@@ -1,8 +1,7 @@
 import {
   activitySummary,
+  activityModeViews,
   aggregateActivity,
-  styledBotsHTML,
-  styledWizardBotsHTML,
   themedSummaryText,
 } from './group-activity.js';
 import { scribeGroupVisible } from './scribe-groups.js';
@@ -126,7 +125,7 @@ function activityMembersForVisibility(members, visible) {
 }
 
 export function globalActivityView(snapshot, wizard = false, visibility = {}) {
-  if (!snapshot) return { markup: '', title: '' };
+  if (!snapshot) return { modes: [], title: '', animationKey: '' };
   const groups = snapshot.groups || [];
   const showOfflineScribes = visibility.scribe ?? false;
   const showUngrouped = visibility.ungrouped ?? true;
@@ -136,16 +135,8 @@ export function globalActivityView(snapshot, wizard = false, visibility = {}) {
   ));
   lists.push(activityMembersForVisibility(snapshot.ungrouped, showUngrouped));
   const summary = aggregateActivity(lists);
-  const styles = snapshot.activity_bots || {};
-  const regularStyle = styles.regular || 'emoji';
-  const slopStyle = styles.slop || 'sprites';
-  const wizardStyle = styles.wizard || 'emoji';
-  const wrap = (className, inner) => inner ? `<span class="${className} level-${summary.level}">${inner}</span>` : '';
-  const regular = wrap('ga-regular', styledBotsHTML(summary, regularStyle));
-  const slop = wrap('ga-slop', styledBotsHTML(summary, slopStyle));
-  const wizardMarkup = wrap('ga-wizard', wizardStyle === 'off' ? '' : styledWizardBotsHTML(summary, wizardStyle));
-  const markup = regular + slop + wizardMarkup;
-  if (!markup) return { markup: '', title: '' };
+  const modes = activityModeViews(summary, snapshot.activity_bots);
+  if (!modes.length) return { modes: [], title: '', animationKey: '' };
 
   const theme = wizard ? 'wizard' : '';
   const lines = [];
@@ -160,7 +151,8 @@ export function globalActivityView(snapshot, wizard = false, visibility = {}) {
     lines.push(`Ungrouped: ${themedSummaryText(ungrouped, theme)}`);
   }
   return {
-    markup,
+    modes,
+    animationKey: modes.map((mode) => `${mode.key}:${mode.style}:${mode.bots.map((bot) => `${bot.key}:${bot.count}`).join(',')}`).join('|'),
     title: `Activity across all groups — ${themedSummaryText(summary, theme)}`
       + (lines.length ? `\n${lines.join('\n')}` : ''),
   };

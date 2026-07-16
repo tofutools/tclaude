@@ -32,7 +32,8 @@ func dndFuncBody(t *testing.T, name string) string {
 	// bounds its span.
 	order := []string{
 		"runDndClone", "runDndMove", "runDndAddToGroup",
-		"runDndRemoveFromGroup", "runDndRetire", "runDndPromoteToUngrouped",
+		"runDndRemoveFromGroup", "runDndRetire", "runDndDeletePending",
+		"runDndPromoteToUngrouped",
 		"runDndReinstate",
 	}
 	start := strings.Index(dashboardAssets, "async function "+name+"(")
@@ -73,7 +74,7 @@ func dndFuncBody(t *testing.T, name string) string {
 func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 	// The six runDnd* functions that gate on the shared confirmModal.
 	// runDndRetire is deliberately excluded — it predates this change
-	// and uses the richer retireConfirm modal (asserted separately
+	// and uses the richer keyed retire transaction (asserted separately
 	// below).
 	gated := []string{
 		"runDndClone", "runDndMove", "runDndAddToGroup",
@@ -141,14 +142,17 @@ func TestDashboardHTML_DndOperationsConfirm(t *testing.T) {
 		t.Errorf("runDndMove: cancel guard (at %d) must precede the optimistic .splice() (at %d) — a cancelled move must not run the splice", cancel, splice)
 	}
 
-	// runDndRetire keeps its richer retireConfirm modal (shutdown
-	// checkbox and all) so a retire-by-drag asks the identical question
-	// as the per-row retire button. It must stay gated.
+	// runDndRetire keeps the keyed retire transaction (shutdown/worktree
+	// choices and all), shared with row and palette launchers. It must await the
+	// final result before deciding whether DnD owes a reconciliation refresh.
 	retire := dndFuncBody(t, "runDndRetire")
-	if !strings.Contains(retire, "await retireConfirm({") {
-		t.Error("runDndRetire: must stay gated behind retireConfirm({")
+	if !strings.Contains(retire, "result = await openRetireAgentDialog(conv, label)") {
+		t.Error("runDndRetire: must stay gated behind the keyed retire transaction")
 	}
-	if rc, fetch := strings.Index(retire, "await retireConfirm({"), strings.Index(retire, "await fetch("); rc >= 0 && fetch >= 0 && rc > fetch {
-		t.Error("runDndRetire: retireConfirm must precede the retire fetch()")
+	if strings.Contains(retire, "await fetch(") {
+		t.Error("runDndRetire: request ownership must stay inside the transaction action")
+	}
+	if !strings.Contains(retire, "retireResultNeedsReconcile(result)") {
+		t.Error("runDndRetire: cancel/dangling failure must reconcile drag presentation")
 	}
 }

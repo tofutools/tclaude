@@ -2,7 +2,7 @@ import { h, render } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { syncBotAnimations } from './helpers.js';
-import { trustedHTMLToVNodes } from './html-vnodes.js';
+import { ActivityModes } from './activity-bots.js';
 import {
   footerMetaView,
   globalActivityView,
@@ -61,10 +61,10 @@ function GlobalActivity({ state, groupsState }) {
     document.addEventListener('tclaude:wizard', update);
     return () => document.removeEventListener('tclaude:wizard', update);
   }, []);
-  useLayoutEffect(() => syncBotAnimations(), [view.markup]);
+  useLayoutEffect(() => syncBotAnimations(), [view.animationKey]);
   return html`
     <span class="global-activity" id="global-activity" aria-label="Activity across all groups" title=${view.title || null}>
-      ${trustedHTMLToVNodes(view.markup)}
+      <${ActivityModes} modes=${view.modes} />
     </span>
   `;
 }

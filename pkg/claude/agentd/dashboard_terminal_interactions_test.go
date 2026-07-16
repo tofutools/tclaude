@@ -13,13 +13,14 @@ import (
 // script/include/import otherwise fails only when a human opens that surface.
 func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	core := readDashboardJS(t, "terminals-core.js")
-	modal := readDashboardJS(t, "modal-term.js")
+	shell := readDashboardJS(t, "terminal-shell-island.js")
 	interactions := readDashboardJS(t, "terminal-interactions.js")
 
-	for name, src := range map[string]string{"terminals-core.js": core, "modal-term.js": modal} {
+	for name, src := range map[string]string{"terminals-core.js": core} {
 		for _, needle := range []string{
 			"import { attachTerminalInteractions } from './terminal-interactions.js';",
-			"attachTerminalInteractions({",
+			"interactionsFactory = attachTerminalInteractions",
+			"interactionsFactory({",
 		} {
 			if !strings.Contains(src, needle) {
 				t.Errorf("%s missing %q", name, needle)
@@ -70,52 +71,48 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		t.Error("terminal Copy action must expose guidance accessibly without a native title tooltip")
 	}
 	for _, needle := range []string{
-		"hintEl.className = 'terminal-interaction-hint'",
+		"class=\"terminal-interaction-hint\"",
 		"Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C",
-		"messageBtn.textContent = '✉ Message'",
-		"onComposeMessage: messageBtn ? () => onComposeMessage(seed) : null",
+		">✉ Message</button>",
+		"onComposeMessage=${composeMessage}",
 	} {
-		if !strings.Contains(core, needle) {
+		if !strings.Contains(shell, needle) {
 			t.Errorf("mux terminal header missing persistent guidance %q", needle)
 		}
 	}
 
-	tab := readDashboardJS(t, "terminals-tab.js")
 	for _, needle := range []string{
 		"import { terminalComposeShortcutAction } from './terminal-compose-route.js';",
-		"const pane = mux?.activePaneDescriptor();",
-		"if (!pane?.seed?.agent) return false;",
-		"restoreFocus: () => mux?.activatePane(pane.key)",
-		"operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),",
-		"blockingOverlayOpen: Boolean($$('.modal-overlay.show, .manage-overlay.show').length),",
+		"import { hasShownOverlay } from './overlay-stack.js';",
+		"const pane = current.panes.find((candidate) => candidate.key === current.activeKey);",
+		"restoreFocus: () => actions.activatePane(pane.key)",
+		"const dialogKind = composeMessageDialogKind();",
+		"operatorModalOpen: dialogKind === 'operator-message',",
+		"blockingOverlayOpen: hasShownOverlay(),",
 		"if (action === 'ignore') return;",
-		"document.addEventListener('keydown', onTerminalsComposeShortcut, true);",
+		"document.addEventListener('keydown', onComposeShortcut, true);",
+		"document.removeEventListener('keydown', onComposeShortcut, true);",
 		"event.stopPropagation();",
 	} {
-		if !strings.Contains(tab, needle) {
+		if !strings.Contains(shell, needle) {
 			t.Errorf("integrated terminals shortcut missing %q", needle)
 		}
 	}
-	for _, needle := range []string{
-		"function activePaneDescriptor()",
-		"return p ? { key: p.key, seed: p.seed } : null;",
-		"activePaneDescriptor,",
-	} {
-		if !strings.Contains(core, needle) {
-			t.Errorf("terminal mux active-pane API missing %q", needle)
-		}
-	}
+	composer := readDashboardJS(t, "message-access-dialog-island.js")
+	actions := readDashboardJS(t, "message-access-dialog-actions.js")
 	for _, needle := range []string{
 		`id="operator-message-modal"`,
 		`id="operator-message-attach-input"`,
 		`id="operator-message-submit"`,
-		`fetch('/api/operator-message'`,
 	} {
-		if !strings.Contains(dashboardAssets, needle) {
+		if !strings.Contains(composer, needle) {
 			t.Errorf("operator message composer missing %q", needle)
 		}
 	}
-	if !strings.Contains(dashboardAssets, `<span class="terminal-interaction-hint">Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C</span>`) {
+	if !strings.Contains(actions, "'/api/operator-message'") {
+		t.Error("operator message action is not wired to /api/operator-message")
+	}
+	if !strings.Contains(shell, "<span class=\"terminal-interaction-hint\">${INTERACTION_HINT}</span>") {
 		t.Error("fallback terminal modal missing persistent selection/copy guidance")
 	}
 
@@ -131,29 +128,26 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 	if data, err := fs.ReadFile(dashboardAssetsFS, "vendor/xterm/addon-web-links.min.js"); err != nil || len(data) < 1000 {
 		t.Errorf("vendored web-links addon missing or unexpectedly small: bytes=%d err=%v", len(data), err)
 	}
-	if !strings.Contains(dashboardAssets, `id="term-session-copy"`) {
+	if !strings.Contains(shell, `id="term-session-copy"`) {
 		t.Error("fallback terminal modal has no visible Copy action")
 	}
-	modalLiveStatus := `<span class="term-session-status" id="term-session-status" role="status"
-        aria-live="polite" aria-atomic="true"></span>`
-	if !strings.Contains(dashboardAssets, modalLiveStatus) {
+	if !strings.Contains(shell, `class="term-session-status" id="term-session-status" role="status" aria-live="polite" aria-atomic="true"`) {
 		t.Error("fallback terminal status must be a polite atomic live region")
 	}
 	for _, jsAttr := range []string{
-		`statusEl.setAttribute('role', 'status')`,
-		`statusEl.setAttribute('aria-live', 'polite')`,
-		`statusEl.setAttribute('aria-atomic', 'true')`,
+		`class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true"`,
 	} {
-		if !strings.Contains(core, jsAttr) {
+		if !strings.Contains(shell, jsAttr) {
 			t.Errorf("mux terminal status missing live-region attribute wiring %q", jsAttr)
 		}
 	}
 	for _, needle := range []string{
-		"if (interactions) interactions.invalidate();",
-		"interactions = attachTerminalInteractions({",
+		"const interactions = interactionsFactory({",
+		"if (disposed) return",
+		"try { interactions.dispose(); }",
 	} {
-		if !strings.Contains(modal, needle) {
-			t.Errorf("modal-term.js missing upload-session race guard %q", needle)
+		if !strings.Contains(core, needle) {
+			t.Errorf("opaque terminal adapter missing interaction lifecycle guard %q", needle)
 		}
 	}
 }

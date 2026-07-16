@@ -20,23 +20,8 @@ function snapshot(groups) {
     conversations: [],
     replaced: [],
     paging: {},
+    activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' },
   };
-}
-
-function testRenderer(groups) {
-  if (!groups.length) return '<div class="empty">No groups</div>';
-  return groups.map((group) => `
-    <details data-group-key="${group.name}">
-      <summary><strong class="group-name">${group.name}</strong></summary>
-      <span class="theme-probe" title="${document.body.classList.contains('wizard') ? 'party' : 'group'}"></span>
-      ${group.members?.length ? `
-        <span class="group-activity">${group.members[0].state?.status}</span>
-        <span class="slop-machine" data-status="${group.members[0].state?.status}"><span>${group.members[0].state?.status}</span></span>
-      ` : ''}
-      <span class="group-descr">${group.descr || ''}</span>
-      <button data-act="inspect" data-group="${group.name}" aria-label="inspect ${group.name}">inspect</button>
-    </details>
-  `).join('');
 }
 
 function stateDependencies() {
@@ -51,12 +36,138 @@ function stateDependencies() {
   };
 }
 
-test('Groups list preserves keyed disclosure, focus and nodes across reorder/activity polls', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createGroupsState }, { GroupsList }, { mountTransientSiblingEditor }] = await Promise.all([
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+async function mountGroups(t, harness, groups, actions, prefsInitial = {}) {
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
     harness.importDashboardModule('js/groups-island.js'),
-    harness.importDashboardModule('js/transient-editor.js'),
+  ]);
+  const state = createGroupsState({
+    prefs: memoryPrefs({
+      'tclaude.dash.ungrouped.groups': '0',
+      'tclaude.dash.retired.groups': '0',
+      ...prefsInitial,
+    }),
+    resetOffsets: () => {},
+    ...stateDependencies(),
+  });
+  state.initialize();
+  state.publish(snapshot(groups));
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`
+    <${GroupsList} host=${host} state=${state} actions=${actions} />
+  `, host);
+  t.after(() => host.remove());
+  return { state, host, mounted };
+}
+
+test('opaque slop host safely retakes nested-root ownership after an imperative pull', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const [{ SlopMachine }, { bindSlopMachineClicks }] = await Promise.all([
+    harness.importDashboardModule('js/groups-member-table.js'),
+    harness.importDashboardModule('js/slop-fx.js'),
+  ]);
+  harness.document.body.classList.add('slop');
+  const mounted = await harness.mount(harness.html`
+    <${SlopMachine} state=${{ status: 'working' }} online=${true} conv="old-conv" />
+  `);
+  bindSlopMachineClicks();
+
+  const machine = mounted.container.querySelector('.slop-machine');
+  harness.fireEvent(machine, 'click', { button: 0 });
+  assert.equal(machine.dataset.status, 'pull-spinning');
+  assert.equal(machine.querySelectorAll('.slop-pull-reel').length, 3,
+    'slop-fx replaces nested-root children with its imperative pull DOM');
+
+  await assert.doesNotReject(() => mounted.rerender(harness.html`
+    <${SlopMachine} state=${{ status: 'idle' }} online=${true} conv="new-conv" />
+  `));
+  assert.equal(mounted.container.querySelector('.slop-machine'), machine,
+    'the parent Preact owner preserves the opaque outer host');
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'new-conv');
+  assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1,
+    'the status edge installs exactly one fresh nested root');
+  assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
+  assert.equal(machine.querySelector('.slop-pull-reel'), null,
+    'no imperative pull DOM survives the ownership hand-back');
+
+  // Exercise the old pull's complete 900ms settle + 1800ms restore window.
+  // Neither delayed callback may overwrite the newer status/conv identity.
+  await new Promise((resolve) => setTimeout(resolve, 2850));
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'new-conv');
+  assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1);
+  assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
+  assert.equal(machine.querySelector('.slop-pull-reel'), null,
+    'all stale pull timers leave the newer nested root untouched');
+
+  await assert.doesNotReject(() => mounted.unmount());
+  assert.equal(mounted.container.querySelector('.slop-machine'), null);
+  assert.equal(mounted.container.querySelector('.slop-pull-reel'), null,
+    'unmount leaves no mutated pull DOM behind');
+});
+
+test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const [{ SlopMachine }, { bindSlopMachineClicks }] = await Promise.all([
+    harness.importDashboardModule('js/groups-member-table.js'),
+    harness.importDashboardModule('js/slop-fx.js'),
+  ]);
+  const savedRandom = Math.random;
+  Math.random = () => 0; // randomCombo's jackpot branch.
+  t.after(() => { Math.random = savedRandom; });
+  harness.document.body.classList.add('slop');
+  const mounted = await harness.mount(harness.html`
+    <${SlopMachine} state=${{ status: 'working' }} online=${true} conv="jackpot-old" />
+  `);
+  bindSlopMachineClicks();
+
+  const machine = mounted.container.querySelector('.slop-machine');
+  harness.fireEvent(machine, 'click', { button: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 950));
+  assert.equal(machine.dataset.status, 'pull-stopped');
+  assert.equal(machine.classList.contains('slop-pull-win'), true,
+    'the forced jackpot enters its imperative hold phase');
+
+  await mounted.rerender(harness.html`
+    <${SlopMachine} state=${{ status: 'idle' }} online=${true} conv="jackpot-new" />
+  `);
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'jackpot-new');
+  assert.equal(machine.classList.contains('slop-pull-win'), true,
+    'Preact intentionally leaves the unchanged imperative class for token cleanup');
+
+  await new Promise((resolve) => setTimeout(resolve, 1850));
+  assert.equal(machine.classList.contains('slop-pull-win'), false,
+    'the current stale token clears its win class even after losing DOM ownership');
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'jackpot-new');
+  assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1);
+  assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
+  assert.equal(machine.querySelector('.slop-pull-reel'), null);
+  await mounted.unmount();
+});
+
+test('Groups list preserves keyed disclosure, focus and nodes across reorder/activity polls', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
   ]);
   const prefs = memoryPrefs({
     'tclaude.dash.ungrouped.groups': '0',
@@ -65,8 +176,8 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   const state = createGroupsState({ prefs, resetOffsets: () => {}, ...stateDependencies() });
   state.initialize();
   state.publish(snapshot([
-    { name: 'alpha', descr: 'old', members: [{ state: { status: 'working' } }] },
-    { name: 'beta', members: [{ state: { status: 'idle' } }] },
+    { name: 'alpha', descr: 'old', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'idle' } }] },
   ]));
   const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -75,71 +186,105 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
       host=${host}
       state=${state}
       actions=${actions}
-      renderGroupsHTML=${testRenderer}
     />
   `, host);
 
   const alpha = host.querySelector('details[data-group-key="alpha"]');
   const beta = host.querySelector('details[data-group-key="beta"]');
-  const inspect = getByRole(alpha, 'button', { name: 'inspect alpha' });
+  const inspect = getByRole(alpha, 'button', { name: 'Alpha member' });
   const descr = alpha.querySelector('.group-descr');
   alpha.open = true;
   inspect.focus();
 
-  const editor = harness.document.createElement('input');
-  const restoreEditor = mountTransientSiblingEditor(descr, editor);
-  assert.equal(descr.isConnected, true, 'the managed inline-edit host stays connected');
-  assert.equal(descr.hidden, true);
-  restoreEditor();
-  assert.equal(descr.hidden, false);
-  assert.equal(editor.isConnected, false);
+  await harness.act(() => harness.fireEvent(descr, 'click'));
+  const editor = alpha.querySelector('.group-descr-input');
+  await harness.input(editor, 'draft survives poll');
 
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ state: { status: 'asking' } }] },
-    { name: 'alpha', descr: 'new', members: [{ state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'awaiting_input' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
 
   assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha);
   assert.equal(host.querySelector('details[data-group-key="beta"]'), beta);
   assert.equal(host.querySelector('details:first-child'), beta, 'snapshot reorder moves keyed nodes');
   assert.equal(alpha.open, true, 'live disclosure state is not reset by a reorder');
-  assert.equal(harness.document.activeElement, inspect, 'focused legacy action remains focused');
-  assert.equal(alpha.querySelector('.group-descr'), descr, 'inline-edit host identity survives publish');
-  assert.equal(descr.textContent, 'new', 'restored inline-edit host receives later updates');
-  assert.equal(beta.querySelector('.group-activity').textContent, 'asking');
+  assert.equal(alpha.querySelector('.group-descr-input'), editor, 'native inline editor identity survives publish');
+  assert.equal(editor.value, 'draft survives poll', 'poll data cannot overwrite a live draft');
+  assert.ok(beta.querySelector('.group-activity'));
+  await harness.act(() => harness.fireEvent(editor, 'keydown', { key: 'Escape' }));
+  assert.match(alpha.querySelector('.group-descr').textContent, /new/, 'cancel reveals the latest published value');
+  inspect.focus();
 
   harness.document.body.classList.add('wizard');
   await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
     'tclaude:wizard', { detail: { active: true } },
   )));
-  assert.equal(alpha.querySelector('.theme-probe').title, 'party',
-    'a live wizard flip repaints list-rendered title attributes');
   assert.equal(host.querySelector('details[data-group-key="alpha"]'), alpha,
     'the theme repaint preserves keyed group disclosure identity');
 
   const machine = beta.querySelector('.slop-machine');
-  machine.innerHTML = '<span>spinning</span>'; // manual pull creates foreign reel children
-  const activeReel = machine.firstElementChild;
+  const activeReel = harness.document.createElement('span');
+  activeReel.textContent = 'spinning';
+  machine.replaceChildren(activeReel); // manual reel pull installs foreign children
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ state: { status: 'asking' } }] },
-    { name: 'alpha', members: [{ state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'awaiting_input' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(machine.firstElementChild, activeReel,
     'a same-status publish preserves an in-flight imperative reel pull');
 
   await harness.act(() => state.publish(snapshot([
-    { name: 'beta', members: [{ state: { status: 'idle' } }] },
-    { name: 'alpha', members: [{ state: { status: 'working' } }] },
+    { name: 'beta', members: [{ conv_id: 'beta-member', title: 'Beta member', online: true, state: { status: 'idle' } }] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
-  assert.equal(machine.querySelector('span').textContent, 'idle',
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.querySelector('.slop-reel').textContent, '7️⃣',
     'a changed status replaces imperative reel children after a manual pull');
 
   await harness.act(() => state.publish(snapshot([
     { name: 'beta', members: [] },
-    { name: 'alpha', members: [] },
+    { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(harness.document.activeElement, inspect,
     'a neighboring activity chip disappearing does not replace the keyed action');
+
+  await mounted.unmount();
+  host.remove();
+});
+
+test('Groups hover state follows semantic keys across polls and clears on disappearance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
+  const alpha = {
+    name: 'alpha', members: [{ conv_id: 'a', online: true, state: { status: 'working' } }],
+  };
+  const beta = { name: 'beta', members: [] };
+  const { state, host, mounted } = await mountGroups(t, harness, [alpha, beta], actions);
+  const alphaNode = host.querySelector('details[data-group-key="alpha"]');
+  const summary = alphaNode.querySelector('summary');
+  const name = summary.querySelector('.group-name');
+  const activity = summary.querySelector('.group-activity');
+
+  await harness.act(() => harness.fireEvent(name, 'mouseover', {
+    relatedTarget: harness.document.body,
+  }));
+  assert.equal(alphaNode.classList.contains('quick-hover'), true);
+  await harness.act(() => harness.fireEvent(activity, 'mouseover', { relatedTarget: name }));
+  assert.equal(alphaNode.classList.contains('quick-hover'), true,
+    'movement within one summary does not clear and reapply hover');
+
+  await harness.act(() => state.publish(snapshot([beta, { ...alpha, descr: 'polled' }])));
+  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alphaNode,
+    'the keyed group node survives reorder polling');
+  assert.equal(alphaNode.classList.contains('quick-hover'), true,
+    'semantic hover state is re-stamped after polling reconciliation');
+
+  await harness.act(() => state.publish(snapshot([beta])));
+  assert.equal(host.querySelector('.quick-hover'), null);
+  await harness.act(() => state.publish(snapshot([alpha, beta])));
+  assert.equal(host.querySelector('details[data-group-key="alpha"]').classList.contains('quick-hover'), false,
+    'a group that disappears clears its hover key before reinsertion');
 
   await mounted.unmount();
   host.remove();
@@ -225,6 +370,132 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
   await mounted.unmount();
 });
 
+test('native group chrome preserves hierarchy, virtual DnD and shared menu contracts', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+    harness.importDashboardModule('js/prefs.js'),
+  ]);
+  const state = createGroupsState({
+    prefs: memoryPrefs({
+      'tclaude.dash.ungrouped.groups': '1',
+      'tclaude.dash.retired.groups': '1',
+    }),
+    resetOffsets: () => {},
+    ...stateDependencies(),
+  });
+  state.initialize();
+  const chromeSnapshot = ({ pendingAgentID, retiredAgentID, ungroupedOnline = true } = {}) => ({
+    ...snapshot([
+      {
+        name: 'parent', members: [], mission: 'ship it', source_template: 'delivery',
+        pending: [{ label: 'spawn-1', name: 'worker', online: true }],
+      },
+      { name: 'child', parent: 'parent', members: [] },
+    ]),
+    ungrouped: [{
+      conv_id: 'loose', agent_id: 'agt-loose', title: 'Loose', online: ungroupedOnline,
+    }],
+    pending: [{ label: 'gate-1', name: 'Gated', online: true, agent_id: pendingAgentID }],
+    retired: [{ conv_id: 'retired-1', title: 'Retired', agent_id: retiredAgentID }],
+    links: [{ id: 7, from: 'parent', to: 'child', mode: 'direct' }],
+  });
+  state.publish(chromeSnapshot());
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.id = 'groups-list';
+  const localActions = [];
+  const mounted = await harness.mount(harness.html`<${GroupsList}
+    host=${host} state=${state}
+    actions=${{
+      sort: () => {}, page: () => {}, setPageSize: () => {},
+      toggleQuickPin: (group) => localActions.push(['quick', group.name]),
+      toggleForceFold: (group) => localActions.push(['force', group.name]),
+    }}
+  />`, host);
+
+  const parent = host.querySelector('details[data-dnd-target-group="parent"]');
+  const child = host.querySelector('details[data-dnd-target-group="child"]');
+  await harness.act(() => harness.fireEvent(parent.querySelector('summary'), 'mouseover', {
+    relatedTarget: harness.document.body,
+  }));
+  assert.equal(parent.classList.contains('quick-hover'), true);
+  dashPrefs.syncItem('tclaude.dash.quickpin.parent', '1');
+  await harness.act(() => state.rerender());
+  assert.equal(parent.classList.contains('quick-pinned'), true);
+  dashPrefs.syncItem('tclaude.dash.quickpin.parent', null);
+  await harness.act(() => state.rerender());
+  assert.equal(parent.classList.contains('quick-hover'), true,
+    'unpinning under a stationary cursor re-stamps the tracked hover class');
+  assert.ok(parent.querySelector('.group-subgroups').contains(child));
+  assert.equal(parent.querySelector('.cog-btn').dataset.act, 'group-menu');
+  assert.equal(parent.querySelector('.cog-btn').getAttribute('aria-expanded'), 'false');
+  const groupCog = parent.querySelector('.group-header-cog .cog-btn');
+  await harness.act(() => harness.fireEvent(groupCog, 'click'));
+  const quickPin = parent.querySelector('.group-header-cog button[data-pinned]');
+  assert.equal(quickPin.hasAttribute('data-act'), false,
+    'component-local presentation state bypasses the root data-act router');
+  await harness.act(() => harness.fireEvent(quickPin, 'click'));
+  const forceFold = parent.querySelector('.force-fold-btn');
+  assert.equal(forceFold.hasAttribute('data-act'), false);
+  await harness.act(() => harness.fireEvent(forceFold, 'click'));
+  assert.deepEqual(localActions, [['quick', 'parent'], ['force', 'parent']]);
+  assert.ok(parent.querySelector('.group-force-block'));
+  assert.ok(parent.querySelector('.group-pending-block tr[data-dnd-pending]'));
+  assert.ok(parent.querySelector('.group-links-section button[data-act="link-edit"]'));
+  assert.match(parent.querySelector('[data-act="power-on-group"]').title, /nothing new is created/);
+  assert.match(parent.querySelector('[data-act="stand-down-force"]').title, /Not a delete/);
+  assert.match(parent.querySelector('[data-act="cleanup-worktrees-group"]').title, /protected/);
+  assert.equal(parent.querySelector('[data-act="link-delete"]').title, 'Remove this link');
+  assert.equal(host.querySelector('details[data-dnd-target-ungrouped]').dataset.groupKey, ' ungrouped-virtual');
+  const loose = host.querySelector('tr[data-dnd-source-ungrouped][data-key="loose"]');
+  assert.ok(loose);
+  assert.equal(loose.querySelector('.rowname-text').dataset.editorKey,
+    'member:virtual:ungrouped:agt-loose:name',
+    'virtual member tables contribute their own interaction identity');
+  const permanentDelete = loose.querySelector('[data-act="delete-agent"]');
+  assert.equal(permanentDelete.dataset.agent, 'agt-loose');
+  assert.equal(permanentDelete.dataset.conv, 'loose');
+  assert.equal(permanentDelete.dataset.label, 'Loose');
+  assert.equal(permanentDelete.querySelector('.theme-copy-wizard').textContent, 'erase familiar');
+
+  const pending = host.querySelector('tr[data-key="gate-1"]');
+  const retired = host.querySelector('tr[data-key="retired-1"]');
+  assert.match(pending.querySelector('[data-act="focus-pending"]').title, /startup gate/);
+  assert.match(retired.querySelector('[data-act="reinstate-agent"]').title, /Reinstate/);
+  await harness.act(() => state.publish(chromeSnapshot({
+    pendingAgentID: 'agt-pending', retiredAgentID: 'agt-retired',
+  })));
+  assert.equal(host.querySelector('tr[data-key="gate-1"]'), pending,
+    'pending row identity stays label-keyed when agent metadata materializes');
+  assert.equal(host.querySelector('tr[data-key="retired-1"]'), retired,
+    'retired row identity stays conv-id-keyed when agent metadata materializes');
+
+  assert.match(retired.closest('details').querySelector('.group-virtual-badge').title,
+    /Drag an agent here to retire it/);
+  const offlineToggle = harness.document.createElement('input');
+  offlineToggle.id = 'filter-groups-offline';
+  offlineToggle.checked = false;
+  harness.document.body.appendChild(offlineToggle);
+  harness.document.body.classList.add('wizard');
+  await harness.act(() => state.publish(chromeSnapshot({ ungroupedOnline: false })));
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  const ungrouped = host.querySelector('details[data-dnd-target-ungrouped]');
+  assert.match(ungrouped.querySelector('.subtable .theme-copy-wizard').textContent,
+    /slumbering familiar.*show slumbering/);
+  assert.match(ungrouped.querySelector('.group-virtual-badge').title,
+    /cannot be renamed, dispelled, whispered to, or scheduled/);
+
+  await harness.act(() => harness.fireEvent(host, 'mouseleave', { relatedTarget: harness.document.body }));
+  harness.document.body.classList.remove('wizard');
+  offlineToggle.remove();
+
+  await mounted.unmount();
+  host.remove();
+});
+
 test('Groups list owns sort and virtual-list pager event routing', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
@@ -247,30 +518,694 @@ test('Groups list owns sort and virtual-list pager event routing', async (t) => 
     page: (...args) => calls.push(['page', ...args]),
     setPageSize: (...args) => calls.push(['size', ...args]),
   };
-  const renderer = () => `
-    <table><thead><tr><th data-sort-table="members" data-sort-col="title">Name</th></tr></thead></table>
-    <button data-pager="next" data-list="retired">next</button>
-    <select data-pager="size" data-list="retired"><option value="100" selected>100/page</option></select>
-  `;
+  state.setVisible('retired', true);
+  state.publish({ ...snapshot([]), retired: [{
+    conv_id: 'retired-1', title: 'Retired', retired_at: '2026-01-01T00:00:00Z',
+  }], paging: { retired: { offset: 0, limit: 50, total: 80 } } });
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`
     <${GroupsList}
       host=${host}
       state=${state}
       actions=${actions}
-      renderGroupsHTML=${renderer}
     />
   `, host);
 
-  await harness.act(() => harness.fireEvent(host.querySelector('th'), 'click'));
-  await harness.act(() => harness.fireEvent(host.querySelector('button'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('th[data-sort-col]'), 'click'));
+  await harness.act(() => harness.fireEvent(host.querySelector('button[data-pager="next"]'), 'click'));
+  host.querySelector('select option[value="100"]').selected = true;
   await harness.act(() => harness.fireEvent(host.querySelector('select'), 'change'));
   assert.deepEqual(calls, [
-    ['sort', 'members', 'title'],
+    ['sort', 'retired', 'id'],
     ['page', 'retired', 'next', 80],
     ['size', 'retired', '100'],
   ]);
 
   await mounted.unmount();
   host.remove();
+});
+
+test('native group and member menus share dismissal, focus, flip and publish state', async (t) => {
+  const harness = await createPreactHarness(t);
+  const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
+  const group = {
+    name: 'alpha',
+    members: [{
+      conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', online: true,
+      state: { status: 'idle' },
+    }],
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [group], actions);
+  const details = host.querySelector('details[data-group-key="alpha"]');
+  const groupCog = details.querySelector('.group-header-cog .cog-btn');
+  const groupMenu = details.querySelector('.group-header-cog .action-menu');
+  const memberCog = details.querySelector('tr[data-key="member-1"] .cog-btn');
+  const memberMenu = details.querySelector('tr[data-key="member-1"] .action-menu');
+
+  Object.defineProperty(harness.window, 'innerHeight', { configurable: true, value: 700 });
+  groupMenu.getBoundingClientRect = () => ({ bottom: 900, height: 180 });
+  groupCog.getBoundingClientRect = () => ({ top: 650 });
+  await harness.act(() => harness.fireEvent(groupCog, 'click'));
+  assert.equal(groupCog.getAttribute('aria-expanded'), 'true');
+  assert.equal(groupMenu.classList.contains('open'), true);
+  assert.equal(groupMenu.classList.contains('opens-up'), true, 'overflowing menus flip above the cog');
+
+  await harness.act(() => state.publish(snapshot([{
+    ...group, descr: 'published while open', members: [{ ...group.members[0], state: { status: 'working' } }],
+  }])));
+  assert.equal(details.querySelector('.group-header-cog .action-menu'), groupMenu);
+  assert.equal(groupMenu.classList.contains('open'), true, 'keyed menu state survives a snapshot publish');
+
+  await harness.act(() => harness.fireEvent(memberCog, 'click'));
+  assert.equal(groupCog.getAttribute('aria-expanded'), 'false');
+  assert.equal(groupMenu.classList.contains('open'), false);
+  assert.equal(memberCog.getAttribute('aria-expanded'), 'true');
+  assert.equal(memberMenu.classList.contains('open'), true, 'member and group menus are mutually exclusive');
+
+  const delegatedItem = memberMenu.querySelector('button[data-act="term"]');
+  await harness.act(() => harness.fireEvent(delegatedItem, 'click'));
+  assert.equal(delegatedItem.isConnected, true, 'dismissal leaves the delegated action target connected');
+  assert.equal(memberMenu.classList.contains('open'), false, 'a menu item dismisses its menu');
+
+  await harness.act(() => harness.fireEvent(memberCog, 'click'));
+  await harness.act(() => harness.fireEvent(harness.document.body, 'click'));
+  assert.equal(memberMenu.classList.contains('open'), false, 'outside click dismisses the menu');
+
+  await harness.act(() => harness.fireEvent(groupCog, 'click'));
+  const focusedItem = groupMenu.querySelector('button[data-act="add-member"]');
+  focusedItem.focus();
+  await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
+  assert.equal(groupMenu.classList.contains('open'), false);
+  assert.equal(harness.document.activeElement, groupCog, 'Escape returns focus to the owning cog');
+
+  await mounted.unmount();
+});
+
+test('multi-group member copies isolate menus, editors, focus and unmount cleanup', async (t) => {
+  const harness = await createPreactHarness(t);
+  const member = {
+    conv_id: 'shared-member', agent_id: 'agt-shared-member', title: 'Shared member', online: true,
+    state: { status: 'idle', harness: 'claude' },
+  };
+  const alpha = { name: 'alpha', members: [member] };
+  const beta = { name: 'beta', members: [member] };
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    renameAgent: async () => true,
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [alpha, beta], actions);
+  const alphaDetails = host.querySelector('details[data-group-key="alpha"]');
+  const betaDetails = host.querySelector('details[data-group-key="beta"]');
+  const alphaRow = alphaDetails.querySelector('tr[data-key="shared-member"]');
+  const betaRow = betaDetails.querySelector('tr[data-key="shared-member"]');
+  const alphaCog = alphaRow.querySelector('.cog-btn');
+  const betaCog = betaRow.querySelector('.cog-btn');
+  const alphaMenu = alphaRow.querySelector('.action-menu');
+  const betaMenu = betaRow.querySelector('.action-menu');
+
+  await harness.act(() => harness.fireEvent(alphaCog, 'click'));
+  assert.equal(alphaMenu.classList.contains('open'), true);
+  assert.equal(betaMenu.classList.contains('open'), false,
+    'opening one membership copy does not open the same agent in another group');
+
+  const alphaTrigger = alphaRow.querySelector('.rowname-text');
+  await harness.act(() => harness.fireEvent(alphaTrigger, 'click'));
+  const alphaInput = alphaRow.querySelector('.rowname-input');
+  assert.ok(alphaInput);
+  assert.equal(betaRow.querySelector('.rowname-input'), null,
+    'editing one membership copy does not replace the other group copy');
+  assert.equal(alphaRow.draggable, false);
+  assert.equal(betaRow.draggable, true);
+  await harness.act(() => harness.fireEvent(alphaInput, 'keydown', { key: 'Escape' }));
+  const restoredAlphaTrigger = alphaRow.querySelector('.rowname-text');
+  assert.equal(harness.document.activeElement, restoredAlphaTrigger);
+  assert.equal(restoredAlphaTrigger.dataset.editorKey,
+    'member:group:alpha:agt-shared-member:name');
+
+  await harness.act(() => harness.fireEvent(betaCog, 'click'));
+  assert.equal(betaMenu.classList.contains('open'), true);
+  await harness.act(() => state.publish(snapshot([{
+    ...beta, members: [{ ...member, title: 'Published shared member' }],
+  }])));
+  const survivingBeta = host.querySelector('details[data-group-key="beta"]');
+  const survivingCog = survivingBeta.querySelector('tr[data-key="shared-member"] .cog-btn');
+  const survivingMenu = survivingBeta.querySelector('tr[data-key="shared-member"] .action-menu');
+  assert.equal(survivingMenu.classList.contains('open'), true,
+    'removing another membership leaves the surviving menu registration live');
+  survivingMenu.querySelector('button[data-act="term"]').focus();
+  await harness.act(() => harness.fireEvent(harness.document.body, 'keydown', { key: 'Escape' }));
+  assert.equal(survivingMenu.classList.contains('open'), false);
+  assert.equal(harness.document.activeElement, survivingCog,
+    'Escape returns focus through the surviving registration after sibling unmount');
+
+  await mounted.unmount();
+});
+
+test('native member and group editors preserve drafts, park DnD and surface busy/error state', async (t) => {
+  const harness = await createPreactHarness(t);
+  const calls = [];
+  let renameAgentResult = async () => true;
+  let renameGroupResult = async () => true;
+  let patchResult = async () => true;
+  let profileChoicesResult = async () => [{ value: 'profile-b', label: 'Profile B' }];
+  let setProfileResult = async () => true;
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    reportError: (error) => calls.push(['report-error', error.message || String(error)]),
+    renameAgent: (member, value) => { calls.push(['rename-agent', member.conv_id, value]); return renameAgentResult(); },
+    renameGroup: (group, value) => { calls.push(['rename-group', group.name, value]); return renameGroupResult(); },
+    patchGroup: (group, field, value) => { calls.push(['patch', group.name, field, value]); return patchResult(); },
+    pickGroupDirectory: async () => false,
+    groupProfileChoices: (kind) => { calls.push(['choices', kind]); return profileChoicesResult(); },
+    setGroupProfile: (group, kind, name) => { calls.push(['profile', group.name, kind, name]); return setProfileResult(); },
+    openNewGroupProfile: (kind, onSaved) => { calls.push(['new-profile', kind, onSaved]); },
+  };
+  const group = {
+    name: 'alpha', descr: 'old descr', default_cwd: '/tmp/old', max_members: 2,
+    default_profile: 'profile-a', sandbox_profile: 'sandbox-a',
+    members: [{
+      conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', online: true,
+      state: { status: 'idle', harness: 'claude' },
+    }],
+  };
+  const { state, host, mounted } = await mountGroups(t, harness, [group], actions);
+  const details = host.querySelector('details[data-group-key="alpha"]');
+  const summary = details.querySelector('summary');
+  const row = details.querySelector('tr[data-key="member-1"]');
+
+  const agentSave = deferred();
+  renameAgentResult = () => agentSave.promise;
+  await harness.act(() => harness.fireEvent(row.querySelector('.rowname-text'), 'click'));
+  const nameInput = row.querySelector('.rowname-input');
+  assert.equal(row.draggable, false);
+  await harness.input(nameInput, 'Member draft');
+  await harness.act(() => state.publish(snapshot([{
+    ...group, members: [{ ...group.members[0], title: 'Published title' }],
+  }])));
+  assert.equal(row.querySelector('.rowname-input'), nameInput);
+  assert.equal(nameInput.value, 'Member draft', 'member rename draft survives a publish');
+  harness.fireEvent(nameInput, 'keydown', { key: 'Enter' });
+  await Promise.resolve();
+  assert.equal(nameInput.disabled, true);
+  assert.equal(row.draggable, false, 'member row stays parked throughout persistence');
+  await harness.act(() => agentSave.resolve(true));
+  await harness.act(() => Promise.resolve());
+  assert.equal(row.querySelector('.rowname-input'), null);
+  assert.equal(row.draggable, true);
+  assert.deepEqual(calls.shift(), ['rename-agent', 'member-1', 'Member draft']);
+
+  renameAgentResult = async () => { throw new Error('rename rejected'); };
+  await harness.act(() => harness.fireEvent(row.querySelector('.rowname-text'), 'click'));
+  const failedName = row.querySelector('.rowname-input');
+  await harness.input(failedName, 'Bad title');
+  await harness.act(() => harness.fireEvent(failedName, 'keydown', { key: 'Enter' }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(failedName.disabled, false);
+  assert.equal(failedName.getAttribute('aria-invalid'), 'true');
+  assert.equal(failedName.title, 'rename rejected');
+  await harness.act(() => harness.fireEvent(failedName, 'keydown', { key: 'Escape' }));
+  assert.equal(harness.document.activeElement.dataset.editorKey,
+    'member:group:alpha:agt-member-1:name');
+  calls.shift();
+
+  const descrTrigger = summary.querySelector('.group-descr');
+  await harness.act(() => harness.fireEvent(descrTrigger, 'click'));
+  const descrInput = summary.querySelector('.group-descr-input');
+  await harness.input(descrInput, 'description draft');
+  assert.equal(summary.draggable, false);
+  await harness.act(() => state.publish(snapshot([{ ...group, descr: 'new poll descr' }])));
+  assert.equal(summary.querySelector('.group-descr-input'), descrInput);
+  assert.equal(descrInput.value, 'description draft');
+  await harness.act(() => harness.fireEvent(descrInput, 'keydown', { key: 'Escape' }));
+  assert.equal(summary.draggable, true);
+  assert.equal(harness.document.activeElement.dataset.editorKey, 'group:alpha:descr');
+
+  const cwdSave = deferred();
+  patchResult = () => cwdSave.promise;
+  await harness.act(() => harness.fireEvent(summary.querySelector('.group-default-cwd'), 'click'));
+  const cwdInput = summary.querySelector('.group-default-cwd-input');
+  await harness.input(cwdInput, ' /tmp/new ');
+  harness.fireEvent(cwdInput, 'keydown', { key: 'Enter' });
+  await Promise.resolve();
+  assert.equal(cwdInput.disabled, true);
+  assert.equal(summary.draggable, false);
+  await harness.act(() => cwdSave.resolve(true));
+  await harness.act(() => Promise.resolve());
+  assert.equal(summary.querySelector('.group-default-cwd-input'), null);
+  assert.deepEqual(calls.shift(), ['patch', 'alpha', 'default_cwd', '/tmp/new']);
+
+  await harness.act(() => harness.fireEvent(summary.querySelector('.group-max-members'), 'click'));
+  const maxInput = summary.querySelector('.group-max-members-input');
+  await harness.input(maxInput, '-1');
+  await harness.act(() => harness.fireEvent(maxInput, 'keydown', { key: 'Enter' }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(maxInput.getAttribute('aria-invalid'), 'true');
+  assert.match(maxInput.title, /non-negative integer/);
+  assert.equal(summary.draggable, false, 'validation errors keep the editor and DnD park live');
+  await harness.act(() => harness.fireEvent(maxInput, 'blur'));
+
+  const groupCog = summary.querySelector('.group-header-cog .cog-btn');
+  await harness.act(() => harness.fireEvent(groupCog, 'click'));
+  await harness.act(() => harness.fireEvent(summary.querySelector('[data-act="rename-group"]'), 'click'));
+  const renameInput = summary.querySelector('.group-rename-input');
+  assert.equal(summary.draggable, false);
+  await harness.act(() => harness.fireEvent(renameInput, 'keydown', { key: 'Escape' }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, groupCog, 'group rename Escape returns to its menu cog');
+
+  const choicesLoad = deferred();
+  profileChoicesResult = () => choicesLoad.promise;
+  const profileTrigger = summary.querySelector('.group-default-model');
+  await harness.act(() => harness.fireEvent(profileTrigger, 'click'));
+  const profileSelect = summary.querySelector('.group-default-profile-select');
+  assert.equal(profileSelect.disabled, true);
+  assert.equal(summary.draggable, false);
+  await harness.act(() => state.publish(snapshot([{ ...group, default_profile: 'published-profile' }])));
+  assert.equal(summary.querySelector('.group-default-profile-select'), profileSelect,
+    'profile picker identity survives a publish while choices load');
+  await harness.act(() => choicesLoad.resolve([{ value: 'profile-b', label: 'Profile B' }]));
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.equal(profileSelect.disabled, false);
+  assert.equal(harness.document.activeElement, profileSelect);
+  const profileSave = deferred();
+  setProfileResult = () => profileSave.promise;
+  profileSelect.querySelector('option[value="profile-b"]').selected = true;
+  harness.fireEvent(profileSelect, 'change');
+  await Promise.resolve();
+  assert.equal(profileSelect.disabled, true);
+  await harness.act(() => profileSave.resolve(true));
+  await harness.act(() => Promise.resolve());
+  assert.equal(summary.querySelector('.group-default-profile-select'), null);
+  assert.deepEqual(calls.splice(0, 2), [
+    ['choices', 'profile'],
+    ['profile', 'alpha', 'profile', 'profile-b'],
+  ]);
+
+  profileChoicesResult = async () => [{ value: 'sandbox-b', label: 'Sandbox B' }];
+  setProfileResult = async () => { throw new Error('sandbox rejected'); };
+  const sandboxTrigger = summary.querySelector('.group-sandbox-profile');
+  await harness.act(() => harness.fireEvent(sandboxTrigger, 'click'));
+  const sandboxSelect = summary.querySelector('.group-default-profile-select');
+  await harness.act(() => Promise.resolve());
+  sandboxSelect.querySelector('option[value="sandbox-b"]').selected = true;
+  await harness.act(() => harness.fireEvent(sandboxSelect, 'change'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(sandboxSelect.disabled, false);
+  assert.equal(sandboxSelect.getAttribute('aria-invalid'), 'true');
+  assert.equal(sandboxSelect.title, 'sandbox rejected');
+  assert.equal(harness.document.activeElement, sandboxSelect, 'failed persistence restores picker focus');
+  await harness.act(() => harness.fireEvent(sandboxSelect, 'keydown', { key: 'Escape' }));
+  await harness.act(() => Promise.resolve());
+  const restoredSandboxTrigger = summary.querySelector('.group-sandbox-profile');
+  assert.equal(sandboxTrigger.isConnected, false, 'the picker replaces its original trigger node');
+  assert.equal(harness.document.activeElement, restoredSandboxTrigger,
+    'Escape focuses the locally committed replacement profile trigger');
+  assert.equal(restoredSandboxTrigger.dataset.editorKey, 'group:alpha:sandbox_profile');
+  calls.splice(0, 2);
+
+  profileChoicesResult = async () => [];
+  await harness.act(() => harness.fireEvent(summary.querySelector('.group-sandbox-profile'), 'click'));
+  const newSandbox = summary.querySelector('.group-default-profile-select');
+  await harness.act(() => Promise.resolve());
+  newSandbox.querySelector('option[value="/new-profile"]').selected = true;
+  await harness.act(() => harness.fireEvent(newSandbox, 'change'));
+  assert.equal(summary.querySelector('.group-default-profile-select'), null);
+  assert.equal(calls[0][0], 'choices');
+  assert.equal(calls[1][0], 'new-profile');
+  assert.equal(calls[1][1], 'sandbox');
+  assert.equal(calls[1][2]('created-sandbox'), undefined,
+    'post-create assignment is reported asynchronously instead of escaping the editor');
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls.slice(2, 4), [
+    ['profile', 'alpha', 'sandbox', 'created-sandbox'],
+    ['report-error', 'sandbox rejected'],
+  ]);
+
+  // A successful rename still uses the same native editor/action boundary.
+  renameGroupResult = async () => true;
+  await harness.act(() => harness.fireEvent(groupCog, 'click'));
+  await harness.act(() => harness.fireEvent(summary.querySelector('[data-act="rename-group"]'), 'click'));
+  const savedRename = summary.querySelector('.group-rename-input');
+  await harness.input(savedRename, 'beta');
+  await harness.act(() => harness.fireEvent(savedRename, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(calls.at(-1), ['rename-group', 'alpha', 'beta']);
+
+  await mounted.unmount();
+});
+
+test('native member rows preserve the legacy field, capability and selector matrix', async (t) => {
+  const harness = await createPreactHarness(t);
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {}, renameAgent: async () => true,
+  };
+  const rich = {
+    conv_id: 'conv-rich', agent_id: 'agt-rich', title: 'Rich agent', online: true,
+    created_at: '2026-07-14T12:00:00Z', role: 'builder', owner: true,
+    descr: 'Ships UI', tags: ['frontend', 'tf:native'], notify: 'on', notify_effective: true,
+    startup_dir: '/home/user/git/tclaude', current_dir: '/home/user/git/tclaude-wt',
+    startup_branch: 'main', startup_branch_url: 'https://github.com/example/tclaude/compare/main',
+    branch: 'feature', branch_url: 'https://github.com/example/tclaude/compare/feature',
+    branch_pr_number: 42, branch_pr_url: 'https://github.com/example/tclaude/pull/42', branch_pr_state: 'open',
+    presented_prs: [
+      { number: 43, url: 'https://github.com/example/tclaude/pull/43', state: 'merged', summary: 'Follow-up' },
+      { number: 99, url: 'javascript:alert(1)', summary: 'unsafe' },
+    ],
+    task_ref_url: 'https://linear.app/example/issue/TCL-465', task_ref_label: 'TCL-465',
+    task_ref_label_override: 'Native tables',
+    state: {
+      status: '', status_detail: '', last_hook: '2026-07-15T00:00:00Z', harness: 'claude',
+      model: 'Opus 4.8 (1M context)', effort_level: 'high', cost_usd: 0.004,
+      virtual_cost_usd: 0.42, remote_control: true, sandbox_mode: 'workspace-write',
+      context_pct: 41, context_window_size: 1000000, tokens_input: 400000, tokens_output: 10000,
+      subagent_count: 2,
+    },
+  };
+  const fixed = {
+    conv_id: 'conv-fixed', agent_id: 'agt-fixed', title: 'Fixed agent', online: false,
+    role: '', descr: '', tags: [], state: { harness: 'codex', exit_reason: 'unexpected', status_detail: 'stale detail' },
+  };
+  const fullSnapshot = {
+    ...snapshot([{ name: 'alpha', members: [rich, fixed] }]),
+    harnesses: [
+      { name: 'claude', can_rename: true, can_remote_control: true },
+      { name: 'codex', can_rename: false, can_remote_control: false },
+    ],
+    sudo: [{ conv_id: 'conv-rich', slug: 'groups.manage', remaining_seconds: 90 }],
+  };
+  const [{ createGroupsState }, { GroupsList }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.initialize();
+  state.publish(fullSnapshot);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsList} host=${host} state=${state} actions=${actions} />`, host);
+  const table = host.querySelector('details[data-group-key="alpha"] table');
+  const rows = [...table.querySelectorAll('tbody tr')];
+  const richRow = rows.find((row) => row.dataset.key === 'conv-rich');
+  const fixedRow = rows.find((row) => row.dataset.key === 'conv-fixed');
+  assert.equal(table.querySelectorAll('thead th').length, 11);
+  assert.equal(richRow.children.length, 11, 'header/body alignment follows the shared visible-column list');
+  assert.equal(richRow.className, 'dnd-draggable');
+  assert.equal(richRow.draggable, true);
+  assert.equal(richRow.dataset.dndSourceGroup, 'alpha');
+  assert.equal(richRow.dataset.dndConv, 'conv-rich');
+  assert.equal(richRow.dataset.dndAgent, 'agt-rich');
+  assert.equal(richRow.dataset.dndLabel, 'Rich agent');
+
+  const dot = richRow.querySelector('.status-dot');
+  assert.equal(dot.dataset.act, 'dot-toggle');
+  assert.equal(dot.dataset.online, '1');
+  assert.equal(dot.dataset.agent, 'agt-rich');
+  assert.equal(dot.dataset.conv, 'conv-rich');
+  assert.match(dot.title, /Claude Code · Opus 4\.8/);
+  const harnessLine = richRow.querySelector('.agent-harness');
+  assert.match(harnessLine.textContent, /CC·O4\.8 1Mhigh<1¢≈\$0\.42📱/);
+  assert.match(harnessLine.title, /WHAT-IF cost this session/);
+  assert.equal(richRow.querySelector('.sandbox-badge').textContent, '🔒 workspace-write');
+  assert.equal(richRow.querySelector('.remote-badge').dataset.act, 'web-open-window');
+
+  assert.equal(richRow.querySelector('.state-pill').textContent, 'online');
+  assert.equal(richRow.querySelector('.state-pill').classList.contains('state-idle'), true,
+    'blank online status keeps the legacy idle color');
+  assert.equal(richRow.querySelector('.slop-machine').dataset.status, 'idle');
+  assert.equal(richRow.querySelector('.slop-machine').textContent, '7️⃣7️⃣7️⃣');
+  assert.match(richRow.querySelector('.wizard-pill').textContent, /Meditating/);
+  assert.equal(richRow.querySelectorAll('.ctx-meter').length, 2);
+  assert.equal(richRow.querySelectorAll('.ctx-seg').length, 10);
+  assert.equal(richRow.querySelectorAll('.ctx-seg.lit-green').length, 4);
+  assert.equal(richRow.querySelector('.badge-subagents').textContent, '🤖+2');
+
+  assert.match(richRow.querySelector('.role-edit').textContent, /builder owner/);
+  assert.equal(richRow.querySelector('.role-edit').hasAttribute('data-owner'), false,
+    'direct Preact launchers do not retain legacy form-prefill attributes');
+  assert.equal(richRow.querySelector('.descr-edit').hasAttribute('data-tags'), false);
+  assert.equal(richRow.querySelector('.agent-tag-tf').title, 'task force: native');
+  assert.equal(richRow.querySelector('.task-link').draggable, false);
+  assert.equal(richRow.querySelector('.task-edit').dataset.currentTaskLabel, 'Native tables');
+  assert.equal(richRow.querySelectorAll('.loc-pair').length, 2);
+  assert.equal(richRow.querySelector('.branch-link').draggable, false);
+  assert.equal(richRow.querySelector('.pr-state-open').textContent, '#42');
+  assert.equal(richRow.querySelector('.pr-state-merged').textContent, '#43');
+  assert.equal(richRow.querySelectorAll('[href^="javascript:"]').length, 0);
+  assert.match(richRow.querySelector('.sudo-badge').title, /groups\.manage \(expires in 1m30s\)/);
+
+  const menu = richRow.querySelector('.action-menu');
+  assert.equal(menu.getAttribute('role'), 'menu');
+  assert.equal(menu.querySelectorAll('button:not([role="menuitem"])').length, 0);
+  assert.equal(menu.querySelector('[data-act="toggle-remote-control"]').dataset.intent, 'off');
+  assert.equal(menu.querySelector('[data-act="retire-agent"]').hasAttribute('data-agent'), false,
+    'retire remains deliberately conv-keyed for dangling-agent recovery');
+  assert.equal(menu.querySelector('[data-act="perm-edit"]').hasAttribute('data-agent'), false);
+  assert.equal(menu.querySelector('[data-act="sudo-grant"]').hasAttribute('data-agent'), false);
+  assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-conv'), false);
+  assert.equal(menu.querySelector('[data-act="cron-new"]').hasAttribute('data-agent'), false);
+  assert.match(menu.querySelector('[data-act="cron-new"]').dataset.prefill, /"target":"agt-rich"/);
+  assert.equal(menu.querySelectorAll('.menu-sep').length, 3);
+
+  assert.equal(fixedRow.querySelector('.rowname-fixed').textContent, 'Fixed agent');
+  assert.equal(fixedRow.querySelector('[data-act="rename-name"]'), null);
+  assert.equal(fixedRow.querySelector('[data-act="toggle-remote-control"]'), null);
+  assert.equal(fixedRow.querySelector('.state-pill').classList.contains('state-crashed'), true);
+  assert.equal(fixedRow.querySelector('.slop-machine').title, 'crashed: stale detail');
+  assert.equal(fixedRow.querySelector('.wizard-pill').title, 'crashed: stale detail');
+
+  harness.document.body.classList.add('wizard');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  assert.equal(menu.querySelector('[data-act="view-agent-messages"] .theme-copy-wizard').textContent, 'view missives');
+  assert.equal(table.querySelectorAll('thead .theme-copy-wizard')[0].textContent, 'Class');
+
+  harness.document.body.classList.remove('wizard');
+  await mounted.unmount();
+  host.remove();
+});
+
+test('native member edit launchers carry focus and keep a frozen draft across polls', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsList }, { GroupsMemberDialog }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/groups-island.js'),
+    harness.importDashboardModule('js/member-editor-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.initialize();
+  const member = {
+    conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', role: 'builder',
+    descr: 'old descr', tags: ['one'], owner: false, online: true, state: { status: 'idle' },
+  };
+  const group = { name: 'alpha', members: [member] };
+  state.publish(snapshot([group]));
+  const actions = {
+    sort: () => {}, page: () => {}, setPageSize: () => {},
+    openMemberEditor: state.openMemberEditor,
+    closeMemberEditor: state.closeMemberEditor,
+    noMemberChanges: () => {},
+    saveMemberEditor: async () => ({ succeeded: [], errors: [] }),
+    openMemberPermissions: () => {},
+  };
+  const listHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  const list = await harness.mount(harness.html`<${GroupsList} host=${listHost} state=${state} actions=${actions} />`, listHost);
+  const dialog = await harness.mount(harness.html`<${GroupsMemberDialog} state=${state} actions=${actions} confirmDiscard=${async () => true} />`, dialogHost);
+  const row = listHost.querySelector('tr[data-key="member-1"]');
+  const role = row.querySelector('.role-edit');
+
+  await harness.act(() => harness.fireEvent(role, 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.memberEditor.value.focus, 'role');
+  assert.equal(harness.document.activeElement.id, 'edit-member-role');
+  const roleInput = dialogHost.querySelector('#edit-member-role');
+  await harness.input(roleInput, 'reviewer draft');
+  await harness.act(() => state.publish(snapshot([{
+    name: 'alpha', members: [{ ...member, role: 'published role', descr: 'published descr' }],
+  }])));
+  assert.equal(dialogHost.querySelector('#edit-member-role'), roleInput,
+    'polling does not remount the active member transaction');
+  assert.equal(roleInput.value, 'reviewer draft', 'polling cannot overwrite the local draft');
+  dialogHost.querySelector('#edit-member-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, role, 'explicit close restores the row-cell invoker');
+
+  const descr = row.querySelector('.descr-edit');
+  await harness.act(() => harness.fireEvent(descr, 'keydown', { key: 'Enter', isComposing: true }));
+  assert.equal(state.memberEditor.value, null, 'IME composition does not activate a row editor');
+  await harness.act(() => harness.fireEvent(descr, 'keydown', { key: 'Enter' }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.memberEditor.value.focus, 'descr');
+  assert.equal(harness.document.activeElement.id, 'edit-member-tags',
+    'description-cell parity lands on the rendered tag chips field');
+  dialogHost.querySelector('#edit-member-cancel').click();
+  await harness.act(() => Promise.resolve());
+
+  const cog = row.querySelector('.cog-btn');
+  await harness.act(() => harness.fireEvent(cog, 'click'));
+  await harness.act(() => harness.fireEvent(row.querySelector('[data-act="edit-member"]'), 'click'));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.memberEditor.value.focus, 'title');
+  assert.equal(harness.document.activeElement.id, 'edit-member-title-input');
+  assert.equal(row.querySelector('.action-menu').classList.contains('open'), false);
+  const escape = new harness.window.Event('keydown', { bubbles: true });
+  Object.defineProperty(escape, 'key', { value: 'Escape' });
+  harness.document.dispatchEvent(escape);
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, cog, 'menu launch restores focus to the owning cog');
+
+  await dialog.unmount();
+  await list.unmount();
+  dialogHost.remove();
+  listHost.remove();
+});
+
+test('member editor preserves dirty, IME, busy, stacked overlay and field-level retry behavior', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createGroupsState }, { GroupsMemberDialog }] = await Promise.all([
+    harness.importDashboardModule('js/groups-state.js'),
+    harness.importDashboardModule('js/member-editor-island.js'),
+  ]);
+  const state = createGroupsState({ prefs: memoryPrefs(), resetOffsets: () => {}, ...stateDependencies() });
+  state.openMemberEditor({
+    conv_id: 'member-1', agent_id: 'agt-member-1', title: 'Member one', role: 'builder',
+    descr: 'old', tags: ['one'], owner: false,
+  }, { name: 'alpha' }, 'role');
+  const saves = [];
+  const firstSave = deferred();
+  let saveResult = () => firstSave.promise;
+  let permissionOverlay = null;
+  let confirmOverlay = null;
+  let discardCalls = 0;
+  let discardResult = null;
+  const actions = {
+    saveMemberEditor: (_descriptor, changes) => { saves.push(changes); return saveResult(); },
+    noMemberChanges: () => {},
+    openMemberPermissions: () => {
+      permissionOverlay = harness.document.body.appendChild(harness.document.createElement('div'));
+      permissionOverlay.id = 'perm-edit-modal';
+      permissionOverlay.className = 'modal-overlay show';
+      permissionOverlay.style.zIndex = '160';
+    },
+  };
+  const confirmDiscard = () => {
+    discardCalls++;
+    confirmOverlay = harness.document.body.appendChild(harness.document.createElement('div'));
+    confirmOverlay.id = 'confirm-modal';
+    confirmOverlay.className = 'modal-overlay show';
+    confirmOverlay.style.zIndex = '1000';
+    discardResult = deferred();
+    return discardResult.promise;
+  };
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`<${GroupsMemberDialog}
+    state=${state} actions=${actions} confirmDiscard=${confirmDiscard}
+  />`, host);
+  await harness.input(host.querySelector('#edit-member-role'), 'reviewer');
+  await harness.input(host.querySelector('#edit-member-tags'), 'one, two');
+  assert.match(host.querySelector('#edit-member-title').textContent, /Edit agent.*Enchant this familiar/,
+    'plain and wizard copy remain in the Preact-owned dialog');
+
+  const composed = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(composed, {
+    key: { value: 'Enter' }, ctrlKey: { value: true }, isComposing: { value: true },
+  });
+  host.querySelector('[role="dialog"]').dispatchEvent(composed);
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves.length, 0, 'Ctrl+Enter does not submit during IME composition');
+
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardCalls, 1);
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  await harness.act(() => Promise.resolve());
+  assert.equal(discardCalls, 1, 'a stacked discard confirm prevents re-entrant dismissal');
+  confirmOverlay.remove();
+  discardResult.resolve(false);
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#edit-member-modal'), 'rejected discard preserves the draft');
+
+  host.querySelector('#edit-member-perms').click();
+  await harness.act(() => Promise.resolve());
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#edit-member-modal'), 'stacked permissions owns Escape');
+  assert.equal(discardCalls, 1, 'the underlying dirty editor does not also ask to discard');
+  permissionOverlay.remove();
+
+  host.querySelector('#edit-member-save').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#edit-member-save').disabled, true);
+  assert.equal(host.querySelector('#edit-member-role').disabled, true);
+  firstSave.resolve({
+    succeeded: ['membership'],
+    errors: [{ key: 'tags', message: 'tag rejected' }],
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#edit-member-error').textContent, /tags: tag rejected/);
+  assert.equal(host.querySelector('#edit-member-role').disabled, false);
+  saveResult = async () => ({ succeeded: ['tags'], errors: [] });
+  host.querySelector('#edit-member-save').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saves, [
+    { role: 'reviewer', tags: ['one', 'two'] },
+    { tags: ['one', 'two'] },
+  ], 'retry resends only the field whose independent write failed');
+  assert.equal(state.memberEditor.value, null);
+
+  await mounted.unmount();
+  host.remove();
+});
+
+test('member editor actions keep independent endpoint and stable-selector boundaries', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ saveMemberEditorRequests }, { memberEditorChanges }] = await Promise.all([
+    harness.importDashboardModule('js/member-editor-actions.js'),
+    harness.importDashboardModule('js/member-editor-island.js'),
+  ]);
+  const baseline = { title: 'Worker', role: 'builder', descr: 'old', tags: ['one'], owner: false };
+  assert.deepEqual(memberEditorChanges(baseline, {
+    title: 'Worker two', role: 'reviewer', descr: 'checks', tags: 'one, two, one', owner: true,
+  }, false), {
+    rename: { title: 'Worker two' }, role: 'reviewer', descr: 'checks', tags: ['one', 'two'], owner: true,
+  });
+  assert.deepEqual(memberEditorChanges(baseline, {
+    title: 'ignored explicit title', role: 'builder', descr: 'old', tags: 'one', owner: false,
+  }, true), { rename: { auto: true } }, 'auto-title wins over an explicit title draft');
+  assert.throws(() => memberEditorChanges(baseline, {
+    title: 'bad  title', role: 'builder', descr: 'old', tags: 'one', owner: false,
+  }, false), /title must be 1-64 chars/);
+  const requests = [];
+  const notices = [];
+  let refreshes = 0;
+  const result = await saveMemberEditorRequests({
+    descriptor: {
+      conv: 'conv-1', agent: 'agt-stable', label: 'Worker', group: 'alpha group',
+    },
+    changes: {
+      rename: { title: 'Worker two' }, role: 'reviewer', descr: 'checks',
+      tags: ['one'], owner: true,
+    },
+    refresh: async () => { refreshes++; },
+    notify: (...args) => notices.push(args),
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      if (url.includes('/tags')) return new Response('bad tag', { status: 400 });
+      return new Response('', { status: 200 });
+    },
+  });
+  assert.deepEqual(requests.map(([url]) => url), [
+    '/api/agents/agt-stable/rename',
+    '/api/groups/alpha%20group/members/agt-stable',
+    '/api/agents/agt-stable/tags',
+    '/api/groups/alpha%20group/owners',
+  ]);
+  assert.deepEqual(JSON.parse(requests[1][1].body), { role: 'reviewer', descr: 'checks' });
+  assert.deepEqual(JSON.parse(requests[3][1].body), { conv: 'agt-stable' });
+  assert.deepEqual(result.succeeded, ['rename', 'membership', 'owner']);
+  assert.deepEqual(result.errors, [{ key: 'tags', message: 'bad tag' }]);
+  assert.equal(refreshes, 1);
+  assert.equal(notices.length, 3, 'successful fields retain independent user feedback');
 });

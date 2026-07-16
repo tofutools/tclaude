@@ -6,7 +6,7 @@ import (
 )
 
 // TestDashboardHTML_NotifyBellsWired guards the notification-filter UI
-// across the files it spans. Per-agent/group menu rows remain legacy-rendered;
+// across the files it spans. Per-agent/group menu rows are native Preact;
 // the global bell + popover are a bounded Preact island with separate state,
 // actions and view modules. Behaviour is covered by notify-preact.test.mjs and
 // the daemon endpoints by dashboard_notify_filter_flow_test.go.
@@ -30,15 +30,15 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 
 	// The per-agent + per-group notify controls render as ⚙ options-menu
 	// rows; the global bell and popover are rendered by their bounded island.
-	must("function notifyMenuItem(m)", "per-agent notify menu-item builder is defined")
-	must("function groupNotifyMenuItem(g)", "per-group notify menu-item builder is defined")
-	must(`data-act="toggle-agent-notify"`, "agent menu item carries the agent-toggle action")
+	must("function NotifyMenuItem({ member })", "per-agent notify menu-item component is defined")
+	must("function GroupMenuItems({ group, members, snapshot, actions })", "per-group menu component is defined")
+	must(`act="toggle-agent-notify"`, "agent menu item carries the agent-toggle action")
 	must(`data-act="toggle-group-notify"`, "group menu item carries the group-toggle action")
 
 	// They are wired INTO the cog menus — not the always-visible header /
 	// row surfaces.
-	must("+ notifyMenuItem(m) + remoteControlMenuItem(m, canRemote)", "agent notify sits in the row cog menu")
-	must("+ groupNotifyMenuItem(g)", "group notify sits in the group cog menu")
+	must("<${NotifyMenuItem} member=${member} />", "agent notify sits in the row cog menu")
+	must("<${ActionMenu} menuKey=${`group:${group.name}`} kind=\"group-menu\"", "group notify sits in the group cog menu")
 
 	// The old always-visible surfaces are gone — no standalone per-agent
 	// bell in the agent-ctl cell, no per-group chip in the summary strip.

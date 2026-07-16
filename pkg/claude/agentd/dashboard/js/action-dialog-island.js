@@ -1,10 +1,16 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
+import {
+  AgentExportDialog, PresetCloneDialog, TerminalDirectoryDialog,
+} from './small-dialog-components.js';
 
 const html = htm.bind(h);
 const WT_NEW = '__new__';
@@ -130,6 +136,7 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
 }
 
 function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [followUp, setFollowUp] = useState('');
   const [copyConversation, setCopyConversation] = useState(true);
   const [worktree, setWorktree] = useState('');
@@ -173,6 +180,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
       resizeKey="tclaude.dash.modalSize.clone-agent"
     >
       <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror familiar"/></h3>
@@ -210,7 +218,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       />
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="clone-agent-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror familiar'}/>
@@ -221,6 +229,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [mode, setMode] = useState('self');
   const [focusHint, setFocusHint] = useState('');
   const [followUp, setFollowUp] = useState('');
@@ -254,6 +263,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
     >
       <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate familiar"/></h3>
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
@@ -300,7 +310,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} id="reincarnate-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="reincarnate-agent-submit" class="primary" type="button" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
           <${Words}
@@ -314,6 +324,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const model = useMemo(() => actions.nestModel(descriptor.group), [descriptor.group]);
   const [parent, setParent] = useState(model.currentParent);
   const [busy, setBusy] = useState(false);
@@ -328,7 +339,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
     finally { setBusy(false); }
   };
   return html`
-    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
       <h3 id="group-nest-title"><${Words} plain=${`Nest group: ${descriptor.group}`} wizard=${`Nest party: ${descriptor.group}`}/></h3>
       <div class="modal-meta"><${Words}
         plain="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants."
@@ -343,9 +354,126 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
       </label>
       <${ErrorBanner} id="group-nest-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="group-nest-submit" class="primary" type="button" disabled=${busy} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Nesting…' : 'Nest party'}/></button>
+      </div>
+    </${Overlay}>
+  `;
+}
+
+function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
+  const oldURL = (descriptor.url || '').trim();
+  const oldLabel = (descriptor.taskLabel || '').trim();
+  const [url, setUrl] = useState(oldURL);
+  const [taskLabel, setTaskLabel] = useState(oldLabel);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const urlRef = useRef(null);
+  const agentLabel = descriptor.agentLabel || '';
+  const dirty = url.trim() !== oldURL || taskLabel.trim() !== oldLabel;
+
+  const submit = async () => {
+    if (busy) return;
+    const nextURL = url.trim();
+    const nextLabel = taskLabel.trim();
+    setError('');
+    // A label without a URL is ambiguous — the daemon derives the label from the
+    // URL, so there is nothing to attach it to.
+    if (!nextURL && nextLabel) {
+      setError('Enter a URL, or clear the display name too.');
+      urlRef.current?.focus();
+      return;
+    }
+    if (nextURL) {
+      let parsed;
+      try { parsed = new URL(nextURL); } catch (_) {}
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+        setError('Task URL must be a complete http:// or https:// URL.');
+        urlRef.current?.focus();
+        return;
+      }
+    }
+    setBusy(true);
+    try {
+      await actions.setTaskLink({
+        conv: descriptor.conv,
+        label: agentLabel,
+        url: nextURL,
+        taskLabel: nextURL ? nextLabel : '',
+        changed: nextURL !== oldURL || nextLabel !== oldLabel,
+      });
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  };
+
+  // Enter saves only from inside the text fields, and never while an IME
+  // composition is active (Enter then commits the candidate, not the form).
+  // Modifiers are allowed so a Ctrl/⌘+Enter from a field still saves, matching
+  // the legacy controller. There is deliberately no global submit hotkey: one
+  // would fire regardless of target (e.g. from Cancel) and without the
+  // composition guard, bypassing this field-only/IME contract.
+  const onFieldKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      submit();
+    }
+  };
+
+  return html`
+    <${Overlay}
+      id="task-link-modal"
+      dialogClass="modal"
+      labelledby="task-link-title"
+      onClose=${actions.close}
+      dirty=${dirty}
+      blocked=${busy}
+      confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
+    >
+      <h3 id="task-link-title"><${Words} plain="Task link" wizard="Bind a quest link"/></h3>
+      ${agentLabel && html`<div class="modal-meta" id="task-link-meta">${agentLabel}</div>`}
+      <div class="field">
+        <label for="task-link-url"><${Words} plain="URL" wizard="Portal URL"/></label>
+        <input
+          ref=${urlRef}
+          id="task-link-url"
+          type="url"
+          inputmode="url"
+          maxlength="2048"
+          autocomplete="off"
+          spellcheck="false"
+          data-select-on-focus
+          placeholder="https://linear.app/… or https://github.com/…"
+          value=${url}
+          onInput=${(event) => setUrl(event.currentTarget.value)}
+          onKeyDown=${onFieldKeyDown}
+        />
+        <span class="task-link-hint"><${Words} plain="Leave the URL empty to clear this agent's task link." wizard="Leave the portal empty to unbind this familiar's quest."/></span>
+      </div>
+      <div class="field">
+        <label for="task-link-label"><${Words} plain="Display name" wizard="Quest name"/> <span class="muted">(optional)</span></label>
+        <input
+          id="task-link-label"
+          type="text"
+          maxlength="200"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Auto: Linear issue key, GitHub number, or hostname"
+          value=${taskLabel}
+          onInput=${(event) => setTaskLabel(event.currentTarget.value)}
+          onKeyDown=${onFieldKeyDown}
+        />
+        <span class="task-link-hint"><${Words} plain="Leave blank to derive a short label automatically while keeping the full URL available on hover." wizard="Leave blank and the grimoire will divine a short quest name while preserving the full portal on hover."/></span>
+      </div>
+      <${ErrorBanner} id="task-link-error" error=${error} onDismiss=${() => setError('')} />
+      <div class="modal-buttons">
+        <button id="task-link-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <span class="spacer"></span>
+        <button id="task-link-save" class="primary" type="button" disabled=${busy} onClick=${submit}>
+          <${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Binding…' : '✒ Bind quest!'}/>
+        </button>
       </div>
     </${Overlay}>
   `;
@@ -357,11 +485,15 @@ export function ActionDialogApp({ state, actions, confirmDiscard }) {
   if (descriptor.kind === 'clone-agent') return html`<${CloneAgentDialog} key=${`clone:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'reincarnate-agent') return html`<${ReincarnateAgentDialog} key=${`reincarnate:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'nest-group') return html`<${NestGroupDialog} key=${`nest:${descriptor.group}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'task-link') return html`<${TaskLinkDialog} key=${`task-link:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${`preset-clone:${descriptor.presetKind}:${descriptor.source.name}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${`agent-export:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${`terminal-directory:${descriptor.label}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   return null;
 }
 
 export function mountActionDialogIsland({ host, state, actions, confirmDiscard, registerCleanup }) {
   render(html`<${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   const unregister = registerActionDialogController(actions);
-  registerCleanup(() => { unregister(); render(null, host); });
+  registerCleanup(() => { state.dispose(); unregister(); render(null, host); });
 }

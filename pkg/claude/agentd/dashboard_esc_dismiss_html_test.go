@@ -1,17 +1,11 @@
 package agentd
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // JOH-358: every layered dialog binds <ESC> to exit — with a discard
-// confirmation when an editable form has unsaved edits. The dismiss wiring
-// lives entirely in JS (bindBackdropDiscard / bindManageOverlayDismiss calls
-// plus the per-open inline handlers) with no Go path exercising it in the
-// browser, so a rename or a dropped bind call silently breaks Escape for a
-// whole dialog. Asserting on the embedded concatenation catches a drop at
-// `go test ./...`.
+// confirmation when an editable form has unsaved edits. ManagementOverlay is
+// the shared Preact lifecycle; component suites cover its behavior and this
+// embedded-asset check catches a dropped ownership connection at go test time.
 func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -36,55 +30,54 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("title: 'Discard input?',", "the shared discard-confirm title remains stable")
 	must("okLabel: 'Discard',", "the shared discard action remains explicit")
 	mustNot("export function confirmDiscard() {", "refresh no longer owns a second discard-confirm implementation")
-	must("if (dirty && !(await confirmDiscard())) return;", "a dirty form confirms before an accidental close")
 
-	// refresh.js: editMemberModal is the one editable form dismissed inline
-	// (title / description text, role, owner) — it now dirty-tracks and
-	// confirms on Escape / backdrop instead of silently discarding edits.
-	must("overlay.addEventListener('input', markDirty);", "edit-member marks dirty on typed input")
-	must("overlay.addEventListener('change', markDirty);", "edit-member marks dirty on toggle/select changes")
-	// Its capture-phase Escape handler bails while the stacked discard
-	// confirm is up so confirmModal's own handler cancels only the confirm,
-	// and never re-enters to pop a second one underneath.
-	must("if ($('#confirm-modal').classList.contains('show')) return;", "edit-member yields Escape to a stacked discard confirm")
+	// member-editor-island.js owns a controlled dirty draft. The shared Preact
+	// overlay confirms accidental close, preserves the legacy backdrop-drag
+	// gesture guard, and yields Escape by painted overlay order to both the
+	// stacked permission editor and the discard confirm.
+	must("dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the member editor confirms dirty accidental closes")
+	must("guardBackdropDrag=${true}", "the member editor preserves selection-drag backdrop safety")
+	must("shouldHandle: () => isTopmostOverlay(overlayRef.current)", "stacked Preact overlays give Escape only to the painted topmost dialog")
+	mustNot("function editMemberModal(", "the legacy inline edit-member lifecycle is removed")
 
-	// A representative slice of the form dialogs wired through
-	// bindBackdropDiscard — a sanity net that the coverage table is real.
-	// (One per bind*UI file so a whole file dropping its call is caught.)
-	must("bindBackdropDiscard('perm-edit-modal', closePermEditModal);", "the permission editor confirms before discarding")
+	// A representative slice of forms wired through ManagementOverlay.
+	must("export function useGuardedOverlayClose() {", "form owners share one explicit-control close adapter")
+	must("const cleanup = registerClose?.(close);", "ManagementOverlay publishes its guarded close transaction")
+	must("return { requestClose, registerClose };", "the shared adapter exposes request and registration wiring")
+	must("registerClose=${registerClose}", "dirty form owners register explicit controls with ManagementOverlay")
+	must(`id="perm-edit-modal" dialogClass="perm-edit-modal"`, "the permission editor uses the shared Preact overlay")
+	must("onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact permission editor confirms before discarding")
 	must("dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard}", "the Preact template editor confirms before discarding")
-	must("if (!dirty || (await confirmDiscard())) onClose();", "Preact management editors confirm before discarding")
+	must("const discard = await state.confirmDiscard();", "the shared Preact overlay awaits discard confirmation")
+	must("if (discard) state.onClose();", "the shared Preact overlay closes only after confirmed discard")
 	must(`id="role-editor-modal"`, "the role editor uses the shared Preact dismissal boundary")
 	must(`id="profile-editor-modal"`, "the profile editor uses the shared Preact dismissal boundary")
-	must("bindBackdropDiscard('agent-spawn-modal', closeAgentSpawnModal);", "the spawn dialog confirms before discarding")
-	must("bindBackdropDiscard('cron-create-modal', closeCronCreateModal);", "the cron-create dialog confirms before discarding")
-	must("bindBackdropDiscard('human-reply-modal', closeHumanReplyModal);", "the human-reply dialog confirms before discarding")
-	must("bindBackdropDiscard('operator-message-modal', close, () => !pending);", "the operator composer confirms before accidental dismissal")
-	must("dismissGuard.tryDismiss()", "the operator composer routes Cancel through the same discard confirmation")
-	must("bindBackdropDiscard('group-create-modal', closeGroupCreateModal);", "the group-create dialog confirms before discarding")
+	must(`id="agent-spawn-modal"`, "the Preact spawn dialog retains its scoped overlay id")
+	must("spawnDraftIsDirty(draft, baseline, attachments.length)", "the spawn dialog derives dirty state from its controlled draft")
+	must(`id="cron-create-modal"`, "the cron editor uses the shared Preact overlay")
+	must("overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}",
+		"component mode controls only the overlay presentation class")
+	must("onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}",
+		"the cron editor confirms dirty dismissal and blocks close while saving")
+	must(`id="human-reply-modal" labelledby="human-reply-title"`, "the human-reply dialog uses the shared Preact overlay")
+	must("onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
+	must(`id="operator-message-modal"`, "the terminal operator composer is rendered by the Preact dialog owner")
+	must("dirty=${dirty}", "the operator composer derives dismissal state from its controlled draft")
+	must(`id="group-create-modal"`, "the Preact group-create dialog retains its scoped overlay id")
+	must("dirty=${dirty}", "the Preact group-create dialog publishes its controlled dirty state")
+	must("blocked=${busy}", "the Preact group-create dialog blocks dismissal while submitting")
 
 	// The non-form LISTING overlays get the friction-free clean close (no
 	// "discard?" for a typed filter). A child .modal-overlay on top claims
-	// Escape first via bindManageOverlayDismiss's own guard.
+	// Escape through the same shared painted-stack guard.
 	must(`id: 'templates-manage-modal'`, "the Preact templates browser uses the clean manage-overlay boundary")
 	must(`manage: true`, "the templates browser uses the listing-overlay variant")
 	must("manage-overlay show", "Preact management browsers use the clean shared overlay close")
-	must("bindManageOverlayDismiss('links-manage-modal', closeLinksManageModal);", "the links browser closes cleanly")
+	must(`id="links-manage-modal"`, "the Preact Links browser uses the clean shared overlay boundary")
+	must(`id="link-modal"`, "the Preact Links editor uses the stacked form boundary")
 
-	// A manage overlay's Escape must key on the z-index/DOM-order topmost test,
-	// NOT a bare "any .modal-overlay is shown" guard. The naive guard couldn't
-	// distinguish a child form modal ABOVE (yield to it) from a plain modal
-	// BENEATH — e.g. the templates panel opened over the "Form a party" dialog
-	// via "⧉ manage circles…" (JOH-356) — so it swallowed the Escape and left
-	// the front-most panel un-closable. Pin the fix so it can't regress: the
-	// topmost guard must now appear in BOTH Escape paths — bindBackdropDiscard
-	// (form modals) AND bindManageOverlayDismiss (listing overlays). A bare
-	// Contains would be satisfied by bindBackdropDiscard's copy alone even if
-	// the manage-overlay guard were dropped, so assert the count instead: a
-	// dropped manage guard takes it back to 1 and fails here.
-	if n := strings.Count(dashboardAssets, "if (!isTopmostOverlay(el)) return;"); n < 2 {
-		t.Errorf("expected the topmost-overlay Escape guard in both bindBackdropDiscard and bindManageOverlayDismiss, found %d occurrence(s)", n)
-	}
+	// Both form and listing variants share the same z-index/DOM-order check.
+	must("shouldHandle: () => isTopmostOverlay(overlayRef.current)", "all shared overlays yield Escape to the painted topmost dialog")
 	mustNot("if (document.querySelector('.modal-overlay.show')) return;", "the naive any-modal-shown Escape guard is gone from the manage overlays")
 
 	// modal-term.js: the live-terminal modal DELIBERATELY does not bind

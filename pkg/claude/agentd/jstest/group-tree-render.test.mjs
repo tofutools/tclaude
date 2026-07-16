@@ -14,11 +14,6 @@ const dashboardStub = `
 
 test('real group renderer moves activity to the leaf-most visible headers', async (t) => {
   const harness = await createPreactHarness(t);
-  await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
-  await harness.replaceDashboardModule('js/refresh.js', `
-    export const sudoByConv = {};
-    export let hoveredGroupKey = null;
-  `);
   await harness.replaceDashboardModule('js/prefs.js', `
     const values = new Map();
     export const dashPrefs = {
@@ -28,8 +23,9 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
     };
   `);
 
-  const [{ renderGroups }, { dashPrefs }] = await Promise.all([
-    harness.importDashboardModule('js/render.js'),
+  const [{ GroupsNativeList }, { GroupsInteractionProvider }, { dashPrefs }] = await Promise.all([
+    harness.importDashboardModule('js/groups-list.js'),
+    harness.importDashboardModule('js/groups-interactions.js'),
     harness.importDashboardModule('js/prefs.js'),
   ]);
   const member = (conv_id) => ({
@@ -42,23 +38,34 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
     { name: 'grandchild', parent: 'child', members: [member('grandchild')], online: 1 },
   ];
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
-  const paint = () => { host.innerHTML = renderGroups(groups); };
+  let mounted;
+  const paint = async (nextGroups) => {
+    const view = harness.html`<${GroupsInteractionProvider}>
+      <${GroupsNativeList}
+        groups=${nextGroups}
+        snapshot=${{ activity_bots: { regular: 'emoji', slop: 'off', wizard: 'off' }, links: [] }}
+        actions=${{}}
+      />
+    <//>`;
+    if (mounted) await mounted.rerender(view);
+    else mounted = await harness.mount(view, host);
+  };
   const activity = (name) => {
     const details = host.querySelector(`details[data-group-key="${name}"]`);
     const summary = details.querySelector(':scope > summary');
     return summary.querySelector('.ga-regular .actbot')?.getAttribute('aria-label') || '';
   };
 
-  paint();
+  await paint(groups);
   assert.equal(activity('root'), '3 working', 'the folded root owns its hidden subtree');
 
   dashPrefs.setItem('tclaude.dash.group.root', '1');
-  paint();
+  await paint(groups);
   assert.equal(activity('root'), '1 working');
   assert.equal(activity('child'), '2 working', 'the folded visible child owns its hidden grandchild');
 
   dashPrefs.setItem('tclaude.dash.group.child', '1');
-  paint();
+  await paint(groups);
   assert.equal(activity('root'), '1 working');
   assert.equal(activity('child'), '1 working');
   assert.equal(activity('grandchild'), '1 working');
@@ -67,13 +74,14 @@ test('real group renderer moves activity to the leaf-most visible headers', asyn
     name: 'pending-root', members: [], online: 0,
     pending: [{ label: 'blocked-spawn', group: 'pending-root', online: true }],
   }];
-  host.innerHTML = renderGroups(pending);
+  await paint(pending);
   assert.equal(host.querySelector('details[data-group-key="pending-root"]').hasAttribute('open'), true,
     'a pending group defaults open without a preference');
   dashPrefs.setItem('tclaude.dash.group.pending-root', '0');
-  host.innerHTML = renderGroups(pending);
+  await paint(pending);
   assert.equal(host.querySelector('details[data-group-key="pending-root"]').hasAttribute('open'), false,
     'an explicit fold overrides pending-group default-open behavior');
+  await mounted.unmount();
 });
 
 test('production disclosure binder persists an intentional fold as zero', async (t) => {
@@ -97,8 +105,8 @@ test('production disclosure binder persists an intentional fold as zero', async 
     </div>`;
   const details = harness.document.querySelector('details');
   const title = details.querySelector('.group-name');
-  bindDetailsPersistence();
-  bindGroupTitleToggle();
+  const cleanups = [bindDetailsPersistence(), bindGroupTitleToggle()];
+  t.after(() => cleanups.reverse().forEach((cleanup) => cleanup()));
 
   harness.fireEvent(title, 'click', { detail: 1 });
   details.open = false;

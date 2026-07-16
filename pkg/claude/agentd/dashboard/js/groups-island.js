@@ -2,7 +2,8 @@ import { h, render } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { GROUP_VIEW_OPTIONS } from './groups-state.js';
-import { trustedHTMLToVNodes } from './html-vnodes.js';
+import { GroupsNativeList } from './groups-list.js';
+import { GroupsInteractionProvider } from './groups-interactions.js';
 import { syncBotAnimations, syncWizardOrbit } from './helpers.js';
 import { isWizardActive } from './slop.js';
 
@@ -10,7 +11,7 @@ const html = htm.bind(h);
 
 // The Groups island stays mounted while the cosmetic theme cycles. Copy pairs
 // switch through CSS, but placeholder/title/aria attributes are single-valued
-// and the legacy list renderer chooses them at render time, so both bounded
+// and the native list chooses them at render time, so both bounded
 // components subscribe to the wizard edge and repaint immediately.
 function useWizardTheme() {
   const [wizard, setWizard] = useState(isWizardActive());
@@ -188,10 +189,10 @@ export function GroupsControls({ state, actions }) {
   `;
 }
 
-export function GroupsList({ host, state, actions, renderGroupsHTML }) {
+export function GroupsList({ host, state, actions }) {
   useWizardTheme();
+  const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   const current = state.view.value;
-  const markup = renderGroupsHTML(current.groups);
 
   useEffect(() => {
     syncBotAnimations();
@@ -224,11 +225,38 @@ export function GroupsList({ host, state, actions, renderGroupsHTML }) {
     };
   }, [host]);
 
-  return trustedHTMLToVNodes(markup);
+  // Hover is local Groups presentation state. Delegate from the stable island
+  // host so keyed group nodes can move across polls without acquiring their
+  // own listeners. relatedTarget suppresses churn while the pointer moves
+  // between descendants of the same summary.
+  useEffect(() => {
+    const summaryFor = (node) => node?.closest?.('details[data-group-key] > summary') || null;
+    const onMouseOver = (event) => {
+      const summary = summaryFor(event.target);
+      if (summary === summaryFor(event.relatedTarget)) return;
+      setHoveredGroupKey(summary?.parentElement?.getAttribute('data-group-key') || null);
+    };
+    const onMouseLeave = () => setHoveredGroupKey(null);
+    host.addEventListener('mouseover', onMouseOver);
+    host.addEventListener('mouseleave', onMouseLeave);
+    return () => {
+      host.removeEventListener('mouseover', onMouseOver);
+      host.removeEventListener('mouseleave', onMouseLeave);
+    };
+  }, [host]);
+
+  useEffect(() => {
+    if (!hoveredGroupKey) return;
+    const present = current.groups.some((group) =>
+      (group.key || group.name) === hoveredGroupKey);
+    if (!present) setHoveredGroupKey(null);
+  }, [current.groups, hoveredGroupKey]);
+
+  return html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} /><//>`;
 }
 
 export function mountGroupsIsland({
-  filterHost, listHost, state, actions, renderGroupsHTML, registerCleanup,
+  filterHost, listHost, state, actions, registerCleanup,
 }) {
   state.initialize();
   render(html`<${GroupsControls} state=${state} actions=${actions} />`, filterHost);
@@ -238,7 +266,6 @@ export function mountGroupsIsland({
       host=${listHost}
       state=${state}
       actions=${actions}
-      renderGroupsHTML=${renderGroupsHTML}
     />
   `, listHost);
   registerCleanup(() => render(null, listHost));

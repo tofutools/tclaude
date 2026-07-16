@@ -223,7 +223,10 @@ async function uploadImages(files, signal) {
 
 // attachTerminalInteractions must be called after term.open(host). It returns a
 // disposer for DOM listeners; xterm-owned handlers/addons die with term.dispose.
-export function attachTerminalInteractions({ term, host, copyButton, setStatus, baseStatus = () => '', onComposeMessage = null }) {
+export function attachTerminalInteractions({
+  term, host, copyButton, setStatus, baseStatus = () => '',
+  onComposeMessage = null, onSelectionChange = () => {},
+}) {
   let statusTimer = null;
   let uploadPending = false;
   let uploadController = null;
@@ -243,8 +246,9 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
   }
 
   function updateCopyButton() {
-    if (!copyButton) return;
     const selected = term.hasSelection();
+    onSelectionChange(selected);
+    if (!copyButton) return;
     // Keep the control clickable even before a selection exists: clicking it
     // is the discoverable path to the platform-specific force-selection hint.
     copyButton.disabled = false;
@@ -472,11 +476,16 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
     lastPasteKey = '';
   }
 
+  let disposed = false;
   return {
     invalidate,
+    copySelection,
     dispose() {
+      if (disposed) return;
+      disposed = true;
       invalidate();
       if (statusTimer) clearTimeout(statusTimer);
+      statusTimer = null;
       host.removeEventListener('mousedown', onTmuxMouseDown, true);
       ownerDocument.removeEventListener('mousemove', onTmuxMouseMove, true);
       ownerDocument.removeEventListener('mouseup', onTmuxMouseUp, true);
@@ -486,3 +495,4 @@ export function attachTerminalInteractions({ term, host, copyButton, setStatus, 
     },
   };
 }
+// dashboard-imperative-boundary: browser-io

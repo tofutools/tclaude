@@ -5,10 +5,8 @@ import (
 	"testing"
 )
 
-// The spawn modal's "worktree a sub-repo of a monorepo launch dir"
-// wiring lives entirely in dashboard.html's embedded JS — no server
-// path exercises it, so this guards the markup/JS against a silent
-// drop in a future refactor (same role as the sortable-columns test).
+// The spawn island's "worktree a sub-repo of a monorepo launch dir" wiring
+// has no server-rendered path, so pin the Preact field, model, and effects.
 func TestDashboardHTML_SubdirWorktreeWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -24,14 +22,14 @@ func TestDashboardHTML_SubdirWorktreeWired(t *testing.T) {
 	must(`list="agent-spawn-subrepo-list"`, "input is bound to the datalist")
 
 	// The picker helpers the field drives.
-	must("function wtResolve(", "selection resolver ({path,branch})")
-	must("function wtFillSubRepos(", "sub-repo datalist populator")
+	must("async resolveWorktree(draft, worktrees)", "selection resolver ({path,branch})")
+	must("subRepos: Array.isArray(data.sub_repos)", "sub-repo results are normalized")
 
 	// Submit threads the worktree through as separate fields when the
 	// worktree repo differs from CWD (the monorepo case).
 	must("worktree_path", "submit sends worktree_path")
 	must("worktree_branch", "submit sends worktree_branch")
-	must("spawnWtRepoEdited", "CWD-mirror detach flag")
+	must("wtRepoEdited", "CWD-mirror detach flag")
 }
 
 // The CWD / Branch columns stack an init/now pair when an agent has
@@ -45,10 +43,10 @@ func TestDashboardHTML_LocationCellsWired(t *testing.T) {
 		}
 	}
 
-	// The stacked-cell helpers.
-	must("function stackedLoc(", "init/now stacking helper")
-	must("function cwdCell(", "CWD column cell renderer")
-	must("function branchCell(", "Branch column cell renderer")
+	// The native stacked-cell components.
+	must("function StackedLocation(", "init/now stacking component")
+	must("function CwdCell(", "CWD column cell component")
+	must("function BranchCell(", "Branch column cell component")
 	must("loc-pair", "stacked-pair CSS class")
 
 	// The cells read the startup/current split off the snapshot rows.

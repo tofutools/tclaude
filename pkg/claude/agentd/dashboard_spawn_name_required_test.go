@@ -7,7 +7,7 @@ import (
 
 // The spawn modal requires a name OR an initial description so the new agent is
 // identifiable. With both blank there are two outcomes, both gated behind the
-// same `if (!name && !descr)` check in submitAgentSpawn:
+// same `if (!usableName && !descr)` check in the spawn model:
 //
 //   - An initial message was typed → derive a name from its first few words
 //     (deriveSpawnNameFromMessage) and confirm before spawning. The human
@@ -32,13 +32,14 @@ func TestDashboardHTML_SpawnNameOrDescrRequired(t *testing.T) {
 		}
 	}
 
-	// The gate still fires only when BOTH name and description are blank.
-	must("if (!name && !descr) {", "gate fires only when name AND description are blank")
+	// The gate still fires only when BOTH the normalized usable name and
+	// description are blank. Symbol-only input must not become a nameless spawn.
+	must("!usableName && !text(draft.descr).trim()", "gate fires only when usable name AND description are blank")
 
 	// With an initial message, derive a name from its first words and confirm
 	// before spawning — rather than rejecting.
 	must("function deriveSpawnNameFromMessage(", "the helper that builds a name from the initial message exists")
-	must("deriveSpawnNameFromMessage(initMsg)", "the gate derives a name from the initial message")
+	must("deriveSpawnNameFromMessage(next.initialMessage)", "the submit path derives a name from the initial message")
 	must("Auto-name this agent?", "the confirm explains the auto-name before spawning")
 
 	// With no derivable name (blank/symbol-only message), the hard inline error

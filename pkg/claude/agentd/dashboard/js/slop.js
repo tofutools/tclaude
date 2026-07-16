@@ -312,3 +312,4 @@ export function bindWizardHotkey() {
     toggleWizard();
   });
 }
+// dashboard-imperative-boundary: media-effects

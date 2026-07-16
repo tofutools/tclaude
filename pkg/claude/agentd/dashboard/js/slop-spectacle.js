@@ -144,3 +144,4 @@ export function bindSlopSpectacle() {
   bindSlopLever();
   bindSlopConfetti();
 }
+// dashboard-imperative-boundary: media-effects

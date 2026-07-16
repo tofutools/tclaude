@@ -103,23 +103,45 @@ export async function mountShellFeature(dependencies = {}, lifecycleOptions) {
 const groupsDescriptor = createIslandDescriptor({
   name: 'groups',
   label: 'Groups',
-  hosts: { filterHost: '#groups-filter-root', listHost: '#groups-list' },
+  hosts: {
+    filterHost: '#groups-filter-root',
+    listHost: '#groups-list',
+    memberDialogHost: '#groups-member-dialog-root',
+    addMemberDialogHost: '#groups-add-member-dialog-root',
+  },
   failureClass: 'groups-error',
-  load: async ({ hosts: { filterHost, listHost }, dependencies }) => {
+  load: async ({ hosts: {
+    filterHost, listHost, memberDialogHost, addMemberDialogHost,
+  }, dependencies }) => {
     const islandModule = import('./groups-island.js');
+    const memberEditorModule = import('./member-editor-island.js');
+    const addMemberDialogModule = import('./add-member-dialog-island.js');
     const stateModule = import('./groups-state.js');
     const actionsModule = import('./groups-actions.js');
-    const renderModule = import('./render.js');
     const [
-      { mountGroupsIsland }, { groupsState }, { createGroupsActions }, { renderGroups },
-    ] = await Promise.all([islandModule, stateModule, actionsModule, renderModule]);
+      { mountGroupsIsland }, { mountGroupsMemberEditor },
+      { mountGroupsAddMemberDialog },
+      { groupsState }, { createGroupsActions },
+    ] = await Promise.all([
+      islandModule, memberEditorModule, addMemberDialogModule, stateModule, actionsModule,
+    ]);
     const actions = createGroupsActions({ state: groupsState, ...dependencies });
     return {
       state: groupsState,
-      mount: (registerCleanup) => mountGroupsIsland({
-        filterHost, listHost, state: groupsState, actions,
-        renderGroupsHTML: renderGroups, registerCleanup,
-      }),
+      mount: (registerCleanup) => {
+        mountGroupsIsland({
+          filterHost, listHost, state: groupsState, actions,
+          registerCleanup,
+        });
+        mountGroupsMemberEditor({
+          host: memberDialogHost, state: groupsState, actions,
+          confirmDiscard: dependencies.confirmDiscard, registerCleanup,
+        });
+        mountGroupsAddMemberDialog({
+          host: addMemberDialogHost, state: groupsState, actions,
+          confirmDiscard: dependencies.confirmDiscard, registerCleanup,
+        });
+      },
     };
   },
 });
@@ -131,19 +153,21 @@ export function mountGroupsFeature(dependencies = {}) {
 const linksDescriptor = createIslandDescriptor({
   name: 'links',
   label: 'Inter-group links',
-  hosts: { filterHost: '#links-filter-root', listHost: '#links-list' },
+  hosts: { host: '#links-feature-root' },
   failureClass: 'links-error',
-  load: async ({ hosts: { filterHost, listHost }, dependencies }) => {
+  load: async ({ hosts: { host }, dependencies }) => {
     const islandModule = import('./links-island.js');
     const stateModule = import('./links-state.js');
-    const [{ mountLinksIsland }, { linksState }] = await Promise.all([
-      islandModule, stateModule,
+    const actionsModule = import('./links-actions.js');
+    const [{ mountLinksIsland }, { linksState }, { createLinksActions }] = await Promise.all([
+      islandModule, stateModule, actionsModule,
     ]);
+    const actions = createLinksActions({ state: linksState, ...dependencies });
     return {
       state: linksState,
       mount: (registerCleanup) => mountLinksIsland({
-        filterHost, listHost, state: linksState, openCreate: dependencies.openCreate,
-        registerCleanup,
+        host, state: linksState, actions,
+        confirmDiscard: dependencies.confirmDiscard, registerCleanup,
       }),
     };
   },
@@ -181,15 +205,52 @@ export function mountDockFeature(dependencies = {}) {
   return mountIslandDescriptor(dockDescriptor, dependencies);
 }
 
+// Terminal chrome and open state are one ownership unit across the nav badge,
+// dashboard pane stack and fallback session modal. xterm itself remains behind
+// the opaque host adapter loaded by terminal-shell-island.js.
+const terminalsDescriptor = createIslandDescriptor({
+  name: 'terminals',
+  label: 'Terminal shell',
+  hosts: {
+    host: '#terminals-root',
+    badgeHost: '#terminals-badge-root',
+    modalHost: '#terminal-session-root',
+  },
+  failureClass: 'terminals-error',
+  load: async ({ hosts: { host, badgeHost, modalHost }, dependencies }) => {
+    const islandModule = import('./terminal-shell-island.js');
+    const stateModule = import('./terminal-shell-state.js');
+    const actionsModule = import('./terminal-shell-actions.js');
+    const [{ mountTerminalShellIsland }, { terminalShellState }, { createTerminalShellActions }] =
+      await Promise.all([islandModule, stateModule, actionsModule]);
+    const actions = createTerminalShellActions({ state: terminalShellState, ...dependencies });
+    return {
+      state: terminalShellState,
+      mount: (registerCleanup) => mountTerminalShellIsland({
+        host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
+        widgetFactory: dependencies.widgetFactory,
+        onComposeMessage: dependencies.onComposeMessage,
+        composeMessageDialogKind: dependencies.composeMessageDialogKind,
+      }),
+    };
+  },
+});
+
+export function mountTerminalsFeature(dependencies = {}) {
+  return mountIslandDescriptor(terminalsDescriptor, dependencies);
+}
+
 // Keep the Jobs graph behind the shared dynamic boundary so a corrupt optional
 // asset produces a visible feature-local error rather than preventing the rest
 // of the dashboard entry module from booting.
 const jobsDescriptor = createIslandDescriptor({
     name: 'jobs',
     label: 'Jobs',
-    hosts: { host: '#jobs-root', badgeHost: '#jobs-badge-root' },
+    hosts: {
+      host: '#jobs-root', badgeHost: '#jobs-badge-root', dialogHost: '#jobs-cron-dialog-root',
+    },
     failureClass: 'jobs-error',
-    load: async ({ hosts: { host, badgeHost }, dependencies: actionDependencies }) => {
+    load: async ({ hosts: { host, badgeHost, dialogHost }, dependencies: actionDependencies }) => {
       // Keep import() behind named promises: the repository's intentionally
       // small module-graph scanner recognizes dynamic imports in expressions,
       // while a bare import(...) line is intentionally rejected as ambiguous.
@@ -198,11 +259,12 @@ const jobsDescriptor = createIslandDescriptor({
       const actionsModule = import('./jobs-actions.js');
       const [{ mountJobsIsland }, { jobsState }, { createJobsActions }] =
         await Promise.all([islandModule, stateModule, actionsModule]);
-      const jobsActions = createJobsActions(actionDependencies);
+      const jobsActions = createJobsActions({ state: jobsState, ...actionDependencies });
       return {
         state: jobsState,
         mount: (registerCleanup) => mountJobsIsland({
-          host, badgeHost, state: jobsState, actions: jobsActions, registerCleanup,
+          host, badgeHost, dialogHost, state: jobsState, actions: jobsActions,
+          confirmDiscard: actionDependencies.confirmDiscard, registerCleanup,
         }),
       };
     },
@@ -282,6 +344,67 @@ export async function mountAccessFeature(actionDependencies) {
       };
     },
   });
+}
+
+const messageAccessDialogsDescriptor = createIslandDescriptor({
+  name: 'message-access-dialogs',
+  label: 'Message and access dialogs',
+  hosts: {
+    dialogHost: '#message-access-dialog-root',
+  },
+  failureClass: 'message-access-dialog-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./message-access-dialog-island.js');
+    const stateModule = import('./message-access-dialog-state.js');
+    const actionsModule = import('./message-access-dialog-actions.js');
+    const snapshotModule = import('./snapshot-store.js');
+    const overlayModule = import('./overlay-stack.js');
+    const [
+      { mountMessageAccessDialogIsland }, { createMessageAccessDialogState },
+      { createMessageAccessDialogActions }, { dashboardState }, { hasShownOverlay },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotModule, overlayModule]);
+    const state = createMessageAccessDialogState({ canRestoreFocus: () => !hasShownOverlay() });
+    const actions = createMessageAccessDialogActions({ ...dependencies });
+    return {
+      state,
+      mount: (registerCleanup) => mountMessageAccessDialogIsland({
+        ...hosts, state, actions, snapshot: dashboardState.snapshot,
+        confirmDiscard: dependencies.confirmDiscard, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountMessageAccessDialogsFeature(dependencies = {}) {
+  return mountIslandDescriptor(messageAccessDialogsDescriptor, dependencies);
+}
+
+const toolbarProfilePickerDescriptor = createIslandDescriptor({
+  name: 'toolbar-profile-picker',
+  label: 'Dashboard profile picker',
+  hosts: { host: '#toolbar-profile-picker-root' },
+  failureClass: 'toolbar-profile-picker-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./toolbar-profile-picker-island.js');
+    const stateModule = import('./toolbar-profile-picker-state.js');
+    const actionsModule = import('./toolbar-profile-picker-actions.js');
+    const [
+      { mountToolbarProfilePickerIsland }, { createToolbarProfilePickerState },
+      { createToolbarProfilePickerActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createToolbarProfilePickerState();
+    const actions = createToolbarProfilePickerActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountToolbarProfilePickerIsland({
+        host, state, actions, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountToolbarProfilePickerFeature(dependencies = {}) {
+  return mountIslandDescriptor(toolbarProfilePickerDescriptor, dependencies);
 }
 
 const messagesDescriptor = createIslandDescriptor({
@@ -447,6 +570,133 @@ const actionDialogsDescriptor = createIslandDescriptor({
 
 export function mountActionDialogsFeature(dependencies = {}) {
   return mountIslandDescriptor(actionDialogsDescriptor, dependencies);
+}
+
+const transactionDialogsDescriptor = createIslandDescriptor({
+  name: 'transaction-dialogs',
+  label: 'Transaction dialogs',
+  hosts: { root: '#transaction-dialog-root' },
+  primaryHost: 'root',
+  failureClass: 'transaction-dialog-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./transaction-dialog-island.js');
+    const stateModule = import('./transaction-dialog-state.js');
+    const actionsModule = import('./transaction-dialog-actions.js');
+    const [
+      { mountTransactionDialogIsland },
+      { createTransactionDialogState },
+      { createTransactionDialogActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createTransactionDialogState();
+    const actions = createTransactionDialogActions({ state, ...dependencies });
+    return {
+      state,
+      mount: (registerCleanup) => mountTransactionDialogIsland({
+        host: hosts.root, state, actions,
+        confirmDiscard: dependencies.confirmDiscard,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountTransactionDialogsFeature(dependencies = {}) {
+  return mountIslandDescriptor(transactionDialogsDescriptor, dependencies);
+}
+
+const worktreeCleanupDescriptor = createIslandDescriptor({
+  name: 'worktree-cleanup',
+  label: 'Worktree cleanup',
+  hosts: { root: '#worktree-cleanup-root' },
+  primaryHost: 'root',
+  failureClass: 'worktree-cleanup-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./worktree-cleanup-island.js');
+    const stateModule = import('./worktree-cleanup-state.js');
+    const actionsModule = import('./worktree-cleanup-actions.js');
+    const [
+      { mountWorktreeCleanupIsland },
+      { createWorktreeCleanupState },
+      { createWorktreeCleanupActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createWorktreeCleanupState();
+    const actions = createWorktreeCleanupActions({ ...dependencies });
+    return {
+      state,
+      mount: (registerCleanup) => mountWorktreeCleanupIsland({
+        host: hosts.root, state, actions, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountWorktreeCleanupFeature(dependencies = {}) {
+  return mountIslandDescriptor(worktreeCleanupDescriptor, dependencies);
+}
+
+const groupCreateDescriptor = createIslandDescriptor({
+  name: 'group-create',
+  label: 'Group creation',
+  hosts: { root: '#group-create-root' },
+  primaryHost: 'root',
+  failureClass: 'group-create-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./group-create-island.js');
+    const stateModule = import('./group-create-state.js');
+    const actionsModule = import('./group-create-actions.js');
+    const [
+      { mountGroupCreateIsland },
+      { createGroupCreateState },
+      { createGroupCreateActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createGroupCreateState({ getSnapshot: dependencies.getSnapshot });
+    const actions = createGroupCreateActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountGroupCreateIsland({
+        host: hosts.root, state, actions,
+        confirmDiscard: dependencies.confirmDiscard,
+        words: dependencies.words,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountGroupCreateFeature(dependencies = {}) {
+  return mountIslandDescriptor(groupCreateDescriptor, dependencies);
+}
+
+const agentSpawnDescriptor = createIslandDescriptor({
+  name: 'agent-spawn',
+  label: 'Agent spawn',
+  hosts: { root: '#agent-spawn-root' },
+  primaryHost: 'root',
+  failureClass: 'agent-spawn-error',
+  load: async ({ hosts, dependencies }) => {
+    const islandModule = import('./agent-spawn-island.js');
+    const stateModule = import('./agent-spawn-state.js');
+    const actionsModule = import('./agent-spawn-actions.js');
+    const [
+      { mountAgentSpawnIsland },
+      { createAgentSpawnState },
+      { createAgentSpawnActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createAgentSpawnState({ getSnapshot: dependencies.getSnapshot });
+    const actions = createAgentSpawnActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountAgentSpawnIsland({
+        host: hosts.root, state, actions,
+        confirmDiscard: dependencies.confirmDiscard,
+        registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountAgentSpawnFeature(dependencies = {}) {
+  return mountIslandDescriptor(agentSpawnDescriptor, dependencies);
 }
 
 const directoryPickerDescriptor = createIslandDescriptor({

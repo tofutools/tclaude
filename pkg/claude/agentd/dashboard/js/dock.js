@@ -49,10 +49,11 @@ import { profileSummary, profileDetailChips, createProfile } from './profiles.js
 import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
 import { roleSummary, createRole } from './roles.js';
 import { openRoleEditor, openRolesManageModal, removeRole } from './modal-roles.js';
-import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
+import { templateReadbackBadgeModels } from './template-readback.js';
+import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
-import { openCloneModal } from './modal-clone.js';
+import { openPresetCloneDialog } from './action-dialog-controller.js';
 
 // The persisted open/collapsed flag. dash-namespaced like every other
 // server-backed dashboard pref. Default OPEN (see isDockOpen): the dock is a
@@ -123,8 +124,8 @@ export const dockSections = Object.freeze([
     drag: true,
     onManageItem: (p) => openProfileEditor(p),
     // Clone → the generic name dialog; the copy is the source profile re-POSTed
-    // under the new name via createProfile (modal-clone.js does the name swap).
-    onCloneItem: (p) => openCloneModal({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
+    // under the new name through the Preact-owned action-dialog host.
+    onCloneItem: (p) => openPresetCloneDialog({ kind: 'profile', kindWizard: 'pattern', source: p, create: createProfile }),
     // Delete → the manager's confirm + delete + toast (removeProfile), then a
     // dashboard refresh so the dock card leaves at once (removeProfile only
     // repaints the closed manager overlay).
@@ -141,7 +142,7 @@ export const dockSections = Object.freeze([
     empty: () => wizWord('no templates yet', 'no circles yet'),
     items: (snap) => (snap && snap.templates) || [],
     name: (t) => t.name,
-    chipsHTML: (t) => templateReadbackBadges(t),
+    chips: (t) => templateReadbackBadgeModels(t),
     drag: true,
     // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
     // matching the profiles/roles cards — it used to fall back to the whole-kind
@@ -149,7 +150,7 @@ export const dockSections = Object.freeze([
     onManageItem: (t) => openTemplateEditor(t),
     // Clone → templates reuse their OWN richer duplicate dialog (a template
     // carries a whole roster, so its bespoke blurb is worth keeping) rather than
-    // the generic modal-clone.js one profiles/roles use. Both are name dialogs.
+    // the generic action-dialog name shell profiles/roles use. Both are name dialogs.
     onCloneItem: (t) => openDuplicateModal(t.name),
     // Delete → deleteTemplate already runs the confirm + DELETE + refresh,
     // so the dock calls it directly (no extra refresh needed here).
@@ -167,7 +168,7 @@ export const dockSections = Object.freeze([
     drag: true,
     onManageItem: (rl) => openRoleEditor(rl),
     // Clone → the generic name dialog, cloning via createRole (see profiles).
-    onCloneItem: (rl) => openCloneModal({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
+    onCloneItem: (rl) => openPresetCloneDialog({ kind: 'role', kindWizard: 'class', source: rl, create: createRole }),
     // Delete → removeRole's confirm + delete + toast (incl. the 409 role_in_use
     // surfacing), then a dashboard refresh so the dock card leaves at once.
     onDeleteItem: (rl) => removeRole(rl.name).then(() => refresh()),
@@ -283,9 +284,8 @@ function applyDockOpen(open) {
 // back to their exact toolbar slots so the filter bar renders as before.
 //
 // We MOVE the live DOM nodes (not clones), so every listener rides along:
-// id-bound ones (#group-create-open's click) stay attached to the element across
-// the move; the cog + chip run off document-level delegated handlers (data-act /
-// the .action-menu cog bus) that don't care where the node lives. The toolbar
+// id-bound ones (#group-create-open's click), the cog's direct menu listener,
+// and the profile chips' cross-feature action route all remain valid. The toolbar
 // filter bar + the dock head are both STATIC markup (Preact owns #dock-body and
 // #groups-list), so nothing re-creates or clobbers the moved nodes.
 //

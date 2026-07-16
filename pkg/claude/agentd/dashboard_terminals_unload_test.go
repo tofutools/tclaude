@@ -6,24 +6,22 @@ import (
 )
 
 // TestTerminalsCore_UnloadGuardTracksOpenPanes pins the accidental-tab-close
-// guard in the shared multiplexer. Both the dashboard Terminals tab and the
-// standalone pop-out page mount this core, so the listener must live here and
-// must be armed only while at least one pane exists. Keeping it off for an
-// empty mux avoids prompting during ordinary dashboard navigation and avoids
-// unnecessarily disabling Firefox's back/forward cache.
+// guard in the shared Preact shell. Both the dashboard Terminals tab and the
+// standalone pop-out mount this component, so it is armed only while a pane
+// exists and disarmed for intentional auth recovery.
 func TestTerminalsCore_UnloadGuardTracksOpenPanes(t *testing.T) {
-	src := readDashboardJS(t, "terminals-core.js")
+	src := readDashboardJS(t, "terminal-shell-island.js")
 	for _, needle := range []string{
-		"function confirmTerminalUnload(e)",
-		"e.preventDefault()",
-		"e.returnValue = true",
-		"function updateUnloadGuard(n)",
-		"const shouldArm = n > 0",
-		"window[shouldArm ? 'addEventListener' : 'removeEventListener']('beforeunload', confirmTerminalUnload)",
-		"updateUnloadGuard(n)",
+		"const confirmUnload = (event) =>",
+		"event.preventDefault()",
+		"event.returnValue = true",
+		"if (!hasPanes) return undefined",
+		"window.addEventListener('beforeunload', confirmUnload)",
+		"window.removeEventListener('beforeunload', confirmUnload)",
+		"window.addEventListener('tclaude:auth-expired', disarmForAuth)",
 	} {
 		if !strings.Contains(src, needle) {
-			t.Errorf("terminals-core.js missing %q — open terminals must guard accidental page unloads", needle)
+			t.Errorf("terminal-shell-island.js missing %q — open terminals must guard accidental page unloads", needle)
 		}
 	}
 }

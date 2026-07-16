@@ -7,11 +7,11 @@ import (
 )
 
 // TestDashboardAssets_ForceBlockWired guards the deployed-task-force block
-// (JOH-247), whose pieces span render.js, row-actions.js and dashboard.css and
+// (JOH-247), whose pieces span groups-list.js, row-actions.js and dashboard.css and
 // must stay in lockstep — there's no JS render test, so we assert on the
 // embedded concatenation at `go test ./...`. A rename in any one file silently
 // breaks the force view (or its re-brief control) only in the browser:
-//   - render.js builds the block (renderForceBlock) and wires it into the group
+//   - groups-list.js builds ForceBlock and wires it into the group
 //     subtable, classifies member liveness, and emits the re-brief + stand-down
 //     buttons;
 //   - row-actions.js handles the re-brief and stand-down actions (confirm →
@@ -20,19 +20,19 @@ import (
 //     hint and the control buttons (new inline buttons render white unskinned).
 func TestDashboardAssets_ForceBlockWired(t *testing.T) {
 	for _, needle := range []string{
-		// render.js — the block, its force-detection gate, the roles rollup +
-		// stalling helpers, and the subtable wiring.
-		"function renderForceBlock(",
-		"function isDeployedForce(",
-		"function forceRolesRollup(",
-		"function forceStalling(",
-		"function forceMemberLiveness(",
-		"${renderForceBlock(g, members)}",
-		// render.js + row-actions.js — the re-brief control + its handler.
+		// groups-list.js — the native block, force-detection gate, roles
+		// rollup, stalling predicate, liveness mapping, and subtable wiring.
+		"function ForceBlock(",
+		"function isForce(",
+		"const roles = new Map();",
+		"live.length > 0 && live.every((member) => member.state?.status === 'idle')",
+		"const liveness = !member.online ? 'dead' : member.state?.status === 'idle' ? 'idle' : 'working';",
+		"<${ForceBlock} group=${group} />",
+		// groups-list.js + row-actions.js — the re-brief control + its handler.
 		`data-act="rebrief-force"`,
 		"case 'rebrief-force':",
 		"`/api/groups/${encodeURIComponent(group)}/rebrief`",
-		// render.js + row-actions.js — the stand-down control + its handler (JOH-345).
+		// groups-list.js + row-actions.js — the stand-down control + its handler (JOH-345).
 		`data-act="stand-down-force"`,
 		"case 'stand-down-force':",
 		"`/api/groups/${encodeURIComponent(group)}/stand-down`",
@@ -65,29 +65,28 @@ func TestDashboardAssets_ForceBlockWired(t *testing.T) {
 }
 
 // TestDashboardAssets_ForceFoldWired guards the 🎯 hide/show toggle for the
-// force info card. Like the block itself its pieces span render.js,
-// row-actions.js and dashboard.css and must stay in lockstep — a rename in one
+// force info card. Like the block itself its pieces span groups-list.js,
+// groups-actions.js and dashboard.css and must stay in lockstep — a rename in one
 // file silently breaks the fold only in the browser:
-//   - render.js reads the fold dashPref (isForceFolded), gates renderForceBlock
+//   - groups-list.js reads the fold dashPref, gates ForceBlock
 //     on it, and emits the toggle button in the group action row
-//     (forceFoldToggleHTML, data-act="toggle-force-fold");
-//   - row-actions.js handles the toggle (flip the dashPref, re-render);
+//     with a native component callback;
+//   - groups-actions.js handles the toggle (flip the dashPref, re-render);
 //   - dashboard.css skins the toggle's folded accent + its wizard label swap.
 //
 // The default-open contract is load-bearing: a freshly deployed force must show
 // its card, so the pref is ABSENT by default and only a stored '1' folds it.
 func TestDashboardAssets_ForceFoldWired(t *testing.T) {
 	for _, needle := range []string{
-		// render.js — the fold-state read, the gate, and the toggle button.
-		"function isForceFolded(",
-		"function forceFoldToggleHTML(",
-		"'tclaude.dash.forcefold.' + name",
-		"if (isForceFolded(g.name)) return '';",
-		`data-act="toggle-force-fold"`,
-		"isDeployedForce(g) ? forceFoldToggleHTML(g) : ''",
-		// row-actions.js — the toggle handler flipping the same pref.
-		"case 'toggle-force-fold':",
-		"'tclaude.dash.forcefold.' + group",
+		// groups-list.js — the fold-state read, gate, and native toggle button.
+		"function GroupActions(",
+		"function ForceBlock(",
+		"`tclaude.dash.forcefold.${group.name}`",
+		"if (!isForce(group) || dashPrefs.getItem(`tclaude.dash.forcefold.${group.name}`) === '1') return null;",
+		"actions.toggleForceFold(group)",
+		"isForce(group) ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`}",
+		// groups-actions.js — the native toggle handler flips the same pref.
+		"toggleForceFold(group)",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — force-fold wiring broken", needle)

@@ -41,13 +41,13 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`id="agent-spawn-load-profile"`, "spawn dialog load-from-profile selector")
 	present(`id="agent-spawn-clear"`, "spawn dialog Clear button")
 	present(`id="agent-spawn-save-profile"`, "spawn dialog Save-as-profile button")
-	present(`function applyProfileToSpawnForm(`, "spawn-form profile applier")
-	present(`function spawnFormAsProfileSeed(`, "spawn-form → profile seed for Save-as")
-	present(`body.profile = spawnProfile`, "dashboard spawns preserve the selected profile identity for server-side disable checks")
+	present(`export function applySpawnProfile(`, "plain spawn-model profile applier")
+	present(`export function spawnProfileSeed(`, "controlled spawn draft → profile seed")
+	present(`if (draft.profile) body.profile = draft.profile`, "dashboard spawns preserve the selected profile identity for server-side disable checks")
 
 	// The default-profile pickers offer a "new profile" entry that jumps to
 	// the editor (so an empty profile list isn't a dead end).
-	present(`const PROFILE_PICKER_NEW`, "the picker's new-profile sentinel")
+	present(`const NEW_PROFILE`, "the Preact picker's new-profile sentinel")
 	present(`openProfileEditor(null, { onSaved })`, "new-profile entry opens the editor + sets the default")
 
 	// 2. Manage-profiles overlay + editor, reached from the Groups cog.
@@ -79,8 +79,8 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`.profile-import-conflict select,`, "profile import conflict select/input controls get dark modal styling")
 
 	// 3. Group default-profile picker: the 🧠 badge is clickable.
-	present(`data-act="set-group-profile"`, "the group default-profile picker action")
-	present(`case 'set-group-profile':`, "the group default-profile handler")
+	present(`'set-group-sandbox-profile' : 'set-group-profile'`, "the group default-profile picker action")
+	present(`actions.setGroupProfile(group, kind, name)`, "the native group default-profile handler")
 
 	// 4. Dashboard default-profile chip replaced the user-default-model chip.
 	present(`id="dashboard-default-profile"`, "the dashboard default-profile chip")
@@ -89,16 +89,14 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 	present(`function renderDashDefaultProfile(`, "the dashboard default-profile chip renderer")
 	present(`/api/spawn-profile-default`, "global default uses the validated operational endpoint")
 	present(`await setDashDefaultProfile(name)`, "picker waits for persistence before reporting success")
-	// The dock caches the global chip's node identity when it first moves the
-	// groups-toolbar controls. Picker dismissal must restore that same node;
-	// restoring a clone strands the cached original, which the next dock toggle
-	// inserts beside the clone and visibly duplicates the selector.
-	present(`select.replaceWith(chipEl)`, "picker teardown preserves the chip identity used by the dock")
+	present(`id="toolbar-profile-picker-root"`, "the picker draft has a stable Preact host")
+	present(`mountToolbarProfilePickerFeature`, "the picker is mounted as a keyed feature")
+	absent(`select.replaceWith(chipEl)`, "the picker no longer replaces the stable chip owned by the dock")
 	present(`syncDashDefaultProfile(data.spawn_profile_default)`, "snapshot reconciles CLI changes without a separate poll request")
 	absent(`function refreshDashDefaultProfile(`, "global default no longer has a separate poll fetch")
-	present(`body.trust_dir = $('#agent-spawn-trust-dir').checked`, "profile false trust intent stays explicit on spawn")
-	present(`if (p.trust_dir != null)`, "sparse profiles preserve trust-dir fallthrough")
-	present(`harness === 'codex' && spawnTrustDirSpecified`, "untouched trust-dir stays omitted")
+	present(`body.trust_dir = !!draft.trustDir`, "profile false trust intent stays explicit on spawn")
+	present(`profile.trust_dir != null`, "sparse profiles preserve trust-dir fallthrough")
+	present(`draft.harness === 'codex' && draft.trustDirSpecified`, "untouched trust-dir stays omitted")
 
 	// The retired user-level default-MODEL chip and its inline editor are gone.
 	// (The backend /api/claude-settings/default-model endpoint and the

@@ -3,6 +3,8 @@
 // dashboard command palette's ranking rules; this module only owns the small
 // combobox/listbox interaction and focus lifecycle.
 
+// dashboard-imperative-boundary: process-graph
+
 import { buildProcessNodeTypeCommands } from './process-command-registry.js';
 import { rankCommands } from './palette-score.js';
 import { isWizardActive } from './slop.js';

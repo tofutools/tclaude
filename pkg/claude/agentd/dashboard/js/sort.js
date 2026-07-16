@@ -150,6 +150,13 @@ function applySort(tableKey, rows, accessors) {
   return applySortState(rows, accessors, sortState[tableKey]);
 }
 
+// Native table heads read the same module-owned state as applySort. Return a
+// copy so a component cannot mutate the shared sort owner.
+function tableSortState(tableKey) {
+  const value = sortState[tableKey] || persistedTableSort(tableKey);
+  return value ? { ...value } : null;
+}
+
 // applySortState is the renderer-agnostic form used by Preact feature models.
 // Legacy tables still call applySort(tableKey, ...), while an island keeps its
 // active sort in a Signal and supplies that explicit value here.
@@ -270,7 +277,7 @@ const LINK_ACCESSORS = {
   created: l => l.created_at,
 };
 
-// The virtual "Replaced generations" sub-table (render.js). Lowercase
+// The virtual "Replaced generations" sub-table (groups-list.js). Lowercase
 // labels match its existing archival style; the leading online-dot and
 // trailing action columns stay non-sortable. The default server order is
 // already newest-replaced-first (collectReplacedGenerationsSnapshot), so
@@ -292,7 +299,7 @@ const REPLACED_ACCESSORS = {
   replaced: a => a.replaced_at,
 };
 
-// The virtual "Retired" sub-table (render.js). Like its siblings the
+// The virtual "Retired" sub-table (groups-list.js). Like its siblings the
 // leading online-dot and trailing action columns stay non-sortable. The
 // id column now leads with the retired actor's stable agent_id (conv-id
 // fallback), so it sorts on that — the same key the column displays. The
@@ -318,7 +325,7 @@ const RETIRED_ACCESSORS = {
   reason:  a => a.retire_reason,
 };
 
-// The virtual "Conversations" sub-table (render.js) — recent non-agent
+// The virtual "Conversations" sub-table (groups-list.js) — recent non-agent
 // conversations. These rows are plain conversations, NOT agents, so they
 // carry no stable agent_id: the id column stays a conv-id and sorts on it.
 // Leading online-dot and trailing promote-action columns are non-sortable.
@@ -336,7 +343,7 @@ const CONVERSATIONS_ACCESSORS = {
   last:  c => c.modified,
 };
 
-// The virtual "Pending" sub-table (render.js) — dashboard spawns still
+// The virtual "Pending" sub-table (groups-list.js) — dashboard spawns still
 // behind a startup gate. Its stable agent_id is reserved before launch even
 // though its harness conv-id does not exist yet, so the ID column matches the
 // enrolled-agent table. Legacy pending rows fall back to the spawn label.
@@ -362,7 +369,7 @@ const PENDING_ACCESSORS = {
 };
 
 export {
-  cycleSort, sortHead, applySort, applySortState, loadSortState,
+  cycleSort, sortHead, applySort, applySortState, tableSortState, loadSortState,
   persistedTableSort, persistTableSort,
   MEMBER_COLS, MEMBER_ACCESSORS, JOBS_COLS, JOBS_ACCESSORS,
   LINK_COLS, LINK_ACCESSORS,

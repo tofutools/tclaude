@@ -2,7 +2,7 @@
 // Groups tab (n-level groups-in-groups, JOH-392).
 //
 // A real group's HEADER (its <summary>, carrying data-group-reorder +
-// draggable, see render.js) is the drag handle: press the bare header and drag.
+// draggable, see groups-list.js) is the drag handle: press the bare header and drag.
 // Where you DROP on a target group decides the gesture (see dropZone):
 //   - onto the BULK of the target box (most of the header + its whole expanded
 //     body — a big, forgiving zone like the member-row DnD's whole-box target)
@@ -47,7 +47,7 @@
 // modules' document-level listeners coexist without stepping on each other.
 //
 // Deliberate, benign import cycle with tabs.js (group-reorder ↔ tabs),
-// mirroring render.js/dashboard.js: neither module reads the other's
+// mirroring groups-list.js/dashboard.js: neither module reads the other's
 // export at evaluation time — renderGroupsTab is called on drop and
 // sortGroupsByPref on render, both long after every module finishes
 // loading.
@@ -56,7 +56,8 @@ import { $, $$ } from './helpers.js';
 import { setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, openDeleteGroupModal } from './refresh.js';
+import { refresh, toast } from './refresh.js';
+import { openDeleteGroupModal } from './dashboard-operations.js';
 import { isWizardActive } from './slop.js';
 
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the
@@ -309,10 +310,9 @@ function bindGroupReorder() {
 
   // dragend is the guaranteed reset for a CANCELLED or no-target drag
   // (Escape, or a release over nothing). A SUCCESSFUL drop tears down in the
-  // drop handler instead (see there) — it must, because that handler
-  // re-renders #groups-list and detaches the dragged header, after which a
-  // dragend dispatched on the now-detached node never bubbles to this
-  // document-level listener. So this is a fallback, not the primary path.
+  // drop handler instead (see there) before keyed reconciliation moves the
+  // source or, for a re-parent, may replace its header. Browser dragend
+  // delivery after that synchronous update is not a reliable primary path.
   listen(document, 'dragend', endGroupDrag);
 
   listen(document, 'dragover', (e) => {
@@ -380,17 +380,16 @@ function bindGroupReorder() {
     const details = reorderTarget(e);
     if (!details) return;
     e.preventDefault();
-    // Snapshot everything we need from the live DOM BEFORE tearing down /
-    // re-rendering: the target name and the drop zone (measured against the
-    // still-attached target box).
+    // Snapshot everything we need from the live DOM BEFORE teardown and
+    // reconciliation: the target name and the drop zone (measured against the
+    // current target box).
     const dragName = groupDragName;
     const targetName = details.getAttribute('data-group-key');
     const zone = dropZone(e, details);
-    // Tear down NOW, before applyGroupDrop re-renders #groups-list and detaches
-    // the dragged header. If we left teardown to dragend, that event — fired
-    // on the detached header — would never bubble here, so the pill would stay
-    // stuck and later document events would be misrouted. endGroupDrag is
-    // idempotent, so a dragend that does still fire is a harmless no-op.
+    // Tear down NOW, before applyGroupDrop reconciles the keyed tree and moves
+    // or replaces the dragged header. Leaving cleanup to browser dragend could
+    // strand the pill and route later document events through stale drag state.
+    // endGroupDrag is idempotent, so a dragend that does fire is harmless.
     endGroupDrag();
     applyGroupDrop(dragName, targetName, zone);
   });

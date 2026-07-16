@@ -1,499 +1,288 @@
-// process-node-dialog.js -- the structured node editing surface (TCL-298):
-// logical zoom into a node opens its stages as a dialog. ONE component, two
-// modes: mode 'edit' stages changes in a private node draft, then Save commits
-// that draft through ProcessEditModel.updateNode's single undo gate, and
-// mode 'view' renders the exact same markup as a read-only detail card for
-// the live viewer (design §8b) — the same controls, disabled, so the §9
-// unlock phase flips a flag rather than growing a second component.
-//
-// The performer editor is ONE shared sub-component keyed by kind (uniform
-// performer contract, §2). Kind-specific fields come from the
-// PERFORMER_FIELDS table in process-node-form.js — never from per-kind
-// branches here. Program performers are command execution; the dialog says
-// so next to the command field (§10).
-//
-// Template content is untrusted at render time regardless of authoring
-// surface: every value lands via textContent / input.value (the h() helper),
-// never via HTML string injection.
+// Preact-owned structured node editor. The pure mutation vocabulary remains in
+// process-node-form.js; this module owns only dialog-local draft state.
 
+import { h, render } from 'preact';
+import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import htm from 'htm';
+import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import {
   PERFORMER_KINDS, RETRY_ON_FAIL_MODES, PLAN_APPROVAL_MODES,
   performerFieldsFor, defaultPerformer, setPerformerKind, setPerformerField,
-  setChoiceOutcome,
-  setContactField, setRetryField, setStageEnabled, setPlanApproval,
+  setChoiceOutcome, setContactField, setRetryField, setStageEnabled, setPlanApproval,
   addCheck, removeCheck, moveCheck, setCheckID,
   setCaptures, setWaitField, setNodeText, formatLines,
 } from './process-node-form.js';
-import { bindDialogFocus } from './dialog-focus-core.js';
-import { makeModalResizable } from './helpers.js';
-import { isTopmostOverlay } from './overlay-stack.js';
 
+const html = htm.bind(h);
 const NODE_DIALOG_SIZE_PREF = 'tclaude.dash.modalSize.process-node-editor';
 
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === undefined || value === null) continue;
-    if (key === 'class') el.className = value;
-    else if (key === 'text') el.textContent = value;
-    else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2), value);
-    else el.setAttribute(key, String(value));
-  }
-  for (const child of children) if (child) el.append(child);
-  return el;
+function replaceNode(target, source) {
+  for (const key of Object.keys(target)) delete target[key];
+  Object.assign(target, structuredClone(source));
 }
 
-// buildNodeDetail renders the shared node card: header, per-type sections,
-// and the edges summary. `commit(mutate)` routes every edit through the edit
-// dialog draft and re-renders; in view mode commit is absent and every control
-// renders disabled.
-export function buildNodeDetail(model, nodeId, { mode = 'edit', commit = null, onClose = null } = {}) {
-  const node = model.node(nodeId);
-  const readOnly = mode !== 'edit' || !commit;
-  const root = h('div', { class: `process-node-detail${readOnly ? ' is-readonly' : ''}` });
-  if (!node) {
-    root.append(h('p', { class: 'process-node-missing', text: `Node ${nodeId} no longer exists.` }));
-    return root;
-  }
-  const type = node.type || 'task';
-
-  const header = h('div', { class: 'process-node-detail-head' },
-    h('span', { class: 'process-inspector-kind', text: `${type} node` }),
-    h('span', { class: 'process-inspector-id', text: nodeId }),
-    readOnly ? h('span', { class: 'process-node-readonly-badge', text: 'read-only' }) : null,
-    h('span', { class: 'spacer' }),
-    onClose ? h('button', {
-      class: 'process-node-close', type: 'button', text: '✕',
-      title: 'Close', 'aria-label': 'Close node dialog', onclick: () => onClose(),
-    }) : null,
-  );
-  root.append(header);
-
-  const control = (el) => {
-    if (readOnly) el.disabled = true;
-    return el;
-  };
-
-  // Associate a commit with the control whose raw DOM value produced it.
-  // The transactional wrapper uses this identity to retain rejected values
-  // (for example a duplicate check id) until that same control is corrected.
-  const applyFromControl = (controlEl, apply, value, restore) => {
-    if (!apply) return true;
-    commit.activeControl = controlEl;
-    try {
-      const accepted = apply(value) !== false;
-      if (accepted || commit.lastFailure === 'blocked') {
-        controlEl.removeAttribute('aria-invalid');
-        if (!accepted) restore?.();
-      } else controlEl.setAttribute('aria-invalid', 'true');
-      return accepted;
-    } finally {
-      commit.activeControl = null;
+function NodeField({
+  fieldKey, label, value = '', apply, readOnly, multiline = false,
+  hint = '', placeholder = '', invalid = false,
+}) {
+  const [raw, setRaw] = useState(String(value ?? ''));
+  const input = useRef(null);
+  const composing = useRef(false);
+  useLayoutEffect(() => {
+    if (document.activeElement !== input.current && !composing.current) setRaw(String(value ?? ''));
+  }, [value]);
+  const commit = () => {
+    if (!apply || readOnly || composing.current) return;
+    const current = input.current?.value ?? raw;
+    setRaw(current);
+    const result = apply(fieldKey, current);
+    if (result?.blocked) {
+      const reset = String(value ?? '');
+      if (input.current) input.current.value = reset;
+      setRaw(reset);
     }
   };
+  const Tag = multiline ? 'textarea' : 'input';
+  return html`<label class="field process-node-field" title=${hint || undefined}>
+    <span class="process-node-field-label">${label}</span>
+    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea' : 'process-node-input'}
+      type=${multiline ? undefined : 'text'} rows=${multiline ? 3 : undefined}
+      spellcheck="false" placeholder=${placeholder} disabled=${readOnly}
+      value=${raw} aria-invalid=${invalid ? 'true' : undefined}
+      onCompositionStart=${() => { composing.current = true; }}
+      onCompositionEnd=${(event) => { composing.current = false; setRaw(event.currentTarget.value); }}
+      onInput=${(event) => setRaw(event.currentTarget.value)} onChange=${commit} />
+  </label>`;
+}
 
-  const textField = (label, value, apply, { multiline = false, hint = '', placeholder = '' } = {}) => {
-    const input = control(h(multiline ? 'textarea' : 'input', {
-      class: multiline ? 'process-node-textarea' : 'process-node-input',
-      spellcheck: 'false', placeholder,
-      ...(multiline ? { rows: '3' } : { type: 'text' }),
-    }));
-    input.value = value || '';
-    if (apply && !readOnly) input.addEventListener('change', (event) => {
-      if (!applyFromControl(input, apply, input.value, () => { input.value = value || ''; })) event.preventDefault();
-    });
-    const field = h('label', { class: 'field process-node-field' },
-      h('span', { class: 'process-node-field-label', text: label }), input);
-    if (hint) field.title = hint;
-    return field;
-  };
+function NodeSelect({ fieldKey, label, options, value, apply, readOnly, blankLabel = null, invalid = false }) {
+  const selected = options.includes(value) ? value : (blankLabel !== null ? '' : options[0]);
+  return html`<label class="field process-node-field"><span class="process-node-field-label">${label}</span>
+    <select class="process-node-select" aria-label=${label} disabled=${readOnly}
+      value=${selected} aria-invalid=${invalid ? 'true' : undefined}
+      onChange=${(event) => apply?.(fieldKey, event.currentTarget.value)}>
+      ${blankLabel !== null && html`<option value="">${blankLabel}</option>`}
+      ${options.map((option) => html`<option key=${option} value=${option}>${option}</option>`)}
+    </select>
+  </label>`;
+}
 
-  const selectField = (label, options, value, apply, { blankLabel = null } = {}) => {
-    const select = control(h('select', { class: 'process-node-select', 'aria-label': label }));
-    const selectedValue = options.includes(value) ? value : (blankLabel !== null ? '' : options[0]);
-    if (blankLabel !== null) select.append(h('option', {
-      value: '', text: blankLabel, selected: selectedValue === '' ? '' : undefined,
-    }));
-    for (const option of options) select.append(h('option', {
-      value: option, text: option, selected: option === selectedValue ? '' : undefined,
-    }));
-    if (apply && !readOnly) select.addEventListener('change', (event) => {
-      if (!applyFromControl(select, apply, select.value, () => {
-        for (const option of select.querySelectorAll('option')) {
-          option.selected = option.value === selectedValue;
-        }
-      })) event.preventDefault();
-    });
-    return h('label', { class: 'field process-node-field' },
-      h('span', { class: 'process-node-field-label', text: label }), select);
-  };
+function Section({ title, children }) {
+  return html`<section class="process-node-section"><h4 class="process-node-section-title">${title}</h4>${children}</section>`;
+}
 
-  const section = (title, ...children) => h('section', { class: 'process-node-section' },
-    h('h4', { class: 'process-node-section-title', text: title }),
-    ...children);
-
-  // The ONE shared performer editor. `locate(draft)` addresses this slot's
-  // performer inside the draft node (work / plan / check[i] / review /
-  // decider) so the same component edits every slot uniformly.
-  const performerEditor = (performer, locate, { choiceRouting = true } = {}) => {
-    const wrap = h('div', { class: 'process-performer-editor' });
-    const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
-    const known = PERFORMER_KINDS.includes(kind);
-    // An unrecognized stored kind renders AS ITSELF (never silently coerced
-    // to agent — the card must not assert a kind the model rejects); picking
-    // a supported kind normalizes it through setPerformerKind.
-    wrap.append(selectField('kind', known ? PERFORMER_KINDS : [...PERFORMER_KINDS, kind], kind,
-      (value) => commit((draft) => setPerformerKind(locate(draft), value))));
-    if (!known) {
-      wrap.append(h('p', { class: 'process-node-empty', text: `Unknown performer kind ${kind}: validation rejects it — pick a supported kind.` }));
-    }
-    for (const field of known ? performerFieldsFor(kind) : []) {
+function PerformerEditor({ performer, locate, path, commit, invalid, readOnly, choiceRouting = true }) {
+  const kind = typeof performer?.kind === 'string' && performer.kind ? performer.kind : 'agent';
+  const known = PERFORMER_KINDS.includes(kind);
+  const mutate = (key, value, operation) => commit(`${path}.${key}`, (draft) => operation(locate(draft), value));
+  const fields = known ? performerFieldsFor(kind) : [];
+  const contact = performer?.contact || {};
+  return html`<div class="process-performer-editor">
+    <${NodeSelect} fieldKey=${`${path}.kind`} label="kind"
+      options=${known ? PERFORMER_KINDS : [...PERFORMER_KINDS, kind]} value=${kind}
+      readOnly=${readOnly} invalid=${invalid.has(`${path}.kind`)}
+      apply=${(key, value) => mutate('kind', value, setPerformerKind)} />
+    ${!known && html`<p class="process-node-empty">Unknown performer kind ${kind}: validation rejects it — pick a supported kind.</p>`}
+    ${fields.map((field) => {
       if (field.outcomeMap) {
-        if (!choiceRouting || !(performer?.choices || []).length) continue;
-        const routes = h('div', { class: 'process-choice-outcomes', title: field.hint },
-          h('span', { class: 'process-node-field-label', text: field.label }));
-        for (const label of performer.choices) {
-          routes.append(selectField(label, ['pass', 'fail'], performer.choiceOutcomes?.[label] || 'pass',
-            (value) => commit((draft) => setChoiceOutcome(locate(draft), label, value))));
-        }
-        wrap.append(routes);
-        continue;
+        if (!choiceRouting || !(performer?.choices || []).length) return null;
+        return html`<div key=${field.key} class="process-choice-outcomes" title=${field.hint}>
+          <span class="process-node-field-label">${field.label}</span>
+          ${performer.choices.map((choice) => html`<${NodeSelect}
+            key=${choice} fieldKey=${`${path}.choice.${choice}`} label=${choice}
+            options=${['pass', 'fail']} value=${performer.choiceOutcomes?.[choice] || 'pass'}
+            readOnly=${readOnly} invalid=${invalid.has(`${path}.choice.${choice}`)}
+            apply=${(key, value) => mutate(`choice.${choice}`, value, (slot, next) => setChoiceOutcome(slot, choice, next))} />`)}
+        </div>`;
       }
       const value = field.list ? formatLines(performer?.[field.key]) : performer?.[field.key];
-      wrap.append(textField(field.label, value,
-        (text) => commit((draft) => setPerformerField(locate(draft), field.key, text, { choiceRouting })),
-        { multiline: !!(field.multiline || field.list), hint: field.hint }));
-      if (field.key === 'run') {
-        wrap.append(h('p', {
-          class: 'process-node-security-note',
-          text: '⚠ Program performers are command execution: this command runs on the host when the node activates.',
-        }));
-      }
-    }
-    const contact = performer?.contact || {};
-    wrap.append(h('div', { class: 'process-node-contact', title: 'Contact schedule for this slot: nudge cadence, budget, escalation target' },
-      h('span', { class: 'process-node-field-label', text: 'contact schedule' },),
-      textField('cadence', contact.cadence, (value) => commit((draft) => setContactField(locate(draft), 'cadence', value)), { placeholder: '30m' }),
-      textField('budget', contact.budget === undefined ? '' : String(contact.budget), (value) => commit((draft) => setContactField(locate(draft), 'budget', value)), { placeholder: '5' }),
-      textField('escalate to', contact.escalationTarget, (value) => commit((draft) => setContactField(locate(draft), 'escalationTarget', value)), { placeholder: 'human:operator' }),
-    ));
-    return wrap;
-  };
-
-  const stageToggle = (label, enabled, apply) => {
-    const checkbox = control(h('input', { type: 'checkbox', class: 'process-node-toggle' }));
-    checkbox.checked = enabled;
-    if (!readOnly) checkbox.addEventListener('change', (event) => {
-      if (!applyFromControl(checkbox, apply, checkbox.checked, () => { checkbox.checked = enabled; })) event.preventDefault();
-    });
-    return h('label', { class: 'process-node-stage-toggle' }, checkbox,
-      h('span', { text: label }));
-  };
-
-  // Shared prose fields. Start/end nodes are label/doc only (the spec's
-  // whole dialog for them); the richer types get description too.
-  const meta = [textField('label', node.name, (value) => commit((draft) => setNodeText(draft, 'name', value)))];
-  if (type !== 'start' && type !== 'end') {
-    meta.push(textField('description', node.description, (value) => commit((draft) => setNodeText(draft, 'description', value))));
-  }
-  meta.push(textField('doc', node.doc, (value) => commit((draft) => setNodeText(draft, 'doc', value)), { multiline: true }));
-  root.append(section(type === 'start' || type === 'end' ? 'label / doc' : 'node', ...meta));
-
-  if (type === 'task') {
-    const plan = section('plan',
-      stageToggle('plan before work', !!node.plan, (enabled) => commit((draft) => setStageEnabled(draft, 'plan', enabled))));
-    if (node.plan) {
-      plan.append(selectField('approval', PLAN_APPROVAL_MODES, node.plan.approval || 'auto',
-        (value) => commit((draft) => setPlanApproval(draft, value))));
-      plan.append(performerEditor(node.plan.performer, (draft) => draft.plan.performer));
-    }
-    root.append(plan);
-
-    if (!node.performer && !readOnly) {
-      // A task minted from the palette has no performer yet; give the editor
-      // a real slot to fill in (the model requires one to validate).
-      root.append(section('work', h('button', {
-        class: 'process-action process-node-add', type: 'button', text: 'add work performer',
-        onclick: () => commit((draft) => { draft.performer = defaultPerformer('agent'); }),
-      })));
-    } else {
-      root.append(section('work', performerEditor(node.performer || defaultPerformer('agent'), (draft) => {
-        if (!draft.performer) draft.performer = defaultPerformer('agent');
-        return draft.performer;
-      })));
-    }
-
-    const checks = section('checks');
-    (node.checks || []).forEach((check, index) => {
-      const row = h('div', { class: 'process-node-check' },
-        h('div', { class: 'process-node-check-head' },
-          textField('check id', check.id, (value) => commit((draft) => setCheckID(draft, index, value))),
-          h('span', { class: 'spacer' }),
-          readOnly ? null : h('button', { class: 'process-action', type: 'button', text: '↑', title: 'Move check up', 'aria-label': `Move check ${check.id} up`, onclick: () => commit((draft) => moveCheck(draft, index, -1)) }),
-          readOnly ? null : h('button', { class: 'process-action', type: 'button', text: '↓', title: 'Move check down', 'aria-label': `Move check ${check.id} down`, onclick: () => commit((draft) => moveCheck(draft, index, 1)) }),
-          readOnly ? null : h('button', { class: 'process-action process-action-danger', type: 'button', text: 'remove', 'aria-label': `Remove check ${check.id}`, onclick: () => commit((draft) => removeCheck(draft, index)) }),
-        ),
-        performerEditor(check.performer, (draft) => draft.checks[index].performer));
-      checks.append(row);
-    });
-    if (!(node.checks || []).length) checks.append(h('p', { class: 'process-node-empty', text: 'No checks: work settles without gate verdicts.' }));
-    if (!readOnly) {
-      checks.append(h('button', {
-        class: 'process-action process-node-add', type: 'button', text: '+ add check',
-        onclick: () => commit((draft) => addCheck(draft)),
-      }));
-    }
-    root.append(checks);
-
-    const review = section('review',
-      stageToggle('review gate after checks', !!node.review, (enabled) => commit((draft) => setStageEnabled(draft, 'review', enabled))));
-    if (node.review) review.append(performerEditor(node.review.performer, (draft) => draft.review.performer));
-    root.append(review);
-
-    root.append(section('retry policy',
-      textField('max attempts', node.retry?.maxAttempts === undefined ? '' : String(node.retry.maxAttempts),
-        (value) => commit((draft) => setRetryField(draft, 'maxAttempts', value)), { placeholder: 'unset' }),
-      selectField('on fail', RETRY_ON_FAIL_MODES, node.retry?.onFail,
-        // Unset onFail resolves to model.DefaultRetryMode: fresh-attempt (the
-        // conservative choice — never trust a possibly-poisoned context).
-        (value) => commit((draft) => setRetryField(draft, 'onFail', value)), { blankLabel: 'default (fresh-attempt)' })));
-
-    root.append(section('captures',
-      textField('published outputs', formatLines(node.captures),
-        (value) => commit((draft) => setCaptures(draft, value)),
-        { multiline: true, hint: 'Names of outputs this node publishes for downstream nodes, one per line', placeholder: 'one-name-per-line' })));
-  }
-
-  if (type === 'decision') {
-    // The displayed performer and the one the first edit mints must agree:
-    // a missing decider renders (and is created) as human, so the field set
-    // shown is the field set written to.
-    root.append(section('decider', performerEditor(node.performer || defaultPerformer('human'), (draft) => {
-      if (!draft.performer) draft.performer = defaultPerformer('human');
-      return draft.performer;
-    }, { choiceRouting: false })));
-  }
-
-  if (type === 'wait') {
-    root.append(section('wait / timer',
-      textField('duration', node.wait?.duration, (value) => commit((draft) => setWaitField(draft, 'duration', value)), { placeholder: '30m', hint: 'Sleep for a Go duration' }),
-      textField('until', node.wait?.until, (value) => commit((draft) => setWaitField(draft, 'until', value)), { hint: 'Wait until a point in time' }),
-      textField('signal', node.wait?.signal, (value) => commit((draft) => setWaitField(draft, 'signal', value)), { hint: 'Wait for a named external signal' })));
-  }
-
-  // Outgoing edges, read-only in every mode: topology is edited on the
-  // canvas. For decision nodes this doubles as the choices → edge mapping.
-  if (type !== 'end') {
-    const edges = model.outgoingEdges(nodeId);
-    const list = h('div', { class: 'process-node-edges' });
-    for (const edge of edges) {
-      list.append(h('div', { class: 'process-node-edge-row' },
-        h('span', { class: 'process-node-edge-outcome', text: edge.outcome }),
-        h('span', { class: 'process-node-edge-arrow', text: '→' }),
-        h('span', { class: 'process-node-edge-target', text: edge.to })));
-    }
-    if (!edges.length) list.append(h('p', { class: 'process-node-empty', text: 'No outgoing edges yet.' }));
-    root.append(section(type === 'decision' ? 'choices → edges' : 'edges',
-      list, h('p', { class: 'process-node-edges-note', text: 'Edges are edited on the canvas, not in this dialog.' })));
-  }
-
-  return root;
+      return html`<div key=${field.key}>
+        <${NodeField} fieldKey=${`${path}.${field.key}`} label=${field.label} value=${value || ''}
+          multiline=${!!(field.multiline || field.list)} hint=${field.hint} readOnly=${readOnly}
+          invalid=${invalid.has(`${path}.${field.key}`)}
+          apply=${(key, next) => mutate(field.key, next, (slot, raw) => setPerformerField(slot, field.key, raw, { choiceRouting }))} />
+        ${field.key === 'run' && html`<p class="process-node-security-note">⚠ Program performers are command execution: this command runs on the host when the node activates.</p>`}
+      </div>`;
+    })}
+    <div class="process-node-contact" title="Contact schedule for this slot: nudge cadence, budget, escalation target">
+      <span class="process-node-field-label">contact schedule</span>
+      ${[
+        ['cadence', contact.cadence || '', '30m'],
+        ['budget', contact.budget === undefined ? '' : String(contact.budget), '5'],
+        ['escalationTarget', contact.escalationTarget || '', 'human:operator'],
+      ].map(([key, value, placeholder]) => html`<${NodeField} key=${key}
+        fieldKey=${`${path}.contact.${key}`} label=${key === 'escalationTarget' ? 'escalate to' : key}
+        value=${value} placeholder=${placeholder} readOnly=${readOnly}
+        invalid=${invalid.has(`${path}.contact.${key}`)}
+        apply=${(fieldKey, next) => mutate(`contact.${key}`, next, (slot, raw) => setContactField(slot, key, raw))} />`)}
+    </div>
+  </div>`;
 }
 
-// openNodeDialog wraps the shared detail card in a modal on the editor's
-// established .modal-overlay styling — an owned overlay, never the shared
-// global confirm singleton (which only offers two fixed buttons and must not
-// be double-booked). Returns a dispose function (resolving dialog close) so
-// the editor can slot it into its single-modal discipline.
-export function openNodeDialog({
-  model, nodeId, mode = 'edit', onMutated = null, onClosed = null,
-  confirmDiscard = async () => false,
-}) {
-  const body = h('div', { class: 'process-node-dialog-body' });
-  const cancelButton = h('button', { class: 'process-node-cancel', type: 'button', text: mode === 'edit' ? 'Cancel' : 'Close' });
-  const saveButton = mode === 'edit'
-    ? h('button', { class: 'primary process-node-save', type: 'button', text: 'Save' }) : null;
-  const actions = h('div', { class: 'modal-buttons process-node-dialog-actions' }, cancelButton, saveButton);
-  const dialog = h('div', { class: 'modal process-node-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Node ${nodeId}` }, body, actions);
-  const overlay = h('div', { class: 'modal-overlay show process-node-modal' },
-    dialog);
-  const status = h('p', { class: 'process-node-status', role: 'status' });
+export function NodeDetail({ model, nodeId, node, mode = 'edit', commit, invalid = new Set(), onClose }) {
+  const readOnly = mode !== 'edit' || !commit;
+  if (!node) return html`<div class="process-node-detail is-readonly"><p class="process-node-missing">Node ${nodeId} no longer exists.</p></div>`;
+  const type = node.type || 'task';
+  const field = (key, label, value, mutate, options = {}) => html`<${NodeField}
+    fieldKey=${key} label=${label} value=${value || ''} apply=${commit && ((fieldKey, raw) => commit(fieldKey, (draft) => mutate(draft, raw)))}
+    readOnly=${readOnly} invalid=${invalid.has(key)} ...${options} />`;
+  const select = (key, label, options, value, mutate, props = {}) => html`<${NodeSelect}
+    fieldKey=${key} label=${label} options=${options} value=${value}
+    apply=${commit && ((fieldKey, raw) => commit(fieldKey, (draft) => mutate(draft, raw)))}
+    readOnly=${readOnly} invalid=${invalid.has(key)} ...${props} />`;
+  const performer = (slot, locate, value, options = {}) => html`<${PerformerEditor}
+    path=${slot} locate=${locate} performer=${value} commit=${commit}
+    invalid=${invalid} readOnly=${readOnly} ...${options} />`;
+  const stageToggle = (key, label, enabled, stage) => html`<label class="process-node-stage-toggle">
+    <input type="checkbox" class="process-node-toggle" checked=${enabled} disabled=${readOnly}
+      onChange=${(event) => commit(key, (draft) => setStageEnabled(draft, stage, event.currentTarget.checked))} />
+    <span>${label}</span>
+  </label>`;
+  const edges = model.outgoingEdges(nodeId);
+  return html`<div class=${`process-node-detail${readOnly ? ' is-readonly' : ''}`}>
+    <div class="process-node-detail-head">
+      <span class="process-inspector-kind">${type} node</span><span class="process-inspector-id">${nodeId}</span>
+      ${readOnly && html`<span class="process-node-readonly-badge">read-only</span>`}<span class="spacer"></span>
+      ${onClose && html`<button class="process-node-close" type="button" title="Close" aria-label="Close node dialog"
+        onMouseDown=${(event) => event.preventDefault()} onClick=${() => { void onClose(); }}>✕</button>`}
+    </div>
+    <${Section} title=${type === 'start' || type === 'end' ? 'label / doc' : 'node'}>
+      ${field('meta.name', 'label', node.name, (draft, value) => setNodeText(draft, 'name', value))}
+      ${type !== 'start' && type !== 'end' && field('meta.description', 'description', node.description, (draft, value) => setNodeText(draft, 'description', value))}
+      ${field('meta.doc', 'doc', node.doc, (draft, value) => setNodeText(draft, 'doc', value), { multiline: true })}
+    </${Section}>
+    ${type === 'task' && html`
+      <${Section} title="plan">
+        ${stageToggle('plan.enabled', 'plan before work', !!node.plan, 'plan')}
+        ${node.plan && html`${select('plan.approval', 'approval', PLAN_APPROVAL_MODES, node.plan.approval || 'auto', (draft, value) => setPlanApproval(draft, value))}${performer('plan.performer', (draft) => draft.plan.performer, node.plan.performer)}`}
+      </${Section}>
+      <${Section} title="work">
+        ${!node.performer && !readOnly
+          ? html`<button class="process-action process-node-add" type="button" onClick=${() => commit('work.add', (draft) => { draft.performer = defaultPerformer('agent'); })}>add work performer</button>`
+          : performer('work.performer', (draft) => { if (!draft.performer) draft.performer = defaultPerformer('agent'); return draft.performer; }, node.performer || defaultPerformer('agent'))}
+      </${Section}>
+      <${Section} title="checks">
+        ${(node.checks || []).map((check, index) => html`<div key=${index} class="process-node-check">
+          <div class="process-node-check-head">
+            ${field(`checks.${index}.id`, 'check id', check.id, (draft, value) => setCheckID(draft, index, value))}<span class="spacer"></span>
+            ${!readOnly && html`<button class="process-action" type="button" title="Move check up" aria-label=${`Move check ${check.id} up`} onClick=${() => commit(`checks.${index}.up`, (draft) => moveCheck(draft, index, -1))}>↑</button><button class="process-action" type="button" title="Move check down" aria-label=${`Move check ${check.id} down`} onClick=${() => commit(`checks.${index}.down`, (draft) => moveCheck(draft, index, 1))}>↓</button><button class="process-action process-action-danger" type="button" aria-label=${`Remove check ${check.id}`} onClick=${() => commit(`checks.${index}.remove`, (draft) => removeCheck(draft, index))}>remove</button>`}
+          </div>${performer(`checks.${index}.performer`, (draft) => draft.checks[index].performer, check.performer)}
+        </div>`)}
+        ${!(node.checks || []).length && html`<p class="process-node-empty">No checks: work settles without gate verdicts.</p>`}
+        ${!readOnly && html`<button class="process-action process-node-add" type="button" onClick=${() => commit('checks.add', (draft) => addCheck(draft))}>+ add check</button>`}
+      </${Section}>
+      <${Section} title="review">${stageToggle('review.enabled', 'review gate after checks', !!node.review, 'review')}${node.review && performer('review.performer', (draft) => draft.review.performer, node.review.performer)}</${Section}>
+      <${Section} title="retry policy">${field('retry.maxAttempts', 'max attempts', node.retry?.maxAttempts === undefined ? '' : String(node.retry.maxAttempts), (draft, value) => setRetryField(draft, 'maxAttempts', value), { placeholder: 'unset' })}${select('retry.onFail', 'on fail', RETRY_ON_FAIL_MODES, node.retry?.onFail, (draft, value) => setRetryField(draft, 'onFail', value), { blankLabel: 'default (fresh-attempt)' })}</${Section}>
+      <${Section} title="captures">${field('captures', 'published outputs', formatLines(node.captures), (draft, value) => setCaptures(draft, value), { multiline: true, placeholder: 'one-name-per-line' })}</${Section}>
+    `}
+    ${type === 'decision' && html`<${Section} title="decider">${performer('decision.performer', (draft) => { if (!draft.performer) draft.performer = defaultPerformer('human'); return draft.performer; }, node.performer || defaultPerformer('human'), { choiceRouting: false })}</${Section}>`}
+    ${type === 'wait' && html`<${Section} title="wait / timer">${field('wait.duration', 'duration', node.wait?.duration, (draft, value) => setWaitField(draft, 'duration', value), { placeholder: '30m' })}${field('wait.until', 'until', node.wait?.until, (draft, value) => setWaitField(draft, 'until', value))}${field('wait.signal', 'signal', node.wait?.signal, (draft, value) => setWaitField(draft, 'signal', value))}</${Section}>`}
+    ${type !== 'end' && html`<${Section} title=${type === 'decision' ? 'choices → edges' : 'edges'}><div class="process-node-edges">${edges.map((edge) => html`<div key=${edge.outcome} class="process-node-edge-row"><span class="process-node-edge-outcome">${edge.outcome}</span><span class="process-node-edge-arrow">→</span><span class="process-node-edge-target">${edge.to}</span></div>`)}${!edges.length && html`<p class="process-node-empty">No outgoing edges yet.</p>`}</div><p class="process-node-edges-note">Edges are edited on the canvas, not in this dialog.</p></${Section}>`}
+  </div>`;
+}
 
-  const original = structuredClone(model.node(nodeId));
-  let draft = structuredClone(original);
-  let disposed = false;
-  let confirming = false;
-  const invalidControls = new Set();
-  let releaseDialogFocus = () => {};
-  let releaseResize = () => {};
-  const isDirty = () => mode === 'edit'
-    && (invalidControls.size > 0 || JSON.stringify(draft) !== JSON.stringify(original));
-  const dispose = () => {
-    if (disposed) return;
-    disposed = true;
-    overlay.remove();
-    document.removeEventListener('keydown', onKey, true);
-    releaseResize();
-    releaseDialogFocus();
-    onClosed?.();
+export function NodeDialog({ model, nodeId, mode = 'edit', onMutated, complete, confirmDiscard, registerHandle }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
+  const original = useRef(structuredClone(model.node(nodeId)));
+  const draftRef = useRef(structuredClone(original.current));
+  const invalid = useRef(new Set());
+  const dirty = useRef(false);
+  const [, redraw] = useState(0);
+  const [status, setStatus] = useState('');
+  const recomputeDirty = useCallback(() => {
+    dirty.current = mode === 'edit' && (invalid.current.size > 0
+      || JSON.stringify(draftRef.current) !== JSON.stringify(original.current));
+  }, [mode]);
+  recomputeDirty();
+  const commit = (key, mutate) => {
+    if (invalid.current.size && !invalid.current.has(key)) {
+      setStatus('Correct the highlighted invalid field first; this change was not applied.');
+      return { accepted: false, blocked: true };
+    }
+    try {
+      const next = structuredClone(draftRef.current);
+      mutate(next);
+      draftRef.current = next;
+      invalid.current.delete(key);
+      setStatus('');
+      recomputeDirty();
+      redraw((value) => value + 1);
+      return { accepted: true };
+    } catch (error) {
+      invalid.current.add(key);
+      recomputeDirty();
+      setStatus(error.message);
+      return { accepted: false, invalid: true };
+    }
   };
-  dispose.isDirty = isDirty;
-
-  const draftModel = {
-    node: (id) => id === nodeId ? draft : model.node(id),
-    outgoingEdges: (id) => model.outgoingEdges(id),
-  };
-
-  const flushActiveControl = () => {
+  const flushActive = useCallback(() => {
     const active = document.activeElement;
-    if (active && body.contains(active) && active.matches?.('input, textarea, select')) {
+    if (active?.closest?.('.process-node-dialog') && active.matches?.('input, textarea, select')) {
       active.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
     }
-    return invalidControls.size === 0;
-  };
-
-  const suspendForConfirmation = (suspended) => {
-    overlay.inert = suspended;
-    overlay.toggleAttribute('inert', suspended);
-    if (suspended) overlay.setAttribute('aria-hidden', 'true');
-    else overlay.removeAttribute('aria-hidden');
-    dialog.setAttribute('aria-modal', suspended ? 'false' : 'true');
-  };
-
-  const requestCancel = async () => {
-    flushActiveControl();
-    if (disposed || confirming) return false;
-    if (!isDirty()) {
-      dispose();
-      return true;
-    }
-    confirming = true;
-    suspendForConfirmation(true);
-    let discard = false;
-    try {
-      discard = await confirmDiscard();
-    } catch (error) {
-      status.textContent = error.message || 'Could not confirm discard.';
-      status.classList.add('is-error');
-    } finally {
-      confirming = false;
-      if (!disposed) suspendForConfirmation(false);
-    }
-    if (discard && !disposed) dispose();
-    else if (!disposed) (saveButton || cancelButton).focus();
-    return !!discard;
-  };
-
-  const replaceNode = (target, source) => {
-    for (const key of Object.keys(target)) delete target[key];
-    Object.assign(target, structuredClone(source));
-  };
-
+    return invalid.current.size === 0;
+  }, []);
+  const prepareClose = useCallback(() => {
+    flushActive();
+    recomputeDirty();
+    return true;
+  }, [flushActive, recomputeDirty]);
   const save = () => {
-    if (!flushActiveControl()) return false;
-    if (disposed || mode !== 'edit') return false;
+    if (!flushActive() || mode !== 'edit') return false;
     try {
-      const changed = model.updateNode(nodeId, (node) => replaceNode(node, draft));
+      const changed = model.updateNode(nodeId, (node) => replaceNode(node, draftRef.current));
       if (changed) onMutated?.();
-      dispose();
+      complete(true);
       return true;
-    } catch (error) {
-      status.textContent = error.message;
-      status.classList.add('is-error');
-      return false;
-    }
+    } catch (error) { setStatus(error.message); return false; }
   };
+  useLayoutEffect(() => {
+    const registered = registerHandle;
+    const cleanup = registered?.({ isDirty: () => dirty.current, requestClose });
+    return () => {
+      if (typeof cleanup === 'function') cleanup();
+      else registered?.(null);
+    };
+  }, [registerHandle, requestClose]);
+  return html`<${Overlay}
+    id="process-node-modal" dialogClass="modal process-node-dialog" overlayClass="process-node-modal"
+    ariaLabel=${`Node ${nodeId}`}
+    onClose=${complete} beforeClose=${prepareClose} dirty=${() => dirty.current} blocked=${false}
+    confirmDiscard=${confirmDiscard} onCloseError=${(error) => setStatus(`Discard confirmation failed: ${error?.message || String(error)}`)}
+    registerClose=${registerClose}
+    resizeKey=${NODE_DIALOG_SIZE_PREF} fitContent=${false} onSubmitHotkey=${save}
+  >
+    <div class="process-node-dialog-body">
+      <${NodeDetail} model=${model} nodeId=${nodeId} node=${draftRef.current} mode=${mode}
+        commit=${mode === 'edit' ? commit : null} invalid=${invalid.current} onClose=${requestClose} />
+      <p class=${`process-node-status${status ? ' is-error' : ''}`} role="status">${status}</p>
+    </div>
+    <div class="modal-buttons process-node-dialog-actions">
+      <button class="process-node-cancel" type="button" onClick=${requestClose}>${mode === 'edit' ? 'Cancel' : 'Close'}</button>
+      ${mode === 'edit' && html`<button class="primary process-node-save" type="button" onClick=${save}>Save</button>`}
+    </div>
+  </${Overlay}>`;
+}
 
-  const onKey = (event) => {
-    // The shared discard confirmation owns the keyboard while it is open. A
-    // document-capture shortcut must neither save behind it nor close this
-    // dialog in response to keys from another overlay.
-    if (confirming || !overlay.contains(event.target)) return;
-    if (mode === 'edit' && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      save();
-    }
+// Standalone compatibility for viewer/tests. Production editor dialogs are
+// rendered by process-editor-island in the editor's Preact tree.
+export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated, onClosed, confirmDiscard = async () => false }) {
+  const host = document.body.appendChild(document.createElement('div'));
+  let handle = null;
+  let closed = false;
+  const complete = (result) => {
+    if (closed) return;
+    closed = true;
+    render(null, host);
+    host.remove();
+    onClosed?.(result);
   };
-
-  // commit routes one mutation through the private draft, then re-renders the
-  // card. A rejected mutation surfaces in the status line and leaves both the
-  // draft and edit model untouched. Save is the only model mutation path.
-  const commit = (mutate) => {
-    const source = commit.activeControl;
-    commit.lastFailure = null;
-    if (invalidControls.size && !invalidControls.has(source)) {
-      commit.lastFailure = 'blocked';
-      status.textContent = 'Correct the highlighted invalid field first; this change was not applied.';
-      status.classList.add('is-error');
-      return false;
-    }
-    let changed = false;
-    try {
-      const next = structuredClone(draft);
-      mutate(next);
-      changed = JSON.stringify(next) !== JSON.stringify(draft);
-      if (changed) draft = next;
-    } catch (error) {
-      commit.lastFailure = 'invalid';
-      if (source) invalidControls.add(source);
-      status.textContent = error.message;
-      status.classList.add('is-error');
-      return false;
-    }
-    if (source) invalidControls.delete(source);
-    status.textContent = '';
-    status.classList.remove('is-error');
-    render();
-    return changed;
-  };
-
-  // Re-rendering replaces every control, so restore the scroll position and
-  // put focus back on the control at the same tab position — a change event
-  // fired from a focused select/checkbox must not dump keyboard users back
-  // at the top of the dialog after every single edit. (On structural edits
-  // the index can shift by the inserted/removed controls; landing on a
-  // neighbor is the acceptable degradation.)
-  const focusables = () => Array.from(body.querySelectorAll('input, select, textarea, button'));
-  const render = () => {
-    const active = document.activeElement;
-    const focusIndex = active && body.contains(active) ? focusables().indexOf(active) : -1;
-    const scrollTop = body.scrollTop;
-    const detail = buildNodeDetail(draftModel, nodeId, {
-      mode, onClose: requestCancel,
-      commit: mode === 'edit' ? commit : null,
-    });
-    body.replaceChildren(detail, status);
-    body.scrollTop = scrollTop;
-    if (focusIndex >= 0) focusables()[focusIndex]?.focus();
-  };
-
-  render();
-  // A text input's blur/change re-renders the scroll body. Claim pointer
-  // dismissal before that blur can replace the header close button; keyboard
-  // activation still follows the button's ordinary click handler.
-  body.addEventListener('pointerdown', (event) => {
-    if (!event.target.closest?.('.process-node-close')) return;
-    event.preventDefault();
-    void requestCancel();
-  });
-  cancelButton.addEventListener('click', () => { void requestCancel(); });
-  saveButton?.addEventListener('click', save);
-  overlay.addEventListener('click', (event) => { if (event.target === overlay) void requestCancel(); });
-  document.addEventListener('keydown', onKey, true);
-  document.body.append(overlay);
-  // Node forms range from a two-field start node to a compound task with
-  // several performers. Keep a fixed, viewport-safe floor and let the body
-  // scroll instead of asking the shared helper to pin the minimum to the
-  // current form's full natural height. The helper still owns the standard
-  // resize gesture plus dashPrefs restore/persistence.
-  releaseResize = makeModalResizable(dialog, NODE_DIALOG_SIZE_PREF, { fitContent: false }) || (() => {});
-  releaseDialogFocus = bindDialogFocus({
-    dialog,
-    initialFocus: () => overlay.querySelector('.process-node-input:not(:disabled)') || cancelButton,
-    onEscape: () => { void requestCancel(); },
-    shouldHandle: () => !confirming && isTopmostOverlay(overlay),
-  });
-  dispose.requestClose = requestCancel;
+  render(html`<${NodeDialog} model=${model} nodeId=${nodeId} mode=${mode}
+    onMutated=${onMutated} complete=${complete} confirmDiscard=${confirmDiscard}
+    registerHandle=${(value) => { handle = value; }} />`, host);
+  const dispose = () => complete(null);
+  dispose.isDirty = () => !!handle?.isDirty?.();
+  dispose.requestClose = () => handle?.requestClose?.() || Promise.resolve(true);
   return dispose;
 }
+// dashboard-imperative-boundary: preact-compat

@@ -24,3 +24,19 @@ export function openReincarnateAgentDialog(conv, label) {
 export function openNestGroupDialog({ group }) {
   requireController().openNest({ group });
 }
+
+export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
+  requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
+}
+
+export function openPresetCloneDialog(options) {
+  return requireController().openPresetClone(options);
+}
+
+export function openAgentExportDialog(conv, label) {
+  return requireController().openExport({ conv, label });
+}
+
+export function chooseTerminalDirectory(label) {
+  return requireController().openTerminalDirectory({ label });
+}

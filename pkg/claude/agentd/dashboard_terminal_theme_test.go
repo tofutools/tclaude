@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The wizard terminal treatment spans the shared xterm palette, multiplexer
+// The wizard terminal treatment spans the shared xterm palette, terminal shell
 // toolbar, pop-out handoff, and fallback modal. These source-shape guards pin
 // that wiring while the pure preference/theme selection is covered by
 // jstest/terminal-theme.test.mjs.
@@ -37,32 +37,39 @@ func TestDashboardTerminalTheme_Wiring(t *testing.T) {
 
 	core := read("js/terminals-core.js")
 	for _, needle := range []string{
-		"paletteLabel.textContent = 'Arcane palette'",
-		"paletteToggle.hidden = !wizardActive()",
-		"paletteCheckbox.addEventListener('change'",
-		"p.term.options.theme = theme",
-		"document.addEventListener('tclaude:wizard', syncTerminalTheme)",
-		"document.addEventListener('tclaude:terminal-palette', syncTerminalTheme)",
-		"hideConv: p.seed.hideConv, wizard: wizardActive()",
+		"function syncTheme()",
+		"term.options.theme = terminalThemeFor(",
+		"documentRef.addEventListener('tclaude:wizard', syncTheme)",
+		"documentRef.addEventListener('tclaude:terminal-palette', syncTheme)",
+		"documentRef.removeEventListener('tclaude:wizard', syncTheme)",
+		"documentRef.removeEventListener('tclaude:terminal-palette', syncTheme)",
 	} {
 		if !strings.Contains(core, needle) {
 			t.Errorf("terminals-core.js missing %q", needle)
 		}
 	}
 
-	modal := read("js/modal-term.js")
-	if !strings.Contains(modal, "term.options.theme = terminalThemeFor(") {
-		t.Error("fallback terminal modal must repaint through the shared terminal theme")
+	shell := read("js/terminal-shell-island.js")
+	for _, needle := range []string{
+		"<span>Arcane palette</span>",
+		"hidden=${!theme.wizard}",
+		"actions.setArcanePaletteEnabled(event.currentTarget.checked)",
+	} {
+		if !strings.Contains(shell, needle) {
+			t.Errorf("terminal-shell-island.js missing %q", needle)
+		}
+	}
+	actions := read("js/terminal-shell-actions.js")
+	if !strings.Contains(actions, "wizard: documentRef.body.classList.contains('wizard')") {
+		t.Error("terminal pop-out must inherit the dashboard wizard theme")
 	}
 
-	popout := read("js/terminals.js")
+	popout := read("js/terminal-standalone.js")
 	for _, needle := range []string{
-		"import { initDashPrefs } from './prefs.js'",
-		"import { initTerminalThemeSync } from './terminal-theme.js'",
-		"document.body.classList.toggle('wizard', seed.wizard === true)",
+		"documentRef.body.classList.toggle('wizard', seed.wizard === true)",
 		"if (prefsReady) consumeHash()",
-		"initDashPrefs().then(",
-		"initTerminalThemeSync()",
+		"Promise.resolve(initPrefs()).then(",
+		"initThemeSync()",
 	} {
 		if !strings.Contains(popout, needle) {
 			t.Errorf("standalone terminal pop-out missing %q", needle)

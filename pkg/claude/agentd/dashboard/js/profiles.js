@@ -10,7 +10,7 @@
 // non-dialog spawns.
 //
 // This module is pure data + cache — no DOM. The spawn dialog
-// (modal-spawn.js), the profile editor (modal-profiles.js) and the
+// (agent-spawn-island.js), the profile editor (modal-profiles.js) and the
 // group/dashboard default-profile pickers (row-actions.js) all read through
 // here so there is one fetch path and one cache.
 

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,11 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 
 	// Recurring snapshot surfaces use feature-local state and stable keys.
 	present("function GroupsList(", "Groups has a Preact owner")
-	present("element.getAttribute('data-group-key')", "Groups promotes stable identities to Preact keys")
+	present("function GroupsNativeList(", "Groups renders native group and virtual-group shells")
+	present("function MemberTable(", "Groups renders native member tables")
+	present("key=${member.conv_id}", "member rows carry stable conversation keys")
+	present("key=${node.key}", "group shells carry stable view-model keys")
+	present("function GroupsInteractionProvider(", "one Preact owner holds menu/editor interaction state")
 	present("function LinksList(", "Links has a Preact owner")
 	present("key=${String(link.id)}", "Links rows carry stable Preact keys")
 	present("function DebugApp(", "Debug has a Preact owner")
@@ -62,6 +67,118 @@ func TestDashboardPreactReconciliationWired(t *testing.T) {
 	} {
 		if strings.Contains(dashboardAssets, forbidden) {
 			t.Errorf("dashboard assets retain recurring wholesale write %q", forbidden)
+		}
+	}
+
+	groupsList, err := fs.ReadFile(dashboardAssetsFS, "js/groups-list.js")
+	if err != nil {
+		t.Fatalf("read native Groups list: %v", err)
+	}
+	groupsSource := string(groupsList)
+	for _, forbidden := range []string{"renderGroupsHTML", "dangerouslySetInnerHTML", ".innerHTML", "trustedHTMLToVNodes"} {
+		if strings.Contains(groupsSource, forbidden) {
+			t.Errorf("native Groups list retains forbidden renderer seam %q", forbidden)
+		}
+	}
+	memberTable, err := fs.ReadFile(dashboardAssetsFS, "js/groups-member-table.js")
+	if err != nil {
+		t.Fatalf("read native Groups member table: %v", err)
+	}
+	for _, forbidden := range []string{"dangerouslySetInnerHTML", ".innerHTML", "trustedHTMLToVNodes"} {
+		if strings.Contains(string(memberTable), forbidden) {
+			t.Errorf("native Groups member table retains forbidden renderer seam %q", forbidden)
+		}
+	}
+	if _, err := fs.ReadFile(dashboardAssetsFS, "js/render.js"); err == nil {
+		t.Error("retired legacy Groups string renderer is still embedded")
+	}
+}
+
+// Production components must consume renderer models directly. Reintroducing
+// a template/innerHTML parser would revive the transitional dual-render path
+// even if it were hidden behind a renamed helper.
+func TestDashboardNoProductionHTMLToVNodeBridge(t *testing.T) {
+	if _, err := fs.ReadFile(dashboardAssetsFS, "js/html-vnodes.js"); err == nil {
+		t.Fatal("retired HTML-to-VNode bridge is still embedded")
+	}
+	for _, name := range dashboardJSModules() {
+		body, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		source := string(body)
+		for _, forbidden := range []string{
+			"trustedHTMLToVNodes", "./html-vnodes.js", "createElement('template')",
+			"createElement(\"template\")", "template.content.childNodes",
+		} {
+			if strings.Contains(source, forbidden) {
+				t.Errorf("production module %s retains HTML-to-VNode parser bridge %q", name, forbidden)
+			}
+		}
+	}
+	for _, name := range []string{"js/dock-island.js", "js/shell-island.js"} {
+		body, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, forbidden := range []string{".innerHTML", "dangerouslySetInnerHTML", "markup="} {
+			if strings.Contains(string(body), forbidden) {
+				t.Errorf("native renderer %s retains innerHTML compatibility bridge %q", name, forbidden)
+			}
+		}
+	}
+}
+
+// row-actions.js is deliberately only a stateless integration binder, while
+// row-action-handler.js owns the cross-feature operation switch. Pin every
+// retained branch to a live producer so compatibility cases cannot accumulate.
+func TestDashboardDelegatedActionsHaveLiveProducers(t *testing.T) {
+	binderBody, err := fs.ReadFile(dashboardAssetsFS, "js/row-actions.js")
+	if err != nil {
+		t.Fatalf("read row action binder: %v", err)
+	}
+	rowBody, err := fs.ReadFile(dashboardAssetsFS, "js/row-action-handler.js")
+	if err != nil {
+		t.Fatalf("read row action handler: %v", err)
+	}
+	producerBody, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
+	if err != nil {
+		t.Fatalf("read dashboard shell: %v", err)
+	}
+	producers := string(producerBody)
+	for _, name := range dashboardJSModules() {
+		if name == "js/row-actions.js" || name == "js/row-action-handler.js" {
+			continue
+		}
+		body, readErr := fs.ReadFile(dashboardAssetsFS, name)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", name, readErr)
+		}
+		producers += "\n" + string(body)
+	}
+
+	cases := regexp.MustCompile(`case '([^']+)':`).FindAllStringSubmatch(string(rowBody), -1)
+	if len(cases) == 0 {
+		t.Fatal("row action router has no dispatch cases")
+	}
+	for _, match := range cases {
+		action := match[1]
+		if !strings.Contains(producers, `"`+action+`"`) &&
+			!strings.Contains(producers, `'`+action+`'`) {
+			t.Errorf("delegated action %q has no producer outside row-actions.js", action)
+		}
+	}
+
+	allProduction := producers + string(binderBody) + string(rowBody)
+	for _, retired := range []string{
+		"cycle-group-offline", "filter-bar-menu", "toggle-force-fold", "toggle-quick-pin",
+	} {
+		if strings.Contains(string(rowBody), "case '"+retired+"':") {
+			t.Errorf("retired action %q still has a delegated switch branch", retired)
+		}
+		if strings.Contains(allProduction, `data-act="`+retired+`"`) ||
+			strings.Contains(allProduction, `data-act='`+retired+`'`) {
+			t.Errorf("retired action %q still has a production data-act producer", retired)
 		}
 	}
 }

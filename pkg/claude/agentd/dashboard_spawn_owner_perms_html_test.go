@@ -32,13 +32,14 @@ func TestDashboardSpawnOwnerPermsUI_Wired(t *testing.T) {
 	present(`id="profile-editor-perms"`, "profile editor has the Permissions… button")
 
 	// The shared editor gained a buffer (no-conv) mode + its pre-spawn opener.
-	present("function openPermEditor(", "the permission editor has a shared renderer")
-	present("function openSpawnPermEditor(", "the buffer (pre-spawn) editor opener exists")
+	present("function PermissionsDialog(", "the permission editor has one shared Preact renderer")
+	present("export function openSpawnPermEditor(options = {})", "the controller exposes the buffer editor opener")
+	present("openBufferedPermissions(options = {})", "the state owns a keyed buffered permission launch")
 	present("openSpawnPermEditor", "the spawn/profile dialogs invoke the buffer editor")
 
 	// The spawn body carries the birth-time access controls.
 	present("body.is_owner = true", "the spawn body sends is_owner when checked")
-	present("body.permission_overrides = spawnPermOverrides",
+	present("body.permission_overrides = { ...draft.permissionOverrides }",
 		"the spawn body sends the buffered overrides")
 
 	// The profile payload carries them too (tri-state owner + overrides).

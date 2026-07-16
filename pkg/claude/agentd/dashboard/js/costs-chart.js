@@ -142,3 +142,4 @@ export function CostsChart({ chart, enabled = true }) {
   }, [chart, enabled]);
   return html`<div id="costs-chart" ref=${host}></div>`;
 }
+// dashboard-imperative-boundary: cost-chart

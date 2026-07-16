@@ -210,6 +210,15 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	}); err != nil {
 		t.Fatalf("seed dashboard human message: %v", err)
 	}
+	if _, err := db.InsertAgentCronJob(&db.AgentCronJob{
+		Name: "dashsnap-release-ritual", OwnerConv: feMembers[0].convID,
+		TargetKind: db.CronTargetGroup, GroupID: fe.ID, TargetRole: "dev",
+		CronExpr: "0 9 * * 1-5", Subject: "Release readiness",
+		Body:    "Report final checks and blockers before the weekday release window.",
+		Enabled: true, CreatedAt: base.Add(4 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed dashboard cron job: %v", err)
+	}
 
 	// Nest infra-crew under frontend-squad so the Groups tab renders the group
 	// TREE (n-level groups-in-groups, JOH-392): infra-crew draws inside
@@ -445,7 +454,7 @@ func baseStates() []dashsnap.State {
 	const ensureForceOpen = `window.__groupsForceReady = (async function(){
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   if (det && det.open && !det.querySelector(':scope > .subtable > .group-force-block')) {
-    var b = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
+    var b = det.querySelector('.force-fold-btn');
     if (b) {
       b.click();
       await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
@@ -574,10 +583,99 @@ func baseStates() []dashsnap.State {
 			SettleMS: 600,
 		},
 		{
+			Key:     "message-access-populated",
+			Title:   "Message/access dialogs — populated compose",
+			Caption: "TCL-454: the Preact-owned scoped composer renders the live roster, role/class filter, populated draft, and sole migrated modal id in the same viewport and both skins.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openMessageCreateModal({from:'fe-lead', targetMode:'group', groupName:'frontend-squad'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  function input(id, value) { var el=document.getElementById(id); el.value=value; el.dispatchEvent(new Event('input',{bubbles:true})); }
+  input('message-create-subject','Release readiness');
+  input('message-create-role','dev');
+  input('message-create-body','Please report final checks and any blockers.');
+  var modal=document.querySelector('#message-create-modal.show');
+  if (!modal || document.querySelectorAll('#message-create-modal').length !== 1) throw new Error('message-access-populated: composer ownership failed');
+  if (!modal.querySelector('#message-create-members-count') || !modal.querySelector('#message-create-role')) throw new Error('message-access-populated: scoped controls missing');
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "message-access-error",
+			Title:   "Message/access dialogs — validation error",
+			Caption: "TCL-454 error state: validation remains inline inside the Preact composer without closing or retargeting the authoritative launch.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openMessageCreateModal({target:'fe-dev-forms'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  document.querySelector('#message-create-submit').click();
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var error=document.querySelector('#message-create-error');
+  if (!error || !error.textContent.trim()) throw new Error('message-access-error: inline validation missing');
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "message-access-busy",
+			Title:   "Message/access dialogs — busy grant",
+			Caption: "TCL-454 busy-state visual gate: the Preact sudo surface keeps its selected catalog visible while the primary action is blocked and relabelled.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openSudoGrantModal('fe-dev-forms');
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  document.querySelector('#sudo-grant-select-all').click();
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var submit=document.querySelector('#sudo-grant-submit');
+  if (!submit || !document.querySelector('#sudo-grant-slugs input:not([disabled]):checked')) throw new Error('message-access-busy: sudo selection missing');
+  submit.disabled=true;
+  submit.textContent='Granting…';
+})();`,
+			SettleMS: 250,
+		},
+		{
+			Key:     "message-access-stacked",
+			Title:   "Message/access dialogs — stacked chooser",
+			Caption: "TCL-454 layering gate: the separately keyed shared chooser stacks over the populated composer without recreating or obscuring its draft.",
+			JS: `return (async function(){
+  var dialogs = await import('/static/js/message-access-dialog-controller.js');
+  dialogs.openMessageCreateModal({from:'fe-lead', target:'fe-dev-forms'});
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var body=document.querySelector('#message-create-body');
+  body.value='Draft retained beneath the chooser.';
+  body.dispatchEvent(new Event('input',{bubbles:true}));
+  document.querySelector('#message-create-from-pick').click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (!document.querySelector('#message-create-modal.show') || !document.querySelector('#cron-pick-target-modal.show')) throw new Error('message-access-stacked: both keyed layers are not visible');
+  if (document.querySelector('#message-create-body') !== body || body.value.indexOf('Draft retained') !== 0) throw new Error('message-access-stacked: parent draft was recreated');
+})();`,
+			SettleMS: 250,
+		},
+		{
 			Key:      "bounded-jobs-normal",
 			Title:    "Bounded Preact — Jobs normal",
 			Caption:  "Jobs island completed its initial request and rendered its normal fixture state.",
 			JS:       boundedTabJS("jobs", "#cron-create-open"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "jobs-cron-create-populated",
+			Title:    "Jobs cron dialog — populated create",
+			Caption:  "TCL-456 create gate: the Jobs-owned form shows a group target, role/class filter, cron-expression explanation, enabled state, and retained message draft in plain and wizard chrome.",
+			JS:       jobsCronCreateDashSnapJS(),
+			SettleMS: 500,
+		},
+		{
+			Key:      "jobs-cron-edit-prefill",
+			Title:    "Jobs cron dialog — edit prefill",
+			Caption:  "TCL-456 edit gate: a real seeded Jobs row opens with its identity metadata, group and role/class target, schedule expression, subject, body, and enabled state prefilled.",
+			JS:       jobsCronRowDialogDashSnapJS("edit", false),
+			SettleMS: 500,
+		},
+		{
+			Key:      "jobs-cron-duplicate-picker",
+			Title:    "Jobs cron dialog — duplicate with target chooser",
+			Caption:  "TCL-456 duplicate/layering gate: the copied draft keeps its source metadata and -copy name while the Jobs-owned agent chooser stacks above it without losing the parent form.",
+			JS:       jobsCronRowDialogDashSnapJS("duplicate", true),
 			SettleMS: 500,
 		},
 		{
@@ -624,7 +722,7 @@ func baseStates() []dashsnap.State {
   document.querySelector('.filter-bar-cog .cog-btn').click();
   document.querySelector('#links-manage-open').click();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  var host = document.querySelector('#links-filter-root[data-island-owner="links"]');
+  var host = document.querySelector('#links-feature-root[data-island-owner="links"]');
   var create = host && host.querySelector('#link-new-open');
   var empty = document.querySelector('#links-list .empty');
   if (!host || !create || !empty) throw new Error('links-management: bounded Links surface did not render');
@@ -1165,19 +1263,31 @@ func baseStates() []dashsnap.State {
 			JS:      showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open');`,
 		},
 		{
+			Key:     "groups-wizard",
+			Title:   "Groups tab — wizard",
+			Caption: "The same viewport in wizard mode: native party shells, activity familiars, force quest card, group actions, hierarchy, and member-table adapter preserve the established re-skin.",
+			JS: showGroups + expandGroups + ensureForceOpen + `document.body.classList.add('dock-open', 'wizard');
+document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}}));`,
+			SettleMS: 300,
+		},
+		{
 			Key:     "task-link-editor",
 			Title:   "Task link editor",
 			Caption: "The operator's Task/Quest editor: an existing short link stays navigable, its hover/focus pencil opens the prefilled URL + optional display-name dialog, and wizard mode applies the quill/violet/parchment treatment.",
-			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');` + `
+			JS: showGroups + expandGroups + `document.body.classList.remove('dock-open');` + `return (async function(){
   var edit = document.querySelector('.task-edit-icon[data-current]');
   if (!edit) throw new Error('task-link-editor: populated task edit control missing');
   edit.click();
+  // The task-link dialog is now Preact-owned, so its markup lands on the next
+  // render rather than synchronously with the click.
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var modal = document.querySelector('#task-link-modal.show');
   var url = document.querySelector('#task-link-url');
   var label = document.querySelector('#task-link-label');
   if (!modal || !url || !label) throw new Error('task-link-editor: dialog missing');
   if (!url.value.startsWith('http')) throw new Error('task-link-editor: URL was not prefilled');
-  if (!label.value) throw new Error('task-link-editor: explicit label was not prefilled');`,
+  if (!label.value) throw new Error('task-link-editor: explicit label was not prefilled');
+})();`,
 			SettleMS: 250,
 		},
 		{
@@ -1198,8 +1308,8 @@ func baseStates() []dashsnap.State {
 		},
 		{
 			Key:     "groups-inline-editor",
-			Title:   "Groups tab — legacy inline editor boundary",
-			Caption: "TCL-357 (self-checked): the description editor remains styled in both skins while its exact Preact-managed chip stays connected and hidden behind the transient input.",
+			Title:   "Groups tab — native inline editor boundary",
+			Caption: "TCL-465 (self-checked): the native description editor replaces only its keyed trigger while the group shell stays connected and its summary parks DnD.",
 			JS: showGroups + expandGroups + `document.body.classList.add('dock-open');` + `return (async function(){
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   var chip = det && det.querySelector(':scope > summary .group-descr');
@@ -1208,7 +1318,9 @@ func baseStates() []dashsnap.State {
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var input = det.querySelector(':scope > summary .group-descr-input');
   if (!input) throw new Error('groups-inline-editor: input did not open');
-  if (!chip.isConnected || !chip.hidden) throw new Error('groups-inline-editor: managed chip was detached instead of hidden');
+  if (chip.isConnected) throw new Error('groups-inline-editor: native trigger remained as a second writer');
+  if (!det.isConnected) throw new Error('groups-inline-editor: stable group shell was detached');
+  if (det.querySelector(':scope > summary').draggable) throw new Error('groups-inline-editor: group DnD was not parked');
 })();`,
 		},
 		{
@@ -1247,13 +1359,13 @@ func baseStates() []dashsnap.State {
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   if (!det) throw new Error('force-folded: frontend-squad not found');
   if (!det.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: expected an open force card before folding');
-  var btn = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
+  var btn = det.querySelector('.force-fold-btn');
   if (!btn) throw new Error('force-folded: no 🎯 toggle button in the action row');
   btn.click();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var det2 = document.querySelector('details[data-group-key="frontend-squad"]');
   if (det2.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: card still present after folding');
-  var btn2 = det2.querySelector('.force-fold-btn.folded[data-act="toggle-force-fold"]');
+  var btn2 = det2.querySelector('.force-fold-btn.folded');
   if (!btn2) throw new Error('force-folded: toggle did not enter its .folded state');
 })();`,
 		},
@@ -1311,14 +1423,24 @@ func baseStates() []dashsnap.State {
 				{Kind: "key", Key: "Enter"},
 				{Kind: "eval", JS: `return (async function(){
   var deadline = Date.now() + 3000;
-  while (!document.querySelector('.group-default-profile-select') && Date.now() < deadline) {
+  var select = document.querySelector('.group-default-profile-select');
+  while ((!select || document.activeElement !== select) && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 60); });
+    select = document.querySelector('.group-default-profile-select');
   }
-  if (!document.querySelector('.group-default-profile-select')) throw new Error('chip-keyboard: Enter did not open the profile picker');
+  if (!select) throw new Error('chip-keyboard: Enter did not open the profile picker');
+  if (document.activeElement !== select) throw new Error('chip-keyboard: profile picker did not take focus');
 })();`},
 				{Kind: "key", Key: "Escape"},
-				{Kind: "eval", JS: `var ae = document.activeElement;
-  if (!ae || !ae.classList.contains('group-default-model')) throw new Error('chip-keyboard: Escape did not hand focus back to the chip');`},
+				{Kind: "eval", JS: `return (async function(){
+  var deadline = Date.now() + 3000;
+  var ae = document.activeElement;
+  while ((!ae || ae.dataset.editorKey !== 'group:frontend-squad:default_profile') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+    ae = document.activeElement;
+  }
+  if (!ae || !ae.classList.contains('group-default-model')) throw new Error('chip-keyboard: Escape did not hand focus back to the chip');
+})();`},
 			},
 			SettleMS: 400,
 		},
@@ -1425,6 +1547,20 @@ func baseStates() []dashsnap.State {
 			SettleMS: 350,
 		},
 		{
+			Key:      "group-create-blank",
+			Title:    "Group create — blank",
+			Caption:  "TCL-455: the Preact-owned empty-group form keeps native controls, populated editable fields, validation surface and scoped plain/wizard chrome at one viewport.",
+			JS:       groupCreateDashSnapJS(false),
+			SettleMS: 300,
+		},
+		{
+			Key:      "group-create-template",
+			Title:    "Group create — template + mirror",
+			Caption:  "TCL-455: a seeded circle shows its roster, task, mirrored group defaults and subgroup choice under the same Preact owner in both visual themes.",
+			JS:       groupCreateDashSnapJS(true),
+			SettleMS: 300,
+		},
+		{
 			Key:      "template-manager",
 			Title:    "Template manager",
 			Caption:  "The Preact template manager with native filter controls, roster summaries and live deployed-force readback.",
@@ -1461,6 +1597,47 @@ func baseStates() []dashsnap.State {
 		},
 	}
 	return append(states, processGraphStates()...)
+}
+
+func groupCreateDashSnapJS(withTemplate bool) string {
+	preset := ""
+	if withTemplate {
+		preset = tfTemplate
+	}
+	return fmt.Sprintf(`return (async function(){
+  document.querySelector('nav [data-tab="groups"]').click();
+  var controller = await import('/static/js/group-create-controller.js');
+  controller.openGroupCreateModal(%q);
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var modal = document.querySelector('#group-create-modal.show');
+  if (!modal || document.querySelectorAll('#group-create-modal').length !== 1) throw new Error('group-create ownership failed');
+  var name = modal.querySelector('#group-create-name');
+  name.value = %q;
+  name.dispatchEvent(new Event('input', {bubbles:true}));
+  var cwd = modal.querySelector('#group-create-cwd');
+  if (%t) {
+    var source = modal.querySelector('#group-create-source');
+    source.value = %q;
+    source.dispatchEvent(new Event('change', {bubbles:true}));
+    var nested = modal.querySelector('#group-create-parent');
+    nested.checked = true;
+    nested.dispatchEvent(new Event('change', {bubbles:true}));
+    var task = modal.querySelector('#group-create-task');
+    task.value = 'Ship the dashboard migration and report verification.';
+    task.dispatchEvent(new Event('input', {bubbles:true}));
+    if (!modal.querySelector('#group-create-template-preview .tp-row')) throw new Error('group-create roster preview missing');
+    if (modal.querySelector('#group-create-task-row').hidden) throw new Error('group-create template fields hidden');
+  } else {
+    cwd.value = '/workspace/tclaude';
+    cwd.dispatchEvent(new Event('input', {bubbles:true}));
+    var cap = modal.querySelector('#group-create-max-members');
+    cap.value = '6';
+    cap.dispatchEvent(new Event('input', {bubbles:true}));
+    if (modal.querySelector('#group-create-max-members-row').hidden) throw new Error('group-create blank cap hidden');
+  }
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  if (document.activeElement !== name) name.focus();
+})();`, preset, map[bool]string{false: "new-dashboard-group", true: "dashboard-party"}[withTemplate], withTemplate, otherGroup)
 }
 
 func directoryPickerDashSnapJS() string {
@@ -2014,6 +2191,100 @@ func actionDialogJS(call, readySelector, extraJS string) string {
 })();`, call, readySelector, readySelector, readySelector, extraJS, readySelector, readySelector)
 }
 
+func jobsCronCreateDashSnapJS() string {
+	return `return (async function(){
+  document.querySelector('nav [data-tab="jobs"]').click();
+  var deadline = Date.now() + 4000;
+  while (!document.querySelector('#cron-create-open') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  var open = document.querySelector('#cron-create-open');
+  if (!open) throw new Error('jobs-cron-create: Jobs launcher did not render');
+  open.click();
+  while (!document.querySelector('#cron-create-modal.show') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  function input(id, value) {
+    var el = document.getElementById(id);
+    if (!el) throw new Error('jobs-cron-create: missing #' + id);
+    el.value = value;
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+  }
+  input('cron-create-name', 'release-readiness');
+  document.querySelector('input[name="cron-create-target-mode"][value="group"]').click();
+  await Promise.resolve();
+  var group = document.querySelector('#cron-create-group');
+  group.value = 'frontend-squad';
+  group.dispatchEvent(new Event('change', {bubbles:true}));
+  await Promise.resolve();
+  input('cron-create-role', 'dev');
+  document.querySelector('input[name="cron-create-schedule-mode"][value="cron"]').click();
+  await Promise.resolve();
+  input('cron-create-cron', '*/15 * * * *');
+  input('cron-create-subject', 'Release readiness');
+  input('cron-create-body', 'Report final checks and blockers before the release window.');
+  while (Date.now() < deadline) {
+    var explanation = document.querySelector('#cron-create-cron-explain');
+    if (explanation && explanation.textContent.trim() && !explanation.textContent.includes('Explaining')) break;
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var modal = document.querySelector('#cron-create-modal.show');
+  var expectedTitle = document.body.classList.contains('wizard') ? 'Bind a recurring ritual' : 'Schedule a cron job';
+  if (!modal || document.querySelectorAll('#cron-create-modal').length !== 1) throw new Error('jobs-cron-create: dialog ownership failed');
+  if (document.querySelector('#cron-create-title').textContent.trim() !== expectedTitle) throw new Error('jobs-cron-create: theme title mismatch');
+  if (group.value !== 'frontend-squad' || document.querySelector('#cron-create-role').value !== 'dev') throw new Error('jobs-cron-create: group target draft missing');
+  if (!document.querySelector('#cron-create-cron-explain').textContent.trim()) throw new Error('jobs-cron-create: schedule explanation missing');
+  if (!document.querySelector('#cron-create-enabled').checked) throw new Error('jobs-cron-create: enabled default missing');
+})();`
+}
+
+func jobsCronRowDialogDashSnapJS(action string, stacked bool) string {
+	return fmt.Sprintf(`return (async function(){
+  document.querySelector('nav [data-tab="jobs"]').click();
+  var deadline = Date.now() + 4000;
+  var row;
+  while (!(row = document.querySelector('#jobs-list tr[data-key^="cron-"]')) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  if (!row) throw new Error('jobs-cron-%s: seeded cron row did not render');
+  var action = %q;
+  var button = Array.from(row.querySelectorAll('.row-actions button')).find(function(node){
+    return node.textContent.trim() === action;
+  });
+  if (!button) throw new Error('jobs-cron-%s: row action missing');
+  button.click();
+  while (!document.querySelector('#cron-create-modal.show') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 25); });
+  }
+  var name = document.querySelector('#cron-create-name');
+  var expectedName = action === 'duplicate' ? 'dashsnap-release-ritual-copy' : 'dashsnap-release-ritual';
+  if (!name || name.value !== expectedName) throw new Error('jobs-cron-%s: name prefill mismatch');
+  if (document.querySelector('#cron-create-group').value !== 'frontend-squad') throw new Error('jobs-cron-%s: group prefill missing');
+  if (document.querySelector('#cron-create-role').value !== 'dev') throw new Error('jobs-cron-%s: role prefill missing');
+  if (document.querySelector('#cron-create-cron').value !== '0 9 * * 1-5') throw new Error('jobs-cron-%s: cron expression prefill missing');
+  if (document.querySelector('#cron-create-body').value.indexOf('Report final checks') !== 0) throw new Error('jobs-cron-%s: body prefill missing');
+  if (%t) {
+    document.querySelector('input[name="cron-create-target-mode"][value="solo"]').click();
+    await Promise.resolve();
+    document.querySelector('#cron-create-target-pick').click();
+    while (!document.querySelector('#cron-pick-target-modal.show') && Date.now() < deadline) {
+      await new Promise(function(resolve){ setTimeout(resolve, 25); });
+    }
+    if (!document.querySelector('#cron-pick-target-modal.show')) throw new Error('jobs-cron-%s: target chooser missing');
+    if (document.querySelector('#cron-create-name') !== name || name.value !== expectedName) throw new Error('jobs-cron-%s: stacked chooser recreated the parent draft');
+    if (!document.querySelector('#cron-pick-target-list .add-member-row')) throw new Error('jobs-cron-%s: target chooser candidates missing');
+  } else {
+    while (Date.now() < deadline) {
+      var explanation = document.querySelector('#cron-create-cron-explain');
+      if (explanation && explanation.textContent.trim() && !explanation.textContent.includes('Explaining')) break;
+      await new Promise(function(resolve){ setTimeout(resolve, 40); });
+    }
+    if (!document.querySelector('#cron-create-cron-explain').textContent.trim()) throw new Error('jobs-cron-%s: stored expression explanation missing');
+  }
+})();`, action, action, action, action, action, action, action, action, stacked,
+		action, action, action, action)
+}
+
 func boundedTabJS(tab, readySelector string) string {
 	return fmt.Sprintf(`return Promise.all([
   import('/static/js/snapshot-store.js'),
@@ -2327,11 +2598,16 @@ return new Promise(function(resolve, reject){
     var clone = card.querySelector('.dock-card-menu-item[data-dock-act="clone-item"]');
     if (!clone) { reject(new Error('card-clone FAIL: no Clone menu item')); return; }
     clone.click();
-    var modal = document.querySelector('#clone-modal.show');
-    if (!modal) { reject(new Error('card-clone FAIL: clone dialog did not open')); return; }
-    var name = document.querySelector('#clone-modal-name');
-    if (!name || !name.value) { reject(new Error('card-clone FAIL: name not pre-filled')); return; }
-    resolve();
+    // The action-dialog host reconciles the published signal on Preact's next
+    // turn. Wait for that paint instead of asserting in the click stack (the
+    // retired imperative modal used to mutate the DOM synchronously here).
+    requestAnimationFrame(function(){
+      var modal = document.querySelector('#clone-modal.show');
+      if (!modal) { reject(new Error('card-clone FAIL: clone dialog did not open')); return; }
+      var name = document.querySelector('#clone-modal-name');
+      if (!name || !name.value) { reject(new Error('card-clone FAIL: name not pre-filled')); return; }
+      resolve();
+    });
   }, 200);
 });
 `

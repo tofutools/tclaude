@@ -1262,3 +1262,4 @@ function bindConfigActivation() {
 }
 
 export { assembleConfig, bindConfigActivation, configLineDiff, handleConfigEvent, loadConfigTab, populateConfigForm, saveConfig };
+// dashboard-imperative-boundary: config-adapter

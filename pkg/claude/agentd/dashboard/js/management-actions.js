@@ -379,10 +379,10 @@ export function createManagementActions({
   function updateTemplates(value, groups) {
     state.updateTemplates(value, groups);
   }
-  function openTemplateManager() {
+  function openTemplateManager(options = {}) {
     const snapshot = getSnapshot() || {};
     state.updateTemplates(snapshot.templates || [], snapshot.groups || []);
-    state.openTemplateManager();
+    state.openTemplateManager(options);
   }
   function openTemplateDeploy(name, dropGroup = '') {
     const snapshot = getSnapshot() || {};
@@ -962,3 +962,4 @@ export function createManagementActions({
     createDirectories,
   });
 }
+// dashboard-imperative-boundary: browser-io

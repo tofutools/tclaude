@@ -46,27 +46,38 @@ function exportSpinnerHTML() {
 // job with no failedAt (nothing remembered) marks the first step — the
 // earliest the job can have died.
 function renderExportChecklist(status, failedAt) {
+  return `<div class="export-checklist">` + exportChecklistSteps(status, failedAt).map((step) => {
+    const icon = step.state === 'active' ? exportSpinnerHTML()
+      : `<span class="export-step-icon" aria-hidden="true">${step.icon}</span>`;
+    return `<div class="export-step ${step.state}">${icon}<span class="export-step-label">${esc(step.label)}</span></div>`;
+  }).join('') + `</div>`;
+}
+
+// The Preact export dialog consumes the same ordinal model directly so it can
+// own real nodes without innerHTML. Legacy/Jobs callers keep the HTML renderer
+// above; both presentations therefore share one status interpretation.
+function exportChecklistSteps(status, failedAt) {
   const failed = status === 'failed';
   const active = failed
     ? Math.max(activeExportStepIndex(failedAt), 0)
     : activeExportStepIndex(status);
-  return `<div class="export-checklist">` + EXPORT_STEPS.map((s, i) => {
-    let cls = 'pending';
-    let icon = '<span class="export-step-icon" aria-hidden="true">·</span>';
+  return EXPORT_STEPS.map((step, i) => {
+    let state = 'pending';
+    let icon = '·';
     if (i < active) {
-      cls = 'done';
-      icon = '<span class="export-step-icon" aria-hidden="true">✓</span>';
+      state = 'done';
+      icon = '✓';
     } else if (i === active) {
       if (failed) {
-        cls = 'failed';
-        icon = '<span class="export-step-icon" aria-hidden="true">✗</span>';
+        state = 'failed';
+        icon = '✗';
       } else {
-        cls = 'active';
-        icon = exportSpinnerHTML();
+        state = 'active';
+        icon = '';
       }
     }
-    return `<div class="export-step ${cls}">${icon}<span class="export-step-label">${esc(s.label)}</span></div>`;
-  }).join('') + `</div>`;
+    return { ...step, state, icon };
+  });
 }
 
 // triggerExportDownload starts a browser download of a ready job's artifact.
@@ -91,5 +102,6 @@ function fmtBytes(n) {
 
 export {
   EXPORT_STEPS, activeExportStepIndex,
-  renderExportChecklist, triggerExportDownload, fmtBytes,
+  exportChecklistSteps, renderExportChecklist, triggerExportDownload, fmtBytes,
 };
+// dashboard-imperative-boundary: browser-io

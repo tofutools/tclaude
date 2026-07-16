@@ -206,9 +206,25 @@ function rowBurst(el) {
 
 const PULL_SPIN_MS = 900;
 const PULL_HOLD_MS = 1800;
-// Track pull-in-progress per machine so a rapid double-click doesn't
-// kick off two overlapping animations on the same cell.
-const pullingNodes = new WeakSet();
+// Track the exact pull generation per machine so a rapid double-click cannot
+// overlap it and, critically, delayed settle/restore callbacks cannot overwrite
+// a newer SlopMachine status/conv hand-back on the same keyed outer host.
+const pullingNodes = new WeakMap();
+
+function pullStillOwns(machine, token, phase, conv) {
+  return machine.isConnected
+    && pullingNodes.get(machine) === token
+    && machine.getAttribute('data-status') === phase
+    && (machine.getAttribute('data-conv') || '') === conv;
+}
+
+function releasePull(machine, token) {
+  // Only the current generation may clean up its imperative win class. A
+  // delayed callback from an older generation must not strip a newer jackpot.
+  if (pullingNodes.get(machine) !== token) return;
+  machine.classList.remove('slop-pull-win');
+  pullingNodes.delete(machine);
+}
 
 function pullReelHTML() {
   // One reel's strip — the full SLOP_SYMBOLS set plus the first symbol
@@ -245,7 +261,8 @@ function randomLosingCombo() {
 // one (a per-machine banner each would be a flood).
 function manualPull(machine, opts) {
   if (pullingNodes.has(machine)) return;
-  pullingNodes.add(machine);
+  const token = {};
+  pullingNodes.set(machine, token);
   opts = opts || {};
   const showBanner = opts.banner !== false;
   // Stash the original state so we can restore the live cell after
@@ -260,13 +277,16 @@ function manualPull(machine, opts) {
   const conv = machine.getAttribute('data-conv') || '';
   // These two sentinel data-status values ('pull-spinning' then
   // 'pull-stopped' below) mark the cell for the pull's full ~2.7s lifetime.
-  // html-vnodes.js treats the reel body as an opaque imperative boundary, so
-  // keyed Groups publishes retain the live spin.
+  // SlopMachine exposes this reel body as an explicit opaque host, so keyed
+  // Groups publishes retain the live spin without reconciling its children.
   machine.setAttribute('data-status', 'pull-spinning');
   machine.innerHTML = pullReelHTML() + pullReelHTML() + pullReelHTML();
   emitSlopFx('spin', conv);
   setTimeout(() => {
-    if (!machine.isConnected) { pullingNodes.delete(machine); return; }
+    if (!pullStillOwns(machine, token, 'pull-spinning', conv)) {
+      releasePull(machine, token);
+      return;
+    }
     machine.setAttribute('data-status', 'pull-stopped');
     machine.innerHTML = combo.map(g => `<span class="slop-reel slop-static">${g}</span>`).join('');
     const isJackpot = combo.every(g => g === '7️⃣');
@@ -284,12 +304,11 @@ function manualPull(machine, opts) {
       emitSlopFx('stop', conv);
     }
     setTimeout(() => {
-      if (machine.isConnected) {
-        machine.classList.remove('slop-pull-win');
+      if (pullStillOwns(machine, token, 'pull-stopped', conv)) {
         machine.setAttribute('data-status', originalStatus);
         machine.innerHTML = originalHTML;
       }
-      pullingNodes.delete(machine);
+      releasePull(machine, token);
     }, PULL_HOLD_MS);
   }, PULL_SPIN_MS);
 }
@@ -540,3 +559,4 @@ export function bindSlopMarquee() {
     updateMarqueeText(text);
   });
 }
+// dashboard-imperative-boundary: media-effects

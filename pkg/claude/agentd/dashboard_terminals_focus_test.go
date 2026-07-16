@@ -15,10 +15,11 @@ import (
 // callers' short-circuit.
 func TestFocusJumpsToOpenPane(t *testing.T) {
 	// The core can find a pane by agent and (re)activate it.
-	core := readDashboardJS(t, "terminals-core.js")
-	for _, needle := range []string{"function findPaneKey(", "activatePane: activate"} {
-		if !strings.Contains(core, needle) {
-			t.Errorf("terminals-core.js missing %q — focus-to-open-pane plumbing broken", needle)
+	state := readDashboardJS(t, "terminal-shell-state.js")
+	actions := readDashboardJS(t, "terminal-shell-actions.js")
+	for _, needle := range []string{"function findPaneKey(", "function focusForSelectors("} {
+		if !strings.Contains(state+actions, needle) {
+			t.Errorf("terminal shell missing %q — focus-to-open-pane plumbing broken", needle)
 		}
 	}
 	// The tab exposes the focus entry point.
@@ -29,11 +30,11 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 	// The per-agent 'jump' row action must consult the open pane BEFORE the
 	// native /api/jump — otherwise it would raise an OS window even when the
 	// live view is the in-browser terminal.
-	rows := readDashboardJS(t, "row-actions.js")
+	rows := readDashboardJS(t, "row-action-handler.js")
 	focusIdx := strings.Index(rows, "focusTerminalForConv([agent])")
 	jumpIdx := strings.Index(rows, "/api/jump/")
 	if focusIdx < 0 || jumpIdx < 0 || focusIdx > jumpIdx {
-		t.Error("row-actions.js 'jump' case must call focusTerminalForConv([agent]) BEFORE POSTing " +
+		t.Error("row-action-handler.js 'jump' case must call focusTerminalForConv([agent]) BEFORE POSTing " +
 			"/api/jump — so an open web pane is preferred over a native window")
 	}
 
@@ -52,12 +53,12 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 // branch must precede the payload + fetch and open every checked candidate via
 // the same helper as the dedicated "web window" action.
 func TestBulkFocusUsesWebPanesByDefault(t *testing.T) {
-	refresh := readDashboardJS(t, "refresh.js")
-	branch := strings.Index(refresh, "if (dir === 'focus' && webTerminalDefault()) {")
-	open := strings.Index(refresh, "openWebWindowPane(c.agent_id || c.conv_id")
-	fetch := strings.Index(refresh, "fetch('/api/agent-windows'")
+	actions := readDashboardJS(t, "transaction-dialog-actions.js")
+	branch := strings.Index(actions, "if (request.direction === 'focus' && request.webTerminal) {")
+	open := strings.Index(actions, "openWebWindowPane(target.selector, target.label)")
+	fetch := strings.Index(actions, "fetchImpl('/api/agent-windows'")
 	if branch < 0 || open < branch || fetch < open {
-		t.Fatal("refresh.js bulk focus must open each selected web pane before the native-only " +
+		t.Fatal("transaction actions must open each selected web pane before the native-only " +
 			"/api/agent-windows path when web terminals are the default")
 	}
 }

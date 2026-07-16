@@ -1,130 +1,105 @@
 package agentd
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
 
 // The command palette's per-group "Retire idle/offline agents in
-// <group>" command opens a PREVIEW modal (openRetirePreview, refresh.js)
-// rather than firing a status-filtered bulk retire the server re-resolves
-// from live state. The modal lists precisely the matching members, lets
-// the human opt agents out, and POSTs the EXPLICIT ticked conv-id list to
+// <group>" command opens a keyed transaction PREVIEW rather than firing a
+// status-filtered bulk retire the server re-resolves from live state. The
+// Preact owner lists precisely the matching members, lets the human opt agents
+// out, and POSTs the EXPLICIT ticked canonical conv-id list to
 // /api/groups/{name}/retire {convs:[…]} — so the BE retires exactly what
 // the human previewed.
 //
-// The repo has no JS test runner, so — following the established
-// dashboard_*_test.go structural guards — this pins the shape of that
-// wiring across the embedded HTML + JS so a refactor can't silently drop
-// the preview, the opt-out, or (crucially) the explicit-list POST that
-// makes "what was previewed" == "what is retired". The explicit-convs
-// backend path has its own flow tests (groups_retire_flow_test.go:
-// TestDashboardGroupRetire_ExplicitConvsSelection / *OverrideStatusQuery).
-func TestDashboardHTML_RetirePreviewWired(t *testing.T) {
-	must := func(needle, why string) {
+// Node component tests pin behavior; this structural guard pins exclusive
+// ownership and the launcher/action wiring across embedded HTML + JS. The
+// explicit-convs backend path has its own flow tests in groups_retire_flow_test.go.
+func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
+	read := func(path string) string {
 		t.Helper()
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		data, err := fs.ReadFile(dashboardAssetsFS, path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		return string(data)
+	}
+	html := read("dashboard.html")
+	island := read("js/transaction-dialog-island.js")
+	actions := read("js/transaction-dialog-actions.js")
+	controller := read("js/transaction-dialog-controller.js")
+	operations := read("js/dashboard-operations.js")
+	palette := read("js/palette.js")
+
+	if strings.Contains(html, `id="retire-preview-modal"`) {
+		t.Error("static dashboard HTML still owns #retire-preview-modal")
+	}
+	for _, required := range []string{
+		`kind === 'retire-group-preview'`, `id="retire-preview-modal"`,
+		`id="retire-preview-search"`, `id="retire-preview-select-all"`,
+		`id="retire-preview-select-none"`, `id="retire-preview-shutdown"`,
+		`id="retire-preview-wt"`, `id="retire-preview-list"`,
+		`submitID="retire-preview-submit"`,
+		`<${Words} plain=${regularTitle} wizard=${wizardTitle} />`,
+		`convs: Object.freeze(selectedCandidates.map((candidate) => candidate.conv_id))`,
+	} {
+		if !strings.Contains(island, required) {
+			t.Errorf("transaction island is missing group-retire contract %q", required)
 		}
 	}
-
-	// 1. Markup: the overlay rides on .modal-overlay (shared backdrop), with the
-	//    list, the per-row opt-out toolbar
-	//    (select-all/none + filter), the shutdown toggle, and the submit
-	//    button the JS drives.
-	must(`id="retire-preview-modal"`, "the retire-preview overlay exists")
-	must(`class="modal-overlay" id="retire-preview-modal"`,
-		"the preview uses the shared modal backdrop")
-	must(`id="retire-preview-list"`, "the preview has a candidate list")
-	must(`id="retire-preview-search"`, "the preview has a title/id filter")
-	must(`id="retire-preview-select-all"`, "the preview can select all candidates")
-	must(`id="retire-preview-select-none"`, "the preview can clear the selection")
-	must(`id="retire-preview-shutdown"`, "the preview has a shut-down-sessions toggle")
-	must(`id="retire-preview-wt"`, "the preview has a delete-worktrees toggle")
-	must(`id="retire-preview-wt-row"`, "the worktree toggle's row exists (coupling target)")
-	must(`id="retire-preview-submit"`, "the preview has a submit button")
-	must(`id="retire-preview-cancel"`, "the preview has a cancel button")
-
-	// 2. The driver is defined and exported, and the palette reaches it.
-	must("function openRetirePreview(", "refresh.js defines the preview driver")
-	must("openRetirePreview,", "refresh.js exports the preview driver")
-	must("openRetirePreview(g.name, status)", "the palette opens the preview for the chosen cohort")
-
-	// 3. The candidate list is built from the SAME snapshot-derived cohort
-	//    the palette count uses (groupMembersByStatus), so the preview lists
-	//    exactly the rows the human sees, all ticked by default.
-	must("groupMembersByStatus(group, status).map(m => ({ ...m, checked: true }))",
-		"the preview seeds its candidates from the matching cohort, all ticked")
-	must("function groupMembersByStatus(",
-		"groupMembersByStatus is the shared cohort builder")
-
-	// 4. THE load-bearing property: submit posts the EXPLICIT ticked
-	//    conv-id list (not a ?status= filter the server re-resolves), so
-	//    the BE retires exactly what the human reviewed.
-	disp := dashboardAssets
-	start := strings.Index(disp, "function openRetirePreview(")
-	if start < 0 {
-		t.Fatal("refresh.js: function openRetirePreview( not found")
-	}
-	// Bound at the function's own column-0 closing brace.
-	fnBody, _, found := strings.Cut(disp[start:], "\n}\n")
-	if !found {
-		t.Fatal("refresh.js: could not bound openRetirePreview")
-	}
-	for _, needle := range []string{
-		"candidates.filter(c => c.checked).map(c => c.agent_id || c.conv_id)",                      // the ticked list (agent_id, conv_id fallback)
-		"JSON.stringify({ convs, shutdown: shutdownCb.checked, delete_worktree: deleteWorktree })", // posted verbatim in the body
-		"/api/groups/${encodeURIComponent(group)}/retire",                                          // to the group retire route
+	for _, required := range []string{
+		"openGroupRetirePreviewDialog(group, status, candidates)",
+		"dedupeRetireCandidates(candidates)",
 	} {
-		if !strings.Contains(fnBody, needle) {
-			t.Errorf("openRetirePreview: missing %q — the explicit-list POST is the whole point", needle)
+		if !strings.Contains(controller, required) {
+			t.Errorf("transaction controller is missing group-retire launch contract %q", required)
 		}
 	}
-	// And it must NOT fall back to the server-re-resolved status filter on
-	// this path (no ?status= in the submit URL).
-	if strings.Contains(fnBody, "?status=") {
-		t.Error("openRetirePreview: must POST the explicit conv list, not a ?status= filter the server re-resolves")
-	}
-
-	// 5. Busy feedback: clicking submit must show an in-flight state (the
-	//    spinner + aria-busy) so a click that takes a beat isn't mistaken
-	//    for a no-op, and renderFooter must tear that busy state back down
-	//    on the error paths.
-	for _, needle := range []string{
-		`submitBtn.setAttribute('aria-busy', 'true')`, // busy flag on click
-		`class="btn-spinner"`,                         // in-button spinner
-		`submitBtn.removeAttribute('aria-busy')`,      // cleared when ready again
+	for _, required := range []string{
+		"async retireGroupPreview({ group, convs, shutdown, deleteWorktree })",
+		"`/api/groups/${encodeURIComponent(group)}/retire`",
+		"JSON.stringify({ convs, shutdown: !!shutdown, delete_worktree: !!deleteWorktree })",
 	} {
-		if !strings.Contains(fnBody, needle) {
-			t.Errorf("openRetirePreview: missing %q — submit must give in-flight feedback", needle)
+		if !strings.Contains(actions, required) {
+			t.Errorf("transaction actions are missing group-retire wire contract %q", required)
 		}
 	}
-	must(".btn-spinner {", "the in-button spinner has a CSS rule")
-
-	// 6. The submit button must read as DESTRUCTIVE — red, like the single
-	//    -agent retire/delete confirms — so a batch retire signals it is
-	//    really shutting agents down rather than looking like a benign
-	//    primary action. Inside .cleanup-modal that's the `primary danger`
-	//    red variant (confirm-danger's neutral cleanup-modal base would lose
-	//    to the generic button rule at equal specificity); the red rule must
-	//    exist for it to bind to.
-	must(`id="retire-preview-submit" class="primary danger"`,
-		"the batch-retire submit button carries the cleanup-modal danger (red) styling")
-	must(".cleanup-modal .modal-buttons button.primary.danger {",
-		"the cleanup-modal danger (red) button rule exists for the submit to bind to")
-
-	// 7. The worktree toggle: default ON, coupled to shutdown (removal can
-	//    only run after a pane exits), and the choice feeds the POST through
-	//    `deleteWorktree`, which is guarded so a box disabled by an unticked
-	//    shutdown never sends delete_worktree.
-	for _, needle := range []string{
-		"wtCb.checked = true; // worktree delete defaults ON",    // default ON on open
-		"const syncWtCoupling = () => {",                         // shutdown→worktree coupling
-		"const deleteWorktree = wtCb.checked && !wtCb.disabled;", // disabled box never opts in
-		"shutdownCb.addEventListener('change', syncWtCoupling)",  // coupling is wired live
+	for _, required := range []string{
+		"function groupMembersByStatus(",
+		"for (const m of (g.members || [])) {",
+		"if (!m.conv_id || seen.has(m.conv_id)) continue; // dedupe owner + member rows",
+		"const matches = status === 'offline'",
+		": (m.online && m.state && m.state.status === status);",
+		"const candidates = groupMembersByStatus(group, status);",
+		"openGroupRetirePreviewDialog(group, status, candidates)",
+		"from './transaction-dialog-controller.js';",
 	} {
-		if !strings.Contains(fnBody, needle) {
-			t.Errorf("openRetirePreview: missing %q — the worktree opt-in must be coupled to shutdown", needle)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher is missing group-retire cutover %q", required)
+		}
+	}
+	if strings.Contains(operations, "$('#retire-preview-modal')") {
+		t.Error("dashboard-operations.js retains the superseded imperative retire-preview owner")
+	}
+	if !strings.Contains(palette, "openRetirePreview(g.name, status)") {
+		t.Error("the per-group palette command lost its preview launcher")
+	}
+	for _, adjacent := range []string{
+		`id="worktree-cleanup-root"`,
+	} {
+		if !strings.Contains(html, adjacent) {
+			t.Errorf("adjacent static workflow changed during retire cutover: %q", adjacent)
+		}
+	}
+	for _, adjacent := range []string{
+		"function openDeleteGroupModal(group)",
+		"export async function openCleanupModal(options = {})",
+		"function openWorktreeCleanup(group = '')",
+	} {
+		if !strings.Contains(operations, adjacent) {
+			t.Errorf("adjacent imperative owner changed during retire cutover: %q", adjacent)
 		}
 	}
 }

@@ -98,18 +98,21 @@ func TestDashboardFooterVersionWired(t *testing.T) {
 }
 
 // TestDashboardAssets_SlopMachineWired guards the slop-mode slot
-// machine: a JS helper (slopMachine) emits a .slop-machine widget with
+// machine: the native SlopMachine component emits a .slop-machine widget with
 // three .slop-reel children, and CSS swaps the regular .state-pill out
 // in body.slop. The three pieces have to stay in lockstep — a rename
 // in one file silently breaks the feature in the browser. Asserting
 // on the embedded concatenation catches it at `go test ./...`.
 func TestDashboardAssets_SlopMachineWired(t *testing.T) {
-	// JS: helper is defined, exported, and wired into the row render.
+	// JS: the component is defined and wired into the native row render. Its
+	// opaque host explicitly hands ownership back on a status edge.
 	for _, needle := range []string{
-		"function slopMachine(",
-		"slopMachine,",                            // exported from helpers.js
-		"slopMachine(state, m.online, m.conv_id)", // called from render.js
-		"const SLOP_SYMBOLS",                      // reel glyph set
+		"function SlopMachine(",
+		"<${SlopMachine} state=${state} online=${member.online} conv=${member.conv_id} />",
+		`data-opaque-host="slop-reels"`,
+		"host.replaceChildren(root);",
+		"render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, root);",
+		"SLOP_SYMBOLS,", // shared reel glyph set
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — slot machine wiring broken", needle)
@@ -135,7 +138,7 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 // slop-mode bug where reused .state-pill cells went blank — the Audit
 // tab's Outcome column showed nothing in slop mode. The slot machine
 // only replaces the pill in the agent-row status cell (.state-cell,
-// render.js), so the pill-hide rule MUST be scoped there. An unscoped
+// groups-member-table.js), so the pill-hide rule MUST be scoped there. An unscoped
 // `body.slop .state-pill { display: none; }` hides every .state-pill on
 // the page — Audit Outcome, Plugins status/step pills — none of which
 // have a slot machine to take their place. Pin the scoped form and
@@ -161,16 +164,18 @@ func TestDashboardCSS_SlopPillHideScopedToStateCell(t *testing.T) {
 // TestDashboardJS_SlopPullUsesPreactOwnershipBoundary guards the slop-mode bug
 // where a snapshot publish cancelled a slot machine the user had just pulled.
 // manualPull still tags its ~2.7s phases, but the Groups Preact bridge now treats
-// the reel body as opaque and retains the keyed wrapper instead of suspending the
-// dashboard's global poll.
+// the reel body as an opaque nested root and retains the keyed wrapper instead
+// of suspending the dashboard's global poll.
 func TestDashboardJS_SlopPullUsesPreactOwnershipBoundary(t *testing.T) {
 	for _, needle := range []string{
 		// slop-fx.js: manualPull tags the cell with each sentinel.
 		`machine.setAttribute('data-status', 'pull-spinning')`,
 		`machine.setAttribute('data-status', 'pull-stopped')`,
-		// html-vnodes.js: Preact does not reconcile the imperative reel children.
-		`if (node.classList.contains('slop-machine'))`,
-		`props.dangerouslySetInnerHTML = { __html: node.innerHTML };`,
+		// groups-member-table.js: same-status publishes preserve the nested root;
+		// the status-edge layout effect explicitly remounts its reel tree.
+		`function SlopMachine({ state, online, conv })`,
+		`}, [status, conv]);`,
+		`host.replaceChildren();`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — slop-pull ownership boundary regressed", needle)
@@ -192,9 +197,10 @@ func TestDashboardJS_PendingSpawnsRenderInTargetGroups(t *testing.T) {
 		"return { ...group, pending: rows };",
 		"if (distributed.fallback.length) list.unshift(virtualPendingGroup(distributed.fallback));",
 		"list.unshift(virtualPendingGroup(distributed.fallback));",
-		"function renderGroupPendingBlock(g)",
-		"groupPendingChip(g)",
-		"return openPref === '1' || ((g.pending || []).length > 0 && openPref !== '0');",
+		"function PendingTable({ rows })",
+		"group.pending?.length ? html`<span class=\"group-pending-chip\"",
+		"group.pending?.length ? html`<div class=\"group-pending-block\"",
+		"open=${realGroupOpen(group, dashPrefs)}",
 		".group-pending-block",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -275,18 +281,13 @@ func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
 	}
 }
 
-// TestDashboardJS_SelectTooltipWired guards the readability half of the
-// spawn-field fix: because the width-limited <select> clips long labels,
-// the worktree options carry a full-path title and a helper mirrors the
-// selected option's label/title into the <select> so it's legible on
-// hover. The three pieces — helper, worktree option title, and the
-// modal-level binding — must stay wired together.
+// TestDashboardJS_SelectTooltipWired guards full-path tooltip ownership on
+// the maintained Preact worktree controls. Spawn gives each shortened option
+// its full path, while clone also derives the closed select's controlled title.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"function syncSelectTitle(",                 // helper exists (helpers.js)
-		"function bindSelectTitles(",                // modal-level binder exists (helpers.js)
-		"syncSelectTitle(select)",                   // worktree picker syncs after repopulate (modal-link-wt.js)
-		"bindSelectTitles($('#agent-spawn-modal'))", // spawn modal wires it (modal-spawn.js)
+		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
+		"title=${selectTitle}",                           // clone's closed select follows controlled selection
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard JS missing %q — select tooltip wiring broken", needle)
@@ -301,10 +302,10 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                                  // helper exists (helpers.js)
-		"makeModalResizable($('#agent-spawn-modal .cron-create-modal')", // spawn modal wires it
-		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                // Preact clone modal wires it
-		"makeModalResizable(dialogRef.current, resizeKey)",              // Preact management overlays wire it
+		"function makeModalResizable(",                     // helper exists (helpers.js)
+		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,   // Preact spawn overlay wires it
+		`resizeKey="tclaude.dash.modalSize.clone-agent"`,   // Preact clone modal wires it
+		"makeModalResizable(dialogRef.current, resizeKey)", // Preact management overlays wire it
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
 		`fitContent: false`,
 		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
@@ -502,32 +503,30 @@ func TestDashboardJS_MailColsResizable(t *testing.T) {
 // assert on the embedded concatenation at `go test ./...`. The Go resolver +
 // round-trip is covered separately by config.TestGroupQuickOptions. A rename in
 // any one file silently breaks the fold (or its pin) only in the browser:
-//   - render.js wraps the variable chip text in .qo-text and stamps
-//     .quick-pinned on a pinned group's <details> + emits the ⚙ pin toggle;
+//   - Groups component state owns semantic hover identity and cleanup;
+//   - groups-list.js wraps the variable chip text in .qo-text and stamps
+//     .quick-pinned on a pinned group's <details> + emits the native ⚙ pin toggle;
 //   - refresh.js toggles body.group-quick-fold off the snapshot flag;
-//   - row-actions.js handles the pin toggle (a per-browser dashPref);
+//   - groups-actions.js handles the pin toggle (a per-browser dashPref);
 //   - dashboard.css collapses .qo-text at rest and expands it on header hover,
 //     scoped to hover-capable pointers and skipping pinned groups;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
 func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 	for _, needle := range []string{
-		// render.js — the collapsible text wrapper, the pin class, the pin
+		// groups-list.js — the collapsible text wrapper, the pin class, the pin
 		// pref key and the ⚙ menu toggle.
 		`<span class="qo-text">`,
 		"quick-pinned",
 		"tclaude.dash.quickpin.",
-		`data-act="toggle-quick-pin"`,
-		// refresh.js — drives the body class off the snapshot flag, and tracks
-		// the hovered group so the reveal survives the 2s innerHTML re-render.
+		"actions.toggleQuickPin(group)",
+		"toggleQuickPin(group)",
+		// refresh.js drives the body class; GroupsList owns hover on the stable
+		// host so the reveal survives keyed polling reconciliation.
 		"'group-quick-fold', data.group_quick_options !== 'expanded'",
-		"export let hoveredGroupKey",
-		"function bindGroupQuickHover(",
-		// dashboard.js — wires the hover tracker in at init.
-		"bindGroupQuickHover()",
-		// render.js — re-stamps .quick-hover from the tracked key each render.
-		"g.name === hoveredGroupKey",
-		// row-actions.js — the pin toggle handler.
-		"case 'toggle-quick-pin':",
+		"host.addEventListener('mouseover', onMouseOver)",
+		"host.removeEventListener('mouseover', onMouseOver)",
+		// groups-list.js — re-stamps .quick-hover from the tracked key each render.
+		"hoveredGroupKey === group.name",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-group-quick-fold",
 		"dashboard.group_quick_options = 'expanded'",
@@ -553,7 +552,7 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 // files that must stay in lockstep — there's no JS render test, so we assert
 // on the embedded concatenation at `go test ./...`. A rename in any one file
 // silently regresses the chips back to click-only in the browser:
-//   - render.js stamps tabindex="0" role="button" on every actionable
+//   - groups-list.js stamps tabindex="0" role="button" on every actionable
 //     group-header chip (the picker 📁 sub-affordance included);
 //   - row-actions.js delegates Enter/Space on those spans into the shared
 //     click dispatcher, and the inline chip editors return focus to the
@@ -564,27 +563,30 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 //     collapsed group and draws the shared focus ring.
 func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 	for _, needle := range []string{
-		// render.js — every actionable group-header chip is focusable and
-		// announces as a button.
-		`tabindex="0" role="button" data-act="set-group-descr"`,
-		`tabindex="0" role="button" data-act="set-group-dir"`,
+		// groups-list.js — every native actionable group-header chip is
+		// focusable and announces as a button.
+		"className=${`group-descr${group.descr ? '' : ' unset'}`} action=\"set-group-descr\"",
+		"className=${`group-default-cwd${group.default_cwd ? '' : ' unset'}`} action=\"set-group-dir\"",
 		`class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir"`,
-		`tabindex="0" role="button" data-act="set-group-max-members"`,
-		`tabindex="0" role="button" data-act="set-group-profile"`,
-		`tabindex="0" role="button" data-act="set-group-sandbox-profile"`,
+		`action="set-group-max-members"`,
+		`data-act=${sandbox ? 'set-group-sandbox-profile' : 'set-group-profile'}`,
 		`class="group-link-chips" tabindex="0" role="button"`,
 		// row-actions.js — delegated Enter/Space activation for the chip
 		// spans, funneled through the click dispatcher.
-		`e.target.closest('span[data-act][role="button"]')`,
+		`liveActionSource(event, 'span[data-act][role="button"]')`,
 		"chip.click();",
-		// row-actions.js — the shared inline editor hands focus back to the
-		// exact managed chip on Escape (parity with the picker's restoreFocus).
-		"revert(true)",
-		"if (restoreFocus) el.focus();",
+		// groups-interactions.js / groups-list.js — generic native editors use
+		// the exact keyed fallback, while profile chips focus the replacement
+		// trigger from their own post-commit layout effect.
+		"if (target?.isConnected)",
+		".find((node) => node.dataset.editorKey === key)?.focus();",
+		"restoreFocusRef.current = true;",
+		"if (active || !restoreFocusRef.current) return;",
+		"triggerRef.current?.focus();",
 		// dashboard.html — the toolbar 🧠 chip keeps native keyboard
 		// semantics, like its 🛡 sibling.
 		`<button type="button" id="dashboard-default-profile"`,
-		// render.js — its accessible name tracks the picked profile.
+		// toolbar-profile-renderers.js — its accessible name tracks the picked profile.
 		"'Set dashboard default spawn profile'",
 		// dashboard.css — tabbing onto a collapsed group's chips reveals the
 		// folded labels (keyboard mirror of the hover reveal)…
@@ -608,7 +610,7 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 //   - terminals-tab.js owns the shared openWebWindowPane / openWebTermPane
 //     pane-openers the web buttons AND the routed actions both call;
 //   - row-actions.js routes jump / open-window / term / term-dir / msg-focus;
-//   - refresh.js routes the bulk windows-modal focus;
+//   - transaction-dialog-actions.js routes the bulk windows-modal focus;
 //   - the shell palette injects the snapshot preference into palette.js's
 //     command/action boundary;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
@@ -622,16 +624,16 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"export function openWebTermPane(",
 		// row-actions.js — the routed per-row actions (native → web branches).
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label); toast(",
-		"if (webTerminalDefault()) { openWebTermPane(agent, label, termDirModal({ label })); return; }",
+		"if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }",
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label); return; }",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
 		// palette.js — the shell-owned command palette passes the snapshot-derived
 		// preference into the command's "focus window" action.
 		"if (preferWebTerminal) { openWebWindowPane(conv, label); toast(",
-		// refresh.js — bulk focus opens every selected agent as a web pane and
+		// transaction-dialog-actions.js — bulk focus opens every selected agent as a web pane and
 		// skips the native-only /api/agent-windows focus endpoint.
-		"if (dir === 'focus' && webTerminalDefault()) {",
-		"openWebWindowPane(c.agent_id || c.conv_id, c.title || c.conv_id.slice(0, 8));",
+		"if (request.direction === 'focus' && request.webTerminal) {",
+		"openWebWindowPane(target.selector, target.label);",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-default-web-terminal",
 		"dashboard.default_terminal = 'web'",
@@ -680,15 +682,15 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 // no JS render test, so a rename in any one of them would silently break the
 // feature in the browser. Assert on the embedded concatenation at `go test ./...`;
 // the server route + resolve is covered by TestGroupTermWS_* below.
-//   - render.js builds the gated menu item (groupWebTermMenuItem);
+//   - groups-list.js builds the gated native menu item;
 //   - row-actions.js imports the pane-opener and dispatches the data-act;
 //   - terminals-tab.js exports the pane-opener that hits /api/group-term-ws.
 func TestDashboardAssets_GroupWebTerminalWired(t *testing.T) {
 	for _, needle := range []string{
-		// render.js — the gated menu item + its data-act.
-		"function groupWebTermMenuItem(",
+		// groups-list.js — the gated native menu item + its data-act.
+		"function GroupMenuItems(",
 		`data-act="group-web-term"`,
-		"+ groupWebTermMenuItem(g)",
+		"group.default_cwd ? html`<${MenuButton}",
 		// row-actions.js — the import and the dispatch case.
 		"openGroupWebTermPane,",
 		"case 'group-web-term':",
@@ -751,7 +753,7 @@ func TestDashboardAssets_ShowAgentHideButtonWired(t *testing.T) {
 //     Descr row by default and restores both under body.show-group-description;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
 //
-// The chip itself (render.js) still always renders .group-descr; visibility is
+// The chip itself (groups-list.js) still always renders .group-descr; visibility is
 // purely the CSS class, so nothing here touches the render path.
 func TestDashboardAssets_ShowGroupDescriptionWired(t *testing.T) {
 	for _, needle := range []string{

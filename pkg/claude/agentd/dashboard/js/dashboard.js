@@ -1,13 +1,12 @@
-import { esc } from './helpers.js';
-import { fmtRemaining } from './tabs.js';
-import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey } from './slop.js';
+import { pickDirectory, shortId } from './helpers.js';
+import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
-  bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner,
+  bindWizardMarquee, bindWizardSpectacle, bindWizardEnterBanner, wizardSummon,
 } from './wizard-fx.js';
 import {
   bindSlopClickFx, bindSlopMachineClicks, bindSlopStatusWatch,
-  bindSlopCursorTrail, bindSlopMarquee,
+  bindSlopCursorTrail, bindSlopMarquee, slopJackpot,
 } from './slop-fx.js';
 import { bindSlopAudio } from './slop-audio.js';
 import { bindSlopVolume } from './slop-volume.js';
@@ -15,9 +14,10 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
+  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle,
   confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
+import { openWorktreeCleanup } from './dashboard-operations.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any
@@ -33,45 +33,37 @@ import {
 // making the dispatch async, would silently start firing that banner on load.
 applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
+import { bindToolbarActionsMenu } from './toolbar-actions-menu.js';
 import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
+import { bindGroupsCleanupButtons } from './modal-message.js';
 import {
-  bindCronModal, openCronCreateModal, openCronEditModal,
-  openSudoGrantModal, pickSudoAgentModal,
-} from './modal-cron.js';
-import { bindTermModal } from './modal-term.js';
-import { initTerminalsTab } from './terminals-tab.js';
+  activeMessageAccessDialogKind, openOperatorMessageDialog,
+  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
+} from './message-access-dialog-controller.js';
 import {
-  bindMessageModal, bindSudoModal, bindPermEditModal, bindGroupCreateModal, openSpawnPermEditor,
-} from './modal-message.js';
-import { bindHumanReplyModal } from './modal-human-reply.js';
-import { bindOperatorMessageModal } from './modal-operator-message.js';
-import {
-  bindTemplatesUI, bindGroupImportModal, summonTemplateScribe,
+  bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
 } from './modal-templates.js';
-import { bindProfilesUI } from './modal-profiles.js';
-import { bindSandboxProfilesUI, refreshSpawnSandboxProfileUI, summonSandboxScribe } from './sandbox-profiles.js';
+import { bindProfilesUI, openProfileEditor } from './modal-profiles.js';
+import { getDashDefaultProfile, loadProfiles } from './profiles.js';
+import { bindSandboxProfilesUI, loadSandboxProfiles, summonSandboxScribe } from './sandbox-profiles.js';
 import { bindRolesUI } from './modal-roles.js';
-import { bindCloneModal } from './modal-clone.js';
-import { bindLinkModal, openLinkModal } from './modal-link-wt.js';
-import { bindExportModal } from './modal-export.js';
-import {
-  bindAgentSpawnModal,
-} from './modal-spawn.js';
+import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { bindRemoteAdmin, loadRemoteAdmin } from './remote-admin.js';
 import { bindCostDisplayToggle } from './cost-display-toggle.js';
 import { focusAccessRequest } from './mail-bridge.js';
 import { dashPrefs, initDashPrefs } from './prefs.js';
 import { initTerminalThemeSync } from './terminal-theme.js';
+import { closeTerminalsForWindowOp, openTermModal, openWebWindowPane } from './terminals-tab.js';
 import { recordGroupInteraction } from './last-group.js';
 import { loadSortState } from './sort.js';
 import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -80,11 +72,8 @@ import { startSnapshotPoll } from './snapshot-poll.js';
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
 export let lastSnapshot = null;
-// setLastSnapshot is the single writer entry-point for lastSnapshot.
-// It has two writers in different modules — refresh() in refresh.js
-// and the rename-rollback in row-actions.js — and an ES-module
-// imported binding is read-only in the importer, so the shared state
-// stays declared here and both writers route through this setter.
+// refresh.js is the sole writer; this setter is required because imported ES
+// module bindings are read-only in the poll/reconciliation module.
 export function setLastSnapshot(v) { lastSnapshot = v; }
 
 // webTerminalDefault reports whether the operator has opted into in-browser
@@ -114,21 +103,6 @@ async function settleInitialLayout() {
       });
     });
   }
-}
-
-// sudoBadge renders the per-row 🔓 indicator when an agent currently
-// holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
-// hovering tells the human everything they'd want to know without a
-// tab switch.
-export function sudoBadge(activeSudo, fallbackConvID) {
-  if (!activeSudo || !activeSudo.length) return '';
-  const lines = activeSudo.map(g => `${g.slug} (expires in ${fmtRemaining(g.remaining_seconds)})`);
-  const title = `${activeSudo.length} active sudo grant${activeSudo.length === 1 ? '' : 's'} — click to manage:\n` + lines.join('\n');
-  // sudoByConv entries carry their own conv_id; the caller-supplied
-  // fallback (and finally '') just guarantees the badge always has a
-  // click target even on an unexpected entry shape.
-  const convID = activeSudo[0].conv_id || fallbackConvID || '';
-  return `<span class="sudo-badge" data-act="sudo-manage" data-conv="${esc(convID)}" title="${esc(title)}">🔓</span>`;
 }
 
 // Boot. The dashboard's sticky view/config prefs now live server-side
@@ -165,16 +139,37 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     confirm: confirmModal,
     notify: toast,
     download: triggerExportDownload,
-    createCron: () => openCronCreateModal({}),
-    editCron: openCronEditModal,
+    confirmDiscard,
   }));
   // The remaining bounded islands are independent. Load them concurrently so
   // navigation setup is delayed by only the slowest optional feature import,
   // not by the sum of seven dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
   const featureCleanups = await Promise.all([
-    mountGroupsFeature({ refresh: dashboardActions.refresh }),
-    mountLinksFeature({ openCreate: () => openLinkModal({ mode: 'create' }) }),
+    mountTerminalsFeature({
+      confirm: confirmModal,
+      onComposeMessage: (seed) => openOperatorMessageDialog(seed),
+      composeMessageDialogKind: activeMessageAccessDialogKind,
+    }),
+    mountMessageAccessDialogsFeature({
+      refresh: dashboardActions.refresh,
+      notify: toast,
+      confirmDiscard,
+      words: wizWord,
+    }),
+    mountGroupsFeature({
+      refresh: dashboardActions.refresh,
+      notify: toast,
+      confirmDiscard,
+      openMemberPermissions: openPermEditModal,
+    }),
+    mountLinksFeature({
+      refresh: dashboardActions.refresh,
+      confirm: confirmModal,
+      confirmDiscard,
+      notify: toast,
+      words: wizWord,
+    }),
     mountDockFeature(),
     mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
@@ -188,7 +183,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirm: confirmModal,
       notify: toast,
       openGrant: async () => {
-        const convID = await pickSudoAgentModal();
+        const convID = await pickAgent({
+          title: 'Grant sudo to', identity: 'conv', showSudo: true,
+          includeOfflineHint: 'Include offline / archived agents (the daemon will still grant; the agent sees the slug on next wake)',
+        });
         if (convID) openSudoGrantModal(convID);
       },
     }),
@@ -201,11 +199,41 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     mountDirectoryPickerFeature({
       prefersWeb: () => lastSnapshot?.default_directory_picker === 'web',
     }),
+    mountGroupCreateFeature({
+      getSnapshot: () => lastSnapshot,
+      pickDirectory,
+      openTemplateManager: openTemplatesManageModal,
+      confirmDiscard,
+      words: wizWord,
+      notify: toast,
+      refresh: dashboardActions.refresh,
+      setExpanded: (name) => dashPrefs.setItem(`tclaude.dash.group.${name}`, '1'),
+      recordInteraction: recordGroupInteraction,
+    }),
+    mountAgentSpawnFeature({
+      getSnapshot: () => lastSnapshot,
+      prefs: dashPrefs,
+      loadProfiles,
+      loadSandboxProfiles,
+      getDashboardDefaultProfile: getDashDefaultProfile,
+      pickDirectory,
+      openProfileEditor,
+      openPermissions: (options) => openSpawnPermEditor({ ...options, group: options.group || 'the spawn group' }),
+      confirm: confirmModal,
+      confirmDiscard,
+      notify: toast,
+      refresh: dashboardActions.refresh,
+      openTerminal: openTermModal,
+      celebrateSlop: slopJackpot,
+      celebrateWizard: wizardSummon,
+      recordInteraction: recordGroupInteraction,
+      shortID: shortId,
+    }),
     mountManagementFeature({
       confirm: confirmModal, confirmDiscard, notify: toast,
       getSnapshot: () => lastSnapshot,
       openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
-      refreshSandboxSpawn: () => refreshSpawnSandboxProfileUI(document.querySelector('#agent-spawn-group')?.value || ''),
+      refreshSandboxSpawn: refreshAgentSpawnSandboxPolicy,
       summonSandboxScribe,
       summonTemplateScribe,
       refresh,
@@ -219,13 +247,31 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       confirmDiscard,
       refresh: dashboardActions.refresh,
       notify: toast,
+      downloadExport: triggerExportDownload,
       getSnapshot: () => lastSnapshot,
+    }),
+    mountToolbarProfilePickerFeature({
+      refresh: dashboardActions.refresh,
+      notify: toast,
+    }),
+    mountWorktreeCleanupFeature({
+      refresh: dashboardActions.refresh,
+      notify: toast,
+    }),
+    mountTransactionDialogsFeature({
+      confirm: confirmModal,
+      confirmDiscard,
+      refresh: dashboardActions.refresh,
+      notify: toast,
+      words: wizWord,
+      openWebWindowPane,
+      closeTerminalsForWindowOp,
+      openWorktreeCleanup,
     }),
   ]);
   pageCleanups.push(...featureCleanups);
 
-  bindTabs();
-  bindTabHotkeys();
+  pageCleanups.push(bindTabs(), bindTabHotkeys());
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();
@@ -234,10 +280,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // pref; the shell + edge toggle are static so this binds once and survives
   // the poll (renderDock only reconciles #dock-body).
   bindDock();
-  bindDetailsPersistence();
-  bindGroupTitleToggle();
-  bindGroupQuickHover();
-  bindRowActions();
+  pageCleanups.push(
+    bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
+  );
   pageCleanups.push(bindDnd(), bindGroupReorder());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
   // (JOH-375). Its document-level listeners coexist with dnd.js /
@@ -260,26 +305,12 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (event.persisted) return;
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
-  bindSudoModal();
-  bindPermEditModal();
-  bindCronModal();
-  bindTermModal();
-  // The in-SPA "Terminals" tab — mounts the multiplexer and starts hidden
-  // (it reveals itself once "web term" / "web window" opens the first pane).
-  initTerminalsTab();
-  bindMessageModal();
-  bindHumanReplyModal();
-  bindOperatorMessageModal();
-  bindGroupCreateModal();
+  bindGroupsCleanupButtons();
   bindTemplatesUI();
   bindProfilesUI();
   bindSandboxProfilesUI();
   bindRolesUI();
-  bindCloneModal();
   bindGroupImportModal();
-  bindLinkModal();
-  bindExportModal();
-  bindAgentSpawnModal();
   bindRemoteAdmin();
   document.querySelector('nav [data-tab="config"]')?.addEventListener('click', () => { void loadRemoteAdmin(); });
   bindCostDisplayToggle();

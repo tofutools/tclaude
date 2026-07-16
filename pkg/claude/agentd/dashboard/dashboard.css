@@ -959,7 +959,7 @@ details[data-group-key] > summary .group-name::before { content: "▶ "; color: 
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 
 /* ── Group activity bots ──────────────────────────────────────────────
-   The deduped per-status robot row (group-activity.js → groupActivityHTML)
+   The deduped per-status robot row (group-activity.js → ActivityModes)
    that rides in a group <summary> right after the name, and the same row
    aggregated for the whole dashboard in the top bar (#global-activity).
    One 🤖 per distinct status present; motion — plus a corner tag glyph
@@ -2276,9 +2276,9 @@ body.wizard .force-fold-label-wizard { display: inline; }
   /* Reveal on native :hover (instant + smooth during live movement), on
      :focus-within (so a keyboard user tabbing onto a collapsed group's chips
      sees the labels they are about to activate — TCL-330), OR on the
-     JS-stamped .quick-hover (which renderGroups re-applies each poll, so the
-     reveal survives the 2s wholesale re-render that a freshly-inserted node's
-     :hover would not — see bindGroupQuickHover in refresh.js). */
+     component-owned .quick-hover (which follows the semantic group key across
+     polls and reorders, so a stationary pointer keeps the same reveal even if
+     its keyed details node moves). */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text {
@@ -2443,7 +2443,7 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
-   chip while choosing a default spawn profile (row-actions openProfilePicker).
+   chip while choosing a default spawn profile (toolbar-profile-picker.js).
    Same compact monospace look as the chip inputs above. */
 .group-default-profile-select {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
@@ -2714,8 +2714,8 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    pattern as the profile editor above — pin it above plain z-index:100 overlays
    so it's always the topmost editor. */
 #role-editor-modal { z-index: 150; }
-/* #confirm-modal is opened FROM inside other modals — by the backdrop-
-   discard guard (bindBackdropDiscard) on every data-entry modal, and
+/* #confirm-modal is opened FROM inside other modals — by each Preact
+   overlay's discard transaction for dirty data-entry dialogs, and
    ahead-of-time by destructive-action confirms invoked from list rows.
    With plain z-index:100 it ties with the modal that triggered it and
    loses on DOM order (it appears earlier in dashboard.html), leaving
@@ -3496,23 +3496,22 @@ body.wizard .group-pending-title-wizard { display: inline; }
   resize: both; overflow: auto;
   max-width: min(1100px, calc(100vw - 32px));
 }
-/* The terminal operator composer benefits from the same persisted two-axis
-   resize escape hatch as the larger form dialogs. Its JS wires this card to
-   makeModalResizable under a dedicated preference key. */
-#operator-message-modal .cron-create-modal {
+/* The Preact-owned terminal operator composer benefits from the same persisted
+   two-axis resize escape hatch as the larger form dialogs. */
+.operator-message-modal {
   resize: both; overflow: auto;
 }
 /* The message is the composer's elastic region: it consumes every extra pixel
    from a vertical resize while the surrounding metadata stays natural-height
    and the action row remains pinned to the bottom. Override the shared 220px
    textarea ceiling; the dialog's own viewport cap remains the only bound. */
-#operator-message-modal .operator-message-body-row {
+.operator-message-modal .operator-message-body-row {
   flex: 1 1 auto; min-height: 100px; align-items: stretch;
 }
-#operator-message-modal .operator-message-body-row textarea {
+.operator-message-modal .operator-message-body-row textarea {
   align-self: stretch; min-height: 0; max-height: none; resize: none;
 }
-#operator-message-modal .modal-buttons { flex: 0 0 auto; }
+.operator-message-modal .modal-buttons { flex: 0 0 auto; }
 /* Theme the scroll container's scrollbar to the dark dialog chrome. Without
    this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
    to the browser's default light, classic scrollbar — the same white-default
@@ -3896,7 +3895,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
   background: #1f6feb; border-color: #388bfd; color: white;
 }
 /* The two schedule-mode bodies (chips+custom interval vs cron expression);
-   modal-cron.js's setScheduleMode toggles which one is visible. */
+   the Jobs cron component renders only the active schedule body. */
 .cron-schedule-interval {
   display: flex; flex-direction: column; gap: 6px;
 }
@@ -3941,8 +3940,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
    leaves no gap. Once a message is set it renders as a prominent banner —
    red-tinted fill, a left accent bar and a ⚠ glyph — so a validation or
    spawn error can't be mistaken for a throwaway hairline or lost below a
-   tall modal's scroll fold (the showModalError helper also scrolls it into
-   view + flashes it). Server errors can carry JSON / newlines / long
+   tall modal's scroll fold (the controlled spawn/action ErrorBanner also
+   scrolls into view and flashes). Server errors can carry JSON / newlines / long
    worktree paths, so wrap rather than overflow the dialog. */
 .cron-create-error {
   color: #ffa198;
@@ -3958,7 +3957,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .cron-create-error:empty { display: none; }
 .cron-create-error::before { content: "⚠ "; font-weight: 600; }
-/* Dismissible variant (built by showModalError): a flex row of ⚠ · message ·
+/* Dismissible controlled-banner variant: a flex row of ⚠ · message ·
    ✕, so the close button sits at the banner's top-right. The ::before ⚠
    becomes the first flex item (gap supplies its spacing, so drop the trailing
    space the block path bakes into the glyph); the message takes the slack. */
@@ -3976,8 +3975,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .cron-create-error-x:hover { opacity: 1; color: #ffd7d3; }
 .cron-create-error-x:focus-visible { outline: 1px solid #f85149; outline-offset: 1px; opacity: 1; }
-/* Brief attention flash, re-triggered on every (re)show by showModalError
-   toggling .flash with a reflow — so an identical, resubmitted error still
+/* Brief attention flash, re-triggered on every (re)show by the Preact banner
+   effect toggling .flash with a reflow — so an identical, resubmitted error still
    pulses instead of sitting silent. */
 .cron-create-error.flash { animation: cron-error-flash .9s ease-out; }
 @keyframes cron-error-flash {
@@ -4544,7 +4543,7 @@ body.wizard .directory-picker-modal .modal-buttons { border-top-color: rgba(122,
 .cleanup-modal .modal-buttons button.primary:disabled {
   background: #6e7681; border-color: #6e7681; cursor: default; color: #c9d1d9;
 }
-/* delete-agent modal — the worktree opt-in row. */
+/* Shared worktree choice row used by transaction and cleanup dialogs. */
 .delete-agent-wt {
   display: flex; gap: 6px; align-items: baseline;
   font-size: 12px; color: #c9d1d9; margin: 12px 0 0;
@@ -4928,6 +4927,7 @@ body.slop .slop-machine {
   box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6),
               0 0 4px rgba(255, 215, 0, 0.25);
 }
+.slop-reels-root { display: contents; }
 /* Hide the regular state pill in slop mode — the slot machine
    takes its place. The +N subagent detail still shows alongside.
    Scoped to .state-cell (the agent-row status cell) on purpose: that
@@ -5300,6 +5300,11 @@ body:has(#tab-terminals.active) #tab-terminals.active {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }
+body:has(#tab-terminals.active) #terminals-root,
+body:has(#tab-terminals.active) #terminals-root > .terminal-shell-root {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
 body:has(#tab-terminals.active) main { padding: 0; }
 body:has(#tab-terminals.active) > header,
 body:has(#tab-terminals.active) > #slop-marquee,
@@ -5617,7 +5622,7 @@ body.slop .slop-machine.slop-transition-flash {
    The spawn-modal submit button is re-skinned in slop mode into a
    chunky pull-lever-styled button. The original button text is hidden
    (font-size: 0) and replaced by a ::before with the "🎰 PULL!"
-   glyph. modal-spawn.js adds .slop-pull-active on click so the yank
+   glyph. The spawn component adds .slop-pull-active on click so the yank
    keyframes fire; class self-removes after 700ms so a retry yanks
    again. The yank class is harmless in non-slop mode — no rule
    targets it without the body.slop scope. */
@@ -6801,8 +6806,8 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal)
    share the .modal class and must keep the default chrome.
 
    Title text is a pure-CSS span swap (the .retire-title-regular /
-   .retire-title-wizard pair in the HTML), the same mechanism as the spawn
-   title / music tab label — no JS involved. */
+   .retire-title-wizard pair rendered by the Preact dialog), the same
+   mechanism as the spawn title / music tab label. */
 .retire-title-wizard { display: none; }
 body.wizard #retire-title .retire-title-regular { display: none; }
 body.wizard #retire-title .retire-title-wizard { display: inline; }
@@ -6846,9 +6851,9 @@ body.wizard #retire-modal .modal-buttons button:not(#retire-ok):hover {
 /* Retire = 🪄 Banish! — the confirm button re-skinned into a gilded
    conjuring lever, the destructive twin of the spawn dialog's 🔮 Summon!.
    Same mechanism: the button's own "Retire" text is hidden (font-size: 0)
-   and replaced by a ::before glyph; the busy state (JS disables the button
-   and swaps in a "Retiring…" spinner via setBusy) keeps that raw text hidden
-   and paints a themed "Banishing…" via ::after instead — a familiar is
+   and replaced by a ::before glyph; the Preact busy state disables the button
+   and renders a "Retiring…" spinner while CSS keeps that raw text hidden and
+   paints a themed "Banishing…" via ::after instead — a familiar is
    *banished*, not retired, so the busy copy stays in the arcane voice too.
    The copy swap is pure-CSS, like the ::before idle label; the click already
    sprays cast sparks via wizard-fx's global cast-FX handler, so no extra JS
@@ -6882,7 +6887,7 @@ body.wizard #retire-modal #retire-ok:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 body.wizard #retire-modal #retire-ok:disabled {
-  /* Busy state: setBusy injects a "Retiring…" text node next to the spinner.
+  /* Busy state renders a "Retiring…" text node next to the spinner.
      Keep font-size: 0 so that raw label stays hidden (the .btn-spinner is a
      fixed 12px circle, unaffected by font-size, so it stays visible) and paint
      a themed "Banishing…" via ::after below. */
@@ -7035,6 +7040,9 @@ body.wizard #cron-create-modal #cron-create-title::before {
 body.wizard #cron-create-modal.cron-editing #cron-create-title::before {
   content: "⏳ Re-bind the ritual";
 }
+body.wizard #cron-create-modal.cron-duplicating #cron-create-title::before {
+  content: "⏳ Duplicate the ritual";
+}
 body.wizard #cron-create-modal .modal-meta {
   background: #140f28;
   border-left-color: #d9b45a;
@@ -7111,6 +7119,9 @@ body.wizard #cron-create-modal #cron-create-submit::before {
 body.wizard #cron-create-modal.cron-editing #cron-create-submit::before {
   content: "⏳ Re-bind it!";
 }
+body.wizard #cron-create-modal.cron-duplicating #cron-create-submit::before {
+  content: "⏳ Bind the copy!";
+}
 body.wizard #cron-create-modal #cron-create-submit:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
@@ -7122,6 +7133,7 @@ body.wizard #cron-create-modal #cron-create-submit:active {
 body.wizard #cron-create-modal #cron-create-submit:disabled { opacity: 0.7; }
 body.wizard #cron-create-modal #cron-create-submit:disabled::before { content: "⏳ Binding…"; }
 body.wizard #cron-create-modal.cron-editing #cron-create-submit:disabled::before { content: "⏳ Re-binding…"; }
+body.wizard #cron-create-modal.cron-duplicating #cron-create-submit:disabled::before { content: "⏳ Binding copy…"; }
 
 /* ─── Wizard missive dialog — "✒ Send a missive" ───────────────────
    The group/agent cog message action reuses .cron-create-modal, so the skin
@@ -7187,54 +7199,54 @@ body.wizard #message-create-modal #message-create-submit:disabled { opacity: 0.6
 
 /* ─── Wizard operator missive composer ──────────────────────────────
    This is the terminal-pane Ctrl/Cmd+M composer, not the agent-authored
-   message action above. Keep its arcane skin scoped to its overlay id. */
-body.wizard #operator-message-modal .cron-create-modal {
+   message action above. Keep its arcane skin scoped to its owned overlay. */
+body.wizard .operator-message-overlay .operator-message-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
   scrollbar-color: #7a5db0 #140f28;
 }
-body.wizard #operator-message-modal .cron-create-modal h3 {
+body.wizard .operator-message-overlay .operator-message-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #operator-message-modal :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
-body.wizard #operator-message-modal .cron-create-target { color: #f3e6c0; }
-body.wizard #operator-message-modal .cron-create-row :is(input[type=text], textarea) {
+body.wizard .operator-message-overlay :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
+body.wizard .operator-message-overlay .cron-create-target { color: #f3e6c0; }
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #operator-message-modal .cron-create-row :is(input[type=text], textarea):focus { border-color: #a97bd6; }
-body.wizard #operator-message-modal .spawn-attachments-list li {
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea):focus { border-color: #a97bd6; }
+body.wizard .operator-message-overlay .spawn-attachments-list li {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
-body.wizard #operator-message-modal .spawn-attachments-list .att-name { color: #f3e6c0; }
-body.wizard #operator-message-modal .spawn-attachments-list .att-size { color: #b39ddb; }
-body.wizard #operator-message-modal button:not(#operator-message-submit):not(.att-remove) {
+body.wizard .operator-message-overlay .spawn-attachments-list .att-name { color: #f3e6c0; }
+body.wizard .operator-message-overlay .spawn-attachments-list .att-size { color: #b39ddb; }
+body.wizard .operator-message-overlay button:not(.operator-message-submit):not(.att-remove) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #operator-message-modal button:not(#operator-message-submit):not(.att-remove):hover { background: #3a2a63; }
-body.wizard #operator-message-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #operator-message-modal #operator-message-submit {
+body.wizard .operator-message-overlay button:not(.operator-message-submit):not(.att-remove):hover { background: #3a2a63; }
+body.wizard .operator-message-overlay .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard .operator-message-overlay .operator-message-submit {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
   letter-spacing: 0.5px; font-weight: 700;
 }
-body.wizard #operator-message-modal #operator-message-submit:hover {
+body.wizard .operator-message-overlay .operator-message-submit:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
-body.wizard #operator-message-modal #operator-message-submit:disabled { opacity: 0.6; }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-track,
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb {
+body.wizard .operator-message-overlay .operator-message-submit:disabled { opacity: 0.6; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-track,
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb {
   background: #7a5db0; border-radius: 6px; border: 2px solid #140f28;
 }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
 
 /* ─── Wizard invite-familiar picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target
@@ -7271,6 +7283,48 @@ body.wizard #add-member-modal .add-member-foot { color: #b39ddb; }
 body.wizard #add-member-modal .add-member-row .role { color: #d9b45a; }
 body.wizard #add-member-modal .add-member-foot input[type=checkbox] { accent-color: #a97bd6; }
 body.wizard #add-member-modal .add-member-foot kbd {
+  background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
+}
+
+/* TCL-454: the shared Preact chooser is mounted at
+   #cron-pick-target-modal for message sender, cron owner/target, and Access
+   sudo launches. Give that separately-keyed overlay the same readable wizard
+   palette as the invite-familiar picker; without the id-scoped rules, broad
+   wizard span coloring makes its live row copy nearly black on #0d1117. */
+body.wizard #cron-pick-target-modal .add-member-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #cron-pick-target-modal .add-member-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #cron-pick-target-modal .add-member-modal h3 .muted,
+body.wizard #cron-pick-target-modal .add-member-modal h3 .theme-copy-wizard { color: #d9b45a; }
+body.wizard #cron-pick-target-modal .add-member-search {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #cron-pick-target-modal .add-member-search:focus { border-color: #a97bd6; }
+body.wizard #cron-pick-target-modal .add-member-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #cron-pick-target-modal .add-member-row { border-bottom-color: #241b3d; }
+body.wizard #cron-pick-target-modal .add-member-row.highlighted { background: #3a2a63; }
+body.wizard #cron-pick-target-modal .add-member-row .rowname { color: #f3e6c0; }
+body.wizard #cron-pick-target-modal .add-member-row .id,
+body.wizard #cron-pick-target-modal .add-member-row .descr,
+body.wizard #cron-pick-target-modal .add-member-row .groups-tag,
+body.wizard #cron-pick-target-modal .add-member-row .offline,
+body.wizard #cron-pick-target-modal .add-member-empty,
+body.wizard #cron-pick-target-modal .add-member-foot { color: #b39ddb; }
+body.wizard #cron-pick-target-modal .add-member-row .role { color: #d9b45a; }
+body.wizard #cron-pick-target-modal .add-member-row .online { color: #5ee58a; }
+body.wizard #cron-pick-target-modal .add-member-foot input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard #cron-pick-target-modal .add-member-foot kbd {
   background: #241b3d; border-color: #7a5db0; color: #f3e6c0;
 }
 
@@ -7699,7 +7753,7 @@ body.wizard #window-modal .cleanup-empty { color: #b39ddb; }
 
 /* Footer: Cancel gets the tarnished-gold secondary treatment; the
    focus/unfocus submit becomes a gilded lever. Its label is JS-set with a live
-   count, and openWindowModal swaps the verb+noun for the theme ("Focus 3 agents"
+   count, and the Preact window dialog swaps the verb+noun for the theme ("Focus 3 agents"
    → "Reveal 3 familiars"), so — unlike the static Summon / Banish levers — the
    CSS only gilds the chrome; the copy swap lives in the JS. The .cleanup-error
    line is deliberately left its base red (a status signal, not chrome). */
@@ -7735,11 +7789,10 @@ body.wizard #window-modal #window-submit:disabled { opacity: 0.6; }
    discipline the retire / edit-member / window re-skins follow, guarded by
    TestDashboardCSS_WizardWindowModalScoped and friends.
 
-   The title + hint copy is JS-set honest prose (applyChrome / applyHint),
-   not a per-theme span pair, so it is left legible and only the chrome is
-   re-skinned — matching the terminal-picker re-skin. Because every rule keys
-   on body.wizard, the whole dialog re-flows correctly on a live 🧙 toggle
-   with no JS wiring. */
+   The keyed Preact owner renders plain/wizard copy spans where vocabulary
+   differs and keeps the remaining honest prose legible. Because every rule
+   keys on body.wizard, the whole dialog re-flows correctly on a live 🧙 toggle
+   with no listener wiring. */
 
 /* The dialog surface: midnight-violet void, mystic-purple frame + glow,
    parchment text — the Summon / Banish palette, same as #window-modal. */
@@ -8101,7 +8154,7 @@ body.wizard #delete-group-modal #delete-group-submit:disabled::after {
 
 /* ─── Wizard terminal picker — "🔮 Open a scrying portal" ────────────
    The which-dir picker that pops before a terminal window is opened for a
-   single agent (termDirModal in refresh.js): pick Current / Worktree / Launch
+   single agent (Preact action dialog): pick Current / Worktree / Launch
    dir, or Cancel. A terminal onto a familiar is a *scrying portal* in the
    palette's voice — the Terminals tab reads "🔮 Scrying", the bulk #window-modal
    above conjures "a scrying portal for each chosen familiar" — so the 🧙 theme
@@ -9336,8 +9389,8 @@ body.wizard #template-duplicate-modal #template-duplicate-submit:disabled { opac
 body.wizard #template-duplicate-modal #template-duplicate-submit:disabled::before { content: "🪞 Mirroring…"; }
 
 /* ─── Wizard clone dialog — the dock card ⚙ → Clone for profiles + roles ──
-   The generic name-selector dialog (#clone-modal, modal-clone.js). Its title /
-   submit copy re-letter to "Mirror" in JS via wizWord; this block gives the
+   The Preact-owned generic name-selector dialog (#clone-modal). Its title /
+   submit copy re-letter to "Mirror" via theme-copy spans; this block gives the
    dialog the same midnight-violet grimoire chrome as its sibling template-mirror
    dialog above, scoped per-#id like every other modal's wizard skin (an
    unstyled dialog would fall back to the plain dark + a browser-white submit).
@@ -10424,7 +10477,7 @@ body.wizard .group-actions .cog-btn:focus-visible .cog-glyph {
 /* ─── Wizard trash icon — the banishment sigil (body.wizard) ─────────
    The top-level 🗑 retire icon that rides beside each row's cog becomes,
    in the wizard reskin, a banishment sigil — retiring an agent is
-   "banishing" it (mirroring the retireConfirm title swap "Retire this
+   "banishing" it (mirroring the retire dialog title swap "Retire this
    agent?" → "Banish this…"). At rest it wears the same tarnished-gold /
    mystic-purple edge the wizard cogs wear, so the trash + cog read as a
    matched clockwork pair; reach for it (hover/focus) and the sigil flares

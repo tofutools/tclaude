@@ -93,13 +93,12 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// "+ new group" button opens (openGroupCreateModal → POST /api/groups on
 	// submit), so it adds no new behaviour — a thin surface, like every other
 	// command. Pinned by its wiz(plain, arcane) label and the reused opener +
-	// its import (the opener had to be exported from modal-message.js for the
-	// palette to reach it). The arcane "Form a party…" twin's presentation is
+	// its import from the stable Preact controller. The arcane "Form a party…" twin's presentation is
 	// covered by TestDashboardHTML_WizardCommandPaletteSynonyms.
-	must("import { openGroupCreateModal } from './modal-message.js'",
-		"palette imports the existing group-create modal opener")
-	must("bindGroupCreateModal, openGroupCreateModal,",
-		"modal-message.js exports the group-create opener for the palette")
+	must("import { openGroupCreateModal } from './group-create-controller.js'",
+		"palette imports the stable Preact group-create controller")
+	must("registerGroupCreateController(controller)",
+		"the Preact owner registers the controller used by every external entry point")
 	must("wiz('Create new group…', 'Form a party…')",
 		"the palette offers a create-group command (plain label + arcane Form-a-party label)")
 	must("run: () => openGroupCreateModal()",
@@ -165,12 +164,13 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// to the same calls the dashboard's Shutdown / Power-on buttons and
 	// per-row status dots make — global + per-group reuse
 	// shutdownScope/powerOnScope (the /api/shutdown + /api/power-on
-	// endpoints), per-agent reuses stopAgentReq/resumeAgentReq behind the
-	// 3-way shutdownConfirm. Every variant is gated on a live count or the
+	// endpoints), per-agent stop opens the transaction dialog while resume
+	// remains non-destructive. Every variant is gated on a live count or the
 	// agent's current state so the palette never offers a no-op or the
 	// wrong verb.
-	must("shutdownScope, powerOnScope, shutdownConfirm, stopAgentReq, resumeAgentReq",
-		"palette imports the existing power-control ops from refresh.js")
+	must("shutdownScope, powerOnScope, resumeAgentReq",
+		"palette imports the remaining bulk/resume power-control ops from refresh.js")
+	must("openShutdownAgentDialog", "palette imports the Preact shutdown transaction launcher")
 	// Each presented label is a wiz(plain, arcane) pair — the plain wording in
 	// the default/slop theme, the 🧙 Slumber/Awaken wording under body.wizard —
 	// pinned in one needle so dropping either copy fails CI. The plain verbs
@@ -187,14 +187,14 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("powerOnScope('group', g.name)", "per-group power-on reuses powerOnScope")
 	// Per-agent, state-gated.
 	must("wiz(`Stop agent: ${label}`, `Slumber familiar: ${label}`)", "the palette offers a per-agent stop (plain + arcane label)")
-	must("stopAgentInteractive(sel, label)",
-		"per-agent stop reuses the 3-way shutdownConfirm then stopAgentReq")
+	must("openShutdownAgentDialog(sel, label)",
+		"per-agent stop opens the frozen Preact shutdown transaction")
 	must("wiz(`Resume agent: ${label}`, `Awaken familiar: ${label}`)", "the palette offers a per-agent resume (plain + arcane label)")
 	must("resumeAgentReq(sel, label)", "per-agent resume reuses resumeAgentReq")
 
 	// Retire: the palette can demote agents back to plain conversations.
 	// A per-agent "Retire agent: <name>" reuses the same confirm + flags
-	// as the per-row ⚙ Retire button (retireAgentInteractive), and a
+	// as the per-row ⚙ Retire button (openRetireAgentDialog), and a
 	// per-group "Retire idle/offline agents in <group>" opens a PREVIEW
 	// modal (openRetirePreview) that lists precisely the matching members,
 	// lets the human opt agents out, and POSTs the EXPLICIT ticked conv-id
@@ -202,8 +202,8 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// the human previewed, not a cohort it re-derived. Listed only when a
 	// live match count is non-zero so the palette never offers a no-op.
 	must("wiz(`Retire agent: ${label}`, `Banish familiar: ${label}`)", "the palette offers a per-agent retire (plain + arcane Banish label)")
-	must("retireAgentInteractive(a.conv_id, label)",
-		"per-agent retire reuses the shared confirm + POST flow")
+	must("openRetireAgentDialog(a.conv_id, label)",
+		"per-agent retire reuses the keyed transaction flow")
 	must("for (const status of ['idle', 'offline'])",
 		"the bulk retire offers the idle and offline cohorts")
 	must("wiz(`Retire ${status} agents in ${g.name}`, `Banish ${status} familiars in ${g.name}`)",

@@ -1,6 +1,6 @@
 // group-activity.js — the deduped "activity bot" indicator.
 //
-// A group's <summary> header (render.js) and the top bar (the
+// A group's <summary> header (groups-list.js) and the top bar (the
 // #global-activity slot) both want a glanceable answer to "is anything
 // happening in here?" — especially when a group is FOLDED, where the
 // per-member rows (and their state pills) are hidden behind the
@@ -18,12 +18,9 @@
 //   offline (clean)                → a SLEEPING bot    (💤, dim)
 //
 // Pure + DOM-free on purpose: the same module the browser imports is unit
-// tested under Node (jstest/group-activity.test.mjs). The HTML builders
-// below emit ONLY fixed class names, emoji and integer counts — never any
-// caller-supplied string — so the output needs no escaping and stays
-// injection-safe by construction. Group names (used in the global
-// tooltip) are joined in render.js and assigned via the .title DOM
-// property, which never parses HTML.
+// tested under Node (jstest/group-activity.test.mjs). It returns structured
+// view models; the bounded Preact owners render those models without an
+// HTML-string compatibility seam.
 
 // VARIANT_ORDER is both the dedup key set AND the left-to-right / loudest
 // -first priority. The first present variant becomes the container's
@@ -79,7 +76,7 @@ export function variantLabel(variant, n, theme) {
 
 // themedSummaryText renders a summary's per-variant breakdown as one tooltip
 // line ("2 working · 1 idle", or the wizard flavour). This is the production
-// render path for both tooltip sites (render.js calls it for every theme,
+// render path for both tooltip sites (groups-list.js calls it for every theme,
 // blank included), so the line can re-flavour when the theme flips;
 // activitySummary's cached `.summaryText` is the regular-only convenience
 // twin. Empty when nothing is present.
@@ -150,29 +147,6 @@ export function activitySummary(members) {
   return { total, online, counts, present, level, summaryText };
 }
 
-// botHTML renders one bot for a single variant. `n` (a number) feeds the
-// count badge (shown only when >1) and the per-bot tooltip; `theme` flavours
-// that tooltip (wizard vs plain). In wizard mode the aria-label carries the
-// same flair as the title (there's no separate visible text to hold the
-// honest word) — a deliberate call for this full-cosmetic theme; the honest
-// status stays one hop away in every per-row wizard pill's own tooltip +
-// data-status. No string interpolation of caller input — safe for innerHTML.
-function botHTML(variant, n, theme) {
-  const tagGlyph = VARIANT_TAG[variant];
-  const tag = tagGlyph ? `<span class="actbot-tag">${tagGlyph}</span>` : '';
-  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
-  const tip = variantLabel(variant, n, theme);
-  return `<span class="actbot actbot-${variant}" title="${tip}" aria-label="${tip}">`
-    + `<span class="actbot-face">🤖</span>${tag}${count}</span>`;
-}
-
-// activityBotsHTML emits the inner bot row for a summary (no wrapper).
-// Returns '' when there's nothing to show.
-export function activityBotsHTML(summary, theme) {
-  if (!summary || !summary.present.length) return '';
-  return summary.present.map(v => botHTML(v, summary.counts[v], theme)).join('');
-}
-
 // === Sprite (pixel-art) bot row — the slop-mode default ==================
 //
 // The same deduped row, but each bot is a pixellab robot sprite animated
@@ -188,20 +162,6 @@ const SPRITE_ANIM = {
   crashed: 'static',
   offline: 'static',
 };
-
-function spriteBotHTML(variant, n, theme) {
-  const anim = SPRITE_ANIM[variant] || 'static';
-  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
-  const tip = variantLabel(variant, n, theme);
-  return `<span class="actbot actbot-sprite actbot-${variant}" title="${tip}" aria-label="${tip}">`
-    + `<span class="actbot-spr spr-${anim}"></span>${count}</span>`;
-}
-
-// spriteBotsHTML emits the inner sprite row for a summary (no wrapper).
-export function spriteBotsHTML(summary, theme) {
-  if (!summary || !summary.present.length) return '';
-  return summary.present.map(v => spriteBotHTML(v, summary.counts[v], theme)).join('');
-}
 
 // === Wizard-theme bot row — the 🧙 re-skin (body.wizard) =================
 //
@@ -226,23 +186,6 @@ const WIZARD_FACE = {
   offline: '🪦',
 };
 
-function wizardBotHTML(variant, n) {
-  const glyph = WIZARD_FACE[variant] || '🧙';
-  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
-  // The wizard row is inherently the 🧙 theme, so its tooltips always speak
-  // the arcane vocabulary ("2 familiars channeling"), reusing PR #678's
-  // variantLabel — no theme arg to thread, it's fixed for this wrapper.
-  const tip = variantLabel(variant, n, 'wizard');
-  return `<span class="actbot actbot-${variant}" title="${tip}" aria-label="${tip}">`
-    + `<span class="actbot-face">${glyph}</span>${count}</span>`;
-}
-
-// wizardBotsHTML emits the inner wizard-glyph row for a summary (no wrapper).
-export function wizardBotsHTML(summary) {
-  if (!summary || !summary.present.length) return '';
-  return summary.present.map(v => wizardBotHTML(v, summary.counts[v])).join('');
-}
-
 // === Wizard-theme SPRITE row — the pixel-art opt-in (body.wizard) =========
 //
 // The wizard theme's bots default to the glyph row above, but you can opt into
@@ -263,74 +206,45 @@ const WIZ_SPRITE_ANIM = {
   offline: 'wiz-static',
 };
 
-function wizardSpriteBotHTML(variant, n) {
-  const anim = WIZ_SPRITE_ANIM[variant] || 'wiz-static';
-  const count = n > 1 ? `<span class="actbot-count">${n}</span>` : '';
-  const tip = variantLabel(variant, n, 'wizard');
-  return `<span class="actbot actbot-sprite actbot-wiz actbot-${variant}" title="${tip}" aria-label="${tip}">`
-    + `<span class="actbot-spr spr-${anim}"></span>${count}</span>`;
+// activityBotView is the structured replacement for the retired HTML bot
+// builders. Fixed vocabulary becomes plain properties; caller-controlled
+// strings never enter the model.
+export function activityBotView(variant, count, style, wizard = false) {
+  const sprite = style === 'sprites';
+  const theme = wizard ? 'wizard' : undefined;
+  const animation = sprite
+    ? (wizard ? WIZ_SPRITE_ANIM : SPRITE_ANIM)[variant] || (wizard ? 'wiz-static' : 'static')
+    : '';
+  return {
+    key: variant,
+    variant,
+    count,
+    title: variantLabel(variant, count, theme),
+    className: `actbot${sprite ? ' actbot-sprite' : ''}${sprite && wizard ? ' actbot-wiz' : ''} actbot-${variant}`,
+    faceClassName: sprite ? `actbot-spr spr-${animation}` : 'actbot-face',
+    face: sprite ? '' : wizard ? (WIZARD_FACE[variant] || '🧙') : '🤖',
+    tag: !sprite && !wizard ? (VARIANT_TAG[variant] || '') : '',
+  };
 }
 
-// wizardSpriteBotsHTML emits the inner wizard-sprite row for a summary (no wrapper).
-export function wizardSpriteBotsHTML(summary) {
-  if (!summary || !summary.present.length) return '';
-  return summary.present.map(v => wizardSpriteBotHTML(v, summary.counts[v])).join('');
-}
-
-// styledWizardBotsHTML is the wizard-wrapper switchboard: 'off' / empty → '';
-// 'sprites' → the pixel spellcasters; anything else (the 'emoji' default) →
-// the fantasy-glyph row. Lets the wizard theme opt into sprites via config
-// while keeping the glyph row as the zero-config default.
-export function styledWizardBotsHTML(summary, style) {
-  if (!summary || style === 'off' || !summary.present.length) return '';
-  return style === 'sprites' ? wizardSpriteBotsHTML(summary) : wizardBotsHTML(summary);
-}
-
-// styledBotsHTML renders the inner bot row for a summary in one of the
-// three styles. 'off' (or an empty summary) → ''. The single switchboard
-// both render call sites go through, so emoji/sprites stay interchangeable.
-// `theme` flavours the per-bot tooltips (wizard vs plain).
-export function styledBotsHTML(summary, style, theme) {
-  if (!summary || style === 'off' || !summary.present.length) return '';
-  return style === 'sprites' ? spriteBotsHTML(summary, theme) : activityBotsHTML(summary, theme);
-}
-
-// groupActivityHTML is the one-shot helper render.js drops into a group
-// <summary>. It emits a regular-mode wrapper (.ga-regular), a slop-mode
-// wrapper (.ga-slop) AND a wizard-mode wrapper (.ga-wizard), each rendered
-// in its configured style — CSS shows exactly one per active theme
-// (body.slop / body.wizard), so toggling a theme swaps the visual with NO
-// re-render (the same trick the slot-machine / wizard state pill uses).
-//
-// The theme↔wrapper mapping is now 1:1 (regular→.ga-regular, slop→.ga-slop,
-// wizard→.ga-wizard), so each wrapper carries a FIXED-flavour tooltip: the
-// plain nouns for regular/slop, and the arcane "N familiars channeling"
-// (themedSummaryText, from PR #678) for the wizard row. No live-theme arg is
-// needed here — the visible wrapper is always correctly flavoured, even the
-// instant a theme flips, since its title is baked at render time and CSS
-// just reveals it. wizardStyle is a per-mode style —
-// 'emoji'(glyphs, the default) / 'sprites'(pixel wizards) / 'off' — dispatched
-// through styledWizardBotsHTML, mirroring the regular/slop emoji-vs-sprites
-// knob. An absent/'off' value drops the wizard wrapper (so the pre-4th-arg
-// callers keep the old two-wrapper output). Returns '' when EVERY mode
-// resolves to nothing (off / empty group).
-export function groupActivityHTML(members, regularStyle, slopStyle, wizardStyle) {
-  const s = activitySummary(members);
-  if (!s.present.length) return '';
-  const wrap = (cls, inner, tip) =>
-    inner
-      ? `<span class="${cls} level-${s.level}" title="${tip}">${inner}</span>`
-      : '';
-  const reg = wrap('ga-regular', styledBotsHTML(s, regularStyle), s.summaryText);
-  const slop = wrap('ga-slop', styledBotsHTML(s, slopStyle), s.summaryText);
-  // Only build the arcane breakdown when the wizard wrapper is actually on —
-  // otherwise `wrap` discards both the bots and the title.
-  const wizOn = wizardStyle && wizardStyle !== 'off';
-  const wiz = wrap('ga-wizard',
-    wizOn ? styledWizardBotsHTML(s, wizardStyle) : '',
-    wizOn ? themedSummaryText(s, 'wizard') : '');
-  if (!reg && !slop && !wiz) return '';
-  return `<span class="group-activity">${reg}${slop}${wiz}</span>`;
+// activityModeViews returns the three theme rows with stable mode/bot keys.
+// All enabled modes are emitted together and CSS selects the active one, so a
+// wizard toggle never remounts an animation node.
+export function activityModeViews(summary, configured = {}) {
+  if (!summary?.present?.length) return [];
+  const specs = [
+    { key: 'regular', className: 'ga-regular', style: configured.regular || 'emoji', wizard: false },
+    { key: 'slop', className: 'ga-slop', style: configured.slop || 'sprites', wizard: false },
+    { key: 'wizard', className: 'ga-wizard', style: configured.wizard || 'emoji', wizard: true },
+  ];
+  return specs.filter((mode) => mode.style !== 'off').map((mode) => ({
+    ...mode,
+    level: summary.level,
+    title: themedSummaryText(summary, mode.wizard ? 'wizard' : undefined),
+    bots: summary.present.map((variant) => activityBotView(
+      variant, summary.counts[variant], mode.style, mode.wizard,
+    )),
+  }));
 }
 
 // aggregateActivity flattens several member lists (every group + the

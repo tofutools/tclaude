@@ -82,7 +82,7 @@ function installDOM(t) {
   const { document } = window;
   const globals = [...new Set([
     'window', 'document', 'Node', 'Element', 'HTMLElement', 'Event',
-    'CustomEvent', 'InputEvent', 'MutationObserver', 'navigator',
+    'CustomEvent', 'InputEvent', 'MutationObserver', 'navigator', 'getComputedStyle',
     ...Object.keys(HTMLClasses),
   ])];
   const previous = new Map(globals.map((name) => [
@@ -100,6 +100,13 @@ function installDOM(t) {
   }
   Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: window });
   Object.defineProperty(globalThis, 'document', { configurable: true, writable: true, value: document });
+  if (typeof globalThis.getComputedStyle !== 'function') {
+    Object.defineProperty(globalThis, 'getComputedStyle', {
+      configurable: true,
+      writable: true,
+      value: () => ({ animationDuration: '0s', animationDirection: 'normal', animationName: 'none' }),
+    });
+  }
 
   // LinkeDOM exposes HTMLDetailsElement but currently constructs <details> as
   // its HTMLElement base. Preserve the browser's instanceof contract used by
