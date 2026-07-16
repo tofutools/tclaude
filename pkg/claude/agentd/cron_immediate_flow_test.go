@@ -179,6 +179,63 @@ func TestCronPatch_ImmediateFireSuppressesCachedSchedulerCandidate(t *testing.T)
 		"cached due candidate must re-check the cadence anchor after the immediate fire")
 }
 
+func TestCronLivenessSnapshotTimeoutReleasesAuthorityLock(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(time.Second))
+	timeoutArmed, fireTimeout, restoreTimeout := agentd.ControlNextTmuxCommandTimeoutForTest()
+	t.Cleanup(restoreTimeout)
+	const target = "clst-target-aaaa-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(target, "snapshot-timeout-target")
+	job := createCronAsHuman(t, f, map[string]any{
+		"target": target, "interval": "30s", "body": "bounded liveness",
+		"queue_when_offline": false,
+	})
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, db.UpdateAgentCronJobLastRun(job.ID, now.Add(-time.Hour), "ok"))
+
+	// Model a tmux server that accepts the batch list command but never
+	// answers. The scheduler holds cronAuthorityMu while revalidating/firing;
+	// the bounded probe must release it so a mutation can complete.
+	f.World.Tmux.HangNextCommand("list-sessions", 30*time.Second)
+	tickDone := make(chan struct{})
+	go func() {
+		agentd.RunCronTickForTest(now)
+		close(tickDone)
+	}()
+	select {
+	case timeout := <-timeoutArmed:
+		assert.Equal(t, time.Second, timeout)
+	case <-time.After(10 * time.Second):
+		t.Fatal("cron liveness snapshot did not start and arm its timeout")
+	}
+
+	patchDone := make(chan int, 1)
+	go func() {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+			t, http.MethodPatch, "/v1/cron/"+strconv.FormatInt(job.ID, 10),
+			map[string]any{"queue_when_offline": true})))
+		patchDone <- rec.Code
+	}()
+	select {
+	case <-patchDone:
+		t.Fatal("cron PATCH unexpectedly bypassed the authority lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	fireTimeout()
+	select {
+	case <-tickDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scheduler remained wedged after the tmux timeout")
+	}
+	select {
+	case code := <-patchDone:
+		assert.Equal(t, http.StatusOK, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("cron PATCH remained blocked after the tmux timeout")
+	}
+}
+
 func TestCronRunNow_RevalidatesRetirementUnderAuthorityLock(t *testing.T) {
 	f := newFlow(t)
 	const owner = "cirn-owner-aaaa-bbbb-cccc-000000000001"
