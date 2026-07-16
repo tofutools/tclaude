@@ -67,6 +67,67 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(host.childNodes.length, 0);
 });
 
+test('Preact join select renders and publishes canonical node.join values', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  Object.assign(editor.model.template.nodes, {
+    left: { type: 'task' },
+    right: { type: 'task' },
+    'join-all': { type: 'task', join: 'all' },
+    'join-any': { type: 'task', join: 'any' },
+  });
+  Object.assign(editor.model.layout.nodes, {
+    left: { x: 50, y: 100 },
+    right: { x: 50, y: 300 },
+    'join-all': { x: 300, y: 100 },
+    'join-any': { x: 300, y: 300 },
+  });
+  editor.model.edges.push(
+    { from: 'left', outcome: 'all', to: 'join-all' },
+    { from: 'right', outcome: 'all', to: 'join-all' },
+    { from: 'left', outcome: 'any', to: 'join-any' },
+    { from: 'right', outcome: 'any', to: 'join-any' },
+  );
+  await harness.act(() => editor.refresh());
+
+  const selectJoin = async (id) => {
+    await harness.act(() => editor.setSelection({ type: 'node', id }));
+    const select = host.querySelector('[aria-label="Join semantics"]');
+    assert.ok(select, `${id} has a fan-in join control`);
+    return select;
+  };
+  const choose = async (select, value) => {
+    [...select.options].forEach((option) => option.removeAttribute('selected'));
+    const option = [...select.options].find((candidate) => candidate.value === value);
+    assert.ok(option, `join select contains ${value || 'unset'}`);
+    option.setAttribute('selected', '');
+    Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+    await harness.act(() => harness.fireEvent(select, 'change'));
+  };
+  const selectedValue = (select) => select.value
+    ?? select.getAttribute('value')
+    ?? [...select.options].find((option) => option.selected)?.getAttribute('value')
+    ?? '';
+
+  let select = await selectJoin('join-all');
+  assert.equal(selectedValue(select), 'all');
+  select = await selectJoin('join-any');
+  assert.equal(selectedValue(select), 'any');
+
+  select = await selectJoin('join-all');
+  await choose(select, 'any');
+  assert.equal(editor.model.template.nodes['join-all'].join, 'any');
+  await harness.act(() => editor.setSelection(null));
+  select = await selectJoin('join-all');
+  assert.equal(selectedValue(select), 'any');
+
+  await choose(select, '');
+  assert.equal(Object.hasOwn(editor.model.template.nodes['join-all'], 'join'), false);
+  await harness.act(() => editor.setSelection(null));
+  select = await selectJoin('join-all');
+  assert.equal(selectedValue(select), '');
+  editor.destroy();
+});
+
 test('unrelated Signals snapshots preserve an active inspector IME buffer and focus node', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   await harness.act(() => editor.setSelection({ type: 'template' }));
