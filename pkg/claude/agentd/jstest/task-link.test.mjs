@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 // Mount the Preact-owned action-dialog root with a task-link descriptor already
 // open, an invoker focused so restoration is observable, and a recording
 // setTaskLink mock. Domain/HTTP behavior is covered separately against the real
@@ -178,6 +188,44 @@ test('task-link dialog enforces url rules, no-ops, and clears', async (t) => {
     assert.deepEqual(m.calls[0], { conv: 'c', label: 'a', url: '', taskLabel: '', changed: true });
     await m.cleanup();
   }
+});
+
+test('task-link submit is single-flight within one turn and releases after success', async (t) => {
+  const requests = [];
+  const mounted = await mountTaskLink(t, {
+    conv: 'agt-alice', agentLabel: 'alice', url: '', taskLabel: '',
+  }, {
+    setTaskLink: () => {
+      const request = deferred();
+      requests.push(request);
+      return request.promise;
+    },
+  });
+  const { harness, host } = mounted;
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  // LinkeDOM does not implement this browser method used by ErrorBanner's
+  // validation-error reveal effect.
+  host.querySelector('#task-link-error').scrollIntoView = () => {};
+
+  const submit = () => host.querySelector('#task-link-save').click();
+  await harness.input(host.querySelector('#task-link-label'), 'Launch task');
+  await harness.act(() => { submit(); submit(); });
+  assert.equal(requests.length, 0, 'validation does not start a mutation');
+
+  await harness.input(host.querySelector('#task-link-url'), 'https://example.com/task');
+  await harness.act(() => { submit(); submit(); });
+  assert.equal(requests.length, 1, 'same-turn valid submits set one task link');
+  await harness.act(async () => {
+    requests[0].resolve();
+    await Promise.resolve();
+  });
+  await harness.act(() => { submit(); submit(); });
+  assert.equal(requests.length, 2, 'validation and success both release the guard');
+  await harness.act(async () => {
+    requests[1].resolve();
+    await Promise.resolve();
+  });
+  await mounted.cleanup();
 });
 
 test('dirty task-link dialog confirms discard and restores the invoker', async (t) => {

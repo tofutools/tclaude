@@ -165,26 +165,31 @@ function LinkEditor({ descriptor, groups, actions, confirmDiscard }) {
   const [bidir, setBidir] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const submitGuard = useRef(false);
   const dirty = from !== initial.from || to !== initial.to || mode !== initial.mode || bidir;
   const groupOptions = optionsFor(groups, from, to);
 
   const submit = async () => {
-    if (busy) return;
-    setError('');
-    if (!edit && (!from || !to)) {
-      setError('from and to are required');
-      return;
-    }
-    if (!edit && from === to) {
-      setError('from and to must differ — use group membership for intra-group comm');
-      return;
-    }
-    setBusy(true);
+    if (submitGuard.current) return;
+    submitGuard.current = true;
     try {
+      setError('');
+      if (!edit && (!from || !to)) {
+        setError('from and to are required');
+        return;
+      }
+      if (!edit && from === to) {
+        setError('from and to must differ — use group membership for intra-group comm');
+        return;
+      }
+      setBusy(true);
       if (edit) await actions.updateLink({ id: descriptor.id, from, to, mode });
       else await actions.createLink({ from, to, mode, bidir });
     } catch (cause) { setError(errorMessage(cause)); }
-    finally { setBusy(false); }
+    finally {
+      submitGuard.current = false;
+      setBusy(false);
+    }
   };
 
   return html`

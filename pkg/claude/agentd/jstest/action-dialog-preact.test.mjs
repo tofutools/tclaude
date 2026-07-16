@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 async function mountDialogs(
   t,
   kind,
@@ -245,6 +255,42 @@ test('preset clone dialog submits controlled names and surfaces create errors', 
   await failed.cleanup();
 });
 
+test('preset clone submit is single-flight within one turn and releases after errors', async (t) => {
+  const requests = [];
+  const mounted = await mountDialogs(t, 'preset-clone', {
+    presetKind: 'profile', kindWizard: 'pattern',
+    source: { name: 'writer' }, create: async () => {},
+  }, {
+    clonePreset: () => {
+      const request = deferred();
+      requests.push(request);
+      return request.promise;
+    },
+  });
+  const { harness, host } = mounted;
+  await harness.act(() => {
+    host.querySelector('#clone-modal-submit').click();
+    host.querySelector('#clone-modal-submit').click();
+  });
+  assert.equal(requests.length, 1, 'same-turn submits start one clone');
+
+  await harness.act(async () => {
+    requests[0].reject(new Error('try again'));
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelector('#clone-modal-submit').disabled, false);
+  await harness.act(() => {
+    host.querySelector('#clone-modal-submit').click();
+    host.querySelector('#clone-modal-submit').click();
+  });
+  assert.equal(requests.length, 2, 'an error releases the guard for one retry');
+  await harness.act(async () => {
+    requests[1].resolve();
+    await Promise.resolve();
+  });
+  await mounted.cleanup();
+});
+
 test('terminal-directory state resolves every result and cancellation path', async (t) => {
   const harness = await createPreactHarness(t);
   const { createActionDialogState } = await harness.importDashboardModule('js/action-dialog-state.js');
@@ -308,6 +354,39 @@ test('export dialog owns submit/error/retry UI and cancels its watcher on close'
   await harness.act(() => Promise.resolve());
   assert.deepEqual(calls.at(-1), ['export-running']);
   assert.equal(watcherCleanup, 2, 'closing an active export cancels the watcher');
+  await mounted.cleanup();
+});
+
+test('export submit is single-flight within one turn and releases after request errors', async (t) => {
+  const requests = [];
+  const mounted = await mountDialogs(t, 'agent-export', { conv: 'abcdefgh-rest', label: 'worker' }, {
+    startExport: () => {
+      const request = deferred();
+      requests.push(request);
+      return request.promise;
+    },
+  });
+  const { harness, host } = mounted;
+  await harness.act(() => {
+    host.querySelector('#export-agent-submit').click();
+    host.querySelector('#export-agent-submit').click();
+  });
+  assert.equal(requests.length, 1, 'same-turn submits start one export');
+
+  await harness.act(async () => {
+    requests[0].reject(new Error('export unavailable'));
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelector('#export-agent-submit').disabled, false);
+  await harness.act(() => {
+    host.querySelector('#export-agent-submit').click();
+    host.querySelector('#export-agent-submit').click();
+  });
+  assert.equal(requests.length, 2, 'a request error releases the guard for one retry');
+  await harness.act(async () => {
+    requests[1].resolve({ id: 7 });
+    await Promise.resolve();
+  });
   await mounted.cleanup();
 });
 

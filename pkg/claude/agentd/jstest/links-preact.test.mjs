@@ -2,6 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness, getByRole } from './preact-harness.mjs';
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function memoryPrefs(initial = {}) {
   const values = new Map(Object.entries(initial));
   return {
@@ -195,6 +205,42 @@ test('Links create form validates, controls bidirectional payload and exposes bu
   assert.match(host.querySelector('#link-modal-error').textContent, /permission denied/);
   assert.equal(host.querySelector('#link-modal-submit').disabled, false);
   assert.ok(host.querySelector('#link-modal'), 'a failed create keeps the draft open');
+  await mounted.cleanup();
+});
+
+test('Links create submit is single-flight within one turn and releases for retry', async (t) => {
+  const requests = [];
+  const mounted = await mountLinks(t, {
+    actions: {
+      createLink: () => {
+        const request = deferred();
+        requests.push(request);
+        return request.promise;
+      },
+    },
+  });
+  const { harness, host, state } = mounted;
+  await harness.act(() => state.openCreate());
+  await harness.act(() => Promise.resolve());
+
+  const submit = () => host.querySelector('#link-modal-submit').click();
+  await choose(harness, host.querySelector('#link-modal-to'), 'alpha');
+  await harness.act(() => { submit(); submit(); });
+  assert.equal(requests.length, 0, 'validation does not start a mutation');
+
+  await choose(harness, host.querySelector('#link-modal-to'), 'beta');
+  await harness.act(() => { submit(); submit(); });
+  assert.equal(requests.length, 1, 'same-turn valid submits create one link');
+  await harness.act(async () => {
+    requests[0].reject(new Error('try again'));
+    await Promise.resolve();
+  });
+  await harness.act(() => { submit(); submit(); });
+  assert.equal(requests.length, 2, 'validation and request errors both release the guard');
+  await harness.act(async () => {
+    requests[1].resolve();
+    await Promise.resolve();
+  });
   await mounted.cleanup();
 });
 
