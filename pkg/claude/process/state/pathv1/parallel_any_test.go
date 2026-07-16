@@ -73,6 +73,152 @@ func TestParallelAnyDeterministicActivationIsRestartExact(t *testing.T) {
 	}
 }
 
+func TestLocalParallelAnyRoutesExclusiveOutcomeAndActivatesOnce(t *testing.T) {
+	for _, outcome := range []string{"direct", "alternate"} {
+		t.Run(outcome, func(t *testing.T) {
+			source := localParallelAnySource()
+			input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+			split, err := AdvanceParallelSplit(t.Context(), input, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input = verifyParallelTransition(t, source, split)
+			for range 2 {
+				activate, activateErr := AdvanceParallelExclusiveArrival(t.Context(), input)
+				if activateErr != nil {
+					t.Fatal(activateErr)
+				}
+				input = verifyParallelTransition(t, source, activate)
+			}
+			input = observeParallelTask(t, source, input, livePathForNode(t, input, "source"), outcome)
+			beforeRoute, err := EncodeCheckpointV7(input.checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			route1, err := AdvanceParallelRoute(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			route2, err := AdvanceParallelRoute(t.Context(), input)
+			if err != nil || route1.PostBinding() != route2.PostBinding() || string(route1.postBytes) != string(route2.postBytes) {
+				t.Fatalf("local any route restart drift = %v", err)
+			}
+			if _, _, _, err := ValidateExecutionTransitionForAppend(t.Context(), beforeRoute, source, route1); err != nil {
+				t.Fatalf("local any route CAS validation: %v", err)
+			}
+			input = verifyParallelTransition(t, source, route1)
+			routed, err := CurrentAggregateCheckpoint(input.checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reservation := reservationForNode(t, routed.View(), "local-any")
+			if reservation.JoinPolicy != JoinAny || reservation.State != ReservationOpen || reservation.IsReducing {
+				t.Fatalf("local any reservation = %#v", reservation)
+			}
+			arrivals := arrivedPathsForReservation(routed.View(), reservation.ID)
+			var impossible []PathRecord
+			for _, path := range routed.Routing.Paths {
+				if path.TargetReservationID == reservation.ID && path.Kind == PathImpossibleEdge && path.State == PathImpossible {
+					impossible = append(impossible, path)
+				}
+			}
+			if len(arrivals) != 1 || len(impossible) != 1 || arrivals[0].CandidateID == impossible[0].CandidateID {
+				t.Fatalf("local any route partition = arrivals %#v, impossible %#v", arrivals, impossible)
+			}
+			closureKey, err := CandidateClosureKeyIdentity(reservation.ID, impossible[0].CandidateID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closure, ok := routed.Routing.CandidateClosures[closureKey]
+			if !ok || closure.TerminalKind != TerminalImpossible || closure.CauseDigest != impossible[0].ImpossibleCauseDigest {
+				t.Fatalf("local any impossible sibling closure = %#v", closure)
+			}
+			closures := 0
+			for _, candidate := range reservation.Candidates {
+				key, keyErr := CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+				if keyErr != nil {
+					t.Fatal(keyErr)
+				}
+				if _, exists := routed.Routing.CandidateClosures[key]; exists {
+					closures++
+				}
+			}
+			if closures != 1 {
+				t.Fatalf("local any candidate closures = %d, want 1", closures)
+			}
+
+			beforeAny, err := EncodeCheckpointV7(input.checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			activate1, err := AdvanceParallelAny(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			activate2, err := AdvanceParallelAny(t.Context(), input)
+			if err != nil || activate1.PostBinding() != activate2.PostBinding() || string(activate1.postBytes) != string(activate2.postBytes) {
+				t.Fatalf("local any activation restart drift = %v", err)
+			}
+			if _, _, _, err := ValidateExecutionTransitionForAppend(t.Context(), beforeAny, source, activate1); err != nil {
+				t.Fatalf("local any activation CAS validation: %v", err)
+			}
+			input = verifyParallelTransition(t, source, activate1)
+			after, err := CurrentAggregateCheckpoint(input.checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reservation = after.Routing.Reservations[reservation.ID]
+			if reservation.State != ReservationActivated || reservation.Activation == nil {
+				t.Fatalf("local any activation = %#v", reservation)
+			}
+			activations := 0
+			for _, activation := range after.Routing.Activations {
+				if activation.ReservationID == reservation.ID {
+					activations++
+				}
+			}
+			if activations != 1 {
+				t.Fatalf("local any activation count = %d, want 1", activations)
+			}
+			detachmentKey, err := DetachmentKeyIdentity(reservation.ID, impossible[0].CandidateID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			detachment, ok := after.Routing.Detachments[detachmentKey]
+			if !ok || detachment.WinnerPathID != arrivals[0].ID || detachment.EventSeq <= impossible[0].UpdatedSeq {
+				t.Fatalf("local any impossible loser audit = %#v", detachment)
+			}
+			setID, err := DetachmentSetIdentity("", detachment.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if set, exists := after.Routing.DetachmentSets[setID]; !exists || set.DetachmentID != detachment.ID || set.ParentSetID != "" {
+				t.Fatalf("local any impossible loser set = %#v, exists %v", set, exists)
+			}
+			if path := after.Routing.Paths[impossible[0].ID]; path.State != PathImpossible || path.UpdatedSeq != impossible[0].UpdatedSeq {
+				t.Fatalf("local any authoritative impossible path changed = %#v", path)
+			}
+			lateImpossible := after.View()
+			lateRouting := Clone(after.Routing)
+			latePath := lateRouting.Paths[impossible[0].ID]
+			latePath.UpdatedSeq = detachment.EventSeq
+			lateRouting.Paths[latePath.ID] = latePath
+			lateImpossible.Routing = &lateRouting
+			if report := ValidateAggregate(lateImpossible); !reportHasCode(report, "detached_reactivation") {
+				t.Fatalf("late impossible path diagnostics = %#v", report.Diagnostics)
+			}
+			if _, err := AdvanceParallelAny(t.Context(), input); !errors.Is(err, ErrParallelAnyNotReady) {
+				t.Fatalf("closed local any advanced again: %v", err)
+			}
+		})
+	}
+}
+
 func TestParallelAnyWinnerTupleProperty(t *testing.T) {
 	source := parallelDirectAnySource(4)
 	input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
@@ -622,6 +768,35 @@ func parallelDirectAnySource(n int) []byte {
 	}
 	out.WriteString("  merge:\n    type: end\n    join: any\n    result: completed\n")
 	return []byte(out.String())
+}
+
+func localParallelAnySource() []byte {
+	return []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: local-parallel-any
+start: fork
+nodes:
+  fork:
+    type: parallel
+    next: {source: source, peer: peer}
+  source:
+    type: task
+    performer: {kind: agent, prompt: source}
+    next: {direct: local-any, alternate: local-any}
+  local-any:
+    type: task
+    join: any
+    performer: {kind: agent, prompt: local-any}
+    next: merge
+  peer:
+    type: task
+    performer: {kind: agent, prompt: peer}
+    next: merge
+  merge:
+    type: end
+    join: all
+    result: completed
+`)
 }
 
 func parallelSlowAnySource() []byte {
