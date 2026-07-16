@@ -75,6 +75,19 @@ func TestAgentsByConvCarriesActorLifecycleState(t *testing.T) {
 	assert.True(t, rows["current-conv"].Retired)
 }
 
+func TestAgentsByConvMarksSupersededOrphanActor(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, RecordConvSuccession("predecessor", "successor", "reincarnate"))
+	_, err := AllocateAgent("predecessor", "legacy-backfill")
+	require.NoError(t, err)
+
+	rows, err := AgentsByConv([]string{"predecessor", "successor"})
+	require.NoError(t, err)
+	assert.True(t, rows["predecessor"].Superseded,
+		"an old_conv_id remains superseded even if a legacy backfill gave it a separate actor")
+	assert.False(t, rows["successor"].Superseded)
+}
+
 // TestCanonicalAgeTimestamp_PreservesPrecision pins the wire representation,
 // which is deliberately ordinary UTC RFC3339Nano. Age consumers compare parsed
 // instants rather than relying on the strings to have a sortable fixed width.

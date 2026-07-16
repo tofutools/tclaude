@@ -141,7 +141,7 @@ func (rc *snapshotRowCache) agentID(convID string) string {
 // history preloads.
 func (rc *snapshotRowCache) inactiveActor(convID string) bool {
 	a, ok := rc.agents[convID]
-	return ok && (a.Retired || a.CurrentConvID != convID)
+	return ok && (a.Retired || a.Superseded || a.CurrentConvID != convID)
 }
 
 // titleFor resolves a conv's display name from the batch (custom title >
