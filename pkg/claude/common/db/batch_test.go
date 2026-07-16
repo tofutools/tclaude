@@ -5,7 +5,49 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestAgentGroupBatchLoaders(t *testing.T) {
+	setupTestDB(t)
+	alpha, err := CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	beta, err := CreateAgentGroup("beta", "")
+	require.NoError(t, err)
+	empty, err := CreateAgentGroup("empty", "")
+	require.NoError(t, err)
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
+		GroupID: alpha, ConvID: "member-a", Role: "builder", Descr: "alpha member",
+	}))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
+		GroupID: beta, ConvID: "member-b", Role: "reviewer", Descr: "beta member",
+	}))
+	require.NoError(t, AddAgentGroupOwner(alpha, "owner-a", "test"))
+	require.NoError(t, AddAgentGroupOwner(beta, "owner-b", "test"))
+
+	members, err := ListAgentGroupMembersBatch([]int64{beta, empty, alpha})
+	require.NoError(t, err)
+	require.Len(t, members[alpha], 1)
+	assert.Equal(t, "member-a", members[alpha][0].ConvID)
+	require.Len(t, members[beta], 1)
+	assert.Equal(t, "member-b", members[beta][0].ConvID)
+	assert.Empty(t, members[empty])
+
+	owners, err := ListAgentGroupOwnersBatch([]int64{beta, empty, alpha})
+	require.NoError(t, err)
+	require.Len(t, owners[alpha], 1)
+	assert.Equal(t, "owner-a", owners[alpha][0].ConvID)
+	require.Len(t, owners[beta], 1)
+	assert.Equal(t, "owner-b", owners[beta][0].ConvID)
+	assert.Empty(t, owners[empty])
+
+	noMembers, err := ListAgentGroupMembersBatch(nil)
+	require.NoError(t, err)
+	assert.Empty(t, noMembers)
+	noOwners, err := ListAgentGroupOwnersBatch(nil)
+	require.NoError(t, err)
+	assert.Empty(t, noOwners)
+}
 
 // TestCanonicalAgeTimestamp_PreservesPrecision pins the wire representation,
 // which is deliberately ordinary UTC RFC3339Nano. Age consumers compare parsed

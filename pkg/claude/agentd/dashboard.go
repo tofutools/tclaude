@@ -1829,30 +1829,25 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// and ListAgentGroupOwners once in the group loop; keying both by group id
 	// here lets inMutedGroup, the conv-set collect and the group loop all reuse
 	// a single read.
-	membersByIndex := make([][]*db.AgentGroupMember, len(groups))
-	ownersByIndex := make([][]*db.AgentGroupOwner, len(groups))
-	membersErrByIndex := make([]error, len(groups))
-	ownersErrByIndex := make([]error, len(groups))
-	groupLoads := make([]func(), 0, len(groups)*2)
-	for i, g := range groups {
-		i, groupID := i, g.ID
-		groupLoads = append(groupLoads,
-			func() { membersByIndex[i], membersErrByIndex[i] = db.ListAgentGroupMembers(groupID) },
-			func() { ownersByIndex[i], ownersErrByIndex[i] = db.ListAgentGroupOwners(groupID) },
-		)
+	groupIDs := make([]int64, len(groups))
+	for i, group := range groups {
+		groupIDs[i] = group.ID
 	}
-	runSnapshotLoads(groupLoads...)
-	membersByGroup := make(map[int64][]*db.AgentGroupMember, len(groups))
-	ownersByGroup := make(map[int64][]*db.AgentGroupOwner, len(groups))
-	for i, g := range groups {
-		if membersErrByIndex[i] != nil {
-			slog.Warn("snapshot: failed to preload group members", "group_id", g.ID, "error", membersErrByIndex[i])
-		}
-		if ownersErrByIndex[i] != nil {
-			slog.Warn("snapshot: failed to preload group owners", "group_id", g.ID, "error", ownersErrByIndex[i])
-		}
-		membersByGroup[g.ID] = membersByIndex[i]
-		ownersByGroup[g.ID] = ownersByIndex[i]
+	var (
+		membersByGroup map[int64][]*db.AgentGroupMember
+		ownersByGroup  map[int64][]*db.AgentGroupOwner
+		membersErr     error
+		ownersErr      error
+	)
+	runSnapshotLoads(
+		func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) },
+		func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) },
+	)
+	if membersErr != nil {
+		slog.Warn("snapshot: failed to preload group members", "error", membersErr)
+	}
+	if ownersErr != nil {
+		slog.Warn("snapshot: failed to preload group owners", "error", ownersErr)
 	}
 
 	// Notification-filter state: the per-agent overrides plus the set
