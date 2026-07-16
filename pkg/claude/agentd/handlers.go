@@ -1237,9 +1237,6 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	if m.Subject != "" {
 		fmt.Fprintf(&b, "; subject: %s", m.Subject)
 	}
-	if !operatorAuthored && m.FromConv != "" {
-		fmt.Fprintf(&b, "; reply with: tclaude agent reply %d \"<your reply body>\"", m.ID)
-	}
 	fmt.Fprintf(&b, "] %s", m.Body)
 	if len(attachments) > 0 {
 		b.WriteString(" Attachments:")
