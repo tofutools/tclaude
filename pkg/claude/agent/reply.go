@@ -45,10 +45,10 @@ func runReply(p *replyParams, stdout, stderr io.Writer, stdin io.Reader) int {
 
 	// Reuse readBody by adapting params (it is shared with `message`).
 	body, status := readBody(&messageParams{
-		Body:  p.Body,
+		Text:  p.Body,
 		Stdin: p.Stdin,
 		File:  p.File,
-	}, stdin, stderr)
+	}, false, stdin, stderr)
 	if status != rcOK {
 		return status
 	}

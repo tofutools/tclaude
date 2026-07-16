@@ -118,6 +118,7 @@ thread), use the `Reply-To` value from the headers as the target of
 
 ```bash
 tclaude agent message <peer> "your message text"
+tclaude agent message <peer> --body "your message text"  # equivalent flag form
 tclaude agent message <peer> --file plan.md     # body from a file
 tclaude agent message <peer> --subject "ack" --stdin <<EOF
 multi-line
