@@ -56,6 +56,19 @@ function fakeWidgetFactory(harness) {
         return Promise.resolve(true);
       },
       copy() { this.copyCount += 1; return Promise.resolve(); },
+      // The reveal path drives fit/focus directly, so the fake mirrors the real
+      // widget contract. Each focus records whether the Terminals tab was
+      // actually revealed at that moment: a real browser drops focus attempted
+      // while the pane is still display:none, and LinkeDOM would not.
+      revealedAtFocus: [],
+      calls: [],
+      fit() { this.calls.push('fit'); },
+      focus() {
+        this.calls.push('focus');
+        this.revealedAtFocus.push(
+          harness.document.getElementById('tab-terminals')?.classList.contains('active') === true,
+        );
+      },
       setActive(value) { this.activeEdges.push(!!value); },
       status() { return this.currentStatus; },
       dispose() {
@@ -97,6 +110,10 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   });
   assert.equal(harness.document.body.classList.contains('hide-terminals'), false);
   assert.equal(terminals.classList.contains('active'), true, 'opening reveals the dashboard tab');
+  assert.deepEqual(fake.widgets[0].revealedAtFocus, [true],
+    'the first pane focuses xterm only once the Terminals tab is revealed');
+  assert.deepEqual(fake.widgets[0].calls, ['fit', 'focus'],
+    'the revealed pane is refitted before it takes focus');
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '1');
   assert.equal(host.querySelectorAll('[role="tab"]').length, 1);
   assert.equal(fake.widgets.length, 1);
@@ -106,6 +123,8 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
     'the fit host fills the padded visual host content box');
 
   const firstActivationEdges = fake.widgets[0].activeEdges.length;
+  harness.fireEvent(harness.document.querySelector('nav [data-tab="groups"]'), 'click');
+  assert.equal(terminals.classList.contains('active'), false, 'fixture leaves the terminal tab before re-reveal');
   await harness.act(async () => {
     controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'agt_one' });
     await Promise.resolve();
@@ -114,6 +133,8 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[0].disposeCount, 0);
   assert.equal(fake.widgets[0].activeEdges.length, firstActivationEdges + 1);
   assert.equal(fake.widgets[0].activeEdges.at(-1), true, 'revealing the active pane refocuses xterm');
+  assert.deepEqual(fake.widgets[0].revealedAtFocus, [true, true],
+    'revealing an existing pane refocuses xterm after the tab is visible');
   assert.equal(fake.widgets[0].child, opaqueChild);
 
   await harness.act(() => fake.widgets[0].options.onStatus('copied'));
@@ -148,6 +169,8 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '2');
   assert.equal(fake.widgets[0].activeEdges.at(-1), false);
   assert.equal(fake.widgets[1].activeEdges.at(-1), true);
+  assert.deepEqual(fake.widgets[1].calls, [],
+    'switching panes while Terminals is visible relies on the existing activation path');
   await harness.act(() => composed[0].restoreFocus());
   assert.equal(fake.widgets[0].activeEdges.at(-1), true,
     'closing the composer restores the exact originating pane');
@@ -155,10 +178,13 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   const activeEdges = fake.widgets[0].activeEdges.length;
   const inactiveEdges = fake.widgets[1].activeEdges.length;
+  const inactiveCalls = fake.widgets[1].calls.length;
   await harness.act(() => controller.focusTerminalForConv(['agt_one']));
   assert.equal(fake.widgets[0].activeEdges.length, activeEdges + 1);
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   assert.equal(fake.widgets[1].activeEdges.length, inactiveEdges, 'reveal does not touch inactive widgets');
+  assert.equal(fake.widgets[1].calls.length, inactiveCalls,
+    'reveal never fits or focuses an inactive widget');
 
   const closeOne = getByRole(host, 'button', { name: 'Close one' });
   await harness.act(() => harness.fireEvent(closeOne, 'click'));
