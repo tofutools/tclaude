@@ -209,10 +209,24 @@ function TerminalTabs({
     return undefined;
   }, [hasPanes, solo]);
 
+  // Preact flushes layout effects child-first, so the active pane's own
+  // activation attempt runs while this tab is still display:none, and a real
+  // browser drops focus on an unrendered xterm. Refit and refocus the active
+  // widget here, once the reveal above has actually made the pane visible.
   useLayoutEffect(() => {
     if (solo || !hasPanes || current.revealRequest === 0) return;
+    const terminalSection = document.getElementById('tab-terminals');
+    const needsPostRevealFocus = !terminalSection?.classList.contains('active');
     document.body.classList.remove('hide-terminals');
     document.querySelector('nav [data-tab="terminals"]')?.click();
+    // Ordinary pane switches already run setActive(true) while this section is
+    // visible. Only repeat fit/focus when the request had to reveal the section.
+    if (!needsPostRevealFocus || !terminalSection?.classList.contains('active')) return;
+    const active = current.panes.find((pane) => pane.key === current.activeKey);
+    const widget = active && actions.widgetFor(active.id);
+    if (!widget) return;
+    widget.fit();
+    widget.focus();
   }, [current.revealRequest, hasPanes, solo]);
 
   useEffect(() => {
