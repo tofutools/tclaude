@@ -75,9 +75,13 @@ type TopologyEdgeV2 struct {
 }
 
 type RoutingOverlayV2 struct {
-	Protocol string                 `json:"protocol"`
-	Encoding uint32                 `json:"encoding"`
-	Edges    []RoutingEdgeOverlayV2 `json:"edges"`
+	Protocol  string                    `json:"protocol"`
+	Encoding  uint32                    `json:"encoding"`
+	Edges     []RoutingEdgeOverlayV2    `json:"edges"`
+	Scopes    []RoutingScopeOverlayV2   `json:"scopes,omitempty"`
+	Joins     []RoutingJoinOverlayV2    `json:"joins,omitempty"`
+	Closures  []RoutingClosureOverlayV2 `json:"closures,omitempty"`
+	Aggregate RoutingAggregateOverlayV2 `json:"aggregate"`
 }
 
 // RoutingEdgeOverlayV2 deliberately collapses path records to an exact
@@ -87,6 +91,45 @@ type RoutingEdgeOverlayV2 struct {
 	EdgeID string           `json:"edgeId"`
 	State  pathv1.PathState `json:"state"`
 	Count  int              `json:"count"`
+}
+
+type RoutingScopeOverlayV2 struct {
+	ID                string                  `json:"id"`
+	ParentScopeID     string                  `json:"parentScopeId,omitempty"`
+	JoinReservationID string                  `json:"joinReservationId,omitempty"`
+	State             pathv1.ScopeState       `json:"state"`
+	CloseReason       pathv1.ScopeCloseReason `json:"closeReason,omitempty"`
+}
+
+type RoutingJoinOverlayV2 struct {
+	ReservationID string                  `json:"reservationId"`
+	NodeID        string                  `json:"nodeId"`
+	ScopeID       string                  `json:"scopeId"`
+	Policy        pathv1.JoinPolicy       `json:"policy"`
+	State         pathv1.ReservationState `json:"state"`
+	Arrived       int                     `json:"arrived"`
+	Open          int                     `json:"open"`
+	Impossible    int                     `json:"impossible"`
+	Failed        int                     `json:"failed"`
+	Skipped       int                     `json:"skipped"`
+	Canceled      int                     `json:"canceled"`
+}
+
+type RoutingClosureOverlayV2 struct {
+	ReservationID string              `json:"reservationId"`
+	CandidateID   string              `json:"candidateId"`
+	TerminalKind  pathv1.TerminalKind `json:"terminalKind"`
+}
+
+type RoutingAggregateOverlayV2 struct {
+	Paths        int    `json:"paths"`
+	Scopes       int    `json:"scopes"`
+	Reservations int    `json:"reservations"`
+	Activations  int    `json:"activations"`
+	Closures     int    `json:"closures"`
+	Propagation  int    `json:"propagation"`
+	Settled      bool   `json:"settled"`
+	Result       string `json:"result,omitempty"`
 }
 
 // ViewerV2Input is the complete input to the pure viewer-v2 projector.
@@ -173,7 +216,7 @@ func ProjectViewerV2(input ViewerV2Input) ViewerV2 {
 		return result
 	}
 
-	overlay, ok := projectRoutingOverlay(aggregate.Routing, topology.semanticHash, topology.edges)
+	overlay, ok := projectRoutingOverlay(*aggregate, topology.semanticHash, topology.edges)
 	if !ok {
 		result.RoutingUnavailableReason = RoutingUnavailableInconsistent
 		return result
@@ -330,7 +373,8 @@ func exactTopologyV2StringBytes(value string) ExactTopologyV2EncodedBytes {
 	return ExactTopologyV2EncodedBytes(len(value)) + 2
 }
 
-func projectRoutingOverlay(routing *pathv1.RoutingState, semanticHash string, topologyEdges map[string]TopologyEdgeV2) (*RoutingOverlayV2, bool) {
+func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, topologyEdges map[string]TopologyEdgeV2) (*RoutingOverlayV2, bool) {
+	routing := aggregate.Routing
 	type overlayKey struct {
 		edgeID string
 		state  pathv1.PathState
@@ -356,5 +400,67 @@ func projectRoutingOverlay(routing *pathv1.RoutingState, semanticHash string, to
 		}
 		return cmp.Compare(a.State, b.State)
 	})
+	for _, scope := range routing.Scopes {
+		overlay.Scopes = append(overlay.Scopes, RoutingScopeOverlayV2{ID: scope.ID, ParentScopeID: scope.ParentScopeID, JoinReservationID: scope.JoinReservationID, State: scope.State, CloseReason: scope.CloseReason})
+	}
+	slices.SortFunc(overlay.Scopes, func(a, b RoutingScopeOverlayV2) int { return cmp.Compare(a.ID, b.ID) })
+	for _, reservation := range routing.Reservations {
+		if reservation.JoinPolicy != pathv1.JoinAll && reservation.JoinPolicy != pathv1.JoinAny {
+			continue
+		}
+		join := RoutingJoinOverlayV2{ReservationID: reservation.ID, NodeID: reservation.NodeID, ScopeID: reservation.ScopeID, Policy: reservation.JoinPolicy, State: reservation.State}
+		for _, candidate := range reservation.Candidates {
+			arrived := false
+			for _, path := range routing.Paths {
+				if path.TargetReservationID == reservation.ID && path.CandidateID == candidate.ID && path.Kind == pathv1.PathEdge && (path.State == pathv1.PathArrived || path.State == pathv1.PathConsumed) {
+					arrived = true
+					break
+				}
+			}
+			if arrived {
+				join.Arrived++
+				continue
+			}
+			key, err := pathv1.CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+			if err != nil {
+				return nil, false
+			}
+			closure, ok := routing.CandidateClosures[key]
+			if !ok {
+				join.Open++
+				continue
+			}
+			switch closure.TerminalKind {
+			case pathv1.TerminalImpossible:
+				join.Impossible++
+			case pathv1.TerminalFailed:
+				join.Failed++
+			case pathv1.TerminalSkipped:
+				join.Skipped++
+			case pathv1.TerminalCanceled:
+				join.Canceled++
+			default:
+				return nil, false
+			}
+		}
+		overlay.Joins = append(overlay.Joins, join)
+	}
+	slices.SortFunc(overlay.Joins, func(a, b RoutingJoinOverlayV2) int { return cmp.Compare(a.ReservationID, b.ReservationID) })
+	for _, closure := range routing.CandidateClosures {
+		overlay.Closures = append(overlay.Closures, RoutingClosureOverlayV2{ReservationID: closure.Key.ReservationID, CandidateID: closure.Key.CandidateID, TerminalKind: closure.TerminalKind})
+	}
+	slices.SortFunc(overlay.Closures, func(a, b RoutingClosureOverlayV2) int {
+		if n := cmp.Compare(a.ReservationID, b.ReservationID); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.CandidateID, b.CandidateID)
+	})
+	overlay.Aggregate = RoutingAggregateOverlayV2{Paths: len(routing.Paths), Scopes: len(routing.Scopes), Reservations: len(routing.Reservations), Activations: len(routing.Activations), Closures: len(routing.CandidateClosures), Propagation: len(routing.Propagation)}
+	if completion, err := pathv1.AssessAggregateCompletion(aggregate); err == nil {
+		overlay.Aggregate.Settled = true
+		overlay.Aggregate.Result = completion.Result
+	} else if !errors.Is(err, pathv1.ErrAggregateUnsettled) {
+		return nil, false
+	}
 	return overlay, true
 }

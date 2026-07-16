@@ -806,7 +806,7 @@ func safeTemplateRef(value string) string {
 
 func validNodeType(nodeType model.NodeType) bool {
 	switch nodeType {
-	case model.NodeTypeTask, model.NodeTypeDecision, model.NodeTypeWait, model.NodeTypeStart, model.NodeTypeEnd:
+	case model.NodeTypeTask, model.NodeTypeDecision, model.NodeTypeWait, model.NodeTypeStart, model.NodeTypeEnd, model.NodeTypeParallel:
 		return true
 	default:
 		return false

@@ -1176,7 +1176,8 @@ func (i *aggregateIndex) validateReservationCommand(path string, r ActivationRes
 		}
 		return
 	}
-	if command.Identity.Kind != CommandActivateGeneration || command.Identity.TargetReservationID != r.ID || command.Identity.TargetGeneration != r.Generation {
+	validKind := command.Identity.Kind == CommandActivateGeneration || command.Identity.Kind == CommandPropagateCandidateClosure
+	if !validKind || command.Identity.TargetReservationID != r.ID || command.Identity.TargetGeneration != r.Generation {
 		i.c.add("reservation_command_authority", path, "command does not own this exact activation reservation generation")
 	}
 }
@@ -1205,10 +1206,24 @@ func (i *aggregateIndex) validateActivationScope(r ActivationReservation) {
 		}
 		return
 	}
-	frames, lineageID, err := PopConsumedLineage(inputs, r.ID)
-	if err != nil {
-		i.c.add("activation_lineage_pop", "reservations."+r.ID, "%v", err)
-		return
+	var frames []CandidateLineageFrame
+	lineageID := ""
+	var err error
+	if r.IsReducing {
+		scope := i.view.Routing.Scopes[r.ReducesScopeID]
+		forkOutput, ok := i.view.Routing.Paths[scope.ForkOutputPathID]
+		if !ok || forkOutput.State != PathSplit {
+			i.c.add("activation_lineage_pop", "reservations."+r.ID, "reducing activation lacks exact split fork output")
+			return
+		}
+		frames = cloneSlice(forkOutput.CandidateLineage)
+		lineageID = forkOutput.CandidateLineageID
+	} else {
+		frames, lineageID, err = PopConsumedLineage(inputs, r.ID)
+		if err != nil {
+			i.c.add("activation_lineage_pop", "reservations."+r.ID, "%v", err)
+			return
+		}
 	}
 	if !slices.Equal(frames, output.CandidateLineage) || lineageID != output.CandidateLineageID {
 		i.c.add("activation_output_lineage", "reservations."+r.ID, "output lineage is not exact common input remainder")

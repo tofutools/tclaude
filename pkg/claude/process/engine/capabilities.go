@@ -27,6 +27,14 @@ func FoundationEngineCapabilities() EngineCapabilities {
 	return EngineCapabilities{supported: map[ExecutionCapability]struct{}{CapabilityFoundationV1: {}}}
 }
 
+// ProductionEngineCapabilities is the indivisible TCL-444/445/446 release
+// surface. Parallel fan-out is never advertised without its all reducer.
+func ProductionEngineCapabilities() EngineCapabilities {
+	return EngineCapabilities{supported: map[ExecutionCapability]struct{}{
+		CapabilityFoundationV1: {}, CapabilityParallelAllV1: {},
+	}}
+}
+
 func (c EngineCapabilities) Supports(capability ExecutionCapability) bool {
 	_, ok := c.supported[capability]
 	return ok

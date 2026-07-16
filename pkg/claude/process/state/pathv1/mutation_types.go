@@ -92,6 +92,7 @@ type ActivateGenerationPlan struct {
 	PreArrivedLoserPathIDs []PathID             `json:"preArrivedLoserPathIds,omitempty"`
 	Candidates             []CandidateRecord    `json:"candidates"`
 	PossibleSlots          []PossibleSlotRecord `json:"possibleSlots"`
+	Intents                []PropagationIntent  `json:"intents,omitempty"`
 	Batch                  MutationBatch        `json:"batch"`
 }
 

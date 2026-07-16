@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -126,8 +127,38 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 			return err
 		}
 		if pending {
-			action.transition, err = pathv1.AdvanceExclusiveRoute(ctx, view.Input)
+			if view.Input.ParallelEnabled() {
+				action.transition, err = pathv1.AdvanceParallelRoute(ctx, view.Input)
+			} else {
+				action.transition, err = pathv1.AdvanceExclusiveRoute(ctx, view.Input)
+			}
 			return err
+		}
+		if view.Input.ParallelEnabled() {
+			if transition, terminalErr := pathv1.AdvanceParallelTerminalClosure(ctx, view.Input); terminalErr == nil {
+				action.transition = transition
+				return nil
+			} else if !errors.Is(terminalErr, pathv1.ErrParallelAllNotReady) {
+				return terminalErr
+			}
+			if transition, propagationErr := pathv1.AdvanceParallelPropagation(ctx, view.Input); propagationErr == nil {
+				action.transition = transition
+				return nil
+			} else if !errors.Is(propagationErr, pathv1.ErrParallelAllNotReady) {
+				return propagationErr
+			}
+			if transition, readyErr := pathv1.AdvanceParallelExclusiveArrival(ctx, view.Input); readyErr == nil {
+				action.transition = transition
+				return nil
+			} else if !errors.Is(readyErr, pathv1.ErrParallelAllNotReady) {
+				return readyErr
+			}
+			if transition, allErr := pathv1.AdvanceParallelAll(ctx, view.Input); allErr == nil {
+				action.transition = transition
+				return nil
+			} else if !errors.Is(allErr, pathv1.ErrParallelAllNotReady) {
+				return allErr
+			}
 		}
 		if _, completeErr := pathv1.AssessAggregateCompletion(aggregate.View()); completeErr == nil {
 			action.transition, err = pathv1.ClaimExclusiveCompletion(ctx, view.Input)
@@ -142,14 +173,29 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 				live = append(live, candidate)
 			}
 		}
-		if len(live) != 1 {
-			return fmt.Errorf("path-v1 exclusive executor found %d live activation outputs", len(live))
+		if len(live) == 0 || (!view.Input.ParallelEnabled() && len(live) != 1) {
+			return fmt.Errorf("path-v1 executor found %d live activation outputs", len(live))
 		}
+		slices.SortFunc(live, func(a, b pathv1.PathRecord) int { return strings.Compare(a.ID, b.ID) })
 		if start, startErr := pathv1.AdvanceExclusiveStart(ctx, view.Input, live[0].ID); startErr == nil {
 			action.transition = start
 			return nil
 		} else if !errors.Is(startErr, pathv1.ErrExclusiveUnsupported) {
 			return startErr
+		}
+		if view.Input.ParallelEnabled() {
+			if split, splitErr := pathv1.AdvanceParallelSplit(ctx, view.Input, live[0].ID); splitErr == nil {
+				action.transition = split
+				return nil
+			} else if !errors.Is(splitErr, pathv1.ErrParallelUnsupported) {
+				return splitErr
+			}
+			if end, endErr := pathv1.AdvanceParallelEnd(ctx, view.Input, live[0].ID); endErr == nil {
+				action.transition = end
+				return nil
+			} else if !errors.Is(endErr, pathv1.ErrExclusiveUnsupported) {
+				return endErr
+			}
 		}
 		if wait, waitErr := pathv1.PlanExclusiveWait(ctx, view.Input, live[0].ID, e.now()); waitErr == nil {
 			action.wait = wait

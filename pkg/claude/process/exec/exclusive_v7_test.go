@@ -18,12 +18,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 )
 
 type exclusiveV7Adapter struct {
 	mu        sync.Mutex
 	performs  int
 	perform   func(Request)
+	observe   func(Request) Observation
 	reconcile func(Request) (Observation, bool, error)
 	results   []Observation
 }
@@ -41,6 +43,7 @@ func (a *exclusiveV7Adapter) Perform(_ context.Context, request Request) (Observ
 	a.performs++
 	index := a.performs - 1
 	perform := a.perform
+	observe := a.observe
 	var observation Observation
 	if index < len(a.results) {
 		observation = a.results[index]
@@ -48,6 +51,9 @@ func (a *exclusiveV7Adapter) Perform(_ context.Context, request Request) (Observ
 	a.mu.Unlock()
 	if perform != nil {
 		perform(request)
+	}
+	if observe != nil {
+		return observe(request), nil
 	}
 	if observation.Actor != "" {
 		return observation, nil
@@ -117,6 +123,81 @@ func TestExclusiveV7DriveClaimsPerformsObservesRoutesAndCompletes(t *testing.T) 
 	assert.Equal(t, "completed", completion.Result)
 	for _, command := range aggregate.Commands {
 		assert.False(t, command.State.Active(), "terminal checkpoint retained active command %q", command.ID)
+	}
+}
+
+func TestExclusiveV7DriveParallelAllClaimsEveryBranchAndCompletes(t *testing.T) {
+	fs, runID := parallelAllV7Run(t)
+	adapter := &exclusiveV7Adapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	reducing := 0
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.JoinPolicy == pathv1.JoinAll && reservation.IsReducing {
+			reducing++
+			assert.Equal(t, pathv1.ReservationActivated, reservation.State)
+		}
+	}
+	assert.Equal(t, 1, reducing)
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	viewer, err := processview.BuildCurrentPathV1Envelope(t.Context(), snapshot)
+	require.NoError(t, err)
+	require.True(t, viewer.ViewerV2.RoutingAvailable, "viewer reason=%s", viewer.ViewerV2.RoutingUnavailableReason)
+	require.NotNil(t, viewer.ViewerV2.Routing)
+	assert.Len(t, viewer.ViewerV2.Routing.Joins, 1)
+	assert.GreaterOrEqual(t, len(viewer.ViewerV2.Routing.Scopes), 2)
+	assert.Equal(t, len(aggregate.Routing.Paths), viewer.ViewerV2.Routing.Aggregate.Paths)
+}
+
+func TestExclusiveV7DriveParallelAllTerminalMixturePoisonsJoin(t *testing.T) {
+	fs, runID := parallelAllV7Run(t)
+	adapter := &exclusiveV7Adapter{results: []Observation{
+		{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:failed-branch"},
+		{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:passed-branch"},
+	}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.JoinPolicy == pathv1.JoinAll && reservation.IsReducing {
+			assert.Equal(t, pathv1.ReservationClosedNoActivation, reservation.State)
+			assert.Equal(t, string(pathv1.ScopeCloseCandidateNonSuccess), reservation.ClosedReason)
+		}
+	}
+}
+
+func TestExclusiveV7ParallelFailurePropagatesThroughUnmaterializedBranchNode(t *testing.T) {
+	fs, runID := parallelAllV7RunWithIntermediate(t)
+	adapter := &exclusiveV7Adapter{observe: func(request Request) Observation {
+		if request.Command.NodeID == "left" {
+			return Observation{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:failed-branch"}
+		}
+		return Observation{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:passed-branch"}
+	}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count(), "poisoned intermediate task must never be performed")
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.NodeID == "left-next" {
+			assert.Equal(t, pathv1.ReservationClosedNoActivation, reservation.State)
+		}
 	}
 }
 
@@ -459,6 +540,74 @@ func TestExclusiveV7TerminalRetryReconfirmsDirectoryDurability(t *testing.T) {
 
 func exclusiveV7Run(t *testing.T) (*store.FS, string) {
 	return exclusiveV7RunFixture(t, nil)
+}
+
+func parallelAllV7Run(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"left": "left", "right": "right"}},
+			"left":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "left"}, Next: model.Next{"pass": "merge"}},
+			"right": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "right"}, Next: model.Next{"pass": "merge"}},
+			"merge": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "left", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "right", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	result, err := fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
+}
+
+func parallelAllV7RunWithIntermediate(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-intermediate", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":      {Type: model.NodeTypeParallel, Next: model.Next{"left": "left", "right": "right"}},
+			"left":      {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "left"}, Next: model.Next{"pass": "left-next"}},
+			"left-next": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "must not run"}, Next: model.Next{"pass": "merge"}},
+			"right":     {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "right"}, Next: model.Next{"pass": "merge"}},
+			"merge":     {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-intermediate"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "left", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "left-next", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "right", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	result, err := fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
 }
 
 func exclusiveV7RunWithRetry(t *testing.T) (*store.FS, string) {

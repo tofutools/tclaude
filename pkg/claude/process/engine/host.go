@@ -444,8 +444,17 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 	if tmpl == nil {
 		return false
 	}
+	hasParallel := false
+	for _, node := range tmpl.Nodes {
+		if node.Type == model.NodeTypeParallel {
+			hasParallel = true
+		}
+	}
 	for nodeID, node := range tmpl.Nodes {
 		if node.IsCompound() {
+			return false
+		}
+		if hasParallel && node.Join == model.JoinAny {
 			return false
 		}
 		switch node.Type {
@@ -456,7 +465,7 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			if node.Type == model.NodeTypeTask && len(node.Performer.ChoiceOutcomes) != 0 {
 				return false
 			}
-			if node.Type == model.NodeTypeTask && model.FailTarget(node.Next) == "" {
+			if node.Type == model.NodeTypeTask && model.FailTarget(node.Next) == "" && !hasParallel {
 				return false
 			}
 		case model.NodeTypeEnd:
@@ -475,6 +484,10 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 				return false
 			}
 		case model.NodeTypeStart:
+		case model.NodeTypeParallel:
+			if len(node.Next) < 2 || node.Join == model.JoinAny {
+				return false
+			}
 		default:
 			return false
 		}

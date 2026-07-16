@@ -77,7 +77,7 @@ func ValidateExecutionTransitionForAppend(ctx context.Context, currentBytes, tem
 	if err != nil {
 		return CheckpointBinding{}, nil, nil, err
 	}
-	if _, err := VerifyExclusiveInput(ctx, currentBytes, templateSource); err != nil {
+	if _, err := VerifyExecutionInput(ctx, currentBytes, templateSource); err != nil {
 		return CheckpointBinding{}, nil, nil, err
 	}
 	pre := CurrentCheckpointBinding(current)
@@ -86,7 +86,7 @@ func ValidateExecutionTransitionForAppend(ctx context.Context, currentBytes, tem
 	if err != nil {
 		return pre, nil, nil, err
 	}
-	if _, err := VerifyExclusiveInput(ctx, postBytes, templateSource); err != nil {
+	if _, err := VerifyExecutionInput(ctx, postBytes, templateSource); err != nil {
 		return CurrentCheckpointBinding(current), nil, nil, err
 	}
 	if bytes.Equal(currentBytes, postBytes) {
@@ -761,7 +761,12 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	if err != nil {
 		return nil, err
 	}
-	if disposition == ExclusiveRouteReady {
+	terminalParallelFailure := input.parallel != nil && node.Type == model.NodeTypeTask && isFailOutcome(observation.Outcome) && model.FailTarget(node.Next) == ""
+	if terminalParallelFailure {
+		outcome = "failed"
+		observation.Outcome = outcome
+	}
+	if disposition == ExclusiveRouteReady && !terminalParallelFailure {
 		outgoing, err := exactOutgoingEdges(view.TemplateRef, plan.nodeID, node.Next)
 		if err != nil {
 			return nil, err
@@ -779,13 +784,17 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		return nil, err
 	}
 	aggregate.Commands[observedPerform.ID] = observedPerform
-	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
+	settlePayloadValue := settleAttemptObservationPayload{
 		TemplateRef: aggregate.TemplateRef, SourceCommandID: observedPerform.ID,
 		SourceActivationID: activation.ID, SourceGeneration: activation.Ref.Generation,
 		Attempt: plan.command.Identity.Attempt, ResultCode: outcome,
 		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
 		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
-	})
+	}
+	if terminalParallelFailure {
+		settlePayloadValue.ReasonCode = "performer_failed"
+	}
+	settlePayload, err := json.Marshal(settlePayloadValue)
 	if err != nil {
 		return nil, err
 	}
@@ -806,9 +815,35 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	}
 	effect := aggregate.SideEffects[effectID]
 	effect.State = "observed"
+	if terminalParallelFailure {
+		effect.State = "failed"
+	}
 	aggregate.SideEffects[effectID] = effect
 	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation); err != nil {
 		return nil, err
+	}
+	if terminalParallelFailure {
+		eventSeq := int64(CurrentLastLogSeq(input.checkpoint) + 1)
+		failed := aggregate.Routing.Paths[source.ID]
+		failed.State = PathFailed
+		failed.UpdatedSeq = eventSeq
+		receiptID, receiptErr := DispositionReceiptIdentity(failed.ID, PathLive, PathFailed, "performer_failed", settle.ID, "", uint64(eventSeq))
+		if receiptErr != nil {
+			return nil, receiptErr
+		}
+		failed.Disposition = &DispositionReceipt{ID: receiptID, PathID: failed.ID, FromState: PathLive, ToState: PathFailed, ReasonCode: "performer_failed", CommandID: settle.ID, EventSeq: eventSeq}
+		causeID, causeErr := CauseIdentity(failed.ID, TerminalFailed, "performer_failed", failed.SourceActivation.ID, settle.ID, "", uint64(eventSeq))
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		failed.TerminalCauseID = causeID
+		aggregate.Routing.Paths[failed.ID] = failed
+		aggregate.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, SourcePathID: failed.ID, TerminalKind: TerminalFailed, DispositionReason: "performer_failed", SourceActivationID: failed.SourceActivation.ID, SourceCommandID: settle.ID, EventSeq: eventSeq}
+		causeDigest, causeErr := CauseSetIdentity([]CauseID{causeID})
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		aggregate.Routing.CauseSets[causeDigest] = CauseSetRecord{Digest: causeDigest, CauseIDs: []CauseID{causeID}}
 	}
 	next, err := advanceCheckpointV7(input.checkpoint, aggregate, CurrentRunStatus(input.checkpoint))
 	if err != nil {

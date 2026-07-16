@@ -57,6 +57,8 @@ func TestProjectViewerV2ValidatesExactTopologyAndAggregateBeforeOverlay(t *testi
 		State:  pathv1.PathArrived,
 		Count:  1,
 	}}, projected.Routing.Edges)
+	assert.Equal(t, len(aggregate.Routing.Paths), projected.Routing.Aggregate.Paths)
+	assert.Equal(t, len(aggregate.Routing.Scopes), projected.Routing.Aggregate.Scopes)
 	require.NotNil(t, projected.ExactTopology)
 	assert.Equal(t, ref, projected.ExactTopology.TemplateRef)
 	assert.Equal(t, []string{"done", "work"}, []string{projected.ExactTopology.Nodes[0].ID, projected.ExactTopology.Nodes[1].ID})
@@ -113,7 +115,7 @@ func TestViewerV2JSONIsNarrowAndHasNoEvidenceFallback(t *testing.T) {
 	})
 	data, err := json.Marshal(projected)
 	require.NoError(t, err)
-	for _, forbidden := range []string{"commands", "payload", "completionBasis", "evidence", "aggregate", "DO_NOT_LEAK"} {
+	for _, forbidden := range []string{"commands", "payload", "completionBasis", "evidence", "DO_NOT_LEAK"} {
 		assert.NotContains(t, string(data), forbidden)
 	}
 

@@ -108,6 +108,16 @@ func TestFoundationEngineCannotCreateParallelRun(t *testing.T) {
 	if production.Supports(CapabilityParallelAllV1) || production.Supports(CapabilityParallelAnyV1) {
 		t.Fatalf("authoring slice exposed parallel execution: %#v", production)
 	}
+	released := ProductionEngineCapabilities()
+	if !released.Supports(CapabilityFoundationV1) || !released.Supports(CapabilityParallelAllV1) || released.Supports(CapabilityParallelAnyV1) {
+		t.Fatalf("production capability gate is not indivisible foundation+all: %#v", released)
+	}
+	if err := ValidateInstantiation(capabilityParallelTemplate(model.JoinAll), InstantiateRequest{RunID: "released", EngineCapabilities: released}); err != nil {
+		t.Fatalf("production all capability rejected exact all template: %v", err)
+	}
+	if err := ValidateInstantiation(capabilityParallelTemplate(model.JoinAny), InstantiateRequest{RunID: "released-any", EngineCapabilities: released}); err == nil || !strings.Contains(err.Error(), string(CapabilityParallelAnyV1)) {
+		t.Fatalf("production all capability admitted any: %v", err)
+	}
 }
 
 func testEngineCapabilities(values ...ExecutionCapability) EngineCapabilities {
