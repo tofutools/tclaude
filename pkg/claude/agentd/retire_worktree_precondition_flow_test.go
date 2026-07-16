@@ -3,7 +3,10 @@ package agentd_test
 import (
 	"net/http"
 	"net/url"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,8 +124,8 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		assert.Contains(t, probe.Body.String(), "feature-a")
 
 		// git switch feature-b — same worktree, same removability, new branch.
-		installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
-			cwd: {Root: cwd, Branch: "feature-b", Kind: "linked"},
+		fw.setDir(cwd, worktree.WorktreeStatus{
+			Root: cwd, Branch: "feature-b", Kind: "linked",
 		})
 		query := url.Values{
 			"shutdown":          {"1"},
@@ -366,6 +369,172 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 				"/api/agents/"+conv+"/retire?shutdown=1&delete_worktree=1", nil))
 			require.Equal(t, http.StatusOK, resp.Code, "body=%s", resp.Body.String())
 			assert.True(t, fw.wasRemoved(cwd), "the established delete_worktree contract is unchanged")
+		})
+	})
+
+	// Request-time validation closes the dialog-to-request gap, but the common
+	// live path then soft-exits the pane and removes seconds later. The world
+	// keeps moving in that window: a command already running in the pane can
+	// switch branches, and another agent can claim the directory. Removal is
+	// --force and takes the branch with it, so the boundary itself must
+	// re-confirm rather than trust the request-time snapshot.
+	t.Run("removal boundary re-confirms the frozen identity", func(t *testing.T) {
+		t.Run("deferred branch switch after scheduling keeps the worktree", func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+
+			const conv = "rwpx-1111-2222-3333-4444"
+			const cwd = "/tmp/retire-deferred-drift"
+			f.HaveConvWithTitle(conv, "drifting-worker")
+			f.HaveAliveSession(conv, "spwn-rwpx", "tmux-rwpx", cwd)
+			f.HaveEnrolledAgent(conv)
+			fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+				cwd: {Root: cwd, Branch: "feature-a", Kind: "linked"},
+			})
+
+			// A slow /exit keeps the pane alive past the response, so removal is
+			// deferred to the waiter — the production shape of this race.
+			cc := f.World.CCs.GetByConvID(conv)
+			require.NotNil(t, cc, "no CCSim registered for %s", conv)
+			cc.SetCommandDelay("/exit", 200*time.Millisecond)
+
+			mux := agentd.BuildDashboardHandlerForTest()
+			query := url.Values{
+				"shutdown":          {"1"},
+				"delete_worktree":   {"1"},
+				"expected_worktree": {cwd},
+				"expected_branch":   {"feature-a"},
+			}.Encode()
+			code, resp := postRetireWt(t, mux, conv, query)
+			require.Equal(t, http.StatusOK, code)
+			require.NotNil(t, resp.Worktree)
+			require.Equal(t, "scheduled", resp.Worktree.Action,
+				"a still-exiting agent must defer removal; detail=%s", resp.Worktree.Detail)
+			require.False(t, fw.wasRemoved(cwd), "nothing may be removed at response time")
+
+			// The gap: something in the still-live pane switches the checkout.
+			fw.setDir(cwd, worktree.WorktreeStatus{
+				Root: cwd, Branch: "feature-b", Kind: "linked",
+			})
+			agentd.WaitForBackgroundForTest()
+
+			assert.False(t, fw.wasRemoved(cwd),
+				"a worktree whose branch moved after confirmation must survive")
+			assert.Empty(t, fw.branchesRemoved(),
+				"feature-b was never confirmed and must never be force-deleted")
+			msgs, err := db.ListHumanMessages()
+			require.NoError(t, err)
+			require.NotEmpty(t, msgs, "a deferred keep must tell the human the promise was not kept")
+			assert.Contains(t, msgs[0].Subject, "kept")
+			assert.Contains(t, msgs[0].Body, "feature-b")
+		})
+
+		t.Run("deferred sharer claiming the path keeps the worktree", func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+
+			const conv = "rwps-1111-2222-3333-4444"
+			const other = "rwpo-1111-2222-3333-4444"
+			const cwd = "/tmp/retire-deferred-sharer"
+			f.HaveConvWithTitle(conv, "retiring-worker")
+			f.HaveAliveSession(conv, "spwn-rwps", "tmux-rwps", cwd)
+			f.HaveEnrolledAgent(conv)
+			fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+				cwd: {Root: cwd, Branch: "feature-a", Kind: "linked"},
+			})
+
+			cc := f.World.CCs.GetByConvID(conv)
+			require.NotNil(t, cc, "no CCSim registered for %s", conv)
+			cc.SetCommandDelay("/exit", 200*time.Millisecond)
+
+			mux := agentd.BuildDashboardHandlerForTest()
+			query := url.Values{
+				"shutdown":          {"1"},
+				"delete_worktree":   {"1"},
+				"expected_worktree": {cwd},
+				"expected_branch":   {"feature-a"},
+			}.Encode()
+			code, resp := postRetireWt(t, mux, conv, query)
+			require.Equal(t, http.StatusOK, code)
+			require.NotNil(t, resp.Worktree)
+			require.Equal(t, "scheduled", resp.Worktree.Action)
+
+			// The gap: another agent starts working in the same worktree.
+			f.HaveConvWithTitle(other, "newcomer-worker")
+			f.HaveAliveSession(other, "spwn-rwpo", "tmux-rwpo", cwd)
+			f.HaveEnrolledAgent(other)
+			agentd.WaitForBackgroundForTest()
+
+			assert.False(t, fw.wasRemoved(cwd),
+				"a live agent's cwd must never be removed out from under it")
+			assert.Empty(t, fw.branchesRemoved())
+			msgs, err := db.ListHumanMessages()
+			require.NoError(t, err)
+			require.NotEmpty(t, msgs)
+			assert.Contains(t, msgs[0].Subject, "kept")
+		})
+
+		// The inline path (agent already offline) races other processes too. A
+		// legacy caller sends no precondition, so the boundary is the ONLY
+		// guard standing between a branch switch and a force-delete.
+		t.Run("inline drift keeps the worktree even without a precondition", func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+
+			const conv = "rwpi-1111-2222-3333-4444"
+			const cwd = "/tmp/retire-inline-drift"
+			f.HaveConvWithTitle(conv, "inline-drift-worker")
+			f.HaveAliveSession(conv, "spwn-rwpi", "tmux-rwpi", cwd)
+			f.MarkOffline("tmux-rwpi")
+			f.HaveEnrolledAgent(conv)
+
+			// The checkout moves between the handler's own resolve and the
+			// removal boundary: the first inspection is the request-time view,
+			// every later one sees the switched branch.
+			var inspects atomic.Int32
+			var removedRoots, removedBranches []string
+			var mu sync.Mutex
+			t.Cleanup(agentd.SetWorktreeFnsForTest(
+				func(dir string) worktree.WorktreeStatus {
+					if dir != cwd {
+						return worktree.WorktreeStatus{Kind: "none"}
+					}
+					branch := "feature-b"
+					if inspects.Add(1) == 1 {
+						branch = "feature-a"
+					}
+					return worktree.WorktreeStatus{Root: cwd, Branch: branch, Kind: "linked"}
+				},
+				func(root string, _ bool) (bool, error) {
+					mu.Lock()
+					removedRoots = append(removedRoots, root)
+					mu.Unlock()
+					return true, nil
+				},
+			))
+			t.Cleanup(agentd.SetRetireWorktreeFnForTest(
+				func(root, branch string, _ bool) (bool, bool, error) {
+					mu.Lock()
+					removedRoots = append(removedRoots, root)
+					removedBranches = append(removedBranches, branch)
+					mu.Unlock()
+					return true, true, nil
+				},
+			))
+
+			mux := agentd.BuildDashboardHandlerForTest()
+			code, resp := postRetireWt(t, mux, conv, "shutdown=1&delete_worktree=1")
+			require.Equal(t, http.StatusOK, code)
+			require.NotNil(t, resp.Worktree)
+			assert.Equal(t, "kept", resp.Worktree.Action,
+				"drift at the boundary must report kept, never removed; detail=%s",
+				resp.Worktree.Detail)
+			assert.Contains(t, resp.Worktree.Detail, "feature-b")
+
+			mu.Lock()
+			defer mu.Unlock()
+			assert.Empty(t, removedRoots, "a drifted worktree must not be removed")
+			assert.Empty(t, removedBranches, "an unconfirmed branch must not be force-deleted")
 		})
 	})
 

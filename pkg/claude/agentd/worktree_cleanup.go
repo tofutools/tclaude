@@ -325,6 +325,53 @@ func applyRetireWorktreeCleanup(wt agentWorktreeView, requested bool) (note stri
 	}
 }
 
+// retireBranchLabel names a branch for a human-facing note, including the
+// detached-HEAD case where there is no branch to name.
+func retireBranchLabel(branch string) string {
+	if branch == "" {
+		return "(detached HEAD)"
+	}
+	return branch
+}
+
+// retireWorktreeDrift reports why the identity confirmed for removal no longer
+// permits it, or "" when removal may proceed.
+//
+// The retire request validates its caller's frozen precondition, but the common
+// path then soft-exits the pane and removes only once it dies — deliberately
+// opening a seconds-long gap. In that window a command already running in the
+// pane can switch the checkout to another branch, and another agent can claim
+// the directory. Removal is `--force` and deletes the branch with it, so the
+// boundary re-confirms the exact frozen identity against the world as it is now
+// rather than trusting the request-time snapshot. Anything unexpected — a moved
+// branch, a vanished or re-kinded worktree, a new claimant, or an ownership
+// snapshot we could not complete — fails closed and keeps the worktree.
+func retireWorktreeDrift(convID string, wt agentWorktreeView) string {
+	st := inspectWorktreeFn(wt.Path)
+	switch {
+	case st.Root != wt.Path || st.Kind != "linked":
+		return "worktree kept — " + wt.Path +
+			" is no longer the confirmed linked worktree"
+	case st.Branch != wt.Branch:
+		return "worktree kept — " + wt.Path + " moved to branch " +
+			retireBranchLabel(st.Branch) + " since confirmation (confirmed " +
+			retireBranchLabel(wt.Branch) + ")"
+	}
+	// The retiring target is no longer a claimant by this point (retired, and
+	// on the deferred path its pane has exited), so anyone else holding the
+	// root is a live claimant whose cwd this must not remove.
+	snap := captureAgentWorktreeClaims()
+	if !snap.complete {
+		return "worktree kept — could not confirm current worktree ownership"
+	}
+	for claimant := range snap.claims[wt.Path] {
+		if claimant != convID {
+			return "worktree kept (shared with another agent)"
+		}
+	}
+	return ""
+}
+
 // isProtectedBranchName mirrors worktree.isProtectedBranch for the
 // note-phrasing above (that helper is unexported). main/master are
 // never deleted, so a "branch kept" note for them would be misleading.
@@ -379,6 +426,9 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	// (success or failure) rides back in the HTTP response and toast, so
 	// the inline path needs no separate human-message notice.
 	if pickAliveSession(convID) == nil {
+		if drift := retireWorktreeDrift(convID, wt); drift != "" {
+			return retireWorktreePlan{Action: "kept", Detail: drift}
+		}
 		note, _ := applyRetireWorktreeCleanup(wt, true)
 		return retireWorktreePlan{Action: "removed", Detail: note}
 	}
@@ -401,6 +451,15 @@ func scheduleRetireWorktreeCleanup(convID string, wt agentWorktreeView, shutdown
 	title := agent.FreshTitle(convID)
 	goBackground(func() {
 		if waitForConvOffline(convID, retireWorktreeExitGrace) {
+			// The pane has exited, but the world moved on while it did. The
+			// promise in the toast is only safe to keep if the identity that
+			// was confirmed still describes this directory.
+			if drift := retireWorktreeDrift(convID, wt); drift != "" {
+				slog.Warn("retire: worktree kept — identity drifted before removal",
+					"conv", convID, "path", wt.Path, "detail", drift)
+				postRetireWorktreeNotice(title, "Retire worktree kept", drift)
+				return
+			}
 			note, ok := applyRetireWorktreeCleanup(wt, true)
 			slog.Info("retire: worktree cleanup after exit", "conv", convID, "detail", note, "ok", ok)
 			if !ok {
