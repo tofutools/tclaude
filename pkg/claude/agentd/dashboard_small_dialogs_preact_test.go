@@ -20,7 +20,7 @@ func TestDashboardSmallDialogsPreactOwnership(t *testing.T) {
 	actions := read("js/action-dialog-actions.js")
 	state := read("js/action-dialog-state.js")
 	controller := read("js/action-dialog-controller.js")
-	rowActions := read("js/row-actions.js")
+	rowActions := read("js/row-action-handler.js")
 	refresh := read("js/refresh.js")
 	dashboard := read("js/dashboard.js")
 

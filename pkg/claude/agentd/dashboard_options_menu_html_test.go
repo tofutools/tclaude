@@ -46,8 +46,8 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must("if (openMenuKeyRef.current === key) closeMenu(true);", "the native cog toggles its keyed menu")
 	must("document.addEventListener('click', onClick);", "outside clicks dismiss native menus")
 	must("menu.addEventListener('click', dismissItem);", "menu item clicks dismiss without detaching delegated targets")
-	must("if (renameEditing) return true;",
-		"only the unrelated legacy toolbar picker pauses the 2s poll")
+	must("mountToolbarProfilePickerFeature",
+		"the dashboard toolbar picker has a Preact owner independent of the 2s poll")
 
 	// Keyboard + ARIA: Escape closes an open menu, focus returns to the
 	// owning cog, and the cog / menu / items carry the ARIA menu-button

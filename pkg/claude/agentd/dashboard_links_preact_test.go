@@ -24,7 +24,7 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 	dashboard := read("js/dashboard.js")
 	html := read("dashboard.html")
 	tabs := read("js/tabs.js")
-	rowActions := read("js/row-actions.js")
+	rowActions := read("js/row-action-handler.js")
 	legacyModal := read("js/modal-link-wt.js")
 
 	for _, needle := range []string{

@@ -188,3 +188,4 @@ function bindRemoteAdmin() {
 }
 
 export { bindRemoteAdmin, loadRemoteAdmin };
+// dashboard-imperative-boundary: config-adapter

@@ -56,7 +56,8 @@ import { $, $$ } from './helpers.js';
 import { setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import { renderGroupsTab } from './tabs.js';
 import { lastSnapshot } from './dashboard.js';
-import { refresh, toast, openDeleteGroupModal } from './refresh.js';
+import { refresh, toast } from './refresh.js';
+import { openDeleteGroupModal } from './dashboard-operations.js';
 import { isWizardActive } from './slop.js';
 
 // Custom drag payload type. Intentionally NOT 'text/plain' — see the

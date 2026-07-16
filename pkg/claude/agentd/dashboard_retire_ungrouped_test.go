@@ -29,7 +29,7 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 	island := read("js/transaction-dialog-island.js")
 	actions := read("js/transaction-dialog-actions.js")
 	controller := read("js/transaction-dialog-controller.js")
-	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	palette := read("js/palette.js")
 
 	// 1. The palette offers the command, gated on a live count so it is
@@ -72,13 +72,12 @@ func TestDashboardTransactionUngroupedRetireExclusiveOwnership(t *testing.T) {
 		"function ungroupedRetireCandidates(",
 		"for (const a of (snap.ungrouped || [])) {",
 		"if (!a.conv_id || seen.has(a.conv_id)) continue;",
-		"function countUngroupedAgents(",
 		"const candidates = ungroupedRetireCandidates();",
 		"openUngroupedRetirePreviewDialog(candidates)",
 		"from './transaction-dialog-controller.js';",
 	} {
-		if !strings.Contains(refresh, required) {
-			t.Errorf("refresh launcher is missing ungrouped-retire cutover %q", required)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher is missing ungrouped-retire cutover %q", required)
 		}
 	}
 }

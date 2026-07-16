@@ -578,7 +578,7 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		`class="group-link-chips" tabindex="0" role="button"`,
 		// row-actions.js — delegated Enter/Space activation for the chip
 		// spans, funneled through the click dispatcher.
-		`e.target.closest('span[data-act][role="button"]')`,
+		`liveActionSource(event, 'span[data-act][role="button"]')`,
 		"chip.click();",
 		// groups-interactions.js / groups-list.js — generic native editors use
 		// the exact keyed fallback, while profile chips focus the replacement

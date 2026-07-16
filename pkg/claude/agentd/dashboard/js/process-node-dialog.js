@@ -292,3 +292,4 @@ export function openNodeDialog({ model, nodeId, mode = 'edit', onMutated, onClos
   dispose.requestClose = () => handle?.requestClose?.() || Promise.resolve(true);
   return dispose;
 }
+// dashboard-imperative-boundary: preact-compat

@@ -463,7 +463,8 @@ test('operator composer keeps target and attachment snapshot atomic with single-
 test('operator Cancel uses dirty confirmation and deferred focus restore yields to a newer dialog', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
-  const state = createMessageAccessDialogState();
+  const { hasShownOverlay } = await harness.importDashboardModule('js/overlay-stack.js');
+  const state = createMessageAccessDialogState({ canRestoreFocus: () => !hasShownOverlay() });
   let restores = 0;
   let allow = false;
   let confirms = 0;
@@ -488,5 +489,13 @@ test('operator Cancel uses dirty confirmation and deferred focus restore yields 
   assert.equal(restores, 0, 'a newer message/access dialog keeps focus ownership');
   assert.ok(host.querySelector('#human-reply-modal'));
   state.close();
+
+  state.openOperatorMessage({ agent: 'agt_worker', label: 'worker', restoreFocus: () => { restores++; } });
+  state.close();
+  const otherFeature = harness.document.body.appendChild(harness.document.createElement('div'));
+  otherFeature.className = 'manage-overlay show';
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(restores, 0, 'a newer non-message overlay keeps focus ownership');
+  otherFeature.remove();
   await mounted.unmount();
 });

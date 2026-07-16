@@ -1047,3 +1047,4 @@ export class ProcessGraph {
 export function createProcessGraph(container, graph, options) {
   return new ProcessGraph(container, graph, options);
 }
+// dashboard-imperative-boundary: process-graph

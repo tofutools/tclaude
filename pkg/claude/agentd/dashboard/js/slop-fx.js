@@ -559,3 +559,4 @@ export function bindSlopMarquee() {
     updateMarqueeText(text);
   });
 }
+// dashboard-imperative-boundary: media-effects

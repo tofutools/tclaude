@@ -675,3 +675,4 @@ export function bindVegasMusic() {
   // the initial state here.
   syncVegas();
 }
+// dashboard-imperative-boundary: media-effects

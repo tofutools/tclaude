@@ -178,3 +178,4 @@ export function createProcessGraphAdapter(host, options) {
 }
 
 export const processGraphAdapterNoop = noop;
+// dashboard-imperative-boundary: process-graph

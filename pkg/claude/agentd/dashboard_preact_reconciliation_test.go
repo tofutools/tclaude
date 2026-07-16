@@ -129,13 +129,17 @@ func TestDashboardNoProductionHTMLToVNodeBridge(t *testing.T) {
 	}
 }
 
-// row-actions.js is deliberately only a cross-feature integration router. Pin
-// every retained switch branch to a live producer literal so compatibility
-// cases cannot accumulate after their last button moves into a native owner.
+// row-actions.js is deliberately only a stateless integration binder, while
+// row-action-handler.js owns the cross-feature operation switch. Pin every
+// retained branch to a live producer so compatibility cases cannot accumulate.
 func TestDashboardDelegatedActionsHaveLiveProducers(t *testing.T) {
-	rowBody, err := fs.ReadFile(dashboardAssetsFS, "js/row-actions.js")
+	binderBody, err := fs.ReadFile(dashboardAssetsFS, "js/row-actions.js")
 	if err != nil {
-		t.Fatalf("read row action router: %v", err)
+		t.Fatalf("read row action binder: %v", err)
+	}
+	rowBody, err := fs.ReadFile(dashboardAssetsFS, "js/row-action-handler.js")
+	if err != nil {
+		t.Fatalf("read row action handler: %v", err)
 	}
 	producerBody, err := fs.ReadFile(dashboardAssetsFS, "dashboard.html")
 	if err != nil {
@@ -143,7 +147,7 @@ func TestDashboardDelegatedActionsHaveLiveProducers(t *testing.T) {
 	}
 	producers := string(producerBody)
 	for _, name := range dashboardJSModules() {
-		if name == "js/row-actions.js" {
+		if name == "js/row-actions.js" || name == "js/row-action-handler.js" {
 			continue
 		}
 		body, readErr := fs.ReadFile(dashboardAssetsFS, name)
@@ -165,7 +169,7 @@ func TestDashboardDelegatedActionsHaveLiveProducers(t *testing.T) {
 		}
 	}
 
-	allProduction := producers + string(rowBody)
+	allProduction := producers + string(binderBody) + string(rowBody)
 	for _, retired := range []string{
 		"cycle-group-offline", "filter-bar-menu", "toggle-force-fold", "toggle-quick-pin",
 	} {

@@ -53,7 +53,25 @@ test('tab installers are idempotent and stale cleanup cannot tear down a reinsta
 test('row root delegation installs once, cleans every listener, and survives stale cleanup', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
-  const { bindRowActions } = await harness.importDashboardModule('js/row-actions.js');
+  const {
+    actionDescriptor, bindRowActions, liveActionSource,
+  } = await harness.importDashboardModule('js/row-actions.js');
+  const producer = harness.document.body.appendChild(harness.document.createElement('button'));
+  producer.id = 'frozen-producer';
+  producer.dataset.act = 'documented-cross-feature-route';
+  producer.dataset.conv = 'conv-before';
+  assert.equal(liveActionSource({ target: producer }), producer);
+  const descriptor = actionDescriptor(producer);
+  producer.dataset.conv = 'conv-after';
+  assert.deepEqual(descriptor, {
+    producerId: 'frozen-producer',
+    data: { act: 'documented-cross-feature-route', conv: 'conv-before' },
+  }, 'delegation freezes plain data instead of retaining a live DOM producer');
+  assert.equal(Object.isFrozen(descriptor), true);
+  assert.equal(Object.isFrozen(descriptor.data), true);
+  producer.remove();
+  assert.equal(liveActionSource({ target: producer }), null,
+    'a detached producer cannot dispatch an operation after Preact replacement');
   const added = [];
   const removed = [];
   const add = harness.document.addEventListener.bind(harness.document);

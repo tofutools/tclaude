@@ -326,3 +326,4 @@ export function mountGroupCreateIsland({
     render(null, host);
   });
 }
+// dashboard-imperative-boundary: preact-compat

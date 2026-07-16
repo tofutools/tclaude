@@ -695,3 +695,4 @@ export {
   // its web implementation without pulling Preact into this legacy module.
   pickDirectory, configureDirectoryPickerBridge, isLoopbackDashboard,
 };
+// dashboard-imperative-boundary: platform-layout

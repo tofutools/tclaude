@@ -516,3 +516,4 @@ export function MemberTable({ members, group, tableKey, ungrouped = false, snaps
   const columns = visibleMemberCols();
   return html`<table><${SortHead} table="members" columns=${columns} /><tbody>${applySort('members', members, MEMBER_ACCESSORS).map((member) => html`<${MemberRow} key=${member.conv_id} member=${member} group=${group} tableKey=${tableKey} ungrouped=${ungrouped} snapshot=${snapshot} actions=${actions} columns=${columns} />`)}</tbody></table>`;
 }
+// dashboard-imperative-boundary: media-effects

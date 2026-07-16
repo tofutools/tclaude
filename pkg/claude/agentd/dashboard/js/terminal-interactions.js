@@ -495,3 +495,4 @@ export function attachTerminalInteractions({
     },
   };
 }
+// dashboard-imperative-boundary: browser-io
