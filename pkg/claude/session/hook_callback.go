@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 )
 
 var safeSessionIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+var agentMessagePromptRe = regexp.MustCompile(`\[system: new agent message #([0-9]+)\b[^\]\r\n]*\]`)
 
 // HookCallbackInput represents the JSON input from any Claude Code hook
 type HookCallbackInput struct {
@@ -1085,6 +1087,20 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	if err := SaveSessionState(state); err != nil {
 		return err
 	}
+	if input.HookEventName == "UserPromptSubmit" {
+		if messageID, inline, ok := agentMessagePrompt(input.Prompt); ok {
+			if _, err := db.MarkRegularAgentMessageStarted(messageID, state.ConvID, inline, time.Now()); err != nil {
+				slog.Warn("failed to mark regular agent message started",
+					"error", err, "message_id", messageID, "conv_id", state.ConvID, "module", "hooks")
+			}
+		}
+	}
+	if input.HookEventName == "Stop" || input.HookEventName == "StopFailure" {
+		if _, err := db.MarkStartedRegularAgentMessagesProcessed(state.ConvID, time.Now()); err != nil {
+			slog.Warn("failed to mark regular agent messages processed",
+				"error", err, "conv_id", state.ConvID, "module", "hooks")
+		}
+	}
 
 	persistCodexWorkspaceSnapshot(state, input)
 
@@ -1136,6 +1152,21 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	return nil
+}
+
+// agentMessagePrompt recognizes the server-authored metadata inside a submitted
+// prompt without requiring byte-for-byte equality. Harnesses may wrap submitted
+// input, while the stable message id and inline marker remain intact.
+func agentMessagePrompt(prompt string) (messageID int64, inline bool, ok bool) {
+	match := agentMessagePromptRe.FindStringSubmatch(prompt)
+	if len(match) != 2 {
+		return 0, false, false
+	}
+	messageID, err := strconv.ParseInt(match[1], 10, 64)
+	if err != nil || messageID <= 0 {
+		return 0, false, false
+	}
+	return messageID, strings.Contains(match[0], "; delivery: inline"), true
 }
 
 // persistCodexHookModel records Codex's active model slug when a hook belongs

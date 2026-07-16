@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -70,16 +71,16 @@ func runReplyDaemon(id int64, subject, body string, stdout, stderr io.Writer) in
 		Pending  int    `json:"pending"`
 		ViaGroup string `json:"via_group"`
 	}
-	err := DaemonPost(fmt.Sprintf("/v1/messages/%d/reply", id), map[string]string{
+	err := DaemonRequest(http.MethodPost, fmt.Sprintf("/v1/messages/%d/reply", id), map[string]string{
 		"subject": subject,
 		"body":    body,
-	}, &resp)
+	}, &resp, DaemonOpts{})
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
-	// Async delivery (JOH-310): the reply is queued; the worker delivers it
-	// after this returns, so we report the queue depth, not a verdict.
+	// The inbox row is durable before the asynchronous nudge runs. Pending is
+	// the target's unprocessed regular-message backlog, not a delivery verdict.
 	state := queuedState(resp.Pending)
 	// A reply to a direct (off-group) message has no routing group.
 	via := "directly"

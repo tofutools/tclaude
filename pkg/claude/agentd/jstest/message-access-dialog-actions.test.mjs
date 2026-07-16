@@ -10,7 +10,7 @@ function response(status, body) {
   };
 }
 
-test('message/reply actions preserve exact wire payloads and queued feedback', async (t) => {
+test('message/reply actions preserve wire payloads and warn on partial backpressure', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
   const calls = [];
@@ -18,7 +18,10 @@ test('message/reply actions preserve exact wire payloads and queued feedback', a
   let refreshes = 0;
   const fetchImpl = async (url, options) => {
     calls.push({ url, method: options.method, body: JSON.parse(options.body) });
-    if (url === '/api/message') return response(200, { via_group: 'team', recipients: [{ queued: true }, { queued: false }] });
+    if (url === '/api/message') return response(200, {
+      via_group: 'team',
+      recipients: [{ queued: true }, { queued: false, queue_full: true }, { queued: false, error: 'insert failed' }],
+    });
     return response(200, { queued: true });
   };
   const actions = createMessageAccessDialogActions({
@@ -31,7 +34,7 @@ test('message/reply actions preserve exact wire payloads and queued feedback', a
     { url: '/api/message', method: 'POST', body: message },
     { url: '/api/human-messages/reply', method: 'POST', body: { id: 17, body: 'answer' } },
   ]);
-  assert.equal(notices[0], 'multicast queued for 1 member of team');
+  assert.equal(notices[0], 'message saved for 1 recipient; 1 not queued (target backlog full); 1 not queued (delivery error)');
   assert.equal(notices[1], 'reply queued for worker');
   assert.equal(refreshes, 1);
 });

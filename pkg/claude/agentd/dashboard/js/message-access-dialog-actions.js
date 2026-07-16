@@ -52,17 +52,23 @@ export function createMessageAccessDialogActions({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (payload.to.startsWith('group:')) {
+    if (payload.to.startsWith('group:') || Array.isArray(response.recipients)) {
       const recipients = response.recipients || [];
       const queued = recipients.filter((item) => item.queued).length;
+      const rejected = recipients.length - queued;
+      const overloaded = recipients.filter((item) => item.queue_full).length;
+      const failed = rejected - overloaded;
+      const rejectionParts = [];
+      if (overloaded) rejectionParts.push(`${overloaded} not queued (target backlog full)`);
+      if (failed) rejectionParts.push(`${failed} not queued (delivery error)`);
       notify(recipients.length
-        ? `multicast queued for ${queued} member${queued === 1 ? '' : 's'} of ${response.via_group || payload.to}`
+        ? `message saved for ${queued} recipient${queued === 1 ? '' : 's'}${rejected ? `; ${rejectionParts.join('; ')}` : ''}`
         : `no recipients reached in ${response.via_group || payload.to} — nothing sent`);
     } else {
       const ahead = (response.pending || 0) - 1;
       notify(ahead > 0
-        ? `message queued in recipient inbox (${ahead} ahead in delivery queue)`
-        : 'message queued in recipient inbox');
+        ? `message saved in recipient inbox (${ahead} earlier pending)`
+        : 'message saved in recipient inbox');
     }
     return response;
   }

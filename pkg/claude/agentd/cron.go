@@ -301,7 +301,7 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string, alive map[string]struc
 		onlineOnly = func(convID string) bool { return isConvOnlineIn(convID, alive) }
 	}
 	recipients, skippedOffline, err := fanOutToGroupFiltered(
-		g, j.OwnerConv, subject, j.Body, j.TargetRole, nil, onlineOnly)
+		g, j.OwnerConv, subject, j.Body, j.TargetRole, nil, onlineOnly, false)
 	if err != nil {
 		slog.Warn("cron: group fan-out failed",
 			"job", j.ID, "group", g.Name, "error", err)

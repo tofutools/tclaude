@@ -56,18 +56,19 @@ func inboxLsCmd() *cobra.Command {
 }
 
 type inboxEntry struct {
-	ID        int64  `json:"id"`
-	From      string `json:"from,omitempty"`
-	FromShort string `json:"from_short,omitempty"`
-	To        string `json:"to,omitempty"`
-	ToShort   string `json:"to_short,omitempty"`
-	Group     string `json:"group"`
-	Subject   string `json:"subject,omitempty"`
-	Preview   string `json:"preview,omitempty"`
-	CreatedAt string `json:"created_at"`
-	Read      bool   `json:"read"`
-	Delivered bool   `json:"delivered,omitempty"`
-	ParentID  int64  `json:"parent_id,omitempty"`
+	ID               int64  `json:"id"`
+	From             string `json:"from,omitempty"`
+	FromShort        string `json:"from_short,omitempty"`
+	To               string `json:"to,omitempty"`
+	ToShort          string `json:"to_short,omitempty"`
+	Group            string `json:"group"`
+	Subject          string `json:"subject,omitempty"`
+	Preview          string `json:"preview,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	Read             bool   `json:"read"`
+	Delivered        bool   `json:"delivered,omitempty"`
+	NudgeDiscardedAt string `json:"nudge_discarded_at,omitempty"`
+	ParentID         int64  `json:"parent_id,omitempty"`
 }
 
 func runInboxLs(p *inboxLsParams, stdout, stderr io.Writer) int {
@@ -183,13 +184,8 @@ func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
 		fmt.Fprintln(stdout, "(no sent messages)")
 		return rcOK
 	}
-	// Status column collapses delivered/read into a single 3-char glyph
-	// so the row stays narrow:
-	//   "···" = queued (not delivered yet, target offline at send time)
-	//   "→··" = delivered, recipient hasn't read it
-	//   "→✓·" = delivered + recipient read
 	tbl := table.New(
-		table.Column{Header: "ST", Width: 3},
+		table.Column{Header: "STATUS", Width: 24},
 		table.Column{Header: "ID", Width: 5, Align: table.AlignRight},
 		table.Column{Header: "TO", Width: 12},
 		table.Column{Header: "GROUP", MinWidth: 6, Weight: 0.4, Truncate: true},
@@ -202,7 +198,7 @@ func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
 			subj = e.Preview
 		}
 		tbl.AddRow(table.Row{Cells: []string{
-			outboxStatusGlyph(e),
+			outboxStatusText(e),
 			fmt.Sprintf("%d", e.ID),
 			e.ToShort,
 			e.Group,
@@ -213,14 +209,18 @@ func renderOutbox(p *inboxSentParams, out []inboxEntry, stdout io.Writer) int {
 	return rcOK
 }
 
-func outboxStatusGlyph(e inboxEntry) string {
+func outboxStatusText(e inboxEntry) string {
 	switch {
+	case e.NudgeDiscardedAt != "" && e.Read:
+		return "discarded offline · read"
+	case e.NudgeDiscardedAt != "":
+		return "discarded while offline"
 	case e.Read:
-		return "→✓·"
+		return "delivered · read"
 	case e.Delivered:
-		return "→··"
+		return "delivered"
 	default:
-		return "···"
+		return "pending"
 	}
 }
 

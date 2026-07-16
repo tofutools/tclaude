@@ -52,18 +52,19 @@ type mailboxEntry struct {
 // mailboxMsg mirrors the mailboxMessage wire shape (subset the tests
 // assert on).
 type mailboxMsg struct {
-	ID        int64  `json:"id"`
-	Direction string `json:"direction"`
-	FromConv  string `json:"from_conv"`
-	FromAgent string `json:"from_agent"`
-	FromTitle string `json:"from_title"`
-	ToConv    string `json:"to_conv"`
-	ToAgent   string `json:"to_agent"`
-	ToTitle   string `json:"to_title"`
-	Group     string `json:"group"`
-	Subject   string `json:"subject"`
-	Body      string `json:"body"`
-	Read      bool   `json:"read"`
+	ID               int64  `json:"id"`
+	Direction        string `json:"direction"`
+	FromConv         string `json:"from_conv"`
+	FromAgent        string `json:"from_agent"`
+	FromTitle        string `json:"from_title"`
+	ToConv           string `json:"to_conv"`
+	ToAgent          string `json:"to_agent"`
+	ToTitle          string `json:"to_title"`
+	Group            string `json:"group"`
+	Subject          string `json:"subject"`
+	Body             string `json:"body"`
+	Read             bool   `json:"read"`
+	NudgeDiscardedAt string `json:"nudge_discarded_at"`
 }
 
 // seedMailboxes stands up two named agents in a group with one message
@@ -490,6 +491,44 @@ func TestDashboardMailboxMarkRead_TogglesByID(t *testing.T) {
 		"ids": []int64{opener.ID}, "read": false}))
 	assert.False(t, findMsg(t, getMailbox(t, dash, mbBob), "hi bob").Read,
 		"back to unread in bob's folder")
+}
+
+func TestDashboardMailboxMarkReadProcessesAlreadyReadRegularBacklog(t *testing.T) {
+	f := newFlow(t)
+	const target = "mailbox-read-recovery-target"
+	f.HaveEnrolledAgent(target)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+
+	completeInline := func(id int64) {
+		claim, claimed, err := db.ClaimAgentMessageNudge(id, time.Now())
+		require.NoError(t, err)
+		require.True(t, claimed)
+		completed, err := db.CompleteAgentMessageNudgeState(id, claim, time.Now(), true)
+		require.NoError(t, err)
+		require.True(t, completed)
+	}
+
+	first, _, err := db.InsertAgentMessageBounded(&db.AgentMessage{ToConv: target, Body: "first"}, 1)
+	require.NoError(t, err)
+	completeInline(first)
+	assert.Equal(t, 1, markRead(t, dash, map[string]any{"ids": []int64{first}, "read": true}),
+		"already-read regular row still transitions to processed")
+	assert.Equal(t, 1, markRead(t, dash, map[string]any{"ids": []int64{first}, "read": false}))
+	firstMessage, err := db.GetAgentMessage(first)
+	require.NoError(t, err)
+	assert.False(t, firstMessage.ProcessedAt.IsZero(), "mark-unread does not resurrect processed backlog")
+	_, _, err = db.InsertAgentMessageBounded(&db.AgentMessage{ToConv: target, Body: "after mark-one"}, 1)
+	require.NoError(t, err, "mark-one frees backlog capacity")
+
+	secondRows, err := db.ListAgentMessagesForConv(target, 10)
+	require.NoError(t, err)
+	second := secondRows[0].ID
+	completeInline(second)
+	assert.Equal(t, 2, markRead(t, dash, map[string]any{"conv": target, "read": true}),
+		"mark-all re-reads the explicitly unread row and processes the already-read regular row")
+	_, _, err = db.InsertAgentMessageBounded(&db.AgentMessage{ToConv: target, Body: "after mark-all"}, 1)
+	require.NoError(t, err, "mark-all frees backlog capacity")
 }
 
 // Scenario: the ids path is DIRECTION-AGNOSTIC — marking a row the folder

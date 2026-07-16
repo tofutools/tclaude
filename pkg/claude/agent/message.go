@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"unicode"
@@ -13,16 +14,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-// queuedState renders the async delivery state shown to the sender (JOH-310).
-// pending is the recipient's queue depth INCLUDING this message, so pending-1
-// is how many are ahead of it. Delivery happens asynchronously, so the sender
-// only ever sees "queued" here — never delivered/held, which the per-agent
-// worker decides after the send returns.
+// queuedState renders durable inbox acceptance. pending is the recipient's
+// unprocessed regular-message backlog INCLUDING this message, so pending-1 is
+// how many earlier messages remain. Nudge delivery happens asynchronously and
+// may be deliberately skipped while the target is offline.
 func queuedState(pending int) string {
 	if pending > 1 {
-		return fmt.Sprintf("queued; %d ahead in delivery queue", pending-1)
+		return fmt.Sprintf("saved; %d earlier message(s) pending", pending-1)
 	}
-	return "queued for delivery"
+	return "saved to target inbox"
 }
 
 type messageParams struct {
@@ -42,7 +42,8 @@ func messageCmd() *cobra.Command {
 		Use:     "message",
 		Aliases: []string{"msg", "send"},
 		Short:   "Send a message to another agent (or 'group:<name|id>' to broadcast)",
-		Long: "Persists the message in SQLite and hands it to the daemon's durable per-agent delivery queue, which nudges a ready pane or retains it until the recipient can receive it. " +
+		Long: "Persists the message in SQLite and asks the daemon to nudge a ready pane. Offline notification attempts are skipped while the durable unread inbox row remains available. " +
+			"A target with 10 unprocessed regular messages applies backpressure: direct sends are rejected without writing a row, while group sends warn per full recipient and continue for available members. " +
 			"A target prefixed with 'group:' fans out: one row per non-sender member, queueing each for delivery. The group can be named ('group:reviewers'), given by numeric id ('group:7'), or left empty ('group:') to mean your own group — the latter is an error unless you are a member of exactly one group. " +
 			"The sender must be a member or owner of the group to broadcast. Add --role to broadcast only to members holding a given role.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -102,6 +103,9 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			MessageID      int64  `json:"message_id"`
 			Queued         bool   `json:"queued"`
 			Pending        int    `json:"pending,omitempty"`
+			QueueFull      bool   `json:"queue_full,omitempty"`
+			Limit          int    `json:"limit,omitempty"`
+			Error          string `json:"error,omitempty"`
 			RedirectedFrom string `json:"redirected_from,omitempty"`
 		} `json:"recipients,omitempty"`
 	}
@@ -119,7 +123,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	if p.Gen != "" {
 		payload["gen"] = p.Gen
 	}
-	err := DaemonPost("/v1/messages", payload, &resp)
+	err := DaemonRequest(http.MethodPost, "/v1/messages", payload, &resp, DaemonOpts{})
 	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
 		fmt.Fprintf(stderr, "%s\n", de.Msg)
 		return rcAmbiguous
@@ -148,8 +152,8 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			}
 			return rcOK
 		}
-		// Async delivery (JOH-310): every persisted recipient is queued; the
-		// per-agent worker delivers (or holds) each one after this returns.
+		// Each queued recipient has a durable inbox row. Nudge delivery is
+		// asynchronous and independent from this per-recipient acceptance result.
 		queued := 0
 		for _, rcp := range resp.Recipients {
 			if rcp.Queued {
@@ -171,7 +175,7 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 		if notQueued > 0 {
 			failNote = fmt.Sprintf(", %d failed", notQueued)
 		}
-		fmt.Fprintf(stdout, "%s%s: %d recipients (%d queued for delivery%s).\n",
+		fmt.Fprintf(stdout, "%s%s: %d recipients (%d saved to inbox%s).\n",
 			header, scope, len(resp.Recipients), queued, failNote)
 		for _, rcp := range resp.Recipients {
 			name := rcp.Title
@@ -181,6 +185,8 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			state := "not queued"
 			if rcp.Queued {
 				state = queuedState(rcp.Pending)
+			} else if rcp.Error != "" {
+				state = "not queued: " + rcp.Error
 			}
 			redirect := ""
 			if rcp.RedirectedFrom != "" {
@@ -192,11 +198,16 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 			}
 			fmt.Fprintf(stdout, "  #%-6d %s  %s  (%s)%s\n", rcp.MessageID, shortAgentID(rcp.AgentID, rcp.ConvID), name, state, redirect)
 		}
+		if notQueued > 0 {
+			fmt.Fprintf(stderr, "Warning: %d recipient(s) were not queued; see per-recipient details above.\n", notQueued)
+			if queued == 0 {
+				return rcIOFailure
+			}
+		}
 		return rcOK
 	}
-	// Async delivery (JOH-310): the row is persisted and handed to the
-	// recipient's per-agent delivery queue; the worker decides delivered/held
-	// after this returns, so the sender sees "queued" + the queue depth.
+	// The row is durable before this returns. Pending describes the recipient's
+	// regular-message backlog, independently of the best-effort tmux nudge.
 	state := queuedState(resp.Pending)
 	// An off-group send (the message.direct path) has no routing group;
 	// render it as a direct message rather than `via group ""`.

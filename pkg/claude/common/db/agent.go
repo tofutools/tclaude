@@ -602,6 +602,16 @@ type AgentMessage struct {
 	// mail resumes delivery. NudgeCancelReason is the human-readable why.
 	NudgeCancelledAt  time.Time
 	NudgeCancelReason string
+	// RegularSend identifies bounded human/agent one-shot messages. Their
+	// processing lifecycle is independent of nudge delivery: StartedAt is
+	// stamped when the exact injected prompt begins, ProcessedAt when that
+	// inline turn ends or the recipient explicitly reads the inbox row, and
+	// NudgeDiscardedAt records an offline notification attempt deliberately
+	// suppressed without discarding the durable unread message.
+	RegularSend       bool
+	StartedAt         time.Time
+	ProcessedAt       time.Time
+	NudgeDiscardedAt  time.Time
 	ToRecipients      []string
 	CcRecipients      []string
 	ToRecipientAgents []string
@@ -1879,6 +1889,31 @@ func InsertAgentMessage(m *AgentMessage) (int64, error) {
 	return insertAgentMessage(db, m)
 }
 
+// AgentMessageQueueFullError reports that a bounded regular-message insert
+// found the target's durable regular-message backlog at capacity. Pending excludes the
+// rejected message; no row is written when this error is returned.
+type AgentMessageQueueFullError struct {
+	Pending int
+	Limit   int
+}
+
+func (e *AgentMessageQueueFullError) Error() string {
+	return fmt.Sprintf("agent message backlog is full (%d/%d unprocessed)", e.Pending, e.Limit)
+}
+
+// InsertAgentMessageBounded atomically checks the target's durable regular
+// backlog and inserts m only when fewer than limit messages are unprocessed.
+// The returned pending depth includes the newly inserted message. Internal
+// lifecycle and scheduler messages deliberately keep using InsertAgentMessage,
+// so they cannot be dropped or blocked by regular-message backpressure.
+func InsertAgentMessageBounded(m *AgentMessage, limit int) (id int64, pending int, err error) {
+	if limit <= 0 {
+		return 0, 0, fmt.Errorf("agent message queue limit must be positive")
+	}
+	m.RegularSend = true
+	return insertAgentMessageWithAttachmentsBounded(m, nil, limit)
+}
+
 func insertAgentMessage(db dbExecQuerier, m *AgentMessage) (int64, error) {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now()
@@ -1903,20 +1938,26 @@ func insertAgentMessage(db dbExecQuerier, m *AgentMessage) (int64, error) {
 	if m.PinGen {
 		pinGen = 1
 	}
+	regularSend := 0
+	if m.RegularSend {
+		regularSend = 1
+	}
 	res, err := db.Exec(`INSERT INTO agent_messages
 		(group_id, from_conv, to_conv, from_agent, to_agent, subject, body, parent_id,
 		 created_at, delivered_at, read_at,
-		 to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv, pin_gen)
+		 to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, original_to_conv, pin_gen,
+		 regular_send, started_at, processed_at, nudge_discarded_at)
 		VALUES (?, ?, ?,
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
 		 COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
-		 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.GroupID, m.FromConv, m.ToConv, m.FromConv, m.ToConv, m.Subject, m.Body, m.ParentID,
 		m.CreatedAt.Format(time.RFC3339Nano),
 		formatTimeOrEmpty(m.DeliveredAt), formatTimeOrEmpty(m.ReadAt),
 		recipientsToJSON(m.ToRecipients), recipientsToJSON(m.CcRecipients),
 		recipientAgentsJSON(db, m.ToRecipients), recipientAgentsJSON(db, m.CcRecipients),
-		m.OriginalToConv, pinGen)
+		m.OriginalToConv, pinGen, regularSend,
+		formatTimeOrEmpty(m.StartedAt), formatTimeOrEmpty(m.ProcessedAt), formatTimeOrEmpty(m.NudgeDiscardedAt))
 	if err != nil {
 		return 0, err
 	}
@@ -2646,6 +2687,46 @@ func ReleaseAllAgentMessageNudgeClaims() (int64, error) {
 	return res.RowsAffected()
 }
 
+// SuppressOfflineRegularNudgesForAgent discards only the tmux notification
+// attempts for an offline agent's head-following regular messages. The durable
+// inbox rows remain unread and unprocessed, so they still count toward bounded
+// sender backpressure and can be fetched after the agent resumes.
+func SuppressOfflineRegularNudgesForAgent(agentID string, now time.Time) (int64, error) {
+	if agentID == "" {
+		return 0, nil
+	}
+	return suppressOfflineRegularNudges(
+		`to_agent = ? AND pin_gen = 0`, []any{agentID}, now)
+}
+
+// SuppressOfflineRegularNudgesForExactConv is the pinned/non-actor counterpart
+// to SuppressOfflineRegularNudgesForAgent.
+func SuppressOfflineRegularNudgesForExactConv(convID string, now time.Time) (int64, error) {
+	if convID == "" {
+		return 0, nil
+	}
+	return suppressOfflineRegularNudges(
+		`to_conv = ? AND (pin_gen = 1 OR to_agent = '')`, []any{convID}, now)
+}
+
+func suppressOfflineRegularNudges(targetWhere string, targetArgs []any, now time.Time) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	stamp := now.Format(time.RFC3339Nano)
+	args := []any{stamp, stamp}
+	args = append(args, targetArgs...)
+	res, err := d.Exec(`UPDATE agent_messages
+		SET delivered_at = ?, nudge_discarded_at = ?, nudge_claimed_at = ''
+		WHERE regular_send = 1 AND delivered_at = '' AND nudge_claimed_at = ''
+		  AND nudge_cancelled_at = '' AND `+targetWhere, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // CancelAgentMessageNudge durably abandons nudge delivery for one message —
 // the reaper's orphan sweep calls it when the recipient is retired or deleted,
 // so no pane can ever receive the nudge. The row leaves every undelivered
@@ -2681,15 +2762,94 @@ func CancelAgentMessageNudge(id int64, targetAgentID string, now time.Time, reas
 	return n == 1, nil
 }
 
-// MarkAgentMessageRead sets read_at = now for the given message ID.
+// MarkAgentMessageRead records explicit inbox consumption. For bounded regular
+// messages this is also the processing acknowledgement that frees capacity;
+// notification delivery alone never does.
 func MarkAgentMessageRead(id int64) error {
 	db, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE agent_messages SET read_at = ? WHERE id = ?`,
-		time.Now().Format(time.RFC3339Nano), id)
+	now := time.Now().Format(time.RFC3339Nano)
+	_, err = db.Exec(`UPDATE agent_messages
+		SET read_at = CASE WHEN read_at = '' THEN ? ELSE read_at END,
+			processed_at = CASE WHEN regular_send = 1 AND processed_at = '' THEN ? ELSE processed_at END
+		WHERE id = ? AND (read_at = '' OR (regular_send = 1 AND processed_at = ''))`, now, now, id)
 	return err
+}
+
+// MarkRegularAgentMessageStarted correlates a server-authored injected prompt
+// with its durable row. Inline prompts carry the full body, so the hook marks
+// them read here as well as started; doing both in one write avoids a race with
+// the daemon's post-send delivery completion.
+func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now time.Time) (bool, error) {
+	if id <= 0 || convID == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	stamp := now.Format(time.RFC3339Nano)
+	readAt := ""
+	if inline {
+		readAt = stamp
+	}
+	targetWhere := `(to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
+		COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`
+	res, err := tx.Exec(`UPDATE agent_messages
+		SET started_at = CASE WHEN started_at = '' THEN ? ELSE started_at END,
+			read_at = CASE WHEN ? != '' THEN ? ELSE read_at END
+		WHERE id = ? AND regular_send = 1 AND processed_at = ''
+		  AND `+targetWhere,
+		stamp, readAt, readAt, id, convID, convID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return false, nil
+	}
+	// Reaching a later injected message proves the harness advanced past any
+	// earlier prompt for this recipient. Only already-read rows qualify here,
+	// which recovers missed inline hooks without falsely consuming pointer mail.
+	if _, err := tx.Exec(`UPDATE agent_messages SET processed_at = ?
+		WHERE id < ? AND regular_send = 1 AND delivered_at != '' AND read_at != '' AND processed_at = ''
+		  AND `+targetWhere, stamp, id, convID, convID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MarkStartedRegularAgentMessagesProcessed acknowledges inline regular prompts
+// whose full body was consumed and whose turn reached a terminal hook. Pointer
+// notifications remain pending until inbox read marks their row processed.
+func MarkStartedRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
+	if convID == "" {
+		return 0, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	stamp := now.Format(time.RFC3339Nano)
+	res, err := d.Exec(`UPDATE agent_messages SET processed_at = ?
+		WHERE regular_send = 1 AND started_at != '' AND read_at != '' AND processed_at = ''
+		  AND (to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
+			COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`,
+		stamp, convID, convID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // DeleteAgentMessageByID deletes a single agent_messages row when
@@ -3349,10 +3509,11 @@ func DeleteAgentMessagesByIDs(ids []int64) (int64, error) {
 // (read=false, clearing read_at on the currently-read ones). It is the
 // dashboard operator's authority to repair a stuck agent's inbox read-state
 // — the cookie + Origin gate stands in for the per-conv party check, same as
-// DeleteAgentMessagesByIDs. Only rows that actually change state are touched,
-// so marking-read leaves an already-read row's read_at timestamp intact and
-// the returned count reflects real transitions (mirroring the idempotent
-// no-op the batched UI relies on). A non-existent id is a silent skip.
+// DeleteAgentMessagesByIDs. Marking read also acknowledges any unprocessed
+// regular row, including one whose inline delivery already stamped read_at
+// before a submit hook was observed. The returned count reflects either
+// transition; a fully read and processed row is an idempotent no-op. A
+// non-existent id is a silent skip.
 // Returns how many rows changed.
 //
 // This is intentionally DIRECTION-AGNOSTIC: it flips read_at on whatever rows
@@ -3374,11 +3535,12 @@ func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 		return 0, err
 	}
 	placeholders := make([]string, len(ids))
-	args := make([]any, 0, len(ids)+1)
+	args := make([]any, 0, len(ids)+2)
 	// When marking read the timestamp is the first bound parameter (it
 	// precedes the IN-list in the UPDATE); marking unread binds the ids only.
 	if read {
-		args = append(args, time.Now().Format(time.RFC3339Nano))
+		stamp := time.Now().Format(time.RFC3339Nano)
+		args = append(args, stamp, stamp)
 	}
 	for i, id := range ids {
 		placeholders[i] = "?"
@@ -3387,7 +3549,10 @@ func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 	in := strings.Join(placeholders, ",")
 	var q string
 	if read {
-		q = `UPDATE agent_messages SET read_at = ? WHERE read_at = '' AND id IN (` + in + `)`
+		q = `UPDATE agent_messages
+			SET read_at = CASE WHEN read_at = '' THEN ? ELSE read_at END,
+				processed_at = CASE WHEN regular_send = 1 AND processed_at = '' THEN ? ELSE processed_at END
+			WHERE (read_at = '' OR (regular_send = 1 AND processed_at = '')) AND id IN (` + in + `)`
 	} else {
 		q = `UPDATE agent_messages SET read_at = '' WHERE read_at != '' AND id IN (` + in + `)`
 	}
@@ -3399,8 +3564,8 @@ func SetAgentMessagesRead(ids []int64, read bool) (int64, error) {
 	return n, nil
 }
 
-// MarkAgentMailboxRead marks every still-unread message a conv has RECEIVED
-// (to_conv = conv, read_at == ”) as read, stamping read_at=now. It backs the
+// MarkAgentMailboxRead marks every still-unread message a conv has RECEIVED as
+// read and acknowledges any already-read, unprocessed regular row. It backs the
 // dashboard's per-agent-folder "mark all read" — the operator clearing a
 // stuck agent's whole inbox in one click. Only the received side is touched:
 // read_at on a row the conv SENT belongs to the other party, so a folder-level
@@ -3414,9 +3579,13 @@ func MarkAgentMailboxRead(conv string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	stamp := time.Now().Format(time.RFC3339Nano)
 	res, err := d.Exec(
-		`UPDATE agent_messages SET read_at = ? WHERE to_conv = ? AND read_at = ''`,
-		time.Now().Format(time.RFC3339Nano), conv)
+		`UPDATE agent_messages
+		 SET read_at = CASE WHEN read_at = '' THEN ? ELSE read_at END,
+			 processed_at = CASE WHEN regular_send = 1 AND processed_at = '' THEN ? ELSE processed_at END
+		 WHERE to_conv = ? AND (read_at = '' OR (regular_send = 1 AND processed_at = ''))`,
+		stamp, stamp, conv)
 	if err != nil {
 		return 0, err
 	}
@@ -3589,15 +3758,15 @@ const agentMessageColumns = `id, group_id, from_conv, to_conv, from_agent, to_ag
 	`subject, body, parent_id, created_at, delivered_at, read_at, ` +
 	`to_recipients, cc_recipients, to_recipient_agents, cc_recipient_agents, ` +
 	`original_to_conv, pin_gen, nudge_claimed_at, nudge_attempted_at, nudge_attempts, ` +
-	`nudge_cancelled_at, nudge_cancel_reason`
+	`nudge_cancelled_at, nudge_cancel_reason, regular_send, started_at, processed_at, nudge_discarded_at`
 
 func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	var m AgentMessage
 	var createdAt, deliveredAt, readAt, nudgeClaimedAt, nudgeAttemptedAt string
-	var nudgeCancelledAt string
+	var nudgeCancelledAt, startedAt, processedAt, nudgeDiscardedAt string
 	var toRecipients, ccRecipients string
 	var toRecipientAgents, ccRecipientAgents string
-	var pinGen int
+	var pinGen, regularSend int
 	if err := s.Scan(&m.ID, &m.GroupID, &m.FromConv, &m.ToConv,
 		&m.FromAgent, &m.ToAgent,
 		&m.Subject, &m.Body, &m.ParentID,
@@ -3605,7 +3774,8 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 		&toRecipients, &ccRecipients,
 		&toRecipientAgents, &ccRecipientAgents, &m.OriginalToConv, &pinGen,
 		&nudgeClaimedAt, &nudgeAttemptedAt, &m.NudgeAttempts,
-		&nudgeCancelledAt, &m.NudgeCancelReason); err != nil {
+		&nudgeCancelledAt, &m.NudgeCancelReason, &regularSend,
+		&startedAt, &processedAt, &nudgeDiscardedAt); err != nil {
 		return nil, err
 	}
 	m.CreatedAt = parseTimeOrZero(createdAt)
@@ -3614,10 +3784,14 @@ func scanAgentMessage(s rowScanner) (*AgentMessage, error) {
 	m.NudgeClaimedAt = parseTimeOrZero(nudgeClaimedAt)
 	m.NudgeAttemptedAt = parseTimeOrZero(nudgeAttemptedAt)
 	m.NudgeCancelledAt = parseTimeOrZero(nudgeCancelledAt)
+	m.StartedAt = parseTimeOrZero(startedAt)
+	m.ProcessedAt = parseTimeOrZero(processedAt)
+	m.NudgeDiscardedAt = parseTimeOrZero(nudgeDiscardedAt)
 	m.ToRecipients = recipientsFromJSON(toRecipients)
 	m.CcRecipients = recipientsFromJSON(ccRecipients)
 	m.ToRecipientAgents = recipientsFromJSON(toRecipientAgents)
 	m.CcRecipientAgents = recipientsFromJSON(ccRecipientAgents)
 	m.PinGen = pinGen != 0
+	m.RegularSend = regularSend != 0
 	return &m, nil
 }

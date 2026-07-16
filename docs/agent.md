@@ -263,17 +263,36 @@ bridged by an inter-group [link](#groups)), otherwise the daemon
 refuses with `not in a shared group`. For multicast (`group:<name>`
 target) the sender must be a member of that group.
 
-All durable post-startup agent mail enters the same asynchronous per-agent
-delivery queue. That queue resolves the current agent generation, waits while
-its input is blocked, retries transient tmux failures, and chooses inline or
-inbox-pointer delivery. Callers choose attribution, recipients, subject, and
-body; they do not choose a separate tmux transport. An offline target keeps the
-message until it is ready. Ephemeral context nudges, unread reminders, and
-lifecycle controls do not create mailbox rows, but they share the same
-cross-process pane-input lock with queued mail so their multi-command tmux
-sequences cannot interleave.
+All durable post-startup agent mail enters the inbox before any asynchronous
+tmux notification is attempted. For an online target the nudge worker resolves
+the current agent generation, waits while its input is blocked, retries
+transient tmux failures, and chooses inline or inbox-pointer delivery. For an
+offline target, regular-message notification attempts are discarded instead
+of accumulating and bursting after resume; the unread inbox rows remain
+durable and the existing unread reminder can summarize them later. Internal
+lifecycle, process, and scheduler nudges remain queued because dropping those
+could break correctness. All pane-input paths share the same cross-process lock
+so multi-command tmux sequences cannot interleave.
 Startup greetings and briefings are the intentional exception: the harness
 launch prompt owns their first delivery.
+
+User-initiated one-shot sends are backpressured at 10 unprocessed regular
+messages per target. A full target rejects a direct send or reply with
+`queue_full` and does not write or discard a message; retry after the target
+processes or explicitly reads pending mail. Group and CC sends continue for
+available recipients and report each full recipient as a warning. Lifecycle,
+process, scheduler, and other correctness-critical internal messages are
+exempt from this regular-send cap.
+
+Regular rows track notification and processing separately. An inline prompt is
+correlated by its server-authored message ID in the shared Claude Code/Codex
+`UserPromptSubmit` hook, then acknowledged as processed by `Stop` or
+`StopFailure`. A later correlated message also acknowledges earlier rows whose
+inline bodies were already marked read, which tolerates a missed hook without
+polling transcript files. Pointer notifications remain unprocessed until
+`inbox read` fetches the body. Notification delivery alone never frees sender
+capacity. Sent-message API, CLI, and dashboard views label a suppressed
+notification as `discarded while offline` rather than reporting it delivered.
 
 Short printable messages are included directly in a nudge marked
 `delivery: inline`, and their archival inbox copy is atomically marked
