@@ -791,20 +791,31 @@ func observedParallelCommands(view AggregateView, nodeID string, source PathReco
 	var existingPerform, existingSettle CommandRecord
 	for _, candidate := range view.Commands {
 		identity := candidate.Identity
-		if identity.SourceActivationID != source.SourceActivation.ID || identity.SourceGeneration != source.SourceActivation.Generation || identity.Attempt != attempt {
+		if identity.SourceActivationID != source.SourceActivation.ID || identity.SourceGeneration != source.SourceActivation.Generation {
 			continue
 		}
 		switch identity.Kind {
 		case CommandPerformAttempt:
+			if identity.Attempt != attempt {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel activation has later perform attempt %d", ErrMutationInconsistent, identity.Attempt)
+			}
 			if existingPerform.ID != "" {
 				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel attempt has multiple source commands", ErrMutationInconsistent)
 			}
 			existingPerform = cloneCommandRecord(candidate)
 		case CommandSettleAttempt:
+			if identity.Attempt != attempt {
+				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel activation has later settlement attempt %d", ErrMutationInconsistent, identity.Attempt)
+			}
 			if existingSettle.ID != "" {
 				return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel attempt has multiple settlement commands", ErrMutationInconsistent)
 			}
 			existingSettle = cloneCommandRecord(candidate)
+		}
+	}
+	for _, candidate := range view.SideEffects {
+		if candidate.Kind == SideEffectAttempt && candidate.ActivationID == source.SourceActivation.ID && candidate.Attempt != attempt {
+			return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, fmt.Errorf("%w: parallel activation has later side-effect attempt %d", ErrMutationInconsistent, candidate.Attempt)
 		}
 	}
 	performPayload, err := json.Marshal(performAttemptPayload{

@@ -133,6 +133,38 @@ func TestParallelSplitRejectsAttemptEvidenceCollisions(t *testing.T) {
 			}
 		})
 	}
+	for _, kind := range []CommandKindV1{CommandPerformAttempt, CommandSettleAttempt} {
+		for _, state := range []CommandState{CommandObserved, CommandReconciled} {
+			t.Run("later "+string(kind)+" "+string(state), func(t *testing.T) {
+				input, pathID := parallelInputWithAttemptEvidence(t, func(aggregate *AggregateCheckpoint, _, _ CommandRecord, _ SideEffectIdentity) {
+					path := aggregate.Routing.Paths[aggregate.Authority.Genesis.OutputPathID]
+					perform, settle, _ := parallelAttemptRecords(t, aggregate.View(), path, 2)
+					command := perform
+					if kind == CommandSettleAttempt {
+						command = settle
+					}
+					command.State = state
+					aggregate.Commands[command.ID] = command
+				})
+				if _, err := PlanParallelSplit(t.Context(), input, pathID); !errors.Is(err, ErrMutationInconsistent) {
+					t.Fatalf("later %s %s error = %v", kind, state, err)
+				}
+			})
+		}
+	}
+	for _, state := range []string{"observed", "failed", "claimed"} {
+		t.Run("later side effect "+state, func(t *testing.T) {
+			input, pathID := parallelInputWithAttemptEvidence(t, func(aggregate *AggregateCheckpoint, _, _ CommandRecord, _ SideEffectIdentity) {
+				path := aggregate.Routing.Paths[aggregate.Authority.Genesis.OutputPathID]
+				_, _, effect := parallelAttemptRecords(t, aggregate.View(), path, 2)
+				effect.State = state
+				aggregate.SideEffects[effect.ID] = effect
+			})
+			if _, err := PlanParallelSplit(t.Context(), input, pathID); !errors.Is(err, ErrMutationInconsistent) {
+				t.Fatalf("later %s side-effect error = %v", state, err)
+			}
+		})
+	}
 	for _, state := range []CommandState{CommandObserved, CommandReconciled} {
 		t.Run("exact "+string(state)+" evidence", func(t *testing.T) {
 			input, pathID := parallelInputWithAttemptEvidence(t, func(aggregate *AggregateCheckpoint, perform, settle CommandRecord, effect SideEffectIdentity) {
@@ -147,6 +179,47 @@ func TestParallelSplitRejectsAttemptEvidenceCollisions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func parallelAttemptRecords(t *testing.T, view AggregateView, source PathRecord, attempt uint64) (CommandRecord, CommandRecord, SideEffectIdentity) {
+	t.Helper()
+	performPayload, err := json.Marshal(performAttemptPayload{
+		TemplateRef: view.TemplateRef, TemplateSourceHash: view.TemplateSourceHash, NodeID: "fork",
+		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation, Attempt: attempt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	perform, err := observedCommand(CommandIdentity{
+		RunID: view.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1,
+		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
+		Attempt: attempt, PlanDigest: payloadDigest(performPayload),
+	}, performPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settlePayload, err := json.Marshal(settleAttemptObservationPayload{
+		TemplateRef: view.TemplateRef, SourceCommandID: perform.ID,
+		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
+		Attempt: attempt, ResultCode: "parallel", Actor: "system:parallel",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settle, err := observedCommand(CommandIdentity{
+		RunID: view.RunID, Kind: CommandSettleAttempt, PayloadSchema: 1,
+		SourceActivationID: source.SourceActivation.ID, SourceGeneration: source.SourceActivation.Generation,
+		Attempt: attempt, InputDigest: perform.ID, PlanDigest: payloadDigest(settlePayload), ResultCode: "parallel",
+	}, settlePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effect := SideEffectIdentity{Kind: SideEffectAttempt, RunID: view.RunID, ActivationID: source.SourceActivation.ID, Attempt: attempt, State: "observed"}
+	effect.ID, err = AttemptIdentity(effect.RunID, effect.ActivationID, effect.Attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return perform, settle, effect
 }
 
 func parallelInputWithAttemptEvidence(t *testing.T, mutate func(*AggregateCheckpoint, CommandRecord, CommandRecord, SideEffectIdentity)) (*VerifiedParallelInput, PathID) {
