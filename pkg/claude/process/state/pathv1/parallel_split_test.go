@@ -228,6 +228,88 @@ func TestParallelSplitUsesEdgeTupleOrderBeforeOpaqueHashOrder(t *testing.T) {
 }
 
 func TestParallelSplitMaximumDegreeEndToEnd(t *testing.T) {
+	source := parallelDirectReducerSource(MaxOutgoingOrAllCandidates)
+	checkpoint := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyParallelInput(t.Context(), checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathID := input.base.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	command, err := PlanParallelSplit(t.Context(), input, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope mutationPayload[RoutePathsPlan]
+	if err := decodeExactPayload(command.Payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(envelope.Plan.Batch.Mutations); got != MaxOutgoingOrAllCandidates+3 || got > MaxRoutingMutations || envelope.Plan.Batch.LogEntries != 1 {
+		t.Fatalf("maximum split mutations/log = %d/%d", got, envelope.Plan.Batch.LogEntries)
+	}
+	projection, err := ReduceParallelSplit(t.Context(), input, pathID, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routing := projection.aggregate.Routing
+	parent := routing.Paths[pathID]
+	if len(parent.ProducedPathIDs) != MaxOutgoingOrAllCandidates || len(routing.Scopes) != 2 || len(routing.Reservations) != 2 {
+		t.Fatalf("maximum split paths/scopes/reservations = %d/%d/%d", len(parent.ProducedPathIDs), len(routing.Scopes), len(routing.Reservations))
+	}
+	encoded, err := encodeParallelProjectionCheckpoint(input.base.checkpoint, projection.aggregate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > MaxCheckpointBytes {
+		t.Fatalf("maximum degree checkpoint bytes = %d, want <= %d", len(encoded), MaxCheckpointBytes)
+	}
+	if disposition, replayErr := projection.Replay(command); replayErr != nil || disposition != ReplayAlreadyApplied {
+		t.Fatalf("maximum split replay = %q, %v", disposition, replayErr)
+	}
+
+	// The degree guard runs before the routing clone or mutation materializer.
+	input.base.template.Nodes["fork"].Next["over-cap"] = "merge"
+	if _, err := PlanParallelSplit(t.Context(), input, pathID); err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("2,047-way split error = %v", err)
+	}
+}
+
+func TestParallelCheckpointByteCeiling(t *testing.T) {
+	_, err := DecodeCheckpointV7(make([]byte, MaxCheckpointBytes))
+	var overBudget *OverBudgetError
+	if errors.As(err, &overBudget) {
+		t.Fatalf("exact 16 MiB checkpoint hit byte ceiling: %v", err)
+	}
+	_, err = DecodeCheckpointV7(make([]byte, MaxCheckpointBytes+1))
+	if !errors.As(err, &overBudget) || overBudget.Limit != "checkpoint_bytes" || overBudget.Value != MaxCheckpointBytes+1 || overBudget.Maximum != MaxCheckpointBytes {
+		t.Fatalf("limit+1 checkpoint error = %v", err)
+	}
+}
+
+func TestParallelTopologyAcceptsPoisonEscalationRetryEdge(t *testing.T) {
+	source := parallelPoisonRetrySource()
+	checkpoint := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyParallelInput(t.Context(), checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.topology.reducers["fork"] != "merge" {
+		t.Fatalf("parallel reducer = %q, want merge", input.topology.reducers["fork"])
+	}
+	pathID := input.base.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	command, err := PlanParallelSplit(t.Context(), input, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := ReduceParallelSplit(t.Context(), input, pathID, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disposition, replayErr := projection.Replay(command); replayErr != nil || disposition != ReplayAlreadyApplied {
+		t.Fatalf("poison-retry split replay = %q, %v", disposition, replayErr)
+	}
+}
+
+func TestParallelSplitWorstCaseCheckpointCeiling(t *testing.T) {
 	source := parallelSplitSource(MaxOutgoingOrAllCandidates)
 	checkpoint := initializedExclusiveCheckpoint(t, source)
 	input, err := VerifyParallelInput(t.Context(), checkpoint, source)
@@ -243,26 +325,13 @@ func TestParallelSplitMaximumDegreeEndToEnd(t *testing.T) {
 	if err := decodeExactPayload(command.Payload, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(envelope.Plan.Batch.Mutations); got != 4_095 || got > MaxRoutingMutations || envelope.Plan.Batch.LogEntries != 1 {
-		t.Fatalf("maximum split mutations/log = %d/%d", got, envelope.Plan.Batch.LogEntries)
+	if got := len(envelope.Plan.Batch.Mutations); got != 4_095 {
+		t.Fatalf("worst-case split mutations = %d, want 4095", got)
 	}
-	projection, err := ReduceParallelSplit(t.Context(), input, pathID, command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	routing := projection.aggregate.Routing
-	parent := routing.Paths[pathID]
-	if len(parent.ProducedPathIDs) != MaxOutgoingOrAllCandidates || len(routing.Scopes) != 2 || len(routing.Reservations) != MaxOutgoingOrAllCandidates+2 {
-		t.Fatalf("maximum split paths/scopes/reservations = %d/%d/%d", len(parent.ProducedPathIDs), len(routing.Scopes), len(routing.Reservations))
-	}
-	if disposition, replayErr := projection.Replay(command); replayErr != nil || disposition != ReplayAlreadyApplied {
-		t.Fatalf("maximum split replay = %q, %v", disposition, replayErr)
-	}
-
-	// The degree guard runs before the routing clone or mutation materializer.
-	input.base.template.Nodes["fork"].Next["over-cap"] = "work-0000"
-	if _, err := PlanParallelSplit(t.Context(), input, pathID); err == nil || !strings.Contains(err.Error(), "out of range") {
-		t.Fatalf("2,047-way split error = %v", err)
+	_, err = ReduceParallelSplit(t.Context(), input, pathID, command)
+	var overBudget *OverBudgetError
+	if !errors.As(err, &overBudget) || overBudget.Limit != "checkpoint_bytes" || overBudget.Value <= MaxCheckpointBytes {
+		t.Fatalf("worst-case checkpoint error = %v", err)
 	}
 }
 
@@ -277,6 +346,55 @@ func parallelSplitSource(n int) []byte {
 	}
 	out.WriteString("  merge:\n    type: end\n    join: all\n")
 	return []byte(out.String())
+}
+
+func parallelDirectReducerSource(n int) []byte {
+	var out strings.Builder
+	out.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: parallel-direct-reducer\nstart: fork\nnodes:\n  fork:\n    type: parallel\n    next:\n")
+	for index := 0; index < n; index++ {
+		fmt.Fprintf(&out, "      branch-%04d: merge\n", index)
+	}
+	out.WriteString("  merge:\n    type: end\n    join: all\n")
+	return []byte(out.String())
+}
+
+func parallelPoisonRetrySource() []byte {
+	return []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: parallel-poison-retry
+start: fork
+nodes:
+  fork:
+    type: parallel
+    next: {left: left, right: right}
+  left:
+    type: task
+    performer: {kind: agent, prompt: left}
+    next: merge
+  right:
+    type: task
+    performer: {kind: agent, prompt: right}
+    next: merge
+  merge:
+    type: task
+    join: all
+    performer: {kind: agent, prompt: merge}
+    checks:
+      - id: verify
+        performer: {kind: program, run: go test ./...}
+    retry: {maxAttempts: 2}
+    next: {pass: done, fail: poison}
+  poison:
+    type: decision
+    performer: {kind: human, ask: "Retry merge?"}
+    next: {retry: merge, cancel: canceled}
+  done:
+    type: end
+    result: success
+  canceled:
+    type: end
+    result: canceled
+`)
 }
 
 func parallelTupleOrderSource(firstOutcome, secondOutcome string) []byte {

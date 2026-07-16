@@ -697,7 +697,7 @@ func validatePoisonEscalations(tmpl *Template) Diagnostics {
 func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 	acyclicEdges := make([]Edge, 0, len(edges))
 	for _, edge := range edges {
-		if isPoisonEscalationRetryEdge(tmpl, edge) {
+		if IsPoisonEscalationRetryEdge(tmpl, edge) {
 			continue
 		}
 		acyclicEdges = append(acyclicEdges, edge)
@@ -736,12 +736,12 @@ func validateAcyclic(tmpl *Template, edges []Edge) Diagnostics {
 	return diagnostics
 }
 
-// isPoisonEscalationRetryEdge recognizes the one v1 loop that is not an
+// IsPoisonEscalationRetryEdge recognizes the one v1 loop that is not an
 // arbitrary graph cycle: a compound task's fail edge offers a human decision,
 // whose retry edge points back to that same task. Runtime planning intercepts
 // this edge as an audited block resolution; it never re-activates a completed
 // graph node through the ordinary edge machinery.
-func isPoisonEscalationRetryEdge(tmpl *Template, edge Edge) bool {
+func IsPoisonEscalationRetryEdge(tmpl *Template, edge Edge) bool {
 	if tmpl == nil || edge.Outcome != "retry" {
 		return false
 	}

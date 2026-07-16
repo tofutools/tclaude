@@ -80,7 +80,7 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 		indegree[nodeID] = 0
 	}
 	for _, edge := range edges {
-		if edge.From == "" || isPoisonEscalationRetryEdge(tmpl, edge) {
+		if edge.From == "" || IsPoisonEscalationRetryEdge(tmpl, edge) {
 			continue
 		}
 		if _, fromOK := tmpl.Nodes[edge.From]; !fromOK {

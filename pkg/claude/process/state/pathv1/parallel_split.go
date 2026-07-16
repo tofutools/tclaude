@@ -136,7 +136,65 @@ func ReduceParallelSplit(ctx context.Context, input *VerifiedParallelInput, sour
 	if err != nil {
 		return nil, err
 	}
+	// Cardinality and mutation bounds are independent of the canonical
+	// checkpoint ceiling. Prove this projection can be installed as one exact
+	// schema-7 revision before exposing it to a future engine gate.
+	if _, err := encodeParallelProjectionCheckpoint(input.base.checkpoint, aggregate); err != nil {
+		return nil, err
+	}
 	return &ParallelProjection{aggregate: aggregate, binding: input.base.binding, command: cloneCommandRecord(command), dispose: result.Disposition}, nil
+}
+
+// encodeParallelProjectionCheckpoint uses the exact schema-7 persistence
+// encoder without cloning the projected routing state a second time. The
+// returned bytes are only a budget proof in TCL-445; no checkpoint capability
+// is exposed until the combined gate lands.
+func encodeParallelProjectionCheckpoint(checkpoint *CheckpointV7, aggregate AggregateCheckpoint) ([]byte, error) {
+	if err := ValidateCheckpointV7(checkpoint); err != nil {
+		return nil, err
+	}
+	status := CurrentRunStatus(checkpoint)
+	if !runtimeStatusValid(status) {
+		return nil, fmt.Errorf("%w: invalid execution status %q", ErrMutationInvalid, status)
+	}
+	currentSeq := CurrentLastLogSeq(checkpoint)
+	if currentSeq >= math.MaxInt64 || CheckpointRevision(checkpoint) == math.MaxUint64 {
+		return nil, &OverBudgetError{Limit: "execution_revision", Value: math.MaxInt64, Maximum: math.MaxInt64 - 1}
+	}
+	lastLogSeq := currentSeq + 1
+	aggregateLast, err := aggregateLogicalLastSeq(aggregate)
+	if err != nil {
+		return nil, err
+	}
+	if aggregateLast > lastLogSeq {
+		lastLogSeq = aggregateLast
+	}
+	if lastLogSeq-currentSeq > MaxRoutingLogEntries {
+		return nil, &OverBudgetError{Limit: "log_entries", Value: int(lastLogSeq - currentSeq), Maximum: MaxRoutingLogEntries}
+	}
+	initialize := checkpoint.Initialize
+	if aggregate.RunID != initialize.UpgradeNeeded.RunID || aggregate.TemplateRef != initialize.TemplateHash || aggregate.TemplateSourceHash != initialize.UpgradeNeeded.TemplateSourceHash {
+		return nil, fmt.Errorf("%w: current aggregate differs from immutable initialization authority", ErrMutationInconsistent)
+	}
+	execution := &ExecutionCheckpoint{
+		Revision: CheckpointRevision(checkpoint) + 1, PreviousDigest: checkpoint.Digest,
+		Status: status, LogAdvanced: true, LastLogSeq: lastLogSeq, Aggregate: aggregate,
+	}
+	execution.LogChecksum, err = executionLogChecksum(execution)
+	if err != nil {
+		return nil, err
+	}
+	next := *checkpoint // shallow container copy; aggregate routing is not cloned
+	next.Execution = execution
+	genesisDigest, err := initializeEventDigest(next.Initialize)
+	if err != nil {
+		return nil, err
+	}
+	next.Digest, err = executionCheckpointDigest(genesisDigest, execution)
+	if err != nil {
+		return nil, err
+	}
+	return EncodeCheckpointV7(&next)
 }
 
 type parallelScopeFrame struct {
@@ -171,7 +229,7 @@ func deriveParallelTopology(tmpl *model.Template, templateRef string) (parallelT
 	}
 	edges := make([]EdgeKey, 0)
 	for _, edge := range model.NormalizeEdges(tmpl) {
-		if edge.From == "" {
+		if edge.From == "" || model.IsPoisonEscalationRetryEdge(tmpl, edge) {
 			continue
 		}
 		key := EdgeKey{TemplateRef: templateRef, FromNodeID: edge.From, Outcome: edge.Outcome, ToNodeID: edge.To}
