@@ -83,12 +83,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"resolveConflict",
 		"'Reload their version (discard mine)'",
 		"'Save as new version anyway'",
-		// Read-time awareness stays in the persistent imperative editor and
-		// reloads in place; no dirty buffer is replaced without confirmation.
-		"text: 'Review changes'",
-		"text: 'Keep editing'",
+		// Read-time awareness stays in the controller and reloads in place; no
+		// dirty buffer is replaced without confirmation.
 		"observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash, actor, authoredAt } = {})",
-		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
 		"sameTemplateGeneration(this.externalChange, reviewed)",
 		"reloadExternalChange()",
 		"this.options.confirmDiscard?.()",
@@ -99,30 +96,23 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"guardedModel.rev !== guardedRev",
 		"externalInteractionPending(this)",
 		"this.refresh();",
-		// IDs are creation-time store keys. Existing templates render only the
-		// title, and a blank template swaps its id input out after first save.
-		"const showIDInput = templateIDEditable(this.blank, model.sourceHash)",
-		"const idEditable = showIDInput && !this.savePending && !externalPending",
-		"this.idInput.disabled = !idEditable",
-		"this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel)",
-		"this.model.setTemplateID(this.idInput.value.trim())",
+		// IDs are creation-time store keys and mutations cross the semantic
+		// controller boundary rather than reading controls from the DOM.
+		"setTemplateID(value)",
+		"this.model.setTemplateID(String(value || '').trim())",
 		"Template id is fixed once an existing version is selected.",
 		"const savedID = id",
 		"this.model.template.id = savedID",
 		// Template-level metadata has an explicit editor affordance and travels
 		// through setTemplateMeta, the same dirty/undo gate as graph edits.
-		"text: 'template settings…'",
-		"this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' })",
 		"if (selection?.type === 'template')",
-		"this.graph.select(null)",
+		"this.graph?.setSelection?.(null)",
 		"if (this.selection?.type !== 'template')",
-		"this.saveButton.disabled = this.savePending ||",
 		"if (this.savePending || externalInteractionPending(this)) return false",
 		"if (requestSeq !== this.saveSeq) return",
 		"this.saveSeq += 1",
-		"this.model.setTemplateMeta({ name:",
-		"text: 'params…'",
-		"text: 'instantiate…'",
+		"setTemplateMeta(fields)",
+		"this.model.setTemplateMeta(clean)",
 		"Save before instantiating",
 		"unsaved editor state is never instantiated",
 		"ref: this.model.currentRef",
@@ -130,15 +120,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'Delete + rewire through'",
 		// Hand-drawn self-loops are blocked at the gesture with a message.
 		"Self-loop edges are not supported",
-		// Editor semantics attach through the core's hooks, not core edits.
-		"onPortDragStart:",
-		"onCanvasDrop:",
-		"onMarqueeSelect:",
-		"onNodeDragStart:",
-		"wheelPan: true",
-		"marqueeSelect: true",
+		// Editor semantics cross the one explicit adapter. Pointer-frame state
+		// never becomes controller or Signals state.
+		"createProcessGraphAdapter(host, {",
+		"nodeDragEnd: (event) => this.commitNodeDrag(event)",
+		"portDragEnd: (event) => this.onPortDragEnd(event)",
+		"canvasDrop: (event) => this.onCanvasDrop(event)",
+		"graphInteraction(this)",
 		"This removes the current highlighted selection.",
-		"text: '⌘K commands'",
 		"requestCommandPalette()",
 		"commandContext()",
 		"addNodeType(payload.type, point)",
@@ -146,6 +135,54 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.model.duplicateNodes(",
 		"this.validation?.focusIssue(delta)",
 	)
+	island := read("js/process-editor-island.js")
+	mustContain("process-editor-island.js", island,
+		"export function ProcessEditorApp(",
+		"export function mountProcessEditorIsland(",
+		"import { NodeDialog } from './process-node-dialog.js';",
+		"import { ParamsDialog } from './process-params-dialog.js';",
+		"templateIDEditable(view.blank, model.sourceHash)",
+		"controller.setSelection({ type: 'template' })",
+		"controller.setTemplateMeta({ name })",
+		"params…", "instantiate…", "⌘K commands",
+		"Review changes", "Keep editing",
+		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
+		"process-issues-panel",
+		"descriptor.kind === 'node'", "descriptor.kind === 'params'",
+		`class="process-editor-inspector" inert=${pending}`,
+		"discardBufferedChange.current",
+	)
+	adapter := read("js/process-graph-adapter.js")
+	mustContain("process-graph-adapter.js", adapter,
+		"export class ProcessGraphAdapter",
+		"new ProcessGraph(host, graph",
+		"onNodeDragEnd:", "onNodeDragCancel:", "onPortDragStart:", "onCanvasDrop:",
+		"interactionSnapshot()", "hasActiveInteraction()", "dispose()",
+	)
+	for _, banned := range []string{"document.", "querySelector(", "innerHTML", "replaceChildren(", ".widget"} {
+		if strings.Contains(editor, banned) {
+			t.Errorf("process-editor.js crosses the Preact/graph ownership boundary with %q", banned)
+		}
+	}
+	graphConsumers := map[string]string{
+		"process-editor.js":        editor,
+		"process-editor-island.js": island,
+		"process-validation.js":    read("js/process-validation.js"),
+		"process-node-dialog.js":   read("js/process-node-dialog.js"),
+		"process-params-dialog.js": read("js/process-params-dialog.js"),
+	}
+	for name, source := range graphConsumers {
+		for _, banned := range []string{
+			"new ProcessGraph(", "from './process-graph.js'", ".widget",
+			".graph.layout;", ".graph.layout.", ".graph.layout[",
+			".graph.view;", ".graph.view.", ".graph.view[",
+			".graph.root", ".graph.svg", ".graph.pointer",
+		} {
+			if strings.Contains(source, banned) {
+				t.Errorf("%s bypasses process-graph-adapter.js with %q", name, banned)
+			}
+		}
+	}
 	if strings.Contains(editor, "localStorage") || strings.Contains(read("js/process-edit-model.js"), "localStorage") {
 		t.Error("localStorage is banned; editor prefs belong in dashPrefs -> SQLite")
 	}
@@ -168,7 +205,6 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"if (!response.ok) return null;",
 		// Badges are glyph-coded per severity, never color-only.
 		"severityGlyph",
-		"process-issues-panel",
 		"validateNow()",
 		"focusIssue(delta = 1)",
 	)
@@ -243,10 +279,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	}
 	params := read("js/process-params-dialog.js")
 	mustContain("process-params-dialog.js", params,
+		"export function ParamsDialog(",
 		"export function openProcessParamsDialog(",
-		"bindDialogFocus({",
-		"dispose.isDirty = isDirty",
-		"dispose.requestClose = requestClose",
+		"<${Overlay}",
+		"registered?.({ isDirty, requestClose })",
+		"dispose.isDirty = () => !!handle?.isDirty?.()",
+		"dispose.requestClose = () => handle?.requestClose?.()",
 		"confirmDiscard = async () => false",
 		"model.setParams(params)",
 		"process-param-default-enabled",

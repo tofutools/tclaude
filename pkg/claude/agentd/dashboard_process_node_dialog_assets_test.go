@@ -45,8 +45,9 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 	dialog := read("js/process-node-dialog.js")
 	mustContain("process-node-dialog.js", dialog,
 		// One component, two modes: the editor dialog and the viewer's
-		// read-only detail card share the same builder.
-		"export function buildNodeDetail(",
+		// read-only detail card share the same Preact component.
+		"export function NodeDetail(",
+		"export function NodeDialog(",
 		"export function openNodeDialog(",
 		"is-readonly",
 		"process-node-readonly-badge",
@@ -56,22 +57,23 @@ func TestDashboardProcessNodeDialogAssets(t *testing.T) {
 		// Edges are canvas-owned; the dialog only summarizes them.
 		"Edges are edited on the canvas, not in this dialog.",
 		// Every slot's editor goes through the shared sub-component.
-		"performerEditor",
+		"function PerformerEditor(",
 		"process-choice-outcomes",
 		"setChoiceOutcome",
 		"choiceRouting: false",
 		// Dialog edits are private until explicit Save, which commits exactly
 		// once through the edit model's undo gate.
-		"const original = structuredClone(model.node(nodeId))",
-		"model.updateNode(nodeId, (node) => replaceNode(node, draft))",
+		"const original = useRef(structuredClone(model.node(nodeId)))",
+		"model.updateNode(nodeId, (node) => replaceNode(node, draftRef.current))",
 		"confirmDiscard = async () => false",
 		"process-node-save",
 		"process-node-cancel",
-		"bindDialogFocus",
-		"dispose.requestClose = requestCancel",
+		"<${Overlay}",
+		"registered?.({ isDirty: () => dirty.current, requestClose })",
+		"dispose.requestClose = () => handle?.requestClose?.()",
 		// The node dialog gets its own DB-backed size and opts out of the
 		// natural-content floor so complex forms remain shrinkable/scrollable.
-		"makeModalResizable(dialog, NODE_DIALOG_SIZE_PREF, { fitContent: false })",
+		"resizeKey=${NODE_DIALOG_SIZE_PREF} fitContent=${false}",
 		"tclaude.dash.modalSize.process-node-editor",
 	)
 	if strings.Contains(dialog, "innerHTML") {

@@ -99,40 +99,25 @@ test('issue navigation starts at the expected end and wraps', () => {
   assert.deepEqual(focused, ['last', 'first']);
 });
 
-test('clicking an issue seeds subsequent next and previous navigation', () => {
-  const previous = globalThis.document;
-  let click;
-  const element = () => ({
-    append() {},
-    addEventListener(type, handler) { if (type === 'click') click = handler; },
-    querySelector() { return { focus() {} }; },
-  });
-  globalThis.document = { createElement: element };
-  try {
-    const focused = [];
-    const entries = [
-      { code: 'first', scope: 'template', targetId: '' },
-      { code: 'middle', scope: 'node', targetId: 'work' },
-      { code: 'last', scope: 'edge', targetId: 'start:fail' },
-    ];
-    const fake = {
-      editor: { stage: { append() {} } },
-      mapped: { entries },
-      issueCursor: -1,
-      focusEntry: (entry) => focused.push(entry.code),
-      focusIssueAt: LiveValidation.prototype.focusIssueAt,
-    };
-    LiveValidation.prototype.buildPanel.call(fake);
-    click({ target: { closest: () => ({ dataset: { issueIndex: '1' } }) } });
-    assert.equal(fake.issueCursor, 1);
-    LiveValidation.prototype.focusIssue.call(fake, 1);
-    LiveValidation.prototype.focusIssue.call(fake, -1);
-    assert.equal(fake.issueCursor, 1);
-    assert.deepEqual(focused, ['middle', 'last', 'middle']);
-  } finally {
-    if (previous === undefined) delete globalThis.document;
-    else globalThis.document = previous;
-  }
+test('an explicitly focused issue seeds subsequent next and previous navigation', () => {
+  const focused = [];
+  const entries = [
+    { code: 'first', scope: 'template', targetId: '' },
+    { code: 'middle', scope: 'node', targetId: 'work' },
+    { code: 'last', scope: 'edge', targetId: 'start:fail' },
+  ];
+  const fake = {
+    editor: { publish() {} }, panel: { open: false }, focusRequest: 0,
+    mapped: { entries }, issueCursor: -1,
+    focusEntry: (entry) => focused.push(entry.code),
+    focusIssueAt: LiveValidation.prototype.focusIssueAt,
+  };
+  assert.equal(LiveValidation.prototype.focusIssueAt.call(fake, 1), true);
+  assert.equal(fake.issueCursor, 1);
+  LiveValidation.prototype.focusIssue.call(fake, 1);
+  LiveValidation.prototype.focusIssue.call(fake, -1);
+  assert.equal(fake.issueCursor, 1);
+  assert.deepEqual(focused, ['middle', 'last', 'middle']);
 });
 
 test('out-of-order responses are discarded (sequence guard)', async () => {

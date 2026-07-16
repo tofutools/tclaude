@@ -78,20 +78,25 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 	)
 	editor := read("js/process-editor.js")
 	must("process-editor.js", editor,
-		"import { bindDialogFocus } from './dialog-focus-core.js'",
-		"import { isTopmostOverlay } from './overlay-stack.js'",
-		"this.scribeButton.addEventListener('click', () => this.requestScribe('template')",
 		"Resolve unsaved edits before handing off",
 		"Discard local edits", "Save changes first",
 		"currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || ''",
 		"isNew: this.blank && !this.model.sourceHash",
+		"processScribeEditorContext",
+		"freshnessGuard",
+	)
+	editorIsland := read("js/process-editor-island.js")
+	must("process-editor-island.js", editorIsland,
+		`class="process-action process-scribe-action"`,
+		`onClick=${() => controller.requestScribe('template')}`,
 		"Share editor context with process scribe",
 		"BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source",
 		"Send & open scribe",
-		"bindDialogFocus({",
-		"shouldHandle: () => isTopmostOverlay(overlay)",
-		"processScribeEditorContext",
-		"freshnessGuard",
+	)
+	overlay := read("js/management-overlay.js")
+	must("management-overlay.js", overlay,
+		"useDialogFocus({",
+		"shouldHandle: () => isTopmostOverlay(overlayRef.current)",
 	)
 	registry := read("js/process-command-registry.js")
 	must("process-command-registry.js", registry,
