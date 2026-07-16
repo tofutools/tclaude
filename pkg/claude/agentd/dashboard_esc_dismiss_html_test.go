@@ -41,6 +41,10 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	mustNot("function editMemberModal(", "the legacy inline edit-member lifecycle is removed")
 
 	// A representative slice of forms wired through ManagementOverlay.
+	must("export function useGuardedOverlayClose() {", "form owners share one explicit-control close adapter")
+	must("const cleanup = registerClose?.(close);", "ManagementOverlay publishes its guarded close transaction")
+	must("return { requestClose, registerClose };", "the shared adapter exposes request and registration wiring")
+	must("registerClose=${registerClose}", "dirty form owners register explicit controls with ManagementOverlay")
 	must(`id="perm-edit-modal" dialogClass="perm-edit-modal"`, "the permission editor uses the shared Preact overlay")
 	must("onClose=${state.close} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact permission editor confirms before discarding")
 	must("dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard}", "the Preact template editor confirms before discarding")
@@ -59,11 +63,9 @@ func TestDashboardHTML_EscDismissWired(t *testing.T) {
 	must("onClose=${state.close} dirty=${!!body} blocked=${busy} confirmDiscard=${confirmDiscard}", "the Preact human-reply dialog confirms before discarding")
 	must(`id="operator-message-modal"`, "the terminal operator composer is rendered by the Preact dialog owner")
 	must("dirty=${dirty}", "the operator composer derives dismissal state from its controlled draft")
-	must("onClick=${() => { void closeRef.current?.(); }}", "operator Cancel routes through the shared dirty-close transaction")
 	must(`id="group-create-modal"`, "the Preact group-create dialog retains its scoped overlay id")
 	must("dirty=${dirty}", "the Preact group-create dialog publishes its controlled dirty state")
 	must("blocked=${busy}", "the Preact group-create dialog blocks dismissal while submitting")
-	must("if (!dirty || await confirmDiscard()) state.close();", "the group-create Cancel path confirms before discarding")
 
 	// The non-form LISTING overlays get the friction-free clean close (no
 	// "discard?" for a typed filter). A child .modal-overlay on top claims
