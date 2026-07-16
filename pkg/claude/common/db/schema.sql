@@ -374,6 +374,11 @@ CREATE TABLE session_cost_daily (
 
 CREATE INDEX idx_session_cost_daily_day ON session_cost_daily(day);
 
+CREATE INDEX idx_session_cost_daily_walk
+			ON session_cost_daily(
+				COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
+			);
+
 CREATE TABLE dashboard_prefs (
 			key        TEXT PRIMARY KEY,
 			value      TEXT NOT NULL,

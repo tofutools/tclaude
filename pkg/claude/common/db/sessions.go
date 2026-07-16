@@ -1193,7 +1193,10 @@ func SumCostSinceDay(fromDay string) (float64, error) {
 // a deterministic order when two rows share a timestamp. The table stays small
 // (sessions × active days — pay-per-token sessions via cost_usd, subscription
 // sessions via virtual_cost_usd), so callers read it whole and aggregate in Go
-// rather than encoding the windowed delta logic in SQL.
+// rather than encoding the windowed delta logic in SQL. Schema v133's
+// idx_session_cost_daily_walk expression index matches the ORDER BY exactly,
+// so this hot read walks rows in canonical order without building a temporary
+// SQLite B-tree on every dashboard poll.
 func AllCostDailyRows() ([]CostDailyRow, error) {
 	db, err := Open()
 	if err != nil {
