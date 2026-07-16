@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convindex"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
+	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -304,9 +304,8 @@ var clearInjectReadyDelay = 1 * time.Second
 // fall through to the pending_name dashboard fallback that
 // db.RotateAgentConv already carried onto the actor.
 //
-// Replicates injectTextAndSubmit's shape from
-// pkg/claude/agentd/handlers.go (text → 500 ms gap → Enter → 500 ms
-// gap → Enter) so CC's bracketed-paste mode can't coalesce the
+// Uses the same paneinput text-submit primitive as agentd (text → 500 ms gap →
+// Enter → 500 ms gap → Enter) so CC's bracketed-paste mode can't coalesce the
 // trailing Enter into a paste-newline — the foot-gun reincarnate's
 // handoff nudge originally tripped on. We can't import the agentd
 // helper directly from session (would cycle), and the cold reviewer
@@ -338,24 +337,10 @@ func restoreClearedTitle(tmuxSession, title string) {
 			"tmux", tmuxSession, "module", "hooks")
 		return
 	}
-	target := clcommon.ExactTarget(tmuxSession) + ":0.0"
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "/rename "+title).Run(); err != nil {
+	if err := paneinput.InjectTextAndSubmit(tmuxSession+":0.0", "/rename "+title, paneinput.Options{}); err != nil {
 		slog.Warn("clear-migrate: /rename injection failed; relying on pending_name",
 			"error", err, "module", "hooks")
-		return
 	}
-	time.Sleep(500 * time.Millisecond)
-	if err := clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run(); err != nil {
-		slog.Warn("clear-migrate: /rename submit failed; relying on pending_name",
-			"error", err, "module", "hooks")
-		return
-	}
-	// Belt-and-suspenders second Enter (no-op if the first already
-	// submitted) — same pattern as agentd.injectTextAndSubmit. The 500
-	// ms gap before it keeps the second Enter from being coalesced
-	// into the same bracketed-paste window as the text.
-	time.Sleep(500 * time.Millisecond)
-	_ = clcommon.TmuxCommand("send-keys", "-t", target, "Enter").Run()
 }
 
 // waitClearInjectPaneReady polls IsTmuxSessionAlive on tmuxSession
@@ -955,7 +940,11 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// gate the injection on the harness actually understanding those
 		// commands, or a Codex pane would be typed a hint it can't act on.
 		// Harness-aware nudging is future work (Codex Lifecycle).
-		handleContextNudge(envSessionID)
+		targetConv := input.ConvID
+		if targetConv == "" {
+			targetConv = state.ConvID
+		}
+		handleContextNudge(envSessionID, targetConv)
 	}
 
 	state.Updated = time.Now()
@@ -1684,20 +1673,19 @@ func nextNudgeTarget(pct float64, minPct, intervalPct int) int {
 	return target
 }
 
-// formatContextNudgeMessage is the text the daemon types into the
-// agent's pane via send-keys when a threshold crosses. Reads as a
-// system tap-on-shoulder rather than user input so the agent picks
-// up on the intent at next turn.
+// formatContextNudgeMessage is the context instruction stored in the target's
+// universal inbox when a threshold crosses.
 //
 // Pure for unit testing.
 func formatContextNudgeMessage(target int) string {
-	return fmt.Sprintf("[system: context at %d%%. Consider /reincarnate at the next breakpoint to avoid running out of room mid-task — fresh CC inherits identity but starts with a clean window.]", target)
+	return fmt.Sprintf("Context is at %d%%. Consider /reincarnate at the next breakpoint to avoid running out of room mid-task — the fresh agent inherits identity but starts with a clean window.", target)
 }
 
 // handleContextNudge fires an opt-in "consider reincarnating" hint
 // when the agent's context crosses a configured threshold. Runs in the
-// Stop-hook path, reads the stored context_pct, and delivers via tmux
-// send-keys into the agent's own pane.
+// Stop-hook path, reads the stored context_pct, and persists a senderless
+// agent_messages row. Agentd's ordinary alive-session sweep hands that row to
+// the same async delivery queue as peer/operator/process mail.
 //
 // Skips when:
 //   - the feature isn't enabled in config
@@ -1705,8 +1693,8 @@ func formatContextNudgeMessage(target int) string {
 //   - context_pct is below the configured min
 //   - the same-or-higher threshold has already been fired
 //     (sessions.nudged_pct; ResetCompact zeroes it so post-compact climbs re-arm)
-func handleContextNudge(sessionID string) {
-	if sessionID == "" {
+func handleContextNudge(sessionID, convID string) {
+	if sessionID == "" || convID == "" {
 		return
 	}
 
@@ -1742,34 +1730,20 @@ func handleContextNudge(sessionID string) {
 		return
 	}
 
-	tmuxSession := GetCurrentTmuxSession()
-	if tmuxSession == "" {
-		// No tmux pane to type into. Drop the nudge but DO stamp
-		// nudged_pct so a later run with tmux available doesn't
-		// re-send the same threshold for the same climb.
-		_ = db.SetNudgedPct(sessionID, float64(target))
-		return
-	}
-
 	msg := formatContextNudgeMessage(target)
-	slog.Info("context-nudge: typing hint into pane",
-		"session_id", sessionID, "tmux_session", tmuxSession,
+	slog.Info("context-nudge: queueing hint",
+		"session_id", sessionID, "conv_id", convID,
 		"context_pct", contextPct, "target", target,
 		"min_pct", minPct, "interval_pct", intervalPct,
 		"module", "hooks")
-
-	// Send-keys the bracketed-paste text + Enter. Same shape the
-	// cron scheduler uses for solo targets. Best-effort: a failed
-	// send leaves nudged_pct unchanged so we'll retry on the next
-	// Stop hook.
-	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", msg).Run(); err != nil {
-		slog.Warn("context-nudge: send-keys failed",
-			"error", err, "module", "hooks")
-		return
-	}
-	if err := clcommon.TmuxCommand("send-keys", "-t", clcommon.ExactTarget(tmuxSession)+":", "Enter").Run(); err != nil {
-		slog.Warn("context-nudge: submit failed",
-			"error", err, "module", "hooks")
+	if _, err := db.InsertAgentMessage(&db.AgentMessage{
+		FromConv:     "",
+		ToConv:       convID,
+		Subject:      fmt.Sprintf("Context window at %d%%", target),
+		Body:         msg,
+		ToRecipients: []string{convID},
+	}); err != nil {
+		slog.Warn("context-nudge: queue failed", "error", err, "module", "hooks")
 		return
 	}
 	if err := db.SetNudgedPct(sessionID, float64(target)); err != nil {

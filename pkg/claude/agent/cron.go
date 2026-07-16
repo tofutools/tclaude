@@ -25,7 +25,7 @@ func cronCmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:         "cron",
 		Short:       "Manage recurring scheduled jobs (the agentd cron scheduler)",
-		Long:        "List, add, and remove agent_cron_jobs. The daemon's scheduler ticks every 30s and fires due jobs by inserting agent_messages rows (or direct send-keys for solo targets). A job may target a single conv or, via --target group:NAME, multicast to every current member of a group.",
+		Long:        "List, add, and remove agent_cron_jobs. The daemon's scheduler ticks every 30s and fires due jobs through the durable agent_messages delivery queue. A job may target a single conv or, via --target group:NAME, multicast to every current member of a group.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			cronLsCmd(),
@@ -240,7 +240,7 @@ func runCronAdd(p *cronAddParams, stdin io.Reader, stdout, stderr io.Writer) int
 	case resp.GroupID > 0:
 		fmt.Fprintf(stdout, "  Routed via group %d (will use agent_messages + flush nudge).\n", resp.GroupID)
 	default:
-		fmt.Fprintln(stdout, "  Solo target — scheduler will send-keys directly when target's pane is alive.")
+		fmt.Fprintln(stdout, "  Solo target — scheduler will queue direct inbox mail and deliver when the target is ready.")
 	}
 	return rcOK
 }

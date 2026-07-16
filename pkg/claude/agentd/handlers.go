@@ -10,13 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -691,7 +690,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		return
 	}
 
-	id, err := db.InsertAgentMessage(&db.AgentMessage{
+	id, err := queueAgentMessage(&db.AgentMessage{
 		GroupID:        groupID,
 		FromConv:       fromID,
 		ToConv:         finalConv,
@@ -708,10 +707,8 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	// Async delivery (JOH-310): hand the recipient to the per-agent queue and
-	// return immediately with the queue depth. The sender never blocks on the
-	// tmux nudge; the worker decides delivered/held later.
-	enqueueDeliveryForConv(finalConv)
+	// Async delivery (JOH-310): queueAgentMessage handed the recipient to the
+	// per-agent worker; the sender never blocks on the tmux nudge.
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             id,
 		Queued:         true,
@@ -821,7 +818,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	// Insert + nudge primary first so the response order matches the
 	// "To:, CC: ..." header order in inbox read.
 	primaryTitle := agent.TitleFor(primaryConv)
-	primaryID, err := db.InsertAgentMessage(&db.AgentMessage{
+	primaryID, err := queueAgentMessage(&db.AgentMessage{
 		GroupID:        primaryGroupID,
 		FromConv:       fromID,
 		ToConv:         primaryConv,
@@ -835,7 +832,6 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	enqueueDeliveryForConv(primaryConv)
 	out.Recipients = append(out.Recipients, recipient{
 		ConvID:         primaryConv,
 		AgentID:        peerAgentID(primaryConv),
@@ -847,7 +843,7 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 	})
 
 	for _, r := range resolved {
-		id, err := db.InsertAgentMessage(&db.AgentMessage{
+		id, err := queueAgentMessage(&db.AgentMessage{
 			GroupID:        r.GroupID,
 			FromConv:       fromID,
 			ToConv:         r.ConvID,
@@ -871,7 +867,6 @@ func handleMultiRecipient(w http.ResponseWriter, fromID, primaryConv, primaryOri
 			})
 			continue
 		}
-		enqueueDeliveryForConv(r.ConvID)
 		out.Recipients = append(out.Recipients, recipient{
 			ConvID:         r.ConvID,
 			AgentID:        peerAgentID(r.ConvID),
@@ -1120,7 +1115,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 				continue
 			}
 		}
-		id, err := db.InsertAgentMessage(&db.AgentMessage{
+		id, err := queueAgentMessage(&db.AgentMessage{
 			GroupID:        g.ID,
 			FromConv:       fromConv,
 			ToConv:         finalConv,
@@ -1144,7 +1139,6 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 			})
 			continue
 		}
-		enqueueDeliveryForConv(finalConv)
 		out = append(out, recipient{
 			ConvID:         finalConv,
 			AgentID:        peerAgentID(finalConv),
@@ -1162,24 +1156,33 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 // message, naming the sender by stable identity (JOH-27 PR3b) — the
 // agent_id is rotation-immune, so it is safe to surface in the receiver's
 // transcript where a conv-id prefix would have gone stale. On a read miss
-// it degrades to the terse, senderless form. Shared by nudgeIfAlive (live
-// delivery) and sendNudgeBracket (deferred flush) so the wording lives in
-// one place.
+// it degrades to the terse, senderless form. The async delivery worker uses
+// this one formatter for immediate queue drains and deferred retries.
 func messageNudgeText(msgID int64) string {
 	if m, err := db.GetAgentMessage(msgID); err == nil && m != nil {
-		if inline, ok := messageInlineText(m); ok {
-			return inline
-		}
-		if db.IsOperatorAgentMessage(m.ID) {
-			return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d.]", msgID, msgID)
-		}
-		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
-			return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", msgID, sender, msgID)
-		}
+		text, _ := messageNudgeTextFor(m)
+		return text
 	}
 	return fmt.Sprintf(
 		"[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]",
 		msgID, msgID)
+}
+
+// messageNudgeTextFor chooses inline-vs-pointer delivery exactly once for a
+// claimed row. The returned consumed flag must be committed with the same
+// attempt after the text lands; recomputing it later could disagree if config
+// changes while tmux is settling.
+func messageNudgeTextFor(m *db.AgentMessage) (text string, consumed bool) {
+	if inline, ok := messageInlineText(m); ok {
+		return inline, true
+	}
+	if db.IsOperatorAgentMessage(m.ID) {
+		return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d.]", m.ID, m.ID), false
+	}
+	if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
+		return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", m.ID, sender, m.ID), false
+	}
+	return fmt.Sprintf("[system: new agent message #%d for you. fetch with: tclaude agent inbox read %d]", m.ID, m.ID), false
 }
 
 func messageInlineMaxChars() int {
@@ -1196,7 +1199,11 @@ func messageInlineMaxChars() int {
 // bytes still stay out of the pane injection path.
 func messageInlineText(m *db.AgentMessage) (string, bool) {
 	limit := messageInlineMaxChars()
-	if limit <= 0 || !db.IsOperatorAgentMessage(m.ID) || strings.TrimSpace(m.Body) == "" {
+	// Startup briefing delivery is owned by the launch seed/welcome path. Its
+	// archival row may briefly be undelivered while the new pane comes online;
+	// treating it as ordinary mail here would race the welcome and duplicate
+	// the briefing as a second turn.
+	if limit <= 0 || m.Subject == db.StartupContextSubject || strings.TrimSpace(m.Body) == "" {
 		return "", false
 	}
 	for _, r := range m.Subject {
@@ -1217,9 +1224,20 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 		return "", false
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[system: new agent message #%d from the human operator", m.ID)
+	operatorAuthored := db.IsOperatorAgentMessage(m.ID)
+	sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent)
+	fmt.Fprintf(&b, "[system: new agent message #%d", m.ID)
+	switch {
+	case operatorAuthored:
+		b.WriteString(" from the human operator")
+	case sender != "":
+		fmt.Fprintf(&b, " from %s", sender)
+	}
 	if m.Subject != "" {
 		fmt.Fprintf(&b, "; subject: %s", m.Subject)
+	}
+	if !operatorAuthored && m.FromConv != "" {
+		fmt.Fprintf(&b, "; reply with: tclaude agent reply %d \"<your reply body>\"", m.ID)
 	}
 	fmt.Fprintf(&b, "] %s", m.Body)
 	if len(attachments) > 0 {
@@ -1233,70 +1251,6 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 		return "", false
 	}
 	return text, true
-}
-
-// nudgeIfAlive looks up the target's tmux session and, if alive, sends
-// the bracketed system-style nudge. The returned deliveryOutcome
-// distinguishes delivered / queued-offline / held — see deliveryOutcome.
-//
-// This is the half that broke for sandboxed senders in v1: the daemon
-// owns the tmux side here, so the sender's sandbox is irrelevant.
-//
-// The DB can hold multiple session rows for the same conv_id (auto-register
-// creates new rows alongside stale ones from previous launches). We pick
-// the first one whose tmux session is actually alive, most-recent first.
-func nudgeIfAlive(msgID int64, toID string) deliveryOutcome {
-	candidates, err := db.FindSessionsByConvID(toID)
-	if err != nil {
-		return outcomeQueued
-	}
-	var sess *db.SessionRow
-	for _, c := range candidates {
-		if c.TmuxSession == "" {
-			continue
-		}
-		if session.IsTmuxSessionAlive(c.TmuxSession) {
-			sess = c
-			break
-		}
-	}
-	if sess == nil {
-		return outcomeQueued
-	}
-	// Hold delivery if the pane is blocked on a human (awaiting_input /
-	// awaiting_permission). Injecting a nudge now would be captured by the
-	// open dialog as the human's answer, and the real notification lost.
-	// Leave delivered_at empty so a later flush — once the agent is back to
-	// working/idle — delivers it. See isAwaitingHumanInput.
-	if isAwaitingHumanInput(sess.Status) {
-		slog.Info("nudge held: recipient awaiting human input",
-			"msg_id", msgID, "to", toID, "status", sess.Status)
-		return outcomeHeld
-	}
-	// Announce the message, naming the sender by stable identity (JOH-27
-	// PR3b). Subject, group and reply addressing still live in the message
-	// itself (fetched via `tclaude agent inbox read <id>`) so the line stays
-	// short. The earlier form was deliberately senderless to avoid leaking
-	// *ephemeral* details — but the agent_id is rotation-immune, so unlike a
-	// conv-id prefix it does not go stale on the sender's next reincarnate;
-	// the title is truncated so it cannot dominate the line.
-	nudge := messageNudgeText(msgID)
-	if err := injectTextAndSubmit(sess.TmuxSession+":0.0", nudge); err != nil {
-		slog.Warn("nudge failed", "error", err, "tmux", sess.TmuxSession)
-		// Treat an inject failure like the offline case: delivered_at stays
-		// empty so a later flush retries.
-		return outcomeQueued
-	}
-	consumed := false
-	if m, _ := db.GetAgentMessage(msgID); m != nil {
-		_, consumed = messageInlineText(m)
-	}
-	// Delivery bookkeeping is one write so an inline message cannot be marked
-	// delivered but left unread if the daemon exits between updates.
-	if err := db.MarkAgentMessageDeliveredState(msgID, consumed); err != nil {
-		slog.Warn("failed to record delivery state", "error", err, "msg_id", msgID)
-	}
-	return outcomeDelivered
 }
 
 // injectSlashCommand finds an alive tmux session for convID and types the
@@ -1355,10 +1309,10 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 // per tmux pane target, serializing send-keys injection into that pane
 // (JOH-310).
 //
-// Every channel through which the daemon types into a CC pane — live
-// inbox nudges (nudgeIfAlive), flushed/queued nudges (sendNudgeBracket),
+// Every channel through which the daemon types into a CC pane — queued inbox
+// nudges (sendNudgeBracket),
 // slash commands (/rename, /compact, soft-exit), the welcome prompt,
-// export nudges, and the remote-access toggle — runs a MULTI-STEP
+// ephemeral reminders, and the remote-access toggle — runs a MULTI-STEP
 // send-keys sequence (text → settle → Enter → settle → Enter, or a full
 // menu walk). Those steps are NOT atomic at the tmux layer, so two
 // sequences racing on the same pane interleave: the text from one and
@@ -1372,11 +1326,10 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 // cron all type into the same panes. The lock keeps any two such sequences
 // single-file.
 //
-// SCOPE — daemon-side only. This is an in-process mutex, so it serializes
-// the agentd injectors listed above against each other. send-keys into
-// the same pane from OTHER processes (the CC hook's own /rename, CLI
-// subprocesses) is not coordinated by it; those are rare and out of scope
-// here — covering them would need a tmux-level / file lock.
+// SCOPE — this in-process mutex cheaply serializes agentd workers. The shared
+// paneinput primitive then takes a crash-releasing advisory file lock, which
+// extends the same contention boundary to hook callbacks and CLI/task
+// subprocesses targeting the pane.
 //
 // COST — the lock is held across injectTextAndSubmit's two ~500 ms settle
 // sleeps (and injectMenuToggle's whole menu walk). Under the async model the
@@ -1441,8 +1394,6 @@ func acquirePaneInjectLock(mu *sync.Mutex) error {
 	}
 }
 
-var panePasteBufferSequence atomic.Uint64
-
 // injectTextAndSubmit types `text` into a harness pane and submits it as a
 // fresh prompt. Multiline/tabbed text is staged in a uniquely named tmux
 // buffer and pasted with bracketed-paste mode, which preserves those bytes in
@@ -1473,30 +1424,12 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 		return err
 	}
 	defer mu.Unlock()
-	// Exact-match the session part of the target (clcommon.ExactTarget):
-	// callers pass raw "name" / "name:0.0" targets, and a bare -t would
-	// prefix-match a live namesake pane if the target dies between the
-	// caller's liveness check and this send — landing the keystrokes in the
-	// wrong agent's prompt. Lock keys stay on the raw target.
-	target := clcommon.ExactTarget(tmuxTarget)
-	if strings.ContainsAny(text, "\n\t") {
-		buffer := fmt.Sprintf("tclaude-inject-%d", panePasteBufferSequence.Add(1))
-		if err := runTmuxCommand("set-buffer", "-b", buffer, text); err != nil {
-			return fmt.Errorf("set-buffer text: %w", err)
-		}
-		if err := runTmuxCommand("paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", target); err != nil {
-			return fmt.Errorf("paste-buffer text: %w", err)
-		}
-	} else if err := runTmuxCommand("send-keys", "-t", target, text); err != nil {
-		return fmt.Errorf("send-keys text: %w", err)
-	}
-	time.Sleep(injectSettleDelay)
-	if err := runTmuxCommand("send-keys", "-t", target, "Enter"); err != nil {
-		return fmt.Errorf("send-keys submit: %w", err)
-	}
-	time.Sleep(injectSettleDelay)
-	_ = runTmuxCommand("send-keys", "-t", target, "Enter")
-	return nil
+	return paneinput.InjectTextAndSubmit(tmuxTarget, text, paneinput.Options{
+		Run:            runTmuxCommand,
+		SettleDelay:    injectSettleDelay,
+		SettleDelaySet: true,
+		LockTimeout:    paneInjectLockTimeout,
+	})
 }
 
 // injectMenuToggle types a slash command that opens a confirm MENU, submits
@@ -1529,26 +1462,29 @@ func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay
 		return err
 	}
 	defer mu.Unlock()
-	// Exact-match the session part — same reasoning as injectTextAndSubmit.
-	target := clcommon.ExactTarget(tmuxTarget)
-	if err := runTmuxCommand("send-keys", "-t", target, toggle); err != nil {
-		return fmt.Errorf("send-keys toggle: %w", err)
-	}
-	time.Sleep(injectSettleDelay)
-	if err := runTmuxCommand("send-keys", "-t", target, "Enter"); err != nil {
-		return fmt.Errorf("send-keys submit: %w", err)
-	}
-	// Let the confirm menu render before moving its highlight.
-	time.Sleep(confirmDelay)
-	for i, key := range menuKeys {
-		if i > 0 {
-			time.Sleep(stepDelay)
+	return paneinput.WithLock(tmuxTarget, paneinput.Options{
+		Run:         runTmuxCommand,
+		LockTimeout: paneInjectLockTimeout,
+	}, func(run paneinput.Runner, target string) error {
+		if err := run("send-keys", "-t", target, toggle); err != nil {
+			return fmt.Errorf("send-keys toggle: %w", err)
 		}
-		if err := runTmuxCommand("send-keys", "-t", target, key); err != nil {
-			return fmt.Errorf("send-keys menu key %q: %w", key, err)
+		time.Sleep(injectSettleDelay)
+		if err := run("send-keys", "-t", target, "Enter"); err != nil {
+			return fmt.Errorf("send-keys submit: %w", err)
 		}
-	}
-	return nil
+		// Let the confirm menu render before moving its highlight.
+		time.Sleep(confirmDelay)
+		for i, key := range menuKeys {
+			if i > 0 {
+				time.Sleep(stepDelay)
+			}
+			if err := run("send-keys", "-t", target, key); err != nil {
+				return fmt.Errorf("send-keys menu key %q: %w", key, err)
+			}
+		}
+		return nil
+	})
 }
 
 // injectSettleDelay is the gap injectTextAndSubmit leaves between its
@@ -1606,10 +1542,10 @@ func handleAgentRename(w http.ResponseWriter, r *http.Request, targetConv string
 // response. caller is recorded in the response when distinct from
 // target so the audit trail has both sides.
 //
-// When body.Auto is true, the title is ignored and instead a
-// bracketed `[system: …]` nudge is injected asking the agent to
-// pick a title for itself via the agent-rename skill / CLI. Same
-// auth, same tmux delivery mechanism — only the payload changes.
+// When body.Auto is true, the title is ignored and a senderless inbox message
+// asks the agent to pick a title for itself via the agent-rename skill / CLI.
+// It uses the same async delivery, hold, retry, and pane-contention path as
+// every other post-startup programmatic message.
 func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, caller string) {
 	var body struct {
 		Title string `json:"title"`
@@ -1621,27 +1557,34 @@ func runRenameOrchestration(w http.ResponseWriter, r *http.Request, target, call
 	}
 
 	if body.Auto {
-		// Auto-rename: defer the title choice to the agent itself.
-		// The nudge text uses the same bracketed [system: …] shape
-		// as agent_messages so the recipient reads it as a system
-		// prompt rather than user input. Spelling out the allowed
+		// Auto-rename: defer the title choice to the agent itself through the
+		// universal inbox. Spelling out the allowed
 		// charset up front saves a back-and-forth when the agent
 		// picks something the title validator would reject.
-		nudge := "[system: please rename yourself to give this conversation a clearer title. " +
+		instruction := "Please rename yourself to give this conversation a clearer title. " +
 			"Run: tclaude agent rename \"<your-chosen-title>\". " +
 			"Pick a 3-4-word kebab-case slug that captures what you've been working on or what " +
 			"your role is — e.g. \"fix-bug-abc-123\", \"working-on-new-ui\", or \"worker-agent-a\". " +
 			"Allowed: 1-64 characters from [A-Za-z0-9_-[]{}() ] only; single spaces ok, " +
-			"no slashes / quotes / newlines / unicode.]"
-		if !injectSlashCommand(target, nudge, "", "auto-rename-nudge") {
-			writeError(w, http.StatusServiceUnavailable, "no_tmux",
-				"target conv "+short8(target)+" has no live tmux session to inject auto-rename nudge into")
+			"no slashes / quotes / newlines / unicode."
+		id, err := queueAgentMessage(&db.AgentMessage{
+			FromConv:     "",
+			ToConv:       target,
+			Subject:      "Choose a conversation title",
+			Body:         instruction,
+			ToRecipients: []string{target},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "queue auto-rename instruction: "+err.Error())
 			return
 		}
 		resp := map[string]any{
-			"conv_id": target,
-			"auto":    true,
-			"note":    "auto-rename nudge submitted via tmux send-keys; the target will pick its own title on its next turn",
+			"conv_id":    target,
+			"auto":       true,
+			"message_id": id,
+			"queued":     true,
+			"pending":    queueDepthFor(target, false),
+			"note":       "auto-rename instruction queued through the target's inbox; it will pick its own title on its next turn",
 		}
 		if caller != "" && caller != target {
 			resp["caller_conv"] = caller
@@ -2300,7 +2243,7 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 			"cannot reply: original sender has been superseded by you; the predecessor's chain points back to your own conv")
 		return
 	}
-	newID, err := db.InsertAgentMessage(&db.AgentMessage{
+	newID, err := queueAgentMessage(&db.AgentMessage{
 		GroupID:        replyGroupID,
 		FromConv:       myID,
 		ToConv:         replyTarget,
@@ -2313,7 +2256,6 @@ func handleMessageReply(w http.ResponseWriter, r *http.Request, idStr string) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	enqueueDeliveryForConv(replyTarget)
 	writeJSON(w, http.StatusOK, sendResp{
 		ID:             newID,
 		Queued:         true,
@@ -2669,7 +2611,7 @@ type groupSummary struct {
 }
 
 // isConvOnline reports whether any tmux session registered for this conv-id
-// is currently alive. Same alive-check `nudgeIfAlive` uses for delivery.
+// is currently alive. Same alive-check the queue delivery path uses.
 //
 // Single-target callers (delivery, lifecycle, reaper) use this — one
 // conv at a time, one `tmux has-session` subprocess at most. For

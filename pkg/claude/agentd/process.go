@@ -300,7 +300,7 @@ func handleGroupProcessAdvance(w http.ResponseWriter, r *http.Request, g *db.Age
 
 	// Nudge the members whose role is active in the NEWLY-ENTERED phase (the
 	// "entering" roles), reusing the existing agent_messages pipeline — no
-	// direct send-keys, no new delivery mechanism. Best-effort: a delivery
+	// direct pane input, no new delivery mechanism. Best-effort: a delivery
 	// failure is logged, never fails the advance (the transition is recorded).
 	notified := notifyEnteringRoles(g, fromPhase, target, caller)
 
@@ -388,7 +388,7 @@ func notifyEnteringRoles(g *db.AgentGroup, fromPhase string, entered db.ProcessP
 	subject := "[process] phase: " + entered.Name
 	notified := 0
 	for _, conv := range targets {
-		if _, err := db.InsertAgentMessage(&db.AgentMessage{
+		if _, err := queueAgentMessage(&db.AgentMessage{
 			GroupID:      g.ID,
 			FromConv:     fromConv,
 			ToConv:       conv,
@@ -400,7 +400,6 @@ func notifyEnteringRoles(g *db.AgentGroup, fromPhase string, entered db.ProcessP
 			continue
 		}
 		notified++
-		enqueueDeliveryForConv(conv)
 	}
 	return notified
 }

@@ -18,8 +18,8 @@ import (
 // cookie-authenticated POST /api/human-messages/reply endpoint. It is the
 // operator's answer to a `notify-human` ping: it resolves the raising
 // agent authoritatively from the stored human_messages row, gates on that
-// agent being online, and delivers the reply as a sender-less operator
-// message on the universal inbox (nudged if the pane is ready).
+// agent being online, and queues the reply as a sender-less operator
+// message on the universal inbox.
 
 // postDashReply POSTs /api/human-messages/reply through the dashboard mux.
 func postDashReply(t *testing.T, mux http.Handler, body map[string]any) *httptest.ResponseRecorder {
@@ -53,12 +53,10 @@ func TestHumanReply_OnlineAgent_DeliversAndNudges(t *testing.T) {
 	var resp struct {
 		MessageID int64  `json:"message_id"`
 		ConvID    string `json:"conv_id"`
-		Delivered bool   `json:"delivered"`
-		Held      bool   `json:"held"`
+		Queued    bool   `json:"queued"`
 	}
 	testharness.DecodeJSON(t, rec, &resp)
-	assert.True(t, resp.Delivered, "an online agent is nudged, so delivery is immediate")
-	assert.False(t, resp.Held)
+	assert.True(t, resp.Queued, "the universal inbox accepted the reply")
 	assert.Equal(t, sender, resp.ConvID)
 
 	// Real surface: the reply is in the agent's inbox as a sender-less
@@ -142,7 +140,8 @@ func TestHumanReply_OfflineAgent_Rejected(t *testing.T) {
 // human input) is ACCEPTED — it is online, just busy — but delivery is
 // HELD: the reply lands in the inbox and flushes when the agent resumes,
 // rather than being injected now (which the open prompt would capture as
-// the human's answer). The response reports held:true so the UI can say so.
+// the human's answer). The endpoint reports queue acceptance; the async
+// worker owns the readiness decision.
 func TestHumanReply_BusyAgent_QueuedHeld(t *testing.T) {
 	f := newFlow(t)
 
@@ -160,12 +159,10 @@ func TestHumanReply_BusyAgent_QueuedHeld(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
 	var resp struct {
-		Delivered bool `json:"delivered"`
-		Held      bool `json:"held"`
+		Queued bool `json:"queued"`
 	}
 	testharness.DecodeJSON(t, rec, &resp)
-	assert.False(t, resp.Delivered, "a busy pane is not nudged now")
-	assert.True(t, resp.Held, "the reply is held for when the agent resumes")
+	assert.True(t, resp.Queued, "the reply is accepted for async delivery")
 
 	// It is still in the inbox (queued), just not yet delivered.
 	rows, err := db.ListAgentMessagesForConv(sender, 100)

@@ -72,8 +72,8 @@ export function createMessageAccessDialogActions({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, body }),
     });
-    notify(response.held
-      ? `reply queued for ${label} — it’s mid-prompt, will see it when it resumes`
+    notify(response.queued
+      ? `reply queued for ${label}`
       : `reply sent to ${label}`);
     // The mutation is already accepted. Let the component close immediately;
     // a slow or stalled snapshot refresh must not leave this non-idempotent

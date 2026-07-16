@@ -474,7 +474,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		// Group routing: pick the first shared group between owner and
 		// target if the caller didn't override. Falls through to solo
 		// (group_id=0) when there's no shared group — the scheduler then
-		// send-keys directly.
+		// direct mailbox delivery.
 		groupID := body.GroupID
 		if groupID == 0 && owner != targetConv {
 			shared, _ := db.SharedGroupsForConvs(owner, targetConv)

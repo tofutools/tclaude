@@ -1667,8 +1667,8 @@ func (c *Config) AccessRequestSystemNotification() bool {
 const DefaultSpawnInlineMaxChars = 2000
 
 // DefaultMessageInlineMaxChars matches the startup-brief threshold: the live
-// pane path uses a bounded bracketed paste for multiline content, so ordinary
-// operator instructions do not need a smaller product-level cutoff.
+// pane path uses a bounded bracketed paste for multiline content, so regular
+// operator, peer, and system instructions share one product-level cutoff.
 const DefaultMessageInlineMaxChars = DefaultSpawnInlineMaxChars
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"

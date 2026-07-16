@@ -226,7 +226,7 @@ func (processAgentAdapter) Contact(_ context.Context, request processexec.Reques
 	if request.Command.Kind == state.CommandKindBlockNode {
 		body = fmt.Sprintf("Process %s node %s is blocked and assigned to you: %s. Resolve it with tclaude process unblock.", request.Input.RunID, request.Input.NodeID, request.Command.Reason)
 	}
-	_, err = db.InsertAgentMessage(&db.AgentMessage{
+	_, err = queueAgentMessage(&db.AgentMessage{
 		GroupID:      0,
 		FromConv:     "",
 		ToConv:       convID,
@@ -234,9 +234,6 @@ func (processAgentAdapter) Contact(_ context.Context, request processexec.Reques
 		Body:         body,
 		ToRecipients: []string{convID},
 	})
-	if err == nil {
-		enqueueDeliveryForConv(convID)
-	}
 	return err
 }
 

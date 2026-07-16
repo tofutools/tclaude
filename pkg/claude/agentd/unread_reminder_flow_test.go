@@ -41,6 +41,10 @@ func haveUnreadMessage(t *testing.T, body string) (*testharness.Flow, int64) {
 	f.HaveMember("team", urRecipient)
 	f.HaveAliveSession(urRecipient, urLabel, urTmux, "/tmp/work")
 
+	// Force pointer delivery. Short messages are consumed atomically when they
+	// are successfully inlined and therefore (correctly) need no later unread
+	// reminder. This helper specifically needs a delivered-but-unread row.
+	body += strings.Repeat(" reminder-fixture-padding", 100)
 	rec := postMessage(t, f, urSender, map[string]any{"to": urRecipient, "body": body})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var resp sendRespView
@@ -119,7 +123,10 @@ func TestUnreadReminder_FollowsAgentAcrossReincarnation(t *testing.T) {
 	f.HaveAliveSession(gen1, "spwn-urr-g1", tmux1, "/tmp/work")
 
 	// Deliver a message to gen1 (now delivered-unread).
-	rec := postMessage(t, f, sender, map[string]any{"to": gen1, "body": "review please"})
+	rec := postMessage(t, f, sender, map[string]any{
+		"to":   gen1,
+		"body": "review please" + strings.Repeat(" reminder-fixture-padding", 100),
+	})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	agentd.WaitForBackgroundForTest()
 
@@ -251,7 +258,10 @@ func TestUnreadReminder_StopsOnceRead(t *testing.T) {
 func TestUnreadReminder_AggregatesBacklog(t *testing.T) {
 	f, _ := haveUnreadMessage(t, "first")
 	// A second message to the same recipient from the same sender.
-	rec := postMessage(t, f, urSender, map[string]any{"to": urRecipient, "body": "second"})
+	rec := postMessage(t, f, urSender, map[string]any{
+		"to":   urRecipient,
+		"body": "second" + strings.Repeat(" reminder-fixture-padding", 100),
+	})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	agentd.WaitForBackgroundForTest() // deliver the second message too (async)
 
