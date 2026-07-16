@@ -27,8 +27,10 @@ const executionAnchorTailBytes = int64(64 << 10)
 // WithExecutionView runs callback while holding the run lock followed by the
 // immutable template lock. All persisted premises are read no-follow and
 // validated before callback begins; neither lock is released until callback
-// returns (or its panic unwinds the stack). This surface is intentionally not
-// wired into the v6 planner/executor/viewer.
+// returns (or its panic unwinds the stack). The 64-MiB byte ceiling covers the
+// complete operation, including repeated baseline/final anchor reads; every
+// regular-file read also retains a separate defensive 16-MiB cap. This surface
+// is intentionally not wired into the v6 planner/executor/viewer.
 func (s *FS) WithExecutionView(ctx context.Context, runID string, callback func(ExecutionView) error) error {
 	if callback == nil {
 		return fmt.Errorf("execution view callback is required")
@@ -65,22 +67,24 @@ func (s *FS) WithExecutionView(ctx context.Context, runID string, callback func(
 // re-derivation and the final atomic replacement share one run critical
 // section.
 func (s *FS) withExecutionViewRunLocked(ctx context.Context, runID string, callback func(ExecutionView) error) error {
-	baseline, err := s.executionAnchorObservationAt(ctx, runID)
+	// One budget lives for the whole lock-held operation. In particular,
+	// re-observation is not a retry with a fresh resource allowance.
+	budget := s.newExecutionViewBudget(ctx)
+	baseline, err := s.executionAnchorObservationAt(ctx, runID, budget)
 	if err != nil {
 		return err
 	}
 
-	budget := s.newExecutionViewBudget(ctx)
 	run, err := s.readExecutionRunRecordAt(ctx, runID, budget)
 	if err != nil {
 		if isExecutionBudgetError(err) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !IsDecodeError(err) {
 			return err
 		}
-		return s.classifyExecutionDisagreement(ctx, runID, baseline, err)
+		return s.classifyExecutionDisagreement(ctx, runID, baseline, budget, err)
 	}
 	id, templateHash, err := parseTemplateRef(run.TemplateRef)
 	if err != nil || safeSegment(id) != nil {
-		return s.classifyExecutionDisagreement(ctx, runID, baseline, fmt.Errorf("run has invalid exact template ref"))
+		return s.classifyExecutionDisagreement(ctx, runID, baseline, budget, fmt.Errorf("run has invalid exact template ref"))
 	}
 	templateExists, err := s.hasTemplateExactView(id, templateHash)
 	if err != nil {
@@ -90,7 +94,7 @@ func (s *FS) withExecutionViewRunLocked(ctx context.Context, runID string, callb
 		return err
 	}
 	if !templateExists {
-		return s.classifyExecutionDisagreement(ctx, runID, baseline, fmt.Errorf("exact template %q is unavailable", run.TemplateRef))
+		return s.classifyExecutionDisagreement(ctx, runID, baseline, budget, fmt.Errorf("exact template %q is unavailable", run.TemplateRef))
 	}
 	unlockTemplate, err := s.lockTemplateView(ctx, id)
 	if err != nil {
@@ -121,7 +125,7 @@ func (s *FS) withExecutionViewRunLocked(ctx context.Context, runID string, callb
 		if isExecutionBudgetError(err) || !isExecutionDataDisagreement(err) {
 			return err
 		}
-		return s.classifyExecutionDisagreement(ctx, runID, baseline, err)
+		return s.classifyExecutionDisagreement(ctx, runID, baseline, budget, err)
 	}
 
 	templateBody, err := s.getTemplateExactBodyWithBudget(ctx, id, templateHash, budget)
@@ -179,9 +183,9 @@ func (s *FS) withExecutionViewRunLocked(ctx context.Context, runID string, callb
 	semanticDiagnostics := append(state.CheckInvariants(snapshot.State), state.CheckTemplateInvariants(snapshot.State, &template)...)
 	if evidenceDiagnostics.HasErrors() || semanticDiagnostics.HasErrors() {
 		cause := fmt.Errorf("execution view invariant diagnostics: evidence=%v semantic=%v", evidenceDiagnostics.Errors(), semanticDiagnostics.Errors())
-		return s.classifyExecutionDisagreement(ctx, runID, baseline, cause)
+		return s.classifyExecutionDisagreement(ctx, runID, baseline, budget, cause)
 	}
-	if err := s.confirmExecutionAnchorsStable(ctx, runID, baseline); err != nil {
+	if err := s.confirmExecutionAnchorsStable(ctx, runID, baseline, budget); err != nil {
 		return err
 	}
 
@@ -242,18 +246,18 @@ func isExecutionDataDisagreement(err error) bool {
 	return errors.As(err, &readErr)
 }
 
-func (s *FS) classifyExecutionDisagreement(ctx context.Context, runID string, baseline [sha256.Size]byte, cause error) error {
-	if err := s.confirmExecutionAnchorsStable(ctx, runID, baseline); err != nil {
+func (s *FS) classifyExecutionDisagreement(ctx context.Context, runID string, baseline [sha256.Size]byte, budget *viewBudget, cause error) error {
+	if err := s.confirmExecutionAnchorsStable(ctx, runID, baseline, budget); err != nil {
 		return err
 	}
 	return &ExecutionViewInconsistentError{Err: cause}
 }
 
-func (s *FS) confirmExecutionAnchorsStable(ctx context.Context, runID string, baseline [sha256.Size]byte) error {
+func (s *FS) confirmExecutionAnchorsStable(ctx context.Context, runID string, baseline [sha256.Size]byte, budget *viewBudget) error {
 	if s.executionReobserveHook != nil {
 		s.executionReobserveHook()
 	}
-	after, err := s.executionAnchorObservationAt(ctx, runID)
+	after, err := s.executionAnchorObservationAt(ctx, runID, budget)
 	if err != nil {
 		return err
 	}
@@ -263,7 +267,7 @@ func (s *FS) confirmExecutionAnchorsStable(ctx context.Context, runID string, ba
 	return nil
 }
 
-func (s *FS) executionAnchorObservationAt(ctx context.Context, runID string) ([sha256.Size]byte, error) {
+func (s *FS) executionAnchorObservationAt(ctx context.Context, runID string, budget *viewBudget) ([sha256.Size]byte, error) {
 	var zero [sha256.Size]byte
 	root, err := openViewDir(s.root)
 	if err != nil {
@@ -281,7 +285,6 @@ func (s *FS) executionAnchorObservationAt(ctx context.Context, runID string) ([s
 	}
 	defer runDir.Close()
 
-	budget := s.newExecutionViewBudget(ctx)
 	digest := sha256.New()
 	for _, name := range []string{"run.json", "state.json"} {
 		data, err := readViewRegularAt(budget, runDir, name, false)
@@ -299,6 +302,7 @@ func (s *FS) executionAnchorObservationAt(ctx context.Context, runID string) ([s
 	nodes, err := openViewDirAt(runDir, "nodes")
 	if err == nil {
 		var names []string
+		entries := 0
 		for {
 			if err := ctx.Err(); err != nil {
 				nodes.Close()
@@ -306,10 +310,10 @@ func (s *FS) executionAnchorObservationAt(ctx context.Context, runID string) ([s
 			}
 			batch, readErr := nodes.Readdirnames(viewerDirectoryBatch)
 			if len(batch) > 0 {
-				budget.entries += len(batch)
-				if budget.entries > budget.maxEntries {
+				entries += len(batch)
+				if entries > budget.maxEntries {
 					nodes.Close()
-					return zero, budget.over("directory_entries", "nodes", int64(budget.entries), int64(budget.maxEntries))
+					return zero, budget.over("directory_entries", "nodes", int64(entries), int64(budget.maxEntries))
 				}
 				names = append(names, batch...)
 			}

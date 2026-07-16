@@ -22,17 +22,24 @@ import (
 )
 
 const (
-	viewerDefaultMaxFileBytes        = int64(16 << 20)
-	viewerDefaultMaxTotalBytes       = int64(64 << 20)
-	viewerDefaultMaxRecords          = 100_000
-	viewerDefaultMaxDirectoryEntries = 4_096
-	viewerDirectoryBatch             = 128
+	viewerDefaultMaxFileBytes = int64(16 << 20)
+	// executionViewDefaultMaxTotalBytes is one operation-wide ceiling. A
+	// WithExecutionView call shares it across its baseline anchors, complete
+	// snapshot and exact-template reads, and every final re-observation.
+	executionViewDefaultMaxTotalBytes = int64(64 << 20)
+	viewerDefaultMaxTotalBytes        = executionViewDefaultMaxTotalBytes
+	viewerDefaultMaxRecords           = 100_000
+	viewerDefaultMaxDirectoryEntries  = 4_096
+	viewerDirectoryBatch              = 128
 )
 
-// viewBudget bounds the v1 full-history viewer. Every regular file has a
-// 16-MiB ceiling; one run snapshot has a 64-MiB cumulative byte ceiling,
-// 100,000 evidence records, and 4,096 directory entries. Reads use limit+1 to
-// catch concurrent growth after stat and check cancellation between chunks.
+// viewBudget bounds the v1 full-history viewer and the dormant execution view.
+// Every regular-file read has a separate defensive 16-MiB ceiling; it does not
+// replenish or add to the cumulative byte allowance. Successful repeated reads
+// charge their physical payload bytes again. Full-file reads use limit+1 to
+// catch growth after stat without unbounded allocation and check cancellation
+// between chunks. Generated legacy template-source fallbacks are charged by
+// their in-memory size as conservatively as persisted input.
 type viewBudget struct {
 	ctx        context.Context
 	typed      bool
@@ -66,6 +73,10 @@ func (s *FS) newViewBudget(ctx context.Context) *viewBudget {
 
 func (s *FS) newExecutionViewBudget(ctx context.Context) *viewBudget {
 	budget := s.newViewBudget(ctx)
+	budget.maxTotal = executionViewDefaultMaxTotalBytes
+	if s.viewerMaxTotalBytes > 0 {
+		budget.maxTotal = s.viewerMaxTotalBytes
+	}
 	budget.typed = true
 	return budget
 }
