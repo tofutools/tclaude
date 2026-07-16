@@ -38,6 +38,7 @@ func TestMigrateV79toV80_AddsColumn(t *testing.T) {
 	// pin_gen column and the to_agent index are v80 artifacts, so drop both.
 	for _, s := range []string{
 		`DROP INDEX IF EXISTS idx_agent_messages_to_agent`,
+		`DROP INDEX IF EXISTS idx_agent_messages_regular_agent_backlog`,
 		`ALTER TABLE agent_messages DROP COLUMN pin_gen`,
 		`UPDATE schema_version SET version = 79`,
 	} {

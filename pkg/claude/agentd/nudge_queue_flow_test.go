@@ -23,10 +23,9 @@ import (
 // message survives the recipient reincarnating; and an explicit `gen` pins a
 // message to a specific past generation instead of following the head.
 
-// TestNudgeQueue_SenderReturnsImmediately_WithDepth: sending to an OFFLINE
-// recipient returns queued=true with a growing pending depth and delivers
-// nothing (no claim, no nudge) until the recipient comes online — at which
-// point a drain delivers the whole backlog, oldest first.
+// TestNudgeQueue_SenderReturnsImmediately_WithDepth: sending to a recipient
+// awaiting human input returns queued=true with a growing pending depth and
+// delivers nothing until the hold clears, then drains oldest first.
 func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("team")
@@ -38,28 +37,29 @@ func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 	f.HaveEnrolledAgent(recipient)
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
-	// recipient is intentionally OFFLINE (no alive session).
+	const tmux = "tclaude-nq01-r"
+	f.HaveAliveSession(recipient, "spwn-nq01-r", tmux, "/tmp/work")
+	f.SetSessionStatus(recipient, "awaiting_input")
 
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
-	assert.True(t, r1.Queued, "queued even though the recipient is offline")
+	assert.True(t, r1.Queued, "queued while the recipient is held")
 	assert.Equal(t, 1, r1.Pending, "first message: queue depth 1")
 
 	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
 	assert.True(t, r2.Queued)
 	assert.Equal(t, 2, r2.Pending, "second message: queue depth 2")
 
-	// Draining while offline must NOT claim/lose the backlog (the gate runs
+	// Draining during a human-input hold must NOT claim/lose the backlog (the gate runs
 	// before the claim).
 	agentd.WaitForBackgroundForTest()
 	for _, id := range []int64{r1.ID, r2.ID} {
 		m, err := db.GetAgentMessage(id)
 		require.NoError(t, err)
-		assert.True(t, m.DeliveredAt.IsZero(), "offline recipient: message #%d stays undelivered", id)
+		assert.True(t, m.DeliveredAt.IsZero(), "held recipient: message #%d stays undelivered", id)
 	}
 
-	// Recipient comes online; a drain delivers the whole backlog, oldest first.
-	const tmux = "tclaude-nq01-r"
-	f.HaveAliveSession(recipient, "spwn-nq01-r", tmux, "/tmp/work")
+	// The hold clears; a drain delivers the whole backlog, oldest first.
+	f.SetSessionStatus(recipient, "working")
 	assert.Equal(t, 2, agentd.FlushUndeliveredForTest(recipient), "both delivered once online")
 	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID), 2*time.Second)
 	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 2*time.Second)
@@ -93,7 +93,7 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	// than the delivery deadline models the anomalous client that parked the
 	// live daemon's worker before ClaimAgentMessageNudge.
 	f.World.Tmux.HangNextCommand("has-session", 30*time.Second)
-	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
+	id1 := queueInternalNudge(t, recipient, "one")
 	select {
 	case timeout := <-timeoutArmed:
 		assert.Equal(t, time.Second, timeout)
@@ -104,19 +104,62 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	// Arrive while the first pass is still in flight. The dispatcher marks the
 	// target `again`; once the timed-out probe returns, that pass must release
 	// and the re-armed pass must drain both rows without a daemon restart.
-	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
-	assert.Equal(t, 2, r2.Pending, "both messages are unclaimed while the probe is hung")
+	id2 := queueInternalNudge(t, recipient, "two")
+	agentID, err := db.AgentIDForConv(recipient)
+	require.NoError(t, err)
+	pending, err := db.CountUndeliveredForAgent(agentID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, pending, "both internal messages are unclaimed while the probe is hung")
 	fireTimeout()
 	agentd.WaitForBackgroundForTest()
 	assert.GreaterOrEqual(t, f.World.Tmux.CommandCount("has-session"), 2,
 		"the timeout releases the first pass and the re-armed pass probes again")
 
-	for _, id := range []int64{r1.ID, r2.ID} {
+	for _, id := range []int64{id1, id2} {
 		m, err := db.GetAgentMessage(id)
 		require.NoError(t, err)
 		assert.False(t, m.DeliveredAt.IsZero(), "message #%d delivered after the probe timeout", id)
 		f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 2*time.Second)
 	}
+}
+
+func TestRegularNudge_IndeterminateLivenessProbeRemainsRetryable(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetTmuxCommandTimeoutForTest(time.Second))
+	timeoutArmed, fireTimeout, restoreTimeout := agentd.ControlNextTmuxCommandTimeoutForTest()
+	t.Cleanup(restoreTimeout)
+	f.HaveGroup("team")
+	const sender = "nq-regular-timeout-sender"
+	const recipient = "nq-regular-timeout-recipient"
+	const tmux = "tclaude-nq-regular-timeout"
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+	f.HaveAliveSession(recipient, "spwn-nq-regular-timeout", tmux, "/tmp/work")
+
+	f.World.Tmux.HangNextCommand("has-session", 30*time.Second)
+	id, _, err := db.InsertAgentMessageBounded(&db.AgentMessage{
+		FromConv: sender, ToConv: recipient, Body: "do not suppress me",
+	}, 10)
+	require.NoError(t, err)
+	drained := make(chan int, 1)
+	go func() { drained <- agentd.FlushUndeliveredForTest(recipient) }()
+	select {
+	case <-timeoutArmed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("hung liveness probe did not start")
+	}
+	fireTimeout()
+	assert.Zero(t, <-drained)
+
+	message, err := db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.True(t, message.DeliveredAt.IsZero(), "indeterminate liveness must not retire the nudge")
+	assert.True(t, message.NudgeDiscardedAt.IsZero(), "indeterminate liveness must remain retryable")
+	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(recipient))
+	message, err = db.GetAgentMessage(id)
+	require.NoError(t, err)
+	assert.False(t, message.DeliveredAt.IsZero())
+	assert.True(t, message.NudgeDiscardedAt.IsZero())
 }
 
 // TestNudgeQueue_HungSendKeysIsRetriedByReaper is the exact live TCL-281
@@ -219,13 +262,13 @@ func TestNudgeQueue_StaleUndeliveredWarnNamesTargetAndMessage(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(got, "nudge delivery queue stuck"), "warning throttled per target")
 }
 
-// TestNudgeQueue_SurvivesReincarnation is the headline correctness win: a
-// message queued to an agent while it is offline is delivered to the agent's
+// TestNudgeQueue_InternalSurvivesReincarnation protects lifecycle correctness:
+// an internal message queued to an offline agent is delivered to the agent's
 // CURRENT head generation even after the conv-id rotated (reincarnate / /clear)
 // between send and delivery. Keying on agent_id — not the to_conv recorded at
 // send time — is what makes this work; the pre-async conv-keyed flush would
 // have stranded it on the dead generation.
-func TestNudgeQueue_SurvivesReincarnation(t *testing.T) {
+func TestNudgeQueue_InternalSurvivesReincarnation(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("team")
 	const sender = "nq02-send-bbbb-cccc-000000000001"
@@ -239,21 +282,12 @@ func TestNudgeQueue_SurvivesReincarnation(t *testing.T) {
 	f.HaveMember("team", gen1)
 	// gen1 is offline at send time.
 
-	r := mustSend(t, f, sender, map[string]any{"to": gen1, "body": "survive the rotation"})
-	require.True(t, r.Queued)
-	nudge := fmt.Sprintf("new agent message #%d", r.ID)
-
-	// Drain the async per-target worker the send armed (enqueueDeliveryForConv)
-	// while gen1 is still OFFLINE, so it HOLDS the backlog — the canDeliver gate
-	// runs before the claim — instead of racing the explicit drain below. Without
-	// this, a late-scheduled worker can run after gen2 comes online, resolve the
-	// agent head to gen2, and win the atomic ClaimAgentMessageNudge first,
-	// leaving the synchronous drain to claim 0 (the macOS-CI flake). Mirrors
-	// TestNudgeQueue_HoldsThenDeliversBacklog's pre-online WaitForBackgroundForTest.
-	agentd.WaitForBackgroundForTest()
+	id, err := db.InsertAgentMessage(&db.AgentMessage{FromConv: sender, ToConv: gen1, Body: "survive the rotation"})
+	require.NoError(t, err)
+	nudge := fmt.Sprintf("new agent message #%d", id)
 
 	// The recipient reincarnates: its actor's live conv rotates gen1 → gen2.
-	_, err := db.RotateAgentConv(gen1, gen2, "reincarnate")
+	_, err = db.RotateAgentConv(gen1, gen2, "reincarnate")
 	require.NoError(t, err, "RotateAgentConv")
 
 	// The fresh generation comes online under a new pane.
@@ -264,7 +298,7 @@ func TestNudgeQueue_SurvivesReincarnation(t *testing.T) {
 	// the OLD one — it followed the agent.
 	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(gen2), "queued message follows the agent to its new generation")
 	f.AssertSentContains(tmux2+":0.0", nudge, 2*time.Second)
-	m, err := db.GetAgentMessage(r.ID)
+	m, err := db.GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.False(t, m.DeliveredAt.IsZero(), "delivered to the live generation")
 }
@@ -358,8 +392,7 @@ func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
 	f.HaveMember("team", recipient)
 	// recipient is OFFLINE — the message queues durably.
 
-	r := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "orphaned"})
-	require.True(t, r.Queued)
+	id := queueInternalNudge(t, recipient, "orphaned")
 	agentd.WaitForBackgroundForTest()
 
 	agentID, err := db.AgentIDForConv(recipient)
@@ -381,14 +414,14 @@ func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
 
 	got := logs.String()
 	assert.Contains(t, got, "level=WARN msg=\"nudge delivery cancelled; target unavailable\"")
-	assert.Contains(t, got, fmt.Sprintf("msg_id=%d", r.ID))
+	assert.Contains(t, got, fmt.Sprintf("msg_id=%d", id))
 	assert.Contains(t, got, "reason=\"target agent retired\"")
 	assert.Equal(t, 1, strings.Count(got, "nudge delivery cancelled"), "cancellation logged exactly once")
 	assert.NotContains(t, got, "nudge delivery queue stuck", "cancelled queue no longer warns as stuck")
 
 	// Cancelled ≠ delivered/read: the message is still readable in the inbox,
 	// only its nudge delivery is abandoned.
-	m, err := db.GetAgentMessage(r.ID)
+	m, err := db.GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.True(t, m.DeliveredAt.IsZero(), "cancel is not a delivery stamp")
 	assert.True(t, m.ReadAt.IsZero(), "cancel is not a read stamp")
@@ -400,7 +433,7 @@ func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
 	reinstated, err := db.ReinstateAgentByID(agentID)
 	require.NoError(t, err)
 	require.True(t, reinstated)
-	m, err = db.GetAgentMessage(r.ID)
+	m, err = db.GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.True(t, m.NudgeCancelledAt.IsZero(), "reinstate revives the queued nudge")
 	assert.Empty(t, m.NudgeCancelReason)
@@ -408,7 +441,15 @@ func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
 	const tmux = "tclaude-nq08-r"
 	f.HaveAliveSession(recipient, "spwn-nq08-r", tmux, "/tmp/work")
 	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(recipient), "revived message delivers")
-	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r.ID), 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 2*time.Second)
+}
+
+func queueInternalNudge(t *testing.T, recipient, body string) int64 {
+	t.Helper()
+	id, err := db.InsertAgentMessage(&db.AgentMessage{ToConv: recipient, Body: body})
+	require.NoError(t, err)
+	agentd.EnqueueDeliveryForTest(recipient)
+	return id
 }
 
 // mustSend POSTs a message and decodes the queue-centric response, asserting a

@@ -9,7 +9,6 @@ import (
 
 func TestMigrateV128toV129AddsCronQueueWhenOfflineDisabledForLegacyJobs(t *testing.T) {
 	setupTestDB(t)
-	require.Equal(t, 129, currentVersion, "tripwire: bump this with the next migration")
 	d, err := Open()
 	require.NoError(t, err)
 

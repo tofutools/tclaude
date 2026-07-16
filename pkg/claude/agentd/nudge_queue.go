@@ -1,17 +1,21 @@
 package agentd
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+const regularAgentMessageQueueLimit = 10
+
 // Async, per-target nudge delivery (JOH-310).
 //
-// The durable queue IS the set of undelivered agent_messages rows
-// (delivered_at=''); this dispatcher owns the agentd-side worker that drains
-// them, so a SENDER's request never blocks on tmux — it inserts the row,
-// enqueues the recipient here, and returns immediately with the queue depth.
+// The nudge queue is the set of undelivered agent_messages rows. Regular sends
+// also have a separate unprocessed backlog used for sender backpressure: an
+// offline nudge can be suppressed while the durable unread row still counts.
 //
 // Delivery is serialized per TARGET, and the target is the stable agent_id for
 // normal (head-following) mail — NOT the conv-id. Keying on the actor means a
@@ -66,13 +70,44 @@ func queueAgentMessage(m *db.AgentMessage) (int64, error) {
 	return id, nil
 }
 
-func queueAgentMessageWithAttachments(m *db.AgentMessage, attachments []db.AgentMessageAttachment) (int64, error) {
-	id, err := db.InsertAgentMessageWithAttachments(m, attachments)
-	if err != nil {
-		return 0, err
+// queueRegularAgentMessage is the bounded entry point for human/agent
+// one-shot sends. Internal lifecycle, cron, process, and coordination traffic
+// keeps using queueAgentMessage so queue pressure cannot break correctness.
+func queueRegularAgentMessage(m *db.AgentMessage) (id int64, pending int, err error) {
+	id, pending, err = db.InsertAgentMessageBounded(m, regularAgentMessageQueueLimit)
+	if err == nil {
+		enqueueDeliveryForConv(m.ToConv)
 	}
-	enqueueDeliveryForConv(m.ToConv)
-	return id, nil
+	return id, pending, err
+}
+
+func queueRegularAgentMessageWithAttachments(m *db.AgentMessage, attachments []db.AgentMessageAttachment) (id int64, pending int, err error) {
+	id, pending, err = db.InsertAgentMessageWithAttachmentsBounded(m, attachments, regularAgentMessageQueueLimit)
+	if err == nil {
+		enqueueDeliveryForConv(m.ToConv)
+	}
+	return id, pending, err
+}
+
+func agentMessageQueueFull(err error) (*db.AgentMessageQueueFullError, bool) {
+	var full *db.AgentMessageQueueFullError
+	ok := errors.As(err, &full)
+	return full, ok
+}
+
+func queueFullHint(pending, limit int) string {
+	return fmt.Sprintf("target message backlog is full (%d/%d unprocessed regular messages); no message was queued. Wait for the target to process or read pending messages, then retry", pending, limit)
+}
+
+func writeQueueFull(w http.ResponseWriter, target string, full *db.AgentMessageQueueFullError) {
+	writeJSON(w, http.StatusTooManyRequests, map[string]any{
+		"error":     queueFullHint(full.Pending, full.Limit),
+		"code":      "queue_full",
+		"target":    target,
+		"pending":   full.Pending,
+		"limit":     full.Limit,
+		"retryable": true,
+	})
 }
 
 // enqueueDeliveryForConv routes a recipient conv-id to the right drain(s): the
@@ -89,6 +124,13 @@ func enqueueDeliveryForConv(convID string) {
 		enqueueAgentNudge(agentID)
 	}
 	enqueueConvNudge(convID)
+}
+
+// EnqueueDeliveryForTest arms the production dispatcher for a row inserted by
+// a flow test. It lets delivery-infrastructure scenarios seed unbounded
+// internal messages without pretending they came through a regular-send API.
+func EnqueueDeliveryForTest(convID string) {
+	enqueueDeliveryForConv(convID)
 }
 
 // enqueueAgentNudge signals the head-following drain for an agent.

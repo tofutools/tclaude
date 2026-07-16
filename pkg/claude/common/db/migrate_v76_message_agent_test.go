@@ -142,6 +142,7 @@ func seedV75MessagesWithoutAgentCols(t *testing.T, d *sql.DB) {
 		// Drop the v80 index first: it references to_agent, so SQLite refuses
 		// to drop the column while it exists. At v75 the index didn't exist.
 		`DROP INDEX IF EXISTS idx_agent_messages_to_agent`,
+		`DROP INDEX IF EXISTS idx_agent_messages_regular_agent_backlog`,
 		`ALTER TABLE agent_messages DROP COLUMN from_agent`,
 		`ALTER TABLE agent_messages DROP COLUMN to_agent`,
 		`UPDATE schema_version SET version = 75`,

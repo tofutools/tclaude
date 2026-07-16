@@ -338,6 +338,13 @@ function AccessReader({ request, controller }) {
   </${Fragment}>`;
 }
 
+export function messageDeliveryState(message) {
+  if (message.nudge_discarded_at) return 'discarded while offline';
+  if (message.delivered_at) return 'delivered';
+  if (message.direction === 'out') return 'undelivered';
+  return '';
+}
+
 function MessageReader({ current, controller, model }) {
   const wizard = document.body.classList.contains('wizard');
   if (model.access) {
@@ -353,8 +360,9 @@ function MessageReader({ current, controller, model }) {
   let to = message.to_recipients?.length ? html`<${RecipientNames} recipients=${message.to_recipients} />` : null;
   if (!to && (message.to_title || message.to_conv)) to = html`<${Fragment}>${message.to_title ? `${message.to_title} ` : ''}${message.to_conv && html`<span class="mail-cid"
     title=${idTooltip(message.to_agent, message.to_conv)}>${shortAgentId(message.to_agent, message.to_conv)}</span>`}</${Fragment}>`;
-  const stateBits = html`<${Fragment}>${message.read ? 'read' : html`<span class="mail-state-unread">unread</span>`}${message.delivered_at
-    ? ' · delivered' : message.direction === 'out' ? html`<${Fragment}> · <span class="mail-state-pending">undelivered</span></${Fragment}>` : null}</${Fragment}>`;
+  const deliveryState = messageDeliveryState(message);
+  const stateBits = html`<${Fragment}>${message.read ? 'read' : html`<span class="mail-state-unread">unread</span>`}${deliveryState
+    ? html`<${Fragment}> · <span class=${deliveryState === 'delivered' ? '' : 'mail-state-pending'}>${deliveryState}</span></${Fragment}>` : null}</${Fragment}>`;
   const human = current.selected === 'human';
   const fromTarget = message.from_agent || message.from_conv;
   const senderLive = controller.senderOnline(message.from_agent, message.from_conv);

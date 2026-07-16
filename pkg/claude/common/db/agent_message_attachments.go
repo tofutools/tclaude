@@ -1,5 +1,7 @@
 package db
 
+import "fmt"
+
 // AgentMessageAttachment is daemon-owned metadata for a file accompanying an
 // inbox message. StoragePath is an absolute, agent-readable path.
 type AgentMessageAttachment struct {
@@ -15,22 +17,47 @@ type AgentMessageAttachment struct {
 // InsertAgentMessageWithAttachments atomically persists the inbox row and all
 // attachment metadata. Callers own cleanup of copied bytes if this fails.
 func InsertAgentMessageWithAttachments(m *AgentMessage, attachments []AgentMessageAttachment) (int64, error) {
+	id, _, err := insertAgentMessageWithAttachmentsBounded(m, attachments, 0)
+	return id, err
+}
+
+// InsertAgentMessageWithAttachmentsBounded is the attachment-aware twin of
+// InsertAgentMessageBounded. The queue check, message row, operator marker,
+// and attachment rows commit as one transaction.
+func InsertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []AgentMessageAttachment, limit int) (id int64, pending int, err error) {
+	if limit <= 0 {
+		return 0, 0, fmt.Errorf("agent message queue limit must be positive")
+	}
+	m.RegularSend = true
+	return insertAgentMessageWithAttachmentsBounded(m, attachments, limit)
+}
+
+func insertAgentMessageWithAttachmentsBounded(m *AgentMessage, attachments []AgentMessageAttachment, limit int) (id int64, pending int, err error) {
 	d, err := Open()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	tx, err := d.Begin()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	id, err := insertAgentMessage(tx, m)
+	if limit > 0 {
+		pending, err = countUnprocessedRegularMessageBacklog(tx, m)
+		if err != nil {
+			return 0, 0, err
+		}
+		if pending >= limit {
+			return 0, pending, &AgentMessageQueueFullError{Pending: pending, Limit: limit}
+		}
+	}
+	id, err = insertAgentMessage(tx, m)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if m.OperatorAuthored {
 		if _, err := tx.Exec(`INSERT INTO operator_agent_messages (message_id) VALUES (?)`, id); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 	for i := range attachments {
@@ -44,14 +71,44 @@ func InsertAgentMessageWithAttachments(m *AgentMessage, attachments []AgentMessa
 			(message_id, ordinal, filename, content_type, size_bytes, storage_path)
 			VALUES (?, ?, ?, ?, ?, ?)`, id, i, a.Filename, a.ContentType, a.SizeBytes, a.StoragePath)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		a.ID, _ = res.LastInsertId()
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return id, nil
+	if limit > 0 {
+		pending++
+	}
+	return id, pending, nil
+}
+
+func countUnprocessedRegularMessageBacklog(q dbExecQuerier, m *AgentMessage) (int, error) {
+	if m.ToConv == "" {
+		return 0, fmt.Errorf("message target is required")
+	}
+	if !m.PinGen {
+		agentID, err := agentIDForConvTx(q, m.ToConv)
+		if err != nil {
+			return 0, err
+		}
+		if agentID != "" {
+			var n int
+			err = q.QueryRow(`SELECT COUNT(*) FROM agent_messages
+				WHERE regular_send = 1 AND processed_at = '' AND (
+					(to_agent = ? AND pin_gen = 0) OR
+					(to_agent = '' AND to_conv IN (
+						SELECT conv_id FROM agent_conversations WHERE agent_id = ?)))`,
+				agentID, agentID).Scan(&n)
+			return n, err
+		}
+	}
+	var n int
+	err := q.QueryRow(`SELECT COUNT(*) FROM agent_messages
+		WHERE to_conv = ? AND (pin_gen = 1 OR to_agent = '') AND regular_send = 1 AND processed_at = ''`,
+		m.ToConv).Scan(&n)
+	return n, err
 }
 
 func IsOperatorAgentMessage(messageID int64) bool {

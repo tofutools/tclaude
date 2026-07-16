@@ -3,6 +3,7 @@ package agentd
 import (
 	"errors"
 	"log/slog"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -119,6 +120,19 @@ func flushAgent(agentID string) int {
 	if head == "" {
 		return 0
 	}
+	if sess, probe := probeNudgeSession(head); sess == nil {
+		if probe == nudgeSessionIndeterminate {
+			slog.Warn("flush: holding regular nudges after indeterminate liveness probe", "agent", agentID)
+			return 0
+		}
+		suppressed, suppressErr := db.SuppressOfflineRegularNudgesForAgent(agentID, time.Now())
+		if suppressErr != nil {
+			slog.Warn("flush: suppress offline regular nudges failed", "error", suppressErr, "agent", agentID)
+		} else if suppressed > 0 {
+			slog.Info("flush: suppressed offline regular nudges", "agent", agentID, "count", suppressed)
+		}
+		return 0
+	}
 	return flushQueue("agent:"+agentID,
 		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForAgent(agentID) },
 		func() bool { return deliverablePane(head) },
@@ -131,6 +145,19 @@ func flushAgent(agentID string) int {
 // which flushAgent owns. The flushSender seam stays so tests can stub the
 // tmux side. Returns the number claimed.
 func flush(convID string, send flushSender) int {
+	if sess, probe := probeNudgeSession(convID); sess == nil {
+		if probe == nudgeSessionIndeterminate {
+			slog.Warn("flush: holding regular nudges after indeterminate liveness probe", "conv", convID)
+			return 0
+		}
+		suppressed, err := db.SuppressOfflineRegularNudgesForExactConv(convID, time.Now())
+		if err != nil {
+			slog.Warn("flush: suppress offline regular nudges failed", "error", err, "conv", convID)
+		} else if suppressed > 0 {
+			slog.Info("flush: suppressed offline regular nudges", "conv", convID, "count", suppressed)
+		}
+		return 0
+	}
 	return flushQueue("conv:"+convID,
 		func() ([]*db.AgentMessage, error) { return db.ListUndeliveredForExactConv(convID) },
 		func() bool { return deliverablePane(convID) },
@@ -143,10 +170,10 @@ func flush(convID string, send flushSender) int {
 // double-nudge) and deliver. Returns the number successfully completed.
 //
 // The canDeliver gate runs before the durable nudge claim. Claims no longer
-// stamp delivered_at, but taking an attempt while the recipient is offline or
-// mid human-input dialog would still create useless retry history and risk the
-// dialog swallowing injected text. Returning early leaves every row untouched
-// for the next drain once it is reachable again.
+// stamp delivered_at, but taking an attempt while the recipient is mid
+// human-input dialog would still create useless retry history and risk the
+// dialog swallowing injected text. Offline regular-message nudges are removed
+// before this core; internal nudges and online holds remain queued.
 func flushQueue(label string, list func() ([]*db.AgentMessage, error), canDeliver func() bool, send flushSender) int {
 	msgs, err := list()
 	if err != nil {
@@ -291,25 +318,60 @@ func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
 // selector ensures the status checked before a claim belongs to the pane the
 // nudge will target afterward.
 func pickNudgeSession(convID string) *db.SessionRow {
-	candidates, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		return nil
-	}
-	for _, c := range candidates {
-		if c.TmuxSession != "" && nudgeTmuxSessionAlive(c.TmuxSession) {
-			return c
-		}
-	}
-	return nil
+	sess, _ := probeNudgeSession(convID)
+	return sess
 }
 
-// nudgeTmuxSessionAlive is the delivery-specific liveness probe. It mirrors
+type nudgeSessionProbe int
+
+const (
+	nudgeSessionOffline nudgeSessionProbe = iota
+	nudgeSessionAlive
+	nudgeSessionIndeterminate
+)
+
+// probeNudgeSession distinguishes a positively absent pane from a probe that
+// failed before it could establish liveness. Only the former is safe for the
+// irreversible offline-notification suppression policy.
+func probeNudgeSession(convID string) (*db.SessionRow, nudgeSessionProbe) {
+	candidates, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return nil, nudgeSessionIndeterminate
+	}
+	indeterminate := false
+	for _, c := range candidates {
+		if c.TmuxSession == "" {
+			continue
+		}
+		switch probeNudgeTmuxSession(c.TmuxSession) {
+		case nudgeSessionAlive:
+			return c, nudgeSessionAlive
+		case nudgeSessionIndeterminate:
+			indeterminate = true
+		}
+	}
+	if indeterminate {
+		return nil, nudgeSessionIndeterminate
+	}
+	return nil, nudgeSessionOffline
+}
+
+// probeNudgeTmuxSession is the delivery-specific liveness probe. It mirrors
 // session.IsTmuxSessionAlive's exact target, but runs under the same deadline
 // as send-keys so a stuck has-session cannot hold nudgeState.running forever.
-func nudgeTmuxSessionAlive(sessionName string) bool {
+func probeNudgeTmuxSession(sessionName string) nudgeSessionProbe {
 	err := runTmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
+	if err == nil {
+		return nudgeSessionAlive
+	}
 	if errors.Is(err, errTmuxCommandTimeout) {
 		slog.Warn("nudge liveness probe timed out", "tmux", sessionName, "error", err)
+		return nudgeSessionIndeterminate
 	}
-	return err == nil
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nudgeSessionOffline
+	}
+	slog.Warn("nudge liveness probe failed", "tmux", sessionName, "error", err)
+	return nudgeSessionIndeterminate
 }

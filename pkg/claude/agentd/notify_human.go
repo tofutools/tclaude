@@ -946,7 +946,7 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	}
 	// Deliver as a sender-less operator message on the universal inbox.
 	// The async worker owns readiness/hold checks, retries, and consumption.
-	id, err := queueAgentMessage(&db.AgentMessage{
+	id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
 		GroupID:          0,
 		FromConv:         "",
 		ToConv:           target,
@@ -956,6 +956,10 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		OperatorAuthored: true,
 	})
 	if err != nil {
+		if full, ok := agentMessageQueueFull(err); ok {
+			writeQueueFull(w, target, full)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "io", "queue reply: "+err.Error())
 		return
 	}
@@ -969,7 +973,7 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 		"message_id": id,
 		"conv_id":    target,
 		"queued":     true,
-		"pending":    queueDepthFor(target, false),
+		"pending":    pending,
 	})
 }
 

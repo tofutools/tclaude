@@ -81,13 +81,17 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "message body or attachment is required")
 		return
 	}
-	id, err := queueAgentMessageWithAttachments(&db.AgentMessage{
+	id, pending, err := queueRegularAgentMessageWithAttachments(&db.AgentMessage{
 		FromConv: "", ToConv: target.ConvID, Subject: req.Subject, Body: req.Body,
 		ToRecipients: []string{target.ConvID}, OperatorAuthored: true,
 	}, attachments)
 	if err != nil {
 		if durableDir != "" {
 			_ = os.RemoveAll(durableDir)
+		}
+		if full, ok := agentMessageQueueFull(err); ok {
+			writeQueueFull(w, target.ConvID, full)
+			return
 		}
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -97,7 +101,7 @@ func handleDashboardOperatorMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	setAuditTargetLabel(r, agent.TitleFor(target.ConvID))
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"id": id, "queued": true, "pending": queueDepthFor(target.ConvID, false),
+		"id": id, "queued": true, "pending": pending,
 		"to": target.ConvID, "attachments": attachments,
 	})
 }

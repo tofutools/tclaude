@@ -26,10 +26,10 @@ func isAwaitingHumanInput(status string) bool {
 // would still create needless attempts and injected-dialog risk. Returning
 // false leaves the whole queue untouched for a later drain.
 //
-// It folds the two "don't deliver yet" cases the async model must handle into
-// one gate, because both want the same outcome (leave it queued, retry later):
-//   - no alive session — the recipient is offline (the async send path can hit
-//     this; the pre-async flush only ran when the target was online); and
+// It folds the two "don't deliver now" cases the async model must handle into
+// one gate. Callers separately suppress regular nudges when no session exists,
+// while internal messages stay queued for lifecycle correctness:
+//   - no alive session — the recipient is offline; and
 //   - an alive pane blocked on a human (awaiting_input / awaiting_permission) —
 //     the JOH-308 hold: a nudge typed in now would be captured by the open
 //     dialog as the human's answer, and the real notification lost.
