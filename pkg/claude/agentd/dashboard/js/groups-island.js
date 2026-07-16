@@ -191,6 +191,7 @@ export function GroupsControls({ state, actions }) {
 
 export function GroupsList({ host, state, actions }) {
   useWizardTheme();
+  const [hoveredGroupKey, setHoveredGroupKey] = useState(null);
   const current = state.view.value;
 
   useEffect(() => {
@@ -224,7 +225,34 @@ export function GroupsList({ host, state, actions }) {
     };
   }, [host]);
 
-  return html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} /><//>`;
+  // Hover is local Groups presentation state. Delegate from the stable island
+  // host so keyed group nodes can move across polls without acquiring their
+  // own listeners. relatedTarget suppresses churn while the pointer moves
+  // between descendants of the same summary.
+  useEffect(() => {
+    const summaryFor = (node) => node?.closest?.('details[data-group-key] > summary') || null;
+    const onMouseOver = (event) => {
+      const summary = summaryFor(event.target);
+      if (summary === summaryFor(event.relatedTarget)) return;
+      setHoveredGroupKey(summary?.parentElement?.getAttribute('data-group-key') || null);
+    };
+    const onMouseLeave = () => setHoveredGroupKey(null);
+    host.addEventListener('mouseover', onMouseOver);
+    host.addEventListener('mouseleave', onMouseLeave);
+    return () => {
+      host.removeEventListener('mouseover', onMouseOver);
+      host.removeEventListener('mouseleave', onMouseLeave);
+    };
+  }, [host]);
+
+  useEffect(() => {
+    if (!hoveredGroupKey) return;
+    const present = current.groups.some((group) =>
+      (group.key || group.name) === hoveredGroupKey);
+    if (!present) setHoveredGroupKey(null);
+  }, [current.groups, hoveredGroupKey]);
+
+  return html`<${GroupsInteractionProvider}><${GroupsNativeList} groups=${current.groups} snapshot=${state.snapshot.value} actions=${actions} hoveredGroupKey=${hoveredGroupKey} /><//>`;
 }
 
 export function mountGroupsIsland({

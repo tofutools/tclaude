@@ -3,13 +3,12 @@ import {
   useCallback, useEffect, useId, useLayoutEffect, useRef, useState,
 } from 'preact/hooks';
 import htm from 'htm';
-import { trustedHTMLToVNodes } from './html-vnodes.js';
 import { wizWord } from './slop.js';
 
 const html = htm.bind(h);
 
-function DockChips({ chips = [], markup = '', full = false }) {
-  if (!chips.length && !markup) return null;
+function DockChips({ chips = [], full = false }) {
+  if (!chips.length) return null;
   return html`
     <span
       class=${`dock-chips ${full ? 'dock-chips-full' : 'dock-chips-compact'}`}
@@ -17,11 +16,11 @@ function DockChips({ chips = [], markup = '', full = false }) {
     >
       ${chips.map((chip) => html`
         <span
-          key=${chip.text}
-          class=${`dock-chip${chip.more ? ' dock-chip-more' : ''}`}
+          key=${chip.key || chip.text}
+          class=${chip.className || `dock-chip${chip.more ? ' dock-chip-more' : ''}`}
+          title=${chip.title || null}
         >${chip.text}</span>
       `)}
-      ${markup ? trustedHTMLToVNodes(markup) : null}
     </span>
   `;
 }
@@ -29,7 +28,6 @@ function DockChips({ chips = [], markup = '', full = false }) {
 function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersion }) {
   const name = section.name(item);
   const compactChips = section.chips?.(item) || [];
-  const compactMarkup = section.chipsHTML?.(item) || '';
   const fullChips = section.fullChips?.(item) || [];
   const hasDetails = fullChips.length > 0;
   const menuKey = `${section.key}:${name}`;
@@ -169,7 +167,7 @@ function DockCard({ section, item, openMenu, setOpenMenu, clipHost, layoutVersio
       <span class="dock-grip" aria-hidden="true" title=${hasDetails ? null : gripTitle}>⠿</span>
       <span class="dock-card-body">
         <span class="dock-card-name">${name}</span>
-        <${DockChips} chips=${compactChips} markup=${compactMarkup} />
+        <${DockChips} chips=${compactChips} />
       </span>
       <span class="dock-card-actions">
         <button

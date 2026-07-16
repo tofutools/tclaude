@@ -10,8 +10,8 @@ import { shortId, shortAgentId, idTooltip, relTime, shortCwd, groupShowOffline, 
 import { dashPrefs } from './prefs.js';
 import { isWizardActive } from './slop.js';
 import { PAGE_SIZES, listLimit } from './list-paging.js';
-import { activitySummary, variantLabel } from './group-activity.js';
-import { hoveredGroupKey } from './group-hover-state.js';
+import { activityModeViews, activitySummary } from './group-activity.js';
+import { ActivityModes } from './activity-bots.js';
 import {
   buildGroupTree, groupMembersView, realGroupOpen, virtualGroupOpen,
 } from './groups-view-model.js';
@@ -24,36 +24,11 @@ function ThemeText({ regular, wizard }) {
   return html`<span class="theme-copy-regular">${regular}</span><span class="theme-copy-wizard">${wizard}</span>`;
 }
 
-const ACTIVITY_TAG = { asking: '❓', error: '💥', crashed: '💀', offline: '💤' };
-const ACTIVITY_WIZARD = { working: '🧙', idle: '🕯️', asking: '📜', error: '💥', crashed: '💀', offline: '🪦' };
-const ACTIVITY_SPRITE = { working: 'dance', asking: 'asking', error: 'error', idle: 'idle', crashed: 'static', offline: 'static' };
-const ACTIVITY_WIZARD_SPRITE = { working: 'wiz-cast', asking: 'wiz-ask', error: 'wiz-error', idle: 'wiz-idle', crashed: 'wiz-static', offline: 'wiz-static' };
-
-function ActivityBot({ variant, count, style, wizard = false }) {
-  const tip = variantLabel(variant, count, wizard ? 'wizard' : undefined);
-  const countNode = count > 1 ? html`<span class="actbot-count">${count}</span>` : null;
-  if (style === 'sprites') {
-    const animation = (wizard ? ACTIVITY_WIZARD_SPRITE : ACTIVITY_SPRITE)[variant] || 'static';
-    return html`<span class=${`actbot actbot-sprite${wizard ? ' actbot-wiz' : ''} actbot-${variant}`} title=${tip} aria-label=${tip}><span class=${`actbot-spr spr-${animation}`}></span>${countNode}</span>`;
-  }
-  const glyph = wizard ? (ACTIVITY_WIZARD[variant] || '🧙') : '🤖';
-  return html`<span class=${`actbot actbot-${variant}`} title=${tip} aria-label=${tip}><span class="actbot-face">${glyph}</span>${!wizard && ACTIVITY_TAG[variant] ? html`<span class="actbot-tag">${ACTIVITY_TAG[variant]}</span>` : null}${countNode}</span>`;
-}
-
 function GroupActivity({ members, snapshot }) {
   const summary = activitySummary(members);
-  if (!summary.present.length) return null;
-  const configured = snapshot?.activity_bots || {};
-  const modes = [
-    { cls: 'ga-regular', style: configured.regular || 'emoji', wizard: false },
-    { cls: 'ga-slop', style: configured.slop || 'sprites', wizard: false },
-    { cls: 'ga-wizard', style: configured.wizard || 'emoji', wizard: true },
-  ].filter((mode) => mode.style !== 'off');
+  const modes = activityModeViews(summary, snapshot?.activity_bots);
   if (!modes.length) return null;
-  return html`<span class="group-activity">${modes.map((mode) => html`<span
-    key=${mode.cls} class=${`${mode.cls} level-${summary.level}`}
-    title=${summary.present.map((variant) => variantLabel(variant, summary.counts[variant], mode.wizard ? 'wizard' : undefined)).join(' · ')}
-  >${summary.present.map((variant) => html`<${ActivityBot} key=${variant} variant=${variant} count=${summary.counts[variant]} style=${mode.style} wizard=${mode.wizard} />`)}</span>`)}</span>`;
+  return html`<span class="group-activity"><${ActivityModes} modes=${modes} modeTitles /></span>`;
 }
 
 function MenuButton({ regular, wizard = regular, className, ...props }) {
@@ -104,7 +79,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     <button role="menuitem" ...${shared} data-act="set-group-permissions" title=${wizardMode ? 'Bestow party boons on every familiar in this party. Membership changes take effect immediately; a personal binding against one still wins.' : 'Grant permissions to every current member of this group. Membership changes take effect immediately; an agent-level Deny still wins.'}>🔑 <span class="group-perms-word-regular">group permissions</span><span class="group-perms-word-wizard">party boons</span>${group.permissions?.length ? ` (${group.permissions.length})` : ''}…</button>
     <${MenuButton} ...${shared} data-act="toggle-group-notify" data-enabled=${notify ? '1' : '0'} title=${notifyTitle} regular=${notify ? '🔔 notifications: on' : '🔕 notifications: muted'} wizard=${notify ? '🔔 omens: on' : '🔕 omens: silent'} />
     <button role="menuitem" ...${shared} data-act="set-group-remote-control" data-policy=${policy} data-next=${nextPolicy} title=${remoteTitle}>${policy === 'deny' ? '🚫' : '📱'} remote policy: ${policy === 'optin' ? 'opt-in' : policy}</button>
-    ${quickFold ? html`<button role="menuitem" ...${shared} data-act="toggle-quick-pin" data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
+    ${quickFold ? html`<button role="menuitem" ...${shared} data-pinned=${pinned ? '1' : '0'} title=${quickPinTitle} onClick=${() => actions.toggleQuickPin(group)}>${pinned ? '📌 unpin quick options' : '📌 pin quick options open'}</button>` : null}
     <${MenuButton} ...${shared} data-act="rename-group" title=${wizardMode ? 'Rename this party' : 'Rename this group'} regular="rename" wizard="rename party" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -390,7 +365,7 @@ function isForce(group) {
   return !!(group.source_template || group.mission || group.process?.phases?.length || group.waves);
 }
 
-function GroupActions({ group }) {
+function GroupActions({ group, actions }) {
   const folded = dashPrefs.getItem(`tclaude.dash.forcefold.${group.name}`) === '1';
   const shared = { 'data-group': group.name, 'data-label': group.name };
   return html`
@@ -399,7 +374,7 @@ function GroupActions({ group }) {
     <span class="group-actions">
       <button ...${shared} data-act="power-on-group" aria-label="Awaken — power on every offline agent in this group" title="Power on — resume every offline agent in this group. Each offline conversation is restarted in a fresh tmux session; agents already running are left alone. Resume only: nothing new is created."><span class="pwr-label-regular" aria-hidden="true">🟢</span><span class="pwr-label-wizard" aria-hidden="true">✨</span></button>
       <button class="warn" ...${shared} data-act="shutdown-group" aria-label="Slumber — shutdown every running agent in this group" title="Shutdown — stop every running agent in this group. Sends /exit, then force-kills any agent still alive after a grace period. Stop only: nothing is deleted, every session can simply be resumed."><span class="pwr-label-regular" aria-hidden="true">🛑</span><span class="pwr-label-wizard" aria-hidden="true">🌙</span></button>
-      ${isForce(group) ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-act="toggle-force-fold" data-folded=${folded ? '1' : '0'} aria-pressed=${folded ? 'true' : 'false'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>` : null}
+      ${isForce(group) ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`} ...${shared} data-folded=${folded ? '1' : '0'} aria-pressed=${folded ? 'true' : 'false'} title=${folded ? 'Task force info card is hidden — click to show it again (mission, phase, roles, re-brief / stand-down controls). Per-browser view state.' : 'Hide the task force info card (mission, phase, roles, controls). The 🎯 button stays here to bring it back. Per-browser view state.'} onClick=${() => actions.toggleForceFold(group)}>🎯<span class="force-fold-label-regular">${folded ? ' show info' : ' hide info'}</span><span class="force-fold-label-wizard">${folded ? ' reveal quest' : ' hide quest'}</span></button>` : null}
     </span>`;
 }
 
@@ -442,7 +417,7 @@ function GroupLinksSection({ group, snapshot }) {
   </div>`;
 }
 
-function RealGroup({ node, snapshot, actions }) {
+function RealGroup({ node, snapshot, actions, hoveredGroupKey }) {
   const { group } = node;
   const view = groupMembersView(group, groupShowOffline(group.name));
   const quickPinned = dashPrefs.getItem(`tclaude.dash.quickpin.${group.name}`) === '1';
@@ -456,9 +431,9 @@ function RealGroup({ node, snapshot, actions }) {
   >
     <${RealGroupSummary} group=${group} activity=${node.activity} membersView=${view} snapshot=${snapshot} actions=${actions} />
     <div class="subtable">
-      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} />`)}</div>` : null}
+      ${node.children.length ? html`<div class="group-subgroups">${node.children.map((child) => html`<${GroupNode} key=${child.key} node=${child} snapshot=${snapshot} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />`)}</div>` : null}
       ${group.pending?.length ? html`<div class="group-pending-block"><div class="group-pending-title"><span class="group-pending-title-regular">Pending spawns</span><span class="group-pending-title-wizard">Currently summoning...</span></div><${PendingTable} rows=${group.pending} /></div>` : null}
-      <div class="group-header-actions"><${GroupActions} group=${group} /></div>
+      <div class="group-header-actions"><${GroupActions} group=${group} actions=${actions} /></div>
       <${ForceBlock} group=${group} />
       ${!view.members.length
         ? html`<div class="muted">(no members yet)</div>`
@@ -586,9 +561,9 @@ const VIRTUAL_NAMES = {
   },
 };
 
-function GroupNode({ node, snapshot, actions }) {
+function GroupNode({ node, snapshot, actions, hoveredGroupKey }) {
   const group = node.group;
-  if (!group.virtual) return html`<${RealGroup} node=${node} snapshot=${snapshot} actions=${actions} />`;
+  if (!group.virtual) return html`<${RealGroup} node=${node} snapshot=${snapshot} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />`;
   if (group.conversations) return html`<${VirtualList} group=${group} kind="conversations" Table=${ConversationsTable} names=${VIRTUAL_NAMES.conversations} />`;
   if (group.retired) return html`<${VirtualList} group=${group} kind="retired" Table=${RetiredTable} names=${VIRTUAL_NAMES.retired} target="retired" />`;
   if (group.replaced) return html`<${VirtualList} group=${group} kind="replaced" Table=${ReplacedTable} names=${VIRTUAL_NAMES.replaced} />`;
@@ -596,8 +571,8 @@ function GroupNode({ node, snapshot, actions }) {
   return html`<${VirtualUngrouped} group=${group} snapshot=${snapshot} actions=${actions} />`;
 }
 
-export function GroupsNativeList({ groups, snapshot, actions }) {
+export function GroupsNativeList({ groups, snapshot, actions, hoveredGroupKey = null }) {
   if (!groups?.length) return html`<div class="empty">No groups yet. Create one with the <strong><span class="group-create-label-regular">+ new group</span><span class="group-create-label-wizard">⚔ Form a party</span></strong> button above.</div>`;
   const tree = buildGroupTree(groups, (group) => realGroupOpen(group, dashPrefs));
-  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} />`);
+  return tree.map((node) => html`<${GroupNode} key=${node.key} node=${node} snapshot=${snapshot} actions=${actions} hoveredGroupKey=${hoveredGroupKey} />`);
 }

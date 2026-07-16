@@ -67,6 +67,47 @@ async function mountGroups(t, harness, groups, actions, prefsInitial = {}) {
   return { state, host, mounted };
 }
 
+test('opaque slop host safely retakes nested-root ownership after an imperative pull', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const [{ SlopMachine }, { bindSlopMachineClicks }] = await Promise.all([
+    harness.importDashboardModule('js/groups-member-table.js'),
+    harness.importDashboardModule('js/slop-fx.js'),
+  ]);
+  harness.document.body.classList.add('slop');
+  const mounted = await harness.mount(harness.html`
+    <${SlopMachine} state=${{ status: 'working' }} online=${true} conv="old-conv" />
+  `);
+  bindSlopMachineClicks();
+
+  const machine = mounted.container.querySelector('.slop-machine');
+  harness.fireEvent(machine, 'click', { button: 0 });
+  assert.equal(machine.dataset.status, 'pull-spinning');
+  assert.equal(machine.querySelectorAll('.slop-pull-reel').length, 3,
+    'slop-fx replaces nested-root children with its imperative pull DOM');
+
+  await assert.doesNotReject(() => mounted.rerender(harness.html`
+    <${SlopMachine} state=${{ status: 'idle' }} online=${true} conv="new-conv" />
+  `));
+  assert.equal(mounted.container.querySelector('.slop-machine'), machine,
+    'the parent Preact owner preserves the opaque outer host');
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'new-conv');
+  assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1,
+    'the status edge installs exactly one fresh nested root');
+  assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
+  assert.equal(machine.querySelector('.slop-pull-reel'), null,
+    'no imperative pull DOM survives the ownership hand-back');
+
+  await assert.doesNotReject(() => mounted.unmount());
+  assert.equal(mounted.container.querySelector('.slop-machine'), null);
+  assert.equal(mounted.container.querySelector('.slop-pull-reel'), null,
+    'unmount leaves no mutated pull DOM behind');
+});
+
 test('Groups list preserves keyed disclosure, focus and nodes across reorder/activity polls', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
@@ -143,7 +184,7 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
     { name: 'alpha', descr: 'new', members: [{ conv_id: 'alpha-member', title: 'Alpha member', online: true, state: { status: 'working' } }] },
   ])));
   assert.equal(machine.dataset.status, 'idle');
-  assert.equal(machine.querySelector('span').textContent, '7️⃣',
+  assert.equal(machine.querySelector('.slop-reel').textContent, '7️⃣',
     'a changed status replaces imperative reel children after a manual pull');
 
   await harness.act(() => state.publish(snapshot([
@@ -152,6 +193,43 @@ test('Groups list preserves keyed disclosure, focus and nodes across reorder/act
   ])));
   assert.equal(harness.document.activeElement, inspect,
     'a neighboring activity chip disappearing does not replace the keyed action');
+
+  await mounted.unmount();
+  host.remove();
+});
+
+test('Groups hover state follows semantic keys across polls and clears on disappearance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const actions = { sort: () => {}, page: () => {}, setPageSize: () => {} };
+  const alpha = {
+    name: 'alpha', members: [{ conv_id: 'a', online: true, state: { status: 'working' } }],
+  };
+  const beta = { name: 'beta', members: [] };
+  const { state, host, mounted } = await mountGroups(t, harness, [alpha, beta], actions);
+  const alphaNode = host.querySelector('details[data-group-key="alpha"]');
+  const summary = alphaNode.querySelector('summary');
+  const name = summary.querySelector('.group-name');
+  const activity = summary.querySelector('.group-activity');
+
+  await harness.act(() => harness.fireEvent(name, 'mouseover', {
+    relatedTarget: harness.document.body,
+  }));
+  assert.equal(alphaNode.classList.contains('quick-hover'), true);
+  await harness.act(() => harness.fireEvent(activity, 'mouseover', { relatedTarget: name }));
+  assert.equal(alphaNode.classList.contains('quick-hover'), true,
+    'movement within one summary does not clear and reapply hover');
+
+  await harness.act(() => state.publish(snapshot([beta, { ...alpha, descr: 'polled' }])));
+  assert.equal(host.querySelector('details[data-group-key="alpha"]'), alphaNode,
+    'the keyed group node survives reorder polling');
+  assert.equal(alphaNode.classList.contains('quick-hover'), true,
+    'semantic hover state is re-stamped after polling reconciliation');
+
+  await harness.act(() => state.publish(snapshot([beta])));
+  assert.equal(host.querySelector('.quick-hover'), null);
+  await harness.act(() => state.publish(snapshot([alpha, beta])));
+  assert.equal(host.querySelector('details[data-group-key="alpha"]').classList.contains('quick-hover'), false,
+    'a group that disappears clears its hover key before reinsertion');
 
   await mounted.unmount();
   host.remove();
@@ -239,10 +317,9 @@ test('Groups controls own query, visibility, columns, badge and dropdown behavio
 
 test('native group chrome preserves hierarchy, virtual DnD and shared menu contracts', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createGroupsState }, { GroupsList }, { setHoveredGroupKey }, { dashPrefs }] = await Promise.all([
+  const [{ createGroupsState }, { GroupsList }, { dashPrefs }] = await Promise.all([
     harness.importDashboardModule('js/groups-state.js'),
     harness.importDashboardModule('js/groups-island.js'),
-    harness.importDashboardModule('js/group-hover-state.js'),
     harness.importDashboardModule('js/prefs.js'),
   ]);
   const state = createGroupsState({
@@ -272,15 +349,21 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   state.publish(chromeSnapshot());
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   host.id = 'groups-list';
+  const localActions = [];
   const mounted = await harness.mount(harness.html`<${GroupsList}
     host=${host} state=${state}
-    actions=${{ sort: () => {}, page: () => {}, setPageSize: () => {} }}
+    actions=${{
+      sort: () => {}, page: () => {}, setPageSize: () => {},
+      toggleQuickPin: (group) => localActions.push(['quick', group.name]),
+      toggleForceFold: (group) => localActions.push(['force', group.name]),
+    }}
   />`, host);
 
   const parent = host.querySelector('details[data-dnd-target-group="parent"]');
   const child = host.querySelector('details[data-dnd-target-group="child"]');
-  setHoveredGroupKey('parent');
-  await harness.act(() => state.rerender());
+  await harness.act(() => harness.fireEvent(parent.querySelector('summary'), 'mouseover', {
+    relatedTarget: harness.document.body,
+  }));
   assert.equal(parent.classList.contains('quick-hover'), true);
   dashPrefs.syncItem('tclaude.dash.quickpin.parent', '1');
   await harness.act(() => state.rerender());
@@ -292,6 +375,16 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.ok(parent.querySelector('.group-subgroups').contains(child));
   assert.equal(parent.querySelector('.cog-btn').dataset.act, 'group-menu');
   assert.equal(parent.querySelector('.cog-btn').getAttribute('aria-expanded'), 'false');
+  const groupCog = parent.querySelector('.group-header-cog .cog-btn');
+  await harness.act(() => harness.fireEvent(groupCog, 'click'));
+  const quickPin = parent.querySelector('.group-header-cog button[data-pinned]');
+  assert.equal(quickPin.hasAttribute('data-act'), false,
+    'component-local presentation state bypasses the root data-act router');
+  await harness.act(() => harness.fireEvent(quickPin, 'click'));
+  const forceFold = parent.querySelector('.force-fold-btn');
+  assert.equal(forceFold.hasAttribute('data-act'), false);
+  await harness.act(() => harness.fireEvent(forceFold, 'click'));
+  assert.deepEqual(localActions, [['quick', 'parent'], ['force', 'parent']]);
   assert.ok(parent.querySelector('.group-force-block'));
   assert.ok(parent.querySelector('.group-pending-block tr[data-dnd-pending]'));
   assert.ok(parent.querySelector('.group-links-section button[data-act="link-edit"]'));
@@ -340,7 +433,7 @@ test('native group chrome preserves hierarchy, virtual DnD and shared menu contr
   assert.match(ungrouped.querySelector('.group-virtual-badge').title,
     /cannot be renamed, dispelled, whispered to, or scheduled/);
 
-  setHoveredGroupKey(null);
+  await harness.act(() => harness.fireEvent(host, 'mouseleave', { relatedTarget: harness.document.body }));
   harness.document.body.classList.remove('wizard');
   offlineToggle.remove();
 

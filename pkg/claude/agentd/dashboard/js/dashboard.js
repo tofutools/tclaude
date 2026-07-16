@@ -15,7 +15,7 @@ import { bindSlopCredits } from './slop-credits.js';
 import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
-  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
+  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle,
   confirmDiscard, confirmModal, isCyclingTabs, openWorktreeCleanup, refresh, toast,
 } from './refresh.js';
 
@@ -33,6 +33,7 @@ import {
 // making the dispatch async, would silently start firing that banner on load.
 applySlopThemeIfRequested();
 import { bindRowActions } from './row-actions.js';
+import { bindToolbarActionsMenu } from './toolbar-actions-menu.js';
 import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
@@ -283,8 +284,7 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   ]);
   pageCleanups.push(...featureCleanups);
 
-  bindTabs();
-  bindTabHotkeys();
+  pageCleanups.push(bindTabs(), bindTabHotkeys());
   // Keep the full-bleed chrome bars sized to the scrollable content so a
   // horizontal page scrollbar doesn't leave them ragged (JOH-313).
   bindHScroll();
@@ -293,10 +293,9 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   // pref; the shell + edge toggle are static so this binds once and survives
   // the poll (renderDock only reconciles #dock-body).
   bindDock();
-  bindDetailsPersistence();
-  bindGroupTitleToggle();
-  bindGroupQuickHover();
-  bindRowActions();
+  pageCleanups.push(
+    bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
+  );
   pageCleanups.push(bindDnd(), bindGroupReorder());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
   // (JOH-375). Its document-level listeners coexist with dnd.js /

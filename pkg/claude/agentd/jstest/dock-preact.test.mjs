@@ -263,3 +263,32 @@ test('Dock removes its document listeners when the island unmounts', async (t) =
   }
   host.remove();
 });
+
+test('Dock renders structured badge metadata natively with stable badge keys', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDockState }, { Dock }] = await Promise.all([
+    harness.importDashboardModule('js/dock-state.js'),
+    harness.importDashboardModule('js/dock-island.js'),
+  ]);
+  const state = createDockState();
+  const native = section([]);
+  native.chips = (item) => [{
+    key: 'waves', className: 'tc-count', title: 'staged-spawn waves', text: `🌊 ${item.waves} waves`,
+  }];
+  state.publish({ profiles: [{ name: 'circle', waves: 2 }] });
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const mounted = await harness.mount(harness.html`
+    <${Dock} host=${host} state=${state} sections=${[native]}
+      isSectionOpen=${() => true} setSectionOpen=${() => {}} />
+  `, host);
+  const badge = host.querySelector('.tc-count');
+  assert.equal(badge.textContent, '🌊 2 waves');
+  assert.equal(badge.title, 'staged-spawn waves');
+  assert.equal(host.querySelector('.dock-chip'), null, 'the source class survives native rendering');
+
+  await harness.act(() => state.publish({ profiles: [{ name: 'circle', waves: 3 }] }));
+  assert.equal(host.querySelector('.tc-count'), badge, 'the structured badge key retains DOM identity');
+  assert.equal(badge.textContent, '🌊 3 waves');
+  await mounted.unmount();
+  host.remove();
+});

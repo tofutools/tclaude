@@ -21,16 +21,28 @@ function templateAgentIsOwner(agent) {
   return owner || !!agent.is_owner;
 }
 
-export function templateReadbackBadges(template) {
-  if (!template) return '';
+export function templateReadbackBadgeModels(template) {
+  if (!template) return [];
   const count = (template.agents || []).length;
-  const chips = [`<span class="tc-count">${count} ${wizWord('agent', 'familiar')}${count === 1 ? '' : 's'}</span>`];
+  const chips = [{
+    key: 'agents', className: 'tc-count',
+    text: `${count} ${wizWord('agent', 'familiar')}${count === 1 ? '' : 's'}`,
+  }];
   const waves = templateWaveCount(template);
-  if (waves > 1) chips.push(`<span class="tc-count" title="${wizWord('staged-spawn waves', 'marching ranks')}">🌊 ${waves} ${wizWord('waves', 'ranks')}</span>`);
-  if (template.process?.length) chips.push(`<span class="tc-count" title="${wizWord('process phases', 'quest chapters')}">◆ ${template.process.length}-${wizWord('phase', 'chapter')}</span>`);
-  if (template.rhythms?.length) chips.push(`<span class="tc-count" title="${wizWord('seeded rhythms', 'drumbeats')}">🥁 ${template.rhythms.length}</span>`);
-  if (template.work_pattern?.length) chips.push(`<span class="tc-count" title="${wizWord('work-pattern steps', 'rite verses')}">⇶ ${template.work_pattern.length}</span>`);
-  return chips.join(' ');
+  if (waves > 1) chips.push({ key: 'waves', className: 'tc-count', title: wizWord('staged-spawn waves', 'marching ranks'), text: `🌊 ${waves} ${wizWord('waves', 'ranks')}` });
+  if (template.process?.length) chips.push({ key: 'process', className: 'tc-count', title: wizWord('process phases', 'quest chapters'), text: `◆ ${template.process.length}-${wizWord('phase', 'chapter')}` });
+  if (template.rhythms?.length) chips.push({ key: 'rhythms', className: 'tc-count', title: wizWord('seeded rhythms', 'drumbeats'), text: `🥁 ${template.rhythms.length}` });
+  if (template.work_pattern?.length) chips.push({ key: 'work-pattern', className: 'tc-count', title: wizWord('work-pattern steps', 'rite verses'), text: `⇶ ${template.work_pattern.length}` });
+  return chips;
+}
+
+// Imperative template editors still consume trusted renderer markup. Build it
+// from the same structured badge model the Dock renders natively so wording
+// and counts cannot drift between the two surfaces.
+export function templateReadbackBadges(template) {
+  const chips = templateReadbackBadgeModels(template);
+  if (!chips.length) return '';
+  return chips.map((chip) => `<span class="${chip.className}"${chip.title ? ` title="${esc(chip.title)}"` : ''}>${esc(chip.text)}</span>`).join(' ');
 }
 
 export function templateRosterRowsHTML(template, prefix, defaultProfile) {

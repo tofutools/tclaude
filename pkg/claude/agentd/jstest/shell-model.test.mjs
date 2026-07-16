@@ -41,7 +41,9 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   });
   assert.match(activity.title, /1 working/);
   assert.doesNotMatch(activity.title, /2 working/);
-  assert.match(activity.markup, /ga-regular/);
+  assert.deepEqual(activity.modes.map((mode) => mode.key), ['regular', 'wizard']);
+  assert.equal(activity.modes[0].className, 'ga-regular');
+  assert.equal(activity.modes[0].bots[0].key, 'working');
 });
 
 test('global activity omits offline agents only when their group view is hidden', async (t) => {

@@ -105,8 +105,8 @@ test('production disclosure binder persists an intentional fold as zero', async 
     </div>`;
   const details = harness.document.querySelector('details');
   const title = details.querySelector('.group-name');
-  bindDetailsPersistence();
-  bindGroupTitleToggle();
+  const cleanups = [bindDetailsPersistence(), bindGroupTitleToggle()];
+  t.after(() => cleanups.reverse().forEach((cleanup) => cleanup()));
 
   harness.fireEvent(title, 'click', { detail: 1 });
   details.open = false;

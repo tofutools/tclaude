@@ -260,8 +260,8 @@ function manualPull(machine, opts) {
   const conv = machine.getAttribute('data-conv') || '';
   // These two sentinel data-status values ('pull-spinning' then
   // 'pull-stopped' below) mark the cell for the pull's full ~2.7s lifetime.
-  // html-vnodes.js treats the reel body as an opaque imperative boundary, so
-  // keyed Groups publishes retain the live spin.
+  // SlopMachine exposes this reel body as an explicit opaque host, so keyed
+  // Groups publishes retain the live spin without reconciling its children.
   machine.setAttribute('data-status', 'pull-spinning');
   machine.innerHTML = pullReelHTML() + pullReelHTML() + pullReelHTML();
   emitSlopFx('spin', conv);

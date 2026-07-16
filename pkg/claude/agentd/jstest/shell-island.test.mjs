@@ -64,6 +64,52 @@ test('shell confirmation keeps capture-Escape semantics and feedback cleanup', a
   await mounted.unmount();
 });
 
+test('global activity keeps keyed native bot identity across polls and wizard changes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { GlobalActivity }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${GlobalActivity} state=${state} />`);
+  const snapshot = {
+    groups: [{ name: 'alpha', members: [
+      { conv_id: 'a', online: true, state: { status: 'working' } },
+      { conv_id: 'b', online: true, state: { status: 'working' } },
+    ] }],
+    ungrouped: [],
+    activity_bots: { regular: 'emoji', slop: 'sprites', wizard: 'emoji' },
+  };
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, snapshot));
+  const regular = mounted.container.querySelector('.ga-regular');
+  const working = regular.querySelector('.actbot-working');
+  const count = working.querySelector('.actbot-count');
+  assert.equal(count.textContent, '2');
+
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(2, {
+    ...snapshot,
+    groups: [{ name: 'alpha', members: snapshot.groups[0].members.concat(
+      { conv_id: 'c', online: true, state: { status: 'working' } },
+    ) }],
+  }));
+  assert.equal(mounted.container.querySelector('.ga-regular'), regular);
+  assert.equal(regular.querySelector('.actbot-working'), working);
+  assert.equal(working.querySelector('.actbot-count'), count);
+  assert.equal(count.textContent, '3');
+
+  harness.document.body.classList.add('wizard');
+  await harness.act(() => harness.document.dispatchEvent(new harness.window.CustomEvent(
+    'tclaude:wizard', { detail: { active: true } },
+  )));
+  assert.equal(mounted.container.querySelector('.ga-regular'), regular,
+    'theme wording changes do not remount hidden animation rows');
+  assert.equal(regular.querySelector('.actbot-working'), working);
+  assert.match(mounted.container.querySelector('#global-activity').title, /familiars channeling/);
+  await mounted.unmount();
+});
+
 test('a failed aggregate shell mount aborts bootstrap instead of stranding feedback', async (t) => {
   const harness = await createPreactHarness(t);
   const hostIDs = [
