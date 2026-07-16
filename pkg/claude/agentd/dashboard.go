@@ -2000,6 +2000,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return tagsView{Tags: allTags[agentID]}
 	}
 	span.mark("preload")
+	groupNames := make(map[int64]string, len(groups))
+	for _, group := range groups {
+		groupNames[group.ID] = group.Name
+	}
 
 	agentRows := map[string]*dashboardAgent{}
 	addAgent := func(convID string) *dashboardAgent {
@@ -2376,24 +2380,33 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		plugins          []dashboardPlugin
 		pluginsWarn      int
 		pluginsErr       error
+		usagePhases      []perfPhase
 	)
 	// These collectors do not depend on each other. Most are one or two small
 	// SQLite reads; serial execution made their fixed per-query overhead add up
 	// to >10 ms even on tiny rosters.
-	span.addChildren("collectors", runSnapshotNamedLoads(
-		snapshotNamedLoad{"pending", func() { pending = collectPendingSnapshot(aliveSessions) }},
+	collectorPhases := runSnapshotNamedLoads(
+		snapshotNamedLoad{"pending", func() { pending = collectPendingSnapshot(aliveSessions, groupNames) }},
 		snapshotNamedLoad{"cron", func() { cron = collectCronSnapshot() }},
 		snapshotNamedLoad{"export_jobs", func() { exportJobsActive, _ = db.CountActiveExportJobs() }},
-		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot() }},
-		snapshotNamedLoad{"usage", func() { usage = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout()) }},
-		snapshotNamedLoad{"real_cost", func() { hasRealCost, costErr = db.HasAnyRealCost() }},
+		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot(groupNames) }},
+		snapshotNamedLoad{"usage", func() {
+			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
+		}},
 		snapshotNamedLoad{"templates", func() { templates = collectTemplatesSnapshot() }},
 		snapshotNamedLoad{"profiles", func() { profiles = collectProfilesSnapshot() }},
 		snapshotNamedLoad{"default_profile", func() { defaultProfile = globalDefaultProfile() }},
 		snapshotNamedLoad{"roles", func() { roles = collectRolesSnapshot() }},
 		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
 		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
-	)...)
+	)
+	for i := range collectorPhases {
+		if collectorPhases[i].Name == "usage" {
+			collectorPhases[i].Children = usagePhases
+			break
+		}
+	}
+	span.addChildren("collectors", collectorPhases...)
 	out.Pending = pending
 	out.Cron = cron
 	// Badge-only: the Jobs tab's row window comes from /api/jobs, not the
@@ -2410,7 +2423,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// degrades to "no real cost" (the opt-in still governs), matching how the
 	// cost figures themselves degrade to 0.
 	if costErr != nil {
-		slog.Debug("snapshot: HasAnyRealCost failed; treating as no real cost", "error", costErr)
+		slog.Debug("snapshot: cost visibility read failed; treating as no real cost", "error", costErr)
 	}
 	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
 	out.CostTabVisible = hasRealCost || showOnSub
@@ -2555,18 +2568,22 @@ func resolveRetiredByDisplay(retiredBy, retiredByAgent string) string {
 // top. aliveSessions is the snapshot-shaped alive set the caller
 // pre-fetched; this function never spawns its own tmux probe. Returns an
 // empty slice (not nil) so JS .map() / .length are safe.
-func collectPendingSnapshot(aliveSessions map[string]struct{}) []dashboardPending {
+func collectPendingSnapshot(aliveSessions map[string]struct{}, groupNames map[int64]string) []dashboardPending {
 	out := []dashboardPending{}
 	pendings, err := db.ListPendingSpawns()
 	if err != nil {
 		return out
 	}
-	names := loadGroupNames()
+	labels := make([]string, 0, len(pendings))
+	for _, pending := range pendings {
+		labels = append(labels, pending.Label)
+	}
+	sessions, _ := db.LoadSessionsByIDs(labels)
 	for _, p := range pendings {
 		dp := dashboardPending{
 			AgentID:   p.AgentID,
 			Label:     p.Label,
-			Group:     names[p.GroupID],
+			Group:     groupNames[p.GroupID],
 			Role:      p.Role,
 			Name:      p.Name,
 			Descr:     p.Descr,
@@ -2577,7 +2594,7 @@ func collectPendingSnapshot(aliveSessions map[string]struct{}) []dashboardPendin
 		// still alive and where the agent is gated. A pending row with no
 		// session row, or a dead pane, renders as offline — stale, no
 		// longer focusable.
-		if sess, err := db.LoadSession(p.Label); err == nil && sess != nil {
+		if sess := sessions[p.Label]; sess != nil {
 			if sess.TmuxSession != "" {
 				_, dp.Online = aliveSessions[sess.TmuxSession]
 			}
@@ -2592,18 +2609,17 @@ func collectPendingSnapshot(aliveSessions map[string]struct{}) []dashboardPendin
 	return out
 }
 
-// collectLinksSnapshot enumerates every inter-group link, resolved to
-// group names. One DB hit for the group list (via loadGroupNames),
-// one for the link list; per-row lookups are map indexed. Returns an
-// empty slice (not nil) so JS can safely call .map() / .length
+// collectLinksSnapshot enumerates every inter-group link, resolved through the
+// group-name map the snapshot already loaded during preload. The link list is
+// therefore this collector's only DB hit; per-row lookups are map indexed.
+// Returns an empty slice (not nil) so JS can safely call .map() / .length
 // without a guard.
-func collectLinksSnapshot() []dashboardLink {
+func collectLinksSnapshot(names map[int64]string) []dashboardLink {
 	out := []dashboardLink{}
 	rows, err := db.ListAllAgentGroupLinks()
 	if err != nil {
 		return out
 	}
-	names := loadGroupNames()
 	for _, l := range rows {
 		out = append(out, dashboardLink{
 			ID:        l.ID,

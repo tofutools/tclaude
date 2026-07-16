@@ -146,9 +146,8 @@ func liveCodexConvIDs() []string {
 // already reset. The real per-window expiry is each window's resets_at (see
 // codexUsageWindowFor); the Observed-age check here is only a backstop for a
 // window that arrived without a reset timestamp, so it can't linger forever.
-func collectCodexUsageSnapshot() *codexDashboardUsage {
-	row, err := db.LoadCodexUsageCache()
-	if err != nil || row == nil {
+func collectCodexUsageSnapshot(row *db.CodexUsageCacheRow) *codexDashboardUsage {
+	if row == nil {
 		return nil
 	}
 	var u harness.CodexUsage

@@ -40,6 +40,52 @@ func TestUsageCacheCRUD(t *testing.T) {
 	assert.Nil(t, row, "expected nil after delete")
 }
 
+func TestLoadDashboardUsageCaches(t *testing.T) {
+	setupTestDB(t)
+
+	usage, codex, err := LoadDashboardUsageCaches()
+	require.NoError(t, err)
+	assert.Nil(t, usage)
+	assert.Nil(t, codex)
+
+	fetchedAt := time.Date(2026, 7, 16, 10, 0, 0, 123_000_000, time.UTC)
+	lastAttemptAt := fetchedAt.Add(time.Minute)
+	require.NoError(t, SaveUsageCache(
+		json.RawMessage(`{"five_hour":{"pct":42}}`), fetchedAt, lastAttemptAt,
+	))
+
+	usage, codex, err = LoadDashboardUsageCaches()
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.JSONEq(t, `{"five_hour":{"pct":42}}`, string(usage.Data))
+	assert.Equal(t, fetchedAt, usage.FetchedAt)
+	assert.Equal(t, lastAttemptAt, usage.LastAttemptAt)
+	assert.Nil(t, codex, "the two cache rows remain independently optional")
+
+	observedAt := fetchedAt.Add(2 * time.Minute)
+	stored, err := SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"primary":{"used_percent":17}}`), observedAt, "rollout.jsonl",
+	)
+	require.NoError(t, err)
+	require.True(t, stored)
+
+	usage, codex, err = LoadDashboardUsageCaches()
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	require.NotNil(t, codex)
+	assert.JSONEq(t, `{"primary":{"used_percent":17}}`, string(codex.Data))
+	assert.Equal(t, observedAt, codex.ObservedAt)
+	assert.False(t, codex.UpdatedAt.IsZero())
+	assert.Equal(t, "rollout.jsonl", codex.Source)
+
+	require.NoError(t, DeleteUsageCache())
+	usage, codex, err = LoadDashboardUsageCaches()
+	require.NoError(t, err)
+	assert.Nil(t, usage, "Codex remains readable without a Claude cache row")
+	require.NotNil(t, codex)
+	assert.Equal(t, observedAt, codex.ObservedAt)
+}
+
 func TestTryClaimUsageFetch_FirstClaim(t *testing.T) {
 	setupTestDB(t)
 

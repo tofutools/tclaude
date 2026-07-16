@@ -88,6 +88,37 @@ func TestAgentsByConvMarksSupersededOrphanActor(t *testing.T) {
 	assert.False(t, rows["successor"].Superseded)
 }
 
+func TestLoadSessionsByIDs(t *testing.T) {
+	setupTestDB(t)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID:          "pending-alpha",
+		TmuxSession: "tmux-alpha",
+		Cwd:         "/tmp/alpha",
+		Status:      "starting",
+		Harness:     "codex",
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID:          "pending-beta",
+		TmuxSession: "tmux-beta",
+		Cwd:         "/tmp/beta",
+		Status:      "idle",
+		Harness:     "claude",
+	}))
+
+	rows, err := LoadSessionsByIDs([]string{"pending-beta", "missing", "pending-alpha"})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, "tmux-alpha", rows["pending-alpha"].TmuxSession)
+	assert.Equal(t, "/tmp/alpha", rows["pending-alpha"].Cwd)
+	assert.Equal(t, "codex", rows["pending-alpha"].Harness)
+	assert.Equal(t, "idle", rows["pending-beta"].Status)
+	assert.NotContains(t, rows, "missing")
+
+	empty, err := LoadSessionsByIDs(nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
+
 // TestCanonicalAgeTimestamp_PreservesPrecision pins the wire representation,
 // which is deliberately ordinary UTC RFC3339Nano. Age consumers compare parsed
 // instants rather than relying on the strings to have a sortable fixed width.

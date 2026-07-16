@@ -111,6 +111,19 @@ func TestDashboardPerf_RecordsPollTimings(t *testing.T) {
 	assert.Equal(t, 2, preload.Children[0].Count)
 	collectors := snap.Phases[6]
 	require.NotEmpty(t, collectors.Children, "collectors expose their nested operations")
+	var usage perfPhaseJSON
+	for _, child := range collectors.Children {
+		if child.Name == "usage" {
+			usage = child
+			break
+		}
+	}
+	require.Equal(t, "usage", usage.Name, "usage collector is present")
+	require.Len(t, usage.Children, 3, "usage exposes each consolidated read and assembly step")
+	assert.Equal(t, "cost_history", usage.Children[0].Name)
+	assert.Equal(t, "rate_limit_caches", usage.Children[1].Name)
+	assert.Equal(t, "assemble", usage.Children[2].Name)
+	assert.Equal(t, 2, usage.Children[0].Count)
 
 	retired := perfEndpointNamed(t, perf, "/api/retired")
 	assert.Equal(t, 1, retired.Count)

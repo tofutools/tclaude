@@ -215,6 +215,46 @@ func FindSessionsByConvIDs(convIDs []string) (map[string][]*SessionRow, error) {
 	return out, nil
 }
 
+// LoadSessionsByIDs bulk-loads session rows by their primary-key IDs. Pending
+// dashboard spawns use the spawn label as the session ID while their conv-id is
+// not known yet, so the conv-keyed loader above cannot serve them. Empty input
+// returns without opening SQLite; malformed rows are skipped independently,
+// matching FindSessionsByConvIDs' best-effort dashboard behavior.
+func LoadSessionsByIDs(sessionIDs []string) (map[string]*SessionRow, error) {
+	out := make(map[string]*SessionRow, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(sessionIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance
+			FROM sessions WHERE id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			s, err := scanSessionRow(rows)
+			if err != nil {
+				slog.Warn("db: skipping undecodable session row in id batch load",
+					"error", err, "module", "db")
+				continue
+			}
+			out[s.ID] = s
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // ListAgentWorkdirsByConv bulk-loads agent_workdir rows for the given conv-ids,
 // keyed by conv-id. A conv with no row has no entry (the caller then falls back
 // to the launch cwd, as with GetAgentWorkdir's zero value).
