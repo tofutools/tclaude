@@ -371,32 +371,34 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const urlRef = useRef(null);
+  const submitGuard = useRef(false);
   const agentLabel = descriptor.agentLabel || '';
   const dirty = url.trim() !== oldURL || taskLabel.trim() !== oldLabel;
 
   const submit = async () => {
-    if (busy) return;
-    const nextURL = url.trim();
-    const nextLabel = taskLabel.trim();
-    setError('');
-    // A label without a URL is ambiguous — the daemon derives the label from the
-    // URL, so there is nothing to attach it to.
-    if (!nextURL && nextLabel) {
-      setError('Enter a URL, or clear the display name too.');
-      urlRef.current?.focus();
-      return;
-    }
-    if (nextURL) {
-      let parsed;
-      try { parsed = new URL(nextURL); } catch (_) {}
-      if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-        setError('Task URL must be a complete http:// or https:// URL.');
+    if (submitGuard.current) return;
+    submitGuard.current = true;
+    try {
+      const nextURL = url.trim();
+      const nextLabel = taskLabel.trim();
+      setError('');
+      // A label without a URL is ambiguous — the daemon derives the label from the
+      // URL, so there is nothing to attach it to.
+      if (!nextURL && nextLabel) {
+        setError('Enter a URL, or clear the display name too.');
         urlRef.current?.focus();
         return;
       }
-    }
-    setBusy(true);
-    try {
+      if (nextURL) {
+        let parsed;
+        try { parsed = new URL(nextURL); } catch (_) {}
+        if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+          setError('Task URL must be a complete http:// or https:// URL.');
+          urlRef.current?.focus();
+          return;
+        }
+      }
+      setBusy(true);
       await actions.setTaskLink({
         conv: descriptor.conv,
         label: agentLabel,
@@ -405,7 +407,10 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
         changed: nextURL !== oldURL || nextLabel !== oldLabel,
       });
     } catch (cause) { setError(errorMessage(cause)); }
-    finally { setBusy(false); }
+    finally {
+      submitGuard.current = false;
+      setBusy(false);
+    }
   };
 
   // Enter saves only from inside the text fields, and never while an IME

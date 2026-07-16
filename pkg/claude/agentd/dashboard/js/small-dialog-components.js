@@ -36,8 +36,10 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
   const [name, setName] = useState(suggested);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const submitGuard = useRef(false);
   const submit = async () => {
-    if (busy) return;
+    if (submitGuard.current) return;
+    submitGuard.current = true;
     setError('');
     setBusy(true);
     try {
@@ -47,7 +49,10 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
         name,
       });
     } catch (cause) { setError(errorMessage(cause)); }
-    finally { setBusy(false); }
+    finally {
+      submitGuard.current = false;
+      setBusy(false);
+    }
   };
   return html`
     <${Overlay}
@@ -165,6 +170,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
   const [history, setHistory] = useState([]);
   const [historyVersion, setHistoryVersion] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const submitGuard = useRef(false);
   const instructionsEdited = useRef(false);
   const requestController = useRef(null);
   const textareaRef = useRef(null);
@@ -227,7 +233,8 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
     actions.close();
   };
   const submit = async () => {
-    if (submitting || phase !== 'form') return;
+    if (submitGuard.current || phase !== 'form') return;
+    submitGuard.current = true;
     setError('');
     setSubmitting(true);
     const controller = new AbortController();
@@ -245,6 +252,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
     } catch (cause) {
       if (cause?.name !== 'AbortError') setError(errorMessage(cause));
     } finally {
+      submitGuard.current = false;
       requestController.current = null;
       setSubmitting(false);
     }
