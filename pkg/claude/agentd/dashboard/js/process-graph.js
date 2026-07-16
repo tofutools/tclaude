@@ -677,6 +677,15 @@ export class ProcessGraph {
     this.svg.releasePointerCapture?.(event.pointerId);
     this.pointer = null;
     hook(this.options, 'onInteractionEnd')({ mode: pointer.mode, pointerId: event.pointerId, cancelled: false, event });
+    // Focusing the graph on pointerdown can synchronously commit an inspector
+    // field and replace the SVG child under the pointer. Chrome then omits the
+    // synthetic click even though pointer capture still delivers pointerup to
+    // this stable SVG. Complete captured node/edge clicks here, and suppress
+    // the redundant synthetic click when the original child survived.
+    if (this.pendingClickTarget?.nodeID || this.pendingClickTarget?.edgeID) {
+      this.onClick(event);
+      this.suppressClick = true;
+    }
     // The synthetic click follows pointerup in the same task. Clear on the next
     // task so a completed drag never also selects/activates the dragged node.
     setTimeout(() => {

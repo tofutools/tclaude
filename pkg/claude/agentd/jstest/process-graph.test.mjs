@@ -244,6 +244,34 @@ test('pointer target survives focus-triggered graph refresh', () => {
   }
 });
 
+test('captured item click completes on pointerup when refresh prevents a synthetic click', () => {
+  const selected = [];
+  const clicked = [];
+  const fake = {
+    pointer: {
+      id: 6, mode: 'node', nodeID: 'a', nodeIDs: ['a'],
+      startPoint: { x: 0, y: 0 },
+    },
+    layout: { nodes: [{ id: 'a' }], edges: [] },
+    dragMoved: false,
+    options: { onNodeClick: ({ node }) => clicked.push(node.id) },
+    svg: { releasePointerCapture() {} },
+    clientToGraph() { return { x: 0, y: 0 }; },
+    snapNodesHome() {},
+    restoreTransientEdges() {},
+    select(value) { selected.push(value); },
+    onClick: ProcessGraph.prototype.onClick,
+  };
+  ProcessGraph.prototype.onPointerUp.call(fake, {
+    pointerId: 6, clientX: 0, clientY: 0,
+  });
+  assert.deepEqual(selected, [{ type: 'node', id: 'a' }]);
+  assert.deepEqual(clicked, ['a']);
+  assert.equal(fake.suppressClick, true);
+  ProcessGraph.prototype.onClick.call(fake, { target: { closest: () => null } });
+  assert.deepEqual(clicked, ['a'], 'a surviving synthetic click is suppressed');
+});
+
 test('middle pointerdown pans even when it starts over a node', () => {
   const fake = {
     root: { focus() {} }, options: { marqueeSelect: true }, selected: null,

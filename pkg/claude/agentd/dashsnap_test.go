@@ -1142,7 +1142,6 @@ func baseStates() []dashsnap.State {
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "click", Selector: ".process-inspector-input"},
 				{Kind: "input", Selector: ".process-inspector-input", Text: "Renamed begin"},
-				{Kind: "key", Key: "Tab"},
 				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
   var selection=ed.snapshot().selection;
