@@ -25,7 +25,8 @@ async function mountDialogs(
     harness.importDashboardModule('js/action-dialog-island.js'),
   ]);
   const state = createActionDialogState();
-  state.dialog.value = { kind, ...descriptor };
+  if (kind === 'terminal-directory') state.openTerminalDirectory(descriptor);
+  else state.dialog.value = { kind, ...descriptor };
   const calls = [];
   const actions = {
     openClone: state.openClone,
@@ -207,20 +208,23 @@ test('action mutations preserve endpoint payloads, notifications, and refresh bo
   });
 
   state.openClone({ conv: 'source', label: 'worker' });
-  await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt' });
+  const cloneOwner = state.dialog.value;
+  await actions.cloneAgent({ conv: 'source', label: 'worker', followUp: 'one\ntwo', copyConversation: false, cwd: '/wt' }, cloneOwner);
   assert.equal(requests[0][0], '/api/agents/source/clone');
   assert.deepEqual(JSON.parse(requests[0][1].body), { follow_up: 'one two', no_copy_conv: true, cwd: '/wt' });
   assert.deepEqual(notices[0], ['cloned worker → 12345678 (warning: late status)', true]);
   assert.equal(state.dialog.value, null);
 
   state.openReincarnate({ conv: 'source', label: 'worker' });
-  await actions.reincarnateAgent({ conv: 'source', label: 'worker', mode: 'force', focusHint: '', followUp: 'resume now' });
+  const reincarnateOwner = state.dialog.value;
+  await actions.reincarnateAgent({ conv: 'source', label: 'worker', mode: 'force', focusHint: '', followUp: 'resume now' }, reincarnateOwner);
   assert.equal(requests[1][0], '/api/agents/source/reincarnate');
   assert.deepEqual(JSON.parse(requests[1][1].body), { mode: 'force', follow_up: 'resume now' });
   assert.deepEqual(notices[1], ['reincarnated worker → worker-r-2']);
 
   state.openNest({ group: 'child' });
-  await actions.nestGroup({ group: 'child', parent: '' });
+  const nestOwner = state.dialog.value;
+  await actions.nestGroup({ group: 'child', parent: '' }, nestOwner);
   assert.equal(requests[2][0], '/api/groups/child/parent');
   assert.deepEqual(JSON.parse(requests[2][1].body), { parent: '' });
   assert.deepEqual(refreshes, [null, null, null]);
@@ -298,7 +302,7 @@ test('terminal-directory state resolves every result and cancellation path', asy
 
   const worktree = state.openTerminalDirectory({ label: 'worker' });
   assert.equal(state.dialog.value.kind, 'terminal-directory');
-  state.finishChoice('worktree');
+  state.finishChoice(state.dialog.value, 'worktree');
   assert.equal(await worktree, 'worktree');
 
   const canceled = state.openTerminalDirectory({ label: 'worker' });
@@ -308,6 +312,122 @@ test('terminal-directory state resolves every result and cancellation path', asy
   const unmounted = state.openTerminalDirectory({ label: 'worker' });
   state.dispose();
   assert.equal(await unmounted, null);
+});
+
+test('every action-dialog family refuses same-turn cross-family collisions and permits sequential reuse', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createActionDialogState } = await harness.importDashboardModule('js/action-dialog-state.js');
+  const create = async () => {};
+  const families = [
+    ['clone', (state) => state.openClone({ conv: 'clone', label: 'clone' })],
+    ['reincarnate', (state) => state.openReincarnate({ conv: 'reincarnate', label: 'reincarnate' })],
+    ['nest', (state) => state.openNest({ group: 'nested' })],
+    ['task-link', (state) => state.openTaskLink({ conv: 'task', agentLabel: 'task' })],
+    ['preset', (state) => state.openPresetClone({ kind: 'profile', kindWizard: 'pattern', source: { name: 'source' }, create })],
+    ['export', (state) => state.openExport({ conv: 'export', label: 'export' })],
+    ['terminal-directory', (state) => state.openTerminalDirectory({ label: 'terminal' })],
+  ];
+
+  for (let index = 0; index < families.length; index += 1) {
+    const [name, launch] = families[index];
+    const [collisionName, collide] = families[(index + 1) % families.length];
+    const state = createActionDialogState();
+    const firstResult = launch(state);
+    const firstOwner = state.dialog.value;
+    assert.ok(firstOwner, `${name} becomes the owner`);
+
+    const collisionResult = collide(state);
+    assert.equal(state.dialog.value, firstOwner, `${collisionName} cannot replace ${name}`);
+    if (collisionResult instanceof Promise) {
+      assert.equal(await collisionResult, null, `${collisionName} reports a refused prompt collision`);
+    } else {
+      assert.equal(collisionResult, false, `${collisionName} reports a refused collision`);
+    }
+
+    assert.equal(state.close(firstOwner), true);
+    if (firstResult instanceof Promise) assert.equal(await firstResult, null);
+    const sequentialResult = collide(state);
+    const sequentialOwner = state.dialog.value;
+    assert.ok(sequentialOwner, `${collisionName} opens after ${name} closes`);
+    assert.notEqual(sequentialOwner.launchID, firstOwner.launchID);
+    state.close(sequentialOwner);
+    if (sequentialResult instanceof Promise) assert.equal(await sequentialResult, null);
+  }
+});
+
+test('a dirty draft retains ownership when another family launches in the same turn', async (t) => {
+  const mounted = await mountDialogs(t, 'clone-agent', {
+    conv: 'first-agent', label: 'first', cwd: '/repo', launchID: 41,
+  });
+  const { harness, host, state } = mounted;
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await harness.input(host.querySelector('#clone-agent-followup'), 'unsaved handoff');
+  const owner = state.dialog.value;
+
+  assert.equal(state.openTaskLink({ conv: 'second-agent', agentLabel: 'second' }), false);
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.dialog.value, owner);
+  assert.equal(host.querySelector('#clone-agent-followup').value, 'unsaved handoff');
+  assert.equal(host.querySelector('#task-link-modal'), null);
+  await mounted.cleanup();
+});
+
+test('stale owners cannot close or settle a later caller', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createActionDialogState } = await harness.importDashboardModule('js/action-dialog-state.js');
+  const state = createActionDialogState();
+
+  state.openClone({ conv: 'first' });
+  const firstOwner = state.dialog.value;
+  state.close(firstOwner);
+  state.openClone({ conv: 'second' });
+  const secondOwner = state.dialog.value;
+  assert.equal(state.close(firstOwner), false);
+  assert.equal(state.dialog.value, secondOwner);
+  state.close(secondOwner);
+
+  const firstPrompt = state.openTerminalDirectory({ label: 'first' });
+  const firstPromptOwner = state.dialog.value;
+  assert.equal(state.close(firstPromptOwner), true);
+  assert.equal(await firstPrompt, null);
+  const secondPrompt = state.openTerminalDirectory({ label: 'second' });
+  const secondPromptOwner = state.dialog.value;
+  assert.equal(state.finishChoice(firstPromptOwner, 'worktree'), false);
+  assert.equal(state.dialog.value, secondPromptOwner);
+  assert.equal(state.finishChoice(secondPromptOwner, 'current'), true);
+  assert.equal(state.finishChoice(secondPromptOwner, 'start'), false);
+  assert.equal(await secondPrompt, 'current');
+});
+
+test('a late action completion cannot close the next dialog owner', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  let completeRequest;
+  const state = createActionDialogState();
+  const actions = createActionDialogActions({
+    state,
+    fetchImpl: () => new Promise((resolve) => { completeRequest = resolve; }),
+    refresh: async () => {},
+    notify: () => {},
+  });
+  state.openClone({ conv: 'first', label: 'first' });
+  const firstOwner = state.dialog.value;
+  const pending = actions.cloneAgent({
+    conv: 'first', label: 'first', followUp: '',
+    copyConversation: true, cwd: '',
+  }, firstOwner);
+  state.close(firstOwner);
+  state.openTaskLink({ conv: 'second', agentLabel: 'second' });
+  const secondOwner = state.dialog.value;
+  completeRequest(new Response('{}', {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  }));
+  await pending;
+  assert.equal(state.dialog.value, secondOwner);
+  state.close(secondOwner);
 });
 
 test('terminal-directory component publishes choice and cancel without DOM listeners', async (t) => {

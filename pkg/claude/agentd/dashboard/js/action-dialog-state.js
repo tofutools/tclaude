@@ -1,65 +1,83 @@
 import { computed, signal } from '@preact/signals';
 
+function snapshotDescriptor(value) {
+  if (Array.isArray(value)) return Object.freeze(value.map(snapshotDescriptor));
+  if (!value || typeof value !== 'object') return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  return Object.freeze(Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, snapshotDescriptor(item)]),
+  ));
+}
+
 export function createActionDialogState() {
   const dialog = signal(null);
   const view = computed(() => ({ dialog: dialog.value }));
-  let choiceResolve = null;
+  let nextLaunchID = 0;
+  let choice = null;
+
+  function open(descriptor) {
+    // The live descriptor is the sole owner across every action-dialog family.
+    // Refusing collisions preserves component-local drafts and keeps promise-
+    // backed prompts attached to the caller which opened them.
+    if (dialog.value || choice) return null;
+    const owner = snapshotDescriptor({ ...descriptor, launchID: ++nextLaunchID });
+    dialog.value = owner;
+    return owner;
+  }
 
   function openChoice(descriptor) {
-    // Choice dialogs are promise-backed compatibility seams. Refuse a second
-    // open instead of retargeting the live prompt and orphaning its caller.
-    if (dialog.value || choiceResolve) return Promise.resolve(null);
-    dialog.value = descriptor;
-    return new Promise((resolve) => { choiceResolve = resolve; });
+    const owner = open(descriptor);
+    if (!owner) return Promise.resolve(null);
+    return new Promise((resolve) => { choice = { owner, resolve }; });
   }
 
-  function finishChoice(result) {
-    const resolve = choiceResolve;
-    choiceResolve = null;
+  function finishChoice(owner, result) {
+    if (!choice || choice.owner !== owner || dialog.value !== owner) return false;
+    const { resolve } = choice;
+    choice = null;
     dialog.value = null;
-    resolve?.(result);
+    resolve(result);
+    return true;
   }
 
-  function close() {
-    if (choiceResolve) finishChoice(null);
-    else dialog.value = null;
+  function close(owner) {
+    // Calls without an owner are reserved for lifecycle cleanup and explicit
+    // controller-level cancellation. Consumers pass their captured descriptor,
+    // making a late async completion harmless after sequential reuse.
+    const expected = arguments.length ? owner : dialog.value;
+    if (!expected || dialog.value !== expected) return false;
+    if (choice?.owner === expected) return finishChoice(expected, null);
+    dialog.value = null;
+    return true;
   }
 
   return Object.freeze({
     dialog,
     view,
     openClone({ conv, label = '', cwd = '' }) {
-      dialog.value = { kind: 'clone-agent', conv, label, cwd: cwd || '' };
+      return !!open({ kind: 'clone-agent', conv, label, cwd: cwd || '' });
     },
     openReincarnate({ conv, label = '' }) {
-      dialog.value = { kind: 'reincarnate-agent', conv, label };
+      return !!open({ kind: 'reincarnate-agent', conv, label });
     },
     openNest({ group }) {
-      dialog.value = { kind: 'nest-group', group };
+      return !!open({ kind: 'nest-group', group });
     },
     openTaskLink({ conv, agentLabel = '', url = '', taskLabel = '' }) {
-      // Single-instance guard: while a task-link dialog is live, a repeated or
-      // programmatic open must not replace the in-progress draft or retarget
-      // Save at a different agent. Refusing the second open preserves the legacy
-      // controller's invariant — the existing dialog keeps its focus containment.
-      if (dialog.value?.kind === 'task-link') return;
-      dialog.value = { kind: 'task-link', conv, agentLabel, url, taskLabel };
+      return !!open({ kind: 'task-link', conv, agentLabel, url, taskLabel });
     },
     openPresetClone({ kind, kindWizard, source, create }) {
-      if (dialog.value) return false;
-      dialog.value = { kind: 'preset-clone', presetKind: kind, kindWizard, source, create };
-      return true;
+      return !!open({ kind: 'preset-clone', presetKind: kind, kindWizard, source, create });
     },
     openExport({ conv, label = '' }) {
-      if (dialog.value) return false;
-      dialog.value = { kind: 'agent-export', conv, label };
-      return true;
+      return !!open({ kind: 'agent-export', conv, label });
     },
     openTerminalDirectory({ label = '' }) {
       return openChoice({ kind: 'terminal-directory', label });
     },
     finishChoice,
     close,
-    dispose: close,
+    dispose() { close(); },
   });
 }

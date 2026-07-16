@@ -47,7 +47,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
         source: descriptor.source,
         create: descriptor.create,
         name,
-      });
+      }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally {
       submitGuard.current = false;
@@ -58,7 +58,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
     <${Overlay}
       id="clone-modal"
       labelledby="clone-modal-title"
-      onClose=${actions.close}
+      onClose=${() => actions.close(descriptor)}
       dirty=${name !== suggested}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
@@ -230,7 +230,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
   const close = () => {
     requestController.current?.abort();
     if (phase === 'working') actions.exportStillRunning();
-    actions.close();
+    actions.close(descriptor);
   };
   const submit = async () => {
     if (submitGuard.current || phase !== 'form') return;
@@ -336,7 +336,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 export function TerminalDirectoryDialog({ descriptor, actions, confirmDiscard }) {
-  const choose = (value) => actions.finishChoice(value);
+  const choose = (value) => actions.finishChoice(descriptor, value);
   return html`
     <${Overlay}
       id="term-modal"
