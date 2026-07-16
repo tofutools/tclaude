@@ -17,11 +17,18 @@ func migrateV132toV133(db *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_session_cost_daily_walk
-		ON session_cost_daily(
-			COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
-		)`); err != nil {
-		return fmt.Errorf("migrate v132→v133 (create cost walk index): %w", err)
+	var haveCostTable int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'table' AND name = 'session_cost_daily'`).Scan(&haveCostTable); err != nil {
+		return fmt.Errorf("migrate v132→v133 (probe cost history): %w", err)
+	}
+	if haveCostTable > 0 {
+		if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_session_cost_daily_walk
+			ON session_cost_daily(
+				COALESCE(NULLIF(conv_id, ''), session_id), day, updated_at, session_id
+			)`); err != nil {
+			return fmt.Errorf("migrate v132→v133 (create cost walk index): %w", err)
+		}
 	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 133`); err != nil {
 		return fmt.Errorf("migrate v132→v133 (version): %w", err)

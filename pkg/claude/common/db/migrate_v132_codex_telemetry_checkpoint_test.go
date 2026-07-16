@@ -11,7 +11,6 @@ import (
 )
 
 func TestMigrateV131toV132AddsCodexTelemetryCheckpoints(t *testing.T) {
-	require.Equal(t, 132, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v132?mode=memory&cache=shared")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

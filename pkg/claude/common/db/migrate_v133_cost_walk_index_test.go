@@ -61,3 +61,14 @@ func TestFreshSchemaHasCostWalkIndex(t *testing.T) {
 		WHERE type = 'index' AND name = 'idx_session_cost_daily_walk'`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
+
+func TestMigrateV132toV133ToleratesMissingCostHistoryTable(t *testing.T) {
+	d, err := sql.Open("sqlite", "file:migrate-v133-no-cost-table?mode=memory&cache=shared")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (132)`)
+
+	require.NoError(t, migrateV132toV133(d))
+	assert.Equal(t, 133, schemaVersion(d))
+}
