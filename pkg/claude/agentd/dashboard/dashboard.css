@@ -12469,3 +12469,13 @@ body.wizard .process-node-select:focus { border-color: #d4af37; }
 body.wizard .process-node-close:hover { border-color: #d4af37; }
 body.wizard .process-performer-editor { border-left-color: #4a3d6b; }
 body.wizard .process-node-readonly-badge { color: #d4af37; border-color: #d4af37; }
+.spawn-harness-matrix-wrap { overflow: auto; max-height: min(62vh, 620px); }
+.spawn-harness-matrix { min-width: 620px; table-layout: fixed; }
+.spawn-harness-matrix th { text-align: left; vertical-align: top; }
+.spawn-harness-matrix td { min-width: 220px; vertical-align: top; }
+.spawn-harness-cell select, .spawn-harness-cell textarea { width: 100%; box-sizing: border-box; }
+.spawn-harness-cell textarea { margin-top: .45rem; resize: vertical; }
+.spawn-harness-cell.deny { background: color-mix(in srgb, var(--danger, #c33) 8%, transparent); }
+.spawn-harness-same { color: var(--muted); font-size: .9em; }
+.spawn-harness-cell small { display: block; margin-top: .4rem; white-space: normal; }
+.danger-text { color: var(--danger, #c33); }

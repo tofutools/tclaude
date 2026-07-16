@@ -637,6 +637,7 @@ func looksLikeConvID(s string) bool {
 // one segment of the *escaped* path, so the embedded slash survives.
 func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups", handleDashboardGroupsCreate)
+	mux.HandleFunc("/api/spawn-harness-policy", handleDashboardGlobalSpawnHarnessPolicy)
 
 	// Import is NOT group-scoped (it creates a group), so it carries no
 	// {name} wildcard. The literal `import` segment is more specific than
@@ -675,6 +676,7 @@ func registerDashboardGroupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/groups/{name}/retire", groupRoute(dashboardGroupRetire))
 	mux.HandleFunc("GET /api/groups/{name}/worktrees", groupRoute(dashboardGroupWorktrees))
 	mux.HandleFunc("POST /api/groups/{name}/spawn", groupRoute(dashboardSpawnInGroup))
+	mux.HandleFunc("/api/groups/{name}/spawn-harness-policy", groupRoute(handleDashboardGroupSpawnHarnessPolicy))
 	mux.HandleFunc("POST /api/groups/{name}/members", groupRoute(dashboardAddMember))
 	mux.HandleFunc("DELETE /api/groups/{name}/members/{conv}", groupRoute(func(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		dashboardRemoveMember(w, g, r.PathValue("conv"))

@@ -955,6 +955,9 @@ func DeleteAgentGroup(name string) error {
 		`DELETE FROM agent_cron_jobs WHERE target_kind = 'group' AND group_id = ?`, gID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM spawn_harness_rules WHERE group_id = ?`, gID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM agent_groups WHERE id = ?`, gID); err != nil {
 		return err
 	}

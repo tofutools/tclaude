@@ -166,6 +166,7 @@
           <button role="menuitem" id="templates-manage-open" title="Manage group templates — reusable team blueprints (create, edit, delete, snapshot from a group, instantiate)"><span class="tpl-word-regular">⧉ templates…</span><span class="tpl-word-wizard">⧉ circles…</span></button>
           <button role="menuitem" id="roles-manage-open" title="Manage the role library — named, reusable agent-role defaults (a canonical brief, a default launch shape and a default permission set) that a template roster agent references and inherits from"><span class="roles-word-regular">⧉ roles…</span><span class="roles-word-wizard">⧉ classes…</span></button>
           <button role="menuitem" id="sandbox-profiles-manage-open" title="Manage sandbox profiles — filesystem and environment policy applied at agent launch"><span class="sandbox-word-regular">🛡 sandbox profiles…</span><span class="sandbox-word-wizard">🛡 wards…</span></button>
+          <button role="menuitem" id="spawn-harness-policy-open" title="Control which agent harnesses may spawn agents on other harnesses, with denial reasons returned to the spawning agent">⇄ cross-harness spawns…</button>
           <button role="menuitem" id="links-manage-open" data-act="links-manage" title="Manage inter-group communication links — the full cross-group listing (add, edit, delete)">🔗 links…</button>
         </div>
       </div>
@@ -505,6 +506,8 @@
 <div id="plugins-modal-root"></div>
 <!-- Preact exclusively owns the Links manager, live list and stacked editor. -->
 <div id="links-feature-root"></div>
+<!-- Global and per-group cross-harness spawn matrix editor. -->
+<div id="spawn-harness-policy-root"></div>
 <div id="agent-spawn-root">
 </div>
 <div class="dnd-mod-pill" id="dnd-pill"></div>

@@ -223,7 +223,7 @@ func handleScribeSummon(w http.ResponseWriter, r *http.Request) {
 
 	correlationID := newApprovalID()
 	granter := scribeSummonGranter(r, spawnerConvID, permissionGrantSudoID, correlationID)
-	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey, taskURL, taskLabel, granter)
+	out, reused, fail := summonScribe(name, overrides, brief, body.Exclusive, scopeKey, taskURL, taskLabel, granter, spawnerConvID)
 	if fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
@@ -303,7 +303,7 @@ var scribeSummonMu sync.Mutex
 // summonScribe is the reusable core: ensure the scribe-kind group, reuse one
 // exact compatible structured scope when requested, or spawn a fresh uniquely
 // named agent in the shared pre-trusted workdir with birth-time grants.
-func summonScribe(name string, overrides map[string]string, brief string, exclusive bool, scopeKey, taskURL, taskLabel, granter string) (*scribeOutcome, bool, *spawnFailure) {
+func summonScribe(name string, overrides map[string]string, brief string, exclusive bool, scopeKey, taskURL, taskLabel, granter, spawnerConvID string) (*scribeOutcome, bool, *spawnFailure) {
 	scribeSummonMu.Lock()
 	defer scribeSummonMu.Unlock()
 
@@ -359,6 +359,7 @@ func summonScribe(name string, overrides map[string]string, brief string, exclus
 		AutoFocus:           !exclusive,
 		PermissionOverrides: overrides,
 		PermissionGranter:   granter,
+		SpawnedByConv:       spawnerConvID,
 	}
 	outcome, spawnFail := executeSpawn(g, p)
 	if spawnFail != nil {

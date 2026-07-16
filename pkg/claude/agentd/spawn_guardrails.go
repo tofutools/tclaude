@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // Spawn guardrails — runaway-prevention for the case where the human
@@ -203,4 +205,60 @@ func checkSpawnGroupRestriction(w http.ResponseWriter, g *db.AgentGroup, spawner
 			"agent.spawn_group_restriction, in ~/.tclaude/config.json.",
 			short8(spawnerConvID), g.Name))
 	return false
+}
+
+// spawnHarnessPolicyFailure enforces the operator's directed cross-harness
+// spawn matrix after all profile/default tiers have resolved the target
+// harness. Human-initiated spawns have no spawner conv-id and bypass it; the
+// matrix exists specifically to constrain agents that otherwise hold
+// groups.spawn. Same-harness delegation is never restricted by this feature.
+func spawnHarnessPolicyFailure(g *db.AgentGroup, spawnerConvID, targetHarness string) *spawnFailure {
+	if spawnerConvID == "" {
+		return nil
+	}
+	sourceHarness := harnessForConv(spawnerConvID).Name
+	targetHarness = strings.TrimSpace(targetHarness)
+	if targetHarness == "" {
+		targetHarness = harness.DefaultName
+	}
+	if sourceHarness == targetHarness {
+		return nil
+	}
+	var groupID int64
+	if g != nil {
+		groupID = g.ID
+	}
+	rule, scope, _, err := db.ResolveSpawnHarnessRule(groupID, sourceHarness, targetHarness)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "spawn harness policy: " + err.Error()}
+	}
+	if rule.Decision != db.SpawnHarnessDeny {
+		return nil
+	}
+	policy := "global"
+	if scope == "group" && g != nil {
+		policy = fmt.Sprintf("group %q", g.Name)
+	}
+	return &spawnFailure{
+		http.StatusForbidden,
+		"cross_harness_spawn_denied",
+		fmt.Sprintf("cross-harness spawn denied by %s policy: %s → %s. Reason: %s",
+			policy, sourceHarness, targetHarness, rule.Reason),
+	}
+}
+
+// spawnHarnessPolicyFailureForGroups applies the effective edge for every
+// destination group a clone will join. All must allow: otherwise cloning a
+// multi-group agent could bypass one group's deny merely because another group
+// explicitly allowed the same edge. An empty slice is the global scope.
+func spawnHarnessPolicyFailureForGroups(groups []*db.AgentGroup, spawnerConvID, targetHarness string) *spawnFailure {
+	if len(groups) == 0 {
+		return spawnHarnessPolicyFailure(nil, spawnerConvID, targetHarness)
+	}
+	for _, g := range groups {
+		if fail := spawnHarnessPolicyFailure(g, spawnerConvID, targetHarness); fail != nil {
+			return fail
+		}
+	}
+	return nil
 }

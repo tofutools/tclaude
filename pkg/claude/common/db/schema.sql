@@ -791,3 +791,17 @@ CREATE TABLE operator_agent_messages (
 			message_id INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE
 		);
 
+CREATE TABLE spawn_harness_rules (
+			group_id       INTEGER NOT NULL DEFAULT 0,
+			source_harness TEXT NOT NULL,
+			target_harness TEXT NOT NULL,
+			decision       TEXT NOT NULL CHECK (decision IN ('allow', 'deny')),
+			reason         TEXT NOT NULL DEFAULT '',
+			updated_at     TEXT NOT NULL,
+			PRIMARY KEY (group_id, source_harness, target_harness),
+			CHECK (source_harness <> target_harness)
+		);
+
+CREATE INDEX idx_spawn_harness_rules_group
+			ON spawn_harness_rules(group_id);
+

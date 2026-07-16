@@ -1894,6 +1894,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
 		return
 	}
+	// Cross-harness spawn policy is evaluated only after the complete profile
+	// stack has resolved the target vendor. That closes the indirect path where
+	// an agent omits --harness but a group/global default profile flips it.
+	if fail := spawnHarnessPolicyFailure(g, spawnerConvID, h.Name); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	validateModel := func(raw string) (string, error) {
 		value, err := h.Models.ValidateModel(raw)
 		if err == nil {
@@ -3005,6 +3012,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// executeSpawn with a profile-carrying group, keeping a Codex spawn
 	// sandboxed. A value invalid for the harness is a typed failure.
 	if fail := applyDefaultProfile(g, &p); fail != nil {
+		return nil, fail
+	}
+	// Defense in depth for template, wave, scribe, and process adapters that
+	// call executeSpawn directly instead of passing through handleGroupSpawn.
+	if fail := spawnHarnessPolicyFailure(g, p.SpawnedByConv, p.Harness); fail != nil {
 		return nil, fail
 	}
 	// Keep non-HTTP launch paths consistent with handleGroupSpawn. In

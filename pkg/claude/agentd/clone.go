@@ -636,6 +636,49 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			oldMembers = append(oldMembers, m)
 		}
 	}
+	oldOwnedIDs, err := db.ListGroupsOwnedBy(target)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io",
+			"snapshot ownerships: "+err.Error())
+		return
+	}
+	// The clone inherits both memberships and ownerships. Build the union of
+	// those destination groups so an owner-only relationship cannot evade a
+	// group-local deny. Keep oldGroups unchanged because membership copy and
+	// handoff routing intentionally use membership rows only.
+	policyGroups := append([]*db.AgentGroup(nil), oldGroups...)
+	seenPolicyGroup := make(map[int64]struct{}, len(policyGroups)+len(oldOwnedIDs))
+	for _, g := range policyGroups {
+		seenPolicyGroup[g.ID] = struct{}{}
+	}
+	for _, groupID := range oldOwnedIDs {
+		if _, seen := seenPolicyGroup[groupID]; seen {
+			continue
+		}
+		g, err := db.GetAgentGroupByID(groupID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io",
+				"snapshot owned group: "+err.Error())
+			return
+		}
+		if g != nil {
+			policyGroups = append(policyGroups, g)
+			seenPolicyGroup[groupID] = struct{}{}
+		}
+	}
+	// A clone is a fresh agent process even though it inherits the target's
+	// conversation and identity settings. For an agent caller, require every
+	// destination membership's effective group/global cross-harness edge to
+	// allow caller-harness → target-harness. An ungrouped clone uses global
+	// policy. Human dashboard/CLI clone callers retain their normal bypass.
+	policyCaller := caller
+	if isHumanCloneCaller(caller) {
+		policyCaller = ""
+	}
+	if fail := spawnHarnessPolicyFailureForGroups(policyGroups, policyCaller, srcHarness); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 
 	// Rate limit: refuse a second clone of the same source within
 	// CloneCooldown — but only for agent-initiated clones. The gate
@@ -670,13 +713,6 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io",
 			"snapshot perms: "+err.Error())
-		return
-	}
-
-	oldOwnedIDs, err := db.ListGroupsOwnedBy(target)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io",
-			"snapshot ownerships: "+err.Error())
 		return
 	}
 

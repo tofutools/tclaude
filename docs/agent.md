@@ -577,7 +577,7 @@ always uses the post-connect inbox pointer.
 human can grant it to a coordinator agent so it can grow its own team.
 To keep a spawn-capable agent from running away (a recursive spawn
 explosion) or minting a less-confined child, an **agent** caller is
-bound by five checks — a human
+bound by six checks — a human
 bypasses the agent-only ones, exactly as humans bypass every other
 permission gate:
 
@@ -585,6 +585,7 @@ permission gate:
 |-----------|---------|---------|
 | **Group restriction** — an agent may only spawn into a group it is a member or owner of | on | `403 group_restricted` |
 | **Rate limit** — spawns per caller-agent per rolling hour | 10 | `429 rate_limited` |
+| **Cross-harness matrix** — the fully resolved child harness must be allowed for the caller's harness | allow | `403 cross_harness_spawn_denied` |
 | **Sandbox lineage** — the child may not have a weaker launch sandbox than the spawning agent | on | `403 sandbox_restricted` |
 | **Dir write-proof** — the caller must prove its own sandbox can write in the child's launch dirs | on | `403 write_proof_required` / `403 write_proof_failed` |
 | **Max group size** — `agent_groups.max_members`; binds the human too | unlimited (0) | `409 group_full` |
@@ -593,6 +594,19 @@ The first two are tuned in `~/.tclaude/data/config.json` under `agent`
 (`spawn_group_restriction`, `spawn_allowed_groups`, `spawn_max_per_hour`);
 the member cap is a per-group property — `groups set-max-members`, or the
 👥 chip on the dashboard's Groups tab. See [Permission model](#permission-model).
+
+The cross-harness matrix is edited from the Groups tab's global ⚙ menu
+(**cross-harness spawns…**) and from each group's own ⚙ menu. It is directed:
+Claude → Codex and Codex → Claude are independent edges. A group edge may
+inherit, explicitly allow, or explicitly deny the global edge; absent global
+edges allow. Denials require a reason, which is returned verbatim to the agent
+along with the source/target harness and whether the group or global rule
+applied. Same-harness and human-initiated spawns are unaffected. The check runs
+after named, group-default, and global-default profiles resolve the target, and
+is repeated in the shared spawn core for template/wave/process launch paths.
+Agent-triggered scribe summons and clones are covered too; a clone that will
+inherit multiple group memberships or ownerships must be allowed by every
+destination group's effective edge.
 
 The sandbox lineage guard compares the spawning agent's recorded harness /
 sandbox mode with the fully resolved child launch shape, after any group
