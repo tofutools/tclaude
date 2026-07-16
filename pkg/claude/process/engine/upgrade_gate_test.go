@@ -371,8 +371,9 @@ func TestEnabledHostMigratesAndCompletesExclusiveSchema7Run(t *testing.T) {
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-host", Start: "work",
 		Nodes: map[string]model.Node{
-			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
-			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
 		},
 	}
 	record, err := fs.PutTemplate(t.Context(), tmpl)
@@ -382,6 +383,7 @@ func TestEnabledHostMigratesAndCompletesExclusiveSchema7Run(t *testing.T) {
 	checkpoint := state.New("run-v7-host", record.Ref, record.Ref, []state.NodeInit{
 		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
 		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
 	})
 	checkpoint.Status = state.RunStatusRunning
 	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v7-host", TemplateRef: record.Ref}, checkpoint); err != nil {
@@ -413,8 +415,9 @@ func TestEnabledHostDrainsActiveLegacyCommandBeforeMigration(t *testing.T) {
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-drain", Start: "work",
 		Nodes: map[string]model.Node{
-			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
-			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
 		},
 	}
 	record, err := fs.PutTemplate(t.Context(), tmpl)
@@ -424,6 +427,7 @@ func TestEnabledHostDrainsActiveLegacyCommandBeforeMigration(t *testing.T) {
 	checkpoint := state.New("run-v6-drain", record.Ref, record.Ref, []state.NodeInit{
 		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
 		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
 	})
 	checkpoint.Status = state.RunStatusRunning
 	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v6-drain", TemplateRef: record.Ref}, checkpoint); err != nil {
@@ -457,8 +461,9 @@ func TestEnabledHostRecoversAfterCommittedAmbiguousInitialization(t *testing.T) 
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-ambiguous", Start: "work",
 		Nodes: map[string]model.Node{
-			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
-			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
 		},
 	}
 	record, err := fs.PutTemplate(t.Context(), tmpl)
@@ -468,6 +473,7 @@ func TestEnabledHostRecoversAfterCommittedAmbiguousInitialization(t *testing.T) 
 	checkpoint := state.New("run-v7-ambiguous", record.Ref, record.Ref, []state.NodeInit{
 		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
 		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
 	})
 	checkpoint.Status = state.RunStatusRunning
 	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v7-ambiguous", TemplateRef: record.Ref}, checkpoint); err != nil {

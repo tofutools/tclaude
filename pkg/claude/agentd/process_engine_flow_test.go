@@ -2355,8 +2355,9 @@ func programTemplate(id string, performer model.Performer) *model.Template {
 		ID:         id,
 		Start:      "work",
 		Nodes: map[string]model.Node{
-			"work": {Type: model.NodeTypeTask, Performer: &performer, Next: model.Next{"pass": "end"}},
-			"end":  {Type: model.NodeTypeEnd},
+			"work":   {Type: model.NodeTypeTask, Performer: &performer, Next: model.Next{"pass": "end", "fail": "failed"}},
+			"end":    {Type: model.NodeTypeEnd},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
 		},
 	}
 }
