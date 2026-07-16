@@ -274,10 +274,12 @@ sequences cannot interleave.
 Startup greetings and briefings are the intentional exception: the harness
 launch prompt owns their first delivery.
 
-Short printable messages are included directly in that nudge and their
-archival inbox copy is atomically marked delivered/read. Newlines and tabs are
-preserved through a bounded bracketed paste; other control-bearing bodies use
-the stable `inbox read <id>` pointer. Configure the rune threshold with
+Short printable messages are included directly in a nudge marked
+`delivery: inline`, and their archival inbox copy is atomically marked
+delivered/read. The complete body follows the nudge's closing bracket, so no
+`inbox read` call is needed. Newlines and tabs are preserved through a bounded
+bracketed paste; other control-bearing bodies use the stable `inbox read <id>`
+pointer. Configure the rune threshold with
 `agent.message_inline_max_chars` (default 2000; `0` disables regular-message
 inlining). Agent-authored inline mail names the sender and includes the normal
 reply command; senderless system mail uses the same envelope without inventing

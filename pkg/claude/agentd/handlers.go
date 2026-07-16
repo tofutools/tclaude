@@ -1233,6 +1233,7 @@ func messageInlineText(m *db.AgentMessage) (string, bool) {
 	case sender != "":
 		fmt.Fprintf(&b, " from %s", sender)
 	}
+	b.WriteString("; delivery: inline")
 	if m.Subject != "" {
 		fmt.Fprintf(&b, "; subject: %s", m.Subject)
 	}

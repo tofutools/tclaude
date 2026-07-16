@@ -150,6 +150,7 @@ func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
 		return true
 	}))
 	assert.Contains(t, nudge, "from the human operator")
+	assert.Contains(t, nudge, "; delivery: inline")
 	assert.Contains(t, nudge, "Please inspect the failing test.")
 	assert.NotContains(t, nudge, "regular chat/output")
 	assert.NotContains(t, nudge, "human.notify")
@@ -175,6 +176,7 @@ func TestFlush_InlineAgentMessagePreservesSenderReplyAndConsumes(t *testing.T) {
 		return true
 	}))
 	assert.Contains(t, nudge, "new agent message")
+	assert.Contains(t, nudge, "; delivery: inline")
 	assert.Contains(t, nudge, "from peer-aaa")
 	assert.Contains(t, nudge, "; subject: review")
 	assert.Contains(t, nudge, fmt.Sprintf("reply with: tclaude agent reply %d", id))
