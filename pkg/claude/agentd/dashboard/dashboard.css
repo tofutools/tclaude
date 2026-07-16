@@ -5292,6 +5292,7 @@ body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
 .process-viewer-graph-panel, .process-viewer-details {
   min-width: 0; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d;
 }
+.process-viewer-graph-panel { display: block; }
 .process-viewer-graph { min-height: 470px; height: 100%; }
 .process-viewer-graph .process-graph { min-height: 470px; border: 0; border-radius: 0; }
 .process-viewer-graph .process-port-layer { display: none; }
@@ -5321,7 +5322,7 @@ body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
 .process-viewer-table th { position: sticky; top: 0; z-index: 1; color: #8b949e; background: #161b22; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
 .process-viewer-id { color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: help; }
 .process-viewer-empty { padding: 18px !important; color: #8b949e; text-align: center !important; }
-.process-viewer-timeline { margin: 0 16px 16px; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d; }
+.process-viewer-timeline { display: block; margin: 0 16px 16px; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d; }
 .process-viewer-timeline ol { max-height: 190px; margin: 0; padding: 0; overflow: auto; list-style: none; }
 .process-viewer-timeline li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 9px; padding: 7px 11px; border-top: 1px solid #21262d; color: #aeb7c1; font-size: 11px; }
 .process-viewer-timeline li:first-child { border-top: 0; }

@@ -308,6 +308,23 @@ func seedProcessWorklistDashSnap(t *testing.T, root string) {
 	createEngineRun(t, root, "dashsnap-signoff-8", decisionTemplate("dashsnap-signoff", model.Performer{
 		Kind: model.PerformerHuman, Profile: "oncall", Ask: "Sign off the incident follow-up?",
 	}), false)
+	createEngineRun(t, root, "dashsnap-parallel-any-9", &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         "dashsnap-parallel-any",
+		Name:       "Parallel-any deployment checks",
+		Start:      "fork",
+		Nodes: map[string]model.Node{
+			"fork": {Type: model.NodeTypeParallel, Next: model.Next{"primary": "primary-wait", "independent": "independent-wait"}},
+			"primary-wait": {
+				Type: model.NodeTypeWait, Wait: &model.WaitConfig{Duration: "24h"}, Next: model.Next{"pass": "accepted"},
+			},
+			"independent-wait": {
+				Type: model.NodeTypeWait, Wait: &model.WaitConfig{Duration: "24h"}, Next: model.Next{"pass": "accepted"},
+			},
+			"accepted": {Type: model.NodeTypeEnd, Join: model.JoinAny, Result: "completed"},
+		},
+	}, false)
 	host, err := agentd.NewProcessEngineHostForTest(root)
 	if err != nil {
 		t.Fatalf("worklist engine host: %v", err)
@@ -944,6 +961,20 @@ func baseStates() []dashsnap.State {
 			Caption:  "Processes Runs sub-view with a populated live run row, status, current activity, and viewer action.",
 			JS:       processTabJS("runs", `[data-process-run="dashsnap-release-42"]`),
 			SettleMS: 900,
+		},
+		{
+			Key:      "process-viewer-rich",
+			Title:    "Processes — rich checkpoint view",
+			Caption:  "Schema-7 checkpoint view with exact pinned topology, current routing overlays, paginated detail tabs, authority boundary, and a sanitized timeline.",
+			JS:       processViewerStateJS("dashsnap-parallel-any-9", true),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-viewer-legacy-unavailable",
+			Title:    "Processes — legacy routing unavailable",
+			Caption:  "Legacy run view fails closed: exact pinned topology remains visible while the routing overlay and checkpoint detail tables explicitly report their unavailable state.",
+			JS:       processViewerStateJS("dashsnap-approve-7", false),
+			SettleMS: 1200,
 		},
 		{
 			Key:      "management-profiles",
@@ -2193,6 +2224,62 @@ func processTabJS(subtab, readySelector string) string {
   }
   if (!document.querySelector('%s')) throw new Error('Processes populated row did not render');
 })();`, subtab, subtab, readySelector, readySelector)
+}
+
+// processViewerStateJS opens a seeded run through the same Runs action an
+// operator uses and verifies the load-bearing authority split. baseStates is
+// expanded across both skins, so every viewer state is captured in regular and
+// wizard chrome without maintaining two diverging fixtures.
+func processViewerStateJS(runID string, rich bool) string {
+	expected := `
+  var unavailable = canvas.querySelector('.process-viewer-unavailable.reason-legacy_schema');
+  if (!unavailable) throw new Error('legacy routing unavailable state missing');
+  if (canvas.querySelector('.process-viewer-tabs')) throw new Error('legacy viewer rendered checkpoint detail tabs');`
+	if rich {
+		expected = `
+  if (canvas.querySelector('.process-viewer-unavailable')) throw new Error('schema-7 routing unexpectedly unavailable');
+  if (!canvas.querySelector('.process-viewer-tabs button[role="tab"]')) throw new Error('routing detail tabs missing');
+  if (!canvas.querySelector('.process-viewer-state-chips span')) throw new Error('checkpoint state counts missing');`
+	}
+	return fmt.Sprintf(`return (async function(){
+  var nav = document.querySelector('nav [data-tab="processes"]');
+  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  nav.click();
+  var sub = document.querySelector('[data-process-subtab="runs"]');
+  if (!sub) throw new Error('Processes runs subtab missing');
+  sub.click();
+  var deadline = Date.now() + 5000;
+  var openSel = 'button[data-process-action="view"][data-id="%s"]';
+  while (!document.querySelector(openSel) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var open = document.querySelector(openSel);
+  if (!open) throw new Error('process viewer action did not render for %s');
+  open.click();
+  while (!document.querySelector('#process-viewer-canvas .process-viewer-header') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var canvas = document.querySelector('#process-viewer-canvas');
+  if (!canvas) throw new Error('process viewer did not mount');
+  if (!canvas.querySelector('.process-viewer-authority-strip')) throw new Error('viewer authority boundary missing');
+  while (!canvas.querySelector('.process-viewer-graph .process-graph-svg') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  if (!canvas.querySelector('.process-viewer-graph .process-graph-svg')) throw new Error('exact pinned topology graph missing');
+  if (!canvas.querySelector('.process-viewer-timeline')) throw new Error('sanitized timeline missing');%s
+  var graphRect = canvas.querySelector('.process-viewer-graph').getBoundingClientRect();
+  var timelineRect = canvas.querySelector('.process-viewer-timeline').getBoundingClientRect();
+  if (graphRect.width < 100 || graphRect.height < 100) {
+    var graphNode = canvas.querySelector('.process-viewer-graph');
+    var graphTrace = [];
+    for (var cursor = graphNode; cursor && graphTrace.length < 6; cursor = cursor.parentElement) {
+      var style = getComputedStyle(cursor); var rect = cursor.getBoundingClientRect();
+      graphTrace.push({tag: cursor.tagName, cls: cursor.className, display: style.display, position: style.position, width: rect.width, height: rect.height});
+    }
+    throw new Error('exact pinned topology graph is not visible: ' + JSON.stringify(graphTrace));
+  }
+  if (timelineRect.width < 100 || timelineRect.height < 20) throw new Error('sanitized timeline is not visible: ' + JSON.stringify(timelineRect.toJSON()));
+})();`, runID, runID, expected)
 }
 
 // worklistTabJS drives the Worklist sub-view into one of its filter-chip

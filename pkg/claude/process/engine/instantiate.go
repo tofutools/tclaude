@@ -47,8 +47,8 @@ type InstantiateRequest struct {
 	Params      map[string]string
 	Now         time.Time
 	// EngineCapabilities is supplied by the hosting engine boundary. It is
-	// intentionally absent from CLI/REST request schemas; current production
-	// callers provide foundation_v1, which cannot instantiate parallel syntax.
+	// intentionally absent from CLI/REST request schemas; the production host
+	// supplies its monotonic foundation/all/any release set.
 	EngineCapabilities EngineCapabilities
 	// ReplayExisting makes an explicit RunID an idempotency boundary: an
 	// existing run is returned only when its pinned template and resolved

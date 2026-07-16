@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,6 +9,24 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
+
+func TestParallelAnyReviewExampleMatchesProductionCapabilityRollout(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "examples", "parallel-any-review.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := model.Parse(source)
+	if err != nil || parsed.Diagnostics.HasErrors() {
+		t.Fatalf("parse example: %v, diagnostics=%#v", err, parsed.Diagnostics.Errors())
+	}
+	params := map[string]string{"issue": "TCL-447"}
+	if err := ValidateInstantiation(parsed.Template, InstantiateRequest{RunID: "parallel-any-review-example", Params: params, EngineCapabilities: ProductionEngineCapabilities()}); err != nil {
+		t.Fatalf("production rejected documented parallel-any example: %v", err)
+	}
+	if err := ValidateInstantiation(parsed.Template, InstantiateRequest{RunID: "foundation-must-reject", Params: params, EngineCapabilities: FoundationEngineCapabilities()}); err == nil || !strings.Contains(err.Error(), string(CapabilityParallelAnyV1)) {
+		t.Fatalf("foundation accepted documented parallel-any example: %v", err)
+	}
+}
 
 func TestInstantiationCapabilityMatrix(t *testing.T) {
 	legacy := capabilityLegacyTemplate()
