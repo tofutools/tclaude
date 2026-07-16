@@ -5,6 +5,8 @@ package store_test
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -49,6 +51,42 @@ func TestPathV1ExecutionViewAndAppendExactReplayCAS(t *testing.T) {
 		assert.NotNil(t, view.Input)
 		return nil
 	}))
+}
+
+func TestPathV1ExecutionViewRejectsTrailingAuthoritativeJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(*testing.T, string, string) string
+	}{
+		{
+			name: "run",
+			path: func(_ *testing.T, root, runID string) string {
+				return filepath.Join(root, "runs", runID, "run.json")
+			},
+		},
+		{name: "exact template", path: exactTemplateBodyPathForRun},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID, _ := initializedPathV1ExecutionRunAt(t, root)
+			path := tc.path(t, root, runID)
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, append(data, []byte(`null`)...), 0o644))
+
+			err = fs.WithPathV1ExecutionView(t.Context(), runID, func(store.PathV1ExecutionView) error {
+				t.Fatal("callback ran for trailing authoritative JSON")
+				return nil
+			})
+			require.ErrorIs(t, err, store.ErrRunInconsistent)
+			if tc.name == "run" {
+				assert.True(t, store.IsDecodeError(err))
+			} else {
+				assert.False(t, store.IsDecodeError(err))
+				assert.NotErrorIs(t, err, store.ErrContentMismatch)
+			}
+		})
+	}
 }
 
 func TestInitializePathV1ReplayAcceptsAuthenticatedMutableExecutionHead(t *testing.T) {
@@ -196,7 +234,12 @@ func TestPathV1AppendAuthorityIsSealed(t *testing.T) {
 
 func initializedPathV1ExecutionRun(t *testing.T) (*store.FS, string, *pathv1.CheckpointV7) {
 	t.Helper()
-	fs, err := store.NewFS(t.TempDir())
+	return initializedPathV1ExecutionRunAt(t, t.TempDir())
+}
+
+func initializedPathV1ExecutionRunAt(t *testing.T, root string) (*store.FS, string, *pathv1.CheckpointV7) {
+	t.Helper()
+	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "execution-demo", Start: "work",
