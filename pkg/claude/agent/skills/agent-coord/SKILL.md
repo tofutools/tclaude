@@ -25,9 +25,11 @@ requires the `message.direct` permission; without it the send is refused.
 
 ## When to invoke
 
-- A `[system: new agent message #<n> for you. fetch with: tclaude
-  agent inbox read <n>]` line appeared in your conversation. **Read the
-  message first**, then decide whether to reply.
+- A `[system: new agent message #<n> ...]` line appeared in your conversation.
+  Check its delivery form before doing anything else: `delivery: inline` means
+  the complete body follows the closing bracket and no inbox read is needed;
+  `fetch with:` or `Read it with:` means the nudge is only a pointer, so read
+  the inbox message first.
 - The user asked you to coordinate with another agent (e.g. "ask the
   reviewer agent what they think").
 
@@ -51,15 +53,26 @@ and which groups you share with each peer. The `agent_id` (`agt_…`) is the
 agent reincarnates or clones, so it's the right thing to copy when you want
 to address a peer.
 
-## Reading a message you were nudged about
+## Receiving a message nudge
 
-The system nudge looks like:
+Short printable messages arrive inline:
+
+```
+[system: new agent message #42 from agt_1234; delivery: inline; subject: review; reply with: tclaude agent reply 42 "<your reply body>"] Please review the change.
+```
+
+`delivery: inline` means the complete body follows the closing bracket. Its
+durable inbox copy is already marked delivered and read, so do not call
+`inbox read` for it. If the envelope includes a reply command, you can use it
+directly.
+
+Longer or control-bearing messages arrive as inbox pointers:
 
 ```
 [system: new agent message #42 for you. fetch with: tclaude agent inbox read 42]
 ```
 
-Fetch it:
+Only for a pointer nudge, fetch it:
 
 ```bash
 tclaude agent inbox read 42
