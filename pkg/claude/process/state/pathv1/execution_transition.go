@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -391,7 +392,7 @@ func ObserveExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, pl
 		SourcePathID: source.ID, Attempt: 1, Outcome: "satisfied",
 		Actor: strings.TrimSpace(actor), EvidenceRef: strings.TrimSpace(evidenceRef),
 	}
-	perform, settle, effect, err := observedAttemptCommands(aggregate.View(), current.nodeID, node, source, observation)
+	perform, settle, effect, err := observedAttemptCommands(aggregate.View(), current.nodeID, node, source, observation, false)
 	if err != nil {
 		return nil, err
 	}
@@ -768,7 +769,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
 	source := view.Routing.Paths[activation.OutputPathID]
 	node := input.template.Nodes[plan.nodeID]
-	normalizedOutcome, _, terminalParallelFailure, err := normalizeExclusiveObservationResult(node, observation.Outcome, input.parallel != nil)
+	normalizedOutcome, _, terminalParallelFailure, err := normalizeExclusiveObservationResult(node, observation.Outcome, plan.command.Identity.Attempt, observation.ResolutionDigest, input.parallel != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +834,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		effect.State = "failed"
 	}
 	aggregate.SideEffects[effectID] = effect
-	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation); err != nil {
+	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation, terminalParallelFailure); err != nil {
 		return nil, err
 	}
 	if terminalParallelFailure {
@@ -885,19 +886,12 @@ func ExactExclusiveAttemptObserved(ctx context.Context, input *VerifiedExclusive
 	if !ok || (node.Type != model.NodeTypeTask && node.Type != model.NodeTypeDecision) {
 		return CommandRecord{}, false, fmt.Errorf("%w: node %q has no direct performer path", ErrExclusiveUnsupported, nodeID)
 	}
-	outcome, reasonCode, _, err := normalizeExclusiveObservationResult(node, observation.Outcome, input.parallel != nil)
-	if err != nil {
+	if _, err := canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, observation.Outcome)); err != nil {
 		return CommandRecord{}, false, err
 	}
 	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
 		return CommandRecord{}, false, err
-	}
-	wanted := settleAttemptObservationPayload{
-		TemplateRef: aggregate.TemplateRef, ResultCode: outcome, ReasonCode: reasonCode, Actor: string(actor),
-		EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
-		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef,
-		Feedback: observation.Feedback,
 	}
 	var matched CommandRecord
 	for _, perform := range aggregate.Commands {
@@ -910,6 +904,16 @@ func ExactExclusiveAttemptObserved(ctx context.Context, input *VerifiedExclusive
 		var request performAttemptPayload
 		if decodeExactPayload(perform.Payload, &request) != nil || request.NodeID != nodeID {
 			continue
+		}
+		outcome, reasonCode, _, normalizeErr := normalizeExclusiveObservationResult(node, observation.Outcome, perform.Identity.Attempt, observation.ResolutionDigest, input.parallel != nil)
+		if normalizeErr != nil {
+			return CommandRecord{}, false, normalizeErr
+		}
+		wanted := settleAttemptObservationPayload{
+			TemplateRef: aggregate.TemplateRef, ResultCode: outcome, ReasonCode: reasonCode, Actor: string(actor),
+			EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
+			ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef,
+			Feedback: observation.Feedback,
 		}
 		for _, settle := range aggregate.Commands {
 			if settle.Identity.Kind != CommandSettleAttempt || settle.Identity.InputDigest != perform.ID {
@@ -953,21 +957,25 @@ func normalizeExclusiveTaskAction(node model.Node, outcome string) string {
 	}
 }
 
-func normalizeExclusiveObservationResult(node model.Node, outcome string, parallel bool) (result, reason string, terminalParallelFailure bool, err error) {
+func normalizeExclusiveObservationResult(node model.Node, outcome string, attempt uint64, resolutionDigest string, parallel bool) (result, reason string, terminalParallelFailure bool, err error) {
 	result, err = canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, outcome))
 	if err != nil {
 		return "", "", false, err
 	}
-	terminalParallelFailure = parallel && node.Type == model.NodeTypeTask && isFailOutcome(result) && model.FailTarget(node.Next) == ""
+	terminalParallelFailure = parallel && node.Type == model.NodeTypeTask && isFailOutcome(result) && model.FailTarget(node.Next) == "" &&
+		attempt >= uint64(model.RetryBudget(node.Retry)) && strings.TrimSpace(resolutionDigest) == ""
 	if terminalParallelFailure {
 		return "failed", "performer_failed", true, nil
 	}
 	return result, "", false, nil
 }
 
-// PendingExclusiveObservation returns the sole routable observed settlement
-// that still owns a live source path. Retry-pending settlements remain durable
-// provenance but do not prevent planning their exact next attempt.
+// PendingExclusiveObservation returns the next routable observed settlement
+// that still owns a live source path. Parallel branches are ordered by exact
+// source and settlement identity and folded one per checkpoint transition;
+// non-parallel execution retains the strict single-pending invariant.
+// Retry-pending settlements remain durable provenance but do not prevent
+// planning their exact next attempt.
 func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveInput) (ExclusiveObservation, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ExclusiveObservation{}, false, err
@@ -985,8 +993,11 @@ func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveIn
 			used[command.Identity.InputDigest] = true
 		}
 	}
-	var pending ExclusiveObservation
-	found := false
+	type pendingCandidate struct {
+		observation  ExclusiveObservation
+		settlementID string
+	}
+	pending := make([]pendingCandidate, 0, 1)
 	for _, command := range aggregate.Commands {
 		if command.Identity.Kind != CommandSettleAttempt || (command.State != CommandObserved && command.State != CommandReconciled) || used[command.ID] {
 			continue
@@ -1018,13 +1029,32 @@ func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveIn
 		if disposition != ExclusiveRouteReady {
 			return ExclusiveObservation{}, false, fmt.Errorf("%w: pending observation disposition %q requires explicit integration", ErrExclusiveUnsupported, disposition)
 		}
-		if found {
-			return ExclusiveObservation{}, false, fmt.Errorf("%w: multiple pending exclusive observations", ErrMutationInconsistent)
-		}
-		pending = candidate
-		found = true
+		pending = append(pending, pendingCandidate{observation: candidate, settlementID: command.ID})
 	}
-	return pending, found, nil
+	if len(pending) == 0 {
+		return ExclusiveObservation{}, false, nil
+	}
+	if len(pending) > 1 && input.parallel == nil {
+		return ExclusiveObservation{}, false, fmt.Errorf("%w: multiple pending exclusive observations", ErrMutationInconsistent)
+	}
+	slices.SortFunc(pending, func(a, b pendingCandidate) int {
+		if order := strings.Compare(a.observation.SourcePathID, b.observation.SourcePathID); order != 0 {
+			return order
+		}
+		if a.observation.Attempt < b.observation.Attempt {
+			return -1
+		}
+		if a.observation.Attempt > b.observation.Attempt {
+			return 1
+		}
+		return strings.Compare(a.settlementID, b.settlementID)
+	})
+	for index := 1; index < len(pending); index++ {
+		if pending[index-1].observation.SourcePathID == pending[index].observation.SourcePathID {
+			return ExclusiveObservation{}, false, fmt.Errorf("%w: multiple pending observations own source path %q", ErrMutationInconsistent, pending[index].observation.SourcePathID)
+		}
+	}
+	return pending[0].observation, true, nil
 }
 
 // AdvanceExclusiveRoute deterministically derives the sole pending durable

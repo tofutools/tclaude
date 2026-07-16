@@ -840,7 +840,7 @@ func buildExclusiveSequenceEnd(input *VerifiedExclusiveInput, post AggregateView
 	current := post
 	current.Commands = cloneMap(post.Commands)
 	current.SideEffects = cloneMap(post.SideEffects)
-	perform, settle, effect, err := observedAttemptCommands(current, reservation.NodeID, node, output, endObservation)
+	perform, settle, effect, err := observedAttemptCommands(current, reservation.NodeID, node, output, endObservation, false)
 	if err != nil {
 		return CommandRecord{}, AggregateView{}, err
 	}

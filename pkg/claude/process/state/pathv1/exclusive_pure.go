@@ -673,7 +673,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	view.Authority = authority
 	view.Commands = cloneMap(view.Commands)
 	view.SideEffects = cloneMap(view.SideEffects)
-	perform, settle, attemptEffect, err := observedAttemptCommands(view, sourceReservation.NodeID, node, source, observation)
+	perform, settle, attemptEffect, err := observedAttemptCommands(view, sourceReservation.NodeID, node, source, observation, false)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
@@ -1288,7 +1288,7 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 	endObservation := ExclusiveObservation{SourcePathID: output.ID, Attempt: 1, Outcome: outcome}
 	post.Commands = cloneMap(post.Commands)
 	post.SideEffects = cloneMap(post.SideEffects)
-	perform, settle, effect, err := observedAttemptCommands(post, reservation.NodeID, node, output, endObservation)
+	perform, settle, effect, err := observedAttemptCommands(post, reservation.NodeID, node, output, endObservation, false)
 	if err != nil {
 		return exclusiveEndDraft{}, err
 	}
@@ -1667,7 +1667,7 @@ func candidateForID(reservation ActivationReservation, candidateID CandidateID) 
 	return CandidateRecord{}, false
 }
 
-func observedAttemptCommands(view AggregateView, nodeID string, node model.Node, source PathRecord, observation ExclusiveObservation) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
+func observedAttemptCommands(view AggregateView, nodeID string, node model.Node, source PathRecord, observation ExclusiveObservation, terminalTaskFailure bool) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
 	var existingPerform, existingSettle CommandRecord
 	for _, candidate := range view.Commands {
 		identity := candidate.Identity
@@ -1721,7 +1721,7 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 	if node.Type == model.NodeTypeEnd && isFailOutcome(outcome) {
 		settlePayloadValue.ReasonCode = "end_failed"
 	}
-	if node.Type == model.NodeTypeTask && isFailOutcome(outcome) && model.FailTarget(node.Next) == "" {
+	if terminalTaskFailure {
 		settlePayloadValue.ReasonCode = "performer_failed"
 	}
 	settlePayload, err := json.Marshal(settlePayloadValue)
@@ -1746,7 +1746,7 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 	if node.Type == model.NodeTypeEnd && isFailOutcome(outcome) {
 		effect.State = "failed"
 	}
-	if node.Type == model.NodeTypeTask && isFailOutcome(outcome) && model.FailTarget(node.Next) == "" {
+	if terminalTaskFailure {
 		effect.State = "failed"
 	}
 	if node.Type == model.NodeTypeWait {

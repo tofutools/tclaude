@@ -2,6 +2,7 @@ package pathv1
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -259,6 +260,131 @@ func TestParallelTerminalFailureObservationRetryIsExact(t *testing.T) {
 	recorded, exact, err := ExactExclusiveAttemptObserved(t.Context(), input, nodeID, plan.Command().ID, observation)
 	if err != nil || !exact || recorded.ID != plan.Command().ID {
 		t.Fatalf("terminal retry = command %q exact %v err %v", recorded.ID, exact, err)
+	}
+}
+
+func TestParallelPassOnlyFailureWaitsForRetryExhaustion(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: parallel-pass-only-retry
+start: fork
+nodes:
+  fork:
+    type: parallel
+    next: {work: work, peer: peer}
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    retry: {maxAttempts: 2}
+    next: {pass: merge}
+  peer:
+    type: task
+    performer: {kind: agent, prompt: peer}
+    next: {pass: merge}
+  merge:
+    type: end
+    join: all
+    result: completed
+`)
+	input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := livePathForNodeType(t, input, "parallel")
+	transition, err := AdvanceParallelSplit(t.Context(), input, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input = activateAllReadyExclusive(t, source, verifyParallelTransition(t, source, transition))
+
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var work PathID
+	for _, path := range aggregate.Routing.Paths {
+		if path.Kind != PathActivationOutput || path.State != PathLive {
+			continue
+		}
+		activation := aggregate.Routing.Activations[path.SourceActivation.ID]
+		if aggregate.Routing.Reservations[activation.ReservationID].NodeID == "work" {
+			work = path.ID
+			break
+		}
+	}
+	if work == "" {
+		t.Fatal("work activation output not found")
+	}
+
+	observeFailure := func(attempt uint64) *ExclusiveAttemptPlan {
+		t.Helper()
+		plan, planErr := PlanExclusiveAttempt(t.Context(), input, work, attempt, nil)
+		if planErr != nil {
+			t.Fatal(planErr)
+		}
+		claim, claimErr := ClaimExclusiveAttempt(t.Context(), input, plan)
+		if claimErr != nil {
+			t.Fatal(claimErr)
+		}
+		input = verifyParallelTransition(t, source, claim)
+		recovered, found, recoverErr := RecoverExclusiveAttempt(t.Context(), input)
+		if recoverErr != nil || !found {
+			t.Fatalf("recover attempt %d = %v/%v", attempt, found, recoverErr)
+		}
+		observed, observeErr := ObserveExclusiveAttempt(t.Context(), input, recovered, ExclusiveObservation{
+			Outcome: "fail", Actor: "human:operator", EvidenceRef: fmt.Sprintf("artifact:attempt-%d", attempt),
+		}, false)
+		if observeErr != nil {
+			t.Fatal(observeErr)
+		}
+		input = verifyParallelTransition(t, source, observed)
+		return plan
+	}
+
+	first := observeFailure(1)
+	aggregate, err = CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path := aggregate.Routing.Paths[work]; path.State != PathLive || path.TerminalCauseID != "" {
+		t.Fatalf("retry-pending output = %#v", path)
+	}
+	firstEffectID, err := AttemptIdentity(aggregate.RunID, first.Command().Identity.SourceActivationID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effect := aggregate.SideEffects[firstEffectID]; effect.State != "observed" {
+		t.Fatalf("retry-pending effect = %#v", effect)
+	}
+	firstObservation := ExclusiveObservation{Outcome: "fail", Actor: "human:operator", EvidenceRef: "artifact:attempt-1"}
+	recorded, exact, err := ExactExclusiveAttemptObserved(t.Context(), input, "work", first.Command().ID, firstObservation)
+	if err != nil || !exact || recorded.ID != first.Command().ID {
+		t.Fatalf("retry-pending exact replay = command %q exact %v err %v", recorded.ID, exact, err)
+	}
+	if pending, found, pendingErr := PendingExclusiveObservation(t.Context(), input); pendingErr != nil || found {
+		t.Fatalf("retry-pending route candidate = %#v found=%v err=%v", pending, found, pendingErr)
+	}
+
+	second := observeFailure(2)
+	aggregate, err = CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := aggregate.Routing.Paths[work]
+	if failed.State != PathFailed || failed.TerminalCauseID == "" {
+		t.Fatalf("retry-exhausted output = %#v", failed)
+	}
+	secondEffectID, err := AttemptIdentity(aggregate.RunID, second.Command().Identity.SourceActivationID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effect := aggregate.SideEffects[secondEffectID]; effect.State != "failed" {
+		t.Fatalf("retry-exhausted effect = %#v", effect)
+	}
+	secondObservation := ExclusiveObservation{Outcome: "fail", Actor: "human:operator", EvidenceRef: "artifact:attempt-2"}
+	recorded, exact, err = ExactExclusiveAttemptObserved(t.Context(), input, "work", second.Command().ID, secondObservation)
+	if err != nil || !exact || recorded.ID != second.Command().ID {
+		t.Fatalf("retry-exhausted exact replay = command %q exact %v err %v", recorded.ID, exact, err)
 	}
 }
 
