@@ -4,8 +4,8 @@
 // Split of responsibilities:
 //   - process-graph.js owns presentation + pointer mechanics (hooks only).
 //   - process-edit-model.js owns the pure edit model + undo/redo (node-tested).
-//   - This module owns the DOM chrome (header, palette, inspector, dialogs),
-//     translates graph hooks into model mutations, and talks REST.
+//   - process-editor-island.js owns the Preact chrome and form DOM.
+//   - This controller translates semantic events into model mutations and REST.
 //
 // Palette drag uses the established dock-dnd idiom: cards are drag sources
 // with a CUSTOM MIME only (never text/plain), so the document-level DnD
@@ -18,17 +18,14 @@
 // surface reuses this editor with completed nodes locked; nothing here may
 // hard-code template-only assumptions beyond the defaults it passes.
 //
-// Template content is untrusted at render time: all text lands via
-// textContent (the h() helper), never via HTML string injection — the assets
-// test enforces this with a literal needle.
+// Template content is untrusted at render time. Preact renders it as text; no
+// editor value is accepted as HTML.
 
-import { ProcessGraph } from './process-graph.js';
+import { createProcessGraphAdapter } from './process-graph-adapter.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
+  PALETTE_SNIPPETS,
 } from './process-edit-model.js';
-import { openNodeDialog } from './process-node-dialog.js';
-import { openProcessParamsDialog } from './process-params-dialog.js';
 import { LiveValidation } from './process-validation.js';
 import {
   NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
@@ -40,14 +37,11 @@ import {
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
-import { bindDialogFocus } from './dialog-focus-core.js';
-import { isTopmostOverlay } from './overlay-stack.js';
 import {
-  PROCESS_SCRIBE_PROMPT_MAX, processScribeContextPreview, processScribeEditorContext,
+  processScribeContextPreview, processScribeEditorContext,
   processScribeHandoff, processScribePrompt,
 } from './process-scribe.js';
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
 // every other document-level DnD feature out of a palette drag.
 const PALETTE_MIME = 'application/x-tclaude-process-palette';
@@ -60,6 +54,10 @@ export function isProcessEditorFormControl(target) {
 
 function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending);
+}
+
+function graphInteraction(editor) {
+  return editor.graph?.interactionSnapshot?.() || { generation: 0, active: false };
 }
 
 function cancelExternalReview(editor) {
@@ -76,19 +74,6 @@ function scribeSelectionIdentity(selection) {
   return JSON.stringify(selectionItems(selection).map((item) => item?.type === 'node'
     ? ['node', String(item.id || '')]
     : ['edge', String(item?.from || ''), String(item?.outcome || '')]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
-}
-
-function h(tag, attrs = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (value === undefined || value === null) continue;
-    if (key === 'class') el.className = value;
-    else if (key === 'text') el.textContent = value;
-    else if (key.startsWith('on') && typeof value === 'function') el.addEventListener(key.slice(2), value);
-    else el.setAttribute(key, String(value));
-  }
-  for (const child of children) if (child) el.append(child);
-  return el;
 }
 
 function shortHash(hash) {
@@ -116,7 +101,6 @@ export class ProcessTemplateEditor {
     this.loadedView = structuredClone(view);
     this.blank = !!options.blank;
     this.selection = null;
-    this.pendingMove = null;
     this.band = null;
     this.nodeChooserDispose = null;
     this.savePending = false;
@@ -128,184 +112,144 @@ export class ProcessTemplateEditor {
     this.externalReviewPending = false;
     this.externalReviewRequest = null;
     this.externalChange = NO_EXTERNAL_CHANGE;
+    this.externalReviewOpen = false;
+    this.paletteHidden = false;
+    this.statusState = { message: '', error: false };
+    this.inlineState = { open: false, token: 0, left: 0, top: 0, value: '' };
+    this.inspectorFocusRequest = 0;
+    this.modalState = null;
+    this.modalGeneration = 0;
+    this.modalHandle = null;
     this.abort = new AbortController();
-    this.buildDOM();
-    this.graph = new ProcessGraph(this.stageHost, this.model.graph(), {
-      ariaLabel: `Process template editor: ${this.model.template.id}`,
-      colorScheme: 'dark',
-      onNodeClick: (e) => this.onNodeClick(e),
-      onNodeDblClick: (e) => this.onNodeDblClick(e),
-      onEdgeClick: (e) => this.onEdgeClick(e),
-      onCanvasClick: () => this.setSelection(null),
-      onMarqueeSelect: (e) => this.setSelection(e.selection),
-      onNodeDragStart: (e) => this.setSelection(e.selection),
-      onNodeDrag: (e) => this.onNodeDrag(e),
-      onPortDragStart: (e) => this.onPortDragStart(e),
-      onPortDragMove: (e) => this.onPortDragMove(e),
-      onPortDragEnd: (e) => this.onPortDragEnd(e),
-      onCanvasDrop: (e) => this.onCanvasDrop(e),
-      marqueeSelect: true,
-      wheelPan: true,
-    });
+    this.graph = null;
+    if (!options.ui?.createPublisher || !options.ui?.mount) {
+      throw new Error('process editor requires its Preact UI boundary');
+    }
+    this.snapshotSignal = options.ui.createPublisher(this.snapshot());
+    this.mount.classList.add('process-editor-mount');
+    this.uiCleanup = options.ui.mount(this.mount, this);
+    if (!this.graph) throw new Error('process editor graph host did not mount');
     // Live validation (TCL-299): debounced POST /v1/process/validate on every
     // model mutation, inline badges + issues panel. Constructed after the
     // graph so its initial diagnostics paint can decorate it.
     this.validation = new LiveValidation(this, options.validation || {});
-    this.bindEditorEvents();
     this.updateChrome();
     // Test/automation handle (dashsnap drives states through this; not an API).
     this.mount.__processEditor = this;
   }
 
-  // ---- DOM ---------------------------------------------------------------
-
-  buildDOM() {
-    this.statusLine = h('span', { class: 'process-editor-status', role: 'status' });
-    this.dirtyBadge = h('span', { class: 'process-editor-dirty', text: '● modified', hidden: '' });
-    this.versionBadge = h('span', { class: 'process-hash process-editor-version' });
-    this.idInput = h('input', {
-      class: 'process-editor-id-input', type: 'text', spellcheck: 'false',
-      placeholder: 'template-id', 'aria-label': 'Template id',
-    });
-    this.idInput.value = this.model.template.id || '';
-    this.titleLabel = h('strong', { class: 'process-editor-title' });
-    this.identity = h('span', { class: 'process-editor-identity' });
-
-    this.undoButton = h('button', { class: 'process-action', type: 'button', title: 'Undo (Ctrl+Z)', text: '↶ undo' });
-    this.redoButton = h('button', { class: 'process-action', type: 'button', title: 'Redo (Ctrl+Shift+Z)', text: '↷ redo' });
-    this.settingsButton = h('button', { class: 'process-action', type: 'button', title: 'Edit template name and description', text: 'template settings…' });
-    this.paramsButton = h('button', { class: 'process-action', type: 'button', title: 'Declare template parameters', text: 'params…' });
-    this.instantiateButton = h('button', { class: 'process-action', type: 'button', title: 'Instantiate this exact saved version', text: 'instantiate…' });
-    this.commandsButton = h('button', {
-      class: 'process-action', type: 'button',
-      title: 'Process commands (Ctrl/Cmd-K)', 'aria-label': 'Open process commands (Ctrl/Cmd-K)',
-      text: '⌘K commands',
-    });
-    this.scribeButton = h('button', { class: 'process-action process-scribe-action', type: 'button', title: 'Open an agent scoped to this exact process template' },
-      h('span', { class: 'process-scribe-plain', text: 'Edit with agent' }),
-      h('span', { class: 'process-scribe-wizard', text: 'Consult a process scribe' }));
-    this.paletteButton = h('button', { class: 'process-action', type: 'button', title: 'Toggle the node palette', text: '⬒ palette' });
-    this.saveButton = h('button', { class: 'process-action primary', type: 'button', title: 'Save a new version', text: 'Save' });
-
-    const header = h('div', { class: 'process-editor-header' },
-      this.identity,
-      this.versionBadge,
-      this.dirtyBadge,
-      this.statusLine,
-      h('span', { class: 'spacer' }),
-      this.settingsButton, this.paramsButton, this.undoButton, this.redoButton, this.paletteButton, this.commandsButton, this.scribeButton, this.instantiateButton, this.saveButton,
-    );
-
-    this.externalMessage = h('span', { class: 'process-editor-external-message', text: 'A new version is available' });
-    this.externalReviewButton = h('button', { class: 'process-action', type: 'button', text: 'Review changes' });
-    this.externalReloadButton = h('button', { class: 'process-action primary', type: 'button', text: 'Reload' });
-    this.externalKeepButton = h('button', { class: 'process-action', type: 'button', text: 'Keep editing' });
-    this.externalActorButton = h('button', { class: 'process-action process-external-actor', type: 'button', hidden: '', text: 'Open agent' });
-    this.externalGraphSummary = h('div', { class: 'process-external-graph-summary' });
-    this.externalSourceSummary = h('pre', { class: 'process-external-source-summary' });
-    this.externalReviewPanel = h('div', { class: 'process-external-review', hidden: '' },
-      this.externalGraphSummary, this.externalSourceSummary);
-    const externalBar = h('div', { class: 'process-editor-external-bar' },
-      this.externalMessage, h('span', { class: 'spacer' }), this.externalActorButton,
-      this.externalReviewButton, this.externalReloadButton, this.externalKeepButton);
-    this.externalBanner = h('div', {
-      class: 'process-editor-external', role: 'status', hidden: '',
-    }, externalBar, this.externalReviewPanel);
-
-    this.palette = this.buildPalette();
-    this.stageHost = h('div', { class: 'process-editor-canvas-host' });
-    this.inlineInput = h('input', {
-      class: 'process-editor-inline-input', type: 'text', spellcheck: 'false', hidden: '',
-    });
-    this.stage = h('div', { class: 'process-editor-stage' }, this.stageHost, this.inlineInput);
-    this.body = h('div', { class: 'process-editor-body' }, this.palette, this.stage);
-
-    this.inspector = h('div', { class: 'process-editor-inspector' });
-    this.root = h('div', { class: 'process-editor' }, header, this.externalBanner, this.body, this.inspector);
-    this.mount.replaceChildren(this.root);
-    this.mount.classList.add('process-editor-mount');
-  }
-
-  buildPalette() {
-    const card = (payload, label, hint) => {
-      const el = h('div', {
-        class: 'process-palette-card',
-        draggable: 'true',
-        title: hint || '',
-        'data-palette-item': JSON.stringify(payload),
-      }, h('span', { class: 'process-palette-card-label', text: label }),
-      h('span', { class: 'process-palette-card-hint', text: hint || '' }));
-      return el;
-    };
-    const primitives = PALETTE_PRIMITIVES.map((p) => card({ kind: 'primitive', type: p.type }, p.label, p.hint));
-    const snippets = PALETTE_SNIPPETS.map((s) => card({ kind: 'snippet', key: s.key }, s.label, s.hint));
-    return h('aside', { class: 'process-editor-palette', 'aria-label': 'Node palette' },
-      h('div', { class: 'process-palette-section', text: 'Primitives' }),
-      ...primitives,
-      h('div', { class: 'process-palette-section', text: 'Snippets' }),
-      ...snippets,
-      h('p', { class: 'process-palette-help', text: 'Drag onto the canvas to add. Drag a port to another node to connect.' }),
-    );
-  }
-
-  bindEditorEvents() {
-    const signal = this.abort.signal;
-    this.saveButton.addEventListener('click', () => this.save(), { signal });
-    this.instantiateButton.addEventListener('click', () => this.requestInstantiate(), { signal });
-    this.commandsButton.addEventListener('click', () => requestCommandPalette(), { signal });
-    this.scribeButton.addEventListener('click', () => this.requestScribe('template'), { signal });
-    this.externalReloadButton.addEventListener('click', () => this.reloadExternalChange(), { signal });
-    this.externalKeepButton.addEventListener('click', () => this.keepExternalChange(), { signal });
-    this.externalReviewButton.addEventListener('click', () => this.toggleExternalReview(), { signal });
-    this.externalActorButton.addEventListener('click', () => this.options.onOpenActor?.(this.externalChange.actor), { signal });
-    this.undoButton.addEventListener('click', () => this.applyHistory('undo'), { signal });
-    this.redoButton.addEventListener('click', () => this.applyHistory('redo'), { signal });
-    this.settingsButton.addEventListener('click', () => this.setSelection({ type: 'template' }), { signal });
-    this.paramsButton.addEventListener('click', () => this.openParamsSettings(), { signal });
-    this.paletteButton.addEventListener('click', () => {
-      this.palette.hidden = !this.palette.hidden;
-    }, { signal });
-    if (this.blank) {
-      this.idInput.addEventListener('change', () => {
-        if (this.savePending || externalInteractionPending(this)) {
-          this.idInput.value = this.model.template.id || '';
-          return;
-        }
-        if (!this.model.setTemplateID(this.idInput.value.trim())) {
-          this.idInput.value = this.model.template.id || '';
-          this.status('Template id is fixed once an existing version is selected.', true);
-        }
-        this.updateChrome();
-      }, { signal });
+  attachGraphHost(host) {
+    if (!host) {
+      this.graph?.dispose?.();
+      this.graph = null;
+      return;
     }
+    if (this.graph?.host === host) return;
+    this.graph?.dispose?.();
+    this.graph = createProcessGraphAdapter(host, {
+      graph: this.model.graph(),
+      ariaLabel: `Process template editor: ${this.model.template.id}`,
+      events: {
+        nodeClick: (event) => this.onNodeClick(event),
+        nodeDoubleClick: (event) => this.onNodeDblClick(event),
+        edgeClick: (event) => this.onEdgeClick(event),
+        canvasClick: () => this.setSelection(null),
+        marqueeSelection: (event) => this.setSelection(event.selection),
+        nodeDragStart: (event) => this.setSelection(event.selection),
+        nodeDragEnd: (event) => this.commitNodeDrag(event),
+        nodeDragCancel: () => {},
+        portDragStart: (event) => this.onPortDragStart(event),
+        portDragEnd: (event) => this.onPortDragEnd(event),
+        canvasDrop: (event) => this.onCanvasDrop(event),
+      },
+    });
+  }
 
-    this.palette.addEventListener('dragstart', (event) => {
-      const card = event.target.closest?.('.process-palette-card');
-      if (!card) return;
-      // Custom MIME only — see the module header.
-      event.dataTransfer.setData(PALETTE_MIME, card.getAttribute('data-palette-item'));
-      event.dataTransfer.effectAllowed = 'copy';
-      this.paletteDragPayload = card.getAttribute('data-palette-item');
-      card.classList.add('is-dragging');
-    }, { signal });
-    this.palette.addEventListener('dragend', (event) => {
-      this.paletteDragPayload = null;
-      event.target.closest?.('.process-palette-card')?.classList.remove('is-dragging');
-    }, { signal });
+  snapshot() {
+    const model = this.model;
+    const selectedNode = this.selection?.type === 'node' ? model.node(this.selection.id) : null;
+    const selectedEdge = this.selection?.type === 'edge'
+      ? model.findEdge(this.selection.from, this.selection.outcome) : null;
+    const actorDescription = this.options.describeActor?.(this.externalChange.actor) || null;
+    return {
+      blank: this.blank,
+      selection: structuredClone(this.selection),
+      selectedNode: structuredClone(selectedNode || null),
+      selectedEdge: structuredClone(selectedEdge || null),
+      selectedNodeIncoming: selectedNode ? model.incomingEdges(this.selection.id).length : 0,
+      model: {
+        id: model.template.id || '', name: model.template.name || '',
+        description: model.template.description || '', doc: model.template.doc || '',
+        start: model.template.start || '', sourceHash: model.sourceHash || '',
+        semanticHash: model.semanticHash || '', currentRef: model.currentRef || '',
+        dirty: model.dirty, canUndo: model.canUndo, canRedo: model.canRedo,
+      },
+      pending: {
+        save: this.savePending,
+        externalDecision: this.externalDecisionPending,
+        externalReload: this.externalReloadPending,
+      },
+      status: { ...this.statusState },
+      paletteHidden: this.paletteHidden,
+      inline: { ...this.inlineState },
+      inspectorFocusRequest: this.inspectorFocusRequest,
+      external: {
+        ...structuredClone(this.externalChange),
+        actorDescription,
+        reviewOpen: this.externalReviewOpen,
+        reviewPending: this.externalReviewPending,
+      },
+      issues: this.validation?.panelSnapshot?.() || {
+        open: false, hidden: true, summary: 'Issues · none', entries: [],
+        issueCursor: -1, focusRequest: 0,
+      },
+      modal: this.modalState ? { ...this.modalState } : null,
+    };
+  }
 
-    // Node-move commit: the graph core intentionally snaps a dragged node back
-    // on release (position ownership lives here). Its pointerup handler runs
-    // first (bound earlier on the same svg), then this one commits the pin.
-    this.graph.svg.addEventListener('pointerup', () => this.commitPendingMove(), { signal });
-    this.graph.svg.addEventListener('pointercancel', () => {
-      this.pendingMove = null;
-      this.removeBand();
-    }, { signal });
+  publish() {
+    if (this.destroyed || !this.snapshotSignal) return;
+    this.snapshotSignal.value = this.snapshot();
+  }
 
-    this.root.addEventListener('keydown', (event) => this.onEditorKeyDown(event), { signal });
+  openModal(descriptor, resolve = null) {
+    const generation = ++this.modalGeneration;
+    this.modalState = { ...descriptor, generation };
+    this.modalHandle = null;
+    const dispose = (result = null) => this.finishModal(generation, result);
+    dispose.isDirty = () => !!(this.modalState?.generation === generation && this.modalHandle?.isDirty?.());
+    dispose.requestClose = async () => {
+      if (this.modalState?.generation !== generation) return true;
+      if (this.modalHandle?.requestClose) return this.modalHandle.requestClose();
+      dispose(null);
+      return true;
+    };
+    dispose.resolve = resolve;
+    this.modalDispose = dispose;
+    this.publish();
+    return dispose;
+  }
+
+  registerModalHandle(generation, handle) {
+    if (this.modalState?.generation !== generation) return () => {};
+    this.modalHandle = handle;
+    return () => { if (this.modalHandle === handle) this.modalHandle = null; };
+  }
+
+  finishModal(generation, result = null) {
+    if (this.modalState?.generation !== generation) return false;
+    const dispose = this.modalDispose;
+    this.modalState = null;
+    this.modalHandle = null;
+    this.modalDispose = null;
+    this.publish();
+    dispose?.resolve?.(result);
+    return true;
   }
 
   destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
     // Invalidate delayed completions and cancel the bounded review request
     // before tearing down the editor's DOM and callbacks.
     this.saveSeq += 1;
@@ -322,14 +266,16 @@ export class ProcessTemplateEditor {
     this.closeInline(false);
     this.validation?.destroy();
     this.validation = null;
-    this.graph.destroy();
+    this.graph?.dispose?.();
+    this.graph = null;
     // Parent teardown follows an already-approved navigation/unmount. It is
     // the one forced-close path; user-driven modal replacement goes through
     // requestClose below so a dirty node draft cannot disappear silently.
     this.modalDispose?.(null);
     delete this.mount.__processEditor;
+    this.uiCleanup?.();
+    this.uiCleanup = null;
     this.mount.classList.remove('process-editor-mount');
-    this.mount.replaceChildren();
   }
 
   get dirty() {
@@ -338,12 +284,51 @@ export class ProcessTemplateEditor {
 
   // ---- chrome ------------------------------------------------------------
 
+  setTemplateID(value) {
+    if (this.savePending || externalInteractionPending(this)) return false;
+    if (!this.model.setTemplateID(String(value || '').trim())) {
+      this.status('Template id is fixed once an existing version is selected.', true);
+      return false;
+    }
+    this.updateChrome();
+    return true;
+  }
+
+  setTemplateMeta(fields) {
+    const clean = Object.fromEntries(Object.entries(fields || {})
+      .map(([key, value]) => [key, String(value || '').trim()]));
+    return this.mutate(() => this.model.setTemplateMeta(clean));
+  }
+
+  renameNode(id, name) { return this.mutate(() => this.model.renameNode(id, String(name || '').trim())); }
+  setJoin(id, join) { return this.mutate(() => this.model.setJoin(id, join)); }
+  setStart(id) { return this.mutate(() => this.model.setStart(id)); }
+  togglePalette() { this.paletteHidden = !this.paletteHidden; this.publish?.(); }
+  openCommands() { requestCommandPalette(); }
+  openExternalActor() { this.options.onOpenActor?.(this.externalChange.actor); }
+  setIssuesOpen(open) { this.validation?.setPanelOpen(open); }
+  focusIssueAt(index, focusButton = false) { return this.validation?.focusIssueAt(index, { focusButton }) || false; }
+
+  paletteDragStart(event) {
+    const card = event.target.closest?.('.process-palette-card');
+    if (!card) return;
+    event.dataTransfer.setData(PALETTE_MIME, card.getAttribute('data-palette-item'));
+    event.dataTransfer.effectAllowed = 'copy';
+    this.paletteDragPayload = card.getAttribute('data-palette-item');
+    card.classList.add('is-dragging');
+  }
+
+  paletteDragEnd(event) {
+    this.paletteDragPayload = null;
+    event.target.closest?.('.process-palette-card')?.classList.remove('is-dragging');
+  }
+
   refresh({ fit = false } = {}) {
     // decorate() re-anchors the last known diagnostics on the fresh graph
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
     const graph = this.validation ? this.validation.decorate(this.model.graph()) : this.model.graph();
-    this.graph.setGraph(graph, { fit });
+    this.graph?.setGraph(graph, { fit });
     // setGraph re-renders the SVG; re-project the semantic editor selection so
     // undo/redo and mutations cannot leave a stale highlight behind.
     this.setSelection(this.selection);
@@ -360,93 +345,11 @@ export class ProcessTemplateEditor {
         actor: this.externalChange.actor, authoredAt: this.externalChange.authoredAt, dirty: this.dirty,
       });
     }
-    this.titleLabel.textContent = model.template.name
-      ? `${model.template.name} (${model.template.id})`
-      : model.template.id || 'untitled';
-    // A force retry pins the identity as soon as it adopts an existing CAS
-    // head. It stays locked even if the retry fails or re-conflicts: `blank`
-    // alone is not enough to decide that the id is still editable.
-    const showIDInput = templateIDEditable(this.blank, model.sourceHash);
-    const externalPending = externalInteractionPending(this);
-    const idEditable = showIDInput && !this.savePending && !externalPending;
-    this.idInput.disabled = !idEditable;
-    this.identity.replaceChildren(showIDInput ? this.idInput : this.titleLabel);
-    this.versionBadge.textContent = model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved';
-    this.versionBadge.title = model.semanticHash || 'This template has never been saved';
-    this.dirtyBadge.hidden = !model.dirty;
-    this.undoButton.disabled = externalPending || !model.canUndo;
-    this.redoButton.disabled = externalPending || !model.canRedo;
-    if (this.settingsButton) this.settingsButton.disabled = externalPending;
-    if (this.paramsButton) this.paramsButton.disabled = externalPending || this.savePending;
-    if (this.instantiateButton) this.instantiateButton.disabled = externalPending || this.savePending;
-    if (this.scribeButton) this.scribeButton.disabled = externalPending || this.savePending;
-    if (this.paletteButton) this.paletteButton.disabled = externalPending;
-    // A blank editor has not completed a save, even if a force retry adopted
-    // an existing CAS head. Keep its retry path armed after a failed or
-    // cancelled retry; only a successfully loaded/saved clean editor is done.
-    this.saveButton.disabled = this.savePending || externalPending || (!model.dirty && !this.blank);
-    this.renderExternalChange?.();
-    this.renderInspector();
+    this.publish?.();
   }
 
   renderExternalChange() {
-    if (!this.externalBanner) return;
-    const visible = this.externalChange.kind === 'clean' || this.externalChange.kind === 'dirty';
-    const externalPending = externalInteractionPending(this);
-    this.externalBanner.hidden = !visible;
-    this.externalBanner.classList.toggle('is-dirty', this.externalChange.kind === 'dirty');
-    const version = shortHash(String(this.externalChange.ref || '').split('@sha256:').at(-1));
-    const actor = this.options.describeActor?.(this.externalChange.actor) || null;
-    this.externalMessage.textContent = actor
-      ? `${actor.label} saved version ${version}${this.externalChange.kind === 'dirty' ? '; your local edits are untouched' : ''}`
-      : `Version ${version} is available${this.externalChange.kind === 'dirty' ? '; your local edits are untouched' : ''}`;
-    this.externalMessage.title = this.externalChange.authoredAt || this.externalChange.ref || '';
-    this.externalActorButton.hidden = !actor?.live;
-    this.externalActorButton.textContent = actor?.live ? `Open ${actor.label}` : 'Open agent';
-    this.externalKeepButton.hidden = this.externalChange.kind !== 'dirty';
-    this.externalReloadButton.textContent = this.externalChange.kind === 'dirty' ? 'Reload & discard' : 'Apply update';
-    this.externalReloadButton.disabled = externalPending || this.savePending;
-    this.externalKeepButton.disabled = externalPending || this.savePending;
-    this.externalReviewButton.disabled = externalPending || this.externalReviewPending;
-    this.externalReviewButton.textContent = this.externalReviewPending ? 'Loading review…'
-      : this.externalReviewPanel.hidden ? 'Review changes' : 'Hide review';
-    const summary = this.externalChange.review?.summary;
-    if (summary) {
-      const parts = [];
-      const nodePart = (prefix, label, ids, count, truncated) => {
-        if (!count) return;
-        const omitted = Math.max(0, count - ids.length);
-        const listed = [...ids, ...(truncated ? [`… ${omitted} more IDs omitted`] : [])].join(', ');
-        parts.push(`${prefix}${count} ${label}${count === 1 ? '' : 's'} (${listed})`);
-      };
-      nodePart('+', 'node', summary.addedNodes, summary.addedNodeCount ?? summary.addedNodes.length, summary.addedNodesTruncated);
-      nodePart('−', 'node', summary.removedNodes, summary.removedNodeCount ?? summary.removedNodes.length, summary.removedNodesTruncated);
-      nodePart('', 'changed node', summary.changedNodes, summary.changedNodeCount ?? summary.changedNodes.length, summary.changedNodesTruncated);
-      if (summary.addedEdges) parts.push(`+${summary.addedEdges} edge${summary.addedEdges === 1 ? '' : 's'}`);
-      if (summary.removedEdges) parts.push(`−${summary.removedEdges} edge${summary.removedEdges === 1 ? '' : 's'}`);
-      if (summary.metadataChanged) parts.push('template settings changed');
-      this.externalGraphSummary.textContent = parts.length ? `Graph: ${parts.join(' · ')}` : 'Graph: no semantic changes (layout/source only)';
-      const source = summary.source;
-      const sourceLimits = source?.truncation ? Object.entries(source.truncation)
-        .filter(([, clipped]) => clipped).map(([limit]) => limit === 'bytes' ? 'UTF-8 bytes' : limit) : [];
-      this.externalSourceSummary.textContent = source
-        ? [`Source near line ${source.firstLine}: −${source.removedLines} / +${source.addedLines}`,
-          ...source.before.map((line) => `− ${line}`), ...source.after.map((line) => `+ ${line}`),
-          ...(source.truncated ? [`… source preview truncated at ${sourceLimits.join(', ') || 'configured'} limit${sourceLimits.length === 1 ? '' : 's'}`] : []),
-          ...(this.externalChange.kind === 'dirty' ? ['Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.'] : []),
-        ].join('\n')
-        : (this.externalChange.kind === 'dirty'
-          ? 'Canonical source preview is unavailable. Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.'
-          : 'Canonical source preview is unavailable; the graph summary remains authoritative.');
-    } else {
-      this.externalGraphSummary.textContent = this.externalReviewPending
-        ? 'Loading the exact polled generation…' : 'Change summary unavailable; retry Review changes.';
-      this.externalSourceSummary.textContent = this.externalChange.kind === 'dirty'
-        ? 'Your local edits remain untouched. Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.' : '';
-    }
-    if (this.body) this.body.inert = externalPending;
-    if (this.inspector) this.inspector.inert = externalPending;
-    this.root?.classList.toggle('is-reloading', externalPending);
+    this.publish?.();
   }
 
   observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash, actor, authoredAt } = {}) {
@@ -467,8 +370,8 @@ export class ProcessTemplateEditor {
 
   toggleExternalReview() {
     if (this.externalReviewPending || externalInteractionPending(this)) return false;
-    this.externalReviewPanel.hidden = !this.externalReviewPanel.hidden;
-    if (!this.externalReviewPanel.hidden && !this.externalChange.review) void this.loadExternalReview();
+    this.externalReviewOpen = !this.externalReviewOpen;
+    if (this.externalReviewOpen && !this.externalChange.review) void this.loadExternalReview();
     this.renderExternalChange();
     return true;
   }
@@ -563,6 +466,7 @@ export class ProcessTemplateEditor {
       rev: this.model.rev,
       modal: this.modalDispose,
       inline: this.inlineCommit,
+      interaction: graphInteraction(this),
       targetRef,
       targetSourceHash,
     };
@@ -574,6 +478,8 @@ export class ProcessTemplateEditor {
       && decision.model.rev === decision.rev
       && this.modalDispose === decision.modal
       && this.inlineCommit === decision.inline
+      && !graphInteraction(this).active
+      && graphInteraction(this).generation === decision.interaction.generation
       && this.externalChange.ref === decision.targetRef
       && this.externalChange.sourceHash === decision.targetSourceHash
       && !this.savePending;
@@ -606,7 +512,8 @@ export class ProcessTemplateEditor {
       if (requestSeq !== this.externalReloadSeq || this.abort.signal.aborted) return false;
       if (this.model !== guardedModel || guardedModel.rev !== guardedRev || this.savePending
           || this.modalDispose !== decision.modal || this.inlineCommit !== decision.inline
-          || this.pendingMove || this.band) {
+          || graphInteraction(this).active
+          || graphInteraction(this).generation !== decision.interaction.generation) {
         this.status('Reload cancelled because the editor changed while the new version was loading.');
         return false;
       }
@@ -624,8 +531,6 @@ export class ProcessTemplateEditor {
       decision.modal?.(null);
       if (this.modalDispose === decision.modal) this.modalDispose = null;
       if (decision.inline) this.closeInline?.(false);
-      this.pendingMove = null;
-      this.removeBand?.();
       this.model = new ProcessEditModel(view, this.model.config);
       this.loadedView = structuredClone(view);
       this.blank = false;
@@ -649,8 +554,8 @@ export class ProcessTemplateEditor {
   }
 
   status(message, isError = false) {
-    this.statusLine.textContent = message || '';
-    this.statusLine.classList.toggle('is-error', !!isError);
+    this.statusState = { message: message || '', error: !!isError };
+    this.publish?.();
   }
 
   // ---- selection + inspector ----------------------------------------------
@@ -660,7 +565,7 @@ export class ProcessTemplateEditor {
   // so matching on from/outcome — which the layout spreads through — is the
   // only stable lookup.
   laidEdge(from, outcome) {
-    return this.graph.layout.edges.find((edge) => edge.from === from && edge.outcome === outcome);
+    return this.graph?.layoutSnapshot().edges.find((edge) => edge.from === from && edge.outcome === outcome);
   }
 
   setSelection(selection) {
@@ -671,8 +576,8 @@ export class ProcessTemplateEditor {
     // therefore leaves template settings cleanly.
     if (selection?.type === 'template') {
       this.selection = { type: 'template' };
-      this.graph.select(null);
-      this.renderInspector();
+      this.graph?.setSelection?.(null);
+      this.publish?.();
       return;
     }
     this.selection = makeSelection(selectionItems(selection));
@@ -681,120 +586,8 @@ export class ProcessTemplateEditor {
       const laid = this.laidEdge(item.from, item.outcome);
       return laid ? { type: 'edge', id: laid.id } : null;
     }).filter(Boolean);
-    this.graph.select(makeSelection(graphical));
-    this.renderInspector();
-  }
-
-  renderInspector() {
-    const parts = [];
-    const sel = this.selection;
-    const selected = selectionItems(sel);
-    if (sel?.type === 'template') {
-      parts.push(h('span', { class: 'process-inspector-kind', text: 'template' }));
-      const idInput = h('input', {
-        class: 'process-inspector-input process-template-id-locked', type: 'text',
-        value: this.model.template.id || '', disabled: '',
-        title: 'Template ids are immutable after creation', 'aria-label': 'Template id (immutable)',
-      });
-      const nameInput = h('input', {
-        class: 'process-inspector-input', type: 'text', spellcheck: 'false',
-        placeholder: 'display name', 'aria-label': 'Template display name',
-      });
-      nameInput.value = this.model.template.name || '';
-      nameInput.addEventListener('change', () => {
-        this.mutate(() => this.model.setTemplateMeta({ name: nameInput.value.trim() }));
-      });
-      const descriptionInput = h('input', {
-        class: 'process-inspector-input process-template-description', type: 'text', spellcheck: 'true',
-        placeholder: 'description', 'aria-label': 'Template description',
-      });
-      descriptionInput.value = this.model.template.description || '';
-      descriptionInput.addEventListener('change', () => {
-        this.mutate(() => this.model.setTemplateMeta({ description: descriptionInput.value.trim() }));
-      });
-      const docInput = h('textarea', {
-        class: 'process-inspector-input process-template-doc', rows: '2', spellcheck: 'true',
-        placeholder: 'documentation', 'aria-label': 'Template documentation',
-      });
-      docInput.value = this.model.template.doc || '';
-      docInput.addEventListener('change', () => {
-        this.mutate(() => this.model.setTemplateMeta({ doc: docInput.value.trim() }));
-      });
-      parts.push(idInput, nameInput, descriptionInput, docInput);
-    } else if (selected.length > 1) {
-      const nodeCount = selected.filter((item) => item.type === 'node').length;
-      const edgeCount = selected.length - nodeCount;
-      parts.push(h('span', { class: 'process-inspector-kind', text: 'multiple selection' }));
-      parts.push(h('span', { class: 'process-inspector-id', text: `${selected.length} items` }));
-      parts.push(h('span', { class: 'process-inspector-hint', text: [
-        nodeCount ? `${nodeCount} node${nodeCount === 1 ? '' : 's'}` : '',
-        edgeCount ? `${edgeCount} edge${edgeCount === 1 ? '' : 's'}` : '',
-      ].filter(Boolean).join(' · ') }));
-      parts.push(h('button', {
-        class: 'process-action process-action-danger', type: 'button', text: 'delete selection',
-        onclick: () => this.deleteSelection(),
-      }));
-    } else if (sel?.type === 'node' && this.model.node(sel.id)) {
-      const node = this.model.node(sel.id);
-      parts.push(h('span', { class: 'process-inspector-kind', text: `${node.type || 'task'} node` }));
-      parts.push(h('span', { class: 'process-inspector-id', text: sel.id }));
-      const labelInput = h('input', {
-        class: 'process-inspector-input', type: 'text', spellcheck: 'false',
-        placeholder: 'label', 'aria-label': 'Node label',
-      });
-      labelInput.value = node.name || '';
-      labelInput.addEventListener('change', () => {
-        this.mutate(() => this.model.renameNode(sel.id, labelInput.value.trim()));
-      });
-      parts.push(labelInput);
-      if (this.model.incomingEdges(sel.id).length > 1) {
-        const joinSelect = h('select', { class: 'process-inspector-select', 'aria-label': 'Join semantics' },
-          h('option', { value: '', text: 'join: unset' }),
-          h('option', { value: 'all', text: 'join: all' }),
-          h('option', { value: 'any', text: 'join: any' }));
-        joinSelect.value = node.metadata?.join || '';
-        joinSelect.addEventListener('change', () => {
-          this.mutate(() => this.model.setJoin(sel.id, joinSelect.value || null));
-        });
-        parts.push(joinSelect);
-      }
-      if (this.model.template.start !== sel.id && node.type !== 'end') {
-        parts.push(h('button', {
-          class: 'process-action', type: 'button', text: 'set as start',
-          title: 'Make this node the process entry point',
-          onclick: () => this.mutate(() => this.model.setStart(sel.id)),
-        }));
-      }
-      parts.push(h('button', {
-        class: 'process-action', type: 'button', text: 'node settings…',
-        title: 'Open the structured node editor: stages, performers, retry, captures',
-        onclick: () => this.openNodeSettings(sel.id),
-      }));
-      parts.push(h('button', {
-        class: 'process-action process-action-danger', type: 'button', text: 'delete node',
-        onclick: () => this.deleteSelection(),
-      }));
-    } else if (sel?.type === 'edge' && this.model.findEdge(sel.from, sel.outcome)) {
-      const edge = this.model.findEdge(sel.from, sel.outcome);
-      parts.push(h('span', { class: 'process-inspector-kind', text: 'edge' }));
-      parts.push(h('span', { class: 'process-inspector-id', text: `${edge.from} → ${edge.to}` }));
-      const outcomeInput = h('input', {
-        class: 'process-inspector-input', type: 'text', spellcheck: 'false',
-        placeholder: 'outcome', 'aria-label': 'Edge outcome label',
-      });
-      outcomeInput.value = edge.outcome;
-      outcomeInput.addEventListener('change', () => {
-        this.renameEdgeOutcome(edge.from, edge.outcome, outcomeInput.value.trim());
-      });
-      parts.push(outcomeInput);
-      parts.push(h('button', {
-        class: 'process-action process-action-danger', type: 'button', text: 'delete edge',
-        onclick: () => this.deleteSelection(),
-      }));
-    } else {
-      parts.push(h('span', { class: 'process-inspector-hint', text: 'Select a node or edge to edit it. Double-click a node to open its stage editor.' }));
-    }
-    this.inspector.replaceChildren(...parts);
+    this.graph?.setSelection?.(makeSelection(graphical));
+    this.publish?.();
   }
 
   // ---- graph hooks ---------------------------------------------------------
@@ -822,13 +615,18 @@ export class ProcessTemplateEditor {
       const closed = current.requestClose ? await current.requestClose() : (current(null), true);
       if (!closed || this.abort?.signal.aborted) return false;
     }
-    const dispose = openProcessParamsDialog({
-      model: this.model,
-      onMutated: () => this.refresh(),
-      onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
-      confirmDiscard: this.options.confirmDiscard,
-    });
-    this.modalDispose = dispose;
+    if (!this.snapshotSignal) {
+      const { openProcessParamsDialog } = await import('./process-params-dialog.js');
+      const dispose = openProcessParamsDialog({
+        model: this.model,
+        onMutated: () => this.refresh?.(),
+        onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
+        confirmDiscard: this.options.confirmDiscard,
+      });
+      this.modalDispose = dispose;
+    } else {
+      this.openModal({ kind: 'params' });
+    }
     return true;
   }
 
@@ -874,17 +672,18 @@ export class ProcessTemplateEditor {
     }
     if (!this.model.node(nodeId)) return false;
     const mode = this.model.config.nodeEditable(nodeId) ? 'edit' : 'view';
-    const dispose = openNodeDialog({
-      model: this.model,
-      nodeId,
-      mode,
-      onMutated: () => this.refresh(),
-      onClosed: () => {
-        if (this.modalDispose === dispose) this.modalDispose = null;
-      },
-      confirmDiscard: this.options.confirmDiscard,
-    });
-    this.modalDispose = dispose;
+    if (!this.snapshotSignal) {
+      const { openNodeDialog } = await import('./process-node-dialog.js');
+      const dispose = openNodeDialog({
+        model: this.model, nodeId, mode,
+        onMutated: () => this.refresh?.(),
+        onClosed: () => { if (this.modalDispose === dispose) this.modalDispose = null; },
+        confirmDiscard: this.options.confirmDiscard,
+      });
+      this.modalDispose = dispose;
+    } else {
+      this.openModal({ kind: 'node', nodeId, mode });
+    }
     return true;
   }
 
@@ -898,33 +697,21 @@ export class ProcessTemplateEditor {
     if (already && !additive) this.openInlineOutcomeEdit(edge.from, edge.outcome);
   }
 
-  onNodeDrag({ nodeId, nodeIds = [nodeId], delta }) {
-    if (!this.pendingMove || this.pendingMove.id !== nodeId) {
-      const starts = nodeIds.map((id) => this.graph.layout.nodes.find((candidate) => candidate.id === id))
-        .filter(Boolean).map((node) => ({ id: node.id, x: node.x, y: node.y }));
-      if (!starts.length) return;
-      this.pendingMove = { id: nodeId, starts, delta };
-    }
-    this.pendingMove.delta = delta;
-  }
-
-  commitPendingMove() {
-    const move = this.pendingMove;
-    this.pendingMove = null;
-    if (!move || !move.delta) return;
+  commitNodeDrag({ starts, delta, moved = true }) {
+    if (!moved || !starts?.length || !delta) return;
     // The core's own click-vs-drag threshold is 3 CLIENT px; the delta is in
     // graph units, so scale by the zoom before comparing — at high zoom a
     // small visible drag is a tiny graph-unit delta and must still commit.
-    if (Math.hypot(move.delta.x, move.delta.y) * this.graph.view.k <= 3) return;
-    this.mutate(() => this.model.moveNodes(move.starts.map((start) => ({
-      id: start.id, x: start.x + move.delta.x, y: start.y + move.delta.y,
+    if (Math.hypot(delta.x, delta.y) * this.graph.viewSnapshot().k <= 3) return;
+    this.mutate(() => this.model.moveNodes(starts.map((start) => ({
+      id: start.id, x: start.x + delta.x, y: start.y + delta.y,
     }))));
   }
 
   // ---- edge drawing (rubber band) -------------------------------------------
 
   portPoint(nodeId, port) {
-    const laid = this.graph.layout.nodes.find((candidate) => candidate.id === nodeId);
+    const laid = this.graph.layoutSnapshot().nodes.find((candidate) => candidate.id === nodeId);
     if (!laid) return { x: 0, y: 0 };
     return { x: laid.x, y: laid.y + (port === 'in' ? -laid.height / 2 : laid.height / 2) };
   }
@@ -932,21 +719,7 @@ export class ProcessTemplateEditor {
   onPortDragStart({ nodeId, port, point }) {
     this.nodeChooserDispose?.();
     this.nodeChooserDispose = null;
-    this.removeBand();
-    const start = this.portPoint(nodeId, port);
-    const band = document.createElementNS(SVG_NS, 'path');
-    band.setAttribute('class', 'process-editor-band');
-    band.setAttribute('fill', 'none');
-    band.setAttribute('d', `M ${start.x} ${start.y} L ${point.x} ${point.y}`);
-    // The viewport keeps extra children across the core's layer re-renders,
-    // so the band survives mid-drag refreshes and pans with the view.
-    this.graph.viewport.append(band);
-    this.band = { element: band, start, source: { nodeId, port } };
-  }
-
-  onPortDragMove({ point }) {
-    if (!this.band) return;
-    this.band.element.setAttribute('d', `M ${this.band.start.x} ${this.band.start.y} L ${point.x} ${point.y}`);
+    this.band = { source: { nodeId, port } };
   }
 
   onPortDragEnd({ nodeId, port, point, targetNodeId, targetPort, emptyCanvas, cancelled, event }) {
@@ -1011,17 +784,14 @@ export class ProcessTemplateEditor {
     }
 
     this.nodeChooserDispose?.();
-    const stageRect = this.stage.getBoundingClientRect();
-    const svgRect = this.graph.svg.getBoundingClientRect();
-    const clientX = Number.isFinite(event?.clientX)
-      ? event.clientX : svgRect.left + this.graph.view.x + point.x * this.graph.view.k;
-    const clientY = Number.isFinite(event?.clientY)
-      ? event.clientY : svgRect.top + this.graph.view.y + point.y * this.graph.view.k;
+    const anchor = Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)
+      ? this.graph.clientPointToHost({ clientX: event.clientX, clientY: event.clientY }, this.stage)
+      : this.graph.graphPointToHost(point, this.stage);
     const dropPoint = { x: point.x, y: point.y };
     const dispose = openProcessNodeTypeChooser({
       host: this.stage,
-      anchor: { x: clientX - stageRect.left, y: clientY - stageRect.top },
-      restoreFocus: () => this.graph.root.focus({ preventScroll: true }),
+      anchor: { x: anchor.left, y: anchor.top },
+      restoreFocus: () => this.graph.focus(),
       onChoose: (type) => this.addConnectedNodeType(type, source, dropPoint),
       onClose: () => {
         if (this.nodeChooserDispose === dispose) this.nodeChooserDispose = null;
@@ -1038,7 +808,7 @@ export class ProcessTemplateEditor {
       x: point.x, y: point.y, ...connection,
     }));
     if (!created) {
-      queueMicrotask(() => this.graph.root.focus({ preventScroll: true }));
+      queueMicrotask(() => this.graph.focus());
       return false;
     }
     this.setSelection({ type: 'node', id: created.id });
@@ -1053,7 +823,7 @@ export class ProcessTemplateEditor {
   }
 
   removeBand() {
-    this.band?.element?.remove();
+    this.graph?.endConnectionBand();
     this.band = null;
   }
 
@@ -1076,8 +846,7 @@ export class ProcessTemplateEditor {
   }
 
   canvasCenterPoint() {
-    const rect = this.graph.svg.getBoundingClientRect();
-    return this.graph.clientToGraph(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return this.graph.canvasCenter();
   }
 
   addNodeType(type, point = this.canvasCenterPoint()) {
@@ -1091,7 +860,8 @@ export class ProcessTemplateEditor {
   editSelection() {
     if (this.selection?.type === 'template') {
       this.setSelection({ type: 'template' });
-      queueMicrotask(() => this.inspector.querySelector('input:not(:disabled), textarea:not(:disabled)')?.focus());
+      this.inspectorFocusRequest += 1;
+      this.publish?.();
       return true;
     }
     const items = selectionItems(this.selection);
@@ -1108,8 +878,9 @@ export class ProcessTemplateEditor {
   duplicateSelection() {
     const items = selectionItems(this.selection);
     if (!items.length || items.some((item) => item.type !== 'node')) return false;
+    const layout = this.graph.layoutSnapshot();
     const positions = Object.fromEntries(items.map((item) => {
-      const node = this.graph.layout.nodes.find((candidate) => candidate.id === item.id);
+      const node = layout.nodes.find((candidate) => candidate.id === item.id);
       return [item.id, node ? { x: node.x, y: node.y } : undefined];
     }));
     const idMap = this.mutate(() => this.model.duplicateNodes(items.map((item) => item.id), { positions }));
@@ -1135,15 +906,16 @@ export class ProcessTemplateEditor {
   }
 
   fitGraph() {
-    this.graph.fitToView();
+    this.graph.fit();
     return true;
   }
 
   centerSelection() {
+    const layout = this.graph.layoutSnapshot();
     const points = selectionItems(this.selection).map((item) => {
-      if (item.type === 'node') return this.graph.layout.nodes.find((node) => node.id === item.id);
+      if (item.type === 'node') return layout.nodes.find((node) => node.id === item.id);
       const edge = this.laidEdge(item.from, item.outcome);
-      return edge?.label || this.graph.layout.nodes.find((node) => node.id === item.from);
+      return edge?.label || layout.nodes.find((node) => node.id === item.from);
     }).filter(Boolean);
     if (!points.length) return false;
     this.graph.centerOn(
@@ -1310,50 +1082,29 @@ export class ProcessTemplateEditor {
   // ---- inline (in-place) label editing ------------------------------------------
 
   stagePosition(x, y) {
-    const svgRect = this.graph.svg.getBoundingClientRect();
-    const stageRect = this.stage.getBoundingClientRect();
-    return {
-      left: svgRect.left - stageRect.left + this.graph.view.x + x * this.graph.view.k,
-      top: svgRect.top - stageRect.top + this.graph.view.y + y * this.graph.view.k,
-    };
+    return this.graph.graphPointToHost({ x, y }, this.stage);
   }
 
   openInline(x, y, value, commit) {
     if (externalInteractionPending(this)) return false;
     this.closeInline(false);
-    const input = this.inlineInput;
     const position = this.stagePosition(x, y);
-    input.style.left = `${Math.round(position.left)}px`;
-    input.style.top = `${Math.round(position.top)}px`;
-    input.value = value;
-    input.hidden = false;
     this.inlineCommit = commit;
-    const done = (apply) => this.closeInline(apply);
-    this.inlineHandlers = {
-      keydown: (event) => {
-        if (event.key === 'Enter') { event.preventDefault(); done(true); }
-        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); done(false); }
-      },
-      blur: () => done(true),
+    this.inlineState = {
+      open: true, token: this.inlineState.token + 1,
+      left: position.left, top: position.top, value: String(value || ''),
     };
-    input.addEventListener('keydown', this.inlineHandlers.keydown);
-    input.addEventListener('blur', this.inlineHandlers.blur);
-    input.focus();
-    input.select();
+    this.publish();
+    return true;
   }
 
-  closeInline(apply) {
-    const input = this.inlineInput;
-    if (!input || input.hidden) return;
+  closeInline(apply, value = this.inlineState.value) {
+    if (!this.inlineState.open) return;
     const commit = this.inlineCommit;
-    if (this.inlineHandlers) {
-      input.removeEventListener('keydown', this.inlineHandlers.keydown);
-      input.removeEventListener('blur', this.inlineHandlers.blur);
-    }
     this.inlineCommit = null;
-    this.inlineHandlers = null;
-    input.hidden = true;
-    if (apply && commit) commit(input.value.trim());
+    this.inlineState = { ...this.inlineState, open: false };
+    this.publish();
+    if (apply && commit) commit(String(value || '').trim());
   }
 
   openInlineOutcomeEdit(from, outcome) {
@@ -1415,6 +1166,7 @@ export class ProcessTemplateEditor {
             const guardedRev = guardedModel.rev;
             const guardedModal = this.modalDispose;
             const guardedInline = this.inlineCommit;
+            const guardedInteraction = graphInteraction(this);
             const requestSeq = ++this.externalReloadSeq;
             this.externalReloadPending = true;
             this.updateChrome?.();
@@ -1423,7 +1175,8 @@ export class ProcessTemplateEditor {
               if (requestSeq !== this.externalReloadSeq || this.abort.signal.aborted) return false;
               if (this.model !== guardedModel || guardedModel.rev !== guardedRev || this.savePending
                   || this.modalDispose !== guardedModal || this.inlineCommit !== guardedInline
-                  || this.pendingMove || this.band) {
+                  || graphInteraction(this).active
+                  || graphInteraction(this).generation !== guardedInteraction.generation) {
                 this.status('Scribe handoff cancelled because the editor changed while canonical state was loading.');
                 return false;
               }
@@ -1498,7 +1251,7 @@ export class ProcessTemplateEditor {
       }
       if (modelFresh && selectionFresh && diagnosticFresh) return true;
       this.status('Scribe handoff cancelled because the editor context changed while the request was open.');
-      this.graph?.root?.focus?.({ preventScroll: true });
+      this.graph?.focus?.();
       return false;
     };
     const prompt = await this.scribePreviewModal({
@@ -1506,10 +1259,6 @@ export class ProcessTemplateEditor {
       truncated: !!context.truncation,
     });
     if (prompt == null || this.abort?.signal.aborted) {
-      const active = globalThis.document?.activeElement;
-      if (!active || !this.root?.contains?.(active)) {
-        this.graph?.root?.focus?.({ preventScroll: true });
-      }
       return false;
     }
     if (!freshnessGuard()) return false;
@@ -1545,7 +1294,6 @@ export class ProcessTemplateEditor {
     // change made while the request was in flight before locking the model;
     // history restoration also preserves this pinned id.
     this.model.template.id = savedID;
-    this.idInput.value = savedID;
     this.model.markSaved(body, savedAtRev);
     this.loadedView = {
       ...savedView, currentRef: body.ref || '', sourceHash: body.sourceHash || '',
@@ -1616,41 +1364,11 @@ export class ProcessTemplateEditor {
         : (current(null), true);
       if (!closed || this.abort?.signal.aborted) return null;
     }
-    return new Promise((resolve) => {
-      // Fully dispose any previous dialog (resolving its promise null) so its
-      // capture-phase document keydown listener never outlives its overlay —
-      // the confirm-modal singleton double-listener disease, avoided by
-      // construction.
-      const buttons = choices.map((choice) => h('button', {
-        class: `${choice.primary ? 'primary ' : ''}${choice.danger ? 'confirm-danger ' : ''}process-editor-modal-btn`,
-        type: 'button', text: choice.label,
-      }));
-      const cancel = h('button', { type: 'button', text: 'Cancel', class: 'process-editor-modal-btn' });
-      const overlay = h('div', { class: 'modal-overlay show process-editor-modal' },
-        h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' },
-          h('h3', { text: title }),
-          h('p', { text: body }),
-          h('div', { class: 'modal-buttons' }, cancel, ...buttons)));
-      const done = (result) => {
-        overlay.remove();
-        document.removeEventListener('keydown', onKey, true);
-        if (this.modalDispose === done) this.modalDispose = null;
-        resolve(result);
-      };
-      const onKey = (event) => {
-        if (event.key !== 'Escape') return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        done(null);
-      };
-      buttons.forEach((button, index) => button.addEventListener('click', () => done(choices[index].key)));
-      cancel.addEventListener('click', () => done(null));
-      overlay.addEventListener('click', (event) => { if (event.target === overlay) done(null); });
-      document.addEventListener('keydown', onKey, true);
-      this.modalDispose = done;
-      document.body.append(overlay);
-      (buttons.find((_, index) => choices[index].initialFocus || choices[index].primary) || cancel).focus();
-    });
+    if (!this.snapshotSignal) {
+      const { openStandaloneChoiceDialog } = await import('./process-editor-island.js');
+      return openStandaloneChoiceDialog({ title, body, choices });
+    }
+    return new Promise((resolve) => this.openModal({ kind: 'choice', title, body, choices }, resolve));
   }
 
   // The human edits only their request. Stable context stays read-only and
@@ -1661,71 +1379,13 @@ export class ProcessTemplateEditor {
       const closed = current.requestClose ? await current.requestClose() : (current(null), true);
       if (!closed || this.abort?.signal.aborted) return null;
     }
-    return new Promise((resolve) => {
-      const input = h('textarea', {
-        class: 'process-scribe-prompt', rows: '4', maxlength: PROCESS_SCRIBE_PROMPT_MAX,
-        'aria-label': 'Request for the process scribe', spellcheck: 'true',
-        'data-select-on-focus': 'true',
-      });
-      input.value = prompt;
-      const count = h('span', { class: 'process-scribe-prompt-count' });
-      const updateCount = () => { count.textContent = `${input.value.length} / ${PROCESS_SCRIBE_PROMPT_MAX}`; };
-      input.addEventListener('input', updateCount);
-      updateCount();
-      const preview = h('pre', {
-        class: 'process-scribe-context-preview', text: context,
-        'aria-label': 'Read-only bounded editor context', tabindex: '0',
-      });
-      const send = h('button', { class: 'primary process-editor-modal-btn', type: 'button', text: 'Send & open scribe' });
-      const cancel = h('button', { type: 'button', text: 'Cancel', class: 'process-editor-modal-btn' });
-      const overlay = h('div', { class: 'modal-overlay show process-editor-modal process-scribe-preview-overlay' },
-        h('div', { class: 'modal process-scribe-preview', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'process-scribe-preview-title' },
-          h('h3', { id: 'process-scribe-preview-title', text: 'Share editor context with process scribe' }),
-          h('p', { text: kind === 'selection' ? 'The selected graph identities below will be shared.'
-            : kind === 'diagnostic' ? 'The current diagnostic identity below will be shared.'
-              : 'A bounded whole-template summary will be shared.' }),
-          h('label', { class: 'process-scribe-prompt-label', text: 'Your request (editable)' }), input, count,
-          h('div', { class: 'process-scribe-context-label', text: 'BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source' }),
-          preview,
-          h('div', { class: `process-scribe-context-end${truncated ? ' is-truncated' : ''}`,
-            text: truncated ? 'END BOUNDED EDITOR CONTEXT · visibly truncated; the scribe must reread canonical YAML'
-              : 'END BOUNDED EDITOR CONTEXT · the scribe must reread canonical YAML' }),
-          h('div', { class: 'modal-buttons' }, cancel, send)));
-      const dialog = overlay.querySelector('.process-scribe-preview');
-      // The focus loop owns ordinary keyboard navigation. Inerting the editor
-      // surface closes the remaining programmatic-focus/default-action gap so
-      // a graph control behind this body-level overlay cannot be activated.
-      const editorSurface = this.root;
-      const editorWasInert = editorSurface?.inert === true || editorSurface?.hasAttribute('inert');
-      let releaseDialogFocus = () => {};
-      const done = (result) => {
-        overlay.remove();
-        if (editorSurface) {
-          editorSurface.inert = editorWasInert;
-          editorSurface.toggleAttribute('inert', editorWasInert);
-        }
-        releaseDialogFocus();
-        if (this.modalDispose === done) this.modalDispose = null;
-        resolve(result);
-      };
-      send.addEventListener('click', () => done(input.value.trim()));
-      cancel.addEventListener('click', () => done(null));
-      overlay.addEventListener('click', (event) => { if (event.target === overlay) done(null); });
-      this.modalDispose = done;
-      // Capture the invoker before inerting its editor ancestor. Browsers may
-      // blur a focused descendant as soon as inert is applied.
-      releaseDialogFocus = bindDialogFocus({
-        dialog,
-        initialFocus: input,
-        onEscape: () => done(null),
-        shouldHandle: () => isTopmostOverlay(overlay),
-      });
-      if (editorSurface) {
-        editorSurface.inert = true;
-        editorSurface.setAttribute('inert', '');
-      }
-      document.body.append(overlay);
-    });
+    if (!this.snapshotSignal) {
+      const { openStandaloneScribeDialog } = await import('./process-editor-island.js');
+      return openStandaloneScribeDialog({ kind, prompt, context, truncated });
+    }
+    return new Promise((resolve) => this.openModal({
+      kind: 'scribe', scribeKind: kind, prompt, context, truncated,
+    }, resolve));
   }
 }
 
@@ -1738,5 +1398,9 @@ export async function openTemplateEditor(mount, { id, blank = false, version, co
   // must not keep gating navigation with its stale dirty state.
   mount.__processEditor?.destroy?.();
   const view = blank ? blankEditView(id) : await fetchEditView(id, version);
-  return new ProcessTemplateEditor(mount, view, { ...config, blank });
+  const ui = await import('./process-editor-island.js');
+  return new ProcessTemplateEditor(mount, view, {
+    ...config, blank,
+    ui: { createPublisher: ui.createProcessEditorPublisher, mount: ui.mountProcessEditorIsland },
+  });
 }

@@ -8,7 +8,8 @@
 //   - ValidationScheduler, mapDiagnostics, decorateGraph are PURE (no DOM, no
 //     real timers/fetch baked in) so Node's test runner exercises the exact
 //     shipped file (jstest/process-validation.test.mjs).
-//   - LiveValidation owns the DOM (issues panel) and the editor wiring.
+//   - LiveValidation owns scheduling + diagnostic state and publishes immutable
+//     snapshots through the editor. Preact owns the issues panel DOM.
 //
 // Correctness rules from the ticket:
 //   - Stale-response guard: every request carries a sequence number; a
@@ -214,10 +215,9 @@ export function decorateGraph(graph, mapped) {
   return graph;
 }
 
-// LiveValidation wires the loop into one ProcessTemplateEditor: it owns the
-// issues panel DOM inside the editor stage and repaints badges by re-setting
-// the decorated graph. The editor calls schedule() from refresh() (its single
-// post-mutation choke point) and destroy() on teardown.
+// LiveValidation wires the loop into one ProcessTemplateEditor. It repaints
+// graph badges by re-setting the decorated graph and exposes panelSnapshot()
+// for the Preact shell; it never reads or writes component DOM.
 export class LiveValidation {
   constructor(editor, { delayMs, fetchFn } = {}) {
     this.editor = editor;
@@ -225,6 +225,8 @@ export class LiveValidation {
     this.diagnostics = editor.model.diagnostics || [];
     this.mapped = null;
     this.panelSignature = '';
+    this.panel = { open: false };
+    this.focusRequest = 0;
     this.issueCursor = -1;
     this.focusedIssueIdentity = '';
     this.focusedIssueAmbiguous = false;
@@ -233,7 +235,6 @@ export class LiveValidation {
       onResult: (diagnostics) => this.applyDiagnostics(diagnostics),
       delayMs,
     });
-    this.buildPanel();
     // The edit view ships the stored version's diagnostics: paint them
     // immediately, then confirm against the live draft.
     this.applyDiagnostics(this.diagnostics);
@@ -275,6 +276,7 @@ export class LiveValidation {
   applyDiagnostics(diagnostics) {
     this.diagnostics = diagnostics || [];
     this.editor.graph.setGraph(this.decorate(this.editor.model.graph()));
+    this.editor?.publish?.();
   }
 
   decorate(graph) {
@@ -283,25 +285,9 @@ export class LiveValidation {
     return decorateGraph(graph, this.mapped);
   }
 
-  buildPanel() {
-    this.panel = document.createElement('details');
-    this.panel.className = 'process-issues-panel';
-    this.summary = document.createElement('summary');
-    this.summary.className = 'process-issues-summary';
-    this.list = document.createElement('ul');
-    this.list.className = 'process-issues-list';
-    this.panel.append(this.summary, this.list);
-    this.panel.addEventListener('click', (event) => {
-      const button = event.target.closest?.('button[data-issue-index]');
-      if (!button) return;
-      this.focusIssueAt(Number(button.dataset.issueIndex), { focusButton: false });
-    });
-    this.editor.stage.append(this.panel);
-  }
-
   // focusEntry selects the diagnostic's target and centers the canvas on it.
   focusEntry(entry) {
-    const layout = this.editor.graph.layout;
+    const layout = this.editor.graph.layoutSnapshot();
     if (entry.scope === 'node' && entry.node) {
       this.editor.setSelection({ type: 'node', id: entry.node });
       const laid = layout.nodes.find((node) => node.id === entry.node);
@@ -340,14 +326,14 @@ export class LiveValidation {
     this.focusedIssueIdentity = diagnosticIdentity(entries[index]);
     this.focusedIssueAmbiguous = entries.filter((entry) => diagnosticIdentity(entry) === this.focusedIssueIdentity).length > 1;
     this.panel.open = true;
+    if (focusButton) this.focusRequest += 1;
     this.focusEntry(entries[index]);
-    if (focusButton) this.list.querySelector(`button[data-issue-index="${index}"]`)?.focus();
+    this.editor?.publish?.();
     return true;
   }
 
   renderPanel() {
     const { entries, errorCount, warningCount } = this.mapped;
-    this.panel.hidden = entries.length === 0;
     const signature = JSON.stringify(entries);
     // Rebuilding on every poll-ish repaint would drop focus mid-keyboarding;
     // only rebuild when the content actually changed.
@@ -363,34 +349,27 @@ export class LiveValidation {
     const bits = [];
     if (errorCount) bits.push(`${errorCount} error${errorCount === 1 ? '' : 's'}`);
     if (warningCount) bits.push(`${warningCount} warning${warningCount === 1 ? '' : 's'}`);
-    this.summary.textContent = `Issues · ${bits.join(' · ') || 'none'}`;
-    const items = entries.map((entry, index) => {
-      const item = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `process-issue process-issue-${entry.severity}`;
-      button.dataset.issueIndex = String(index);
-      const glyph = document.createElement('span');
-      glyph.className = 'process-issue-glyph';
-      glyph.textContent = severityGlyph(entry.severity);
-      const target = document.createElement('span');
-      target.className = 'process-issue-target';
-      target.textContent = entry.scope === 'edge' && entry.edge
-        ? `${entry.edge.from} → (${entry.edge.outcome})`
-        : entry.node || 'template';
-      const message = document.createElement('span');
-      message.className = 'process-issue-message';
-      message.textContent = entry.message;
-      message.title = `${entry.code}: ${entry.message}`;
-      button.append(glyph, target, message);
-      item.append(button);
-      return item;
-    });
-    this.list.replaceChildren(...items);
+    this.summaryText = `Issues · ${bits.join(' · ') || 'none'}`;
+    this.editor.publish?.();
+  }
+
+  setPanelOpen(open) {
+    this.panel.open = !!open;
+    this.editor.publish?.();
+  }
+
+  panelSnapshot() {
+    return {
+      open: !!this.panel.open,
+      hidden: !(this.mapped?.entries?.length),
+      summary: this.summaryText || 'Issues · none',
+      entries: structuredClone(this.mapped?.entries || []),
+      issueCursor: this.issueCursor,
+      focusRequest: this.focusRequest,
+    };
   }
 
   destroy() {
     this.scheduler.destroy();
-    this.panel.remove();
   }
 }

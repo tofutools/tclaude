@@ -472,13 +472,17 @@ export class ProcessGraph {
     this.svg.addEventListener('pointermove', (event) => this.onPointerMove(event), { signal });
     this.svg.addEventListener('pointerup', (event) => this.onPointerUp(event), { signal });
     this.svg.addEventListener('pointercancel', (event) => this.onPointerCancel(event), { signal });
+    this.svg.addEventListener('lostpointercapture', (event) => this.onLostPointerCapture(event), { signal });
     this.svg.addEventListener('pointerleave', () => this.updatePortHover(null), { signal });
     this.svg.addEventListener('click', (event) => this.onClick(event), { signal });
     this.svg.addEventListener('dblclick', (event) => this.onDoubleClick(event), { signal });
     this.svg.addEventListener('keydown', (event) => this.onKeyDown(event), { signal });
     document.addEventListener('keydown', (event) => this.onSpaceKey(event), { signal });
     document.addEventListener('keyup', (event) => this.onSpaceKey(event), { signal });
-    window.addEventListener('blur', () => this.setSpaceHeld(false), { signal });
+    window.addEventListener('blur', () => {
+      this.setSpaceHeld(false);
+      this.cancelActivePointer();
+    }, { signal });
     this.root.addEventListener('dragover', (event) => event.preventDefault(), { signal });
     this.root.addEventListener('drop', (event) => {
       event.preventDefault();
@@ -538,10 +542,12 @@ export class ProcessGraph {
       ? selectedNodes : nodeID ? [nodeID] : [];
     this.pointer = {
       id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
+      lastClientX: event.clientX, lastClientY: event.clientY,
       startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
       edgeID: target.edge?.dataset.edgeId, port: target.port?.dataset.port,
       selectionStarted: false,
     };
+    hook(this.options, 'onInteractionStart')({ mode, pointerId: event.pointerId, event });
     this.dragMoved = false;
     this.svg.setPointerCapture?.(event.pointerId);
     if (mode === 'port') {
@@ -557,6 +563,8 @@ export class ProcessGraph {
   onPointerMove(event) {
     this.updatePortHover(event);
     if (!this.pointer || this.pointer.id !== event.pointerId) return;
+    this.pointer.lastClientX = event.clientX;
+    this.pointer.lastClientY = event.clientY;
     const dx = event.clientX - this.pointer.startClientX;
     const dy = event.clientY - this.pointer.startClientY;
     if (Math.hypot(dx, dy) > 3 && !this.dragMoved) {
@@ -628,6 +636,14 @@ export class ProcessGraph {
       // unless the hook's caller supplied a new pinned graph through setGraph.
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
       this.restoreTransientEdges();
+      hook(this.options, 'onNodeDragEnd')({
+        nodeId: pointer.nodeID, nodeIds: [...(pointer.nodeIDs || [pointer.nodeID])],
+        delta: {
+          x: point.x - pointer.startPoint.x,
+          y: point.y - pointer.startPoint.y,
+        },
+        moved: this.dragMoved, event,
+      });
     } else if (pointer.mode === 'marquee') {
       this.marquee?.remove();
       this.marquee = null;
@@ -651,6 +667,7 @@ export class ProcessGraph {
     };
     this.svg.releasePointerCapture?.(event.pointerId);
     this.pointer = null;
+    hook(this.options, 'onInteractionEnd')({ mode: pointer.mode, pointerId: event.pointerId, cancelled: false, event });
     // The synthetic click follows pointerup in the same task. Clear on the next
     // task so a completed drag never also selects/activates the dragged node.
     setTimeout(() => {
@@ -679,16 +696,41 @@ export class ProcessGraph {
     } else if (pointer.mode === 'node') {
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
       this.restoreTransientEdges();
+      hook(this.options, 'onNodeDragCancel')({
+        nodeId: pointer.nodeID, nodeIds: [...(pointer.nodeIDs || [pointer.nodeID])], event,
+      });
     } else if (pointer.mode === 'marquee') {
       this.marquee?.remove();
       this.marquee = null;
     }
+    hook(this.options, 'onInteractionEnd')({ mode: pointer.mode, pointerId: event.pointerId, cancelled: true, event });
     this.suppressClick = this.dragMoved;
     this.pendingClickTarget = null;
     setTimeout(() => {
       this.dragMoved = false;
       this.suppressClick = false;
     }, 0);
+  }
+
+  onLostPointerCapture(event) {
+    if (!this.pointer || this.pointer.id !== event.pointerId) return;
+    this.onPointerCancel({
+      pointerId: event.pointerId,
+      clientX: this.pointer.lastClientX,
+      clientY: this.pointer.lastClientY,
+      type: 'lostpointercapture',
+    });
+  }
+
+  cancelActivePointer() {
+    if (!this.pointer) return false;
+    this.onPointerCancel({
+      pointerId: this.pointer.id,
+      clientX: this.pointer.lastClientX,
+      clientY: this.pointer.lastClientY,
+      type: 'blur',
+    });
+    return true;
   }
 
   snapNodeHome(nodeID) {
