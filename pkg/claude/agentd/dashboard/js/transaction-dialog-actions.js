@@ -488,26 +488,37 @@ export function createTransactionDialogActions({
       return result;
     },
 
-    async retireAgent({ conv, label, shutdown, deleteWorktree, expectedWorktree }) {
+    async retireAgent({
+      conv, label, shutdown, deleteWorktree, expectedWorktree, expectedBranch,
+    }) {
       // Keep the daemon's deliberately asymmetric defaults explicit at this
       // destructive boundary: shutdown is always named; worktree deletion is
-      // sent only when the frozen choice opted in. The exact probed path rides
-      // along as a server-authoritative precondition so a retry cannot retarget
-      // deletion onto a worktree the operator never confirmed.
+      // sent only when the frozen choice opted in. Retire removes the worktree
+      // AND force-deletes its branch, so both halves of the probed identity
+      // ride along as server-authoritative preconditions — a retry can neither
+      // retarget another worktree nor destroy a branch switched in underneath
+      // the confirmed path. A detached HEAD freezes an empty branch, which is a
+      // bound value: presence of the param, not its emptiness, is the contract.
+      const bound = !!deleteWorktree && typeof expectedBranch === 'string';
       const choice = Object.freeze({
         shutdown: !!shutdown,
         deleteWorktree: !!deleteWorktree,
         expectedWorktree: !!deleteWorktree && typeof expectedWorktree === 'string'
           ? expectedWorktree : '',
+        expectedBranch: bound ? expectedBranch : null,
       });
       if (choice.deleteWorktree && !choice.expectedWorktree) {
         throw new Error('delete worktree requires a freshly probed worktree path');
+      }
+      if (choice.deleteWorktree && choice.expectedBranch === null) {
+        throw new Error('delete worktree requires a freshly probed branch');
       }
       const params = new URLSearchParams();
       params.set('shutdown', choice.shutdown ? '1' : '0');
       if (choice.deleteWorktree) {
         params.set('delete_worktree', '1');
         params.set('expected_worktree', choice.expectedWorktree);
+        params.set('expected_branch', choice.expectedBranch);
       }
       const response = await fetchImpl(
         `/api/agents/${encodeURIComponent(conv)}/retire?${params}`,

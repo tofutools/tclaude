@@ -73,13 +73,15 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 
 	// Endpoint and authority remain daemon-owned; the adapter only preserves
 	// the raw conv id and exact option query. Worktree deletion additionally
-	// carries the probed path as a precondition, so a retry cannot be
-	// retargeted at whatever worktree the agent claims by then.
+	// carries the probed path AND branch as preconditions, so a retry can
+	// neither be retargeted at another worktree nor delete a branch switched in
+	// underneath the confirmed path.
 	for _, needle := range []string{
 		"`/api/agents/${encodeURIComponent(conv)}/retire?${params}`",
 		"params.set('shutdown', choice.shutdown ? '1' : '0')",
 		"params.set('delete_worktree', '1')",
 		"params.set('expected_worktree', choice.expectedWorktree)",
+		"params.set('expected_branch', choice.expectedBranch)",
 		"state.handoff()",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -88,10 +90,13 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	}
 
 	// The island is the freezer: the submitted choice must capture the exact
-	// probed path, and the adapter must refuse an unbound deletion opt-in.
+	// probed identity the row displayed, and the adapter must refuse a deletion
+	// opt-in that is missing either half.
 	for _, needle := range []string{
-		"? { expectedWorktree: worktree.path } : {}",
+		"expectedWorktree: worktree.path",
+		"expectedBranch: worktree.branch || ''",
 		"throw new Error('delete worktree requires a freshly probed worktree path')",
+		"throw new Error('delete worktree requires a freshly probed branch')",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("retire worktree precondition binding missing %q", needle)

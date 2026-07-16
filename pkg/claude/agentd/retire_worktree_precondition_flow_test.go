@@ -48,11 +48,12 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			"shutdown":          {"1"},
 			"delete_worktree":   {"1"},
 			"expected_worktree": {pathA},
+			"expected_branch":   {"feature-a"},
 		}.Encode()
 		resp := testharness.Serve(mux,
 			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
 		require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Body.String())
-		assert.Contains(t, resp.Body.String(), "worktree changed")
+		assert.Contains(t, resp.Body.String(), "changed since confirmation")
 		assert.Contains(t, resp.Body.String(), "re-probe")
 
 		live, err := db.IsLiveAgentConv(conv)
@@ -82,6 +83,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			"shutdown":          {"1"},
 			"delete_worktree":   {"1"},
 			"expected_worktree": {cwd},
+			"expected_branch":   {"feature-safe"},
 		}.Encode()
 		resp := testharness.Serve(mux,
 			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
@@ -92,6 +94,166 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		assert.False(t, live, "a satisfied precondition retires normally")
 		assert.True(t, fw.wasRemoved(cwd), "decoded matching worktree must be removed")
 		assert.Contains(t, fw.branchesRemoved(), "feature-safe")
+	})
+
+	// The destructive half nobody sees coming: the agent never leaves the
+	// confirmed path, it just switches branch in place. Retire force-deletes
+	// the branch, and the confirmation row named feature-a, so feature-b and
+	// any uncommitted work on it must survive a Retry.
+	t.Run("same-path branch switch conflicts before any mutation", func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+
+		const conv = "rwpb-1111-2222-3333-4444"
+		const cwd = "/tmp/retire-branch-switch"
+		f.HaveConvWithTitle(conv, "branch-switching-worker")
+		f.HaveAliveSession(conv, "spwn-rwpb", "tmux-rwpb", cwd)
+		f.MarkOffline("tmux-rwpb")
+		f.HaveEnrolledAgent(conv)
+		fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			cwd: {Root: cwd, Branch: "feature-a", Kind: "linked"},
+		})
+		mux := agentd.BuildDashboardHandlerForTest()
+
+		probe := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree", nil))
+		require.Equal(t, http.StatusOK, probe.Code, "body=%s", probe.Body.String())
+		assert.Contains(t, probe.Body.String(), "feature-a")
+
+		// git switch feature-b — same worktree, same removability, new branch.
+		installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			cwd: {Root: cwd, Branch: "feature-b", Kind: "linked"},
+		})
+		query := url.Values{
+			"shutdown":          {"1"},
+			"delete_worktree":   {"1"},
+			"expected_worktree": {cwd},
+			"expected_branch":   {"feature-a"},
+		}.Encode()
+		resp := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
+		require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Body.String())
+		assert.Contains(t, resp.Body.String(), "changed since confirmation")
+
+		live, err := db.IsLiveAgentConv(conv)
+		require.NoError(t, err)
+		assert.True(t, live, "an unreviewed branch must never cost the agent its retirement")
+		assert.False(t, fw.wasRemoved(cwd), "the worktree must survive an unconfirmed branch")
+		assert.NotContains(t, fw.branchesRemoved(), "feature-b",
+			"a branch the operator never confirmed must never be force-deleted")
+		assert.Empty(t, fw.branchesRemoved(), "no branch may be deleted behind a conflict")
+	})
+
+	// A detached HEAD freezes an empty branch. That is a bound value, not an
+	// absent precondition, so it must satisfy the guard rather than trip it.
+	t.Run("detached HEAD binds an explicitly empty branch", func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+
+		const conv = "rwpd-1111-2222-3333-4444"
+		const cwd = "/tmp/retire-detached-head"
+		f.HaveConvWithTitle(conv, "detached-worker")
+		f.HaveAliveSession(conv, "spwn-rwpd", "tmux-rwpd", cwd)
+		f.MarkOffline("tmux-rwpd")
+		f.HaveEnrolledAgent(conv)
+		fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			cwd: {Root: cwd, Branch: "", Kind: "linked"},
+		})
+		mux := agentd.BuildDashboardHandlerForTest()
+
+		query := url.Values{
+			"shutdown":          {"1"},
+			"delete_worktree":   {"1"},
+			"expected_worktree": {cwd},
+			"expected_branch":   {""},
+		}.Encode()
+		resp := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
+		require.Equal(t, http.StatusOK, resp.Code, "body=%s", resp.Body.String())
+
+		live, err := db.IsLiveAgentConv(conv)
+		require.NoError(t, err)
+		assert.False(t, live, "an empty branch is a satisfied precondition, not a missing one")
+		assert.True(t, fw.wasRemoved(cwd), "a detached-HEAD worktree still deletes")
+	})
+
+	// A detached HEAD that gains a branch is still a change the operator never
+	// reviewed — the empty precondition must not degrade into "any branch".
+	t.Run("branch appearing under a detached-HEAD confirmation conflicts", func(t *testing.T) {
+		t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+		f := newFlow(t)
+
+		const conv = "rwpg-1111-2222-3333-4444"
+		const cwd = "/tmp/retire-detached-gained"
+		f.HaveConvWithTitle(conv, "detached-gained-worker")
+		f.HaveAliveSession(conv, "spwn-rwpg", "tmux-rwpg", cwd)
+		f.MarkOffline("tmux-rwpg")
+		f.HaveEnrolledAgent(conv)
+		fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+			cwd: {Root: cwd, Branch: "rescued-work", Kind: "linked"},
+		})
+		mux := agentd.BuildDashboardHandlerForTest()
+
+		query := url.Values{
+			"shutdown":          {"1"},
+			"delete_worktree":   {"1"},
+			"expected_worktree": {cwd},
+			"expected_branch":   {""},
+		}.Encode()
+		resp := testharness.Serve(mux,
+			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
+		require.Equal(t, http.StatusConflict, resp.Code, "body=%s", resp.Body.String())
+
+		live, err := db.IsLiveAgentConv(conv)
+		require.NoError(t, err)
+		assert.True(t, live)
+		assert.Empty(t, fw.branchesRemoved(), "a branch created after confirmation must survive")
+	})
+
+	// Half a precondition is not a precondition: the pair travels together or
+	// not at all, so a caller can never bind the path while leaving the branch
+	// free to be resolved fresh.
+	t.Run("half a precondition pair is rejected", func(t *testing.T) {
+		for _, row := range []struct {
+			name  string
+			query url.Values
+		}{
+			{"path without branch", url.Values{
+				"shutdown": {"1"}, "delete_worktree": {"1"},
+				"expected_worktree": {"/tmp/retire-half-pair"},
+			}},
+			{"branch without path", url.Values{
+				"shutdown": {"1"}, "delete_worktree": {"1"},
+				"expected_branch": {"feature-half"},
+			}},
+		} {
+			t.Run(row.name, func(t *testing.T) {
+				t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+				f := newFlow(t)
+
+				const conv = "rwph-1111-2222-3333-4444"
+				const cwd = "/tmp/retire-half-pair"
+				f.HaveConvWithTitle(conv, "half-pair-worker")
+				f.HaveAliveSession(conv, "spwn-rwph", "tmux-rwph", cwd)
+				f.MarkOffline("tmux-rwph")
+				f.HaveEnrolledAgent(conv)
+				fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+					cwd: {Root: cwd, Branch: "feature-half", Kind: "linked"},
+				})
+				mux := agentd.BuildDashboardHandlerForTest()
+
+				resp := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost,
+					"/api/agents/"+conv+"/retire?"+row.query.Encode(), nil))
+				require.Equal(t, http.StatusBadRequest, resp.Code, "body=%s", resp.Body.String())
+				assert.Contains(t, resp.Body.String(), "must be sent together")
+
+				live, err := db.IsLiveAgentConv(conv)
+				require.NoError(t, err)
+				assert.True(t, live, "a malformed precondition must never demote the agent")
+				assert.False(t, fw.wasRemoved(cwd))
+				assert.Empty(t, fw.branchesRemoved())
+			})
+		}
 	})
 
 	t.Run("precondition without opt-in is rejected", func(t *testing.T) {
@@ -109,11 +271,15 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		})
 		mux := agentd.BuildDashboardHandlerForTest()
 
-		query := url.Values{"shutdown": {"1"}, "expected_worktree": {cwd}}.Encode()
+		query := url.Values{
+			"shutdown":          {"1"},
+			"expected_worktree": {cwd},
+			"expected_branch":   {"feature-guarded"},
+		}.Encode()
 		resp := testharness.Serve(mux,
 			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
 		require.Equal(t, http.StatusBadRequest, resp.Code, "body=%s", resp.Body.String())
-		assert.Contains(t, resp.Body.String(), "requires delete_worktree=1")
+		assert.Contains(t, resp.Body.String(), "require delete_worktree=1")
 
 		live, err := db.IsLiveAgentConv(conv)
 		require.NoError(t, err)
@@ -140,6 +306,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			"shutdown":          {"1"},
 			"delete_worktree":   {"1"},
 			"expected_worktree": {""},
+			"expected_branch":   {"feature-empty"},
 		}.Encode()
 		resp := testharness.Serve(mux,
 			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
@@ -223,6 +390,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			"shutdown":          {"1"},
 			"delete_worktree":   {"1"},
 			"expected_worktree": {cwd},
+			"expected_branch":   {"main"},
 		}.Encode()
 		resp := testharness.Serve(mux,
 			testharness.JSONRequest(t, http.MethodPost, "/api/agents/"+conv+"/retire?"+query, nil))
