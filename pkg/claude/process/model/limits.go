@@ -33,6 +33,7 @@ const (
 	DiagnosticCodeNormalizedNodeLimit = "normalized_node_limit"
 	DiagnosticCodeNormalizedEdgeLimit = "normalized_edge_limit"
 	DiagnosticCodeGraphAliasLimit     = "normalized_graph_alias_limit"
+	DiagnosticCodeInvalidGraphKey     = "invalid_graph_key"
 	DiagnosticCodeSchemaBudget        = "template_schema_budget"
 )
 
@@ -145,6 +146,14 @@ func graphAliasLimitDiagnostic() Diagnostic {
 		DiagnosticCodeGraphAliasLimit,
 		"nodes",
 		"process template graph aliases exceed the parsed YAML structural-resolution budget",
+	)
+}
+
+func invalidGraphKeyDiagnostic(path string) Diagnostic {
+	return diagError(
+		DiagnosticCodeInvalidGraphKey,
+		path,
+		"process template graph mapping keys must decode to strings",
 	)
 }
 

@@ -110,15 +110,38 @@ func TestRunProcessTemplatesSaveRejectsCompactAliasCardinalityLocally(t *testing
 	assert.Contains(t, stderr.String(), "ERROR normalized_edge_limit [template]")
 }
 
-func TestRenderLocalGraphCardinalityDiagnosticsIncludesSchemaBudget(t *testing.T) {
-	var stderr bytes.Buffer
-	found := renderLocalGraphCardinalityDiagnostics(model.Diagnostics{{
-		Severity: model.SeverityError,
-		Code:     model.DiagnosticCodeSchemaBudget,
-		Message:  "process template schema diagnostics exceed the bounded authoring budget",
-	}}, &stderr)
-	assert.True(t, found)
-	assert.Contains(t, stderr.String(), "ERROR template_schema_budget [template]")
+func TestRunProcessTemplatesSaveRejectsMalformedGraphKeyLocally(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{}`))
+	var stdout, stderr bytes.Buffer
+	source := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: malformed-key
+nodes:
+  ? [malformed]
+  : {type: end}
+`
+
+	rc := runProcessTemplatesSave(&processTemplatesSaveParams{File: "-"}, strings.NewReader(source), &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Empty(t, calls, "local raw guard rejects before contacting agentd")
+	assert.Contains(t, stderr.String(), "ERROR invalid_graph_key [template]")
+}
+
+func TestRenderLocalGraphCardinalityDiagnosticsIncludesPredecodeRejections(t *testing.T) {
+	for _, code := range []string{model.DiagnosticCodeSchemaBudget, model.DiagnosticCodeInvalidGraphKey} {
+		t.Run(code, func(t *testing.T) {
+			var stderr bytes.Buffer
+			found := renderLocalGraphCardinalityDiagnostics(model.Diagnostics{{
+				Severity: model.SeverityError,
+				Code:     code,
+				Message:  "bounded predecode rejection",
+			}}, &stderr)
+			assert.True(t, found)
+			assert.Contains(t, stderr.String(), "ERROR "+code+" [template]")
+		})
+	}
 }
 
 func compactAliasProcessTemplate(nodeCount, outcomes int) string {

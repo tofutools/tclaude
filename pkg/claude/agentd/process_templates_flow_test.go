@@ -180,6 +180,38 @@ func TestProcessTemplateGetRejectsLegacyOverBudgetSourceWithoutPanic(t *testing.
 	assert.Equal(t, "template", response.Diagnostics[0].Scope)
 }
 
+func TestProcessTemplateGetRejectsLegacyMalformedGraphKeyWithTypedDiagnostic(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-malformed", "legacy source", 10))
+	require.NoError(t, err)
+
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: legacy-malformed
+nodes:
+  ? [malformed]
+  : {type: end}
+`)
+	sourcePath := filepath.Join(root, "templates", record.ID, "sha256-"+record.SemanticHash, "template.yaml")
+	require.NoError(t, os.WriteFile(sourcePath, source, 0o644))
+
+	rec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/legacy-malformed", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	var response struct {
+		Code        string            `json:"code"`
+		Diagnostics []processEditDiag `json:"diagnostics"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	assert.Equal(t, "process_template_invalid", response.Code)
+	require.Len(t, response.Diagnostics, 1)
+	assert.Equal(t, model.DiagnosticCodeInvalidGraphKey, response.Diagnostics[0].Code)
+	assert.Equal(t, "template", response.Diagnostics[0].Scope)
+	assert.Empty(t, response.Diagnostics[0].TargetID)
+	assert.Less(t, rec.Body.Len(), 1024)
+}
+
 func TestProcessTemplateSaveStoreFailureIsInternalError(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, err := store.NewFS(root)

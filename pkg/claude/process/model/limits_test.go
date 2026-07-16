@@ -223,6 +223,119 @@ func TestParseRejectsCompactAliasedNextMapsBeforeDecodeAndHash(t *testing.T) {
 	})
 }
 
+func TestRawGraphMalformedKeysFailClosedWithoutHidingCardinality(t *testing.T) {
+	assertRejected := func(t *testing.T, source []byte, wantCode, wantPath string) {
+		t.Helper()
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template, "predecode rejection must not materialize Template maps")
+		assert.Nil(t, parsed.Edges, "predecode rejection must not normalize the graph")
+		assert.Empty(t, parsed.SemanticHash, "predecode rejection must not hash the graph")
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.Equal(t, wantCode, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, wantPath, parsed.Diagnostics[len(parsed.Diagnostics)-1].Path)
+	}
+
+	for _, graphKey := range []struct {
+		name    string
+		rewrite func(string, int) string
+		path    string
+	}{
+		{"node key", replaceNodeKeyWithComplex, "nodes"},
+		{"outcome key", replaceOutcomeKeyWithComplex, "nodes.next"},
+	} {
+		t.Run(graphKey.name, func(t *testing.T) {
+			t.Run("under boundary", func(t *testing.T) {
+				source := graphKey.rewrite(string(aliasedNextTemplateYAML(1, 1, false)), 0)
+				assertRejected(t, []byte(source), DiagnosticCodeInvalidGraphKey, graphKey.path)
+			})
+
+			t.Run("exact edge boundary", func(t *testing.T) {
+				source := graphKey.rewrite(string(aliasedNextTemplateYAML(63, 65, false)), 0)
+				assertRejected(t, []byte(source), DiagnosticCodeInvalidGraphKey, graphKey.path)
+			})
+
+			t.Run("edge boundary plus one before malformed key", func(t *testing.T) {
+				source := graphKey.rewrite(string(aliasedNextTemplateYAML(64, 64, false)), 0)
+				assertRejected(t, []byte(source), DiagnosticCodeNormalizedEdgeLimit, "nodes")
+			})
+
+			t.Run("edge boundary plus one after malformed key", func(t *testing.T) {
+				source := graphKey.rewrite(string(aliasedNextTemplateYAML(64, 64, false)), 63)
+				assertRejected(t, []byte(source), DiagnosticCodeNormalizedEdgeLimit, "nodes")
+			})
+		})
+	}
+
+	t.Run("worst allowed node and degree amplification", func(t *testing.T) {
+		source := replaceNodeKeyWithComplex(
+			string(aliasedNextTemplateYAML(MaxNormalizedNodes, MaxNormalizedDegree, false)),
+			MaxNormalizedNodes-1,
+		)
+		require.Less(t, len(source), MaxProcessTemplateSourceBytes)
+		assertRejected(t, []byte(source), DiagnosticCodeNormalizedEdgeLimit, "nodes")
+	})
+
+	t.Run("malformed node field key still traverses next", func(t *testing.T) {
+		source := string(aliasedNextTemplateYAML(64, 64, false))
+		source = strings.Replace(source, "    type: end\n    next: &shared", "    ? [bad-field]\n    : ignored\n    next: &shared", 1)
+		assertRejected(t, []byte(source), DiagnosticCodeNormalizedEdgeLimit, "nodes")
+	})
+
+	t.Run("multiple malformed keys emit one bounded deterministic finding", func(t *testing.T) {
+		source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: malformed-keys
+description: &bad-one [one]
+metadata: &bad-two [two]
+nodes:
+  *bad-one: {type: end}
+  *bad-two: {type: end}
+`)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template)
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.Equal(t, DiagnosticCodeInvalidGraphKey, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Equal(t, "nodes", parsed.Diagnostics[len(parsed.Diagnostics)-1].Path)
+		encoded, err := json.Marshal(parsed.Diagnostics)
+		require.NoError(t, err)
+		assert.Less(t, len(encoded), 1024)
+		assert.Equal(t, 1, countDiagnosticCode(parsed.Diagnostics, DiagnosticCodeInvalidGraphKey))
+	})
+
+	t.Run("valid duplicate last wins before malformed-key rejection", func(t *testing.T) {
+		source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: malformed-with-duplicate
+start: target
+nodes:
+  source:
+    type: decision
+    next:
+      pass: missing
+      pass: target
+      ? [malformed-outcome]
+      : target
+  target: {type: end}
+`)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template)
+		assert.Equal(t,
+			[]string{"duplicate_key", DiagnosticCodeInvalidGraphKey},
+			diagnosticCodes(parsed.Diagnostics),
+		)
+		assert.Equal(t, "nodes.next", parsed.Diagnostics[1].Path)
+	})
+
+	t.Run("independent overflow takes precedence over malformed node merge", func(t *testing.T) {
+		source := string(aliasedNextTemplateYAML(64, 64, false))
+		source = strings.Replace(source, "  n063:\n    type: end", "  n063:\n    <<: &node-defaults {type: end}\n    type: end", 1)
+		assertRejected(t, []byte(source), DiagnosticCodeNormalizedEdgeLimit, "nodes")
+	})
+}
+
 func TestParseResolvesAliasedStructuralGraphKeysWithinFiniteBound(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -630,6 +743,22 @@ func aliasedNextTemplateYAML(nodeCount, outcomes int, invalidBranch bool) []byte
 		}
 	}
 	return []byte(source.String())
+}
+
+func replaceNodeKeyWithComplex(source string, nodeIndex int) string {
+	return strings.Replace(source,
+		fmt.Sprintf("  n%03d:\n", nodeIndex),
+		"  ? [malformed-node-key]\n  :\n",
+		1,
+	)
+}
+
+func replaceOutcomeKeyWithComplex(source string, outcomeIndex int) string {
+	return strings.Replace(source,
+		fmt.Sprintf("      outcome-%03d: n000\n", outcomeIndex),
+		"      ? [malformed-outcome-key]\n      : n000\n",
+		1,
+	)
 }
 
 func schemaAliasedNodeTemplateYAML(nodeCount, checks, unknownFields int) []byte {
