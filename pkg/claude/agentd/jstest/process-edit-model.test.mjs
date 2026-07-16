@@ -183,13 +183,25 @@ test('multi-selection delete rewires across selected nodes atomically', () => {
   assert.equal(model.findEdge('begin', 'pass').to, 'build');
 });
 
-test('setJoin stores fan-in semantics as node metadata and clears cleanly', () => {
+test('setJoin stores typed fan-in semantics, removes legacy metadata, and clears cleanly', () => {
   const model = new ProcessEditModel(view());
+  model.template.nodes.ship.metadata = { join: 'any', owner: 'routing-team' };
   model.setJoin('ship', 'all');
-  assert.equal(model.template.nodes.ship.metadata.join, 'all');
+  assert.equal(model.template.nodes.ship.join, 'all');
+  assert.deepEqual(model.template.nodes.ship.metadata, { owner: 'routing-team' });
   model.setJoin('ship', null);
-  assert.equal(model.template.nodes.ship.metadata, undefined);
+  assert.equal(model.template.nodes.ship.join, undefined);
+  assert.deepEqual(model.template.nodes.ship.metadata, { owner: 'routing-team' });
   assert.throws(() => model.setJoin('ship', 'most'), /invalid join/);
+});
+
+test('parallel is a first-class performer-free primitive and survives save projection', () => {
+  const model = new ProcessEditModel(view());
+  const id = model.addNode('parallel', { x: 12, y: 34 });
+  assert.equal(id, 'parallel');
+  assert.deepEqual(model.node(id), { type: 'parallel' });
+  assert.deepEqual(model.layout.nodes[id], { x: 12, y: 34 });
+  assert.deepEqual(model.saveBody().template.nodes[id], { type: 'parallel' });
 });
 
 test('undo stack is bounded and drops the oldest snapshots', () => {
@@ -489,8 +501,9 @@ test('duplicateNodes copies semantics, internal edges, placement, and one undo s
 });
 
 test('palette data is well-formed: known primitive types, internally consistent snippets', () => {
-  const types = new Set(['task', 'decision', 'wait', 'start', 'end']);
+  const types = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
   for (const primitive of PALETTE_PRIMITIVES) assert.ok(types.has(primitive.type), primitive.type);
+  assert.ok(PALETTE_PRIMITIVES.some(primitive => primitive.type === 'parallel'));
   for (const snippet of PALETTE_SNIPPETS) {
     const seen = new Map();
     for (const edge of snippet.edges) {

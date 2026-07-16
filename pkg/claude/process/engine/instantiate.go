@@ -46,6 +46,10 @@ type InstantiateRequest struct {
 	RunID       string
 	Params      map[string]string
 	Now         time.Time
+	// EngineCapabilities is supplied by the hosting engine boundary. It is
+	// intentionally absent from CLI/REST request schemas; current production
+	// callers provide foundation_v1, which cannot instantiate parallel syntax.
+	EngineCapabilities EngineCapabilities
 	// ReplayExisting makes an explicit RunID an idempotency boundary: an
 	// existing run is returned only when its pinned template and resolved
 	// params are identical. Generated IDs still suffix collisions, and the
@@ -101,6 +105,9 @@ func Instantiate(ctx context.Context, st store.Store, request InstantiateRequest
 func prepareInstantiation(tmpl *model.Template, request InstantiateRequest) (map[string]string, string, bool, error) {
 	if diagnostics := model.Validate(tmpl, model.NormalizeEdges(tmpl)); diagnostics.HasErrors() {
 		return nil, "", false, &InstantiateInputError{Err: fmt.Errorf("template has validation errors")}
+	}
+	if err := requireInstantiationCapabilities(tmpl, request.EngineCapabilities); err != nil {
+		return nil, "", false, &InstantiateInputError{Err: err}
 	}
 	params, err := applyParamDefaults(tmpl, request.Params)
 	if err != nil {

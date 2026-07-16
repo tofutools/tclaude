@@ -341,10 +341,11 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := processengine.Instantiate(r.Context(), fs, processengine.InstantiateRequest{
-		TemplateRef:    body.TemplateRef,
-		RunID:          body.RunID,
-		Params:         body.Params,
-		ReplayExisting: body.RunID != "",
+		TemplateRef:        body.TemplateRef,
+		RunID:              body.RunID,
+		Params:             body.Params,
+		ReplayExisting:     body.RunID != "",
+		EngineCapabilities: processengine.FoundationEngineCapabilities(),
 	})
 	if err != nil {
 		switch {

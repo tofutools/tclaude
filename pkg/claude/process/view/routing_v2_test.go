@@ -183,27 +183,32 @@ func assertViewerV2Unavailable(t *testing.T, got processview.ViewerV2, reason pr
 
 // denseViewerV2TemplateAtEncodedByteBudget builds a valid acyclic chain whose
 // 4,096 long source IDs are each repeated across 21 projected edge objects.
+// Branch targets are sharded so no normalized inbound candidate set exceeds
+// the authoring model's 2,046 ceiling.
 // This keeps the exact template input well below its existing file ceiling
 // while projection overhead supplies most of the encoded topology size. One
 // safe outcome is then extended just enough to land exactly on the bound.
 func denseViewerV2TemplateAtEncodedByteBudget(t *testing.T) (*model.Template, string, string, string, int) {
 	t.Helper()
 	const outgoing = 21
+	const sinks = 64
 	sourceIDs := make([]string, pathv1.MaxRoutingList)
 	for i := range sourceIDs {
 		sourceIDs[i] = fmt.Sprintf("source-%04d-%s", i, strings.Repeat("s", 52))
 	}
-	nodes := make(map[string]model.Node, len(sourceIDs)+1)
-	nodes["end"] = model.Node{Type: model.NodeTypeEnd}
+	nodes := make(map[string]model.Node, len(sourceIDs)+sinks)
+	for sink := 0; sink < sinks; sink++ {
+		nodes[fmt.Sprintf("end-%02d", sink)] = model.Node{Type: model.NodeTypeEnd}
+	}
 	for i, sourceID := range sourceIDs {
 		next := make(model.Next, outgoing)
 		for branch := 0; branch < outgoing-1; branch++ {
-			next[fmt.Sprintf("branch-%02d", branch)] = "end"
+			next[fmt.Sprintf("branch-%02d", branch)] = fmt.Sprintf("end-%02d", (i*(outgoing-1)+branch)%sinks)
 		}
 		if i+1 < len(sourceIDs) {
 			next["advance"] = sourceIDs[i+1]
 		} else {
-			next["advance"] = "end"
+			next["advance"] = "end-00"
 		}
 		nodes[sourceID] = model.Node{
 			Type:      model.NodeTypeDecision,

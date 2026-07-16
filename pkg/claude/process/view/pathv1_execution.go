@@ -26,7 +26,7 @@ func ProjectCurrentPathV1ViewerV2(ctx context.Context, checkpointJSON, templateS
 	if err != nil {
 		return ViewerV2{}, err
 	}
-	parsed, err := model.Parse(templateSource)
+	parsed, err := model.ParseExactSource(templateSource)
 	if err != nil {
 		return ViewerV2{}, err
 	}

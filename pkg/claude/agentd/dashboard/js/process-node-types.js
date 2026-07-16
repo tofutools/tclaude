@@ -4,6 +4,7 @@
 export const PROCESS_NODE_TYPES = [
   { type: 'task', label: 'Task', wizardLabel: 'Task rune', hint: 'A unit of work with a performer', requiresConfiguration: true },
   { type: 'decision', label: 'Decision', wizardLabel: 'Forking rune', hint: 'Branch on an explicit outcome', requiresConfiguration: true },
+  { type: 'parallel', label: 'Parallel', wizardLabel: 'Splitting rune', hint: 'Fan out through every outgoing branch' },
   { type: 'wait', label: 'Wait / timer', wizardLabel: 'Waiting rune', hint: 'Pause for a duration or signal', requiresConfiguration: true },
   { type: 'start', label: 'Start', wizardLabel: 'Opening rune', hint: 'Entry marker' },
   { type: 'end', label: 'End', wizardLabel: 'Closing rune', hint: 'Terminal node with a result' },

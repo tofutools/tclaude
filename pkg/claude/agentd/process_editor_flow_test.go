@@ -36,7 +36,7 @@ func TestProcessEditorSaveRoundTripsNodeEdgeJoinAndPin(t *testing.T) {
 	// node.next), a join marker on the fan-in target, and a pinned position.
 	edit.Template.Nodes["review"] = model.Node{Type: model.NodeTypeTask, Name: "Cold review"}
 	done := edit.Template.Nodes["done"]
-	done.Metadata = model.Metadata{"join": "all"}
+	done.Join = model.JoinAll
 	edit.Template.Nodes["done"] = done
 	edit.Edges = append(edit.Edges,
 		model.Edge{From: "begin", Outcome: "fail", To: "review"},
@@ -62,7 +62,8 @@ func TestProcessEditorSaveRoundTripsNodeEdgeJoinAndPin(t *testing.T) {
 	assert.Contains(t, next.Edges, model.Edge{From: "begin", Outcome: "fail", To: "review"})
 	assert.Contains(t, next.Edges, model.Edge{From: "review", Outcome: "pass", To: "done"})
 	assert.Equal(t, model.LayoutNode{X: 420, Y: 260}, next.Layout.Nodes["review"])
-	assert.Equal(t, "all", next.Template.Nodes["done"].Metadata["join"])
+	assert.Equal(t, model.JoinAll, next.Template.Nodes["done"].Join)
+	assert.NotContains(t, next.Template.Nodes["done"].Metadata, "join")
 
 	assert.Contains(t, next.Source, "review:", "canonical YAML names the new node")
 	assert.Contains(t, next.Source, "fail: review", "canonical YAML carries the new edge as next")

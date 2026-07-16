@@ -11,7 +11,27 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Parse is the public editable-authoring-source parser. It retains the
+// historical name for CLI/editor callers and may perform explicitly documented
+// source migrations such as metadata.join promotion. Pinned/execution source
+// must use ParseExactSource instead.
 func Parse(data []byte) (*ParsedTemplate, error) {
+	return ParseAuthoring(data)
+}
+
+// ParseAuthoring parses editable YAML and applies authoring-only promotions.
+func ParseAuthoring(data []byte) (*ParsedTemplate, error) {
+	return parseSource(data, true)
+}
+
+// ParseExactSource parses the YAML source paired with an immutable template
+// version. It validates and hashes exactly the modeled fields present and
+// never promotes advisory legacy metadata.
+func ParseExactSource(data []byte) (*ParsedTemplate, error) {
+	return parseSource(data, false)
+}
+
+func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("parse process template YAML: %w", err)
@@ -28,6 +48,9 @@ func Parse(data []byte) (*ParsedTemplate, error) {
 
 	normalizeTemplate(&tmpl)
 	diagnostics = append(diagnostics, normalizeFreeform(&tmpl)...)
+	if authoring {
+		diagnostics = append(diagnostics, promoteLegacyJoins(&tmpl)...)
+	}
 	edges := NormalizeEdges(&tmpl)
 	diagnostics = append(diagnostics, Validate(&tmpl, edges)...)
 
@@ -46,6 +69,38 @@ func Parse(data []byte) (*ParsedTemplate, error) {
 		Ref:          TemplateRef(tmpl.ID, semanticHash),
 	}
 	return parsed, nil
+}
+
+// promoteLegacyJoins is deliberately confined to Parse, the authoring-source
+// boundary. Immutable template.json reads decode Template directly and must
+// never reinterpret advisory metadata under an already-pinned semantic hash.
+func promoteLegacyJoins(tmpl *Template) Diagnostics {
+	if tmpl == nil {
+		return nil
+	}
+	var diagnostics Diagnostics
+	for _, nodeID := range sortedKeys(tmpl.Nodes) {
+		node := tmpl.Nodes[nodeID]
+		legacy, present := node.Metadata["join"]
+		if !present {
+			continue
+		}
+		value, ok := legacy.(string)
+		policy := JoinPolicy(value)
+		if !ok || policy != JoinAll && policy != JoinAny {
+			diagnostics = append(diagnostics, diagError("invalid_legacy_join", "nodes."+nodeID+".metadata.join", "legacy metadata.join must be all or any"))
+			continue
+		}
+		if node.Join == "" {
+			node.Join = policy
+		} else if node.Join != policy {
+			diagnostics = append(diagnostics, diagError("join_metadata_conflict", "nodes."+nodeID+".metadata.join",
+				fmt.Sprintf("typed join %q disagrees with legacy metadata.join %q", node.Join, policy)))
+		}
+		delete(node.Metadata, "join")
+		tmpl.Nodes[nodeID] = node
+	}
+	return diagnostics
 }
 
 // mergeTag is the resolved short tag yaml.v3 assigns to a `<<` merge key.

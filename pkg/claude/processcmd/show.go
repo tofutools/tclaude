@@ -181,7 +181,7 @@ func runShowPathV1(cmd *cobra.Command, fs *store.FS, p *showParams, out io.Write
 	if _, err := pathv1.VerifyExclusiveInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
 		return err
 	}
-	parsed, err := model.Parse(snapshot.TemplateSource)
+	parsed, err := model.ParseExactSource(snapshot.TemplateSource)
 	if err != nil || parsed.Diagnostics.HasErrors() {
 		return fmt.Errorf("schema-7 process template is invalid")
 	}

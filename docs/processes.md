@@ -467,13 +467,36 @@ outlive the viewer request and accumulate after the coherent lock is released.
 - A manual `advance` of another ready node while a run is paused is an
   intentional human override; the paused command's own running node remains
   protected from manual advancement.
-- Phase 1 treats each selected outgoing edge as an exclusive branch. Explicit
-  AND-join semantics are deferred until the engine can track live paths.
+- Execution currently treats each selected outgoing edge as an exclusive
+  branch. The authoring model and editor accept an instantaneous
+  `type: parallel` gateway and typed target-node `join: all | any`, but the
+  production engine advertises only `foundation_v1` and rejects templates
+  containing a parallel gateway at instantiation. No fan-out or join execution
+  is enabled yet.
 - End nodes default to completed runs; set `result: failed` on a failure
   terminal node when that path should fail the run.
 - A poison-resolution `cancel` settles the run directly; the authored canceled
   end marker remains pending until the resolution command grows a typed
   terminal-node target in a later phase.
+
+### Parallel/join authoring (execution disabled)
+
+Parallel gateways have no performer, wait, retry, result, capture, or compound
+stage fields and require 2–2,046 normalized outgoing edges. A typed join is set
+on the target node, requires at least two inbound edges, and accepts only `all`
+or `any`. Omission on a multi-inbound node means `all` without serializing an
+explicit default, so unchanged legacy templates keep their semantic hashes.
+
+Static validation propagates causal fork/branch scope signatures. It permits a
+local merge inside one unchanged scope, or a complete reduction of exactly one
+innermost parallel scope. Partial, unrelated, multiple-scope, bypass, and escape
+shapes are rejected before save; nested complete reductions are supported.
+
+When editable YAML still contains the former advisory `metadata.join`, the
+authoring parser promotes a valid value to typed `join`, removes only that
+metadata key, and creates a new semantic version. A disagreeing typed field is
+a blocking diagnostic. Immutable `template.json`, exact pinned template, and
+run reads never perform this promotion or reinterpret an existing hash.
 
 ## Param templating surface
 
