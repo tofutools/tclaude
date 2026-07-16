@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"io/fs"
 	"strings"
 	"testing"
@@ -25,7 +26,9 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 	html := read("dashboard.html")
 	tabs := read("js/tabs.js")
 	rowActions := read("js/row-action-handler.js")
-	legacyModal := read("js/modal-link-wt.js")
+	if _, err := fs.Stat(dashboardAssetsFS, "js/modal-link-wt.js"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("retired modal-link-wt.js must stay absent, stat error: %v", err)
+	}
 
 	for _, needle := range []string{
 		"export function LinksControls(",
@@ -114,16 +117,6 @@ func TestDashboardLinksPreactOwnership(t *testing.T) {
 	for _, forbidden := range []string{"bindFilter('links')", "bindSortHeaders", "renderLinks(", "bindLinkModal", "openLinkModal"} {
 		if strings.Contains(dashboard+tabs, forbidden) {
 			t.Errorf("legacy Links ownership remains: %q", forbidden)
-		}
-	}
-	for _, forbidden := range []string{"link-modal", "links-manage", "openLinkModal", "submitLinkModal", "bindLinkModal"} {
-		if strings.Contains(legacyModal, forbidden) {
-			t.Errorf("modal-link-wt.js retains retired Links controller %q", forbidden)
-		}
-	}
-	for _, needle := range []string{"WT_NEW", "wtToggleNew", "wtLoad", "bindWtPicker", "wtResolve", "wtResolveCwd"} {
-		if !strings.Contains(legacyModal, needle) {
-			t.Errorf("modal-link-wt.js lost unrelated worktree picker export %q", needle)
 		}
 	}
 	for _, needle := range []string{"openLinkCreate({ from })", "openLinksManager()", "openLinkEdit({ id, from, to, mode })", "await deleteLink({ id, from, to, scope })"} {

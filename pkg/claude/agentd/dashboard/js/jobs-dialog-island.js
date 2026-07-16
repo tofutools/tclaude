@@ -1,7 +1,10 @@
 import { Fragment, h } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { agentCandidates, groupMembers, groupsForPicker } from './message-access-dialog-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 import { wizWord } from './slop.js';
@@ -138,6 +141,7 @@ function CronExplanation({ result, loading, onRetry }) {
 }
 
 export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   useLiveTheme();
   const [initial, setInitial] = useState(() => createCronDraft(descriptor.prefill));
   const [draft, setDraft] = useState(() => createCronDraft(descriptor.prefill));
@@ -244,7 +248,8 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
       overlayClass=${editing ? 'cron-editing' : descriptor.kind === 'duplicate' ? 'cron-duplicating' : ''}
       labelledby="cron-create-title" onClose=${actions.closeCronDialog}
       onSubmitHotkey=${busy ? null : () => submit(false)} dirty=${dirty} blocked=${busy}
-      confirmDiscard=${confirmDiscard} resizeKey="tclaude.dash.modalSize.cron-create">
+      confirmDiscard=${confirmDiscard} registerClose=${registerClose}
+      resizeKey="tclaude.dash.modalSize.cron-create">
       <h3 id="cron-create-title">${title}</h3>
       ${meta && html`<div class="modal-meta" id="cron-create-meta">${meta}</div>`}
       <label class="cron-create-row"><span class="cron-create-label">Name</span>
@@ -302,7 +307,7 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
       <label class="cron-create-enabled"><input id="cron-create-enabled" type="checkbox" checked=${draft.enabled}
         onChange=${(event) => update({ enabled: event.currentTarget.checked })} /> Enabled</label>
       <div class="cron-create-error" id="cron-create-error" role="alert">${error}</div>
-      <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${actions.closeCronDialog}>Cancel</button>
+      <div class="modal-buttons"><button id="cron-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>${!editing && html`<button id="cron-create-save-another" class="secondary" type="button" disabled=${busy}
           title="Save and reset the form so you can create another in the same sitting" onClick=${() => submit(true)}>Save & create another</button>`}
         <button id="cron-create-submit" class="primary" type="button" disabled=${busy} onClick=${() => submit(false)}>

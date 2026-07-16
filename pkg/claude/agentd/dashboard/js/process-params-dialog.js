@@ -2,9 +2,9 @@
 // text until Apply; the live model is mutated atomically only after validation.
 
 import { h, render } from 'preact';
-import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 
 const html = htm.bind(h);
 
@@ -53,11 +53,11 @@ function comparable(rows) {
 }
 
 export function ParamsDialog({ model, onMutated, complete, confirmDiscard, registerHandle }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const baseline = useRef(modelRows(model));
   const rowsRef = useRef(clone(baseline.current));
   const [, redraw] = useState(0);
   const [error, setError] = useState('');
-  const sharedClose = useRef(null);
   const list = useRef(null);
   const addButton = useRef(null);
   const isDirty = () => comparable(rowsRef.current) !== comparable(baseline.current);
@@ -66,9 +66,6 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     setError('');
     redraw((value) => value + 1);
   };
-  const requestClose = useCallback(async () => {
-    return sharedClose.current?.() ?? false;
-  }, []);
   const apply = () => {
     const rows = rowsRef.current;
     const names = rows.map((row) => row.name);
@@ -104,10 +101,6 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
       else registered?.(null);
     };
   }, [registerHandle, requestClose]);
-  const registerSharedClose = useCallback((close) => {
-    sharedClose.current = close;
-    return () => { if (sharedClose.current === close) sharedClose.current = null; };
-  }, []);
   const remove = (index) => {
     rowsRef.current.splice(index, 1);
     redraw((value) => value + 1);
@@ -131,7 +124,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     id="process-param-modal" dialogClass="modal process-param-dialog" overlayClass="process-param-modal"
     labelledby="process-param-title" onClose=${complete} dirty=${isDirty} blocked=${false}
     confirmDiscard=${confirmDiscard} onCloseError=${(closeError) => setError(`Discard confirmation failed: ${closeError?.message || String(closeError)}`)}
-    registerClose=${registerSharedClose}
+    registerClose=${registerClose}
   >
     <h3 id="process-param-title">Template parameters</h3>
     <p class="muted">Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.</p>

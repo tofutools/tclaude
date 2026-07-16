@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
@@ -133,6 +136,7 @@ function WorktreeFields({ repo, actions, value, setValue, branch, setBranch, bas
 }
 
 function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [followUp, setFollowUp] = useState('');
   const [copyConversation, setCopyConversation] = useState(true);
   const [worktree, setWorktree] = useState('');
@@ -176,6 +180,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
       resizeKey="tclaude.dash.modalSize.clone-agent"
     >
       <h3 id="clone-agent-title"><${Words} plain="Clone agent" wizard="⧉ Mirror familiar"/></h3>
@@ -213,7 +218,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
       />
       <${ErrorBanner} id="clone-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="clone-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="clone-agent-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Cloning…' : 'Clone'} wizard=${busy ? 'Mirroring…' : 'Mirror familiar'}/>
@@ -224,6 +229,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [mode, setMode] = useState('self');
   const [focusHint, setFocusHint] = useState('');
   const [followUp, setFollowUp] = useState('');
@@ -257,6 +263,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
     >
       <h3 id="reincarnate-agent-title"><${Words} plain="Reincarnate agent" wizard="Reincarnate familiar"/></h3>
       <div class="modal-meta" id="reincarnate-agent-meta">target: ${target}</div>
@@ -303,7 +310,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
       `}
       <${ErrorBanner} id="reincarnate-agent-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="reincarnate-agent-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="reincarnate-agent-submit" class="primary" type="button" disabled=${busy || (force && !normaliseFollowUp(followUp))} onClick=${submit}>
           <${Words}
@@ -317,6 +324,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const model = useMemo(() => actions.nestModel(descriptor.group), [descriptor.group]);
   const [parent, setParent] = useState(model.currentParent);
   const [busy, setBusy] = useState(false);
@@ -331,7 +339,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
     finally { setBusy(false); }
   };
   return html`
-    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}>
+    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
       <h3 id="group-nest-title"><${Words} plain=${`Nest group: ${descriptor.group}`} wizard=${`Nest party: ${descriptor.group}`}/></h3>
       <div class="modal-meta"><${Words}
         plain="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants."
@@ -346,7 +354,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
       </label>
       <${ErrorBanner} id="group-nest-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="group-nest-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="group-nest-submit" class="primary" type="button" disabled=${busy} onClick=${submit}><${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Nesting…' : 'Nest party'}/></button>
       </div>
@@ -355,6 +363,7 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
 }
 
 function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const oldURL = (descriptor.url || '').trim();
   const oldLabel = (descriptor.taskLabel || '').trim();
   const [url, setUrl] = useState(oldURL);
@@ -421,6 +430,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
     >
       <h3 id="task-link-title"><${Words} plain="Task link" wizard="Bind a quest link"/></h3>
       ${agentLabel && html`<div class="modal-meta" id="task-link-meta">${agentLabel}</div>`}
@@ -459,7 +469,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       </div>
       <${ErrorBanner} id="task-link-error" error=${error} onDismiss=${() => setError('')} />
       <div class="modal-buttons">
-        <button id="task-link-cancel" type="button" disabled=${busy} onClick=${actions.close}><${Words} plain="Cancel" wizard="Dispel"/></button>
+        <button id="task-link-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
         <span class="spacer"></span>
         <button id="task-link-save" class="primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Saving…' : 'Save'} wizard=${busy ? 'Binding…' : '✒ Bind quest!'}/>

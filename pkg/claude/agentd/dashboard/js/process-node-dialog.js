@@ -4,7 +4,7 @@
 import { h, render } from 'preact';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import {
   PERFORMER_KINDS, RETRY_ON_FAIL_MODES, PLAN_APPROVAL_MODES,
   performerFieldsFor, defaultPerformer, setPerformerKind, setPerformerField,
@@ -182,11 +182,11 @@ export function NodeDetail({ model, nodeId, node, mode = 'edit', commit, invalid
 }
 
 export function NodeDialog({ model, nodeId, mode = 'edit', onMutated, complete, confirmDiscard, registerHandle }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const original = useRef(structuredClone(model.node(nodeId)));
   const draftRef = useRef(structuredClone(original.current));
   const invalid = useRef(new Set());
   const dirty = useRef(false);
-  const sharedClose = useRef(null);
   const [, redraw] = useState(0);
   const [status, setStatus] = useState('');
   const recomputeDirty = useCallback(() => {
@@ -227,9 +227,6 @@ export function NodeDialog({ model, nodeId, mode = 'edit', onMutated, complete, 
     recomputeDirty();
     return true;
   }, [flushActive, recomputeDirty]);
-  const requestClose = useCallback(async () => {
-    return sharedClose.current?.() ?? false;
-  }, []);
   const save = () => {
     if (!flushActive() || mode !== 'edit') return false;
     try {
@@ -247,16 +244,12 @@ export function NodeDialog({ model, nodeId, mode = 'edit', onMutated, complete, 
       else registered?.(null);
     };
   }, [registerHandle, requestClose]);
-  const registerSharedClose = useCallback((close) => {
-    sharedClose.current = close;
-    return () => { if (sharedClose.current === close) sharedClose.current = null; };
-  }, []);
   return html`<${Overlay}
     id="process-node-modal" dialogClass="modal process-node-dialog" overlayClass="process-node-modal"
     ariaLabel=${`Node ${nodeId}`}
     onClose=${complete} beforeClose=${prepareClose} dirty=${() => dirty.current} blocked=${false}
     confirmDiscard=${confirmDiscard} onCloseError=${(error) => setStatus(`Discard confirmation failed: ${error?.message || String(error)}`)}
-    registerClose=${registerSharedClose}
+    registerClose=${registerClose}
     resizeKey=${NODE_DIALOG_SIZE_PREF} fitContent=${false} onSubmitHotkey=${save}
   >
     <div class="process-node-dialog-body">

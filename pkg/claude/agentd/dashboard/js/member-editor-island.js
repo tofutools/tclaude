@@ -1,7 +1,10 @@
 import { h, render } from 'preact';
 import { useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 
 const html = htm.bind(h);
 
@@ -76,6 +79,7 @@ const FAILURE_LABELS = {
 };
 
 export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   // The descriptor and first baseline are keyed by launchID. Snapshot polling
   // updates the rows behind this overlay, never this local transaction.
   const [baseline, setBaseline] = useState(() => initialBaseline(descriptor));
@@ -142,6 +146,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
     id="edit-member-modal" dialogClass="modal" labelledby="edit-member-title"
     onClose=${state.closeMemberEditor} onSubmitHotkey=${submit}
     dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}
     guardBackdropDrag=${true}
   >
     <h3 id="edit-member-title"><span class="edit-member-title-regular">Edit agent</span><span class="edit-member-title-wizard">Enchant this familiar</span></h3>
@@ -186,7 +191,7 @@ export function MemberEditorDialog({ descriptor, state, actions, confirmDiscard 
         onClick=${() => actions.openMemberPermissions(descriptor)}><span class="em-btn-regular">Permissions…</span><span class="em-btn-wizard">Grimoire…</span></button>
       <span class="spacer"></span>
       <button id="edit-member-cancel" type="button" disabled=${busy}
-        onClick=${state.closeMemberEditor}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
+        onClick=${() => { void requestClose(); }}><span class="em-btn-regular">Cancel</span><span class="em-btn-wizard">Dispel</span></button>
       <button id="edit-member-save" type="button" disabled=${busy} onClick=${submit}>${busy ? 'Saving…' : 'Save'}</button>
     </div>
   </${Overlay}>`;

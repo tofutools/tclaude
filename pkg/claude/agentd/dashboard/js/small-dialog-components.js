@@ -1,7 +1,10 @@
 import { h } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { ManagementOverlay as Overlay } from './management-overlay.js';
+import {
+  ManagementOverlay as Overlay,
+  useGuardedOverlayClose,
+} from './management-overlay.js';
 import { exportChecklistSteps, fmtBytes } from './export-progress.js';
 import { relTime, shortId } from './helpers.js';
 
@@ -28,6 +31,7 @@ function Words({ plain, wizard }) {
 function errorMessage(error) { return error?.message || String(error); }
 
 export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const suggested = `${descriptor.source.name}-copy`;
   const [name, setName] = useState(suggested);
   const [busy, setBusy] = useState(false);
@@ -53,6 +57,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${name !== suggested}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
     >
       <h3 id="clone-modal-title"><${Words}
         plain=${`Clone ${descriptor.presetKind}: ${descriptor.source.name}`}
@@ -82,7 +87,7 @@ export function PresetCloneDialog({ descriptor, actions, confirmDiscard }) {
       </label>
       <div class="cron-create-error" id="clone-modal-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button id="clone-modal-cancel" type="button" disabled=${busy} onClick=${actions.close}>Cancel</button>
+        <button id="clone-modal-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
         <span class="spacer"></span>
         <button id="clone-modal-submit" class="primary" type="button" disabled=${busy} onClick=${submit}>
           <${Words} plain=${busy ? 'Creating…' : 'Create copy'} wizard=${busy ? 'Mirroring…' : 'Mirror it'}/>
@@ -146,6 +151,7 @@ function ExportHistory({ jobs, actions, conv, refreshHistory }) {
 }
 
 export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
   const [preset, setPreset] = useState('summary');
   const [title, setTitle] = useState('');
   const [instructions, setInstructions] = useState(EXPORT_PRESETS.summary);
@@ -261,6 +267,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
       dirty=${dirty}
       blocked=${submitting}
       confirmDiscard=${confirmDiscard}
+      registerClose=${registerClose}
     >
       <h3 id="export-agent-title"><${Words} plain="Export conversation" wizard="Inscribe conversation scroll"/></h3>
       <div class="modal-meta" id="export-agent-meta">target: ${descriptor.label || shortId(descriptor.conv)}</div>
@@ -310,7 +317,7 @@ export function AgentExportDialog({ descriptor, actions, confirmDiscard }) {
       <${ExportHistory} jobs=${history} actions=${actions} conv=${descriptor.conv} refreshHistory=${() => setHistoryVersion((value) => value + 1)} />
       <div class="cron-create-error" id="export-agent-error" role="alert">${error}</div>
       <div class="modal-buttons">
-        <button id="export-agent-cancel" type="button" disabled=${submitting} onClick=${close}>${phase === 'form' ? 'Cancel' : 'Close'}</button>
+        <button id="export-agent-cancel" type="button" disabled=${submitting} onClick=${() => { void requestClose(); }}>${phase === 'form' ? 'Cancel' : 'Close'}</button>
         <span class="spacer"></span>
         ${phase === 'ready' && html`<button id="export-agent-download" class="primary" type="button" onClick=${() => actions.downloadExport(jobID)}>Download again</button>`}
         ${phase === 'failed' && html`<button id="export-agent-retry" class="primary" type="button" onClick=${retry}>Retry</button>`}
