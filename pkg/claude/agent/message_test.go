@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -59,6 +60,30 @@ func TestRunMessage_HappyPath(t *testing.T) {
 	assert.Equal(t, gID, got.GroupID, "group_id")
 	// `delivered_at` should remain unset since no tmux session ran.
 	assert.True(t, got.DeliveredAt.IsZero(), "expected delivered_at unset, got %v", got.DeliveredAt)
+}
+
+func TestRunInboxReadDaemonShowsReplyability(t *testing.T) {
+	prev := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = prev })
+	DaemonRequestImpl = func(_, _ string, _, out any, _ DaemonOpts) error {
+		payload := map[string]any{
+			"id": 42, "from_title": "human operator", "to": "worker",
+			"group": "", "body": "please investigate", "created_at": "2026-07-16T12:00:00Z",
+			"replyable": false,
+		}
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(b, out)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := runInboxReadDaemon(&inboxReadParams{ID: "42"}, 42, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), "Replyable:  false")
+	assert.NotContains(t, stdout.String(), "Reply-To:")
+	assert.NotContains(t, stdout.String(), "Reply-Cmd:")
 }
 
 func TestRunMessage_RefusesWithoutSharedGroup(t *testing.T) {
@@ -179,6 +204,25 @@ func TestRunInboxRead_RefusesWrongRecipient(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := runInboxReadDirect(&inboxReadParams{ID: itoa(id)}, id, &stdout, &stderr)
 	require.Equal(t, rcAuth, rc, "stderr = %q", stderr.String())
+}
+
+func TestRunInboxReadDirect_SenderlessSystemMessageIsNotReplyable(t *testing.T) {
+	setupTestDB(t)
+	const target = "bbbbbbbb-2222-3333-4444-555555555555"
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv:  target,
+		Subject: "system instruction",
+		Body:    "refresh state",
+	})
+	require.NoError(t, err)
+	t.Setenv("TCLAUDE_SESSION_ID", target)
+
+	var stdout, stderr bytes.Buffer
+	rc := runInboxReadDirect(&inboxReadParams{ID: itoa(id)}, id, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%s", stderr.String())
+	assert.Contains(t, stdout.String(), "Replyable:  false")
+	assert.NotContains(t, stdout.String(), "Reply-To:")
+	assert.NotContains(t, stdout.String(), "Reply-Cmd:")
 }
 
 func itoa(i int64) string {

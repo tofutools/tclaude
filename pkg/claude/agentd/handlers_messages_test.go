@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -137,6 +138,37 @@ func TestHandleMessages_SingleRecipient_StillRecordsToRecipient(t *testing.T) {
 	m := msgs[0]
 	assert.Equal(t, []string{targetConv}, m.ToRecipients, "ToRecipients")
 	assert.Empty(t, m.CcRecipients, "CcRecipients should be empty")
+}
+
+func TestHandleMessageByID_SenderlessSystemMessageIsNotReplyable(t *testing.T) {
+	setupTestDB(t)
+	const targetConv = "bbbbbbbb-1111-2222-3333-444444444444"
+	upsertConvIndexLocal(t, targetConv, "target")
+	gID, err := db.CreateAgentGroup("alpha", "")
+	require.NoError(t, err)
+	require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: targetConv}))
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv:  targetConv,
+		Subject: "system instruction",
+		Body:    "refresh state",
+	})
+	require.NoError(t, err)
+
+	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/v1/messages/%d", id), nil)
+	r = r.WithContext(context.WithValue(r.Context(), peerKey{},
+		&peer{PID: 999, HasClaudeAncestor: true, ConvID: targetConv}))
+	w := httptest.NewRecorder()
+	handleMessageByID(w, r)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	var detail struct {
+		Replyable bool   `json:"replyable"`
+		ReplyTo   string `json:"reply_to"`
+		ReplyCmd  string `json:"reply_cmd"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &detail))
+	assert.False(t, detail.Replyable)
+	assert.Empty(t, detail.ReplyTo)
+	assert.Empty(t, detail.ReplyCmd)
 }
 
 // TestHandleMessages_UnknownCC_RejectsBeforeAnyInsert validates the

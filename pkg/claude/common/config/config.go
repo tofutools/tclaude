@@ -1576,10 +1576,12 @@ type AgentConfig struct {
 	// (a newline = an early submit). See agentd.spawnInlineMaxChars.
 	SpawnInlineMaxChars *int `json:"spawn_inline_max_chars,omitempty"`
 
-	// MessageInlineMaxChars bounds safe, single-line mailbox messages that are
-	// included directly in their pane nudge. The inbox row remains the durable
-	// archive; an inlined copy is atomically marked delivered and read. Longer
-	// or control-bearing messages keep the traditional inbox-read pointer.
+	// MessageInlineMaxChars bounds safe mailbox messages that are included
+	// directly in their pane nudge. Newlines and tabs are delivered through a
+	// bracketed tmux paste so they remain part of one submitted turn. The inbox
+	// row remains the durable archive; an inlined copy is atomically marked
+	// delivered and read. Longer or control-bearing messages keep the
+	// traditional inbox-read pointer.
 	// nil uses DefaultMessageInlineMaxChars; <= 0 disables regular-message
 	// inlining without affecting spawn briefings.
 	MessageInlineMaxChars *int `json:"message_inline_max_chars,omitempty"`
@@ -1664,9 +1666,10 @@ func (c *Config) AccessRequestSystemNotification() bool {
 // ballooning the launch command. See agentd.spawnInlineMaxChars.
 const DefaultSpawnInlineMaxChars = 2000
 
-// DefaultMessageInlineMaxChars is deliberately smaller than the spawn brief
-// threshold because regular mail crosses a live pane injection boundary.
-const DefaultMessageInlineMaxChars = 1000
+// DefaultMessageInlineMaxChars matches the startup-brief threshold: the live
+// pane path uses a bounded bracketed paste for multiline content, so ordinary
+// operator instructions do not need a smaller product-level cutoff.
+const DefaultMessageInlineMaxChars = DefaultSpawnInlineMaxChars
 
 // ContextNudgeConfig controls the opt-in "consider reincarnating"
 // nudge that fires as a long-running agent's context fills. Off by

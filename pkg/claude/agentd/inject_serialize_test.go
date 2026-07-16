@@ -3,11 +3,14 @@ package agentd
 import (
 	"errors"
 	"os/exec"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 )
 
@@ -22,6 +25,52 @@ type recordingTmux struct {
 	firstTextSeen    bool
 	firstTextStarted chan struct{}
 	releaseFirstText chan struct{}
+}
+
+type commandRecordingTmux struct {
+	mu       sync.Mutex
+	commands [][]string
+}
+
+func (r *commandRecordingTmux) Command(args ...string) *exec.Cmd {
+	r.mu.Lock()
+	r.commands = append(r.commands, append([]string(nil), args...))
+	r.mu.Unlock()
+	return exec.Command("true")
+}
+
+func (r *commandRecordingTmux) ListSessions() (map[string]struct{}, error) {
+	return map[string]struct{}{}, nil
+}
+
+func (r *commandRecordingTmux) snapshot() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][]string, len(r.commands))
+	for i := range r.commands {
+		out[i] = append([]string(nil), r.commands[i]...)
+	}
+	return out
+}
+
+func TestInjectTextAndSubmit_MultilineUsesBracketedPaste(t *testing.T) {
+	t.Cleanup(SetInjectSettleDelayForTest(0))
+	rt := &commandRecordingTmux{}
+	prev := clcommon.Default
+	clcommon.Default = rt
+	t.Cleanup(func() { clcommon.Default = prev })
+
+	const text = "first line\n\tsecond line"
+	require.NoError(t, injectTextAndSubmit("pane-multiline:0.0", text))
+	commands := rt.snapshot()
+	require.Len(t, commands, 4)
+	assert.Equal(t, "set-buffer", commands[0][0])
+	assert.Equal(t, text, commands[0][len(commands[0])-1])
+	assert.Equal(t, "paste-buffer", commands[1][0])
+	assert.True(t, slices.Contains(commands[1], "-p"), "paste must enable bracketed-paste mode: %v", commands[1])
+	assert.True(t, slices.Contains(commands[1], "-r"), "paste must preserve LF bytes: %v", commands[1])
+	assert.Equal(t, []string{"send-keys", "-t", "=pane-multiline:0.0", "Enter"}, commands[2])
+	assert.Equal(t, commands[2], commands[3])
 }
 
 func (r *recordingTmux) Command(args ...string) *exec.Cmd {

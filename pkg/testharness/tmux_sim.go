@@ -93,7 +93,7 @@ type TmuxSim struct {
 	// buffers models tmux's named paste buffers. set-buffer stores into
 	// it; paste-buffer reads it back and routes the content to the
 	// target pane's sim — the test-time stand-in for the bracketed
-	// paste injectMultilineAndSubmit uses to land multi-line text.
+	// paste injectTextAndSubmit uses to land multi-line text.
 	buffers map[string]string
 	// commandCounts records every Command(verb, …) invocation by verb
 	// (args[0]) — exposed via CommandCount for regression tests that
@@ -301,8 +301,8 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 }
 
 // setBuffer models `tmux set-buffer -b <name> <data>` — it stores the
-// trailing data argument under the named buffer. injectMultilineAndSubmit
-// stages the group startup context this way before pasting it.
+// trailing data argument under the named buffer. injectTextAndSubmit stages
+// multiline input this way before pasting it.
 func (t *TmuxSim) setBuffer(args []string) {
 	name := ""
 	for i := 0; i < len(args)-1; i++ {

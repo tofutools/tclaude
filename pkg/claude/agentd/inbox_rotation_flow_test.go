@@ -70,6 +70,15 @@ func TestInboxRotation_PredecessorMailReadableAfterReincarnate(t *testing.T) {
 		testharness.JSONRequest(t, http.MethodGet, "/v1/messages/"+strconv.FormatInt(r.ID, 10), nil), gen2))
 	require.Equal(t, http.StatusOK, readRec.Code,
 		"GET /v1/messages/{id} from the new generation must be allowed; body=%s", readRec.Body.String())
+	var readDetail struct {
+		Replyable bool   `json:"replyable"`
+		ReplyTo   string `json:"reply_to"`
+		ReplyCmd  string `json:"reply_cmd"`
+	}
+	require.NoError(t, json.Unmarshal(readRec.Body.Bytes(), &readDetail))
+	assert.True(t, readDetail.Replyable)
+	assert.NotEmpty(t, readDetail.ReplyTo)
+	assert.NotEmpty(t, readDetail.ReplyCmd)
 
 	// Reply from the new generation is accepted (the recipient gate is
 	// agent-keyed) and routes back to the sender.

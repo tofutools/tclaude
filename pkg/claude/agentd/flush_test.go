@@ -173,10 +173,10 @@ func TestInlineOperatorMessageKeepsExplicitSubjectInMetadata(t *testing.T) {
 		"explicit subject belongs inside metadata, before the operator body: %q", nudge)
 }
 
-func TestFlush_MultilineOperatorMessageKeepsUnreadPointer(t *testing.T) {
+func TestFlush_MultilineOperatorMessageIsInlinedAndConsumed(t *testing.T) {
 	setupTestDB(t)
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
-		ToConv: "me", Body: "first line\nsecond line", OperatorAuthored: true,
+		ToConv: "me", Body: "first line\n\tsecond line", OperatorAuthored: true,
 	})
 	require.NoError(t, err)
 	var nudge string
@@ -184,12 +184,36 @@ func TestFlush_MultilineOperatorMessageKeepsUnreadPointer(t *testing.T) {
 		nudge = messageNudgeText(m.ID)
 		return true
 	}))
-	assert.Contains(t, nudge, "tclaude agent inbox read")
-	assert.NotContains(t, nudge, "first line")
+	assert.NotContains(t, nudge, "tclaude agent inbox read")
+	assert.Contains(t, nudge, "] first line\n\tsecond line")
 	m, err := db.GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.False(t, m.DeliveredAt.IsZero())
-	assert.True(t, m.ReadAt.IsZero(), "pointer delivery remains unread until inbox read")
+	assert.False(t, m.ReadAt.IsZero(), "inline archival copy is consumed in queue completion")
+}
+
+func TestOperatorMessageDefaultInlinesStartupSizedBody(t *testing.T) {
+	setupTestDB(t)
+	body := strings.Repeat("x", 1500)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: "me", Body: body, OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, body)
+	assert.NotContains(t, nudge, "inbox read")
+}
+
+func TestOperatorMessagePointerOmitsReplyInstructions(t *testing.T) {
+	setupTestDB(t)
+	id, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: "me", Body: strings.Repeat("x", 2100), OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+	nudge := messageNudgeText(id)
+	assert.Contains(t, nudge, "tclaude agent inbox read")
+	assert.NotContains(t, nudge, "regular chat/output")
+	assert.NotContains(t, nudge, "human.notify")
 }
 
 func TestFlush_NoMessagesNoCalls(t *testing.T) {
