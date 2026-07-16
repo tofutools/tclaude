@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -18,12 +19,14 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 )
 
 type exclusiveV7Adapter struct {
 	mu        sync.Mutex
 	performs  int
 	perform   func(Request)
+	observe   func(Request) Observation
 	reconcile func(Request) (Observation, bool, error)
 	results   []Observation
 }
@@ -34,6 +37,13 @@ type exclusiveV7DeferredAdapter struct {
 	reconcileCalls int
 }
 
+type exclusiveV7ControlledDeferredAdapter struct {
+	mu             sync.Mutex
+	dispatches     int
+	reconcileCalls int
+	observed       bool
+}
+
 func (a *exclusiveV7Adapter) Validate(Request) error { return nil }
 
 func (a *exclusiveV7Adapter) Perform(_ context.Context, request Request) (Observation, error) {
@@ -41,6 +51,7 @@ func (a *exclusiveV7Adapter) Perform(_ context.Context, request Request) (Observ
 	a.performs++
 	index := a.performs - 1
 	perform := a.perform
+	observe := a.observe
 	var observation Observation
 	if index < len(a.results) {
 		observation = a.results[index]
@@ -48,6 +59,9 @@ func (a *exclusiveV7Adapter) Perform(_ context.Context, request Request) (Observ
 	a.mu.Unlock()
 	if perform != nil {
 		perform(request)
+	}
+	if observe != nil {
+		return observe(request), nil
 	}
 	if observation.Actor != "" {
 		return observation, nil
@@ -99,6 +113,41 @@ func (a *exclusiveV7DeferredAdapter) counts() (int, int) {
 	return a.dispatches, a.reconcileCalls
 }
 
+func (a *exclusiveV7ControlledDeferredAdapter) Validate(Request) error { return nil }
+
+func (a *exclusiveV7ControlledDeferredAdapter) Perform(context.Context, Request) (Observation, error) {
+	panic("Perform should not be called on a deferred adapter")
+}
+
+func (a *exclusiveV7ControlledDeferredAdapter) Dispatch(_ context.Context, request Request) (DispatchResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.dispatches++
+	return DispatchResult{ExternalRef: fmt.Sprintf("dispatch-%s-%d", request.Command.ID, a.dispatches)}, nil
+}
+
+func (a *exclusiveV7ControlledDeferredAdapter) ReconcileDeferred(_ context.Context, _ Request) (Observation, DeferredStatus, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.reconcileCalls++
+	if !a.observed {
+		return Observation{}, DeferredInFlight, nil
+	}
+	return Observation{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:controlled"}, DeferredObserved, nil
+}
+
+func (a *exclusiveV7ControlledDeferredAdapter) setObserved() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.observed = true
+}
+
+func (a *exclusiveV7ControlledDeferredAdapter) counts() (int, int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.dispatches, a.reconcileCalls
+}
+
 func TestExclusiveV7DriveClaimsPerformsObservesRoutesAndCompletes(t *testing.T) {
 	fs, runID := exclusiveV7Run(t)
 	adapter := &exclusiveV7Adapter{}
@@ -118,6 +167,288 @@ func TestExclusiveV7DriveClaimsPerformsObservesRoutesAndCompletes(t *testing.T) 
 	for _, command := range aggregate.Commands {
 		assert.False(t, command.State.Active(), "terminal checkpoint retained active command %q", command.ID)
 	}
+}
+
+func TestExclusiveV7DriveParallelAllClaimsEveryBranchAndCompletes(t *testing.T) {
+	fs, runID := parallelAllV7Run(t)
+	adapter := &exclusiveV7Adapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	reducing := 0
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.JoinPolicy == pathv1.JoinAll && reservation.IsReducing {
+			reducing++
+			assert.Equal(t, pathv1.ReservationActivated, reservation.State)
+		}
+	}
+	assert.Equal(t, 1, reducing)
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	viewer, err := processview.BuildCurrentPathV1Envelope(t.Context(), snapshot)
+	require.NoError(t, err)
+	require.True(t, viewer.ViewerV2.RoutingAvailable, "viewer reason=%s", viewer.ViewerV2.RoutingUnavailableReason)
+	require.NotNil(t, viewer.ViewerV2.Routing)
+	assert.Len(t, viewer.ViewerV2.Routing.Joins, 1)
+	assert.GreaterOrEqual(t, len(viewer.ViewerV2.Routing.Scopes), 2)
+	assert.Equal(t, len(aggregate.Routing.Paths), viewer.ViewerV2.Routing.Aggregate.Paths)
+}
+
+func TestExclusiveV7DriveParallelAllTerminalMixturePoisonsJoin(t *testing.T) {
+	fs, runID := parallelAllV7Run(t)
+	adapter := &exclusiveV7Adapter{results: []Observation{
+		{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:failed-branch"},
+		{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:passed-branch"},
+	}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.JoinPolicy == pathv1.JoinAll && reservation.IsReducing {
+			assert.Equal(t, pathv1.ReservationClosedNoActivation, reservation.State)
+			assert.Equal(t, string(pathv1.ScopeCloseCandidateNonSuccess), reservation.ClosedReason)
+		}
+	}
+}
+
+func TestExclusiveV7ParallelFailurePropagatesThroughUnmaterializedBranchNode(t *testing.T) {
+	fs, runID := parallelAllV7RunWithIntermediate(t)
+	adapter := &exclusiveV7Adapter{observe: func(request Request) Observation {
+		if request.Command.NodeID == "left" {
+			return Observation{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:failed-branch"}
+		}
+		return Observation{Actor: "agent:agt_test1", Verdict: "pass", EvidenceRef: "artifact:passed-branch"}
+	}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count(), "poisoned intermediate task must never be performed")
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	foundIntermediate := false
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.NodeID == "left-next" {
+			foundIntermediate = true
+			assert.Equal(t, pathv1.ReservationClosedNoActivation, reservation.State)
+		}
+	}
+	assert.True(t, foundIntermediate, "poison propagation must materialize the intermediate reservation")
+}
+
+func TestExclusiveV7RecoveredParallelWaitDoesNotStarveRunnableSibling(t *testing.T) {
+	fs, runID := parallelAllV7WaitRun(t)
+	claimParallelWaitForTest(t, fs, runID)
+
+	adapter := &exclusiveV7Adapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, adapter.count(), "runnable sibling must execute before the recovered wait fallback")
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+}
+
+func TestExclusiveV7ParallelPassOnlyTaskRetriesThenCompletes(t *testing.T) {
+	fs, runID := parallelAllV7RetryRun(t)
+	var performed []string
+	adapter := &exclusiveV7Adapter{}
+	adapter.perform = func(request Request) {
+		performed = append(performed, fmt.Sprintf("%s/%d", request.Command.NodeID, request.Command.Attempt))
+	}
+	adapter.observe = func(request Request) Observation {
+		verdict := "pass"
+		if request.Command.NodeID == "work" && request.Command.Attempt == 1 {
+			verdict = "fail"
+		}
+		return Observation{Actor: "agent:agt_test1", Verdict: verdict, EvidenceRef: "artifact:" + request.Command.NodeID}
+	}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+	slices.Sort(performed)
+	assert.Equal(t, []string{"peer/1", "work/1", "work/2"}, performed)
+}
+
+func TestExclusiveV7ParallelPendingRoutesRestartOneAtATime(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := parallelAllV7WaitRunAt(t, root)
+	claimParallelWaitForTest(t, fs, runID)
+	adapter := &exclusiveV7ControlledDeferredAdapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+	dispatches, reconciles := adapter.counts()
+	assert.Equal(t, 1, dispatches)
+	assert.Equal(t, 0, reconciles)
+
+	_, err = executor.SatisfySignal(t.Context(), runID, "wait", "release", "agent:agt_test1")
+	require.NoError(t, err)
+	var live []pathv1.PathID
+	require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		aggregate, aggregateErr := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if aggregateErr != nil {
+			return aggregateErr
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind == pathv1.PathActivationOutput && path.State == pathv1.PathLive {
+				live = append(live, path.ID)
+			}
+		}
+		return nil
+	}))
+	slices.Sort(live)
+	require.Len(t, live, 2)
+
+	adapter.setObserved()
+	injected := errors.New("restart after first parallel route")
+	appends := 0
+	restore := fs.SetPathV1AppendHooksForTest(nil, func() error {
+		appends++
+		if appends == 2 {
+			return injected
+		}
+		return nil
+	})
+	_, err = executor.Drive(t.Context(), runID)
+	restore()
+	assert.ErrorIs(t, err, injected)
+	assert.Equal(t, 2, appends, "task observation and exactly one route must commit before restart")
+
+	restarted, err := store.NewFS(root)
+	require.NoError(t, err)
+	require.NoError(t, restarted.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		aggregate, aggregateErr := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if aggregateErr != nil {
+			return aggregateErr
+		}
+		assert.Equal(t, pathv1.PathRouted, aggregate.Routing.Paths[live[0]].State)
+		pending, found, pendingErr := pathv1.PendingExclusiveObservation(t.Context(), view.Input)
+		if pendingErr != nil {
+			return pendingErr
+		}
+		assert.True(t, found)
+		assert.Equal(t, live[1], pending.SourcePathID)
+		return nil
+	}))
+
+	restartedExecutor := NewExclusiveV7(restarted, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+	checkpoint, err = restartedExecutor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+	dispatches, reconciles = adapter.counts()
+	assert.Equal(t, 1, dispatches, "restart must not redispatch the observed task")
+	assert.Equal(t, 1, reconciles, "task must be reconciled exactly once")
+}
+
+func TestExclusiveV7ParallelSiblingSignalsClaimRestartAndCompleteInEitherOrder(t *testing.T) {
+	orders := []struct {
+		name  string
+		nodes []string
+	}{
+		{name: "forward", nodes: []string{"wait-a", "wait-b"}},
+		{name: "reverse", nodes: []string{"wait-b", "wait-a"}},
+	}
+	for _, test := range orders {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, runID := parallelAllV7SiblingWaitRunAt(t, root,
+				&model.WaitConfig{Signal: "release-a"}, &model.WaitConfig{Signal: "release-b"})
+			executor := NewExclusiveV7(fs, nil)
+			checkpoint, err := executor.Drive(t.Context(), runID)
+			require.NoError(t, err)
+			assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+			var claimedIDs []string
+			require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+				waits, waitErr := pathv1.RecoverExclusiveWaits(t.Context(), view.Input)
+				if waitErr != nil {
+					return waitErr
+				}
+				for _, wait := range waits {
+					claimedIDs = append(claimedIDs, wait.Command().ID)
+				}
+				return nil
+			}))
+			require.Len(t, claimedIDs, 2)
+			slices.Sort(claimedIDs)
+
+			restarted, err := store.NewFS(root)
+			require.NoError(t, err)
+			require.NoError(t, restarted.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+				waits, waitErr := pathv1.RecoverExclusiveWaits(t.Context(), view.Input)
+				if waitErr != nil {
+					return waitErr
+				}
+				restartedIDs := make([]string, 0, len(waits))
+				for _, wait := range waits {
+					restartedIDs = append(restartedIDs, wait.Command().ID)
+				}
+				slices.Sort(restartedIDs)
+				assert.Equal(t, claimedIDs, restartedIDs, "restart must preserve both exact claims without duplicates")
+				return nil
+			}))
+
+			restartedExecutor := NewExclusiveV7(restarted, nil)
+			for _, nodeID := range test.nodes {
+				signal := "release-a"
+				if nodeID == "wait-b" {
+					signal = "release-b"
+				}
+				_, err = restartedExecutor.SatisfySignal(t.Context(), runID, nodeID, signal, "agent:agt_test1")
+				require.NoError(t, err)
+			}
+			checkpoint, err = restartedExecutor.Drive(t.Context(), runID)
+			require.NoError(t, err)
+			assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+		})
+	}
+}
+
+func TestExclusiveV7ParallelSiblingDurationsScheduleTogetherAndComplete(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := parallelAllV7SiblingWaitRunAt(t, root,
+		&model.WaitConfig{Duration: "5m"}, &model.WaitConfig{Duration: "7m"})
+	scheduledAt := time.Date(2026, time.July, 16, 8, 0, 0, 0, time.UTC)
+	executor := NewExclusiveV7(fs, nil)
+	executor.Now = func() time.Time { return scheduledAt }
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+
+	require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		waits, waitErr := pathv1.RecoverExclusiveWaits(t.Context(), view.Input)
+		if waitErr != nil {
+			return waitErr
+		}
+		require.Len(t, waits, 2)
+		due := []time.Time{waits[0].DueAt(), waits[1].DueAt()}
+		slices.SortFunc(due, func(a, b time.Time) int { return a.Compare(b) })
+		assert.Equal(t, []time.Time{scheduledAt.Add(5 * time.Minute), scheduledAt.Add(7 * time.Minute)}, due)
+		return nil
+	}))
+
+	restarted, err := store.NewFS(root)
+	require.NoError(t, err)
+	restartedExecutor := NewExclusiveV7(restarted, nil)
+	restartedExecutor.Now = func() time.Time { return scheduledAt.Add(10 * time.Minute) }
+	checkpoint, err = restartedExecutor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
 }
 
 func TestExclusiveV7AdapterRunsAfterCoherentLocksRelease(t *testing.T) {
@@ -459,6 +790,231 @@ func TestExclusiveV7TerminalRetryReconfirmsDirectoryDurability(t *testing.T) {
 
 func exclusiveV7Run(t *testing.T) (*store.FS, string) {
 	return exclusiveV7RunFixture(t, nil)
+}
+
+func parallelAllV7Run(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"left": "left", "right": "right"}},
+			"left":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "left"}, Next: model.Next{"pass": "merge"}},
+			"right": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "right"}, Next: model.Next{"pass": "merge"}},
+			"merge": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "left", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "right", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	result, err := fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
+}
+
+func parallelAllV7RunWithIntermediate(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-intermediate", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":      {Type: model.NodeTypeParallel, Next: model.Next{"left": "left", "right": "right"}},
+			"left":      {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "left"}, Next: model.Next{"pass": "left-next"}},
+			"left-next": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "must not run"}, Next: model.Next{"pass": "merge"}},
+			"right":     {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "right"}, Next: model.Next{"pass": "merge"}},
+			"merge":     {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-intermediate"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "left", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "left-next", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "right", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	result, err := fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
+}
+
+func parallelAllV7WaitRun(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	return parallelAllV7WaitRunAt(t, t.TempDir())
+}
+
+func parallelAllV7WaitRunAt(t *testing.T, root string) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-wait", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"wait": "wait", "work": "work"}},
+			"wait":  {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "release"}, Next: model.Next{"pass": "merge"}},
+			"work":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "merge"}},
+			"merge": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-wait"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "wait", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	return fs, runID
+}
+
+func parallelAllV7RetryRun(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-retry", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork": {Type: model.NodeTypeParallel, Next: model.Next{"work": "work", "peer": "peer"}},
+			"work": {
+				Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"},
+				Retry: &model.RetryPolicy{MaxAttempts: 2}, Next: model.Next{"pass": "merge"},
+			},
+			"peer":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "peer"}, Next: model.Next{"pass": "merge"}},
+			"merge": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-retry"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "peer", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	return fs, runID
+}
+
+func parallelAllV7SiblingWaitRunAt(t *testing.T, root string, waitA, waitB *model.WaitConfig) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "parallel-all-v7-sibling-waits", Start: "fork",
+		Nodes: map[string]model.Node{
+			"fork":   {Type: model.NodeTypeParallel, Next: model.Next{"wait-a": "wait-a", "wait-b": "wait-b"}},
+			"wait-a": {Type: model.NodeTypeWait, Wait: waitA, Next: model.Next{"pass": "merge"}},
+			"wait-b": {Type: model.NodeTypeWait, Wait: waitB, Next: model.Next{"pass": "merge"}},
+			"merge":  {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-parallel-all-v7-sibling-waits"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "fork", Type: model.NodeTypeParallel, Status: state.NodeStatusReady},
+		{ID: "wait-a", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
+		{ID: "wait-b", Type: model.NodeTypeWait, Status: state.NodeStatusPending},
+		{ID: "merge", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	return fs, runID
+}
+
+func claimParallelWaitForTest(t *testing.T, fs *store.FS, runID string) {
+	t.Helper()
+	appendTransition := func(plan func(store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error)) {
+		t.Helper()
+		var transition *pathv1.ExecutionTransition
+		require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+			var err error
+			transition, err = plan(view)
+			return err
+		}))
+		_, err := fs.AppendPathV1(t.Context(), runID, transition)
+		require.NoError(t, err)
+	}
+	appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind == pathv1.PathActivationOutput && path.State == pathv1.PathLive {
+				return pathv1.AdvanceParallelSplit(t.Context(), view.Input, path.ID)
+			}
+		}
+		return nil, errors.New("parallel root output not found")
+	})
+	for range 2 {
+		appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+			return pathv1.AdvanceParallelExclusiveArrival(t.Context(), view.Input)
+		})
+	}
+	appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind != pathv1.PathActivationOutput || path.State != pathv1.PathLive {
+				continue
+			}
+			activation := aggregate.Routing.Activations[path.SourceActivation.ID]
+			if aggregate.Routing.Reservations[activation.ReservationID].NodeID != "wait" {
+				continue
+			}
+			wait, planErr := pathv1.PlanExclusiveWait(t.Context(), view.Input, path.ID, time.Now())
+			if planErr != nil {
+				return nil, planErr
+			}
+			return pathv1.ClaimExclusiveWait(t.Context(), view.Input, wait)
+		}
+		return nil, errors.New("wait output not found")
+	})
 }
 
 func exclusiveV7RunWithRetry(t *testing.T) (*store.FS, string) {

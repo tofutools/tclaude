@@ -108,6 +108,45 @@ func TestFoundationEngineCannotCreateParallelRun(t *testing.T) {
 	if production.Supports(CapabilityParallelAllV1) || production.Supports(CapabilityParallelAnyV1) {
 		t.Fatalf("authoring slice exposed parallel execution: %#v", production)
 	}
+	released := ProductionEngineCapabilities()
+	if !released.Supports(CapabilityFoundationV1) || !released.Supports(CapabilityParallelAllV1) || released.Supports(CapabilityParallelAnyV1) {
+		t.Fatalf("production capability gate is not indivisible foundation+all: %#v", released)
+	}
+	if err := ValidateInstantiation(capabilityParallelTemplate(model.JoinAll), InstantiateRequest{RunID: "released", EngineCapabilities: released}); err != nil {
+		t.Fatalf("production all capability rejected exact all template: %v", err)
+	}
+	if err := ValidateInstantiation(capabilityParallelTemplate(model.JoinAny), InstantiateRequest{RunID: "released-any", EngineCapabilities: released}); err == nil || !strings.Contains(err.Error(), string(CapabilityParallelAnyV1)) {
+		t.Fatalf("production all capability admitted any: %v", err)
+	}
+}
+
+func TestProductionParallelAdmissionMatchesExecutableSubset(t *testing.T) {
+	unsupported := capabilityParallelTemplate(model.JoinAll)
+	program := unsupported.Nodes["merge"]
+	program.Type = model.NodeTypeTask
+	program.Performer = &model.Performer{Kind: model.PerformerProgram, Run: "true"}
+	program.Next = model.Next{"pass": "done"}
+	unsupported.Nodes["merge"] = program
+	unsupported.Nodes["done"] = model.Node{Type: model.NodeTypeEnd, Result: "completed"}
+	if err := ValidateInstantiation(unsupported, InstantiateRequest{RunID: "unsupported-program", EngineCapabilities: ProductionEngineCapabilities()}); err == nil || !strings.Contains(err.Error(), "executable schema-7 parallel-all subset") {
+		t.Fatalf("production admitted unsupported parallel performer: %v", err)
+	}
+
+	nested := capabilityUnsafeNestedParallelTemplate()
+	if err := ValidateInstantiation(nested, InstantiateRequest{RunID: "unsafe-nested", EngineCapabilities: ProductionEngineCapabilities()}); err == nil || !strings.Contains(err.Error(), "executable schema-7 parallel-all subset") {
+		t.Fatalf("production admitted nested fork with an unpoisonable predecessor: %v", err)
+	}
+	if exclusiveV7Eligible(nested) {
+		t.Fatal("runtime eligibility diverged from nested-fork admission rejection")
+	}
+	directNested := capabilityUnsafeNestedParallelTemplate()
+	outer := directNested.Nodes["outer"]
+	outer.Next["left"] = "inner"
+	directNested.Nodes["outer"] = outer
+	delete(directNested.Nodes, "before-inner")
+	if err := ValidateInstantiation(directNested, InstantiateRequest{RunID: "direct-nested", EngineCapabilities: ProductionEngineCapabilities()}); err != nil {
+		t.Fatalf("production rejected directly nested executable all topology: %v", err)
+	}
 }
 
 func testEngineCapabilities(values ...ExecutionCapability) EngineCapabilities {
@@ -144,6 +183,22 @@ func capabilityParallelTemplate(join model.JoinPolicy) *model.Template {
 		Nodes: map[string]model.Node{
 			"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"left": "merge", "right": "merge"}},
 			"merge": {Type: model.NodeTypeEnd, Join: join},
+		},
+	}
+}
+
+func capabilityUnsafeNestedParallelTemplate() *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "unsafe-nested-parallel", Start: "outer",
+		Nodes: map[string]model.Node{
+			"outer":        {Type: model.NodeTypeParallel, Next: model.Next{"left": "before-inner", "right": "outer-right"}},
+			"before-inner": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "before"}, Next: model.Next{"pass": "inner"}},
+			"inner":        {Type: model.NodeTypeParallel, Next: model.Next{"left": "inner-left", "right": "inner-right"}},
+			"inner-left":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "left"}, Next: model.Next{"pass": "inner-merge"}},
+			"inner-right":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "right"}, Next: model.Next{"pass": "inner-merge"}},
+			"inner-merge":  {Type: model.NodeTypeTask, Join: model.JoinAll, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "merge"}, Next: model.Next{"pass": "outer-merge"}},
+			"outer-right":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "outer"}, Next: model.Next{"pass": "outer-merge"}},
+			"outer-merge":  {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "completed"},
 		},
 	}
 }

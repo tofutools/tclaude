@@ -31,7 +31,10 @@ type VerifiedExclusiveInput struct {
 	checkpoint      *CheckpointV7
 	template        *model.Template
 	binding         CheckpointBinding
+	parallel        *parallelTopology
 }
+
+func (v *VerifiedExclusiveInput) ParallelEnabled() bool { return v != nil && v.parallel != nil }
 
 // ExclusiveObservation is the already-reduced observation boundary used by
 // the dormant pure planner. Adapter claim/dispatch/observation remains outside
@@ -112,6 +115,63 @@ func (p *ExclusiveProjection) Routing() RoutingState {
 // checkpoint validation, exact semantic/source template binding, aggregate
 // authority validation, and exact-template reservation topology validation.
 func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource []byte) (*VerifiedExclusiveInput, error) {
+	input, err := verifyExecutionInput(ctx, checkpointBytes, templateSource)
+	if err != nil {
+		return nil, err
+	}
+	current, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%w: current aggregate: %v", ErrExclusiveInputInvalid, err)
+	}
+	if err := validateExclusiveMaterializedTopology(ctx, current.View(), input.template); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrExclusiveInputInvalid, err)
+	}
+	return input, nil
+}
+
+// VerifyExecutionInput is the production schema-7 gate. It accepts the
+// indivisible foundation+parallel-all surface and rejects authored any joins.
+// VerifyExclusiveInput remains the stricter public foundation-only verifier.
+func VerifyExecutionInput(ctx context.Context, checkpointBytes, templateSource []byte) (*VerifiedExclusiveInput, error) {
+	input, err := verifyExecutionInput(ctx, checkpointBytes, templateSource)
+	if err != nil {
+		return nil, err
+	}
+	hasParallel := false
+	hasAny := false
+	for _, node := range input.template.Nodes {
+		if node.Join == model.JoinAny {
+			hasAny = true
+		}
+		if node.Type == model.NodeTypeParallel {
+			hasParallel = true
+		}
+	}
+	if hasParallel && hasAny {
+		return nil, fmt.Errorf("%w: parallel any is not enabled", ErrParallelUnsupported)
+	}
+	current, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%w: current aggregate: %v", ErrExclusiveInputInvalid, err)
+	}
+	if !hasParallel {
+		if err := validateExclusiveMaterializedTopology(ctx, current.View(), input.template); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrExclusiveInputInvalid, err)
+		}
+		return input, nil
+	}
+	topology, err := deriveParallelTopology(input.template, input.checkpoint.Initialize.Aggregate.TemplateRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
+	}
+	if err := validateParallelMaterializedTopology(ctx, current.View(), input.template, topology); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
+	}
+	input.parallel = &topology
+	return input, nil
+}
+
+func verifyExecutionInput(ctx context.Context, checkpointBytes, templateSource []byte) (*VerifiedExclusiveInput, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -146,9 +206,6 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 	view := current.View()
 	if view.RunID != event.UpgradeNeeded.RunID || view.TemplateRef != parsed.SemanticHash || view.TemplateSourceHash != parsed.SourceHash {
 		return nil, fmt.Errorf("%w: exact run/template aggregate binding mismatch", ErrExclusiveInputInvalid)
-	}
-	if err := validateExclusiveMaterializedTopology(ctx, view, parsed.Template); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrExclusiveInputInvalid, err)
 	}
 	return &VerifiedExclusiveInput{
 		checkpointBytes: checkpointCopy,
@@ -525,7 +582,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 		if err := ctx.Err(); err != nil {
 			return exclusiveRouteDraft{}, err
 		}
-		reservation, created, err := exactExclusiveReservation(input.template, view, authority, after, edge.ToNodeID, eventSeq)
+		reservation, created, err := exactRouteReservation(input, view, authority, after, source, edge, eventSeq)
 		if err != nil {
 			return exclusiveRouteDraft{}, err
 		}
@@ -533,7 +590,10 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 			authority.Reservations[reservation.ID] = reservationAuthority(reservation)
 			after.Reservations[reservation.ID] = reservation
 		}
-		candidate, ok := candidateForEdge(reservation, edge.ID)
+		if reservation.State != ReservationOpen {
+			return exclusiveRouteDraft{}, fmt.Errorf("%w: exact route target %q is %q", ErrMutationInconsistent, reservation.ID, reservation.State)
+		}
+		candidate, ok := routeCandidateForEdge(reservation, edge.ID, source.BranchEdgeID)
 		if !ok {
 			return exclusiveRouteDraft{}, fmt.Errorf("%w: target reservation lacks exact edge candidate", ErrExclusiveInputInvalid)
 		}
@@ -613,7 +673,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	view.Authority = authority
 	view.Commands = cloneMap(view.Commands)
 	view.SideEffects = cloneMap(view.SideEffects)
-	perform, settle, attemptEffect, err := observedAttemptCommands(view, sourceReservation.NodeID, node, source, observation)
+	perform, settle, attemptEffect, err := observedAttemptCommands(view, sourceReservation.NodeID, node, source, observation, false)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
@@ -656,6 +716,81 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 		view: replayView, command: command, eventSeq: eventSeq, sourcePathID: source.ID,
 		outgoing: outgoing, selectedEdge: outgoing[selectedIndex].ID, producedPaths: produced,
 	}, nil
+}
+
+func exactRouteReservation(input *VerifiedExclusiveInput, view AggregateView, authority *AggregateAuthority, routing RoutingState, source PathRecord, edge EdgeKey, eventSeq int64) (ActivationReservation, bool, error) {
+	if input.parallel == nil {
+		return exactExclusiveReservation(input.template, view, authority, routing, edge.ToNodeID, eventSeq)
+	}
+	reservationIDs := sortedMapKeys(routing.Reservations)
+	for _, reservationID := range reservationIDs {
+		reservation := routing.Reservations[reservationID]
+		if reservation.NodeID != edge.ToNodeID || reservation.State != ReservationOpen || reservation.ScopeID != source.ScopeID {
+			continue
+		}
+		if !reservation.IsReducing && reservation.BranchEdgeID != source.BranchEdgeID {
+			continue
+		}
+		if _, ok := routeCandidateForEdge(reservation, edge.ID, source.BranchEdgeID); ok {
+			return reservation, false, nil
+		}
+	}
+	reservationID, err := ReservationIdentity(view.RunID, edge.ToNodeID, source.ScopeID, source.BranchEdgeID, 1)
+	if err != nil {
+		return ActivationReservation{}, false, err
+	}
+	if existing, exists := routing.Reservations[reservationID]; exists {
+		if _, ok := routeCandidateForEdge(existing, edge.ID, source.BranchEdgeID); !ok {
+			return ActivationReservation{}, false, fmt.Errorf("%w: exact route reservation %q conflicts with route context", ErrMutationInconsistent, existing.ID)
+		}
+		return existing, false, nil
+	}
+	wantSignature, ok := input.parallel.incomingSignature[edge.ID]
+	if !ok {
+		return ActivationReservation{}, false, fmt.Errorf("%w: route edge lacks exact parallel signature", ErrParallelInputInvalid)
+	}
+	candidates := make([]CandidateRecord, 0)
+	slots := make([]PossibleSlotRecord, 0)
+	for _, incoming := range input.parallel.incoming[edge.ToNodeID] {
+		if !slices.Equal(wantSignature, input.parallel.incomingSignature[incoming.ID]) {
+			continue
+		}
+		candidateID, candidateErr := CandidateIdentity(reservationID, CandidateInboundEdge, incoming.ID)
+		if candidateErr != nil {
+			return ActivationReservation{}, false, candidateErr
+		}
+		slotID, slotErr := PossibleSlotIdentity(reservationID, candidateID, incoming.FromNodeID, incoming.ID, source.ScopeID, source.BranchEdgeID, 1)
+		if slotErr != nil {
+			return ActivationReservation{}, false, slotErr
+		}
+		candidates = append(candidates, CandidateRecord{ID: candidateID, Kind: CandidateInboundEdge, MemberID: incoming.ID, PossibleSlotIDs: []PossibleSlotID{slotID}})
+		slots = append(slots, PossibleSlotRecord{ID: slotID, ReservationID: reservationID, CandidateID: candidateID, SourceNodeID: incoming.FromNodeID, SourceEdgeID: incoming.ID, SourceScopeID: source.ScopeID, SourceBranchEdgeID: source.BranchEdgeID, Generation: 1})
+	}
+	if len(candidates) == 0 {
+		return ActivationReservation{}, false, fmt.Errorf("%w: route target lacks exact context candidates", ErrParallelInputInvalid)
+	}
+	slices.SortFunc(candidates, func(a, b CandidateRecord) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(slots, func(a, b PossibleSlotRecord) int { return strings.Compare(a.ID, b.ID) })
+	policy := JoinExclusive
+	if len(candidates) > 1 {
+		policy = JoinAll
+		if input.template.Nodes[edge.ToNodeID].Join == model.JoinAny {
+			return ActivationReservation{}, false, fmt.Errorf("%w: parallel any is not enabled", ErrParallelUnsupported)
+		}
+	}
+	return ActivationReservation{ID: reservationID, RunID: view.RunID, NodeID: edge.ToNodeID, ScopeID: source.ScopeID, BranchEdgeID: source.BranchEdgeID, Generation: 1, JoinPolicy: policy, Candidates: candidates, PossibleSlots: slots, State: ReservationOpen, EventSeq: eventSeq}, true, nil
+}
+
+func routeCandidateForEdge(reservation ActivationReservation, edgeID, branchEdgeID EdgeID) (CandidateRecord, bool) {
+	if candidate, ok := candidateForEdge(reservation, edgeID); ok {
+		return candidate, true
+	}
+	for _, slot := range reservation.PossibleSlots {
+		if slot.SourceEdgeID == edgeID && (branchEdgeID == "" || slot.SourceBranchEdgeID == branchEdgeID) {
+			return candidateForID(reservation, slot.CandidateID)
+		}
+	}
+	return CandidateRecord{}, false
 }
 
 func buildExclusiveClosureDraft(ctx context.Context, input *VerifiedExclusiveInput, observation ExclusiveObservation, routeCommand CommandRecord) (exclusiveClosureDraft, error) {
@@ -1153,7 +1288,7 @@ func buildExclusiveEndDraft(ctx context.Context, input *VerifiedExclusiveInput, 
 	endObservation := ExclusiveObservation{SourcePathID: output.ID, Attempt: 1, Outcome: outcome}
 	post.Commands = cloneMap(post.Commands)
 	post.SideEffects = cloneMap(post.SideEffects)
-	perform, settle, effect, err := observedAttemptCommands(post, reservation.NodeID, node, output, endObservation)
+	perform, settle, effect, err := observedAttemptCommands(post, reservation.NodeID, node, output, endObservation, false)
 	if err != nil {
 		return exclusiveEndDraft{}, err
 	}
@@ -1532,7 +1667,7 @@ func candidateForID(reservation ActivationReservation, candidateID CandidateID) 
 	return CandidateRecord{}, false
 }
 
-func observedAttemptCommands(view AggregateView, nodeID string, node model.Node, source PathRecord, observation ExclusiveObservation) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
+func observedAttemptCommands(view AggregateView, nodeID string, node model.Node, source PathRecord, observation ExclusiveObservation, terminalTaskFailure bool) (CommandRecord, CommandRecord, SideEffectIdentity, error) {
 	var existingPerform, existingSettle CommandRecord
 	for _, candidate := range view.Commands {
 		identity := candidate.Identity
@@ -1586,6 +1721,9 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 	if node.Type == model.NodeTypeEnd && isFailOutcome(outcome) {
 		settlePayloadValue.ReasonCode = "end_failed"
 	}
+	if terminalTaskFailure {
+		settlePayloadValue.ReasonCode = "performer_failed"
+	}
 	settlePayload, err := json.Marshal(settlePayloadValue)
 	if err != nil {
 		return CommandRecord{}, CommandRecord{}, SideEffectIdentity{}, err
@@ -1606,6 +1744,9 @@ func observedAttemptCommands(view AggregateView, nodeID string, node model.Node,
 	}
 	effect := SideEffectIdentity{Kind: SideEffectAttempt, RunID: view.RunID, ActivationID: source.SourceActivation.ID, Attempt: observation.Attempt, State: "observed"}
 	if node.Type == model.NodeTypeEnd && isFailOutcome(outcome) {
+		effect.State = "failed"
+	}
+	if terminalTaskFailure {
 		effect.State = "failed"
 	}
 	if node.Type == model.NodeTypeWait {

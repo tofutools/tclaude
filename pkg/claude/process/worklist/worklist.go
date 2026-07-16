@@ -103,7 +103,7 @@ func Derive(snapshots []store.Snapshot) []Item {
 // execution authority; template source is used solely for immutable node and
 // performer metadata.
 func DerivePathV1(ctx context.Context, snapshot store.PathV1RunSnapshot, lookup CommandAssigneeLookup) ([]Item, error) {
-	if _, err := pathv1.VerifyExclusiveInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
+	if _, err := pathv1.VerifyExecutionInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
 		return nil, err
 	}
 	parsed, err := model.ParseExactSource(snapshot.TemplateSource)

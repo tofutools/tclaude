@@ -18,10 +18,9 @@ var (
 	ErrParallelUnsupported  = errors.New("path-v1 parallel operation is unsupported")
 )
 
-// VerifiedParallelInput is a sealed, exact-template input for the dormant
-// fan-out substrate. It deliberately has no store, host, executor, or engine
-// capability integration. Production continues to advertise foundation_v1
-// only until the combined parallel-all gate lands.
+// VerifiedParallelInput is a sealed, exact-template input for the pure
+// fan-out substrate. Production reaches it only through the combined
+// VerifyExecutionInput parallel-all gate.
 type VerifiedParallelInput struct {
 	base     *VerifiedExclusiveInput
 	topology parallelTopology
@@ -78,13 +77,10 @@ func (p *ParallelProjection) Replay(command CommandRecord) (ReplayDisposition, e
 	return result.Disposition, nil
 }
 
-// VerifyParallelInput performs the same strict checkpoint, exact-source, and
-// pinned-template verification as the enabled exclusive foundation, then
-// derives the complete static scope plan. The exclusive verifier intentionally
-// limits this TCL-445 surface to a pre-split checkpoint; post-split execution
-// remains unavailable until TCL-446 installs the complete parallel-all gate.
+// VerifyParallelInput performs strict checkpoint, exact-source, and pinned
+// template verification, then derives the complete static scope plan.
 func VerifyParallelInput(ctx context.Context, checkpointBytes, templateSource []byte) (*VerifiedParallelInput, error) {
-	base, err := VerifyExclusiveInput(ctx, checkpointBytes, templateSource)
+	base, err := verifyExecutionInput(ctx, checkpointBytes, templateSource)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
 	}
@@ -95,6 +91,14 @@ func VerifyParallelInput(ctx context.Context, checkpointBytes, templateSource []
 	if len(topology.reducers) == 0 {
 		return nil, fmt.Errorf("%w: exact template has no parallel scope", ErrParallelUnsupported)
 	}
+	current, err := CurrentAggregateCheckpoint(base.checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("%w: current aggregate: %v", ErrParallelInputInvalid, err)
+	}
+	if err := validateParallelMaterializedTopology(ctx, current.View(), base.template, topology); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
+	}
+	base.parallel = &topology
 	return &VerifiedParallelInput{base: base, topology: topology}, nil
 }
 
@@ -143,6 +147,33 @@ func ReduceParallelSplit(ctx context.Context, input *VerifiedParallelInput, sour
 		return nil, err
 	}
 	return &ParallelProjection{aggregate: aggregate, binding: input.base.binding, command: cloneCommandRecord(command), dispose: result.Disposition}, nil
+}
+
+// AdvanceParallelSplit seals one pure split projection as the exact next
+// schema-7 checkpoint. This is enabled only through VerifyExecutionInput's
+// combined parallel-all gate.
+func AdvanceParallelSplit(ctx context.Context, input *VerifiedExclusiveInput, sourcePathID PathID) (*ExecutionTransition, error) {
+	if input == nil || input.parallel == nil {
+		return nil, fmt.Errorf("%w: verified parallel input is required", ErrParallelInputInvalid)
+	}
+	parallel := &VerifiedParallelInput{base: input, topology: *input.parallel}
+	command, err := PlanParallelSplit(ctx, parallel, sourcePathID)
+	if err != nil {
+		return nil, err
+	}
+	projection, err := ReduceParallelSplit(ctx, parallel, sourcePathID, command)
+	if err != nil {
+		return nil, err
+	}
+	last, err := aggregateLogicalLastSeq(projection.aggregate)
+	if err != nil {
+		return nil, err
+	}
+	next, err := advanceCheckpointV7To(input.checkpoint, projection.aggregate, CurrentRunStatus(input.checkpoint), last)
+	if err != nil {
+		return nil, err
+	}
+	return newExecutionTransition(input.checkpoint, next, "parallel_split")
 }
 
 // encodeParallelProjectionCheckpoint uses the exact schema-7 persistence
@@ -221,6 +252,86 @@ func (h *parallelNodeHeap) Pop() any {
 	old[last] = ""
 	*h = old[:last]
 	return value
+}
+
+func validateParallelMaterializedTopology(ctx context.Context, view AggregateView, tmpl *model.Template, topology parallelTopology) error {
+	if view.Routing == nil || view.Authority == nil || tmpl == nil {
+		return fmt.Errorf("complete aggregate and exact template are required")
+	}
+	for _, path := range view.Routing.Paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if path.Edge == nil {
+			continue
+		}
+		edge, ok := topology.edges[path.Edge.ID]
+		if !ok || edge != *path.Edge {
+			return fmt.Errorf("path %q edge is outside exact parallel topology", path.ID)
+		}
+	}
+	root := view.Authority.Genesis.RootScopeID
+	for id, scope := range view.Routing.Scopes {
+		if id == root {
+			continue
+		}
+		activation, ok := view.Routing.Activations[scope.ForkActivationID]
+		if !ok {
+			return fmt.Errorf("scope %q fork activation is absent", id)
+		}
+		fork, ok := view.Routing.Reservations[activation.ReservationID]
+		if !ok || tmpl.Nodes[fork.NodeID].Type != model.NodeTypeParallel || topology.reducers[fork.NodeID] != scope.JoinNodeID {
+			return fmt.Errorf("scope %q fork/reducer differs from exact topology", id)
+		}
+		outgoing, err := exactParallelOutgoingEdges(view.TemplateRef, fork.NodeID, tmpl.Nodes[fork.NodeID].Next)
+		if err != nil {
+			return err
+		}
+		branchIDs := parallelEdgeIDs(outgoing)
+		slices.Sort(branchIDs)
+		if !slices.Equal(branchIDs, scope.ExpectedBranchEdgeIDs) {
+			return fmt.Errorf("scope %q branch set differs from exact topology", id)
+		}
+		reducer, ok := view.Routing.Reservations[scope.JoinReservationID]
+		if !ok || reducer.NodeID != scope.JoinNodeID || reducer.JoinPolicy != JoinAll || !reducer.IsReducing || reducer.ReducesScopeID != scope.ID {
+			return fmt.Errorf("scope %q reducer reservation is not exact all authority", id)
+		}
+	}
+	for id, reservation := range view.Routing.Reservations {
+		if _, ok := tmpl.Nodes[reservation.NodeID]; !ok || reservation.JoinPolicy == JoinAny {
+			return fmt.Errorf("reservation %q node/policy is outside parallel-all authority", id)
+		}
+		wantID, err := ReservationIdentity(view.RunID, reservation.NodeID, reservation.ScopeID, reservation.BranchEdgeID, reservation.Generation)
+		if err != nil || wantID != id {
+			return fmt.Errorf("reservation %q identity does not recompute", id)
+		}
+		if id == view.Authority.Genesis.ReservationID {
+			continue
+		}
+		for _, candidate := range reservation.Candidates {
+			wantCandidate, err := CandidateIdentity(id, candidate.Kind, candidate.MemberID)
+			if err != nil || wantCandidate != candidate.ID {
+				return fmt.Errorf("reservation %q candidate identity does not recompute", id)
+			}
+			if candidate.Kind == CandidateInboundEdge {
+				edge, ok := topology.edges[candidate.MemberID]
+				if !ok || edge.ToNodeID != reservation.NodeID {
+					return fmt.Errorf("reservation %q inbound candidate is outside exact topology", id)
+				}
+			}
+		}
+		for _, slot := range reservation.PossibleSlots {
+			edge, ok := topology.edges[slot.SourceEdgeID]
+			if !ok || edge.FromNodeID != slot.SourceNodeID || edge.ToNodeID != reservation.NodeID {
+				return fmt.Errorf("reservation %q possible slot is outside exact topology", id)
+			}
+			wantSlot, err := PossibleSlotIdentity(id, slot.CandidateID, slot.SourceNodeID, slot.SourceEdgeID, slot.SourceScopeID, slot.SourceBranchEdgeID, slot.Generation)
+			if err != nil || wantSlot != slot.ID {
+				return fmt.Errorf("reservation %q possible slot identity does not recompute", id)
+			}
+		}
+	}
+	return nil
 }
 
 func deriveParallelTopology(tmpl *model.Template, templateRef string) (parallelTopology, error) {
@@ -391,7 +502,7 @@ func buildParallelSplitDraft(ctx context.Context, input *VerifiedParallelInput, 
 	}
 	view := aggregate.View()
 	for _, command := range view.Commands {
-		if command.State.Active() {
+		if command.State.Active() && !parallelActiveWaitCommand(input.base, aggregate, command) {
 			return parallelSplitDraft{}, fmt.Errorf("%w: active command %q must recover before split", ErrMutationInconsistent, command.ID)
 		}
 	}

@@ -67,7 +67,7 @@ func runVerify(ctx context.Context, p *verifyParams, out io.Writer) error {
 		snapshot, loadErr := fs.LoadPathV1RunView(ctx, p.RunID)
 		if loadErr != nil {
 			report = processverify.LoadError(p.RunID, loadErr)
-		} else if _, verifyErr := pathv1.VerifyExclusiveInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); verifyErr != nil {
+		} else if _, verifyErr := pathv1.VerifyExecutionInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); verifyErr != nil {
 			report = processverify.Report{
 				RunID: p.RunID, EffectiveStatus: state.RunStatusInconsistent,
 				Diagnostics: []processverify.Diagnostic{{

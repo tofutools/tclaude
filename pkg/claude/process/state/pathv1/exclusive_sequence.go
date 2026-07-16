@@ -482,7 +482,7 @@ func compareString(a, b string) int {
 
 func buildExclusiveSequenceClosure(binding CheckpointBinding, post AggregateView, impossible PathRecord, eventSeq int64) (CommandRecord, AggregateView, error) {
 	reservation, ok := post.Routing.Reservations[impossible.TargetReservationID]
-	if !ok || reservation.JoinPolicy != JoinExclusive || reservation.State != ReservationOpen {
+	if !ok || reservation.JoinPolicy == JoinAny || reservation.State != ReservationOpen {
 		return CommandRecord{}, AggregateView{}, fmt.Errorf("%w: loser reservation is absent or closed", ErrMutationInconsistent)
 	}
 	candidate, ok := candidateForID(reservation, impossible.CandidateID)
@@ -840,7 +840,7 @@ func buildExclusiveSequenceEnd(input *VerifiedExclusiveInput, post AggregateView
 	current := post
 	current.Commands = cloneMap(post.Commands)
 	current.SideEffects = cloneMap(post.SideEffects)
-	perform, settle, effect, err := observedAttemptCommands(current, reservation.NodeID, node, output, endObservation)
+	perform, settle, effect, err := observedAttemptCommands(current, reservation.NodeID, node, output, endObservation, false)
 	if err != nil {
 		return CommandRecord{}, AggregateView{}, err
 	}

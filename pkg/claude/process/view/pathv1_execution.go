@@ -15,7 +15,7 @@ import (
 // Its only routing authority is the exact validated current checkpoint; it has
 // no evidence input and therefore cannot reconstruct or fall back to history.
 func ProjectCurrentPathV1ViewerV2(ctx context.Context, checkpointJSON, templateSource []byte) (ViewerV2, error) {
-	if _, err := pathv1.VerifyExclusiveInput(ctx, checkpointJSON, templateSource); err != nil {
+	if _, err := pathv1.VerifyExecutionInput(ctx, checkpointJSON, templateSource); err != nil {
 		return ViewerV2{}, err
 	}
 	checkpoint, err := pathv1.DecodeCheckpointV7(checkpointJSON)

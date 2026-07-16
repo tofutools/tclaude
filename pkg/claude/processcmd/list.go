@@ -126,7 +126,7 @@ func runRunsLs(cmd *cobra.Command, p *runsLsParams, out io.Writer) error {
 		if schema, schemaErr := fs.RunStateSchemaVersion(cmd.Context(), run.ID); schemaErr == nil {
 			if schema == pathv1.CheckpointStateSchemaVersion {
 				if snapshot, loadErr := fs.LoadPathV1RunView(cmd.Context(), run.ID); loadErr == nil {
-					if _, verifyErr := pathv1.VerifyExclusiveInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); verifyErr == nil {
+					if _, verifyErr := pathv1.VerifyExecutionInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); verifyErr == nil {
 						status = pathv1.CurrentRunStatus(snapshot.Checkpoint)
 					}
 				}

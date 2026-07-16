@@ -234,6 +234,13 @@ func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan
 			return err
 		}
 	}
+	for _, intent := range plan.Intents {
+		mutation, ok := findMutation(plan.Batch, MutationPropagation, intent.ID)
+		if !ok || len(mutation.Before) != 0 || len(mutation.After) == 0 || intent.CommandID != MutationCommandPlaceholder || intent.EventSeq != plan.Batch.EventSeq {
+			return fmt.Errorf("%w: activation propagation intent %q is not an exact create", ErrMutationInvalid, intent.ID)
+		}
+		allowed[mutationTarget{kind: MutationPropagation, key: intent.ID}] = struct{}{}
+	}
 	if err := validateExactMutationTargets(plan.Batch, allowed); err != nil {
 		return err
 	}
@@ -337,6 +344,13 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 		if !ok || len(mutation.After) == 0 {
 			return fmt.Errorf("%w: propagation intent %q lacks its exact transition", ErrMutationInvalid, intent.ID)
 		}
+		var persisted PropagationIntent
+		if err := decodeExactPayload(mutation.After, &persisted); err != nil {
+			return err
+		}
+		if !canonicalEqual(persisted, intent) {
+			return fmt.Errorf("%w: propagation intent %q differs from its persisted mutation", ErrMutationInvalid, intent.ID)
+		}
 		start := uint32(0)
 		if len(mutation.Before) > 0 {
 			var before PropagationIntent
@@ -348,13 +362,19 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 				return fmt.Errorf("%w: propagation intent %q cursor/frontier regresses", ErrMutationInvalid, intent.ID)
 			}
 		}
-		for _, key := range intent.Frontier[start:intent.Cursor] {
+		for _, key := range persisted.Frontier[start:persisted.Cursor] {
 			processed[key] = struct{}{}
 		}
 		allowed[mutationTarget{kind: MutationPropagation, key: intent.ID}] = struct{}{}
 	}
 
 	reservations := make(map[ReservationID]struct{})
+	frontierKeys := make(map[CandidateClosureKey]struct{})
+	for _, intent := range intents {
+		for _, key := range intent.Frontier {
+			frontierKeys[key] = struct{}{}
+		}
+	}
 	for key := range processed {
 		found := false
 		for _, reservation := range pre.Reservations {
@@ -368,6 +388,25 @@ func validatePropagationMutationSet(pre RoutingState, plan PropagateClosurePlan,
 		}
 		if !found {
 			return fmt.Errorf("%w: processed closure key %q has no reserved candidate", ErrMutationInvalid, key)
+		}
+	}
+	for _, mutation := range plan.Batch.Mutations {
+		if mutation.Kind != MutationReservation || len(mutation.Before) != 0 || len(mutation.After) == 0 {
+			continue
+		}
+		var reservation ActivationReservation
+		if err := decodeExactPayload(mutation.After, &reservation); err != nil {
+			return err
+		}
+		for _, candidate := range reservation.Candidates {
+			key, err := CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+			if err != nil {
+				return err
+			}
+			if _, seeded := frontierKeys[key]; seeded {
+				reservations[reservation.ID] = struct{}{}
+				break
+			}
 		}
 	}
 
@@ -542,7 +581,8 @@ func validatePropagationEventSeq(batch MutationBatch) error {
 			if err := decodeExactPayload(mutation.After, &record); err != nil {
 				return err
 			}
-			if record.EventSeq != want || record.CommandID != MutationCommandPlaceholder || (record.CloseReceipt != nil && (record.CloseReceipt.EventSeq != want || record.CloseReceipt.CommandID != MutationCommandPlaceholder)) {
+			openCreate := len(mutation.Before) == 0 && record.State == ReservationOpen && record.CommandID == ""
+			if record.EventSeq != want || (!openCreate && record.CommandID != MutationCommandPlaceholder) || (record.CloseReceipt != nil && (record.CloseReceipt.EventSeq != want || record.CloseReceipt.CommandID != MutationCommandPlaceholder)) {
 				return propagationEventSeqError(mutation, want)
 			}
 		case MutationActivation:

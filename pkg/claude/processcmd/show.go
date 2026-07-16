@@ -178,7 +178,7 @@ func runShowPathV1(cmd *cobra.Command, fs *store.FS, p *showParams, out io.Write
 	if err != nil {
 		return err
 	}
-	if _, err := pathv1.VerifyExclusiveInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
+	if _, err := pathv1.VerifyExecutionInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
 		return err
 	}
 	parsed, err := model.ParseExactSource(snapshot.TemplateSource)

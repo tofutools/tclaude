@@ -345,7 +345,7 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		RunID:              body.RunID,
 		Params:             body.Params,
 		ReplayExisting:     body.RunID != "",
-		EngineCapabilities: processengine.FoundationEngineCapabilities(),
+		EngineCapabilities: processengine.ProductionEngineCapabilities(),
 	})
 	if err != nil {
 		switch {

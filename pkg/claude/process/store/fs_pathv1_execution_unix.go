@@ -184,7 +184,7 @@ func (s *FS) withPathV1ExecutionViewRunLocked(ctx context.Context, runID string,
 	if err != nil {
 		return pathV1ExecutionReadError("exact template source", err)
 	}
-	verified, err := pathv1.VerifyExclusiveInput(ctx, checkpointJSON, templateSource)
+	verified, err := pathv1.VerifyExecutionInput(ctx, checkpointJSON, templateSource)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err

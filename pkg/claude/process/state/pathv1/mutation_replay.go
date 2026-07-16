@@ -142,6 +142,9 @@ func (p ActivateGenerationPlan) Validate() error {
 		if p.WinnerPathID != "" || len(p.LosingCandidateIDs) != 0 || len(p.PreArrivedLoserPathIDs) != 0 {
 			return fmt.Errorf("%w: non-any plan carries any-only fields", ErrMutationInvalid)
 		}
+		if _, err := normalizePropagationIntents(p.Intents); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -521,6 +524,12 @@ func ValidatePropagateClosureCommand(view MutationReplayView, command CommandRec
 		return fmt.Errorf("%w: propagation root candidate is not reserved", ErrMutationInvalid)
 	}
 	target, ok := pre.Reservations[plan.TargetReservationID]
+	if !ok {
+		mutation, created := findMutation(plan.Batch, MutationReservation, plan.TargetReservationID)
+		if created && len(mutation.Before) == 0 && len(mutation.After) > 0 {
+			ok = decodeExactPayload(mutation.After, &target) == nil
+		}
+	}
 	if !ok || target.Generation != plan.TargetGeneration {
 		return fmt.Errorf("%w: propagation first target reservation/generation missing", ErrMutationInvalid)
 	}

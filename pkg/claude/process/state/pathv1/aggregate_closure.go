@@ -124,6 +124,25 @@ func (i *aggregateIndex) slotSettlement(slot PossibleSlotRecord) (SlotSettlement
 	}
 	source, ok := i.view.Routing.Reservations[sourceID]
 	if !ok {
+		// A reducing join is reserved inside the scope it pops, while an
+		// outgoing possible slot names the parent context reached after that
+		// pop. Resolve that exact one-scope relationship without treating an
+		// unrelated same-node reservation as authority.
+		for _, candidate := range i.view.Routing.Reservations {
+			if candidate.NodeID != slot.SourceNodeID || candidate.Generation != slot.Generation || !candidate.IsReducing {
+				continue
+			}
+			scope, exists := i.view.Routing.Scopes[candidate.ReducesScopeID]
+			if !exists || scope.ParentScopeID != slot.SourceScopeID || scope.ParentBranchEdgeID != slot.SourceBranchEdgeID {
+				continue
+			}
+			if ok {
+				return SlotSettlement{}, false
+			}
+			source, ok = candidate, true
+		}
+	}
+	if !ok {
 		return SlotSettlement{}, false
 	}
 	if source.State == ReservationClosedNoActivation {
@@ -261,7 +280,9 @@ func (i *aggregateIndex) validatePropagation() {
 		i.refCommand(intent.CommandID, path+".commandId")
 		if cmd, ok := i.view.Commands[intent.CommandID]; ok {
 			reservation := i.view.Routing.Reservations[intent.RootReservationID]
-			if (cmd.Identity.Kind != CommandPropagateCandidateClosure && cmd.Identity.Kind != CommandActivateGeneration) || cmd.Identity.TargetReservationID != intent.RootReservationID || cmd.Identity.TargetGeneration != reservation.Generation {
+			propagate := cmd.Identity.Kind == CommandPropagateCandidateClosure && cmd.Identity.CauseDigest == intent.RootCauseDigest
+			activate := cmd.Identity.Kind == CommandActivateGeneration && cmd.Identity.TargetReservationID == intent.RootReservationID && cmd.Identity.TargetGeneration == reservation.Generation
+			if !propagate && !activate {
 				i.c.add("propagation_command_authority", path, "command does not own this exact root reservation generation")
 			}
 		}

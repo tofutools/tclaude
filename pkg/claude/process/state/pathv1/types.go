@@ -1,6 +1,5 @@
-// Package pathv1 contains the disabled, schema-independent substrate for the
-// durable path-v1 routing protocol. Nothing in this package is wired into the
-// active v6 checkpoint, planner, reducer, or executor.
+// Package pathv1 contains the schema-independent durable path-v1 routing
+// protocol used by the schema-7 foundation and parallel-all executor.
 package pathv1
 
 import "encoding/json"
