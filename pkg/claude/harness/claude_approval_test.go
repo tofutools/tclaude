@@ -99,10 +99,7 @@ func TestClaudeApproval_HarnessResolution(t *testing.T) {
 	}
 }
 
-// TestClaudeApproval_CodexNotSurfaced guards the "Claude only" scope: Codex's
-// approval is real (DefaultPolicy still drives the daemon default) but exposes
-// no dialog modes, so the dashboard keeps the Codex approval row hidden.
-func TestClaudeApproval_CodexNotSurfaced(t *testing.T) {
+func TestClaudeApproval_CodexCatalogIsSurfaced(t *testing.T) {
 	h, err := Resolve(CodexName)
 	if err != nil {
 		t.Fatalf("Resolve(codex): %v", err)
@@ -110,8 +107,8 @@ func TestClaudeApproval_CodexNotSurfaced(t *testing.T) {
 	if !h.SupportsApproval() {
 		t.Fatal("codex still supports approval (the daemon default + CLI)")
 	}
-	if modes := h.Approval.Modes(); len(modes) != 0 {
-		t.Fatalf("codex must surface no dialog approval modes (Claude-only scope), got %v", modes)
+	if modes := h.Approval.Modes(); !equalStrings(modes, []string{ApprovalNever, ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest}) {
+		t.Fatalf("codex approval modes = %v", modes)
 	}
 	if !h.SupportsAutoReview() {
 		t.Fatal("codex must SupportsAutoReview — it has the guardian subagent")

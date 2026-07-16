@@ -123,9 +123,10 @@ func approvalForHarness(name string) string {
 }
 
 // approvalForRelaunch preserves the source generation's recorded authority.
-// Legacy rows fall back to the harness default; current rows carry both
-// approval inputs so the relaunched process and the authorization record stay
-// identical.
+// Proven legacy daemon launches reconstruct their historical default. An
+// ambiguous Codex row relaunches as untrusted: the least automatic Codex
+// capability, so lifecycle repair cannot broaden unknown authority. Current
+// rows carry both inputs exactly.
 func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 	row, err := db.FindSessionByConvID(sourceConv)
 	if err != nil {
@@ -133,7 +134,24 @@ func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 			"conv", sourceConv, "error", err)
 		return approvalForHarness(harnessName), false
 	}
-	if row == nil || strings.TrimSpace(row.ApprovalPolicy) == "" {
+	if row == nil {
+		return approvalForHarness(harnessName), false
+	}
+	if strings.TrimSpace(row.ApprovalPolicy) == "" {
+		if strings.TrimSpace(harnessName) == harness.CodexName {
+			policy, proven, inferErr := db.LegacyCodexApprovalForConv(sourceConv)
+			if inferErr != nil {
+				slog.Warn("relaunch: legacy approval provenance lookup failed; using conservative fallback",
+					"conv", sourceConv, "error", inferErr)
+			}
+			if proven {
+				return policy, false
+			}
+			// An ambiguous legacy Codex row cannot faithfully inherit its old
+			// posture. Relaunch it at the least automatic Codex capability rather
+			// than silently widening it to the daemon's current never default.
+			return harness.ApprovalUntrusted, false
+		}
 		return approvalForHarness(harnessName), false
 	}
 	h, err := harness.Resolve(harnessName)

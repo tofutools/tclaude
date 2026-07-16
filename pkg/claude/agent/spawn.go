@@ -1024,7 +1024,11 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 
 	var resp SpawnResponse
 	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
+		// --ask-human is an authorization fallback, not a blanket trust-root
+		// override. An owner/already-granted caller may reach a later lineage
+		// denial without any popup being opened, so do not claim a human request
+		// is pending before the daemon has actually needed one.
+		fmt.Fprintf(stdout, "Human approval may be requested if authorization is needed (timeout %s).\n", ask)
 	}
 	path := "/v1/groups/" + p.Group + "/spawn"
 	// DaemonRequestWithWriteProof transparently answers the daemon's dir

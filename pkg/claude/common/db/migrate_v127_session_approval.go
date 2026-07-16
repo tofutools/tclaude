@@ -8,8 +8,8 @@ import (
 // migrateV126toV127 records the launch-time approval posture on sessions so
 // agent-initiated spawns can enforce approval lineage just as sandbox lineage
 // already uses sessions.sandbox_mode. Empty approval_policy is the legacy or
-// direct-session sentinel; the guard treats it conservatively rather than
-// guessing at an out-of-band configuration.
+// direct-session sentinel; v128 reconstructs only the rows whose durable
+// provenance makes their historical effective policy deterministic.
 func migrateV126toV127(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {

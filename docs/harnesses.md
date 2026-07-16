@@ -224,7 +224,7 @@ This is the per-session counterpart to the **global** hardening guide
 --install-sandbox-hardening`), which locks down your user-level `settings.json`
 once for *all* agents; the two share the same `on` block so they can't drift.
 
-### Permission mode at spawn (Claude Code)
+### Permission / approval mode at spawn
 
 The **approval axis** for Claude Code is its permission mode. The spawn dialog
 (a "Permission mode" dropdown), profiles, and `--ask-for-approval` thread it
@@ -238,8 +238,11 @@ hint flags the modes that can block on a prompt no human can answer, auto-deny,
 or remove all guardrails. The OS sandbox (above) and the permission mode are
 **orthogonal** — both layers apply.
 
-> Codex's approval axis (`--ask-for-approval`) is still CLI/profile-only — it is
-> not surfaced as a dialog dropdown yet; only Claude Code's permission modes are.
+Codex uses the same dashboard/profile control for its `--ask-for-approval`
+axis: `never` (daemon default/recommended), `untrusted`, deprecated
+`on-failure`, and `on-request`. The catalog comes from the same harness-owned
+source used by CLI and profile validation, so UI options cannot drift from the
+accepted policy set.
 
 Agent-initiated spawns also enforce approval lineage: a parent cannot choose a
 child posture with broader automatic command acceptance than its recorded

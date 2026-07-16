@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,8 +36,26 @@ type wireProfile struct {
 	Model          string   `json:"model"`
 	Effort         string   `json:"effort"`
 	Sandbox        string   `json:"sandbox"`
+	Approval       string   `json:"approval"`
 	AutoReview     *bool    `json:"auto_review"`
 	SyncWorktree   *bool    `json:"sync_worktree"`
+}
+
+func TestSpawnProfiles_CodexApprovalPoliciesRoundTrip(t *testing.T) {
+	f := newFlow(t)
+	for i, approval := range []string{"", "never", "untrusted", "on-failure", "on-request"} {
+		name := fmt.Sprintf("codex-approval-%d", i)
+		rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+			"name": name, "harness": "codex", "approval": approval,
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "create %q body=%s", approval, rec.Body.String())
+
+		rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/"+name, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got wireProfile
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		assert.Equal(t, approval, got.Approval, "approval %q must round-trip", approval)
+	}
 }
 
 func TestSpawnProfiles_DisabledStateAndRememberedReasonRoundTrip(t *testing.T) {

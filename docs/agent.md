@@ -673,9 +673,14 @@ in-sandbox action that `never` would run. `never` never produces an approval
 request, so setting `auto_review=true` alongside it does not activate the
 classifier capability.
 
-A legacy session row with no recorded approval posture fails closed; relaunch
-it under the current version or ask the human to spawn the child. The human
-spawn path bypasses approval lineage, as it does the sandbox-lineage guard.
+A legacy Codex session whose durable spawn provenance proves it used the old
+daemon default is reconstructed as `never` by the database migration and the
+runtime compatibility guard. This is faithful launch-history reconstruction,
+not an assumption that `never` is less capable than prompt-oriented policies.
+Ambiguous direct/imported/template histories stay fail-closed; relaunching them
+under the current version records the conservative `untrusted` posture. The
+human spawn path bypasses approval lineage, as it does the sandbox-lineage
+guard.
 
 The **dir write-proof** closes the lineage guard's remaining gap: sandboxes
 grant write access rooted at the launch cwd, so an agent that picks the
