@@ -3667,7 +3667,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-row button:last-child { padding: 0 9px; color: #8b949e; }
 .sbx-row button:hover { background: #2d333b; }
 .sbx-row button:last-child:hover { color: #f0b0b0; border-color: #6e3a3a; }
-/* Sandbox-profile card body: one compact line per grant / env key, replacing
+/* Sandbox-profile card body: one compact line per grant / env binding, replacing
    the old ` · `-joined .modal-meta paragraph. Each line is a small tag plus a
    monospace value that ellipsis-truncates rather than wrapping. */
 .sbx-caps { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
