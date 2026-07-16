@@ -14,20 +14,6 @@ import (
 // The Preact spawn owner keeps the exact model string in its plain draft and
 // derives whether the curated select displays it through the Custom sentinel.
 func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
-	// The helper exists, is exported from helpers.js, keys its injected option
-	// by a data attribute (so a re-open strips the stale one), and flags it so
-	// an out-of-catalog id reads as such rather than a curated preset.
-	for _, needle := range []string{
-		"function setModelSelectValue(",
-		"setModelSelectValue,",   // exported from helpers.js
-		"o.dataset.dynamicModel", // stale-option cleanup key
-		"(exact id)",             // out-of-catalog option label
-	} {
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard JS missing %q — out-of-catalog model wiring broken", needle)
-		}
-	}
-
 	// The migrated profile editor uses a controlled free-text input backed by a
 	// datalist, so an out-of-catalog id is represented directly in state.
 	if !strings.Contains(dashboardAssets, "model: seed?.model || ''") ||
@@ -56,19 +42,10 @@ func TestDashboardHTML_ModelCaptureOutOfCatalog(t *testing.T) {
 // enter one by hand. Each editor's <select> now ends with a "Custom model id…"
 // sentinel <option> that reveals a free-text <input>; picking it routes submit
 // and seeding through that input. This pins the wiring across the three editors
-// (spawn dialog, profile editor, role editor) — HTML control, the shared helper,
-// the active-element resolver's sentinel branch, and the change listener.
+// (spawn dialog, profile editor, role editor) through controlled Preact state.
 func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
-	// Shared helper + sentinel exist and are exported from helpers.js.
-	for _, needle := range []string{
-		"const MODEL_CUSTOM_VALUE = '__custom__';",
-		"function syncCustomModelRow(",
-		"MODEL_CUSTOM_VALUE,", // exported
-		"syncCustomModelRow,", // exported
-	} {
-		if !strings.Contains(dashboardAssets, needle) {
-			t.Errorf("dashboard JS missing %q — custom-model free-text helper broken", needle)
-		}
+	if !strings.Contains(dashboardAssets, "export const MODEL_CUSTOM_VALUE = '__custom__';") {
+		t.Error("Preact spawn model state must retain the Custom model sentinel")
 	}
 
 	// The Preact spawn editor retains the select+sentinel/custom-input contract.
@@ -77,7 +54,7 @@ func TestDashboardHTML_CustomModelFreeText(t *testing.T) {
 			`id="` + base + `-custom"`,     // the free-text input
 			`id="` + base + `-custom-row"`, // its toggled row
 			// The select routes to the custom input on the sentinel (reads:
-			// submit + effort read the typed value). Compared against the shared
+			// submit + effort read the typed value). Compared against the Preact
 			// MODEL_CUSTOM_VALUE constant, not a hardcoded literal.
 			"modelSelectValue(draft, context)",
 			"hidden=${selectedModel !== MODEL_CUSTOM_VALUE}",

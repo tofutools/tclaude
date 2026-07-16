@@ -9,8 +9,8 @@ import (
 // shared inline line (.cron-create-error). It used to be a small red hairline
 // at the bottom of a tall, scrollable modal — easy to miss, especially when a
 // Ctrl/Cmd+Enter submit fired while that line sat below the scroll fold. This
-// guards the uplift: the line renders as a collapse-when-empty banner, and the
-// migrated spawn/clone/reincarnate paths render an equivalent controlled banner.
+// guards the uplift: the migrated spawn/clone/reincarnate paths render a
+// collapse-when-empty controlled banner.
 func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -28,19 +28,7 @@ func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	must(".cron-create-error.flash {",
 		"flash class drives the animation")
 
-	// The shared helper: sets the text, scrolls it into view, restarts the
-	// flash. scrollIntoView is the fix for the below-the-fold hotkey submit.
-	must("function showModalError(",
-		"shared modal-error helper present")
-	must("el.scrollIntoView({ block: 'nearest' });",
-		"helper scrolls the error into view")
-	must("el.classList.add('flash');",
-		"helper (re)triggers the flash")
-
-	// Dismiss button: the banner carries a ✕ that clears it on click, styled
-	// to sit at the top-right (the .dismissible flex variant).
-	must("x.addEventListener('click', () => showModalError(el, ''));",
-		"✕ dismiss button clears the banner")
+	// The controlled banner's dismiss button sits at the top-right.
 	must("cron-create-error-x",
 		"dismiss button element + style present")
 	must(".cron-create-error.dismissible {",
@@ -58,7 +46,7 @@ func TestDashboardHTML_SpawnErrorBannerWired(t *testing.T) {
 	// textContent write any more — that was exactly the easy-to-miss path.
 	for _, id := range []string{"agent-spawn-error", "clone-agent-error", "reincarnate-agent-error"} {
 		if strings.Contains(dashboardAssets, "'#"+id+"').textContent =") {
-			t.Errorf("#%s still set via bare textContent — route it through showModalError", id)
+			t.Errorf("#%s still set via bare textContent — route it through controlled Preact error state", id)
 		}
 	}
 }

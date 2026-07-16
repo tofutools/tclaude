@@ -132,90 +132,6 @@ function syncSelectTitle(sel) {
   sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
 }
 
-// MODEL_CUSTOM_VALUE is the sentinel <option> value the curated Model
-// <select>s end with ("Custom model id…"). Picking it reveals a free-text input
-// (id `${base}-custom`) so a human can type ANY model id/alias, not just the
-// curated presets — the daemon validates it at spawn (ValidateModel). It is not
-// a real model, so submit/seed treat it specially (see the active-model-element
-// resolvers + syncCustomModelRow). Kept distinct from "" (Default/unset).
-const MODEL_CUSTOM_VALUE = '__custom__';
-
-// populateModelSelect rebuilds a curated Model <select> from the selected
-// harness's snapshot catalog. The catalog is a suggestion list rather than an
-// allow-list, so every harness gets the same trailing Custom model id… entry.
-// Callers seed an existing model afterwards through setModelSelectValue(),
-// which keeps an out-of-catalog value selectable as an exact ID.
-function populateModelSelect(sel, models, defaultLabel = 'Default (unset)') {
-  if (!sel) return;
-  sel.replaceChildren();
-  const add = (value, label) => {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = label;
-    sel.appendChild(opt);
-  };
-  add('', defaultLabel);
-  for (const model of (models || [])) add(model, model);
-  add(MODEL_CUSTOM_VALUE, 'Custom model id…');
-  sel.value = '';
-  syncSelectTitle(sel);
-}
-
-// setModelSelectValue sets a model id into a Model control, the way the spawn
-// dialog and profile editor seed one from a saved profile / captured live
-// agent. A curated Model control is a <select> whose <option>s are a preset
-// list of aliases; assigning `.value` a
-// model that isn't one of those options is a silent no-op — the box just keeps
-// its prior pick — so a full model id captured from a running agent (e.g.
-// "claude-opus-4-8[1m]", which ValidateModel accepts but the alias list never
-// contains) would be dropped. To keep it, we inject the exact id as a
-// selectable option (flagged "(exact id)" so it reads as an out-of-catalog
-// value, not a curated preset) before selecting it — mirroring the
-// profileRef/roleRef "keep the current value selectable" pattern. The injected
-// option is placed before the trailing "Custom model id…" sentinel so that
-// stays last. A previously injected option is removed on each call so re-opening
-// the form with a different model doesn't stack stale options. For a free-text
-// <input> (a harness with no suggestion list) any value is valid, so we set it
-// directly.
-function setModelSelectValue(el, value) {
-  if (!el) return;
-  value = (value || '').trim();
-  if (el.tagName === 'SELECT') {
-    // Drop a stale injected option from a prior open so they never accumulate.
-    for (const o of [...el.options]) {
-      if (o.dataset.dynamicModel && o.value !== value) o.remove();
-    }
-    if (value && ![...el.options].some(o => o.value === value)) {
-      const opt = document.createElement('option');
-      opt.value = value;
-      opt.textContent = `${value} (exact id)`;
-      opt.dataset.dynamicModel = '1';
-      // Keep the "Custom model id…" sentinel last (insertBefore(…, null) just
-      // appends when the select carries no sentinel).
-      el.insertBefore(opt, el.querySelector(`option[value="${MODEL_CUSTOM_VALUE}"]`));
-    }
-  }
-  el.value = value;
-}
-
-// syncCustomModelRow reconciles a Model field group's free-text "Custom…" row
-// with its curated <select>. The row (id `${base}-custom-row`) and its input
-// (id `${base}-custom`) are shown iff the select (id `${base}`) sits on the
-// MODEL_CUSTOM_VALUE sentinel; the input is cleared when hidden so a stale typed
-// id can't leak into a later read. Pass {focus:true} to move the caret into the
-// input the moment it appears (a human picking "Custom…"). Call after any change
-// to the select — a user pick, a programmatic seed, or a harness switch.
-function syncCustomModelRow(base, { focus = false } = {}) {
-  const sel = $('#' + base);
-  const row = $('#' + base + '-custom-row');
-  const input = $('#' + base + '-custom');
-  if (!sel || !row || !input) return;
-  const on = sel.value === MODEL_CUSTOM_VALUE;
-  row.style.display = on ? '' : 'none';
-  if (!on) input.value = '';
-  else if (focus) input.focus();
-}
-
 // refreshModalMinSize pins a resizable modal's minimum size to its natural
 // "at rest" size — the size it renders at with no user resize: the default
 // width and the content height (the latter already capped by max-height in
@@ -412,51 +328,6 @@ function bindModalSubmitHotkey(modalEl, submitBtn) {
   });
 }
 
-// showModalError renders a modal's inline error line (a .cron-create-error
-// element) as a dismissible banner: the message plus an ✕ that clears it.
-// When `msg` is non-empty it also scrolls the banner into view and re-triggers
-// its attention flash so it can't be missed — the dialogs that use it (spawn /
-// clone / reincarnate, …) are tall and scroll inside a max-height cap, and
-// Ctrl/Cmd+Enter can submit while the line sits below the fold, so a bare
-// textContent write would leave a failed submit looking like nothing happened.
-// An empty/falsy `msg` clears it (the .cron-create-error `:empty` rule then
-// collapses the banner). Accepts an element or an id (no '#').
-function showModalError(elOrId, msg) {
-  const el = typeof elOrId === 'string' ? $('#' + elOrId) : elOrId;
-  if (!el) return;
-  if (!msg) {
-    // Cleared → empty the line so `:empty` collapses it, and drop the
-    // banner-mode classes so no flex/flash state lingers for the next show.
-    el.textContent = '';
-    el.classList.remove('flash', 'dismissible');
-    return;
-  }
-  // Rebuilt on every show (a textContent write would wipe a prior ✕ anyway),
-  // so the dismiss handler never accumulates across resubmits.
-  el.textContent = '';
-  const span = document.createElement('span');
-  span.className = 'cron-create-error-msg';
-  span.textContent = msg;
-  const x = document.createElement('button');
-  x.type = 'button';
-  x.className = 'cron-create-error-x';
-  x.setAttribute('aria-label', 'Dismiss error');
-  x.title = 'Dismiss';
-  x.textContent = '✕';
-  // The error already self-clears on the next submit and on close/reopen; the
-  // ✕ is just "I've read it, hide it now" — so it only clears the line.
-  x.addEventListener('click', () => showModalError(el, ''));
-  el.append(span, x);
-  el.classList.add('dismissible');
-  // Remove → force a reflow → re-add so an identical, resubmitted message
-  // still restarts the CSS flash animation (the standard restart trick).
-  el.classList.remove('flash');
-  void el.offsetWidth;
-  el.classList.add('flash');
-  // block:'nearest' is a no-op when already visible, so this never yanks the
-  // dialog around for an error the human is already looking at.
-  el.scrollIntoView({ block: 'nearest' });
-}
 // harnessCanRename reports whether an agent on harness `name` can be
 // renamed, per the snapshot's harness catalog (dashboardHarness.can_rename).
 // can_rename is true whenever a rename is DELIVERABLE — by an in-pane
@@ -684,9 +555,7 @@ export {
   syncBotAnimations,
   syncWizardOrbit,
   $, $$, isModifiedClick, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
-  syncSelectTitle, populateModelSelect, setModelSelectValue, MODEL_CUSTOM_VALUE,
-  syncCustomModelRow, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey,
-  showModalError,
+  syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey,
   harnessCanRename, harnessCanRemoteControl,
   relTime, shortCwd, offlineDefault, groupOfflineOverride, groupShowOffline,
   // slop-fx.js and the native member reels share one symbol sequence.
@@ -695,4 +564,3 @@ export {
   // its web implementation without pulling Preact into this legacy module.
   pickDirectory, configureDirectoryPickerBridge, isLoopbackDashboard,
 };
-// dashboard-imperative-boundary: platform-layout

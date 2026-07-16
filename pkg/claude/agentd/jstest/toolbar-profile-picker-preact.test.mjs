@@ -52,6 +52,74 @@ test('toolbar profile picker keeps its draft mounted and does not steal focus fr
   for (const cleanup of cleanups.reverse()) cleanup();
 });
 
+async function mountPicker(t, load) {
+  const harness = await createPreactHarness(t);
+  const { createToolbarProfilePickerState } = await harness.importDashboardModule('js/toolbar-profile-picker-state.js');
+  const { mountToolbarProfilePickerIsland } = await harness.importDashboardModule('js/toolbar-profile-picker-island.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const state = createToolbarProfilePickerState();
+  let cleanup;
+  mountToolbarProfilePickerIsland({
+    host,
+    state,
+    actions: { load, commit: async () => true, openNew() {} },
+    registerCleanup: (registered) => { cleanup = registered; },
+  });
+  return { harness, host, state, cleanup };
+}
+
+test('toolbar profile picker remains focused and cancellable while loading stalls', async (t) => {
+  const picker = await mountPicker(t, () => new Promise(() => {}));
+  picker.state.open({ kind: 'profile', current: '' });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const dialog = picker.host.querySelector('[role="dialog"]');
+  const cancel = [...dialog.querySelectorAll('button')].find((button) => button.textContent === 'Cancel');
+  assert.equal(picker.harness.document.activeElement === cancel, true,
+    'the enabled Cancel button keeps focus inside the loading dialog');
+  picker.harness.fireEvent(cancel, 'click');
+  assert.equal(picker.state.dialog.value, null, 'Cancel closes before the load settles');
+  picker.cleanup();
+});
+
+test('toolbar profile picker focuses the select after a delayed load', async (t) => {
+  const picker = await mountPicker(t, () => new Promise((resolve) => {
+    setTimeout(() => resolve({ choices: [{ value: 'alpha', label: 'alpha' }] }), 10);
+  }));
+  await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
+  await picker.harness.act(async () => {});
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const dialog = picker.host.querySelector('[role="dialog"]');
+  const active = picker.harness.document.activeElement;
+  const select = dialog.querySelector('.group-default-profile-select');
+  assert.equal(select.disabled, false, 'the delayed load finished rendering');
+  assert.equal(active === select, true,
+    'the enabled select explicitly receives focus when loading completes');
+  picker.harness.fireEvent(picker.host.querySelector('.modal-overlay'), 'mousedown');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(picker.state.dialog.value, null, 'backdrop cancellation remains available after loading');
+  picker.cleanup();
+});
+
+test('toolbar profile picker delayed load does not steal focus from a newer overlay', async (t) => {
+  let focusNewerOverlay;
+  const picker = await mountPicker(t, () => new Promise((resolve) => {
+    setTimeout(() => {
+      focusNewerOverlay();
+      resolve({ choices: [] });
+    }, 10);
+  }));
+  const newerOverlay = picker.harness.document.body.appendChild(picker.harness.document.createElement('div'));
+  newerOverlay.className = 'modal-overlay show';
+  const newerButton = newerOverlay.appendChild(picker.harness.document.createElement('button'));
+  focusNewerOverlay = () => newerButton.focus();
+  await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
+  await picker.harness.act(async () => {});
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(picker.harness.document.activeElement === newerButton, true);
+  newerOverlay.remove();
+  picker.cleanup();
+});
+
 test('profile mutation starts and awaits a newer poll generation before repaint', async (t) => {
   const harness = await createPreactHarness(t);
   const events = [];

@@ -88,6 +88,7 @@ test('optional feature load failures stay inside the claimed host', async (t) =>
   const harness = await createPreactHarness(t);
   const { mountFeatureIsland } = await harness.importDashboardModule('js/island-lifecycle.js');
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const staleChild = host.appendChild(harness.document.createElement('span'));
   const errors = [];
   const cleanup = await mountFeatureIsland({
     name: 'broken', label: 'Broken feature', hosts: [host],
@@ -96,6 +97,7 @@ test('optional feature load failures stay inside the claimed host', async (t) =>
   });
 
   assert.equal(cleanup, null);
+  assert.equal(staleChild.isConnected, false, 'the failure fallback replaces only the claimed host contents');
   assert.match(getByRole(host, 'alert').textContent, /Broken feature failed to load: missing optional asset/);
   assert.equal(host.dataset.islandOwner, 'broken');
   assert.equal(errors.length, 1);

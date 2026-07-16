@@ -22,7 +22,7 @@ func TestDashboardImperativeOwnershipInventory(t *testing.T) {
 		"process-graph": true,
 	}
 	marker := regexp.MustCompile(`dashboard-imperative-boundary:\s*([a-z-]+)`)
-	highRisk := regexp.MustCompile(`document\.createElement(?:NS)?\s*\(|\.innerHTML\s*=|\.insertAdjacentHTML\s*\(|dangerouslySetInnerHTML`)
+	highRisk := regexp.MustCompile(`\.createElement(?:NS)?\s*\(|\.innerHTML\s*=|\.insertAdjacentHTML\s*\(|dangerouslySetInnerHTML`)
 
 	for _, name := range dashboardJSModules() {
 		body, readErr := fs.ReadFile(dashboardAssetsFS, name)

@@ -85,7 +85,7 @@ func TestSpawnProfile_FromAgentSeed(t *testing.T) {
 	// SpawnNew writes the SessionRow WITHOUT a model_id, so set it directly on
 	// the row the tracer reads (sessions.id == the spawn label). This exercises
 	// traceMemberLaunch → the seed's Model, guarding that a non-preset model is
-	// captured (the frontend then keeps it selectable — see setModelSelectValue).
+	// captured (the controlled Preact draft then preserves it through the Custom sentinel).
 	const nonDefaultModel = "claude-opus-4-8[1m]"
 	require.NoError(t, db.UpdateSessionModelID(a.TmuxSession, nonDefaultModel),
 		"stamp the live agent's session row with a non-default model id")
