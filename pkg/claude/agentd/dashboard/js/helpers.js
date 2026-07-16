@@ -116,22 +116,6 @@ function linkify(text) {
   return out;
 }
 
-// syncSelectTitle mirrors a <select>'s currently-selected option text
-// into its `title` attribute. The modal form controls shrink to the
-// available width (min-width:0 in dashboard.css), so a long option label
-// — e.g. a worktree's "branch — ~/long/path" — is clipped in the closed
-// box; the tooltip makes the full label readable on hover without having
-// to open the dropdown. Safe to call repeatedly and after every
-// (re)population; a short/blank label just yields a short/blank tooltip.
-function syncSelectTitle(sel) {
-  if (!sel) return;
-  const opt = sel.selectedOptions && sel.selectedOptions[0];
-  // Prefer an option's own `title` when it carries one — the worktree
-  // options set it to the full, untruncated path (their visible label
-  // shortens the path), so the tooltip can show more than the box does.
-  sel.title = (opt ? (opt.title || opt.textContent) : '').trim();
-}
-
 // refreshModalMinSize pins a resizable modal's minimum size to its natural
 // "at rest" size — the size it renders at with no user resize: the default
 // width and the content height (the latter already capped by max-height in
@@ -292,22 +276,6 @@ function makeModalResizable(modalEl, key, opts = {}) {
   return cleanup;
 }
 
-// bindSelectTitles keeps every <select> under `root` tooltip-synced: an
-// initial pass over the current selections plus one delegated `change`
-// listener so user picks update the tooltip live. Programmatic
-// repopulation (e.g. the worktree reload) doesn't fire `change`, so those
-// call sites sync explicitly via syncSelectTitle. Idempotent per root via
-// a data-flag so re-binding (modules can bind on open) won't stack
-// listeners.
-function bindSelectTitles(root) {
-  if (!root) return;
-  $$('select', root).forEach(syncSelectTitle);
-  if (root.dataset.selectTitlesBound === '1') return;
-  root.dataset.selectTitlesBound = '1';
-  root.addEventListener('change', (e) => {
-    if (e.target && e.target.tagName === 'SELECT') syncSelectTitle(e.target);
-  });
-}
 // bindModalSubmitHotkey makes Ctrl/Cmd+Enter anywhere inside a modal
 // fire its primary submit button — a keyboard alternative to mousing over
 // to click it. Both modifiers are accepted on every platform (Cmd+Enter
@@ -555,7 +523,7 @@ export {
   syncBotAnimations,
   syncWizardOrbit,
   $, $$, isModifiedClick, esc, themeWords, linkify, shortId, shortAgentId, idTooltip,
-  syncSelectTitle, bindSelectTitles, makeModalResizable, bindModalSubmitHotkey,
+  makeModalResizable, bindModalSubmitHotkey,
   harnessCanRename, harnessCanRemoteControl,
   relTime, shortCwd, offlineDefault, groupOfflineOverride, groupShowOffline,
   // slop-fx.js and the native member reels share one symbol sequence.
