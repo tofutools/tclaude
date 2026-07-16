@@ -10,9 +10,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  memberVariant, activitySummary, activityBotsHTML, groupActivityHTML,
-  spriteBotsHTML, wizardBotsHTML, wizardSpriteBotsHTML, styledWizardBotsHTML,
-  styledBotsHTML, aggregateActivity, VARIANT_ORDER,
+  memberVariant, activitySummary, activityBotView, activityModeViews,
+  aggregateActivity, VARIANT_ORDER,
   variantLabel, themedSummaryText,
 } from '../dashboard/js/group-activity.js';
 
@@ -83,9 +82,7 @@ test('empty membership yields nothing to render', () => {
   const s = activitySummary([]);
   assert.deepEqual(s.present, []);
   assert.equal(s.level, 'empty');
-  assert.equal(activityBotsHTML(s), '');
-  assert.equal(spriteBotsHTML(s), '');
-  assert.equal(groupActivityHTML([], 'emoji', 'sprites'), '');
+  assert.deepEqual(activityModeViews(s), []);
 });
 
 test('summaryText reads as a human breakdown', () => {
@@ -114,173 +111,51 @@ test('themedSummaryText re-flavours the breakdown for wizard, plain otherwise', 
   assert.equal(themedSummaryText(activitySummary([]), 'wizard'), ''); // nothing present
 });
 
-test('wizard flavour lands on the wizard wrapper; regular/slop stay plain', () => {
-  const members = [on('working'), on('working'), on('idle')];
-  // Per-bot tooltip + aria-label carry the arcane phrasing when a builder is
-  // asked for the wizard theme directly.
-  const bots = activityBotsHTML(activitySummary(members), 'wizard');
-  assert.ok(bots.includes('title="2 familiars channeling"'));
-  assert.ok(bots.includes('aria-label="1 familiar meditating"'));
-  // Sprite bots too (the slop-style row).
-  assert.ok(spriteBotsHTML(activitySummary(members), 'wizard').includes('title="2 familiars channeling"'));
-  // In the group chip, the theme↔wrapper mapping is 1:1, so each wrapper is
-  // FIXED-flavour: the dedicated .ga-wizard wrapper carries the arcane
-  // breakdown, while .ga-regular/.ga-slop keep the plain nouns even in the
-  // same render (they're CSS-hidden in wizard mode, but the title is baked).
-  const wiz = groupActivityHTML(members, 'emoji', 'sprites', 'wizard');
-  assert.ok(wiz.includes('class="ga-wizard level-working" title="2 familiars channeling · 1 familiar meditating"'));
-  assert.ok(wiz.includes('class="ga-regular level-working" title="2 working · 1 idle"'));
-  // A plain (pre-wizard-arg) call emits NO wizard wrapper — no arcane leak.
-  const plain = groupActivityHTML(members, 'emoji', 'sprites');
-  assert.ok(plain.includes('title="2 working · 1 idle"'));
-  assert.ok(!plain.includes('ga-wizard'));
-  assert.ok(!plain.includes('familiar'));
+test('activity mode models preserve exact classes, keys, counts and themed titles', () => {
+  const summary = activitySummary([on('working'), on('working'), on('idle')]);
+  const modes = activityModeViews(summary, { regular: 'emoji', slop: 'sprites', wizard: 'emoji' });
+  assert.deepEqual(modes.map((mode) => mode.key), ['regular', 'slop', 'wizard']);
+  assert.deepEqual(modes.map((mode) => mode.className), ['ga-regular', 'ga-slop', 'ga-wizard']);
+  assert.ok(modes.every((mode) => mode.level === 'working'));
+  assert.equal(modes[0].title, '2 working · 1 idle');
+  assert.equal(modes[2].title, '2 familiars channeling · 1 familiar meditating');
+  assert.deepEqual(modes[0].bots.map((bot) => bot.key), ['working', 'idle']);
+  assert.equal(modes[0].bots[0].count, 2);
+  assert.equal(modes[0].bots[1].count, 1);
+  assert.equal(modes[0].bots[0].className, 'actbot actbot-working');
+  assert.equal(modes[1].bots[0].className, 'actbot actbot-sprite actbot-working');
+  assert.equal(modes[1].bots[0].faceClassName, 'actbot-spr spr-dance');
+  assert.equal(modes[2].bots[0].face, '🧙');
 });
 
-test('botsHTML emits one bot per present variant, count badge only when >1', () => {
-  const s = activitySummary([on('working'), on('working'), on('idle')]);
-  const html = activityBotsHTML(s);
-  assert.equal((html.match(/class="actbot /g) || []).length, 2); // two bots
-  assert.ok(html.includes('actbot-working'));
-  assert.ok(html.includes('actbot-idle'));
-  assert.ok(html.includes('<span class="actbot-count">2</span>')); // working count
-  // idle is a single member → no count badge for it. Only one count total.
-  assert.equal((html.match(/actbot-count/g) || []).length, 1);
+test('activity bot models preserve emoji tags, sprite poses and wizard vocabulary', () => {
+  const asking = activityBotView('asking', 1, 'emoji');
+  assert.equal(asking.tag, '❓');
+  assert.equal(asking.face, '🤖');
+  assert.equal(asking.title, '1 awaiting');
+
+  const sprite = activityBotView('crashed', 1, 'sprites');
+  assert.equal(sprite.tag, '');
+  assert.equal(sprite.faceClassName, 'actbot-spr spr-static');
+  assert.match(sprite.className, /actbot-sprite actbot-crashed/);
+
+  const wizard = activityBotView('working', 2, 'emoji', true);
+  assert.equal(wizard.face, '🧙');
+  assert.equal(wizard.title, '2 familiars channeling');
+  assert.equal(wizard.tag, '');
+
+  const wizardSprite = activityBotView('asking', 1, 'sprites', true);
+  assert.match(wizardSprite.className, /actbot-sprite actbot-wiz actbot-asking/);
+  assert.equal(wizardSprite.faceClassName, 'actbot-spr spr-wiz-ask');
+  assert.equal(wizardSprite.title, '1 familiar awaiting a decree');
 });
 
-test('asking + error bots carry a corner tag glyph', () => {
-  const html = activityBotsHTML(activitySummary([on('awaiting_permission'), on('error')]));
-  assert.ok(html.includes('❓'));
-  assert.ok(html.includes('💥'));
-});
-
-test('spriteBotsHTML emits sprite bots with anim classes, no tag glyphs', () => {
-  const html = spriteBotsHTML(activitySummary([on('working'), on('awaiting_permission'), on('idle')]));
-  assert.ok(html.includes('actbot-sprite'));
-  assert.ok(html.includes('spr-dance'));   // working → dance
-  assert.ok(html.includes('spr-asking'));  // awaiting → asking
-  assert.ok(html.includes('spr-idle'));    // idle → idle
-  assert.ok(!html.includes('❓'));          // pose carries status; no corner glyph
-});
-
-test('crashed + offline sprites fall back to the static frame', () => {
-  const html = spriteBotsHTML(activitySummary([off('unexpected')])); // crashed
-  assert.ok(html.includes('spr-static'));
-  assert.ok(html.includes('actbot-crashed'));
-});
-
-test('styledBotsHTML switches emoji / sprites / off', () => {
-  const s = activitySummary([on('working')]);
-  assert.ok(styledBotsHTML(s, 'emoji').includes('actbot-face'));   // emoji bot
-  assert.ok(styledBotsHTML(s, 'sprites').includes('actbot-spr'));  // sprite bot
-  assert.equal(styledBotsHTML(s, 'off'), '');                      // hidden
-});
-
-test('wizardBotsHTML re-skins each variant with a fantasy glyph, no tags', () => {
-  const html = wizardBotsHTML(activitySummary([on('working'), on('awaiting_permission'), on('idle')]));
-  // Reuses the emoji-bot structure (so the shared animations apply) but with
-  // wizard glyphs carrying the state — a dancing 🧙 leads.
-  assert.ok(html.includes('actbot-face'));
-  assert.ok(html.includes('🧙'));                    // working → mage
-  assert.ok(html.includes('📜'));                    // asking → scroll
-  assert.ok(html.includes('🕯️'));                   // idle → candle
-  assert.ok(html.includes('actbot-working'));
-  assert.ok(!html.includes('actbot-spr'));           // not sprites
-  assert.ok(!html.includes('❓'));                    // glyph carries state; no corner tag
-  // The wizard row is inherently the 🧙 theme, so its tooltips speak the
-  // arcane vocabulary (reusing PR #678's variantLabel), not the plain nouns.
-  assert.ok(html.includes('title="1 familiar channeling"'));  // working
-  assert.ok(html.includes('title="1 familiar meditating"'));  // idle
-  assert.ok(!html.includes('title="1 working"'));
-});
-
-test('wizardBotsHTML keeps the count badge and is empty for no members', () => {
-  const html = wizardBotsHTML(activitySummary([on('working'), on('working')]));
-  assert.ok(html.includes('<span class="actbot-count">2</span>'));
-  assert.equal(wizardBotsHTML(activitySummary([])), '');
-});
-
-test('wizardSpriteBotsHTML emits pixel wizard sprites (spr-wiz-* + .actbot-wiz marker)', () => {
-  const html = wizardSpriteBotsHTML(activitySummary([on('working'), on('awaiting_permission'), on('error'), on('idle')]));
-  assert.ok(html.includes('actbot-sprite actbot-wiz')); // wizard aspect-ratio marker
-  assert.ok(html.includes('spr-wiz-cast'));   // working → cast
-  assert.ok(html.includes('spr-wiz-ask'));    // awaiting → ask
-  assert.ok(html.includes('spr-wiz-error'));  // error → error
-  assert.ok(html.includes('spr-wiz-idle'));   // idle → idle
-  assert.ok(!html.includes('🧙'));            // sprites, not glyphs
-  // Sprite bots in the wizard wrapper still speak the arcane tooltip vocab.
-  assert.ok(html.includes('title="1 familiar channeling"'));
-});
-
-test('wizard sprite crashed + offline reuse the static standing frame', () => {
-  const crashed = wizardSpriteBotsHTML(activitySummary([off('unexpected')]));
-  assert.ok(crashed.includes('spr-wiz-static'));
-  assert.ok(crashed.includes('actbot-crashed'));
-  const offline = wizardSpriteBotsHTML(activitySummary([off(''), off('')]));
-  assert.ok(offline.includes('spr-wiz-static'));
-  assert.ok(offline.includes('actbot-offline'));
-});
-
-test('styledWizardBotsHTML: sprites→pixel, emoji/default→glyphs, off→empty', () => {
-  const s = activitySummary([on('working')]);
-  assert.ok(styledWizardBotsHTML(s, 'sprites').includes('spr-wiz-cast')); // pixel wizards
-  assert.ok(styledWizardBotsHTML(s, 'emoji').includes('🧙'));             // glyph row (default)
-  assert.ok(styledWizardBotsHTML(s, 'anything').includes('🧙'));          // unknown → glyphs
-  assert.equal(styledWizardBotsHTML(s, 'off'), '');                       // hidden
-});
-
-test('groupActivityHTML wizard wrapper honours the sprites opt-in', () => {
-  // Default (emoji) wizard wrapper → glyphs; explicit sprites → pixel wizards.
-  const glyphs = groupActivityHTML([on('working')], 'emoji', 'sprites', 'emoji');
-  assert.ok(glyphs.includes('class="ga-wizard'));
-  assert.ok(glyphs.includes('🧙'));
-  assert.ok(!glyphs.includes('spr-wiz-'));
-  const sprites = groupActivityHTML([on('working')], 'emoji', 'sprites', 'sprites');
-  assert.ok(sprites.includes('class="ga-wizard'));
-  assert.ok(sprites.includes('spr-wiz-cast'));
-  // 'off' drops the wizard wrapper entirely.
-  assert.ok(!groupActivityHTML([on('working')], 'emoji', 'sprites', 'off').includes('ga-wizard'));
-});
-
-test('groupActivityHTML emits a per-mode wrapper in each configured style', () => {
-  const html = groupActivityHTML([on('awaiting_input'), on('working')], 'emoji', 'sprites');
-  // regular wrapper = emoji bots, slop wrapper = sprite bots, both tinted
-  // by the loudest level (asking).
-  assert.ok(html.includes('class="ga-regular level-asking"'));
-  assert.ok(html.includes('class="ga-slop level-asking"'));
-  assert.ok(html.includes('actbot-face'));  // emoji in the regular wrapper
-  assert.ok(html.includes('actbot-spr'));   // sprites in the slop wrapper
-});
-
-test('groupActivityHTML drops a wrapper whose mode is off; empty when all off', () => {
-  const onlyRegular = groupActivityHTML([on('working')], 'emoji', 'off');
-  assert.ok(onlyRegular.includes('ga-regular'));
-  assert.ok(!onlyRegular.includes('ga-slop'));
-  // An absent 4th arg (pre-wizard callers) yields NO wizard wrapper.
-  assert.ok(!onlyRegular.includes('ga-wizard'));
-  assert.equal(groupActivityHTML([on('working')], 'off', 'off'), '');
-  // All three off → nothing, even with the wizard arg present.
-  assert.equal(groupActivityHTML([on('working')], 'off', 'off', 'off'), '');
-});
-
-test('groupActivityHTML adds a wizard wrapper when wizardStyle is on', () => {
-  const html = groupActivityHTML([on('awaiting_input'), on('working')], 'emoji', 'sprites', 'wizard');
-  assert.ok(html.includes('class="ga-regular level-asking"'));
-  assert.ok(html.includes('class="ga-slop level-asking"'));
-  assert.ok(html.includes('class="ga-wizard level-asking"'));
-  assert.ok(html.includes('🧙'));   // wizard glyph in the wizard wrapper
-  // Wizard-only config (regular + slop off) still emits the wizard row.
-  const wizOnly = groupActivityHTML([on('working')], 'off', 'off', 'wizard');
-  assert.ok(wizOnly.includes('ga-wizard'));
-  assert.ok(!wizOnly.includes('ga-regular'));
-  assert.ok(!wizOnly.includes('ga-slop'));
-});
-
-test('groupActivityHTML output is injection-safe (no caller strings)', () => {
-  // status_detail is attacker-influenceable; it must never reach the HTML.
-  const html = groupActivityHTML([on('working', '<img src=x onerror=alert(1)>')], 'emoji', 'sprites');
-  assert.ok(!html.includes('<img'));
-  assert.ok(!html.includes('onerror'));
+test('activity mode models omit disabled modes and never carry status detail strings', () => {
+  const summary = activitySummary([on('working', '<img src=x onerror=alert(1)>')]);
+  const regular = activityModeViews(summary, { regular: 'emoji', slop: 'off', wizard: 'off' });
+  assert.deepEqual(regular.map((mode) => mode.key), ['regular']);
+  assert.doesNotMatch(JSON.stringify(regular), /img|onerror/);
+  assert.deepEqual(activityModeViews(summary, { regular: 'off', slop: 'off', wizard: 'off' }), []);
 });
 
 test('aggregateActivity flattens several group member lists', () => {

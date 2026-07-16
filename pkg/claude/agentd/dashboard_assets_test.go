@@ -109,8 +109,9 @@ func TestDashboardAssets_SlopMachineWired(t *testing.T) {
 	for _, needle := range []string{
 		"function SlopMachine(",
 		"<${SlopMachine} state=${state} online=${member.online} conv=${member.conv_id} />",
-		"host.replaceChildren();",
-		"render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, host);",
+		`data-opaque-host="slop-reels"`,
+		"host.replaceChildren(root);",
+		"render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, root);",
 		"SLOP_SYMBOLS,", // shared reel glyph set
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -288,9 +289,9 @@ func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
 // modal-level binding — must stay wired together.
 func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 	for _, needle := range []string{
-		"function syncSelectTitle(",                 // helper exists (helpers.js)
-		"function bindSelectTitles(",                // modal-level binder exists (helpers.js)
-		"syncSelectTitle(select)",                   // worktree picker syncs after repopulate (modal-link-wt.js)
+		"function syncSelectTitle(",                      // helper exists (helpers.js)
+		"function bindSelectTitles(",                     // modal-level binder exists (helpers.js)
+		"syncSelectTitle(select)",                        // worktree picker syncs after repopulate (modal-link-wt.js)
 		"title=${`${branch}${main} — ${worktree.path}`}", // Preact worktree options retain the full path
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
@@ -306,10 +307,10 @@ func TestDashboardJS_SelectTooltipWired(t *testing.T) {
 // here means the modal would silently forget its size across reopens.
 func TestDashboardJS_ModalResizePersisted(t *testing.T) {
 	for _, needle := range []string{
-		"function makeModalResizable(",                                  // helper exists (helpers.js)
-		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,               // Preact spawn overlay wires it
-		`resizeKey="tclaude.dash.modalSize.clone-agent"`,                // Preact clone modal wires it
-		"makeModalResizable(dialogRef.current, resizeKey)",              // Preact management overlays wire it
+		"function makeModalResizable(",                     // helper exists (helpers.js)
+		`resizeKey="tclaude.dash.modalSize.agent-spawn"`,   // Preact spawn overlay wires it
+		`resizeKey="tclaude.dash.modalSize.clone-agent"`,   // Preact clone modal wires it
+		"makeModalResizable(dialogRef.current, resizeKey)", // Preact management overlays wire it
 		`resizeKey: 'tclaude.dash.modalSize.templates-manage'`,
 		`fitContent: false`,
 		"tclaude.dash.modalSize.agent-spawn",            // per-modal pref key
@@ -507,10 +508,11 @@ func TestDashboardJS_MailColsResizable(t *testing.T) {
 // assert on the embedded concatenation at `go test ./...`. The Go resolver +
 // round-trip is covered separately by config.TestGroupQuickOptions. A rename in
 // any one file silently breaks the fold (or its pin) only in the browser:
+//   - Groups component state owns semantic hover identity and cleanup;
 //   - groups-list.js wraps the variable chip text in .qo-text and stamps
-//     .quick-pinned on a pinned group's <details> + emits the ⚙ pin toggle;
+//     .quick-pinned on a pinned group's <details> + emits the native ⚙ pin toggle;
 //   - refresh.js toggles body.group-quick-fold off the snapshot flag;
-//   - row-actions.js handles the pin toggle (a per-browser dashPref);
+//   - groups-actions.js handles the pin toggle (a per-browser dashPref);
 //   - dashboard.css collapses .qo-text at rest and expands it on header hover,
 //     scoped to hover-capable pointers and skipping pinned groups;
 //   - config.js + dashboard.html expose the Config-tab checkbox.
@@ -521,18 +523,15 @@ func TestDashboardAssets_GroupQuickFoldWired(t *testing.T) {
 		`<span class="qo-text">`,
 		"quick-pinned",
 		"tclaude.dash.quickpin.",
-		`data-act="toggle-quick-pin"`,
-		// refresh.js — drives the body class off the snapshot flag, and tracks
-		// the hovered group so the reveal survives the 2s innerHTML re-render.
+		"actions.toggleQuickPin(group)",
+		"toggleQuickPin(group)",
+		// refresh.js drives the body class; GroupsList owns hover on the stable
+		// host so the reveal survives keyed polling reconciliation.
 		"'group-quick-fold', data.group_quick_options !== 'expanded'",
-		"export let hoveredGroupKey",
-		"function bindGroupQuickHover(",
-		// dashboard.js — wires the hover tracker in at init.
-		"bindGroupQuickHover()",
+		"host.addEventListener('mouseover', onMouseOver)",
+		"host.removeEventListener('mouseover', onMouseOver)",
 		// groups-list.js — re-stamps .quick-hover from the tracked key each render.
 		"hoveredGroupKey === group.name",
-		// row-actions.js — the pin toggle handler.
-		"case 'toggle-quick-pin':",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-group-quick-fold",
 		"dashboard.group_quick_options = 'expanded'",

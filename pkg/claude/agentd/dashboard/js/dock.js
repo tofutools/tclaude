@@ -49,7 +49,8 @@ import { profileSummary, profileDetailChips, createProfile } from './profiles.js
 import { openProfileEditor, openProfilesManageModal, removeProfile } from './modal-profiles.js';
 import { roleSummary, createRole } from './roles.js';
 import { openRoleEditor, openRolesManageModal, removeRole } from './modal-roles.js';
-import { templateReadbackBadges, openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
+import { templateReadbackBadgeModels } from './template-readback.js';
+import { openTemplatesManageModal, openTemplateEditor, openDuplicateModal, deleteTemplate } from './modal-templates.js';
 // The generic "clone under a new name" dialog (profiles + roles). Templates
 // reuse their own richer openDuplicateModal above — see the SECTIONS clone hooks.
 import { openPresetCloneDialog } from './action-dialog-controller.js';
@@ -141,7 +142,7 @@ export const dockSections = Object.freeze([
     empty: () => wizWord('no templates yet', 'no circles yet'),
     items: (snap) => (snap && snap.templates) || [],
     name: (t) => t.name,
-    chipsHTML: (t) => templateReadbackBadges(t),
+    chips: (t) => templateReadbackBadgeModels(t),
     drag: true,
     // The per-card ⚙ deep-links into THIS template's editor (JOH-390 item 6),
     // matching the profiles/roles cards — it used to fall back to the whole-kind
@@ -283,9 +284,8 @@ function applyDockOpen(open) {
 // back to their exact toolbar slots so the filter bar renders as before.
 //
 // We MOVE the live DOM nodes (not clones), so every listener rides along:
-// id-bound ones (#group-create-open's click) stay attached to the element across
-// the move; the cog + chip run off document-level delegated handlers (data-act /
-// the .action-menu cog bus) that don't care where the node lives. The toolbar
+// id-bound ones (#group-create-open's click), the cog's direct menu listener,
+// and the profile chips' cross-feature action route all remain valid. The toolbar
 // filter bar + the dock head are both STATIC markup (Preact owns #dock-body and
 // #groups-list), so nothing re-creates or clobbers the moved nodes.
 //

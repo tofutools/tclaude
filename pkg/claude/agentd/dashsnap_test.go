@@ -454,7 +454,7 @@ func baseStates() []dashsnap.State {
 	const ensureForceOpen = `window.__groupsForceReady = (async function(){
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   if (det && det.open && !det.querySelector(':scope > .subtable > .group-force-block')) {
-    var b = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
+    var b = det.querySelector('.force-fold-btn');
     if (b) {
       b.click();
       await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
@@ -1359,13 +1359,13 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   var det = document.querySelector('details[data-group-key="frontend-squad"]');
   if (!det) throw new Error('force-folded: frontend-squad not found');
   if (!det.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: expected an open force card before folding');
-  var btn = det.querySelector('.force-fold-btn[data-act="toggle-force-fold"]');
+  var btn = det.querySelector('.force-fold-btn');
   if (!btn) throw new Error('force-folded: no 🎯 toggle button in the action row');
   btn.click();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var det2 = document.querySelector('details[data-group-key="frontend-squad"]');
   if (det2.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: card still present after folding');
-  var btn2 = det2.querySelector('.force-fold-btn.folded[data-act="toggle-force-fold"]');
+  var btn2 = det2.querySelector('.force-fold-btn.folded');
   if (!btn2) throw new Error('force-folded: toggle did not enter its .folded state');
 })();`,
 		},

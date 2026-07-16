@@ -19,13 +19,13 @@ import { renderGroupsTab, renderLinksTab } from './tabs.js';
 import { renderTemplatesTab } from './modal-templates.js';
 import { applyProcessesTabVisibility } from './processes.js';
 import { renderDock } from './dock.js';
-// renameEditing is the historical flag for row-actions.js's remaining toolbar
+// renameEditing is the historical flag for the remaining toolbar
 // profile picker; refreshSuspended() only reads it. lastSnapshot
 // is dashboard.js's shared state — read directly, written via the
 // setLastSnapshot setter (two writers: refresh() here, and the
-// row-actions picker rollback). All deliberate, benign cycles are TDZ-safe —
+// toolbar-profile-picker rollback). All deliberate, benign cycles are TDZ-safe —
 // no top-level code reads a cyclic import.
-import { renameEditing } from './row-actions.js';
+import { renameEditing } from './toolbar-profile-picker.js';
 import { reconcileTerminalsForAgentRoster } from './terminals-tab.js';
 import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
 import { setVegasRegularMode, wizWord } from './slop.js';
@@ -42,7 +42,6 @@ import {
 } from './shell-state.js';
 import { isTopmostOverlay } from './overlay-stack.js';
 import { disclosurePreference } from './group-tree-activity.js';
-import { hoveredGroupKey, setHoveredGroupKey } from './group-hover-state.js';
 import {
   buildCleanupDescriptor, buildWindowSelectionDescriptor, openCleanupDialog,
   openDeleteRetiredPreviewDialog,
@@ -329,9 +328,12 @@ async function stitchListPage(data, kind, resp, prevSnap) {
   };
 }
 
+let tabsCleanup = null;
 function bindTabs() {
+  if (tabsCleanup) return tabsCleanup;
+  const bindings = [];
   $$('nav [data-tab]').forEach(b => {
-    b.addEventListener('click', e => {
+    const onClick = e => {
       // The tabs are real <a href> anchors: a modified/middle click is left to
       // the browser, which opens the location in a new tab (this view untouched).
       // A plain left-click (including a synthetic element.click() from the
@@ -355,7 +357,9 @@ function bindTabs() {
         document.dispatchEvent(new CustomEvent('tclaude:tab-reselected', { detail: { tab: b.dataset.tab } }));
       }
       if (b.dataset.tab === 'jobs') void refresh();
-    });
+    };
+    b.addEventListener('click', onClick);
+    bindings.push([b, 'click', onClick]);
     // <a> activates on Enter only, whereas the former <button> also switched on
     // Space; restore that parity so a keyboard user's Space still selects the
     // focused tab (preventDefault stops the page from scrolling instead). The
@@ -363,13 +367,21 @@ function bindTabs() {
     // <button> — Space fires its click natively — so skip it to avoid a
     // double toggle.
     if (b.tagName === 'A') {
-      b.addEventListener('keydown', e => {
+      const onKeyDown = e => {
         if (e.key !== ' ' && e.key !== 'Spacebar') return;
         e.preventDefault();
         b.click();
-      });
+      };
+      b.addEventListener('keydown', onKeyDown);
+      bindings.push([b, 'keydown', onKeyDown]);
     }
   });
+  const cleanup = () => {
+    for (const [target, type, listener] of bindings) target.removeEventListener(type, listener);
+    if (tabsCleanup === cleanup) tabsCleanup = null;
+  };
+  tabsCleanup = cleanup;
+  return cleanup;
 }
 
 // visibleTabButtons returns the nav tab buttons that are actually on
@@ -441,8 +453,10 @@ function isEditableTarget(el) {
 //   • ←/→ cycle while the tab bar itself holds keyboard focus (the
 //     WAI-ARIA tablist pattern); roving focus follows the activated tab so
 //     repeated arrows keep stepping.
+let tabHotkeysCleanup = null;
 function bindTabHotkeys() {
-  document.addEventListener('keydown', e => {
+  if (tabHotkeysCleanup) return tabHotkeysCleanup;
+  const onKeyDown = e => {
     // Leave every modifier chord to the browser / app — plain keys only.
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
@@ -464,7 +478,14 @@ function bindTabHotkeys() {
       e.preventDefault();
       cycleTab(e.key === ']' ? 1 : -1);
     }
-  });
+  };
+  document.addEventListener('keydown', onKeyDown);
+  const cleanup = () => {
+    document.removeEventListener('keydown', onKeyDown);
+    if (tabHotkeysCleanup === cleanup) tabHotkeysCleanup = null;
+  };
+  tabHotkeysCleanup = cleanup;
+  return cleanup;
 }
 
 // applyDebugTabVisibility drives the Debug tab's auto-hide off the
@@ -537,14 +558,6 @@ export function showAccessTab(subtab) {
 // space still lands in the input; only the fold is cancelled). Verified in
 // Chromium: the Space activation is a synthetic click on the <summary>, and a
 // capture-phase preventDefault cancels the fold without eating the character.
-// hoveredGroupKey: the group whose <summary> header the pointer is currently
-// over. Native Groups reconciliation normally retains the keyed <details>
-// node, including this imperative class, across snapshot polls and reorders.
-// Keep the key in JS as well: the native group class computation re-stamps
-// .quick-hover when another class prop changes (notably pin/unpin), so a
-// stationary cursor cannot make the quick chips snap shut. It also keeps
-// delegated handling coherent when a view change removes, reinserts, or
-// reparents a group. CSS keeps :hover for the instant live reveal.
 const groupDisclosureIntents = new Set();
 
 // noteGroupDisclosureIntent marks the next native toggle for one group as a
@@ -554,38 +567,12 @@ export function noteGroupDisclosureIntent(key) {
   if (key) groupDisclosureIntents.add(key);
 }
 
-// bindGroupQuickHover tracks the hovered group header on the stable
-// #groups-list container. It is bound once at init and delegated so it also
-// covers keyed nodes that are moved or conditionally mounted. mouseover sets
-// the key to the group whose <summary> the pointer is over (null over the
-// expanded member body, matching the header-only reveal), and mouseleave
-// clears it when the pointer exits the list entirely. It also toggles
-// .quick-hover immediately so live interaction stays smooth.
-function bindGroupQuickHover() {
-  const root = $('#groups-list');
-  if (!root) return;
-  const setHover = key => {
-    if (key === hoveredGroupKey) return;
-    setHoveredGroupKey(key);
-    // Re-sync every currently mounted keyed group immediately.
-    root.querySelectorAll('details[data-group-key]').forEach(d => {
-      d.classList.toggle('quick-hover', d.getAttribute('data-group-key') === key);
-    });
-  };
-  root.addEventListener('mouseover', e => {
-    // closest() with a child combinator matches a <summary> that is a direct
-    // child of a group <details> — true when the pointer is over the header or
-    // any chip in it, false over the expanded subtable below.
-    const summary = e.target.closest('details[data-group-key] > summary');
-    setHover(summary ? summary.parentElement.getAttribute('data-group-key') : null);
-  });
-  // mouseleave (not mouseout) fires once when the pointer truly exits the
-  // container, so a header left stale by the last in-list mouseover is cleared.
-  root.addEventListener('mouseleave', () => setHover(null));
-}
-
+let groupTitleToggleCleanup = null;
 function bindGroupTitleToggle() {
-  document.addEventListener('click', e => {
+  if (groupTitleToggleCleanup) return groupTitleToggleCleanup;
+  const root = $('#groups-list');
+  if (!root) return () => {};
+  const onClick = e => {
     const summary = e.target.closest('summary');
     if (!summary) return;
     const details = summary.parentElement;
@@ -619,14 +606,25 @@ function bindGroupTitleToggle() {
       return; // the title — allow toggle
     }
     e.preventDefault();
-  }, true);
+  };
+  root.addEventListener('click', onClick, true);
+  const cleanup = () => {
+    root.removeEventListener('click', onClick, true);
+    if (groupTitleToggleCleanup === cleanup) groupTitleToggleCleanup = null;
+  };
+  groupTitleToggleCleanup = cleanup;
+  return cleanup;
 }
 
-// <details> only fires `toggle` on the element itself (not bubbling),
-// so use a capturing listener at the document level rather than
-// re-binding per-element after every render.
+// <details> only fires `toggle` on the element itself (not bubbling), so use a
+// capturing listener on the stable Groups host rather than re-binding keyed
+// details elements after every render.
+let detailsPersistenceCleanup = null;
 function bindDetailsPersistence() {
-  document.addEventListener('toggle', e => {
+  if (detailsPersistenceCleanup) return detailsPersistenceCleanup;
+  const root = $('#groups-list');
+  if (!root) return () => {};
+  const onToggle = e => {
     const d = e.target;
     if (!(d instanceof HTMLDetailsElement)) return;
     const key = d.getAttribute('data-group-key');
@@ -647,7 +645,14 @@ function bindDetailsPersistence() {
     // necessarily changes the persisted open preference.
     const changed = next === null ? previous !== null : previous !== next;
     if (changed) featureState('groups')?.rerender();
-  }, true);
+  };
+  root.addEventListener('toggle', onToggle, true);
+  const cleanup = () => {
+    root.removeEventListener('toggle', onToggle, true);
+    if (detailsPersistenceCleanup === cleanup) detailsPersistenceCleanup = null;
+  };
+  detailsPersistenceCleanup = cleanup;
+  return cleanup;
 }
 
 // --- inline mutations: action buttons + shared Preact feedback services ---
@@ -1251,7 +1256,7 @@ async function resumeAgentReq(conv, label, recreate) {
 }
 
 export {
-  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle, bindGroupQuickHover,
+  bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle,
   toast, confirmModal, confirmDiscard,
   shutdownScope, powerOnScope, openWindowModal,
   openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview, openWorktreeCleanup,

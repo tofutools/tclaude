@@ -80,9 +80,10 @@ func TestDashboardHTML_WizardTheme(t *testing.T) {
 	// (.ga-wizard) with fantasy glyphs by default (or opt-in pixel sprites),
 	// emitted alongside regular + slop and CSS-swapped in via body.wizard
 	// (same "always emit, theme picks" trick).
-	must("export function wizardBotsHTML(", "group-activity.js exports the wizard glyph row")
+	must("export function activityModeViews(", "group-activity.js exports structured theme rows")
+	must("export function ActivityModes(", "the shared native activity component renders those rows")
 	must("function GroupActivity({ members, snapshot })", "the native group activity switchboard exists")
-	must("wizard: true", "the native group activity component emits its wizard row")
+	must("className: 'ga-wizard'", "the structured activity model emits its wizard row")
 	must("body.wizard .ga-wizard", "dashboard.css shows the wizard bot row in wizard mode")
 	must("body.wizard .ga-regular { display: none", "wizard mode hides the plain bot row")
 
@@ -256,7 +257,7 @@ func TestDashboardHTML_WizardGroupsTabCopy(t *testing.T) {
 	must("Filter (party name + familiar title/class/lore/grove/branch)", "the party filter explains its wizard-search fields")
 	must("document.addEventListener('tclaude:wizard', onWizard)", "the filter placeholder follows a live theme flip")
 	must("function useWizardTheme()", "the controls and group list share live wizard-theme state")
-	must("useWizardTheme();\n  const current = state.view.value;", "the group list repaints theme-dependent title attributes")
+	must("useWizardTheme();\n  const [hoveredGroupKey, setHoveredGroupKey] = useState(null);", "the group list repaints theme-dependent title attributes and owns hover state")
 	must("current.total === 1 ? 'party' : 'parties'", "the unfiltered count names parties")
 	must("wizardLabel: 'show unbound'", "the view menu names the unbound tray")
 	must("wizardLabel: 'show banished'", "the view menu names the banished tray")
@@ -632,7 +633,7 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 	// The three profile *selectors* also speak the vocabulary in wizard mode:
 	//   - spawn dialog: the "Profile" row label (static .profiles-word span pair)
 	//   - global + group default: the "＋ new profile…" option in the shared
-	//     openProfilePicker <select> (JS, wizWord).
+	//     openToolbarProfilePicker <select> (JS, wizWord).
 	must(`prefix="profiles-word" plain="Profile" wizard="Pattern"`, "the spawn dialog's Profile selector keeps both vocabularies")
 	must("＋ new pattern…", "the global/group default picker's new-entry reads '＋ new pattern…' in wizard mode")
 }

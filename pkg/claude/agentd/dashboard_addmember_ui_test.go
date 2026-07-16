@@ -27,7 +27,7 @@ func TestDashboardAddMemberUI_PreactOwned(t *testing.T) {
 	present("loadAddMemberPromotionPool", "the full promotion pool remains asynchronous and retryable")
 	present("state.optimisticAddMember", "successful membership writes update the Groups signal immediately")
 	present("`/api/groups/${encodeURIComponent(group)}/members`", "the production membership endpoint remains wired")
-	present("function openProfilePicker(", "the unrelated dashboard-toolbar picker stays untouched")
+	present("function openToolbarProfilePicker(", "the unrelated dashboard-toolbar picker stays isolated")
 	absent("function addMemberModal(", "the legacy imperative picker lifecycle was removed")
 	absent(`<div class="modal-overlay" id="add-member-modal">`, "the static picker form was removed")
 	absent("case 'add-member':", "the delegated row-action picker controller was removed")

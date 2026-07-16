@@ -78,6 +78,18 @@ export function createGroupsActions({
       setListPageSize(kind, Number(value) || 50);
       void refresh();
     },
+    toggleQuickPin(group) {
+      const key = `tclaude.dash.quickpin.${group.name}`;
+      if (dashPrefs.getItem(key) === '1') dashPrefs.removeItem(key);
+      else dashPrefs.setItem(key, '1');
+      state.rerender();
+    },
+    toggleForceFold(group) {
+      const key = `tclaude.dash.forcefold.${group.name}`;
+      if (dashPrefs.getItem(key) === '1') dashPrefs.removeItem(key);
+      else dashPrefs.setItem(key, '1');
+      state.rerender();
+    },
     async renameAgent(member, rawTitle) {
       const oldTitle = member.title || '';
       const title = String(rawTitle || '').trim();

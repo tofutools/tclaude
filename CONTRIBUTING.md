@@ -107,7 +107,8 @@ Non-component modules must not independently replace a claimed host or treat
 its DOM as durable application state. Narrow adapters are allowed only when the
 island explicitly exposes the boundary: delegated actions may read an event
 target's `data-*`; transient editors may hide a managed node and insert a
-sibling; and `html-vnodes.js` treats slop-machine children as opaque. Keep those
+sibling; and the native `SlopMachine` component mounts its reel tree into an
+explicit opaque child host that `slop-fx.js` may temporarily replace. Keep those
 constraints covered behaviorally and do not widen them. Code outside claimed
 hosts may remain imperative where it has a clear owner.
 

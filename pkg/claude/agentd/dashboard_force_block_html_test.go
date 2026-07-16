@@ -66,12 +66,12 @@ func TestDashboardAssets_ForceBlockWired(t *testing.T) {
 
 // TestDashboardAssets_ForceFoldWired guards the 🎯 hide/show toggle for the
 // force info card. Like the block itself its pieces span groups-list.js,
-// row-actions.js and dashboard.css and must stay in lockstep — a rename in one
+// groups-actions.js and dashboard.css and must stay in lockstep — a rename in one
 // file silently breaks the fold only in the browser:
 //   - groups-list.js reads the fold dashPref, gates ForceBlock
 //     on it, and emits the toggle button in the group action row
-//     (forceFoldToggleHTML, data-act="toggle-force-fold");
-//   - row-actions.js handles the toggle (flip the dashPref, re-render);
+//     with a native component callback;
+//   - groups-actions.js handles the toggle (flip the dashPref, re-render);
 //   - dashboard.css skins the toggle's folded accent + its wizard label swap.
 //
 // The default-open contract is load-bearing: a freshly deployed force must show
@@ -83,11 +83,10 @@ func TestDashboardAssets_ForceFoldWired(t *testing.T) {
 		"function ForceBlock(",
 		"`tclaude.dash.forcefold.${group.name}`",
 		"if (!isForce(group) || dashPrefs.getItem(`tclaude.dash.forcefold.${group.name}`) === '1') return null;",
-		`data-act="toggle-force-fold"`,
+		"actions.toggleForceFold(group)",
 		"isForce(group) ? html`<button class=${`force-fold-btn${folded ? ' folded' : ''}`}",
-		// row-actions.js — the toggle handler flipping the same pref.
-		"case 'toggle-force-fold':",
-		"'tclaude.dash.forcefold.' + group",
+		// groups-actions.js — the native toggle handler flips the same pref.
+		"toggleForceFold(group)",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — force-fold wiring broken", needle)

@@ -959,7 +959,7 @@ details[data-group-key] > summary .group-name::before { content: "▶ "; color: 
 details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 
 /* ── Group activity bots ──────────────────────────────────────────────
-   The deduped per-status robot row (group-activity.js → groupActivityHTML)
+   The deduped per-status robot row (group-activity.js → ActivityModes)
    that rides in a group <summary> right after the name, and the same row
    aggregated for the whole dashboard in the top bar (#global-activity).
    One 🤖 per distinct status present; motion — plus a corner tag glyph
@@ -2276,9 +2276,9 @@ body.wizard .force-fold-label-wizard { display: inline; }
   /* Reveal on native :hover (instant + smooth during live movement), on
      :focus-within (so a keyboard user tabbing onto a collapsed group's chips
      sees the labels they are about to activate — TCL-330), OR on the
-     JS-stamped .quick-hover (which renderGroups re-applies each poll, so the
-     reveal survives the 2s wholesale re-render that a freshly-inserted node's
-     :hover would not — see bindGroupQuickHover in refresh.js). */
+     component-owned .quick-hover (which follows the semantic group key across
+     polls and reorders, so a stationary pointer keeps the same reveal even if
+     its keyed details node moves). */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .qo-text,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .qo-text,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .qo-text {
@@ -2443,7 +2443,7 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
 /* The inline 🧠 profile picker — a <select> swapped in for the group / user
-   chip while choosing a default spawn profile (row-actions openProfilePicker).
+   chip while choosing a default spawn profile (toolbar-profile-picker.js).
    Same compact monospace look as the chip inputs above. */
 .group-default-profile-select {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
@@ -4928,6 +4928,7 @@ body.slop .slop-machine {
   box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.6),
               0 0 4px rgba(255, 215, 0, 0.25);
 }
+.slop-reels-root { display: contents; }
 /* Hide the regular state pill in slop mode — the slot machine
    takes its place. The +N subagent detail still shows alongside.
    Scoped to .state-cell (the agent-row status cell) on purpose: that
