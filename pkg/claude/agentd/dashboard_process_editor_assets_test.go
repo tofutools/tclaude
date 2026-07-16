@@ -149,6 +149,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
 		"process-issues-panel",
 		"descriptor.kind === 'node'", "descriptor.kind === 'params'",
+		"key=${descriptor.generation}",
 		`class="process-editor-inspector" inert=${pending}`,
 		"discardBufferedChange.current",
 	)
