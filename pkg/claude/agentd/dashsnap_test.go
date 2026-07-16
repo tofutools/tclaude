@@ -956,6 +956,24 @@ func baseStates() []dashsnap.State {
 			SettleMS: 900,
 		},
 		{
+			Key:     "processes-scribe-library-entry",
+			Title:   "Processes — library scribe entry",
+			Caption: "TCL-434 capstone: the Processes list exposes one visible library-scoped scribe action with skin-coherent language before any template is opened.",
+			JS:      processTabJS("templates", `#process-scribe-library`),
+			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `var button=document.querySelector('#process-scribe-library');
+  if(!button) throw new Error('library-scoped process scribe action missing');
+  var rect=button.getBoundingClientRect();
+  if(rect.width<80||rect.height<24) throw new Error('library-scoped process scribe action is not meaningfully visible');
+  var plain=button.querySelector('.process-scribe-plain'),wizard=button.querySelector('.process-scribe-wizard');
+  var active=document.body.classList.contains('wizard')?wizard:plain;
+  var inactive=document.body.classList.contains('wizard')?plain:wizard;
+  if(!active||getComputedStyle(active).display==='none') throw new Error('active-skin process scribe language is hidden');
+  if(!inactive||getComputedStyle(inactive).display!=='none') throw new Error('inactive-skin process scribe language leaked');
+  if(document.body.classList.contains('wizard')&&!active.textContent.includes('process scribe')) throw new Error('wizard process scribe language missing');
+  if(!document.body.classList.contains('wizard')&&!active.textContent.includes('Edit with agent')) throw new Error('plain process scribe language missing');`}},
+			SettleMS: 900,
+		},
+		{
 			Key:      "processes-runs",
 			Title:    "Processes — runs",
 			Caption:  "Processes Runs sub-view with a populated live run row, status, current activity, and viewer action.",
@@ -1057,6 +1075,22 @@ func baseStates() []dashsnap.State {
   if (!input || !document.querySelector('#command-palette-modal.show')) throw new Error('process command palette did not open');
   input.value = 'selection'; input.dispatchEvent(new InputEvent('input', {bubbles:true}));
   if (!document.querySelector('.palette-item[aria-disabled="false"]')) throw new Error('enabled selection command missing');`),
+			SettleMS: 1100,
+		},
+		{
+			Key:     "process-editor-scribe-selection-preview",
+			Title:   "Process editor — scribe selection preview",
+			Caption: "TCL-434 capstone: selection handoff shows an editable request beside bounded, read-only stable graph identity before the scoped scribe is reused or summoned.",
+			JS: processEditorStateJS(`ed.setSelection({type: 'node', id: 'begin'});
+  void ed.requestScribe('selection');
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var preview = document.querySelector('#process-scribe-preview-modal');
+  if (!preview || !preview.classList.contains('show')) throw new Error('process scribe selection preview did not open');
+  if (!preview.querySelector('.process-scribe-prompt')) throw new Error('editable scribe request missing');
+  var context = preview.querySelector('.process-scribe-context-preview');
+  if (!context || !context.textContent.includes('current-selection') || !context.textContent.includes('begin')) {
+    throw new Error('bounded stable selection identity missing from scribe preview');
+  }`),
 			SettleMS: 1100,
 		},
 		{
