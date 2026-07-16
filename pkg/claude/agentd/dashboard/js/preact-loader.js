@@ -177,6 +177,26 @@ export function mountLinksFeature(dependencies = {}) {
   return mountIslandDescriptor(linksDescriptor, dependencies);
 }
 
+const spawnHarnessPolicyDescriptor = createIslandDescriptor({
+  name: 'spawn-harness-policy',
+  label: 'Cross-harness spawn policy',
+  hosts: { host: '#spawn-harness-policy-root' },
+  failureClass: 'spawn-harness-policy-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const { mountSpawnHarnessPolicyIsland } = await import('./spawn-harness-policy-island.js');
+    return {
+      mount: (registerCleanup) => mountSpawnHarnessPolicyIsland({
+        host, confirmDiscard: dependencies.confirmDiscard,
+        notify: dependencies.notify, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountSpawnHarnessPolicyFeature(dependencies = {}) {
+  return mountIslandDescriptor(spawnHarnessPolicyDescriptor, dependencies);
+}
+
 const dockDescriptor = createIslandDescriptor({
   name: 'dock',
   label: 'Dock',

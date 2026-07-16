@@ -14,6 +14,7 @@ import {
   addExistingMemberRequest,
   loadAddMemberPromotionPool,
 } from './add-member-actions.js';
+import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
@@ -39,6 +40,9 @@ export function createGroupsActions({
     },
     openAddMember(group) {
       return state.openAddMember(group);
+    },
+    openSpawnHarnessPolicy(group) {
+      return openSpawnHarnessPolicy(group?.name || group || '');
     },
     closeAddMember() {
       state.closeAddMember();

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -102,6 +103,26 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			"create new group: "+err.Error())
 		return
 	}
+	// Cross-harness spawn edges are group settings too. Preserve explicit
+	// overrides exactly; inherited edges remain absent and continue to follow
+	// the global matrix in the clone.
+	spawnRules, err := db.ListSpawnHarnessRules(src.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "snapshot spawn harness policy: "+err.Error())
+		return
+	}
+	if err := db.ReplaceSpawnHarnessRules(newGroupID, spawnRules); err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "copy spawn harness policy: "+err.Error())
+		return
+	}
+	newGroup, err := db.GetAgentGroupByID(newGroupID)
+	if err != nil || newGroup == nil {
+		if err == nil {
+			err = fmt.Errorf("new group %d disappeared", newGroupID)
+		}
+		writeError(w, http.StatusInternalServerError, "io", "load cloned group policy: "+err.Error())
+		return
+	}
 
 	granter := "system:groups.clone"
 	if caller != "" {
@@ -137,6 +158,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 				SrcConv: m.ConvID,
 				Error:   "skipped: source has no live tmux session (cwd unknown)",
 			})
+			continue
+		}
+		if fail := spawnHarnessPolicyFailure(newGroup, caller, harnessForConv(m.ConvID).Name); fail != nil {
+			results = append(results, memberResult{SrcConv: m.ConvID, Error: fail.Msg})
 			continue
 		}
 		cwd, cwdErr := livePaneCwd(oldSess.TmuxSession)

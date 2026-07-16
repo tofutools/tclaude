@@ -198,6 +198,12 @@ exported `.zip`), **🧹 clean up** (the all-categories cleanup tool — see
 [Cleanup](#cleanup)), **🗑 delete retired…**, **⧉ templates…** and **⧉ roles…**
 (the [template](#templates) and [role-library](#roles-library) overlays), **⧉
 profiles…** (spawn profiles), **🛡 sandbox profiles…**, and **🔗 links…**.
+It also contains **⇄ cross-harness spawns…**, a directed spawn matrix for
+agent-initiated delegation. Each source→target edge is allow/deny and a denial
+records the reason returned to a blocked agent. The same editor appears in each
+real group's ⚙ menu; group cells add an **inherit global** state and otherwise
+override that one edge. Same-harness cells are always allowed, and human
+spawns bypass the matrix.
 Toggles surface three
 **virtual groups** below the real ones: **Ungrouped** (online agents in no
 group),
