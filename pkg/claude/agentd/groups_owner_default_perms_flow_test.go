@@ -1,10 +1,7 @@
 package agentd_test
 
 import (
-	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,24 +20,6 @@ func serveGroupVerbAs(t *testing.T, f *testharness.Flow, verb, group, convID str
 	path := "/v1/groups/" + group + "/" + verb
 	rec := testharness.Serve(f.Mux,
 		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost, path, nil), convID))
-	var challenge struct {
-		Code       string `json:"code"`
-		WriteProof struct {
-			Token    string   `json:"token"`
-			Filename string   `json:"filename"`
-			Dirs     []string `json:"dirs"`
-		} `json:"write_proof"`
-	}
-	if rec.Code == http.StatusForbidden && json.Unmarshal(rec.Body.Bytes(), &challenge) == nil &&
-		challenge.Code == "write_proof_required" {
-		for _, dir := range challenge.WriteProof.Dirs {
-			marker := filepath.Join(dir, challenge.WriteProof.Filename)
-			require.NoError(t, os.WriteFile(marker, nil, 0o600))
-			t.Cleanup(func() { _ = os.Remove(marker) })
-		}
-		rec = testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(t,
-			http.MethodPost, path, map[string]any{"write_proof_token": challenge.WriteProof.Token}), convID))
-	}
 	return rec.Code
 }
 
@@ -122,14 +101,20 @@ func TestGroupOwnerDefaultPerms_DenyOverrideBeatsOwner(t *testing.T) {
 	f.HaveAliveSession(member, memberLabel, "tmux-gddm", "/tmp/gddm")
 	f.HaveMember("squad", member)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner")
-	// Deny groups.stop specifically — the owner keeps the other verbs.
+	// Deny the two lifecycle slugs specifically — owner status must not raise
+	// either one back above an explicit deny.
 	require.NoError(t,
 		db.SetAgentPermissionOverride(owner, agentd.PermGroupsStop, db.PermEffectDeny, "test"),
 		"seed deny override on groups.stop")
+	require.NoError(t,
+		db.SetAgentPermissionOverride(owner, agentd.PermGroupsResume, db.PermEffectDeny, "test"),
+		"seed deny override on groups.resume")
 
 	assert.Equal(t, http.StatusForbidden, serveGroupVerbAs(t, f, "stop", "squad", owner),
 		"deny override on groups.stop must beat the owner default")
-	// The un-denied verb still rides the owner default.
-	assert.Equal(t, http.StatusOK, serveGroupVerbAs(t, f, "resume", "squad", owner),
-		"owner still resumes — only groups.stop was denied")
+	assert.Equal(t, http.StatusForbidden, serveGroupVerbAs(t, f, "resume", "squad", owner),
+		"deny override on groups.resume must beat the owner default")
+	// An un-denied sibling still rides the owner default.
+	assert.Equal(t, http.StatusOK, serveGroupVerbAs(t, f, "retire", "squad", owner),
+		"owner still retires when only stop and resume are denied")
 }

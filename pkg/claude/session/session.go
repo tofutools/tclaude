@@ -59,6 +59,7 @@ type SessionState struct {
 	// is stored verbatim. The dashboard renders it as a per-agent badge.
 	SandboxMode      string                  `json:"sandboxMode,omitempty"`
 	EffectiveSandbox *sandboxpolicy.Snapshot `json:"effectiveSandbox,omitempty"`
+	ResumeProvenance string                  `json:"resumeProvenance,omitempty"`
 	// ApprovalPolicy and ApprovalAutoReview preserve the resolved launch-time
 	// approval posture across hook load/mutate/save cycles. They are recorded
 	// for authorization and re-applied when the conversation is resumed.
@@ -183,6 +184,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		Harness:                s.Harness,
 		SandboxMode:            s.SandboxMode,
 		EffectiveSandbox:       s.EffectiveSandbox,
+		ResumeProvenance:       s.ResumeProvenance,
 		ApprovalPolicy:         s.ApprovalPolicy,
 		ApprovalAutoReview:     s.ApprovalAutoReview,
 		AskUserQuestionTimeout: s.AskUserQuestionTimeout,
@@ -207,6 +209,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		Harness:                r.Harness,
 		SandboxMode:            r.SandboxMode,
 		EffectiveSandbox:       r.EffectiveSandbox,
+		ResumeProvenance:       r.ResumeProvenance,
 		ApprovalPolicy:         r.ApprovalPolicy,
 		ApprovalAutoReview:     r.ApprovalAutoReview,
 		AskUserQuestionTimeout: r.AskUserQuestionTimeout,

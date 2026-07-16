@@ -2,7 +2,9 @@ package agentd_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,6 +19,276 @@ import (
 func stubApproval(t *testing.T, decision bool) {
 	t.Helper()
 	t.Cleanup(agentd.StubApprovalForTest(decision))
+}
+
+func TestCrossAgentAskHuman_ResumeCreatesPendingRequestAndApprovalLaunchesOnce(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const (
+		target     = "resume-approval-target-111111111111"
+		targetTmux = "tmux-resume-approval-target"
+		caller     = "resume-approval-caller-111111111111"
+	)
+	cwd := t.TempDir()
+	f.HaveConvWithTitle(target, "resume-approval-target")
+	f.HaveAliveSession(target, "spwn-resume-approval-target", targetTmux, cwd)
+	f.MarkOffline(targetTmux)
+	f.HaveGroup("resume-approval-team")
+	f.HaveMember("resume-approval-team", target)
+
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+target+"/resume", nil), caller)
+		req.Header.Set("X-Tclaude-Ask-Human", "5s")
+		result <- testharness.Serve(f.Mux, req)
+	}()
+
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	pendingID := ""
+	require.Eventually(t, func() bool {
+		snap := fetchAccessReqSnapshot(t, dashboard)
+		for _, request := range snap.AccessRequests {
+			if request.Status == db.AccessRequestStatusPending && request.Perm == agentd.PermAgentResume {
+				pendingID = request.ID
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond, "resume must create a real pending access request")
+
+	decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": "approve"}))
+	require.Equal(t, http.StatusOK, decision.Code, "decision body=%s", decision.Body.String())
+	response := <-result
+	require.Equal(t, http.StatusOK, response.Code, "resume body=%s", response.Body.String())
+	proof, launched := f.World.SpawnCwdWriteProof(target)
+	assert.True(t, launched, "approved resume must launch exactly once")
+	assert.NotEmpty(t, proof,
+		"daemon-owned launch pin must bind target provenance without asking the caller to write there")
+}
+
+func TestCrossAgentAskHuman_ResumeDenyAndTimeoutLeaveTargetStopped(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		timeout  string
+		decision string
+		status   string
+	}{
+		{name: "deny", timeout: "5s", decision: "deny", status: "declined"},
+		{name: "timeout", timeout: "1ms", status: "timed out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+			target := "resume-" + tc.name + "-target-111111111111"
+			targetTmux := "tmux-resume-" + tc.name + "-target"
+			caller := "resume-" + tc.name + "-caller-111111111111"
+			f.HaveConvWithTitle(target, "resume-"+tc.name+"-target")
+			f.HaveAliveSession(target, "spwn-resume-"+tc.name+"-target", targetTmux, t.TempDir())
+			f.MarkOffline(targetTmux)
+			f.HaveGroup("resume-" + tc.name + "-team")
+			f.HaveMember("resume-"+tc.name+"-team", target)
+
+			serve := func() *httptest.ResponseRecorder {
+				req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+					"/v1/agent/"+target+"/resume", nil), caller)
+				req.Header.Set("X-Tclaude-Ask-Human", tc.timeout)
+				return testharness.Serve(f.Mux, req)
+			}
+			var response *httptest.ResponseRecorder
+			if tc.decision == "" {
+				response = serve()
+			} else {
+				result := make(chan *httptest.ResponseRecorder, 1)
+				go func() { result <- serve() }()
+				dashboard := agentd.BuildDashboardHandlerForTest()
+				pendingID := ""
+				require.Eventually(t, func() bool {
+					snap := fetchAccessReqSnapshot(t, dashboard)
+					for _, request := range snap.AccessRequests {
+						if request.Status == db.AccessRequestStatusPending && request.Perm == agentd.PermAgentResume {
+							pendingID = request.ID
+							return true
+						}
+					}
+					return false
+				}, time.Second, 10*time.Millisecond)
+				decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+					"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": tc.decision}))
+				require.Equal(t, http.StatusOK, decision.Code, "decision body=%s", decision.Body.String())
+				response = <-result
+			}
+
+			require.Equal(t, http.StatusForbidden, response.Code, "body=%s", response.Body.String())
+			_, launched := f.World.SpawnCwdWriteProof(target)
+			assert.False(t, launched, "denied or timed-out resume must not launch")
+			assert.False(t, f.World.Tmux.IsAlive(targetTmux), "target must remain stopped")
+			rows, err := db.ListRecentHandledAccessRequests(10)
+			require.NoError(t, err)
+			require.NotEmpty(t, rows)
+			assert.Equal(t, tc.status, rows[0].Status)
+		})
+	}
+}
+
+func TestCrossAgentAskHuman_ResumeProvenanceRecoveryApproveDenyTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		timeout  string
+		decision string
+		status   int
+	}{
+		{name: "approve", timeout: "5s", decision: "approve", status: http.StatusOK},
+		{name: "deny", timeout: "5s", decision: "deny", status: http.StatusForbidden},
+		{name: "timeout", timeout: "1ms", status: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+			target := "recovery-" + tc.name + "-target-111111111111"
+			caller := "recovery-" + tc.name + "-owner-111111111111"
+			tmux := "recovery-" + tc.name + "-tmux"
+			cwd := t.TempDir()
+			f.HaveConvWithTitle(target, "recovery-"+tc.name+"-target")
+			f.HaveAliveSession(target, "recovery-"+tc.name+"-session", tmux, cwd)
+			f.MarkOffline(tmux)
+			group := f.HaveGroup("recovery-" + tc.name + "-team")
+			f.HaveMember(group.Name, target)
+			require.NoError(t, db.AddAgentGroupOwner(group.ID, caller, "test"),
+				"owner authority should pass before integrity recovery")
+			source, err := db.FindSessionByConvID(target)
+			require.NoError(t, err)
+			require.NotNil(t, source)
+			require.NoError(t, db.SetSessionResumeProvenance(source.ID, ""))
+
+			serve := func() *httptest.ResponseRecorder {
+				req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+					"/v1/agent/"+target+"/resume", nil), caller)
+				req.Header.Set("X-Tclaude-Ask-Human", tc.timeout)
+				return testharness.Serve(f.Mux, req)
+			}
+			var response *httptest.ResponseRecorder
+			if tc.decision == "" {
+				response = serve()
+			} else {
+				result := make(chan *httptest.ResponseRecorder, 1)
+				go func() { result <- serve() }()
+				dashboard := agentd.BuildDashboardHandlerForTest()
+				pendingID := ""
+				require.Eventually(t, func() bool {
+					snap := fetchAccessReqSnapshot(t, dashboard)
+					for _, request := range snap.AccessRequests {
+						if request.Status == db.AccessRequestStatusPending && request.Perm == agentd.PermAgentResume {
+							pendingID = request.ID
+							return true
+						}
+					}
+					return false
+				}, time.Second, 10*time.Millisecond, "invalid provenance must create a real recovery request")
+				decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+					"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": tc.decision}))
+				require.Equal(t, http.StatusOK, decision.Code, "decision body=%s", decision.Body.String())
+				response = <-result
+			}
+
+			require.Equal(t, tc.status, response.Code, "body=%s", response.Body.String())
+			oldRow, err := db.LoadSession(source.ID)
+			require.NoError(t, err)
+			_, launched := f.World.SpawnCwdWriteProof(target)
+			if tc.decision == "approve" {
+				assert.True(t, launched)
+				assert.NotEmpty(t, oldRow.ResumeProvenance,
+					"actual approval must durably recover the stopped target identity")
+			} else {
+				assert.False(t, launched, "deny/timeout must leave the target stopped")
+				assert.Empty(t, oldRow.ResumeProvenance,
+					"deny/timeout must not bless or mutate the stopped row")
+				assert.False(t, f.World.Tmux.IsAlive(tmux))
+			}
+			assertNoDirWriteProofMarkers(t, cwd)
+		})
+	}
+}
+
+func TestGroupResume_ProvenanceRecoveryApprovalIsMemberScoped(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const (
+		first      = "aaa-recovery-target-aaaa-bbbb-111111111111"
+		second     = "bbb-recovery-target-aaaa-bbbb-222222222222"
+		caller     = "group-recovery-owner-aaaa-bbbb-111111111111"
+		firstTmux  = "group-recovery-first-tmux"
+		secondTmux = "group-recovery-second-tmux"
+	)
+	firstCwd, secondCwd := t.TempDir(), t.TempDir()
+	group := f.HaveGroup("member-scoped-recovery")
+	for _, target := range []struct {
+		conv, session, tmux, cwd string
+	}{
+		{first, "group-recovery-first-session", firstTmux, firstCwd},
+		{second, "group-recovery-second-session", secondTmux, secondCwd},
+	} {
+		f.HaveConvWithTitle(target.conv, target.conv[:3]+"-target")
+		f.HaveAliveSession(target.conv, target.session, target.tmux, target.cwd)
+		f.MarkOffline(target.tmux)
+		f.HaveMember(group.Name, target.conv)
+		row, err := db.FindSessionByConvID(target.conv)
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		require.NoError(t, db.SetSessionResumeProvenance(row.ID, ""))
+	}
+	require.NoError(t, db.AddAgentGroupOwner(group.ID, caller, "test"))
+
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/groups/"+group.Name+"/resume", nil), caller)
+		req.Header.Set("X-Tclaude-Ask-Human", "5s")
+		result <- testharness.Serve(f.Mux, req)
+	}()
+
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	pending := func(exclude string) string {
+		var id string
+		require.Eventually(t, func() bool {
+			for _, request := range fetchAccessReqSnapshot(t, dashboard).AccessRequests {
+				if request.Status == db.AccessRequestStatusPending &&
+					request.Perm == agentd.PermGroupsResume && request.ID != exclude {
+					id = request.ID
+					return true
+				}
+			}
+			return false
+		}, time.Second, 10*time.Millisecond)
+		return id
+	}
+	firstRequest := pending("")
+	approve := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+firstRequest+"/decision", map[string]any{"decision": "approve"}))
+	require.Equal(t, http.StatusOK, approve.Code, "approve body=%s", approve.Body.String())
+	secondRequest := pending(firstRequest)
+	deny := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+secondRequest+"/decision", map[string]any{"decision": "deny"}))
+	require.Equal(t, http.StatusOK, deny.Code, "deny body=%s", deny.Body.String())
+	response := <-result
+	require.Equal(t, http.StatusForbidden, response.Code, "group resume body=%s", response.Body.String())
+
+	_, firstLaunched := f.World.SpawnCwdWriteProof(first)
+	assert.True(t, firstLaunched, "the individually approved member must resume")
+	firstRow, err := db.FindSessionByConvID(first)
+	require.NoError(t, err)
+	require.NotNil(t, firstRow)
+	assert.NotEmpty(t, firstRow.ResumeProvenance)
+	_, secondLaunched := f.World.SpawnCwdWriteProof(second)
+	assert.False(t, secondLaunched, "approval for the first member must not bless the second")
+	secondRow, err := db.FindSessionByConvID(second)
+	require.NoError(t, err)
+	require.NotNil(t, secondRow)
+	assert.Empty(t, secondRow.ResumeProvenance)
+	assert.False(t, f.World.Tmux.IsAlive(secondTmux))
+	assertNoDirWriteProofMarkers(t, firstCwd)
+	assertNoDirWriteProofMarkers(t, secondCwd)
 }
 
 // Scenario: a peer agent with no slug, not a group owner, calls a

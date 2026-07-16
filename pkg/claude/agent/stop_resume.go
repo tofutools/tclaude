@@ -109,6 +109,7 @@ func runStop(p *stopParams, stdout, stderr io.Writer) int {
 type resumeParams struct {
 	Selector    string `pos:"true" help:"Target conv: title, full conv-id, or 8+-char prefix"`
 	RecreateDir bool   `long:"recreate-dir" help:"If the agent's recorded launch directory was deleted, recreate it empty so the agent can start (otherwise resume reports missing_cwd and does nothing)"`
+	AskHuman    string `long:"ask-human" optional:"true" help:"On permission denial or stopped-target provenance recovery, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func resumeCmd() *cobra.Command {
@@ -117,8 +118,8 @@ func resumeCmd() *cobra.Command {
 		Short: "Resume another agent into a fresh tmux session",
 		Long: "Spawns `tclaude session new -r <conv> -d --global` for the target " +
 			"conv if it isn't already online, attaching it to a fresh tmux " +
-			"pane. Lands the agent in the cwd recorded on its last session " +
-			"row, falling back to the daemon's cwd if none is known. " +
+			"pane. Lands the agent in the physical cwd recorded in durable " +
+			"resume provenance for its last session. " +
 			"\n\n" +
 			"Idempotent: agents already online come back as " +
 			"`skipped:already_online`. " +
@@ -127,6 +128,8 @@ func resumeCmd() *cobra.Command {
 			"ran, resume reports `error:missing_cwd` and does nothing (spawning " +
 			"into a vanished cwd would wedge the agent at startup). Re-run with " +
 			"`--recreate-dir` to recreate the directory empty and start the agent. " +
+			"Malformed, missing, or changed provenance also fails closed; a direct " +
+			"human resume or an approved `--ask-human` request may recapture it. " +
 			"\n\n" +
 			"Auth: requires the agent.resume permission OR being an owner of a " +
 			"group containing the target. The single-conv variant of " +
@@ -134,6 +137,7 @@ func resumeCmd() *cobra.Command {
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *resumeParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			return nil
 		},
 		RunFunc: func(p *resumeParams, _ *cobra.Command, _ []string) {
@@ -151,6 +155,11 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	path := "/v1/agent/" + url.PathEscape(selector) + "/resume"
 	if p.RecreateDir {
 		path += "?recreate=1"
@@ -162,9 +171,7 @@ func runResume(p *resumeParams, stdout, stderr io.Writer) int {
 		Action        string `json:"action"`
 		Detail        string `json:"detail,omitempty"`
 	}
-	if err := DaemonRequestWithWriteProof(http.MethodPost, path,
-		func(token string) any { return withWriteProofToken(nil, token) },
-		&resp, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, path, nil, &resp, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

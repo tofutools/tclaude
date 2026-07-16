@@ -55,6 +55,11 @@ type SessionRow struct {
 	// session generation. Nil is the legacy/direct-session sentinel. Hook
 	// upserts preserve an existing snapshot when they do not carry one.
 	EffectiveSandbox *sandboxpolicy.Snapshot
+	// ResumeProvenance is versioned daemon-private JSON binding this session's
+	// physical cwd and repository metadata identities. Empty means the row is
+	// legacy or a controlled-stop capture failed; offline agent resume must then
+	// fail closed until a human explicitly recovers trust (schema v131).
+	ResumeProvenance string
 	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
 	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under,
 	// recorded once at spawn by `session new` so a relaunch (resume / clone /
@@ -119,9 +124,12 @@ func SaveSession(s *SessionRow) error {
 	// propagateAgentCompanions. The conflict guard re-derives only when the new
 	// value is non-empty, so a later status-update upsert (whose conv may not
 	// resolve) never wipes an agent already known for this session.
+	// Resume provenance is intentionally insert-only here. Trusted lifecycle
+	// boundaries update it through SetSessionResumeProvenance; allowing generic
+	// hook UPSERTs to update it could resurrect a value invalidated during stop.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -144,7 +152,7 @@ func SaveSession(s *SessionRow) error {
 			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ConvID)
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID)
 	return err
 }
 
@@ -155,7 +163,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -176,7 +184,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +202,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -219,7 +227,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -279,7 +287,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -343,7 +351,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var autoReg, remoteCtl, approvalAutoReview int
 	var createdStr, updatedStr, lastHookStr, effectiveSandbox string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &row.ApprovalPolicy, &approvalAutoReview); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -384,6 +392,19 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 		return err
 	}
 	_, err = db.Exec(`UPDATE sessions SET last_hook = ? WHERE id = ?`, t.Format(time.RFC3339Nano), id)
+	return err
+}
+
+// SetSessionResumeProvenance replaces the durable offline-resume identity for
+// one session. Unlike SaveSession's hook-safe UPSERT, an empty value is
+// meaningful here: controlled stop uses it to atomically invalidate an older
+// snapshot when fresh live-pane capture fails.
+func SetSessionResumeProvenance(id, provenance string) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET resume_provenance = ? WHERE id = ?`, provenance, id)
 	return err
 }
 

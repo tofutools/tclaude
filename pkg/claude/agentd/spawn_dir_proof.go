@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -90,6 +92,13 @@ type writeProofApprovalContinuation struct {
 
 type writeProofApprovalContextKey struct{}
 
+type humanApprovalContextKey struct{}
+
+type humanApprovalContinuation struct {
+	perm       string
+	authTarget string
+}
+
 var (
 	dirWriteChallengeMu sync.Mutex
 	dirWriteChallenges  = map[string]dirWriteChallenge{}
@@ -148,11 +157,32 @@ func newDirWriteProofToken() string {
 // inherits this tightly scoped continuation. Non-proof-gated handlers simply
 // ignore the annotation.
 func markWriteProofHumanApproval(r *http.Request, perm, authTarget string) {
+	markHumanApprovalContinuation(r, perm, authTarget)
 	continuation, _, ok := writeProofContinuationForRequest(r, perm, authTarget)
 	if !ok {
 		return
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), writeProofApprovalContextKey{}, continuation))
+}
+
+// markHumanApprovalContinuation records that this exact in-flight operation
+// was approved by the human. Unlike the write-proof continuation it never
+// crosses requests, so it does not need to canonicalise or retain request body
+// data. Resume provenance recovery consumes this same audited trust-root signal.
+func markHumanApprovalContinuation(r *http.Request, perm, authTarget string) {
+	if r == nil {
+		return
+	}
+	continuation := humanApprovalContinuation{perm: perm, authTarget: authTarget}
+	*r = *r.WithContext(context.WithValue(r.Context(), humanApprovalContextKey{}, continuation))
+}
+
+func hasHumanApprovalContinuation(r *http.Request, perm, authTarget string) bool {
+	if r == nil {
+		return false
+	}
+	continuation, ok := r.Context().Value(humanApprovalContextKey{}).(humanApprovalContinuation)
+	return ok && continuation.perm == perm && continuation.authTarget == authTarget
 }
 
 // hasWriteProofApprovalContinuation reports whether this proved retry is the
@@ -424,6 +454,52 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 		}
 		_ = os.Remove(filepath.Join(dir, filename))
 	}
+}
+
+// pinInheritedLaunchDirs creates daemon-owned, short-lived marker files after
+// durable target provenance has established which physical directories an
+// offline lifecycle launch may reuse. This is launch-integrity plumbing, not
+// caller authorization: the requester never writes into target-owned paths.
+func pinInheritedLaunchDirs(rawDirs []string) (map[string]string, string, []string, func(), error) {
+	return pinInheritedLaunchDirsWithToken(rawDirs, newDirWriteProofToken())
+}
+
+func pinInheritedLaunchDirsWithToken(rawDirs []string, token string) (map[string]string, string, []string, func(), error) {
+	resolved, mapping, err := resolveDirWriteProofDirs(rawDirs)
+	if err != nil {
+		return nil, "", nil, func() {}, err
+	}
+	if token == "" {
+		return nil, "", nil, func() {}, fmt.Errorf("generate inherited launch pin")
+	}
+	filename := dirWriteProofFilePrefix + token
+	type heldMarker struct {
+		dir *os.File
+	}
+	held := make([]heldMarker, 0, len(resolved))
+	cleanup := func() {
+		for _, marker := range held {
+			_ = unix.Unlinkat(int(marker.dir.Fd()), filename, 0)
+			_ = marker.dir.Close()
+		}
+	}
+	for _, dir := range resolved {
+		dirHandle, openErr := os.Open(dir)
+		if openErr != nil {
+			cleanup()
+			return nil, "", nil, func() {}, fmt.Errorf("open inherited launch pin directory %s: %w", dir, openErr)
+		}
+		fd, createErr := unix.Openat(int(dirHandle.Fd()), filename,
+			unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW, 0o600)
+		if createErr != nil {
+			_ = dirHandle.Close()
+			cleanup()
+			return nil, "", nil, func() {}, fmt.Errorf("create inherited launch pin in %s: %w", dir, createErr)
+		}
+		_ = unix.Close(fd)
+		held = append(held, heldMarker{dir: dirHandle})
+	}
+	return mapping, token, resolved, cleanup, nil
 }
 
 func appendUniqueDirs(dirs []string, candidates ...string) []string {

@@ -19,8 +19,30 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+func saveResumeSession(t *testing.T, convID, cwd, harnessName string) *db.SessionRow {
+	t.Helper()
+	captured, err := resumeprovenance.Capture(cwd)
+	require.NoError(t, err)
+	encoded, err := resumeprovenance.Encode(captured)
+	require.NoError(t, err)
+	row := &db.SessionRow{
+		ID: "resume-" + convID, ConvID: convID, Cwd: cwd, Status: "exited",
+		Harness: harnessName, ResumeProvenance: encoded,
+	}
+	require.NoError(t, db.SaveSession(row))
+	return row
+}
+
+func physicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	physical, err := filepath.EvalSymlinks(path)
+	require.NoError(t, err)
+	return physical
+}
 
 // Ensures that stopping a conv that has no live tmux session returns
 // the idempotent `skipped:already_offline` sentinel rather than a
@@ -78,15 +100,12 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	// A real, existing launch dir: resume now refuses to relaunch into a
 	// vanished cwd, so the recorded path must exist for the spawn to proceed.
 	cwd := t.TempDir()
+	physicalCwd := physicalTestPath(t, cwd)
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{
 		GroupID: gID, ConvID: "worker-conv-id-12345678",
 	})
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID:      "worker-conv-id-12345678",
-		ProjectPath: cwd,
-		IndexedAt:   time.Now(),
-	}))
+	saveResumeSession(t, "worker-conv-id-12345678", cwd, harness.DefaultName)
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
 
 	w := httptest.NewRecorder()
@@ -100,7 +119,63 @@ func TestHandleAgentResume_AttemptsSpawnForOfflineTarget(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp), "decode")
 	assert.Equal(t, "resumed", resp["action"], "full body=%s", w.Body.String())
 	assert.Equal(t, "worker-conv-id-12345678", rec.convID)
-	assert.Equal(t, cwd, rec.cwd)
+	assert.Equal(t, physicalCwd, rec.cwd)
+}
+
+func TestHandleAgentResume_GroupOwnershipAuthority(t *testing.T) {
+	const (
+		target = "worker-conv-id-12345678"
+		owner  = "owner-conv-id-123456789"
+	)
+
+	requestAsOwner := func(t *testing.T, denyResume, unrelatedOwner bool) (*httptest.ResponseRecorder, *recordingResumeSpawner) {
+		t.Helper()
+		setupTestDB(t)
+		rec := installRecordingResumeSpawner(t)
+		cwd := t.TempDir()
+		targetGroupID, err := db.CreateAgentGroup("target-team", "")
+		require.NoError(t, err)
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{
+			GroupID: targetGroupID, ConvID: target,
+		}))
+		ownerGroupID := targetGroupID
+		if unrelatedOwner {
+			ownerGroupID, err = db.CreateAgentGroup("other-team", "")
+			require.NoError(t, err)
+		}
+		require.NoError(t, db.AddAgentGroupOwner(ownerGroupID, owner, "test"))
+		if denyResume {
+			require.NoError(t, db.SetAgentPermissionOverride(
+				owner, PermAgentResume, db.PermEffectDeny, "test"))
+		}
+		saveResumeSession(t, target, cwd, harness.DefaultName)
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/v1/agent/"+target+"/resume", nil)
+		r = r.WithContext(context.WithValue(r.Context(), peerKey{}, &peer{
+			PID: 1, HasClaudeAncestor: true, ConvID: owner,
+		}))
+		handleAgentByConv(w, r)
+		return w, rec
+	}
+
+	t.Run("owner of target group resumes without slug", func(t *testing.T) {
+		w, rec := requestAsOwner(t, false, false)
+		require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+		assert.Equal(t, target, rec.convID)
+	})
+
+	t.Run("explicit deny beats ownership", func(t *testing.T) {
+		w, rec := requestAsOwner(t, true, false)
+		assert.Equal(t, http.StatusForbidden, w.Code, "body=%s", w.Body.String())
+		assert.Empty(t, rec.convID, "denied resume must not launch the target")
+	})
+
+	t.Run("ownership does not cross group boundaries", func(t *testing.T) {
+		w, rec := requestAsOwner(t, false, true)
+		assert.Equal(t, http.StatusForbidden, w.Code, "body=%s", w.Body.String())
+		assert.Empty(t, rec.convID, "unrelated ownership must not launch the target")
+	})
 }
 
 // stopOneConv is the helper shared between the bulk and single-conv
@@ -140,10 +215,10 @@ func TestResumeOneConv_OrphanWithoutSessionOrIndexErrors(t *testing.T) {
 	setupTestDB(t)
 	res := resumeOneConv("orphan-conv-id-12345678")
 	assert.Equal(t, "error", res.Action, "action")
-	assert.Contains(t, res.Detail, "no resumable session metadata")
+	assert.Contains(t, res.Detail, "no resumable session row")
 }
 
-func TestResumeOneConv_UsesConvIndexWhenSessionMissing(t *testing.T) {
+func TestResumeOneConv_ConvIndexWithoutProvenanceFailsClosed(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
@@ -157,15 +232,12 @@ func TestResumeOneConv_UsesConvIndexWhenSessionMissing(t *testing.T) {
 	}))
 
 	res := resumeOneConv(convID)
-	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.Equal(t, convID, rec.convID)
-	assert.Equal(t, cwd, rec.cwd)
-	assert.Equal(t, harness.CodexName, rec.harness)
-	assert.Equal(t, harness.CodexAgentProfile, rec.sandbox)
-	assert.Equal(t, "never", rec.approval)
+	require.Equal(t, "error", res.Action, "detail=%s", res.Detail)
+	assert.Contains(t, res.Detail, "no resumable session row")
+	assert.Empty(t, rec.convID)
 }
 
-func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T) {
+func TestResumeOneConv_CodexNativeStoreWithoutProvenanceFailsClosed(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
@@ -184,13 +256,9 @@ func TestResumeOneConv_UsesCodexNativeStoreWhenTclaudeCacheMissing(t *testing.T)
 	}))
 
 	res := resumeOneConv(convID)
-	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.Equal(t, convID, rec.convID)
-	assert.Equal(t, cwd, rec.cwd)
-	assert.Equal(t, harness.CodexName, rec.harness)
-	assert.Empty(t, rec.codexGitCommonDir,
-		"proofless human relaunch lets the child derive its own repository root")
-	assert.False(t, rec.codexGitCommonDirPinned)
+	require.Equal(t, "error", res.Action, "detail=%s", res.Detail)
+	assert.Contains(t, res.Detail, "no resumable session row")
+	assert.Empty(t, rec.convID)
 }
 
 // A resume whose recorded launch dir was deleted must NOT spawn into the
@@ -204,15 +272,17 @@ func TestResumeOneConv_MissingCwdReportsErrorAndDoesNotSpawn(t *testing.T) {
 	// Parent exists (writable temp), leaf is gone — the deleted-worktree shape.
 	gone := filepath.Join(t.TempDir(), "deleted-worktree")
 	const convID = "gone-conv-id-12345678"
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	physicalGone := physicalTestPath(t, gone)
+	saveResumeSession(t, convID, gone, harness.DefaultName)
+	require.NoError(t, os.Remove(gone))
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID:      convID,
-		ProjectPath: gone,
-		IndexedAt:   time.Now(),
+		ConvID: convID, ProjectPath: gone, IndexedAt: time.Now(),
 	}))
 
 	res := resumeOneConv(convID)
 	assert.Equal(t, "error:missing_cwd", res.Action, "detail=%s", res.Detail)
-	assert.Equal(t, gone, res.Detail,
+	assert.Equal(t, physicalGone, res.Detail,
 		"Detail must carry the missing path so the dialog can name it and recreate it")
 	assert.Empty(t, rec.convID, "resume must not spawn a child into a vanished cwd")
 	assert.NoDirExists(t, gone, "resume without the recreate opt-in must not create the dir")
@@ -227,16 +297,15 @@ func TestResumeOneConvRecreate_RecreatesMissingCwdThenSpawns(t *testing.T) {
 
 	gone := filepath.Join(t.TempDir(), "deleted-worktree")
 	const convID = "recr-conv-id-12345678"
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID:      convID,
-		ProjectPath: gone,
-		IndexedAt:   time.Now(),
-	}))
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	physicalGone := physicalTestPath(t, gone)
+	saveResumeSession(t, convID, gone, harness.DefaultName)
+	require.NoError(t, os.Remove(gone))
 
-	res := resumeOneConvRecreate(convID, true)
+	res := resumeOneConvWithTrustRoot(convID, true)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.DirExists(t, gone, "the recreate opt-in must create the empty launch dir")
-	assert.Equal(t, gone, rec.cwd, "the resumed agent must launch into the recreated dir")
+	assert.Equal(t, physicalGone, rec.cwd, "the resumed agent must launch into the recreated dir")
 }
 
 // End-to-end over the daemon mux: POST /v1/agent/{conv}/resume answers
@@ -251,9 +320,10 @@ func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
 	const convID = "httpr-conv-id-12345678"
 	gID, _ := db.CreateAgentGroup("team", "")
 	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: gID, ConvID: convID})
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID: convID, ProjectPath: gone, IndexedAt: time.Now(),
-	}))
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	physicalGone := physicalTestPath(t, gone)
+	saveResumeSession(t, convID, gone, harness.DefaultName)
+	require.NoError(t, os.Remove(gone))
 	require.NoError(t, db.GrantAgentPermission("manager", PermAgentResume, "<test>"), "grant")
 
 	resumePost := func(query string) map[string]any {
@@ -271,7 +341,7 @@ func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
 	// Without the opt-in: missing_cwd, nothing created, nothing spawned.
 	resp := resumePost("")
 	assert.Equal(t, "error:missing_cwd", resp["action"], "resp=%v", resp)
-	assert.Equal(t, gone, resp["detail"], "resp=%v", resp)
+	assert.Equal(t, physicalGone, resp["detail"], "resp=%v", resp)
 	assert.NoDirExists(t, gone)
 	assert.Empty(t, rec.convID, "the plain resume must not spawn")
 
@@ -279,13 +349,16 @@ func TestHandleAgentResume_RecreateParamCreatesMissingDir(t *testing.T) {
 	resp = resumePost("?recreate=1")
 	assert.Equal(t, "resumed", resp["action"], "resp=%v", resp)
 	assert.DirExists(t, gone)
-	assert.Equal(t, gone, rec.cwd)
+	assert.Equal(t, physicalGone, rec.cwd)
 }
 
 func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 	setupTestDB(t)
 	gone := filepath.Join(t.TempDir(), "deleted-worktree")
 	const convID = "agent-recreate-target-12345678"
+	require.NoError(t, os.MkdirAll(gone, 0o755))
+	saveResumeSession(t, convID, gone, harness.DefaultName)
+	require.NoError(t, os.Remove(gone))
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID: convID, ProjectPath: gone, IndexedAt: time.Now(),
 	}))
@@ -337,52 +410,31 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	return s.spawnErr
 }
 
-func TestResumeOneConv_ConvIndexProjectDirFallback(t *testing.T) {
+func TestResumeOneConv_SessionProvenanceUsesClaudeHarness(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
 	cwd := t.TempDir()
+	physicalCwd := physicalTestPath(t, cwd)
 	const convID = "claude-conv-id-12345678"
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID:     convID,
-		ProjectDir: cwd,
-		IndexedAt:  time.Now(),
-	}))
+	saveResumeSession(t, convID, cwd, harness.DefaultName)
 
 	res := resumeOneConv(convID)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.Equal(t, cwd, rec.cwd)
+	assert.Equal(t, physicalCwd, rec.cwd)
 	assert.True(t, rec.harness == "" || strings.EqualFold(rec.harness, harness.DefaultName))
 }
 
-func TestResumeOneConvWithGrant_OnlineProofSnapshotCannotBecomeLaunch(t *testing.T) {
-	setupTestDB(t)
-	rec := installRecordingResumeSpawner(t)
-	const convID = "online-at-proof-conv-12345678"
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID: convID, ProjectPath: t.TempDir(), IndexedAt: time.Now(),
-	}))
-
-	// The sentinel is recorded by requireResumeWriteProofs while the member is
-	// online. At execution time this test has no live tmux row, modelling the
-	// online→offline transition that can occur behind an earlier bulk resume.
-	res := resumeOneConvWithGrant(convID, false, &resumeGrant{SkipOnline: true}, "", nil)
-	require.Equal(t, "skipped:already_online", res.Action, "detail=%s", res.Detail)
-	assert.Empty(t, rec.convID, "proof-time-online member must not turn into an unproved launch")
-}
-
-func TestResumeOneConvWithGrant_DoesNotPassAnotherMembersProof(t *testing.T) {
+func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 	const convID = "unproved-group-member-conv-12345678"
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID: convID, ProjectPath: t.TempDir(), IndexedAt: time.Now(),
-	}))
+	saveResumeSession(t, convID, t.TempDir(), harness.DefaultName)
 
-	res := resumeOneConvWithGrant(convID, false, nil, "other-member-proof", nil)
+	res := resumeOneConv(convID)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.Empty(t, rec.cwdWriteProof,
-		"member without a cwd grant must not receive another member's group proof")
+	assert.NotEmpty(t, rec.cwdWriteProof,
+		"daemon must bind the verified target cwd through the child launch")
 }
 
 func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing.T) {
@@ -390,9 +442,7 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	rec := installRecordingResumeSpawner(t)
 	rec.spawnErr = errors.New("launch reservation lost")
 	const convID = "failed-resume-sandbox-conv-12345678"
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID: convID, ProjectPath: t.TempDir(), IndexedAt: time.Now(),
-	}))
+	saveResumeSession(t, convID, t.TempDir(), harness.DefaultName)
 
 	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
 		Name:        "changing-policy",

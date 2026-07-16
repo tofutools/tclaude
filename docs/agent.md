@@ -738,12 +738,18 @@ trust-folder modal. Other agent-selected paths remain forbidden. All extra
 repository write grants are resolved, proved, and pinned before launch rather
 than recomputed from a mutable cwd; Codex consumes them through its managed
 profile and Claude Code through merged `sandbox.filesystem.allowWrite` paths.
-Agent-triggered clone, reincarnate, and resume operations prove the inherited
-child cwd plus every repository path added by the current sandbox profile. The
-forked session binds the cwd marker after tmux changes directory and checks the
-same marker in every pinned root immediately before starting the harness.
-Recreating a missing resume cwd remains human-only because the daemon cannot
-prove an agent can write inside a path that does not yet exist.
+Agent-triggered clone and reincarnate operations inherit the live pane's
+physical cwd. Offline resume instead validates daemon-private, durable
+provenance captured from the target's physical cwd and Git metadata at launch
+and again before a controlled stop. The daemon pins that exact identity through
+the real session-new handoff; the caller never needs write access to the
+target-owned directory. A failed stop-time capture never blocks the stop, but
+it clears older provenance so the next resume fails closed. A direct human
+resume, or an actually approved `--ask-human` recovery, may recapture the
+current identity. Recreating a missing resume cwd remains human-only because
+the daemon cannot prove an agent can write inside a path that does not yet
+exist. Fresh spawns and caller-selected launch locations still use caller-side
+directory proof.
 
 ### clone / reincarnate / compact / context-info
 
@@ -797,7 +803,7 @@ claude.ai-login prerequisite, and the best-known-state caveat.
 
 ```bash
 tclaude agent stop <selector> [--force]      # soft /exit, or kill-session with --force
-tclaude agent resume <selector>              # bring an offline agent back into a tmux pane
+tclaude agent resume <selector> [--ask-human 30s] [--recreate-dir] # bring an offline agent back into a tmux pane
 tclaude agent dir [selector]                 # print an agent's working directory
 tclaude agent dir --worktree                 # git worktree/repo root instead
 tclaude agent dir --start                     # the launch directory instead
@@ -808,6 +814,18 @@ tclaude agent dir --open                      # open a terminal there (via the d
 agents come back as `skipped:...`. They are the single-conv variants
 of `groups stop` / `groups resume`, and require `agent.stop` /
 `agent.resume` (or group ownership) when targeting another agent.
+
+Resume is an in-place lifecycle operation: it reconstructs and revalidates the
+target's durable physical-directory and Git identity plus its current effective
+sandbox, then reuses that target authority through daemon-owned launch pins.
+The caller does not need filesystem write access to the target's managed
+directories. Missing, malformed, or changed provenance fails closed; a direct
+human resume or an approved `--ask-human` request may trust and persist the
+current identity. Denial or timeout leaves the stopped target unchanged.
+Directory write proof remains required for fresh agent spawns and
+caller-selected launch locations. A missing recorded launch directory also
+fails closed; only a direct human or approved `--ask-human` recovery may opt
+into recreating it with `--recreate-dir`.
 
 ### cron
 

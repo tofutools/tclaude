@@ -111,6 +111,74 @@ func TestLifecycleInheritedAuthority_AgentOwnedDirectoriesNeedNoCallerProof(t *t
 	}
 }
 
+func TestLifecycleInheritedAuthority_ResumePinsTargetOwnedDirectory(t *testing.T) {
+	for _, harnessName := range []string{"claude", "codex"} {
+		t.Run(harnessName, func(t *testing.T) {
+			t.Setenv("XDG_CACHE_HOME", t.TempDir())
+			f := newFlow(t)
+			group := f.HaveGroup("resume-crew-" + harnessName)
+			profileName := "private-resume-cache-" + harnessName
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+				Name: profileName, AgentDirectories: []string{"GOCACHE"},
+			})
+			require.NoError(t, err)
+			_, err = db.SetAgentGroupSandboxProfile(group.Name, profileName)
+			require.NoError(t, err)
+
+			body := map[string]any{
+				"name": "worker", "harness": harnessName, "cwd": t.TempDir(),
+			}
+			if harnessName == "codex" {
+				body["sandbox"] = "tclaude-agent"
+			}
+			target := f.AsHuman().SpawnWith(group.Name, body)
+			require.Equalf(t, http.StatusOK, target.Code, "spawn target body=%s", target.Raw)
+			before, err := db.AgentEffectiveSandboxConfigForConv(target.ConvID)
+			require.NoError(t, err)
+			require.NotNil(t, before)
+			require.Len(t, before.Effective.Environment, 1)
+			privateDir := before.Effective.Environment[0].Value
+			assert.Contains(t, privateDir, filepath.Join("agent-dirs", target.Label))
+			f.MarkOffline(target.TmuxSession)
+
+			const manager = "resume-manager-aaaa-bbbb-cccc-111111111111"
+			f.HaveAliveSession(manager, "resume-manager-session", "resume-manager-tmux", t.TempDir())
+			require.NoError(t, db.AddAgentGroupOwner(group.ID, manager, "test"))
+			rec := agentReq(t, f, manager, http.MethodPost,
+				"/v1/agent/"+target.ConvID+"/resume", nil)
+			require.Equalf(t, http.StatusOK, rec.Code,
+				"owner resume must inherit target authority for %s; body=%s", privateDir, rec.Body.String())
+			proof, launched := f.World.SpawnCwdWriteProof(target.ConvID)
+			assert.True(t, launched)
+			assert.NotEmpty(t, proof,
+				"resume must carry a daemon-owned target pin, not a caller write proof")
+			assertNoDirWriteProofMarkers(t, privateDir)
+		})
+	}
+}
+
+func TestStopCaptureFailureContinuesAndInvalidatesResumeProvenance(t *testing.T) {
+	f := newFlow(t)
+	const target = "stop-invalidates-provenance-aaaa-bbbb-111111111111"
+	f.HaveConvWithTitle(target, "stop-invalidates-provenance")
+	cwd := filepath.Join(t.TempDir(), "vanishing-cwd")
+	require.NoError(t, os.Mkdir(cwd, 0o755))
+	f.HaveAliveSession(target, "stop-invalidates-session", "stop-invalidates-tmux", cwd)
+	before, err := db.FindSessionByConvID(target)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+	require.NotEmpty(t, before.ResumeProvenance)
+	require.NoError(t, os.Remove(cwd))
+
+	stopped := f.AsHuman().Stop(target, false)
+	assert.Equal(t, "soft_stopped", stopped.Action, "administrative stop must remain available")
+	assert.Contains(t, stopped.Detail, "human recovery will be required")
+	after, err := db.LoadSession(before.ID)
+	require.NoError(t, err)
+	assert.Empty(t, after.ResumeProvenance,
+		"a failed fresh capture must not preserve older apparently valid provenance")
+}
+
 func TestLifecycleInheritedAuthority_UsesLivePanePhysicalCwd(t *testing.T) {
 	for _, clone := range []bool{false, true} {
 		name := "reincarnate"

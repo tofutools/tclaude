@@ -726,14 +726,14 @@ func runGroupsStop(p *groupsStopParams, stdout, stderr io.Writer) int {
 	if p.Force {
 		path += "?force=1"
 	}
-	return runGroupsLifecycle(path, ask, false, stdout, stderr)
+	return runGroupsLifecycle(path, ask, stdout, stderr)
 }
 
 // --- groups resume ---
 
 type groupsResumeParams struct {
 	Name     string `pos:"true" help:"Group name"`
-	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial or stopped-target provenance recovery, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny."`
 }
 
 func groupsResumeCmd() *cobra.Command {
@@ -766,11 +766,8 @@ func runGroupsResume(p *groupsResumeParams, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return rcInvalidArg
 	}
-	if ask > 0 {
-		fmt.Fprintf(stdout, "Waiting up to %s for human approval...\n", ask)
-	}
 	path := "/v1/groups/" + url.PathEscape(p.Name) + "/resume"
-	return runGroupsLifecycle(path, ask, true, stdout, stderr)
+	return runGroupsLifecycle(path, ask, stdout, stderr)
 }
 
 // --- groups retire ---
@@ -954,7 +951,7 @@ func runGroupsRebrief(p *groupsRebriefParams, stdout, stderr io.Writer) int {
 // runGroupsLifecycle is shared between stop/resume — both endpoints
 // return the same per-member result shape, only the action label
 // changes.
-func runGroupsLifecycle(path string, ask time.Duration, writeProof bool, stdout, stderr io.Writer) int {
+func runGroupsLifecycle(path string, ask time.Duration, stdout, stderr io.Writer) int {
 	var resp struct {
 		Group   string `json:"group"`
 		Action  string `json:"action"`
@@ -968,13 +965,7 @@ func runGroupsLifecycle(path string, ask time.Duration, writeProof bool, stdout,
 		} `json:"members"`
 	}
 	opts := DaemonOpts{AskHuman: ask}
-	var err error
-	if writeProof {
-		err = DaemonRequestWithWriteProof(http.MethodPost, path,
-			func(token string) any { return withWriteProofToken(nil, token) }, &resp, opts)
-	} else {
-		err = DaemonRequest(http.MethodPost, path, nil, &resp, opts)
-	}
+	err := DaemonRequest(http.MethodPost, path, nil, &resp, opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)

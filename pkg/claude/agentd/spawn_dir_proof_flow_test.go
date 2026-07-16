@@ -842,7 +842,7 @@ func TestSpawnDirProof_CodexReincarnateNeedsNoProofOrSelfSlug(t *testing.T) {
 	assertNoDirWriteProofMarkers(t, repoParent)
 }
 
-func TestSpawnDirProof_CodexResumeProvesNewRepositoryRoot(t *testing.T) {
+func TestSpawnDirProof_CodexResumeInheritsTargetRepositoryAuthority(t *testing.T) {
 	f := newFlow(t)
 	const caller = "resume-manager-aaaa-bbbb-111111111111"
 	const target = "019ec663-3bef-7c41-abf8-ad956ed94a01"
@@ -854,24 +854,24 @@ func TestSpawnDirProof_CodexResumeProvesNewRepositoryRoot(t *testing.T) {
 	require.NoError(t, db.GrantAgentPermission(caller, agentd.PermAgentResume, "test"))
 	haveSpawnCapableSandboxParent(t, f, "alpha", caller, harness.DefaultName, harness.ClaudeSandboxInherit)
 
-	body := map[string]any{}
-	ch := decodeWriteProofChallenge(t,
-		agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", body))
-	gitDir := filepath.Join(repo, ".git")
-	assert.ElementsMatch(t, []string{repo, repoParent, gitDir}, ch.WriteProof.Dirs)
-	answerChallenge(t, ch)
-	body["write_proof_token"] = ch.WriteProof.Token
-	rec := agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", body)
-	require.Equalf(t, http.StatusOK, rec.Code, "proved resume; body=%s", rec.Body.String())
+	rec := agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "inherited-authority resume; body=%s", rec.Body.String())
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(target)
 	require.True(t, ok)
-	assert.Equal(t, []string{repoParent, gitDir}, dirs)
+	gitDir := filepath.Join(repo, ".git")
+	assert.Contains(t, dirs, repoParent,
+		"resume must pass repository roots derived from verified target provenance")
+	assert.Contains(t, dirs, gitDir,
+		"resume must pin the checkout metadata identity")
 	dirProof, ok := f.World.SpawnDirWriteProof(target)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
 	cwdProof, ok := f.World.SpawnCwdWriteProof(target)
 	require.True(t, ok)
-	assert.Equal(t, ch.WriteProof.Token, cwdProof)
+	assert.NotEmpty(t, cwdProof, "resume must carry the daemon-owned launch-integrity pin")
+	assertNoDirWriteProofMarkers(t, repo)
+	assertNoDirWriteProofMarkers(t, repoParent)
+	assertNoDirWriteProofMarkers(t, gitDir)
 }
 
 func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
@@ -1048,8 +1048,14 @@ func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 		f.MarkOffline("tclaude-profile-resume")
 		setEffectiveSandboxWriteRoot(t, target, writeRoot)
 
-		challenge := decodeWriteProofChallenge(t, agentReq(t, f, caller, http.MethodPost,
-			"/v1/agent/"+url.PathEscape(target)+"/resume", nil))
-		assert.ElementsMatch(t, []string{cwd, writeRoot}, challenge.WriteProof.Dirs)
+		rec := agentReq(t, f, caller, http.MethodPost,
+			"/v1/agent/"+url.PathEscape(target)+"/resume", nil)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		cwdProof, ok := f.World.SpawnCwdWriteProof(target)
+		require.True(t, ok)
+		assert.NotEmpty(t, cwdProof,
+			"resume must bind inherited target authority with a daemon-owned launch pin")
+		assertNoDirWriteProofMarkers(t, cwd)
+		assertNoDirWriteProofMarkers(t, writeRoot)
 	})
 }
