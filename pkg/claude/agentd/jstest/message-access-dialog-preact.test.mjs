@@ -411,3 +411,82 @@ test('dirty backdrop confirms before close while a clean prefill does not prompt
   assert.equal(state.dialog.value, null);
   await mounted.unmount();
 });
+
+test('operator composer keeps target and attachment snapshot atomic with single-flight retry state', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  state.openOperatorMessage({ agent: 'agt_original', label: 'worker' });
+  const pending = deferred();
+  const drafts = [];
+  let attempts = 0;
+  const actions = {
+    sendOperatorMessage: (draft) => {
+      attempts++;
+      drafts.push(draft);
+      return attempts === 1 ? pending.promise : Promise.resolve();
+    },
+  };
+  const { host, mounted } = await mountDialogs(harness, state, actions, snapshot({ groups: [] }));
+  const body = host.querySelector('#operator-message-body');
+  await harness.act(() => Promise.resolve());
+  assert.equal(harness.document.activeElement, body, 'the controlled body owns initial focus');
+  await harness.input(body, 'queued body');
+  await harness.input(host.querySelector('#operator-message-subject'), 'subject');
+  const file = { name: 'proof.txt', size: 5 };
+  const fileInput = host.querySelector('#operator-message-attach-input');
+  Object.defineProperty(fileInput, 'files', { configurable: true, value: [file] });
+  await harness.act(() => harness.fireEvent(fileInput, 'change'));
+  assert.equal(host.querySelectorAll('#operator-message-attachments-list li').length, 1);
+
+  await harness.act(() => { host.querySelector('#operator-message-submit').click(); });
+  assert.equal(attempts, 1);
+  assert.equal(host.querySelector('#operator-message-submit').disabled, true);
+  assert.equal(body.value, 'queued body');
+  assert.deepEqual(drafts[0], {
+    to: 'agt_original', subject: 'subject', body: 'queued body', files: [file],
+  });
+  assert.equal(Object.isFrozen(drafts[0]), true);
+  assert.equal(Object.isFrozen(drafts[0].files), true);
+  await harness.act(() => { host.querySelector('#operator-message-submit').click(); });
+  assert.equal(attempts, 1, 'busy submit cannot enqueue a duplicate');
+  pending.reject(new Error('server refused once'));
+  await harness.act(async () => { try { await pending.promise; } catch (_) {} });
+  assert.equal(host.querySelector('#operator-message-error').textContent, 'server refused once');
+  assert.equal(body.value, 'queued body', 'server errors preserve the exact draft for retry');
+  await harness.act(async () => { host.querySelector('#operator-message-submit').click(); await Promise.resolve(); });
+  assert.equal(attempts, 2);
+  assert.equal(state.dialog.value, null);
+  await mounted.unmount();
+});
+
+test('operator Cancel uses dirty confirmation and deferred focus restore yields to a newer dialog', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogState } = await harness.importDashboardModule('js/message-access-dialog-state.js');
+  const state = createMessageAccessDialogState();
+  let restores = 0;
+  let allow = false;
+  let confirms = 0;
+  state.openOperatorMessage({ agent: 'agt_worker', label: 'worker', restoreFocus: () => { restores++; } });
+  const actions = { sendOperatorMessage: async () => {} };
+  const { host, mounted } = await mountDialogs(
+    harness, state, actions, snapshot({ groups: [] }),
+    async () => { confirms++; return allow; },
+  );
+  await harness.input(host.querySelector('#operator-message-body'), 'dirty');
+  await harness.act(async () => { host.querySelector('#operator-message-cancel').click(); await Promise.resolve(); });
+  assert.equal(confirms, 1, 'Cancel shares the dirty Escape/backdrop transaction');
+  assert.equal(state.dialog.value?.kind, 'operator-message');
+  assert.equal(restores, 0);
+
+  allow = true;
+  await harness.act(async () => { host.querySelector('#operator-message-cancel').click(); await Promise.resolve(); });
+  assert.equal(state.dialog.value, null);
+  state.openHumanReply({ id: '9', agent: 'agt_other', conv: 'conv-other', label: 'other' });
+  await harness.act(() => Promise.resolve());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(restores, 0, 'a newer message/access dialog keeps focus ownership');
+  assert.ok(host.querySelector('#human-reply-modal'));
+  state.close();
+  await mounted.unmount();
+});

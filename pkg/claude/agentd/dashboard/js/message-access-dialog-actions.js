@@ -24,6 +24,29 @@ export function createMessageAccessDialogActions({
   notify = () => {},
   words = (plain) => plain,
 } = {}) {
+  async function sendOperatorMessage(draft) {
+    let attachmentToken = '';
+    if (draft.files.length) {
+      const form = new FormData();
+      draft.files.forEach((file, index) => {
+        form.append('file', file, file.name || `pasted-image-${index + 1}.png`);
+      });
+      const uploaded = await requestJSON(fetchImpl, '/api/spawn-attachments', {
+        method: 'POST', body: form,
+      });
+      attachmentToken = uploaded.token || '';
+    }
+    return requestJSON(fetchImpl, '/api/operator-message', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: draft.to,
+        subject: draft.subject,
+        body: draft.body,
+        attachment_token: attachmentToken,
+      }),
+    });
+  }
+
   async function sendMessage(payload) {
     const response = await requestJSON(fetchImpl, '/api/message', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -106,5 +129,5 @@ export function createMessageAccessDialogActions({
     return { overrides: kept };
   }
 
-  return Object.freeze({ sendMessage, replyHuman, grantSudo, savePermissions });
+  return Object.freeze({ sendMessage, sendOperatorMessage, replyHuman, grantSudo, savePermissions });
 }

@@ -13,6 +13,7 @@ export function ManagementOverlay({
   dialogClass = '',
   overlayClass = '',
   labelledby,
+  describedby,
   ariaLabel,
   onClose,
   beforeClose = null,
@@ -167,6 +168,7 @@ export function ManagementOverlay({
       role="dialog"
       aria-modal="true"
       aria-labelledby=${labelledby}
+      aria-describedby=${describedby}
       aria-label=${ariaLabel}
     >
       ${children}

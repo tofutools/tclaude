@@ -218,3 +218,64 @@ test('throwaway modal omits Detach, ignores Escape, and confirms backdrop close'
   assert.equal(modalHost.childElementCount, 0);
   cleanup();
 });
+
+test('terminal button and shortcut route through the mounted Preact operator composer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  dialogHost.id = 'message-access-dialog-root';
+  const [loader, terminalController, messageController] = await Promise.all([
+    harness.importDashboardModule('js/preact-loader.js'),
+    harness.importDashboardModule('js/terminals-tab.js'),
+    harness.importDashboardModule('js/message-access-dialog-controller.js'),
+  ]);
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, status: 200, text: async () => '{}' };
+  };
+  const messageCleanup = await loader.mountMessageAccessDialogsFeature({
+    fetchImpl, confirmDiscard: async () => true,
+  });
+  const terminalCleanup = await loader.mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    confirm: async () => true,
+    onComposeMessage: messageController.openOperatorMessageDialog,
+    composeMessageDialogKind: messageController.activeMessageAccessDialogKind,
+  });
+  await harness.act(async () => {
+    terminalController.openTerminalPane({
+      ws: '/worker', key: 'worker', label: 'Worker', agent: 'agt_worker',
+    });
+    await Promise.resolve();
+  });
+  const beforeRestore = fake.widgets[0].activeEdges.length;
+  await harness.act(() => harness.fireEvent(getByRole(host, 'button', { name: '✉ Message' }), 'click'));
+  assert.ok(dialogHost.querySelector('#operator-message-modal'));
+  assert.equal(dialogHost.querySelector('#operator-message-to').textContent, 'Worker');
+  assert.equal(dialogHost.querySelector('#operator-message-to').title, 'agt_worker');
+
+  const held = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(held, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true }, repeat: { value: true },
+  });
+  harness.document.dispatchEvent(held);
+  assert.equal(held.defaultPrevented, true, 'an already-open composer consumes the held global shortcut');
+  await harness.input(dialogHost.querySelector('#operator-message-body'), 'from terminal');
+  await harness.act(async () => {
+    dialogHost.querySelector('#operator-message-submit').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/operator-message');
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    to: 'agt_worker', subject: '', body: 'from terminal', attachment_token: '',
+  });
+  assert.equal(dialogHost.querySelector('#operator-message-modal'), null);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(fake.widgets[0].activeEdges.length, beforeRestore + 1,
+    'composer close restores the exact terminal pane through its action boundary');
+  terminalCleanup();
+  messageCleanup();
+});

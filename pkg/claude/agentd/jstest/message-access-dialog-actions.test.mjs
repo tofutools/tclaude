@@ -48,6 +48,30 @@ test('action errors retain status, code, and server message for component retry 
   );
 });
 
+test('operator message uploads its frozen attachment batch before posting the target payload', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');
+  const calls = [];
+  const actions = createMessageAccessDialogActions({
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return url === '/api/spawn-attachments'
+        ? response(200, { token: 'batch-token' })
+        : response(200, { id: 7 });
+    },
+  });
+  const file = new Blob(['proof']);
+  Object.defineProperty(file, 'name', { value: 'proof.txt' });
+  await actions.sendOperatorMessage(Object.freeze({
+    to: 'agt_worker', subject: 'evidence', body: '', files: Object.freeze([file]),
+  }));
+  assert.deepEqual(calls.map((call) => call.url), ['/api/spawn-attachments', '/api/operator-message']);
+  assert.equal(calls[0].options.body.get('file').name, 'proof.txt');
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    to: 'agt_worker', subject: 'evidence', body: '', attachment_token: 'batch-token',
+  });
+});
+
 test('accepted reply and sudo mutations do not await snapshot refresh before completion', async (t) => {
   const harness = await createPreactHarness(t);
   const { createMessageAccessDialogActions } = await harness.importDashboardModule('js/message-access-dialog-actions.js');

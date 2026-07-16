@@ -130,7 +130,8 @@ func TestTerminalShellPreactAtomicOwnership(t *testing.T) {
 	for _, needle := range []string{
 		"mountTerminalsFeature({",
 		"confirm: confirmModal",
-		"onComposeMessage: (seed) => openOperatorMessageModal",
+		"onComposeMessage: (seed) => openOperatorMessageDialog(seed)",
+		"composeMessageDialogKind: activeMessageAccessDialogKind",
 	} {
 		if !strings.Contains(dashboard, needle) {
 			t.Errorf("dashboard terminal ownership mount missing %q", needle)

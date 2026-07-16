@@ -38,6 +38,125 @@ function fieldSubmit(submit) {
   };
 }
 
+function operatorFileName(file, index) {
+  return file?.name || `pasted-image-${index + 1}.png`;
+}
+
+function OperatorAttachmentList({ files, busy, remove }) {
+  return html`<ul class="spawn-attachments-list" id="operator-message-attachments-list">
+    ${files.map((file, index) => html`<li key=${`${index}:${operatorFileName(file, index)}:${file?.size || 0}`}>
+      <span class="att-name">${operatorFileName(file, index)}</span>
+      <span class="att-size">${file?.size || 0} B</span>
+      <button type="button" class="att-remove" disabled=${busy}
+        aria-label=${`Remove ${operatorFileName(file, index)}`} onClick=${() => remove(index)}>✕</button>
+    </li>`)}
+  </ul>`;
+}
+
+function OperatorMessageDialog({ descriptor, state, actions, confirmDiscard }) {
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const busyRef = useRef(false);
+  const bodyRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const closeRef = useRef(null);
+  const dirty = !!subject || !!body || files.length > 0;
+
+  const addFiles = (incoming) => {
+    if (busyRef.current) return;
+    setFiles((current) => [...current, ...Array.from(incoming || []).filter(Boolean)].slice(0, 8));
+  };
+  const removeFile = (index) => {
+    if (busyRef.current) return;
+    setFiles((current) => current.filter((_, candidate) => candidate !== index));
+  };
+  const submit = async () => {
+    if (busyRef.current) return;
+    const draft = Object.freeze({
+      to: descriptor.agent,
+      subject,
+      body,
+      files: Object.freeze([...files]),
+    });
+    setError('');
+    if (!draft.body.trim() && !draft.files.length) {
+      setError('Write a message or attach a file.');
+      return;
+    }
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await actions.sendOperatorMessage(draft);
+      state.close();
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
+  return html`<${Overlay}
+    id="operator-message-modal"
+    overlayClass="operator-message-overlay"
+    dialogClass="cron-create-modal operator-message-modal"
+    labelledby="operator-message-title"
+    describedby="operator-message-desc"
+    onClose=${state.close}
+    onSubmitHotkey=${submit}
+    dirty=${dirty}
+    blocked=${busy}
+    confirmDiscard=${confirmDiscard}
+    resizeKey="tclaude.dash.modalSize.operator-message"
+    initialFocusRef=${bodyRef}
+    registerClose=${(close) => { closeRef.current = close; return () => { if (closeRef.current === close) closeRef.current = null; }; }}
+    guardBackdropDrag=${true}
+    onPaste=${(event) => {
+      const pasted = Array.from(event.clipboardData?.files || []);
+      if (!pasted.length) return;
+      event.preventDefault();
+      addFiles(pasted);
+    }}
+    onDragOver=${(event) => {
+      if (event.dataTransfer?.types?.includes('Files')) event.preventDefault();
+    }}
+    onDrop=${(event) => {
+      const dropped = Array.from(event.dataTransfer?.files || []);
+      if (!dropped.length) return;
+      event.preventDefault();
+      addFiles(dropped);
+    }}>
+    <h3 id="operator-message-title"><${Words} plain="Send message to agent" wizard="✒ Send a missive to the familiar"/></h3>
+    <p class="modal-hint" id="operator-message-desc"><${Words}
+      plain="Queued through the agent mailbox, so incoming agent output cannot interfere with what you type."
+      wizard="Sealed into the familiar's mailbox, beyond the meddling of terminal omens."/></p>
+    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="To" wizard="Familiar"/></span>
+      <div class="cron-create-target"><strong id="operator-message-to" title=${descriptor.agent}>${descriptor.label}</strong></div></div>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Subject" wizard="Seal"/></span>
+      <input id="operator-message-subject" type="text" maxlength="256" placeholder="optional" autocomplete="off"
+        value=${subject} readOnly=${busy} onInput=${(event) => setSubject(event.currentTarget.value)}/></label>
+    <label class="cron-create-row operator-message-body-row"><span class="cron-create-label"><${Words} plain="Message" wizard="Missive"/></span>
+      <textarea ref=${bodyRef} id="operator-message-body" rows="6" maxlength="16384"
+        placeholder="Message text — Ctrl/Cmd+Enter to send" spellcheck=${true} value=${body} readOnly=${busy}
+        onInput=${(event) => setBody(event.currentTarget.value)}></textarea></label>
+    <div class="cron-create-row"><span class="cron-create-label"><${Words} plain="Attachments" wizard="Enclosures"/></span>
+      <div class="cron-create-target spawn-attachments"><div class="spawn-attachments-controls">
+        <button type="button" id="operator-message-attach-btn" disabled=${busy}
+          onClick=${() => fileInputRef.current?.click()}><${Words} plain="📎 Attach files…" wizard="📎 Bind relics…"/></button>
+        <input ref=${fileInputRef} type="file" id="operator-message-attach-input" multiple hidden disabled=${busy}
+          onChange=${(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = ''; }}/>
+        <span class="spawn-attachments-hint"><${Words} plain="…or drag files here / paste a screenshot" wizard="…or draw relics here / paste a captured vision"/></span>
+      </div><${OperatorAttachmentList} files=${files} busy=${busy} remove=${removeFile}/></div></div>
+    <${ErrorLine} id="operator-message-error" value=${error}/>
+    <div class="modal-buttons"><button id="operator-message-cancel" type="button" disabled=${busy} onClick=${() => { void closeRef.current?.(); }}><${Words} plain="Cancel" wizard="Dispel"/></button>
+      <span class="spacer"></span><button id="operator-message-submit" class="primary operator-message-submit" type="button" disabled=${busy} onClick=${submit}>
+        <${Words} plain=${busy ? 'Queueing…' : 'Send'} wizard=${busy ? '✒ Sending missive…' : '✒ Send missive'}/></button></div>
+  </${Overlay}>`;
+}
+
 function useLiveTheme() {
   const [, setRevision] = useState(0);
   useEffect(() => {
@@ -417,7 +536,8 @@ export function MessageAccessDialogApp({ state, actions, snapshot, confirmDiscar
   const current = state.view.value;
   const descriptor = current.dialog;
   let parent = null;
-  if (descriptor?.kind === 'message') parent = html`<${MessageDialog} key=${`message:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
+  if (descriptor?.kind === 'operator-message') parent = html`<${OperatorMessageDialog} key=${`operator:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+  else if (descriptor?.kind === 'message') parent = html`<${MessageDialog} key=${`message:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'human-reply') parent = html`<${HumanReplyDialog} key=${`reply:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'sudo-grant') parent = html`<${SudoGrantDialog} key=${`sudo:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'permissions') parent = html`<${PermissionsDialog} key=${`permissions:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
@@ -430,6 +550,8 @@ export function mountMessageAccessDialogIsland({
 }) {
   const controller = {
     openMessage: state.openMessage,
+    openOperatorMessage: state.openOperatorMessage,
+    dialogKind: state.dialogKind,
     openHumanReply: state.openHumanReply,
     openSudoGrant: state.openSudoGrant,
     openAgentPermissions: state.openAgentPermissions,
