@@ -179,15 +179,59 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	shutdown := retireShouldShutdown(r)
 	deleteWorktree := retireShouldDeleteWorktree(r)
 
+	// The precondition pair is the caller's frozen probe result: the worktree
+	// path and the branch checked out there. Both halves travel together —
+	// retire force-deletes the branch as well as the worktree, and an agent can
+	// `git switch` in place without ever leaving the confirmed path, so a
+	// path-only precondition would leave that branch unguarded. Presence, not
+	// emptiness, binds the branch: a detached HEAD legitimately freezes "".
+	query := r.URL.Query()
+	_, hasExpectedWorktree := query["expected_worktree"]
+	_, hasExpectedBranch := query["expected_branch"]
+	if (hasExpectedWorktree || hasExpectedBranch) && !deleteWorktree {
+		writeError(w, http.StatusBadRequest, "request",
+			"expected_worktree/expected_branch require delete_worktree=1")
+		return
+	}
+	if hasExpectedWorktree != hasExpectedBranch {
+		writeError(w, http.StatusBadRequest, "request",
+			"expected_worktree and expected_branch must be sent together")
+		return
+	}
+	var expectedWorktreePath, expectedBranch string
+	if hasExpectedWorktree {
+		expectedWorktreePath = query.Get("expected_worktree")
+		if expectedWorktreePath == "" {
+			writeError(w, http.StatusBadRequest, "request",
+				"expected_worktree must not be empty")
+			return
+		}
+		expectedBranch = query.Get("expected_branch")
+	}
+
 	// Resolve before demotion as well as before shutdown. Historical retired
 	// session rows are not worktree claimants, so the safety view must be taken
 	// while this target and every sibling still have their pre-retire state.
 	var wt agentWorktreeView
 	if deleteWorktree {
 		wt = resolveRetireWorktree(convID)
+		// A Preact opt-in freezes the exact removable identity returned by its
+		// earlier probe — the same path and branch the confirmation row showed.
+		// Re-check it here, before the demotion and every later destructive
+		// phase, so neither a moved agent nor an in-place branch switch can
+		// redirect deletion onto anything the operator never reviewed. Older
+		// callers that omit the pair retain the established delete_worktree
+		// contract.
+		if hasExpectedWorktree &&
+			(wt.Path != expectedWorktreePath || wt.Branch != expectedBranch ||
+				!wt.Removable()) {
+			writeError(w, http.StatusConflict, "conflict",
+				"worktree or branch changed since confirmation; reopen retire to re-probe and retry")
+			return
+		}
 	}
 
-	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	reason := strings.TrimSpace(query.Get("reason"))
 	outcome, _, err := retireAgentConv(convID, enrollmentActor(caller), reason)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())

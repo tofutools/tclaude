@@ -214,10 +214,11 @@ func TestCleanup_Group_UnknownGroupReturns404(t *testing.T) {
 // a test can assert which worktrees were (and were not) touched.
 type fakeWorktrees struct {
 	byDir map[string]worktree.WorktreeStatus
-	// mu guards removed/branchRemoved: the deferred retire path records
-	// removals from a background goroutine (scheduleRetireWorktreeCleanup)
-	// while the test goroutine polls wasRemoved/branchesRemoved, so every
-	// access to those slices must be synchronized.
+	// mu guards byDir/removed/branchRemoved: the deferred retire path both
+	// re-inspects (retireWorktreeDrift) and records removals from a background
+	// goroutine (scheduleRetireWorktreeCleanup) while the test goroutine polls
+	// wasRemoved/branchesRemoved or drifts a directory via setDir, so every
+	// access must be synchronized.
 	mu sync.Mutex
 	// removed records every root passed to either remove seam (delete or
 	// retire). branchRemoved is the branch arg the retire seam received,
@@ -230,10 +231,22 @@ type fakeWorktrees struct {
 }
 
 func (f *fakeWorktrees) inspect(dir string) worktree.WorktreeStatus {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if st, ok := f.byDir[dir]; ok {
 		return st
 	}
 	return worktree.WorktreeStatus{Kind: "none"}
+}
+
+// setDir re-points one directory's canned status mid-test. The retire removal
+// boundary re-inspects from a background goroutine, so a scenario that drifts a
+// worktree between confirmation and removal must mutate through this seam
+// rather than writing byDir directly.
+func (f *fakeWorktrees) setDir(dir string, st worktree.WorktreeStatus) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.byDir[dir] = st
 }
 
 func (f *fakeWorktrees) remove(root string, _ bool) (bool, error) {

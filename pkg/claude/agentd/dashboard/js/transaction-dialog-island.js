@@ -1466,9 +1466,20 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
   const submit = async () => {
     if (busy) return;
+    const deleting = !!worktree?.removable && shutdown && deleteWorktree;
+    // Freeze the whole probed identity alongside the choice — path AND branch,
+    // exactly what this row showed the operator. Retire force-deletes the
+    // branch too, and an agent can `git switch` in place without ever leaving
+    // the confirmed path, so a path-only precondition would still let a retry
+    // destroy a branch nobody reviewed. An empty branch (detached HEAD) is a
+    // real frozen value, not an absent one.
     const choice = submittedChoice || Object.freeze({
       shutdown,
-      deleteWorktree: !!worktree?.removable && shutdown && deleteWorktree,
+      deleteWorktree: deleting,
+      ...(deleting ? {
+        expectedWorktree: worktree.path,
+        expectedBranch: worktree.branch || '',
+      } : {}),
     });
     if (!submittedChoice) {
       submittedRef.current = choice;

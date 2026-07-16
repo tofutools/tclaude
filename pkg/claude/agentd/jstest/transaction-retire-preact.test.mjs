@@ -70,8 +70,14 @@ test('retire actions preserve raw conv identity, exact queries, and success outp
   });
   const conv = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const pending = state.open({ kind: 'retire-agent', conv, label: 'Raw target' });
-  const result = await actions.retireAgent({ conv, label: 'Raw target', shutdown: true, deleteWorktree: true });
-  assert.equal(requests[0][0], `/api/agents/${conv}/retire?shutdown=1&delete_worktree=1`);
+  const result = await actions.retireAgent({
+    conv, label: 'Raw target', shutdown: true, deleteWorktree: true,
+    expectedWorktree: '/repo/worktrees/feature & review?#',
+    expectedBranch: 'feat/a & b?#',
+  });
+  assert.equal(requests[0][0], `/api/agents/${conv}/retire?shutdown=1&delete_worktree=1`
+    + '&expected_worktree=%2Frepo%2Fworktrees%2Ffeature+%26+review%3F%23'
+    + '&expected_branch=feat%2Fa+%26+b%3F%23');
   assert.equal(requests[0][1].method, 'POST');
   assert.equal(requests[0][1].credentials, 'same-origin');
   assert.deepEqual(notices, [[
@@ -85,6 +91,135 @@ test('retire actions preserve raw conv identity, exact queries, and success outp
   await actions.retireAgent({ conv, label: 'Raw target', shutdown: false, deleteWorktree: false });
   assert.equal(requests[1][0], `/api/agents/${conv}/retire?shutdown=0`);
   await second;
+});
+
+test('retire worktree deletion demands a probed path and never sends one without opt-in', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const requests = [];
+  const actions = createTransactionDialogActions({
+    state,
+    fetchImpl: async (url) => {
+      requests.push(url);
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    refresh: async () => {}, notify: () => {}, confirm: async () => false,
+  });
+  const conv = 'raw-conv';
+
+  // Opting into deletion without a freshly probed path is a client bug, not a
+  // request the daemon should have to adjudicate: it must never reach the wire.
+  for (const expectedWorktree of [undefined, '', null, 42]) {
+    await assert.rejects(
+      actions.retireAgent({
+        conv, label: 'Target', shutdown: true, deleteWorktree: true,
+        expectedWorktree, expectedBranch: 'feature',
+      }),
+      /freshly probed worktree path/,
+    );
+  }
+  // The branch is half of the identity the operator confirmed, and retire
+  // force-deletes it. An absent branch precondition is equally unbound — but
+  // '' is a real detached-HEAD value and must NOT be treated as missing.
+  for (const expectedBranch of [undefined, null, 42]) {
+    await assert.rejects(
+      actions.retireAgent({
+        conv, label: 'Target', shutdown: true, deleteWorktree: true,
+        expectedWorktree: '/repo/wt', expectedBranch,
+      }),
+      /freshly probed branch/,
+    );
+  }
+  assert.deepEqual(requests, [], 'an unbound deletion opt-in is refused before any request');
+
+  // Keep-worktree retirement stays a two-field request; a stray probed
+  // identity must not smuggle a deletion precondition onto it.
+  const pending = state.open({ kind: 'retire-agent', conv, label: 'Target' });
+  await actions.retireAgent({
+    conv, label: 'Target', shutdown: true, deleteWorktree: false,
+    expectedWorktree: '/repo/wt', expectedBranch: 'feature',
+  });
+  assert.deepEqual(requests, [`/api/agents/${conv}/retire?shutdown=1`]);
+  await pending;
+
+  // A detached HEAD freezes '' — a bound value that must reach the wire as an
+  // explicitly present, empty parameter rather than being dropped.
+  const detached = state.open({ kind: 'retire-agent', conv, label: 'Target' });
+  await actions.retireAgent({
+    conv, label: 'Target', shutdown: true, deleteWorktree: true,
+    expectedWorktree: '/repo/wt', expectedBranch: '',
+  });
+  assert.equal(requests[1],
+    `/api/agents/${conv}/retire?shutdown=1&delete_worktree=1&expected_worktree=%2Frepo%2Fwt&expected_branch=`);
+  await detached;
+});
+
+test('retire retry stays bound to the confirmed worktree after the agent moves', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTransactionDialogState }, { createTransactionDialogActions }, island] = await Promise.all([
+    harness.importDashboardModule('js/transaction-dialog-state.js'),
+    harness.importDashboardModule('js/transaction-dialog-actions.js'),
+    harness.importDashboardModule('js/transaction-dialog-island.js'),
+  ]);
+  const state = createTransactionDialogState();
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const conv = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const retireRequests = [];
+  // The agent's live claim moves from worktree A to B — and switches branch in
+  // place — while the frozen dialog waits for an explicit retry. Any reprobe
+  // after the move would observe the new identity.
+  let claimed = { path: '/repo/wt-a', branch: 'feature-a' };
+  const replies = [
+    async () => { throw new Error('transport failed'); },
+    async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+  ];
+  const actions = createTransactionDialogActions({
+    state,
+    fetchImpl: (url) => {
+      if (url.endsWith('/worktree')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          kind: 'linked', ...claimed, shared: false, removable: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      retireRequests.push(url);
+      return replies.shift()();
+    },
+    refresh: async () => {}, notify: () => {}, confirm: async () => false,
+  });
+  const mounted = await harness.mount(harness.html`
+    <${island.TransactionDialogApp} state=${state} actions=${actions} confirmDiscard=${async () => true} />
+  `, host);
+  let completion;
+  await harness.act(() => { completion = state.open({
+    kind: 'retire-agent', conv, label: 'Moving target',
+  }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(host.querySelector('#retire-wt').hasAttribute('checked'), true,
+    'the probed removable worktree defaults deletion ON');
+
+  host.querySelector('#retire-ok').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.equal(host.querySelector('#retire-error').textContent, 'transport failed');
+  assert.equal(host.querySelector('#retire-ok').textContent, 'Retry');
+
+  claimed = { path: '/repo/wt-b', branch: 'feature-b' };
+  host.querySelector('#retire-ok').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  const expected = `/api/agents/${conv}/retire?shutdown=1&delete_worktree=1`
+    + '&expected_worktree=%2Frepo%2Fwt-a&expected_branch=feature-a';
+  assert.deepEqual(retireRequests, [expected, expected],
+    'the retry names the reviewed identity A, never the agent’s new claim B');
+  assert.ok(!retireRequests.some((url) => url.includes('wt-b')),
+    'a moved claim can never be retargeted by a retry');
+  assert.ok(!retireRequests.some((url) => url.includes('feature-b')),
+    'a branch switched in after confirmation can never be retargeted by a retry');
+  assert.deepEqual(await completion, { ok: true, response: {} });
+  await mounted.unmount();
 });
 
 test('retire action errors leave the frozen transaction mounted and dangling handoff is explicit', async (t) => {
