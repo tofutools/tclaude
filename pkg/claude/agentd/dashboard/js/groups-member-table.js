@@ -173,7 +173,7 @@ function SlopReels({ status, conv }) {
   </span></span>`);
 }
 
-function SlopMachine({ state, online, conv }) {
+export function SlopMachine({ state, online, conv }) {
   const hostRef = useRef(null);
   const status = online
     ? (state?.status || 'idle')
@@ -182,15 +182,27 @@ function SlopMachine({ state, online, conv }) {
   const title = detail ? `${status}: ${detail}` : status;
   useLayoutEffect(() => {
     const host = hostRef.current;
-    // slop-fx may have installed foreign reel children for a manual pull.
-    // A status edge is the explicit hand-back: clear that carve-out before
-    // mounting the new Preact-owned reel tree. Same-status publishes do not
-    // run this effect and therefore preserve an in-flight pull.
-    host.replaceChildren();
-    render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, host);
-    return () => render(null, host);
+    // The parent Groups root renders this empty outer host forever and never
+    // reconciles beneath it. Each status identity receives a fresh nested-root
+    // host: slop-fx may replace the OUTER host's children during a manual pull,
+    // detaching the old root without corrupting the parent tree. On hand-back
+    // we replace the foreign children first and mount into a new root, so Preact
+    // never reconciles bookkeeping against nodes the pull already replaced.
+    const root = document.createElement('span');
+    root.className = 'slop-reels-root';
+    root.setAttribute('data-preact-root', 'slop-reels');
+    host.replaceChildren(root);
+    render(html`<${SlopReels} status=${status} conv=${conv || ''} />`, root);
+    return () => {
+      // If slop-fx detached this root, it is already an opaque abandoned tree;
+      // rendering into it would reconcile against foreign/missing DOM. Its
+      // pure reel VNodes own no effects and become collectible with this closure.
+      if (root.parentNode !== host) return;
+      render(null, root);
+      root.remove();
+    };
   }, [status, conv]);
-  return html`<span ref=${hostRef} class="slop-machine" data-status=${status} data-conv=${conv || ''} title=${title} aria-label=${title}></span>`;
+  return html`<span ref=${hostRef} class="slop-machine" data-opaque-host="slop-reels" data-status=${status} data-conv=${conv || ''} title=${title} aria-label=${title}></span>`;
 }
 
 const WIZARD_STATE = {

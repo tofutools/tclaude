@@ -1,23 +1,18 @@
 // row-actions.js — bindRowActions, the delegated click router for every
 // per-row action button across the dashboard's tables.
 //
-// Extracted from dashboard.js in the Stage 2 module split. Owns the remaining
-// imperative toolbar profile-picker lifecycle flag that refreshSuspended reads.
+// Extracted from dashboard.js in the Stage 2 module split. This module owns no
+// presentation state: it translates live data-act producers into feature or
+// daemon operations.
 
-import { $, $$, shortId, groupOfflineOverride } from './helpers.js';
-import { renderGroupsTab } from './tabs.js';
+import { shortId } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
-import { dashPrefs } from './prefs.js';
-import { loadProfiles, setDashDefaultProfile, findProfileByHandle, profileChoices } from './profiles.js';
-import { openProfileEditor } from './modal-profiles.js';
-// The 🛡 group chip's picker feeds off the sandbox-profile registry.
-// sandbox-profiles.js doesn't import row-actions.js, so this edge only
-// closes the already-tolerated refresh.js↔row-actions.js style of cycle
-// (function/let bindings resolved at call time — TDZ-safe).
+import { setDashDefaultProfile } from './profiles.js';
 import {
   loadSandboxProfiles, openSandboxProfileEditor,
 } from './sandbox-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
+import { openToolbarProfilePicker } from './toolbar-profile-picker.js';
 import { openCronCreateModal } from './jobs-controller.js';
 import { openGroupCreateModal } from './group-create-controller.js';
 import {
@@ -46,8 +41,6 @@ import { openAgentSpawnModal, refreshAgentSpawnSandboxPolicy } from './agent-spa
 import { openMailbox } from './mail-bridge.js';
 import { wizWord } from './slop.js';
 // refresh()/toast() and the shared action modals live in refresh.js;
-// lastSnapshot is dashboard.js's shared state, written here (rename
-// rollback) via setLastSnapshot. Deliberate benign cycles are TDZ-safe.
 import {
   refresh, toast, confirmModal,
   shutdownScope, powerOnScope, openCleanupModal, openWindowModal,
@@ -56,157 +49,19 @@ import {
   openDeleteGroupModal,
   showAccessTab,
 } from './refresh.js';
-import { lastSnapshot, setLastSnapshot, webTerminalDefault } from './dashboard.js';
+import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 
-// Historical name: true only while a legacy toolbar profile <select> is open;
-// native Groups menus/editors remain keyed and never suspend snapshot publish.
-let renameEditing = false;
-
-// openProfilePicker turns a 🧠 spawn-profile chip into a one-shot <select>
-// of the saved profile names (+ a leading "(none)" to clear), suspending the
-// 2s auto-refresh while it's open (renameEditing) so a poll can't blow it
-// away. Picking an option (or pressing it then leaving) restores the chip
-// element and calls onCommit(name) — which performs the persistence and any
-// repaint and resolves to true on success, false (or throws) to revert.
-// Escape / blur cancel. This is now used only by the dashboard toolbar's
-// profile and sandbox-profile chips; group defaults are native keyed editors.
-// The profile list is fetched
-// (loadProfiles) so a freshly-created profile shows up; a current value no
-// longer in the list is kept as a "(missing)" option so it's still visible
-// and changeable.
-// opts retargets the picker at another profile registry (the 🛡 sandbox
-// chips): loadList swaps the list fetch, noneLabel/newLabel reword the two
-// fixed options, and openNewEditor opens that registry's create editor —
-// it receives the onSaved callback that assigns the created name.
-// Sentinel <option> value for the picker's "＋ new profile…" entry. A leading
-// slash can never appear in a real profile name (server-side validateGroupName
-// rejects "/" and "\"), so this value can't collide with a profile.
-const PROFILE_PICKER_NEW = '/new-profile';
-
-async function openProfilePicker(chipEl, current, onCommit, opts = {}) {
-  const loadList = opts.loadList || loadProfiles;
-  const noneLabel = opts.noneLabel || '(none)';
-  const newLabel = opts.newLabel || wizWord('＋ new profile…', '＋ new pattern…');
-  const openNewEditor = opts.openNewEditor || ((onSaved) => openProfileEditor(null, { onSaved }));
-  const prevSnapshot = lastSnapshot;
-  // Fetch the list BEFORE suspending the refresh or touching the DOM, so a
-  // slow (cold-cache) fetch can't leave the picker half-open. Critically,
-  // renameEditing is set only AFTER the await: were it set before, a second
-  // click during the fetch would start a rival picker whose chip is already
-  // detached — its replaceWith no-ops, so it never mounts, its listeners
-  // never fire, and the only code that resets renameEditing never runs,
-  // wedging the auto-refresh permanently.
-  let profiles = [];
-  try { profiles = await loadList(); } catch (_) { profiles = []; }
-  // Bail if another picker already opened (renameEditing) or this chip was
-  // repainted away (a poll re-rendered it) while we were fetching — either
-  // way, mounting a <select> here would strand it.
-  if (renameEditing || !chipEl.isConnected) return;
-  renameEditing = true;
-  const select = document.createElement('select');
-  select.className = 'group-default-profile-select';
-  // "＋ new profile…" sits at the top — picking it jumps to the editor to
-  // create one (and sets it as this default on save), so an empty profile
-  // list isn't a dead end. Re-lettered "＋ new pattern…" in 🧙 wizard mode,
-  // matching the editor it opens (New familiar pattern).
-  select.add(new Option(newLabel, PROFILE_PICKER_NEW));
-  select.add(new Option(noneLabel, ''));
-  for (const choice of profileChoices(profiles)) select.add(new Option(choice.label, choice.value));
-  if (current && !findProfileByHandle(profiles, current)) {
-    select.add(new Option(`${current} (missing)`, current));
-  }
-  select.value = current;
-  chipEl.replaceWith(select);
-  select.focus();
-  let done = false;
-  const cancel = (restoreFocus = false) => {
-    if (done) return;
-    done = true;
-    // Restore the SAME chip node, not a clone. dock.js caches the three
-    // toolbar controls by identity so it can re-home them when the right
-    // panel opens. Replacing this chip with a clone leaves that cache pointing
-    // at the detached original; the next dock toggle would then insert the
-    // original alongside the clone and display the global picker twice.
-    if (select.parentNode) select.replaceWith(chipEl);
-    renameEditing = false;
-    setLastSnapshot(prevSnapshot);
-    if (restoreFocus) chipEl.focus();
-  };
-  const commit = async () => {
-    if (done) return;
-    const name = select.value;
-    if (name === PROFILE_PICKER_NEW) {
-      // Jump to the editor (create mode): close the picker, then on a
-      // successful save set the new profile as this default via onCommit.
-      done = true;
-      if (select.parentNode) select.replaceWith(chipEl);
-      renameEditing = false;
-      openNewEditor((newName) => onCommit(newName));
-      return;
-    }
-    if (name === current) { cancel(true); return; }
-    done = true;
-    // Put the chip element back before persisting so onCommit's refresh /
-    // re-render has a stable mount point and no stray <select> survives.
-    if (select.parentNode) select.replaceWith(chipEl);
-    renameEditing = false;
-    try {
-      const ok = await onCommit(name);
-      if (!ok) setLastSnapshot(prevSnapshot);
-    } catch (err) {
-      toast((err && err.message) || String(err), true);
-      setLastSnapshot(prevSnapshot);
-    }
-  };
-  select.addEventListener('change', commit);
-  select.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') { ev.preventDefault(); cancel(true); }
-  });
-  select.addEventListener('blur', () => cancel());
-}
-
-// Legacy non-Groups menus still use the delegated action path below. Native
-// Groups menus are owned by GroupsInteractionProvider and remain keyed across
-// snapshot publishes. This helper also keeps
-// the cog's aria-expanded in sync and — when focus sat inside a menu
-// about to be display:none'd — hands focus back to that cog so it
-// doesn't fall to <body> and get lost.
-function closeAllActionMenus() {
-  $$('.action-menu.open:not([data-preact-menu])').forEach((menu) => {
-    const cog = menu.parentElement
-      && menu.parentElement.querySelector('.cog-btn');
-    const focusInside = menu.contains(document.activeElement);
-    menu.classList.remove('open');
-    if (cog) {
-      cog.setAttribute('aria-expanded', 'false');
-      if (focusInside) cog.focus();
-    }
-  });
-}
-
-// bindRowActions delegates clicks on row-action buttons to the
-// appropriate /api/groups/... call. After a successful mutation we
-// re-fetch the snapshot so the badge / button state updates.
+// One stateless document-root integration boundary for data-act producers that
+// cross a daemon, terminal, dialog, mailbox, download/clipboard, or sibling
+// feature boundary. Component-local menus, drafts, selection and presentation
+// state stay with their Preact owners. The installer is idempotent and returns
+// the exact listener cleanup registered by dashboard bootstrap.
+let rowActionsCleanup = null;
 function bindRowActions() {
-  document.addEventListener('click', async (e) => {
+  if (rowActionsCleanup) return rowActionsCleanup;
+  const onClick = async (e) => {
     const btn = e.target.closest('[data-act]');
     const act = btn ? btn.getAttribute('data-act') : null;
-    // ⚙ options-menu dismissal. The cog toggles its own menu (the
-    // row-menu / group-menu cases below) — leave open menus alone for
-    // it. Otherwise: a click on a menu ITEM closes the menu it came
-    // from, then falls through to dispatch the item (btn stays valid —
-    // only the .open class is dropped); a click anywhere OUTSIDE every
-    // menu closes them too (click-away). A click on a menu's own
-    // padding — inside a menu but not on an item — leaves it open.
-    const onCog = act === 'filter-bar-menu';
-    const inMenu = !!e.target.closest('.action-menu');
-    // Menus self-dismiss on any click that lands on a button inside
-    // them. data-act items are caught by the `btn` check below, but
-    // the filter-bar-cog's menu items dispatch via their id-bound
-    // listeners and so have no data-act — `inMenuButton` covers
-    // them too.
-    const inMenuButton = inMenu && !!e.target.closest('.action-menu button');
-    if (!onCog && (btn || inMenuButton || !inMenu)) closeAllActionMenus();
     if (!btn) return;
     // Buttons may live inside <summary>, where the default click
     // action is to toggle the details. Stop that.
@@ -230,42 +85,6 @@ function bindRowActions() {
     try {
       let ok = false;
       switch (act) {
-        case 'cycle-group-offline': {
-          // Pure client-side view state — cycle the per-group
-          // offline override inherit → show → hide and re-render.
-          // No daemon round-trip.
-          const okey = 'tclaude.dash.group.offline.' + group;
-          const cur = groupOfflineOverride(group);
-          const next = cur === 'inherit' ? 'show' : cur === 'show' ? 'hide' : 'inherit';
-          if (next === 'inherit') dashPrefs.removeItem(okey);
-          else dashPrefs.setItem(okey, next);
-          renderGroupsTab();
-          return;
-        }
-        case 'toggle-quick-pin': {
-          // Pure client-side view state — pin/unpin this group's quick
-          // options so the body.group-quick-fold accordion skips it. Stored
-          // in dashPrefs (server-side, per browser) like the offline override
-          // above. No daemon round-trip; re-render shows the new state.
-          const pkey = 'tclaude.dash.quickpin.' + group;
-          if (dashPrefs.getItem(pkey) === '1') dashPrefs.removeItem(pkey);
-          else dashPrefs.setItem(pkey, '1');
-          renderGroupsTab();
-          return;
-        }
-        case 'toggle-force-fold': {
-          // Pure client-side view state — fold away / reveal this deployed
-          // force's info card. renderForceBlock reads the same dashPref and
-          // renders nothing while folded; the 🎯 toggle in the action row is
-          // the way back. Stored in dashPrefs (server-side, per browser) like
-          // the quick-pin toggle above; default open, so a stored '1' = folded.
-          // No daemon round-trip; re-render shows the new state.
-          const fkey = 'tclaude.dash.forcefold.' + group;
-          if (dashPrefs.getItem(fkey) === '1') dashPrefs.removeItem(fkey);
-          else dashPrefs.setItem(fkey, '1');
-          renderGroupsTab();
-          return;
-        }
         case 'advance-phase': {
           // Advance the group's advisory process to the NEXT phase (JOH-242).
           // A deliberate act that records a transition and nudges the entering
@@ -813,21 +632,21 @@ function bindRowActions() {
           // is also agentd's fallback after a group's own profile. The setter
           // awaits the shared validated API before updating the UI cache.
           const current = btn.getAttribute('data-profile') || '';
-          await openProfilePicker(btn, current, async (name) => {
+          await openToolbarProfilePicker(btn, current, async (name) => {
             const canonical = await setDashDefaultProfile(name);
             toast(canonical ? `dashboard default profile → ${canonical}` : 'dashboard default profile cleared');
             renderDashDefaultProfile();
             return true;
           });
-          return; // openProfilePicker owns the chip lifecycle + re-render.
+          return; // the toolbar picker owns the chip lifecycle + re-render.
         }
         case 'set-dash-sandbox-profile': {
           // The dashboard-level 🛡 chip: pick the global sandbox profile from
           // the sandbox registry, then repaint the snapshot-backed chip and
           // recompute the spawn dialog's composed policy preview.
           const current = btn.getAttribute('data-sandbox-profile') || '';
-          await openProfilePicker(btn, current, async (name) => {
-            // openProfilePicker restores the stable chip before persistence.
+          await openToolbarProfilePicker(btn, current, async (name) => {
+            // The picker restores the stable chip before persistence.
             // Keep the native button disabled until the mutation and repaint
             // settle so rapid picks cannot race and finish out of order.
             if (btn.dataset.sandboxProfilePending === 'true') return false;
@@ -858,7 +677,7 @@ function bindRowActions() {
             newLabel: '＋ new sandbox profile…',
             openNewEditor: (onSaved) => openSandboxProfileEditor(null, { onCreate: onSaved }),
           });
-          return; // openProfilePicker owns the chip lifecycle + re-render.
+          return; // the toolbar picker owns the chip lifecycle + re-render.
         }
         case 'export-group': {
           // Export is a file download, not a mutation. Trigger it via
@@ -1186,34 +1005,6 @@ function bindRowActions() {
           refresh();
           return;
         }
-        case 'filter-bar-menu': {
-          // The ⚙ cog: toggle this row's / group's / filter-bar's
-          // options menu. The menu is the cog's sibling inside the
-          // surrounding .row-actions / .group-actions / .filter-bar-cog;
-          // for a group cog the e.preventDefault() above already stops
-          // the click from toggling the <details>.
-          // closeAllActionMenus first so opening one always closes any
-          // other. Keyed Preact ownership keeps it open across a snapshot
-          // publish.
-          const menu = btn.parentElement
-            && btn.parentElement.querySelector('.action-menu');
-          const willOpen = !!menu && !menu.classList.contains('open');
-          closeAllActionMenus();
-          if (willOpen) {
-            menu.classList.remove('opens-up');
-            menu.classList.add('open');
-            btn.setAttribute('aria-expanded', 'true');
-            // Flip the menu above the cog when its default downward
-            // position would run off the viewport bottom — but only
-            // when it actually fits above.
-            const mr = menu.getBoundingClientRect();
-            if (mr.bottom > window.innerHeight
-                && mr.height < btn.getBoundingClientRect().top) {
-              menu.classList.add('opens-up');
-            }
-          }
-          return;
-        }
         default:
           return;
       }
@@ -1224,17 +1015,8 @@ function bindRowActions() {
     } catch (err) {
       toast(`Request failed: ${err && err.message || err}`, true);
     }
-  });
-
-  // Escape closes any open ⚙ options menu — parity with the modal /
-  // inline-edit Escape handling. closeAllActionMenus restores focus to
-  // the owning cog when focus sat inside the menu.
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape') return;
-    if (!document.querySelector('.action-menu.open:not([data-preact-menu])')) return;
-    e.preventDefault();
-    closeAllActionMenus();
-  });
+  };
+  document.addEventListener('click', onClick);
 
   // Enter/Space activation for the chip-style controls (TCL-330): the
   // quick-option chips are focusable spans with role="button" (native
@@ -1244,7 +1026,7 @@ function bindRowActions() {
   // scrolling the page and Enter from toggling the enclosing <details>;
   // the synthesized click funnels through the delegated click dispatcher
   // above, so pointer and keyboard share one path.
-  document.addEventListener('keydown', (e) => {
+  const onChipKeyDown = (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     // Match native-button semantics: no auto-repeat re-activation while a
     // key is held, and no activation under Ctrl/Alt/Meta chords.
@@ -1253,7 +1035,15 @@ function bindRowActions() {
     if (!chip) return;
     e.preventDefault();
     chip.click();
-  });
+  };
+  document.addEventListener('keydown', onChipKeyDown);
+  const cleanup = () => {
+    document.removeEventListener('click', onClick);
+    document.removeEventListener('keydown', onChipKeyDown);
+    if (rowActionsCleanup === cleanup) rowActionsCleanup = null;
+  };
+  rowActionsCleanup = cleanup;
+  return cleanup;
 }
 
-export { bindRowActions, renameEditing };
+export { bindRowActions };
