@@ -96,3 +96,43 @@ func ListAgentTaskRefs() (map[string]AgentTaskRef, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListAgentTaskRefsByAgentIDs batch-loads task references for the requested
+// stable actors, keyed by agent_id. It is one SELECT for up to batchChunkSize
+// actors (not one query per actor), and only splits larger sets to stay below
+// SQLite's bound-variable limit. The dashboard passes its deduplicated visible
+// actor set so the 2-second snapshot never scans task links belonging to
+// invisible or retired agents. An empty set returns without opening SQLite.
+func ListAgentTaskRefsByAgentIDs(agentIDs []string) (map[string]AgentTaskRef, error) {
+	out := make(map[string]AgentTaskRef, len(agentIDs))
+	if len(agentIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(agentIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT agent_id, task_ref_url, task_ref_label
+			FROM agents WHERE task_ref_url <> '' AND agent_id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var ref AgentTaskRef
+			if err := rows.Scan(&id, &ref.URL, &ref.Label); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = ref
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
