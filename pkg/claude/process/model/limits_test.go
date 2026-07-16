@@ -110,6 +110,18 @@ func BenchmarkParseAliasedEdgeBoundaryPlusOne(b *testing.B) {
 	}
 }
 
+func BenchmarkSchemaDiagnosticsAliasedNodeSaturation(b *testing.B) {
+	source := schemaAliasedNodeTemplateYAML(MaxNormalizedNodes, 4, 1)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(source)))
+	for range b.N {
+		parsed, err := Parse(source)
+		if err != nil || !parsed.Diagnostics.HasNormalizedGraphBudgetError() {
+			b.Fatalf("unexpected schema result: parsed=%#v err=%v", parsed, err)
+		}
+	}
+}
+
 func TestParseRejectsCompactAliasedNextMapsBeforeDecodeAndHash(t *testing.T) {
 	t.Run("exact edge boundary", func(t *testing.T) {
 		source := aliasedNextTemplateYAML(63, 65, false) // 63*65 + start = 4,096.
@@ -226,6 +238,44 @@ nodes:
 			assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeGraphAliasLimit)
 		})
 	}
+}
+
+func TestSchemaAliasTraversalAndDiagnosticsAreBounded(t *testing.T) {
+	t.Run("large valid shared subtree is memoized", func(t *testing.T) {
+		parsed, err := Parse(schemaAliasedNodeTemplateYAML(MaxNormalizedNodes, 4, 0))
+		require.NoError(t, err)
+		require.NotNil(t, parsed.Template)
+		assert.Len(t, parsed.Template.Nodes, MaxNormalizedNodes)
+		assert.NotContains(t, diagnosticCodes(parsed.Diagnostics), DiagnosticCodeSchemaBudget)
+	})
+
+	t.Run("unknown findings saturate with deterministic occurrence prefix", func(t *testing.T) {
+		source := schemaAliasedNodeTemplateYAML(MaxNormalizedNodes, 4, 1)
+		parsed, err := Parse(source)
+		require.NoError(t, err)
+		assert.Nil(t, parsed.Template, "schema resource rejection must stop before Decode")
+		require.NotEmpty(t, parsed.Diagnostics)
+		assert.LessOrEqual(t, len(parsed.Diagnostics), MaxTemplateSchemaDiagnostics+1)
+		assert.Equal(t, "nodes.n000.checks[0].unknown-000", parsed.Diagnostics[0].Path)
+		assert.Equal(t, DiagnosticCodeSchemaBudget, parsed.Diagnostics[len(parsed.Diagnostics)-1].Code)
+		assert.Less(t, testing.AllocsPerRun(1, func() {
+			result, parseErr := Parse(source)
+			if parseErr != nil || result.Template != nil {
+				panic("unexpected schema saturation result")
+			}
+		}), float64(500_000))
+	})
+
+	t.Run("huge unknown key cannot amplify path or message", func(t *testing.T) {
+		hugeKey := strings.Repeat("k", MaxTemplateSchemaDiagnosticBytes/2+1)
+		root := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Value: hugeKey}, {Kind: yaml.ScalarNode, Value: "value"},
+		}}
+		diagnostics := unknownFieldDiagnostics(root)
+		require.Len(t, diagnostics, 1)
+		assert.Equal(t, DiagnosticCodeSchemaBudget, diagnostics[0].Code)
+		assert.Less(t, len(diagnostics[0].Message)+len(diagnostics[0].Path), 512)
+	})
 }
 
 func TestRawGraphAliasInspectionDefersMalformedAndCyclicValuesToDecode(t *testing.T) {
@@ -361,6 +411,26 @@ func aliasedNextTemplateYAML(nodeCount, outcomes int, invalidBranch bool) []byte
 			}
 		} else {
 			source.WriteString("*shared\n")
+		}
+	}
+	return []byte(source.String())
+}
+
+func schemaAliasedNodeTemplateYAML(nodeCount, checks, unknownFields int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: schema-aliases\nstart: n000\nnodes:\n")
+	for nodeIndex := range nodeCount {
+		fmt.Fprintf(&source, "  n%03d: ", nodeIndex)
+		if nodeIndex != 0 {
+			source.WriteString("*shared\n")
+			continue
+		}
+		source.WriteString("&shared\n    type: task\n    performer:\n      kind: agent\n      prompt: work\n    checks:\n")
+		for check := range checks {
+			fmt.Fprintf(&source, "      - id: check-%03d\n        performer:\n          kind: program\n          run: echo\n", check)
+			for unknown := range unknownFields {
+				fmt.Fprintf(&source, "        unknown-%03d: value\n", unknown)
+			}
 		}
 	}
 	return []byte(source.String())

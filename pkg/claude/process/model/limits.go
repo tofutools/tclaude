@@ -19,9 +19,16 @@ const (
 	// staying aligned with the 4,096-entry routing/viewer operational scale.
 	MaxNormalizedEdges = 2 * MaxNormalizedNodes
 
+	// Schema findings are bounded at the same aggregate graph-work scale. The
+	// byte ceiling matches the public process-template source/request cap so a
+	// diagnostic response cannot amplify one accepted request beyond that size.
+	MaxTemplateSchemaDiagnostics     = MaxNormalizedNodes + MaxNormalizedEdges
+	MaxTemplateSchemaDiagnosticBytes = 4 << 20
+
 	DiagnosticCodeNormalizedNodeLimit = "normalized_node_limit"
 	DiagnosticCodeNormalizedEdgeLimit = "normalized_edge_limit"
 	DiagnosticCodeGraphAliasLimit     = "normalized_graph_alias_limit"
+	DiagnosticCodeSchemaBudget        = "template_schema_budget"
 )
 
 // NormalizedGraphCardinality is the bounded count used before and after edge
@@ -44,11 +51,20 @@ func (d Diagnostics) HasNormalizedGraphBudgetError() bool {
 		switch diagnostic.Code {
 		case DiagnosticCodeNormalizedNodeLimit,
 			DiagnosticCodeNormalizedEdgeLimit,
-			DiagnosticCodeGraphAliasLimit:
+			DiagnosticCodeGraphAliasLimit,
+			DiagnosticCodeSchemaBudget:
 			return true
 		}
 	}
 	return false
+}
+
+func schemaBudgetDiagnostic() Diagnostic {
+	return diagError(
+		DiagnosticCodeSchemaBudget,
+		"",
+		fmt.Sprintf("process template schema diagnostics exceed the bounded authoring budget (%d findings or %d bytes)", MaxTemplateSchemaDiagnostics, MaxTemplateSchemaDiagnosticBytes),
+	)
 }
 
 // NormalizedGraphBudgetError prevents direct canonicalization/hash callers

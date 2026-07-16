@@ -63,7 +63,11 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	// Schema traversal resolves aliases recursively. Keep it behind the
 	// saturating graph walk so repeated references cannot amplify diagnostic
 	// work before the normalized-cardinality allocation guard has run.
-	diagnostics = append(diagnostics, unknownFieldDiagnostics(&root)...)
+	schemaDiagnostics := unknownFieldDiagnostics(&root)
+	diagnostics = append(diagnostics, schemaDiagnostics...)
+	if schemaDiagnostics.HasNormalizedGraphBudgetError() {
+		return &ParsedTemplate{Diagnostics: diagnostics, SourceHash: hashBytes(data)}, nil
+	}
 
 	var tmpl Template
 	if err := root.Decode(&tmpl); err != nil {
@@ -298,6 +302,12 @@ func structuralMappingKey(key *yaml.Node, maximumAliasSteps int) (string, rawGra
 }
 
 func structuralNode(node *yaml.Node, maximumSteps int) (*yaml.Node, rawGraphCardinalityStatus) {
+	if node == nil {
+		return nil, rawGraphUncountable
+	}
+	if node.Kind != yaml.AliasNode {
+		return node, rawGraphCounted
+	}
 	seen := make(map[*yaml.Node]struct{})
 	for steps := 0; node != nil && node.Kind == yaml.AliasNode; steps++ {
 		if steps >= maximumSteps {

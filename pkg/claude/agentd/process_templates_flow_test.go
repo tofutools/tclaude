@@ -491,6 +491,19 @@ func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T
 	assert.NotContains(t, list.Body.String(), `"id":"raw"`)
 }
 
+func TestProcessTemplateRawSchemaAliasBudgetIsStableAndRejectsSave(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	source := processSchemaAliasSource(model.MaxNormalizedNodes)
+	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
+	require.Equal(t, http.StatusOK, validate.Code, validate.Body.String())
+	assert.Contains(t, validate.Body.String(), `"code":"template_schema_budget"`)
+
+	save := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/schema-budget", map[string]any{"source": string(source)})
+	require.Equal(t, http.StatusUnprocessableEntity, save.Code, save.Body.String())
+	assert.Contains(t, save.Body.String(), `"code":"process_template_invalid"`)
+	assert.Contains(t, save.Body.String(), `"code":"template_schema_budget"`)
+}
+
 func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 	f, _ := processEngineFlow(t)
 	tmpl := processRESTTemplate("validate-me", "invalid edge", 10)
@@ -753,6 +766,23 @@ func processAliasedNextSource(nodeCount, outcomes int) []byte {
 			}
 		} else {
 			source.WriteString("*shared\n")
+		}
+	}
+	return []byte(source.String())
+}
+
+func processSchemaAliasSource(nodeCount int) []byte {
+	var source strings.Builder
+	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: schema-budget\nstart: n000\nnodes:\n")
+	for nodeIndex := range nodeCount {
+		fmt.Fprintf(&source, "  n%03d: ", nodeIndex)
+		if nodeIndex > 0 {
+			source.WriteString("*shared\n")
+			continue
+		}
+		source.WriteString("&shared\n    type: task\n    performer: {kind: agent, prompt: work}\n    checks:\n")
+		for check := range 4 {
+			fmt.Fprintf(&source, "      - id: check-%d\n        performer: {kind: program, run: echo}\n        unknown: value\n", check)
 		}
 	}
 	return []byte(source.String())

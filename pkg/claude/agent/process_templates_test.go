@@ -110,6 +110,17 @@ func TestRunProcessTemplatesSaveRejectsCompactAliasCardinalityLocally(t *testing
 	assert.Contains(t, stderr.String(), "ERROR normalized_edge_limit [template]")
 }
 
+func TestRenderLocalGraphCardinalityDiagnosticsIncludesSchemaBudget(t *testing.T) {
+	var stderr bytes.Buffer
+	found := renderLocalGraphCardinalityDiagnostics(model.Diagnostics{{
+		Severity: model.SeverityError,
+		Code:     model.DiagnosticCodeSchemaBudget,
+		Message:  "process template schema diagnostics exceed the bounded authoring budget",
+	}}, &stderr)
+	assert.True(t, found)
+	assert.Contains(t, stderr.String(), "ERROR template_schema_budget [template]")
+}
+
 func compactAliasProcessTemplate(nodeCount, outcomes int) string {
 	var source strings.Builder
 	source.WriteString("apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: aliases\nstart: n000\nnodes:\n")
