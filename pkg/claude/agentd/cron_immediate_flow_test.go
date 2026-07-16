@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -104,8 +105,15 @@ func TestCronCreate_RunImmediatelyOnceThenKeepsCadence(t *testing.T) {
 		})
 		assert.True(t, job.RunImmediately)
 		assert.Equal(t, 1, msgRowCount(t, target), "create delivers exactly once")
-		agentd.RunCronTickForTest(job.LastRunAt.Add(time.Hour))
-		assert.Equal(t, 1, msgRowCount(t, target), "expression cadence is preserved")
+		firstDue, err := cronexpr.Next(job.CronExpr, job.LastRunAt)
+		require.NoError(t, err)
+		require.False(t, firstDue.IsZero())
+		agentd.RunCronTickForTest(firstDue.Add(-time.Nanosecond))
+		assert.Equal(t, 1, msgRowCount(t, target), "expression does not fire before its first due time")
+		agentd.RunCronTickForTest(firstDue)
+		assert.Equal(t, 2, msgRowCount(t, target), "expression fires once at its first due time")
+		agentd.RunCronTickForTest(firstDue.Add(time.Second))
+		assert.Equal(t, 2, msgRowCount(t, target), "adjacent ticks do not replay the first due time")
 	})
 }
 
