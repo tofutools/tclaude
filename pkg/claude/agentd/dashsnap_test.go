@@ -1183,6 +1183,10 @@ func baseStates() []dashsnap.State {
 			JS:      processEditorStateJS(`window.__browserEd=ed; ed.setSelection(null);`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "click", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
+				{Kind: "eval", JS: `return new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); }).then(function(){
+  var selection=window.__browserEd.snapshot().selection;
+  if(selection?.type!=='node'||selection.id!=='begin') throw new Error('trusted node click did not settle before modifier gesture');
+});`},
 				{Kind: "key-down", Key: "Control"},
 				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
 				{Kind: "key-up", Key: "Control"},
@@ -1216,9 +1220,10 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "process-editor-browser-drag-commit",
 			Title:   "Process editor — atomic drag commit",
-			Caption: "Real Chrome drag release commits the selected nodes once, clears transient routing, and consumes exactly one undo slot.",
-			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layoutSnapshot().nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
-  window.__dragBefore={rev:ed.model.rev,undo:ed.model.undoStack.length};`),
+			Caption: "Real Chrome drag release commits the selected nodes once, renders node/connector geometry from the committed adapter layout, and consumes exactly one undo slot.",
+			JS: processEditorStateJS(`window.__browserEd=ed; var layout=ed.graph.layoutSnapshot(),items=layout.nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
+  var begin=layout.nodes.find(function(node){return node.id==='begin';}),ship=layout.nodes.find(function(node){return node.id==='ship';});
+  window.__dragBefore={path:document.querySelector('.process-edge-path').getAttribute('d'),begin:{x:begin.x,y:begin.y},ship:{x:ship.x,y:ship.y},rev:ed.model.rev,undo:ed.model.undoStack.length};`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
 				{Kind: "move-by", DX: 100, DY: 55, Steps: 5},
@@ -1226,7 +1231,12 @@ func baseStates() []dashsnap.State {
 				{Kind: "mouse-up"},
 				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
   if(ed.model.undoStack.length!==b.undo+1) throw new Error('drag release was not one atomic undo step');
-  if(ed.graph.interactionSnapshot().active) throw new Error('drag interaction survived release');`},
+  if(ed.graph.interactionSnapshot().active) throw new Error('drag interaction survived release');
+  var layout=ed.graph.layoutSnapshot(),begin=layout.nodes.find(function(node){return node.id==='begin';}),ship=layout.nodes.find(function(node){return node.id==='ship';});
+  if((begin.x===b.begin.x&&begin.y===b.begin.y)||(ship.x===b.ship.x&&ship.y===b.ship.y)) throw new Error('drag release did not commit every selected node');
+  if(document.querySelector('.process-node[data-node-id="begin"]').getAttribute('transform')!=='translate('+begin.x+' '+begin.y+')') throw new Error('begin node DOM diverged from committed adapter layout');
+  if(document.querySelector('.process-node[data-node-id="ship"]').getAttribute('transform')!=='translate('+ship.x+' '+ship.y+')') throw new Error('ship node DOM diverged from committed adapter layout');
+  if(document.querySelector('.process-edge-path').getAttribute('d')===b.path) throw new Error('connector did not reroute from the committed layout');`},
 			},
 			SettleMS: 300,
 		},
@@ -1237,13 +1247,16 @@ func baseStates() []dashsnap.State {
 			JS: processEditorStateJS(`window.__browserEd=ed; window.__dragBefore={
     path:document.querySelector('.process-edge-path').getAttribute('d'),
     transform:document.querySelector('.process-node[data-node-id="begin"]').getAttribute('transform'),
-    rev:ed.model.rev,undo:ed.model.undoStack.length};`),
+    rev:ed.model.rev,undo:ed.model.undoStack.length};
+  window.__dragPointerID=null;
+  document.querySelector('.process-graph-svg').addEventListener('pointerdown',function(event){window.__dragPointerID=event.pointerId;},{once:true,capture:true});`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
 				{Kind: "move-by", DX: 90, DY: 50, Steps: 5},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
   if(!ed.graph.interactionSnapshot().active) throw new Error('drag interaction missing before cancel');
-  window.dispatchEvent(new Event('blur'));`},
+  if(window.__dragPointerID==null) throw new Error('drag pointer id was not observed');
+  document.querySelector('.process-graph-svg').dispatchEvent(new PointerEvent('pointercancel',{pointerId:window.__dragPointerID,bubbles:true}));`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
   if(ed.graph.interactionSnapshot().active) throw new Error('drag interaction survived cancel');
   if(document.querySelector('.process-edge-path').getAttribute('d')!==b.path) throw new Error('cancel did not restore connector');
