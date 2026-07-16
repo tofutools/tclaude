@@ -49,6 +49,32 @@ func TestAgentGroupBatchLoaders(t *testing.T) {
 	assert.Empty(t, noOwners)
 }
 
+func TestAgentsByConvCarriesActorLifecycleState(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := AllocateAgent("old-conv", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, LinkConvToAgent("current-conv", agentID, ConvRoleHead, "reincarnate"))
+	moved, err := SetAgentCurrentConv(agentID, "old-conv", "current-conv")
+	require.NoError(t, err)
+	require.True(t, moved)
+
+	rows, err := AgentsByConv([]string{"old-conv", "current-conv", "plain-conv"})
+	require.NoError(t, err)
+	assert.Equal(t, "current-conv", rows["old-conv"].CurrentConvID,
+		"a predecessor resolves to the actor's current generation")
+	assert.False(t, rows["old-conv"].Retired)
+	assert.Equal(t, "current-conv", rows["current-conv"].CurrentConvID)
+	assert.NotContains(t, rows, "plain-conv")
+
+	ok, err := RetireAgentByID(agentID, "human", "done")
+	require.NoError(t, err)
+	require.True(t, ok)
+	rows, err = AgentsByConv([]string{"old-conv", "current-conv"})
+	require.NoError(t, err)
+	assert.True(t, rows["old-conv"].Retired)
+	assert.True(t, rows["current-conv"].Retired)
+}
+
 // TestCanonicalAgeTimestamp_PreservesPrecision pins the wire representation,
 // which is deliberately ordinary UTC RFC3339Nano. Age consumers compare parsed
 // instants rather than relying on the strings to have a sortable fixed width.

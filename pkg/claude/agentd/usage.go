@@ -138,7 +138,8 @@ func refreshUsage() {
 // API-billing account, or a subscription account idle long enough that
 // both windows have reset).
 func collectUsageSnapshot(idleTimeout time.Duration) dashboardUsage {
-	out := dashboardUsage{TotalCostUSD: monthToDateCost(), TodayCostUSD: todayCost(), Codex: collectCodexUsageSnapshot()}
+	totalCost, todayCost := dashboardCostTotals(time.Now())
+	out := dashboardUsage{TotalCostUSD: totalCost, TodayCostUSD: todayCost, Codex: collectCodexUsageSnapshot()}
 	if idleTimeout <= 0 {
 		idleTimeout = usageStaleAfter
 	}
@@ -219,42 +220,27 @@ func usageWindowOrZero(w *usageWindow) *usageWindow {
 	return &usageWindow{}
 }
 
-// monthToDateCost sums the recorded API cost since the start of the
-// current calendar month (local time). The aggregation runs DB-side
-// (SumCostSinceDay) because this sits on the 2s snapshot tick — but it
-// is the closed form of the same delta walk the Costs tab performs, so
-// the top-bar headline always matches the tab's "this month" total —
-// TestCostDeltasFromRows and TestSumCostSinceDay pin both sides to one
-// shared fixture. A read
-// failure degrades to 0 — the dashboard simply shows no cost token —
-// since this is a display-only figure on the same snapshot path that
-// already tolerates missing subscription data.
-func monthToDateCost() float64 {
-	now := time.Now()
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-	total, err := db.SumCostSinceDay(monthStart.Format(costDayKey))
+// dashboardCostTotals computes month-to-date and today spend from one cost
+// history read and one delta walk. The previous pair of helpers each called
+// db.SumCostSinceDay, duplicating the same full-table ordered scan every two
+// seconds. A read failure degrades both display-only figures to zero.
+func dashboardCostTotals(now time.Time) (month, today float64) {
+	rows, err := db.AllCostDailyRows()
 	if err != nil {
-		slog.Debug("usage snapshot: sum daily costs failed; omitting cost readout", "error", err)
-		return 0
+		slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", err)
+		return 0, 0
 	}
-	return total
-}
-
-// todayCost sums the API spend recorded so far on the current local
-// calendar day — the same DB-side windowed delta as monthToDateCost,
-// with the window opening at midnight today instead of the first of the
-// month. It is always ≤ monthToDateCost and equals the Costs tab's
-// today bar. Shares monthToDateCost's rationale: it rides the 2s
-// snapshot tick, so the aggregation runs DB-side, and a read failure
-// degrades to 0 (the top bar simply shows no "(today)" figure) since
-// this is display-only.
-func todayCost() float64 {
-	total, err := db.SumCostSinceDay(time.Now().Format(costDayKey))
-	if err != nil {
-		slog.Debug("usage snapshot: sum today's costs failed; omitting today readout", "error", err)
-		return 0
+	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
+	todayKey := now.Format(costDayKey)
+	for _, delta := range db.CostDeltas(rows, false) {
+		if delta.Day >= monthKey {
+			month += delta.USD
+		}
+		if delta.Day >= todayKey {
+			today += delta.USD
+		}
 	}
-	return total
+	return month, today
 }
 
 // usageWindowFor converts a cached bucket into the wire shape, or nil

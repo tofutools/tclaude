@@ -300,8 +300,10 @@ func ListAgentWorkspacesByConv(convIDs []string) (map[string]AgentWorkspace, err
 // pending name as a title fallback, and created_at as the member Age source)
 // without a per-conv AgentIDForConv + GetAgent pair.
 type ConvAgent struct {
-	AgentID     string
-	PendingName string
+	AgentID       string
+	CurrentConvID string
+	PendingName   string
+	Retired       bool
 	// CreatedAt is the actor's immutable birth timestamp (agents.created_at),
 	// stamped at spawn/enrollment BEFORE the harness writes its first .jsonl
 	// event. It is the dashboard member Age source: available the instant the
@@ -408,9 +410,11 @@ func PendingNamesByAgent(agentIDs []string) (map[string]string, error) {
 	return out, nil
 }
 
-// AgentsByConv bulk-resolves each conv-id to its owning actor (agent_id +
-// pending_name) via the agent_conversations JOIN, keyed by conv-id. A conv that
-// is not (yet) an agent has no entry — the same "" agent_id signal
+// AgentsByConv bulk-resolves each conv-id to its owning actor via the
+// agent_conversations JOIN, keyed by conv-id. CurrentConvID and Retired let
+// snapshot callers reject a retired actor or superseded generation without
+// separately loading the full retired roster and succession history. A conv
+// that is not (yet) an agent has no entry — the same "" agent_id signal
 // AgentIDForConv returns for a plain conversation.
 func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 	out := make(map[string]ConvAgent, len(convIDs))
@@ -423,7 +427,8 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 	}
 	for _, chunk := range chunkStrings(convIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
-		rows, err := d.Query(`SELECT ac.conv_id, a.agent_id, a.pending_name, a.created_at
+		rows, err := d.Query(`SELECT ac.conv_id, a.agent_id, a.current_conv_id,
+				a.pending_name, a.created_at, a.retired_at
 			FROM agent_conversations ac
 			JOIN agents a ON a.agent_id = ac.agent_id
 			WHERE ac.conv_id `+clause, args...)
@@ -433,11 +438,13 @@ func AgentsByConv(convIDs []string) (map[string]ConvAgent, error) {
 		for rows.Next() {
 			var convID string
 			var ca ConvAgent
-			var createdAt string
-			if err := rows.Scan(&convID, &ca.AgentID, &ca.PendingName, &createdAt); err != nil {
+			var createdAt, retiredAt string
+			if err := rows.Scan(&convID, &ca.AgentID, &ca.CurrentConvID,
+				&ca.PendingName, &createdAt, &retiredAt); err != nil {
 				_ = rows.Close()
 				return nil, err
 			}
+			ca.Retired = retiredAt != ""
 			// Canonicalise to UTC RFC3339Nano (keeping full sub-second precision)
 			// so the value agrees byte-for-byte with the CLI path
 			// (agent.MemberCreated). Age consumers compare parsed instants.

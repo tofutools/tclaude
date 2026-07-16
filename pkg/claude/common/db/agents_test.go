@@ -375,6 +375,11 @@ func TestRetireReinstateAndRoster(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{gone}, agentIDs(retired))
 
+	activeConvs, retiredTotal, err := ListAgentRosterState()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"live-conv"}, activeConvs)
+	assert.Equal(t, 1, retiredTotal)
+
 	a, _ := GetAgent(gone)
 	assert.False(t, a.Active())
 	assert.Equal(t, "human", a.RetiredBy)
@@ -386,6 +391,10 @@ func TestRetireReinstateAndRoster(t *testing.T) {
 	assert.True(t, ok)
 	a, _ = GetAgent(gone)
 	assert.True(t, a.Active())
+	activeConvs, retiredTotal, err = ListAgentRosterState()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"live-conv", "gone-conv"}, activeConvs)
+	assert.Zero(t, retiredTotal)
 }
 
 // TestSetAgentPendingName: the actor-level display-name fallback.
