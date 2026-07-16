@@ -1817,10 +1817,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		allOverrides         map[string]map[string]string
 		cfg                  *config.Config
 		notifyPrefs          map[string]string
-		retiredAgents        []*db.Agent
-		successions          []*db.AgentConvSuccession
-		activeAgents         []*db.Agent
-		activeAgentsErr      error
+		activeConvIDs        []string
+		retiredTotal         int
+		agentRosterErr       error
 		sudoGrants           []*db.SudoGrant
 	)
 	// The snapshot preload is a set of independent SQLite WAL reads plus one
@@ -1831,15 +1830,26 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"groups", func() { groups, _ = db.ListAgentGroups() }},
 		snapshotNamedLoad{"sandbox_profiles", func() { sandboxProfiles, _ = db.ListSandboxProfiles() }},
 		snapshotNamedLoad{"global_sandbox", func() { globalSandboxProfile, _ = db.GetGlobalSandboxProfile() }},
-		snapshotNamedLoad{"permissions", func() { allGrants, _ = db.ListAllAgentPermissions() }},
 		snapshotNamedLoad{"permission_overrides", func() { allOverrides, _ = db.ListAllAgentPermissionOverrides() }},
 		snapshotNamedLoad{"config", func() { cfg, _ = config.Load() }},
 		snapshotNamedLoad{"notify_prefs", func() { notifyPrefs, _ = db.ListConvNotifyPrefs() }},
-		snapshotNamedLoad{"retired_agents", func() { retiredAgents, _ = db.ListRetiredAgents() }},
-		snapshotNamedLoad{"successions", func() { successions, _ = db.ListAgentConvSuccessions() }},
-		snapshotNamedLoad{"active_agents", func() { activeAgents, activeAgentsErr = db.ListActiveAgents() }},
+		snapshotNamedLoad{"agent_roster", func() {
+			activeConvIDs, retiredTotal, agentRosterErr = db.ListAgentRosterState()
+		}},
 		snapshotNamedLoad{"sudo_grants", func() { sudoGrants, _ = db.ListAllActiveSudoGrants() }},
 	)...)
+	// The all-overrides read contains both grant and deny effects. Derive the
+	// grant-only compatibility view in memory instead of scanning and sorting
+	// the same permission table a second time on every poll.
+	allGrants = map[string][]string{}
+	for convID, effects := range allOverrides {
+		for slug, effect := range effects {
+			if effect == db.PermEffectGrant {
+				allGrants[convID] = append(allGrants[convID], slug)
+			}
+		}
+		sort.Strings(allGrants[convID])
+	}
 	defaults := []string{}
 	if cfg != nil && cfg.Agent != nil {
 		defaults = append(defaults, cfg.Agent.DefaultPermissions...)
@@ -1900,29 +1910,6 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		return !inMutedGroup[convID]
 	}
 
-	// Retired / superseded conv sets, loaded UP FRONT (TCL-369) so addAgent can
-	// skip a retired/superseded conv before paying for its ~13-query row
-	// resolution, rather than building it and discarding it in the output loop.
-	// Both also remain the belt-and-braces roster filter further down.
-	//
-	// Retired ACTORS are demoted — they must never reach out.Agents. The
-	// actor-level roster is keyed on agents.retired_at, which only a human
-	// retire sets (a reincarnate / Claude Code /clear predecessor stays a
-	// generation of its active actor, so it is NOT here).
-	retiredSet := make(map[string]bool, len(retiredAgents))
-	for _, e := range retiredAgents {
-		retiredSet[e.CurrentConvID] = true
-	}
-	// Superseded conversations — the predecessors of a reincarnation chain —
-	// are NOT agents: their identity moved to the chain head. The actor-level
-	// roster already excludes them (a predecessor is never an active actor's
-	// current conv), so supersededSet is a redundant read-time belt-and-braces
-	// guard — symmetric with retiredSet.
-	supersededSet := map[string]bool{}
-	for _, s := range successions {
-		supersededSet[s.OldConvID] = true
-	}
-
 	// Every active ACTOR — the canonical roster (JOH-26 PR3b reads the
 	// agent-level roster, one row per live actor at its current conv). Unlike
 	// the old "online ungrouped session" probe, this includes OFFLINE agents: a
@@ -1961,8 +1948,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	for convID := range allOverrides {
 		addConv(convID)
 	}
-	for _, e := range activeAgents {
-		addConv(e.CurrentConvID)
+	for _, convID := range activeConvIDs {
+		addConv(convID)
 	}
 	for _, g := range sudoGrants {
 		addConv(g.ConvID)
@@ -2012,7 +1999,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		// TCL-369: a retired/superseded conv never becomes an agent row, so
 		// skip its resolution entirely instead of building it and dropping it
 		// in the output loop. Callers that use the return value nil-check it.
-		if retiredSet[convID] || supersededSet[convID] {
+		if rc.inactiveActor(convID) {
 			return nil
 		}
 		b := rc.viewFor(convID)
@@ -2062,7 +2049,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		ShowAgentHideButton:      cfg.ShowAgentHideButton(),
 		ShowGroupDescription:     cfg.ShowGroupDescription(),
 		ProcessesEnabled:         cfg.ProcessesEnabled(),
-		AgentRosterAuthoritative: activeAgentsErr == nil,
+		AgentRosterAuthoritative: agentRosterErr == nil,
 		Permissions: snapshotPermissionsView{
 			Defaults:  defaults,
 			Grants:    map[string][]string{},
@@ -2070,7 +2057,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		},
 		Slugs: append([]PermSlug{}, permissionRegistry...),
 	}
-	out.RetiredTotal = len(retiredAgents)
+	out.RetiredTotal = retiredTotal
 	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
 
 	// Remote-access runtime state for the Config tab's guidance (JOH-227): has
@@ -2232,11 +2219,11 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Register every active actor's current conv on the roster. The set was
-	// loaded up front (activeAgents) so its conv-ids could join the batch; here
+	// loaded up front (activeConvIDs) so its conv-ids could join the batch; here
 	// we just fold them into agentRows. addAgent skips a retired/superseded conv
 	// (TCL-369) — harmless here, its return value is unused.
-	for _, e := range activeAgents {
-		addAgent(e.CurrentConvID)
+	for _, convID := range activeConvIDs {
+		addAgent(convID)
 	}
 
 	// Bucket the active sudo grants (loaded up front) per conv-id so the
@@ -2292,12 +2279,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		// Defensive: a retired conv must never appear on the roster,
 		// even if a partially-applied retire left a stale group/grant
 		// row that the passes above picked up.
-		if retiredSet[a.ConvID] {
-			continue
-		}
-		// Same for a superseded reincarnation predecessor — it is a
-		// ghost of an agent that lives on under the chain head.
-		if supersededSet[a.ConvID] {
+		if rc.inactiveActor(a.ConvID) {
 			continue
 		}
 		// Effective = (defaults ∪ active-group grants ∪ grant-overrides)
@@ -2365,8 +2347,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// The retired / conversations / replaced lists are no longer embedded in
 	// the snapshot — the dashboard fetches them from their own paginated
 	// endpoints (GET /api/retired, /api/conversations, /api/replaced). The
-	// snapshot still loads the cheap retiredSet / supersededSet conv-id sets
-	// above to guard the roster.
+	// snapshot still guards the roster using actor state carried by the existing
+	// AgentsByConv row-cache batch above.
 	var (
 		pending          []dashboardPending
 		cron             []dashboardCronJob

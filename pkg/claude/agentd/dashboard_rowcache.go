@@ -135,6 +135,15 @@ func (rc *snapshotRowCache) agentID(convID string) string {
 	return rc.agents[convID].AgentID
 }
 
+// inactiveActor reports whether convID resolves to a retired actor or to a
+// superseded generation of an active actor. Both facts ride the existing
+// AgentsByConv batch, replacing snapshot-wide retired-roster and succession
+// history preloads.
+func (rc *snapshotRowCache) inactiveActor(convID string) bool {
+	a, ok := rc.agents[convID]
+	return ok && (a.Retired || a.CurrentConvID != convID)
+}
+
 // titleFor resolves a conv's display name from the batch (custom title >
 // pending name > summary > first prompt > UnknownTitle) with zero queries.
 func (rc *snapshotRowCache) titleFor(convID string) string {

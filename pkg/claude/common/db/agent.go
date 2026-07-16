@@ -329,9 +329,11 @@ func ListAllAgentPermissionOverrides() (map[string]map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The result is folded into maps, so row order has no observable meaning.
+	// Omitting ORDER BY avoids a temp sort over the whole permission table on
+	// the dashboard's 2-second snapshot path.
 	rows, err := db.Query(`SELECT ag.current_conv_id, p.slug, p.effect
-		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id
-		ORDER BY ag.current_conv_id, p.slug`)
+		FROM agent_permissions p JOIN agents ag ON ag.agent_id = p.agent_id`)
 	if err != nil {
 		return nil, err
 	}

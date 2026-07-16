@@ -739,6 +739,34 @@ func ListActiveAgents() ([]*Agent, error) { return listAgents(`retired_at = ''`)
 // candidates).
 func ListRetiredAgents() ([]*Agent, error) { return listAgents(`retired_at != ''`) }
 
+// ListAgentRosterState returns the active actors' current conversation ids and
+// the retired actor count in one lightweight scan. Snapshot callers need only
+// these two facts; loading and time-parsing every rich Agent row twice (active
+// and retired) adds avoidable work to the 2-second dashboard poll.
+func ListAgentRosterState() (activeConvIDs []string, retiredTotal int, err error) {
+	d, err := Open()
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := d.Query(`SELECT current_conv_id, retired_at FROM agents`)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var convID, retiredAt string
+		if err := rows.Scan(&convID, &retiredAt); err != nil {
+			return nil, 0, err
+		}
+		if retiredAt == "" {
+			activeConvIDs = append(activeConvIDs, convID)
+		} else {
+			retiredTotal++
+		}
+	}
+	return activeConvIDs, retiredTotal, rows.Err()
+}
+
 // ListAgentConvIDs returns every conversation generation known to the actor
 // layer — the full set of agent_conversations.conv_id across all actors (active,
 // retired, and superseded predecessors alike). Roster surfaces use it to exclude
