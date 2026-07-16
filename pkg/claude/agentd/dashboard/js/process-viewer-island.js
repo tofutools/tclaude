@@ -8,6 +8,7 @@ import {
 } from './process-viewer-core.js';
 
 const html = htm.bind(h);
+export const VIEWER_REFRESH_MS = 5000;
 
 function ViewerGraph({ graph, runID }) {
   const hostRef = useRef(null);
@@ -57,20 +58,36 @@ function EvidenceTimeline({ envelope }) {
   </section>`;
 }
 
-export function ProcessViewerBoundary({ spec, actions }) {
+export function ProcessViewerBoundary({
+  spec, actions,
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
+}) {
   const [request, setRequest] = useState({ phase: 'loading', envelope: null, error: '' });
   const [tabKey, setTabKey] = useState(VIEWER_DETAIL_TABS[0].key);
   const [offset, setOffset] = useState(0);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
   useEffect(() => {
-    const token = ++generation.current;
-    setRequest((current) => ({ phase: current.envelope ? 'refreshing' : 'loading', envelope: current.envelope, error: '' }));
-    actions.loadRunView(spec.id, offset, VIEWER_PAGE_LIMIT)
-      .then((envelope) => { if (generation.current === token) setRequest({ phase: 'ready', envelope, error: '' }); })
-      .catch((error) => { if (generation.current === token) setRequest((current) => ({ phase: 'error', envelope: current.envelope, error: error.message })); });
-    return () => { if (generation.current === token) generation.current += 1; };
-  }, [spec.key, offset, reload]);
+    let active = true;
+    let timer = null;
+    const load = () => {
+      const token = ++generation.current;
+      setRequest((current) => ({ phase: current.envelope ? 'refreshing' : 'loading', envelope: current.envelope, error: '' }));
+      Promise.resolve().then(() => actions.loadRunView(spec.id, offset, VIEWER_PAGE_LIMIT))
+        .then((envelope) => { if (active && generation.current === token) setRequest({ phase: 'ready', envelope, error: '' }); })
+        .catch((error) => { if (active && generation.current === token) setRequest((current) => ({ phase: 'error', envelope: current.envelope, error: error.message })); })
+        .finally(() => {
+          if (active && generation.current === token) timer = setTimeoutImpl(load, VIEWER_REFRESH_MS);
+        });
+    };
+    load();
+    return () => {
+      active = false;
+      generation.current += 1;
+      if (timer !== null) clearTimeoutImpl(timer);
+    };
+  }, [spec.key, offset, reload, actions, setTimeoutImpl, clearTimeoutImpl]);
 
   const envelope = request.envelope;
   const viewer = envelope?.viewerV2;

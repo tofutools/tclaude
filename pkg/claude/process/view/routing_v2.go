@@ -602,7 +602,8 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		overlay.Scopes = append(overlay.Scopes, RoutingScopeOverlayV2{ID: scope.ID, ParentScopeID: scope.ParentScopeID, JoinReservationID: scope.JoinReservationID, State: scope.State, CloseReason: scope.CloseReason})
 	}
 	slices.SortFunc(overlay.Scopes, func(a, b RoutingScopeOverlayV2) int { return cmp.Compare(a.ID, b.ID) })
-	joins, ok := projectRoutingJoins(routing, arrivals)
+	detachmentCounts := indexRoutingDetachmentsByReservation(routing.Detachments)
+	joins, ok := projectRoutingJoins(routing, arrivals, detachmentCounts)
 	if !ok {
 		return nil, RoutingUnavailableInconsistent
 	}
@@ -644,7 +645,15 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 	return overlay, ""
 }
 
-func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArrivalKey]struct{}) ([]RoutingJoinOverlayV2, bool) {
+func indexRoutingDetachmentsByReservation(detachments map[pathv1.DetachmentKey]pathv1.DetachmentRecord) map[pathv1.ReservationID]int {
+	counts := make(map[pathv1.ReservationID]int, len(detachments))
+	for _, detachment := range detachments {
+		counts[detachment.ReservationID]++
+	}
+	return counts
+}
+
+func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArrivalKey]struct{}, detachmentCounts map[pathv1.ReservationID]int) ([]RoutingJoinOverlayV2, bool) {
 	joins := make([]RoutingJoinOverlayV2, 0)
 	for _, reservation := range routing.Reservations {
 		if reservation.JoinPolicy != pathv1.JoinAll && reservation.JoinPolicy != pathv1.JoinAny {
@@ -653,6 +662,7 @@ func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArriv
 		join := RoutingJoinOverlayV2{
 			ReservationID: reservation.ID, NodeID: reservation.NodeID, ScopeID: reservation.ScopeID,
 			Policy: reservation.JoinPolicy, State: reservation.State, Generation: reservation.Generation,
+			Detached: detachmentCounts[reservation.ID],
 		}
 		if reservation.Activation != nil {
 			activation, exists := routing.Activations[reservation.Activation.ID]
@@ -665,11 +675,6 @@ func projectRoutingJoins(routing *pathv1.RoutingState, arrivals map[routingArriv
 					return nil, false
 				}
 				join.WinnerPathID = activation.InputPathIDs[0]
-			}
-		}
-		for _, detachment := range routing.Detachments {
-			if detachment.ReservationID == reservation.ID {
-				join.Detached++
 			}
 		}
 		for _, candidate := range reservation.Candidates {

@@ -30,13 +30,49 @@ func TestProjectRoutingOverlayIndexesHighCardinalityJoinArrivals(t *testing.T) {
 	for _, path := range routing.Paths {
 		arrivals[routingArrivalKey{reservationID: path.TargetReservationID, candidateID: path.CandidateID}] = struct{}{}
 	}
-	joins, ok := projectRoutingJoins(&routing, arrivals)
+	joins, ok := projectRoutingJoins(&routing, arrivals, nil)
 	if !ok || len(joins) != 1 {
 		t.Fatalf("joins = %#v, ok=%v", joins, ok)
 	}
 	join := joins[0]
 	if join.Arrived != candidates/2 || join.Open != candidates/2 || join.Impossible != 0 || join.Failed != 0 || join.Skipped != 0 || join.Canceled != 0 {
 		t.Fatalf("indexed join counts = %#v", join)
+	}
+}
+
+func TestProjectRoutingJoinsUsesPreindexedDetachmentsAcrossReservations(t *testing.T) {
+	const (
+		reservations              = 128
+		detachmentsPerReservation = 16
+	)
+	routing := pathv1.NewRoutingState()
+	for reservationIndex := 0; reservationIndex < reservations; reservationIndex++ {
+		reservationID := fmt.Sprintf("reservation-%03d", reservationIndex)
+		routing.Reservations[reservationID] = pathv1.ActivationReservation{
+			ID: reservationID, NodeID: fmt.Sprintf("join-%03d", reservationIndex), ScopeID: "scope",
+			Generation: 1, JoinPolicy: pathv1.JoinAny, State: pathv1.ReservationOpen,
+		}
+		for detachmentIndex := 0; detachmentIndex < detachmentsPerReservation; detachmentIndex++ {
+			detachmentID := fmt.Sprintf("detachment-%03d-%02d", reservationIndex, detachmentIndex)
+			routing.Detachments[detachmentID] = pathv1.DetachmentRecord{
+				ID: detachmentID, ReservationID: reservationID,
+			}
+		}
+	}
+	counts := indexRoutingDetachmentsByReservation(routing.Detachments)
+	// projectRoutingJoins receives the compact index, not the full detachment
+	// set. Clearing the source map makes this regression fail if the projector
+	// reintroduces a per-join scan instead of using the O(1) indexed count.
+	routing.Detachments = nil
+	joins, ok := projectRoutingJoins(&routing, nil, counts)
+	if !ok || len(joins) != reservations {
+		t.Fatalf("joins = %d, ok=%v", len(joins), ok)
+	}
+	for index, join := range joins {
+		wantID := fmt.Sprintf("reservation-%03d", index)
+		if join.ReservationID != wantID || join.Detached != detachmentsPerReservation {
+			t.Fatalf("join[%d] = %#v, want reservation %q with %d detachments", index, join, wantID, detachmentsPerReservation)
+		}
 	}
 }
 

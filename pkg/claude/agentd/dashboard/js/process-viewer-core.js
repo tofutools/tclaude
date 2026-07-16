@@ -58,7 +58,9 @@ function edgeOverlaySummary(items = []) {
 }
 
 function overlaySeverity(items = []) {
-  return items.some((entry) => ['failed', 'impossible', 'canceled'].includes(entry?.state)) ? 'warning' : '';
+  if (items.some((entry) => entry?.state === 'failed')) return 'error';
+  if (items.some((entry) => ['impossible', 'canceled'].includes(entry?.state))) return 'warning';
+  return 'info';
 }
 
 export function buildViewerGraph(envelope) {

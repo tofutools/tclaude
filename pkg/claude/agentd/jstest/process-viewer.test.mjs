@@ -51,6 +51,23 @@ test('viewer graph uses exact topology plus checkpoint overlay and ignores evide
   assert.deepEqual(sanitizedTimeline(envelope).map((entry) => entry.seq), [1, 2]);
 });
 
+test('viewer graph renders healthy, failed, and terminal-warning edge classes honestly', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { buildViewerGraph } = await harness.importDashboardModule('js/process-viewer-core.js');
+  const { ProcessGraph } = await harness.importDashboardModule('js/process-graph.js');
+  const envelope = richEnvelope();
+  envelope.viewerV2.routing.edges.find((edge) => edge.edgeId === 'edge-merge').state = 'failed';
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const widget = new ProcessGraph(host, buildViewerGraph(envelope), { fitOnRender: false });
+  assert.ok(host.querySelector('[data-edge-id="id:edge-left"] .process-edge-badge-info'), 'consumed edge uses non-error info styling');
+  assert.ok(host.querySelector('[data-edge-id="id:edge-merge"] .process-edge-badge-error'), 'failed edge uses error styling');
+
+  envelope.viewerV2.routing.edges.find((edge) => edge.edgeId === 'edge-merge').state = 'impossible';
+  widget.setGraph(buildViewerGraph(envelope));
+  assert.ok(host.querySelector('[data-edge-id="id:edge-merge"] .process-edge-badge-warning'), 'impossible edge uses warning styling');
+  widget.destroy();
+});
+
 test('viewer helpers render closed unavailable vocabulary and typed page cells', async (t) => {
   const harness = await createPreactHarness(t);
   const { detailPage, detailRowCells, viewerUnavailable, viewerStateChips } = await harness.importDashboardModule('js/process-viewer-core.js');
@@ -113,4 +130,72 @@ test('viewer component requests bounded next pages and preserves aggregate conte
   assert.deepEqual(calls, [{ offset: 0, limit: 25 }, { offset: 25, limit: 25 }]);
   assert.match(mounted.container.querySelector('.process-viewer-table').textContent, /second-page/);
   await mounted.unmount();
+});
+
+test('mounted viewer refreshes checkpoint state without resetting active tab or page', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessViewerBoundary, VIEWER_REFRESH_MS } = await harness.importDashboardModule('js/process-viewer-island.js');
+  let nextTimer = 1;
+  const timers = new Map();
+  const setTimeoutImpl = (callback, delay) => {
+    assert.equal(delay, VIEWER_REFRESH_MS);
+    const id = nextTimer++;
+    timers.set(id, callback);
+    return id;
+  };
+  const clearTimeoutImpl = (id) => timers.delete(id);
+  const calls = [];
+  let checkpoint = 1;
+  let pendingResolve = null;
+  const envelopeAt = (offset) => {
+    const envelope = richEnvelope();
+    envelope.run.effectiveStatus = checkpoint === 1 ? 'running' : 'completed';
+    envelope.viewerV2.routing.joins[0].winnerPathId = `winner-${checkpoint}`;
+    envelope.viewerV2.routing.joins[0].detached = checkpoint;
+    envelope.viewerV2.routing.stateCounts.paths = [{ state: checkpoint === 1 ? 'arrived' : 'consumed', count: checkpoint }];
+    envelope.viewerV2.routing.details = Object.fromEntries(
+      ['generations', 'scopes', 'closures', 'causeSets', 'causes', 'detachments', 'detachedSinks'].map((key) => [key, {
+        page: { offset, limit: 25, total: key === 'scopes' ? 26 : 0, hasMore: key === 'scopes' && offset === 0 },
+        items: key === 'scopes' ? [{ id: `scope-${checkpoint}-page-${offset}`, generation: 1, state: 'open' }] : [],
+      }]),
+    );
+    return envelope;
+  };
+  const actions = { loadRunView: async (_id, offset, limit) => {
+    calls.push({ offset, limit });
+    if (checkpoint === 3) return new Promise((resolve) => { pendingResolve = resolve; });
+    return envelopeAt(offset);
+  } };
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-rich', key: 'run-rich' }} actions=${actions}
+    setTimeoutImpl=${setTimeoutImpl} clearTimeoutImpl=${clearTimeoutImpl} />`);
+  for (let i = 0; i < 6; i++) await harness.act(() => Promise.resolve());
+  const scopes = [...mounted.container.querySelectorAll('.process-viewer-tabs button')].find((button) => /Scopes/.test(button.textContent));
+  await harness.act(() => harness.fireEvent(scopes, 'click'));
+  const next = [...mounted.container.querySelectorAll('.process-viewer-detail-summary button')].find((button) => /next/.test(button.textContent));
+  await harness.act(() => harness.fireEvent(next, 'click'));
+  for (let i = 0; i < 6; i++) await harness.act(() => Promise.resolve());
+
+  checkpoint = 2;
+  const [timerID, refresh] = timers.entries().next().value;
+  timers.delete(timerID);
+  await harness.act(() => refresh());
+  for (let i = 0; i < 6; i++) await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls, [{ offset: 0, limit: 25 }, { offset: 25, limit: 25 }, { offset: 25, limit: 25 }]);
+  assert.match(mounted.container.querySelector('.process-viewer-run-state').textContent, /completed/);
+  assert.match(mounted.container.querySelector('.process-viewer-state-chips').textContent, /consumed 2/);
+  assert.match(mounted.container.querySelector('.process-node[data-node-id="merge"]').getAttribute('aria-label'), /2 detached/);
+  assert.match(mounted.container.querySelector('.process-viewer-tabs button.active').textContent, /Scopes/);
+  assert.match(mounted.container.querySelector('.process-viewer-table').textContent, /scope-2-page-25/);
+
+  checkpoint = 3;
+  const [pendingTimerID, pendingRefresh] = timers.entries().next().value;
+  timers.delete(pendingTimerID);
+  await harness.act(() => pendingRefresh());
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.ok(pendingResolve, 'refresh request is in flight before cleanup');
+  await mounted.unmount();
+  pendingResolve(envelopeAt(25));
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.equal(timers.size, 0, 'unmounted viewer neither retains nor reschedules refresh timers');
 });

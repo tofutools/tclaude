@@ -11934,6 +11934,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 }
 .process-edge-badge-error { fill: var(--pg-error); }
 .process-edge-badge-warning { fill: var(--pg-warn); }
+.process-edge-badge-info { fill: var(--pg-accent); }
 .process-graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
 .process-fit-button {
   appearance: none;
