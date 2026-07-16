@@ -280,7 +280,7 @@ test('setTaskLink posts, clears, no-ops, notifies, and refreshes', async (t) => 
 
   // Update: the daemon owns label derivation, so a blank label is sent blank.
   state.openTaskLink({ conv: 'agt-1', agentLabel: 'alice' });
-  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: 'https://example.com/x', taskLabel: 'X', changed: true });
+  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: 'https://example.com/x', taskLabel: 'X', changed: true }, state.dialog.value);
   assert.equal(requests[0][0], '/api/agents/agt-1/task');
   assert.equal(requests[0][1].method, 'POST');
   assert.deepEqual(JSON.parse(requests[0][1].body), { url: 'https://example.com/x', label: 'X' });
@@ -289,13 +289,13 @@ test('setTaskLink posts, clears, no-ops, notifies, and refreshes', async (t) => 
 
   // Clear: an empty URL persists {clear:true}.
   state.openTaskLink({ conv: 'agt-1', agentLabel: 'alice' });
-  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: '', taskLabel: '', changed: true });
+  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: '', taskLabel: '', changed: true }, state.dialog.value);
   assert.deepEqual(JSON.parse(requests[1][1].body), { clear: true });
   assert.deepEqual(notices[1], ['task link cleared: alice']);
 
   // No-op: no request, and no refresh.
   state.openTaskLink({ conv: 'agt-1', agentLabel: 'alice' });
-  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: 'https://example.com/x', taskLabel: 'X', changed: false });
+  await actions.setTaskLink({ conv: 'agt-1', label: 'alice', url: 'https://example.com/x', taskLabel: 'X', changed: false }, state.dialog.value);
   assert.equal(requests.length, 2, 'a no-op submit performs no request');
   assert.deepEqual(notices[2], ['no changes']);
   assert.equal(state.dialog.value, null);

@@ -100,7 +100,7 @@ export function createActionDialogActions({
         body: JSON.stringify({ repo, branch, from_branch: fromBranch || '' }),
       });
     },
-    async cloneAgent({ conv, label, followUp, copyConversation, cwd }) {
+    async cloneAgent({ conv, label, followUp, copyConversation, cwd }, owner) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), CLONE_TIMEOUT_MS);
       try {
@@ -113,7 +113,7 @@ export function createActionDialogActions({
           }),
           signal: controller.signal,
         });
-        state.close();
+        state.close(owner);
         const target = payload.new_conv ? ` → ${String(payload.new_conv).slice(0, 8)}` : '';
         notify(payload.warning
           ? `cloned ${label}${target} (warning: ${payload.warning})`
@@ -127,7 +127,7 @@ export function createActionDialogActions({
         throw error;
       } finally { clearTimeout(timer); }
     },
-    async reincarnateAgent({ conv, label, mode, focusHint, followUp }) {
+    async reincarnateAgent({ conv, label, mode, focusHint, followUp }, owner) {
       const body = mode === 'force'
         ? { mode: 'force', follow_up: normaliseFollowUp(followUp) }
         : { mode: 'self', ...(focusHint.trim() ? { focus_hint: focusHint.trim() } : {}) };
@@ -135,7 +135,7 @@ export function createActionDialogActions({
       const payload = await requestJSON(fetchImpl, `/api/agents/${encodeURIComponent(conv)}/reincarnate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      state.close();
+      state.close(owner);
       if (mode === 'force') {
         const suffix = payload.new_title ? ` → ${payload.new_title}`
           : payload.new_conv ? ` → ${String(payload.new_conv).slice(0, 8)}` : '';
@@ -144,11 +144,11 @@ export function createActionDialogActions({
       await refresh();
       return payload;
     },
-    async nestGroup({ group, parent }) {
+    async nestGroup({ group, parent }, owner) {
       await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/parent`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parent }),
       });
-      state.close();
+      state.close(owner);
       notify(parent ? `${group}: nested under ${parent}` : `${group}: moved to top level`);
       await refresh();
     },
@@ -157,9 +157,9 @@ export function createActionDialogActions({
     // the daemon stays the single source of truth for Linear/GitHub/hostname
     // derivation; a blank URL clears the reference. `changed` is false when the
     // submit is a no-op, in which case nothing is POSTed.
-    async setTaskLink({ conv, label, url, taskLabel, changed }) {
+    async setTaskLink({ conv, label, url, taskLabel, changed }, owner) {
       if (!changed) {
-        state.close();
+        state.close(owner);
         notify('no changes');
         return;
       }
@@ -167,16 +167,16 @@ export function createActionDialogActions({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(url ? { url, label: taskLabel } : { clear: true }),
       });
-      state.close();
+      state.close(owner);
       notify(url ? `task link updated: ${label}` : `task link cleared: ${label}`);
       await refresh();
     },
-    async clonePreset({ source, create, name }) {
+    async clonePreset({ source, create, name }, owner) {
       const cleanName = String(name || '').trim();
       if (!cleanName) throw new Error('name is required');
       if (cleanName === source.name) throw new Error('pick a different name for the copy');
       await create(clonePayload(source, cleanName));
-      state.close();
+      state.close(owner);
       notify(`cloned: ${cleanName}`);
       await refresh();
     },

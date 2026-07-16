@@ -14,19 +14,19 @@ function requireController() {
 }
 
 export function openCloneAgentDialog(conv, label, cwd) {
-  requireController().openClone({ conv, label, cwd });
+  return requireController().openClone({ conv, label, cwd });
 }
 
 export function openReincarnateAgentDialog(conv, label) {
-  requireController().openReincarnate({ conv, label });
+  return requireController().openReincarnate({ conv, label });
 }
 
 export function openNestGroupDialog({ group }) {
-  requireController().openNest({ group });
+  return requireController().openNest({ group });
 }
 
 export function openTaskLinkDialog({ conv, agentLabel, url, taskLabel }) {
-  requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
+  return requireController().openTaskLink({ conv, agentLabel, url, taskLabel });
 }
 
 export function openPresetCloneDialog(options) {

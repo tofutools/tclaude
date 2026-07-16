@@ -166,7 +166,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
         followUp,
         copyConversation,
         cwd,
-      });
+      }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
@@ -175,7 +175,7 @@ function CloneAgentDialog({ descriptor, actions, confirmDiscard }) {
     <${Overlay}
       id="clone-agent-modal"
       labelledby="clone-agent-title"
-      onClose=${actions.close}
+      onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
@@ -249,7 +249,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
     if (busy || (force && !normaliseFollowUp(followUp))) return;
     setError('');
     setBusy(true);
-    try { await actions.reincarnateAgent({ conv: descriptor.conv, label: target, mode, focusHint, followUp }); }
+    try { await actions.reincarnateAgent({ conv: descriptor.conv, label: target, mode, focusHint, followUp }, descriptor); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
@@ -258,7 +258,7 @@ function ReincarnateAgentDialog({ descriptor, actions, confirmDiscard }) {
     <${Overlay}
       id="reincarnate-agent-modal"
       labelledby="reincarnate-agent-title"
-      onClose=${actions.close}
+      onClose=${() => actions.close(descriptor)}
       onSubmitHotkey=${submit}
       dirty=${dirty}
       blocked=${busy}
@@ -334,12 +334,12 @@ function NestGroupDialog({ descriptor, actions, confirmDiscard }) {
     if (busy) return;
     setError('');
     setBusy(true);
-    try { await actions.nestGroup({ group: descriptor.group, parent }); }
+    try { await actions.nestGroup({ group: descriptor.group, parent }, descriptor); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
   return html`
-    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${actions.close} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
+    <${Overlay} id="group-nest-modal" labelledby="group-nest-title" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} onSubmitEnter=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}>
       <h3 id="group-nest-title"><${Words} plain=${`Nest group: ${descriptor.group}`} wizard=${`Nest party: ${descriptor.group}`}/></h3>
       <div class="modal-meta"><${Words}
         plain="Nest this group under another so it draws inside it on the board — collapse the parent to tuck the whole subgroup away, expand it to bring it back. Board layout only: nesting doesn't change messaging, permissions or spawns. A group can't nest under itself or one of its own descendants."
@@ -403,7 +403,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
         url: nextURL,
         taskLabel: nextURL ? nextLabel : '',
         changed: nextURL !== oldURL || nextLabel !== oldLabel,
-      });
+      }, descriptor);
     } catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
@@ -426,7 +426,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
       id="task-link-modal"
       dialogClass="modal"
       labelledby="task-link-title"
-      onClose=${actions.close}
+      onClose=${() => actions.close(descriptor)}
       dirty=${dirty}
       blocked=${busy}
       confirmDiscard=${confirmDiscard}
@@ -482,13 +482,13 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
 export function ActionDialogApp({ state, actions, confirmDiscard }) {
   const descriptor = state.view.value.dialog;
   if (!descriptor) return null;
-  if (descriptor.kind === 'clone-agent') return html`<${CloneAgentDialog} key=${`clone:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'reincarnate-agent') return html`<${ReincarnateAgentDialog} key=${`reincarnate:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'nest-group') return html`<${NestGroupDialog} key=${`nest:${descriptor.group}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'task-link') return html`<${TaskLinkDialog} key=${`task-link:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${`preset-clone:${descriptor.presetKind}:${descriptor.source.name}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${`agent-export:${descriptor.conv}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
-  if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${`terminal-directory:${descriptor.label}`} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'clone-agent') return html`<${CloneAgentDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'reincarnate-agent') return html`<${ReincarnateAgentDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'nest-group') return html`<${NestGroupDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'task-link') return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
+  if (descriptor.kind === 'terminal-directory') return html`<${TerminalDirectoryDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   return null;
 }
 
