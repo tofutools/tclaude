@@ -46,17 +46,18 @@ function PickerDialog({ current, state, actions }) {
   }, [loading]);
 
   const close = () => {
-    state.close();
+    if (!state.close(current)) return false;
     setTimeout(() => {
       if (!state.dialog.value && !hasShownOverlay()) {
         document.getElementById(current.producerId)?.focus();
       }
     }, 0);
+    return true;
   };
   const submit = async (selected = value) => {
     if (submitLock.current || loading || saving) return;
     if (selected === NEW_PROFILE) {
-      state.close();
+      if (!state.close(current)) return;
       actions.openNew(current.kind, (name) => { void actions.commitFromEditor(current.kind, name); });
       return;
     }
@@ -103,11 +104,26 @@ function App({ state, actions }) {
 }
 
 export function mountToolbarProfilePickerIsland({ host, state, actions, registerCleanup }) {
-  const unregister = registerToolbarProfilePickerController(Object.freeze({ open: state.open }));
-  render(html`<${App} state=${state} actions=${actions}/>`, host);
-  registerCleanup(() => {
-    unregister();
-    state.dispose();
-    render(null, host);
-  });
+  let unregister = null;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    const failures = [];
+    const attempt = (step) => { try { step(); } catch (error) { failures.push(error); } };
+    attempt(() => { unregister?.(); unregister = null; });
+    attempt(() => state.dispose());
+    attempt(() => render(null, host));
+    if (failures.length) throw new AggregateError(failures, 'toolbar profile picker cleanup failed');
+    cleaned = true;
+  };
+  try {
+    unregister = registerToolbarProfilePickerController(Object.freeze({ open: state.open }));
+    render(html`<${App} state=${state} actions=${actions}/>`, host);
+    registerCleanup(cleanup);
+  } catch (error) {
+    try { cleanup(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'toolbar profile picker initialization failed');
+    }
+    throw error;
+  }
 }
