@@ -58,13 +58,12 @@ to address a peer.
 Short printable messages arrive inline:
 
 ```
-[system: new agent message #42 from agt_1234; delivery: inline; subject: review; reply with: tclaude agent reply 42 "<your reply body>"] Please review the change.
+[system: new agent message #42 from agt_1234; delivery: inline; subject: review] Please review the change.
 ```
 
 `delivery: inline` means the complete body follows the closing bracket. Its
 durable inbox copy is already marked delivered and read, so do not call
-`inbox read` for it. If the envelope includes a reply command, you can use it
-directly.
+`inbox read` for it.
 
 Longer or control-bearing messages arrive as inbox pointers:
 

@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -163,7 +162,7 @@ func TestFlush_InlineOperatorMessageIsConsumedAtomically(t *testing.T) {
 	assert.False(t, m.ReadAt.IsZero(), "inline archival copy is consumed in queue completion")
 }
 
-func TestFlush_InlineAgentMessagePreservesSenderReplyAndConsumes(t *testing.T) {
+func TestFlush_InlineAgentMessagePreservesSenderAndConsumes(t *testing.T) {
 	setupTestDB(t)
 	id, err := db.InsertAgentMessage(&db.AgentMessage{
 		FromConv: "peer-aaaa-bbbb-cccc", ToConv: "me", Subject: "review",
@@ -179,7 +178,7 @@ func TestFlush_InlineAgentMessagePreservesSenderReplyAndConsumes(t *testing.T) {
 	assert.Contains(t, nudge, "; delivery: inline")
 	assert.Contains(t, nudge, "from peer-aaa")
 	assert.Contains(t, nudge, "; subject: review")
-	assert.Contains(t, nudge, fmt.Sprintf("reply with: tclaude agent reply %d", id))
+	assert.NotContains(t, nudge, "tclaude agent reply")
 	assert.Contains(t, nudge, "] Please inspect the failing test.")
 	assert.NotContains(t, nudge, "inbox read")
 	m, err := db.GetAgentMessage(id)
