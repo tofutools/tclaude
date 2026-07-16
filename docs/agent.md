@@ -282,8 +282,8 @@ delivered/read. The complete body follows the nudge's closing bracket, so no
 bracketed paste; other control-bearing bodies use the stable `inbox read <id>`
 pointer. Configure the rune threshold with
 `agent.message_inline_max_chars` (default 2000; `0` disables regular-message
-inlining). Agent-authored inline mail names the sender and includes the normal
-reply command; senderless system mail uses the same envelope without inventing
+inlining). Agent-authored inline mail names the sender but omits reply
+instructions; senderless system mail uses the same envelope without inventing
 a sender. Human-authored dashboard mail is explicitly labelled **human
 operator** and is not replyable. Pointer nudges contain only the message ID and
 fetch command. Attachments are listed by durable, agent-readable absolute path
