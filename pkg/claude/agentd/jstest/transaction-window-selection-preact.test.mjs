@@ -289,6 +289,8 @@ test('window picker freezes retries, blocks busy dismissal, and restores focus a
   const { harness, host, opener } = mounted;
   host.querySelector('#window-submit').click();
   await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#window-submit .theme-copy-regular').textContent, 'Focusing…');
+  assert.equal(host.querySelector('#window-submit .theme-copy-wizard').textContent, 'Revealing…');
   assert.equal(host.querySelector('#window-cancel').disabled, true);
   assert.equal(host.querySelector('#window-search').disabled, true);
   escape(harness);
@@ -305,6 +307,8 @@ test('window picker freezes retries, blocks busy dismissal, and restores focus a
   host.querySelector('#window-submit').click();
   await harness.act(() => Promise.resolve());
   assert.equal(requests[1], requests[0], 'retry reuses the exact frozen request object');
+  assert.equal(host.querySelector('#window-submit .theme-copy-regular').textContent, 'Focusing…');
+  assert.equal(host.querySelector('#window-submit .theme-copy-wizard').textContent, 'Revealing…');
   host.querySelector('#window-submit').click();
   assert.equal(requests.length, 2, 'same-render repeated submission is locked');
 

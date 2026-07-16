@@ -254,6 +254,8 @@ test('delete mutation failure retries the same frozen worktree choice', async (t
   assert.equal(requests[0].deleteWorktree, true);
   assert.equal(requests[0].expectedWorktree, '/repo/wt');
   assert.ok(Object.isFrozen(requests[0]));
+  assert.equal(host.querySelector('#delete-agent-ok .theme-copy-regular').textContent, 'Deleting…');
+  assert.equal(host.querySelector('#delete-agent-ok .theme-copy-wizard').textContent, 'Erasing…');
   first.reject(new Error('server refused delete'));
   await harness.act(() => first.promise.catch(() => {}));
   assert.equal(host.querySelector('[role="alert"]').textContent, 'server refused delete');
@@ -262,6 +264,8 @@ test('delete mutation failure retries the same frozen worktree choice', async (t
   host.querySelector('#delete-agent-ok').click();
   await harness.act(() => Promise.resolve());
   assert.equal(requests[1], requests[0]);
+  assert.equal(host.querySelector('#delete-agent-ok .theme-copy-regular').textContent, 'Deleting…');
+  assert.equal(host.querySelector('#delete-agent-ok .theme-copy-wizard').textContent, 'Erasing…');
   second.reject(new Error('server still refused delete'));
   await harness.act(() => second.promise.catch(() => {}));
   mounted.state.close();

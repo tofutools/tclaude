@@ -137,7 +137,7 @@ func TestDashboardHTML_SingleRetireSpinner(t *testing.T) {
 	for _, needle := range []string{
 		`aria-busy=${busy && busyAction === 'primary' ? 'true' : undefined}`,
 		`<span class="btn-spinner" aria-hidden="true"></span>`,
-		`retrying ? 'Retrying…' : 'Retiring…'`,
+		`plain="Retiring…" wizard="Banishing…"`,
 		`primaryLabel=${retrying ? 'Retry' : 'Retire'}`,
 		`errorID="retire-error"`,
 		`if (activeRef.current) setError(cause?.message || String(cause))`,

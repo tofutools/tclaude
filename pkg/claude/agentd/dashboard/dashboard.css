@@ -6988,9 +6988,9 @@ body.wizard #retire-modal .modal-buttons button:not(#retire-ok):hover {
    conjuring lever, the destructive twin of the spawn dialog's 🔮 Summon!.
    Same mechanism: the button's own "Retire" text is hidden (font-size: 0)
    and replaced by a ::before glyph; the Preact busy state disables the button
-   and renders a "Retiring…" spinner while CSS keeps that raw text hidden and
-   paints a themed "Banishing…" via ::after instead — a familiar is
-   *banished*, not retired, so the busy copy stays in the arcane voice too.
+   and renders theme-paired "Retiring…" / "Banishing…" copy. CSS keeps those
+   text nodes hidden with the idle label and paints the same themed
+   "Banishing…" via ::after so the gilded lever retains its typography.
    The copy swap is pure-CSS, like the ::before idle label; the click already
    sprays cast sparks via wizard-fx's global cast-FX handler, so no extra JS
    is needed. #retire-modal keeps it out-specifying the base .confirm-danger
@@ -7023,8 +7023,8 @@ body.wizard #retire-modal #retire-ok:active {
   box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
 }
 body.wizard #retire-modal #retire-ok:disabled {
-  /* Busy state renders a "Retiring…" text node next to the spinner.
-     Keep font-size: 0 so that raw label stays hidden (the .btn-spinner is a
+  /* Busy state renders theme-paired text next to the spinner. Keep font-size:
+     0 so those nodes stay hidden (the .btn-spinner is a
      fixed 12px circle, unaffected by font-size, so it stays visible) and paint
      a themed "Banishing…" via ::after below. */
   font-size: 0;

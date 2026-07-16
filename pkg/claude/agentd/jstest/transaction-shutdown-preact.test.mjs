@@ -106,6 +106,8 @@ test('shutdown actions share one busy lock and retry the same frozen soft choice
   assert.equal(host.querySelector('#shutdown-force').disabled, true);
   assert.equal(host.querySelector('#shutdown-cancel').disabled, true);
   assert.equal(host.querySelector('#shutdown-soft').getAttribute('aria-busy'), 'true');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-regular').textContent, 'Soft exiting…');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, 'Slumbering…');
 
   escape(harness);
   const overlay = host.querySelector('#shutdown-modal');
@@ -129,6 +131,8 @@ test('shutdown actions share one busy lock and retry the same frozen soft choice
   await harness.act(() => Promise.resolve());
   assert.equal(requests.length, 2);
   assert.equal(requests[1], requests[0], 'retry reuses the exact frozen request');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-regular').textContent, 'Soft exiting…');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, 'Slumbering…');
   second.reject(new Error('soft stop still failed'));
   await harness.act(() => second.promise.catch(() => {}));
   host.querySelector('#shutdown-cancel').click();
@@ -160,6 +164,8 @@ test('shutdown force path freezes force=true and yields Escape to a higher overl
   });
   assert.ok(Object.isFrozen(submitted));
   assert.equal(host.querySelector('#shutdown-force').getAttribute('aria-busy'), 'true');
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-regular').textContent, 'Force killing…');
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-wizard').textContent, 'Forcing slumber…');
   assert.equal(host.querySelector('#shutdown-soft').hasAttribute('aria-busy'), false);
   request.reject(new Error('force failed'));
   await harness.act(() => request.promise.catch(() => {}));

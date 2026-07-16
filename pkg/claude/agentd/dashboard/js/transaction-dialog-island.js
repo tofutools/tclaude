@@ -242,8 +242,8 @@ function WindowSelectionDialog({ descriptor, actions, confirmDiscard }) {
       wizard=${`${retrying ? 'Retry ' : ''}${wizardVerb} ${count} familiar${count === 1 ? '' : 's'}`}
     />`}
     busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
-      plain=${retrying ? 'Retrying…' : `${plainVerb}ing…`}
-      wizard=${retrying ? 'Retrying…' : `${wizardVerb}ing…`}
+      plain=${`${plainVerb}ing…`}
+      wizard=${`${wizardVerb}ing…`}
     />`}
     primaryClass="primary"
     submitDisabled=${count === 0}
@@ -1043,7 +1043,10 @@ function BulkRetireDialog({ descriptor, actions, confirmDiscard }) {
     errorID="retire-preview-error"
     primaryLabel=${result ? 'Done' : retrying ? 'Retry retire' : selectedCandidates.length === 1
       ? 'Retire 1 agent' : `Retire ${selectedCandidates.length} agents`}
-    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${result ? 'Refreshing…' : retrying ? 'Retrying…' : 'Retiring…'}`}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+      plain=${result ? 'Refreshing…' : 'Retiring…'}
+      wizard=${result ? 'Refreshing…' : 'Banishing…'}
+    />`}
     primaryClass=${result ? 'primary' : 'primary danger'}
     submitDisabled=${!result && selectedCandidates.length === 0}
     hideCancel=${!!result}
@@ -1264,7 +1267,10 @@ function DeleteRetiredDialog({ descriptor, actions, confirmDiscard }) {
     errorID="delete-retired-error"
     primaryLabel=${result ? 'Done' : failedAttempt ? 'Retry delete'
       : visibleSelected.length === 1 ? 'Delete 1 agent' : `Delete ${visibleSelected.length} agents`}
-    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${result ? 'Refreshing…' : failedAttempt ? 'Retrying…' : 'Deleting…'}`}
+    busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+      plain=${result ? 'Refreshing…' : 'Deleting…'}
+      wizard=${result ? 'Refreshing…' : 'Dispelling…'}
+    />`}
     primaryClass=${result ? 'primary' : 'primary danger'}
     submitDisabled=${!result && visibleSelected.length === 0}
     hideCancel=${!!result}
@@ -1510,7 +1516,8 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   const title = html`<span class="retire-title-regular">Retire this agent?</span><span class="retire-title-wizard">Banish this familiar?</span>`;
   const retrying = !!submittedChoice;
-  const busyLabel = html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying…' : 'Retiring…'}`;
+  const busyLabel = html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+    plain="Retiring…" wizard="Banishing…" />`;
   return html`
     <${TransactionDialogFrame}
       id="retire-modal"
@@ -1599,12 +1606,14 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
       busy=${busy}
       busyAction=${forceChoice ? 'alternate' : 'primary'}
       primaryLabel=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}
-      busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying soft exit…' : 'Soft exiting…'}`}
+      busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+        plain="Soft exiting…" wizard="Slumbering…" />`}
       primaryClass=""
       submitDisabled=${retrying && forceChoice}
       submitID="shutdown-soft"
       alternateLabel=${retrying && forceChoice ? 'Retry force kill' : 'Force kill'}
-      alternateBusyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying force kill…' : 'Force killing…'}`}
+      alternateBusyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+        plain="Force killing…" wizard="Forcing slumber…" />`}
       alternateDisabled=${retrying && !forceChoice}
       alternateID="shutdown-force"
       alternateTitle="Immediately kills the tmux session; use if soft exit is stuck"
@@ -1712,7 +1721,8 @@ function DeleteAgentDialog({ descriptor, actions, confirmDiscard }) {
       errorID="delete-agent-error"
       busy=${busy}
       primaryLabel=${retrying ? 'Retry delete' : initialLabel}
-      busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span>${retrying ? 'Retrying delete…' : 'Deleting…'}`}
+      busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
+        plain="Deleting…" wizard="Erasing…" />`}
       submitID="delete-agent-ok"
       cancelID="delete-agent-cancel"
       onClose=${actions.close}

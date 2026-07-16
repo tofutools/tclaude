@@ -549,9 +549,10 @@ test('retire failure stays inline with frozen choices and explicit retry', async
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const requests = [];
   const first = deferred();
+  const second = deferred();
   const replies = [
     () => first.promise,
-    async () => { throw new Error('transport failed again'); },
+    () => second.promise,
     async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
   ];
   const notices = [];
@@ -586,6 +587,8 @@ test('retire failure stays inline with frozen choices and explicit retry', async
   await harness.act(() => Promise.resolve());
   assert.equal(requests.filter(([url]) => url.includes('/retire?')).length, 1);
   assert.equal(host.querySelector('#retire-ok').getAttribute('aria-busy'), 'true');
+  assert.equal(host.querySelector('#retire-ok .theme-copy-regular').textContent, 'Retiring…');
+  assert.equal(host.querySelector('#retire-ok .theme-copy-wizard').textContent, 'Banishing…');
   assert.equal(host.querySelector('#retire-cancel').disabled, true);
 
   const escape = new harness.window.Event('keydown', { bubbles: true });
@@ -609,7 +612,11 @@ test('retire failure stays inline with frozen choices and explicit retry', async
   assert.equal(host.querySelector('#retire-ok').textContent, 'Retry');
 
   host.querySelector('#retire-ok').click();
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#retire-ok .theme-copy-regular').textContent, 'Retiring…');
+  assert.equal(host.querySelector('#retire-ok .theme-copy-wizard').textContent, 'Banishing…');
+  second.reject(new Error('transport failed again'));
+  await harness.act(() => second.promise.catch(() => {}));
   assert.equal(host.querySelector('#retire-error').textContent, 'transport failed again');
   assert.ok(host.querySelector('#retire-modal'), 'transport failure also stays mounted');
   host.querySelector('#retire-ok').click();
