@@ -49,6 +49,8 @@ test('cron dialog owns focus and dirty Escape/backdrop dismissal', async (t) => 
     snapshot=${snapshot()} actions=${actions} confirmDiscard=${async () => discard} />`);
   await Promise.resolve();
   assert.equal(harness.document.activeElement.id, 'cron-create-name', 'the first field receives focus');
+  assert.notEqual(mounted.container.querySelector('#cron-create-run-immediately').checked, true,
+    'new jobs wait by default');
 
   await harness.input(mounted.container.querySelector('#cron-create-body'), 'changed');
   const overlay = mounted.container.querySelector('#cron-create-modal');

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const currentVersion = 125
+const currentVersion = 126
 
 // DefaultHarness is the value of the `harness` column for a row that
 // predates multi-harness support or was produced by the Claude Code scan
@@ -2705,7 +2705,9 @@ func migrateV13toV14(db *sql.DB) error {
 // agent_messages row so the existing flush nudge pipeline picks it
 // up; when 0, the scheduler falls back to direct send-keys.
 //
-// last_run_at unset (zero time) → "never run, due immediately".
+// At the time this schema landed, last_run_at unset meant "due immediately".
+// Current scheduling semantics instead anchor never-run jobs on created_at;
+// the later run_immediately column carries an explicit first-fire opt-in.
 // On every successful fire we set last_run_at = now (NOT now -
 // missed-intervals); skipping catch-ups means a daemon restart
 // after a long offline period doesn't replay 50 messages at once.

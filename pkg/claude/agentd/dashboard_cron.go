@@ -70,42 +70,11 @@ func handleDashboardCronAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			dashboardCronLogs(w, r, id)
 		case "enable":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			if err := db.SetAgentCronJobEnabled(id, true); err != nil {
-				http.Error(w, "update: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
+			handleCronSetEnabled(w, asDashboardHumanPeer(r), id, true)
 		case "disable":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			if err := db.SetAgentCronJobEnabled(id, false); err != nil {
-				http.Error(w, "update: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
+			handleCronSetEnabled(w, asDashboardHumanPeer(r), id, false)
 		case "run-now":
-			if r.Method != http.MethodPost {
-				http.Error(w, "POST only", http.StatusMethodNotAllowed)
-				return
-			}
-			now := time.Now()
-			status := fireCronJob(job, now)
-			if err := db.UpdateAgentCronJobLastRun(id, now, status); err != nil {
-				http.Error(w, "stamp: "+err.Error(), http.StatusInternalServerError)
-				return
-			}
-			_, _ = db.InsertAgentCronRun(&db.AgentCronRun{
-				JobID:   id,
-				FiredAt: now,
-				Status:  status,
-			})
-			writeJSON(w, http.StatusOK, map[string]any{"status": status})
+			handleCronRunNow(w, asDashboardHumanPeer(r), id)
 		default:
 			http.Error(w, "unknown subpath /api/cron/{id}/"+parts[1], http.StatusNotFound)
 		}
@@ -113,11 +82,7 @@ func handleDashboardCronAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodDelete:
-		if err := db.DeleteAgentCronJob(id); err != nil {
-			http.Error(w, "delete: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
+		handleCronDelete(w, asDashboardHumanPeer(r), id)
 	case http.MethodPatch:
 		dashboardCronPatch(w, r, id)
 	default:

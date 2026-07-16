@@ -19,6 +19,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     path: '/api/cron/7', method: 'PATCH',
     payload: {
       name: 'daily', body: 'Report', subject: 'Status', enabled: true,
+      run_immediately: false,
       owner: 'agt_owner', interval: '5m', cron_expr: '',
     },
   }, 'an untouched solo target is omitted from PATCH');
@@ -26,6 +27,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   const retargeted = { ...draft, target: { ...draft.target, target: 'agt_next' } };
   assert.deepEqual(model.buildCronMutation(edit, retargeted).payload, {
     name: 'daily', body: 'Report', subject: 'Status', enabled: true,
+    run_immediately: false,
     owner: 'agt_owner', interval: '5m', cron_expr: '', target: 'agt_next', group_id: 0,
   });
 
@@ -37,7 +39,7 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
     path: '/api/cron', method: 'POST',
     payload: {
       name: 'fanout', target: 'group:alpha', subject: '', body: 'Standup',
-      enabled: false, cron_expr: '@daily', role: 'dev',
+      enabled: false, run_immediately: false, cron_expr: '@daily', role: 'dev',
     },
   });
 
@@ -46,6 +48,13 @@ test('cron dialog model preserves create, edit, duplicate, and validation contra
   assert.equal(model.buildCronMutation(
     { kind: 'duplicate' }, model.createCronDraft(duplicate),
   ).method, 'POST', 'duplicates create a new row without the source id');
+
+  const immediate = model.createCronDraft({
+    target: 'agt_target', interval: '5m', body: 'now', runImmediately: true,
+  });
+  assert.equal(model.buildCronMutation({ kind: 'create' }, immediate).payload.run_immediately, true);
+  immediate.enabled = false;
+  assert.equal(model.validateCronDraft({ kind: 'create' }, immediate).code, 'immediate-disabled');
 
   const missing = model.createCronDraft({ targetMode: 'group', groupName: '', body: '' });
   assert.equal(model.validateCronDraft({ kind: 'create' }, missing).code, 'group-target');

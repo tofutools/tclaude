@@ -21,6 +21,7 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 		Subject:         "status check",
 		Body:            "What's the latest?",
 		Enabled:         true,
+		RunImmediately:  true,
 	})
 	require.NoError(t, err, "InsertAgentCronJob")
 	require.Greater(t, id, int64(0), "expected positive id")
@@ -43,6 +44,7 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 	assert.Equal(t, targetAgent, got.TargetAgent, "job should carry the stable target agent_id")
 	assert.Equal(t, int64(600), got.IntervalSeconds, "interval")
 	assert.True(t, got.Enabled, "expected enabled=true")
+	assert.True(t, got.RunImmediately, "run_immediately round-trip")
 	assert.False(t, got.CreatedAt.IsZero(), "created_at should be stamped on insert")
 	assert.True(t, got.LastRunAt.IsZero(), "last_run_at should be zero before any fire")
 
@@ -54,7 +56,7 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 func TestAgentCronJob_DueLogic(t *testing.T) {
 	setupTestDB(t)
 
-	// j1: never run, always due.
+	// j1: never run, anchored at creation — waits one full interval.
 	j1, _ := InsertAgentCronJob(&AgentCronJob{
 		OwnerConv: "a", TargetConv: "b",
 		IntervalSeconds: 60, Body: "x", Enabled: true,
@@ -86,10 +88,18 @@ func TestAgentCronJob_DueLogic(t *testing.T) {
 	for _, j := range due {
 		dueIDs[j.ID] = true
 	}
-	assert.True(t, dueIDs[j1], "j1 (never run) should be due")
+	assert.False(t, dueIDs[j1], "j1 (new) should wait for its first interval")
 	assert.False(t, dueIDs[j2], "j2 (30s ago, 60s interval) should NOT be due")
 	assert.True(t, dueIDs[j3], "j3 (90s ago, 60s interval) should be due")
 	assert.False(t, dueIDs[j4], "j4 (disabled) should never be due")
+
+	due, err = ListDueAgentCronJobs(now.Add(61 * time.Second))
+	require.NoError(t, err)
+	dueIDs = map[int64]bool{}
+	for _, j := range due {
+		dueIDs[j.ID] = true
+	}
+	assert.True(t, dueIDs[j1], "j1 should be due after its first interval")
 }
 
 func TestAgentCronJob_DueLogicExcludesRetiredOwner(t *testing.T) {

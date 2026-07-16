@@ -15,6 +15,7 @@ export function cronJobToPrefill(job = {}, { duplicate = false } = {}) {
     subject: text(job.subject),
     body: text(job.body),
     enabled: !!job.enabled,
+    runImmediately: !!job.run_immediately,
     role: groupTarget ? text(job.target_role) : '',
   };
 }
@@ -38,6 +39,7 @@ export function createCronDraft(prefill = {}) {
     subject: text(prefill.subject),
     body: text(prefill.body),
     enabled: prefill.enabled === undefined ? true : !!prefill.enabled,
+    runImmediately: prefill.runImmediately === undefined ? false : !!prefill.runImmediately,
   };
 }
 
@@ -60,6 +62,9 @@ export function validateCronDraft(dialog, draft) {
     return { code: 'solo-target', message: 'Target is required — type an agt_ id / title / conv-id or use 🔍 to pick.' };
   }
   if (!draft.body) return { code: 'body', message: 'Body is required (the message text the cron job sends).' };
+  if (draft.runImmediately && !draft.enabled) {
+    return { code: 'immediate-disabled', message: 'Run immediately requires Enabled, so the requested first run can be delivered.' };
+  }
   if (draft.scheduleMode === 'cron' && !draft.cronExpr.trim()) {
     return { code: 'cron-expr', message: 'Cron expression is required — type one (e.g. */5 * * * *) or switch back to Interval.' };
   }
@@ -82,7 +87,10 @@ export function buildCronMutation(dialog, draft) {
   const subject = draft.subject.trim();
 
   if (dialog.kind === 'edit') {
-    const payload = { name, body: draft.body, subject, enabled: draft.enabled };
+    const payload = {
+      name, body: draft.body, subject, enabled: draft.enabled,
+      run_immediately: draft.runImmediately,
+    };
     if (owner) payload.owner = owner;
     if (draft.scheduleMode === 'cron') payload.cron_expr = cronExpr;
     else if (interval) {
@@ -99,7 +107,10 @@ export function buildCronMutation(dialog, draft) {
     return { path: `/api/cron/${encodeURIComponent(dialog.id)}`, method: 'PATCH', payload };
   }
 
-  const payload = { name, target, subject, body: draft.body, enabled: draft.enabled };
+  const payload = {
+    name, target, subject, body: draft.body, enabled: draft.enabled,
+    run_immediately: draft.runImmediately,
+  };
   if (draft.scheduleMode === 'cron') payload.cron_expr = cronExpr;
   else payload.interval = interval;
   if (owner) payload.owner = owner;

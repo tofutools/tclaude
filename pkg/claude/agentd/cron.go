@@ -22,6 +22,8 @@ const cronTickInterval = 30 * time.Second
 var cronAuthorityMu sync.Mutex
 
 var cronAfterDueListForTest func()
+var cronAfterAuthorityRevalidationForTest func(int64)
+var cronBeforeAuthorityLockForTest func(string)
 
 // startCronScheduler spins up the agent_cron_jobs scheduler in its
 // own goroutine. The goroutine ticks every cronTickInterval, fires
@@ -81,18 +83,34 @@ func fireScheduledCronJob(jobID int64, now time.Time) {
 	if j == nil {
 		return
 	}
-	status := fireCronJob(j, now)
-	if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
+	// Re-check the schedule under the authority lock. A run-now or a PATCH
+	// false→true may have fired and stamped this job after the due-list query;
+	// its cached candidate must not become a duplicate delivery.
+	if !j.IsDue(now) {
+		return
+	}
+	if cronAfterAuthorityRevalidationForTest != nil {
+		cronAfterAuthorityRevalidationForTest(jobID)
+	}
+	if _, err := fireCronJobAndRecord(j, now); err != nil {
 		slog.Warn("cron: stamp last_run_at failed", "job", j.ID, "error", err)
 	}
-	// Append a run-history row so `cron logs` can show "last few
-	// executions" without mining slog. Best-effort — failure here doesn't
-	// roll back the fire.
+}
+
+// fireCronJobAndRecord performs one delivery attempt and advances the cadence
+// anchor to now. Callers serialize it with cronAuthorityMu when it can race the
+// scheduler. Run-history is best-effort because delivery has already happened.
+func fireCronJobAndRecord(j *db.AgentCronJob, now time.Time) (string, error) {
+	status := fireCronJob(j, now)
+	if err := db.UpdateAgentCronJobLastRun(j.ID, now, status); err != nil {
+		return status, err
+	}
 	if _, err := db.InsertAgentCronRun(&db.AgentCronRun{
 		JobID: j.ID, FiredAt: now, Status: status,
 	}); err != nil {
 		slog.Warn("cron: insert run row failed", "job", j.ID, "error", err)
 	}
+	return status, nil
 }
 
 // SetCronAfterDueListForTest installs a deterministic scheduler race hook.
@@ -100,6 +118,23 @@ func SetCronAfterDueListForTest(fn func()) func() {
 	old := cronAfterDueListForTest
 	cronAfterDueListForTest = fn
 	return func() { cronAfterDueListForTest = old }
+}
+
+// SetCronAfterAuthorityRevalidationForTest installs a deterministic scheduler
+// hook after a job is revalidated while cronAuthorityMu is held.
+func SetCronAfterAuthorityRevalidationForTest(fn func(int64)) func() {
+	old := cronAfterAuthorityRevalidationForTest
+	cronAfterAuthorityRevalidationForTest = fn
+	return func() { cronAfterAuthorityRevalidationForTest = old }
+}
+
+// SetCronBeforeAuthorityLockForTest installs a deterministic race hook for
+// HTTP mutations that are about to take cronAuthorityMu. operation identifies
+// "create-immediate", "delete", "patch", or "run-now".
+func SetCronBeforeAuthorityLockForTest(fn func(string)) func() {
+	old := cronBeforeAuthorityLockForTest
+	cronBeforeAuthorityLockForTest = fn
+	return func() { cronBeforeAuthorityLockForTest = old }
 }
 
 // RunCronTickForTest runs one scheduler sweep synchronously.

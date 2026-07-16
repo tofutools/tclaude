@@ -26,8 +26,9 @@ they can receive it.
 | Command                                                     | What it does                                                                          |
 |-------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | `tclaude agent cron ls`                                     | List jobs visible to you (your own + jobs targeting you + jobs in groups you own)     |
-| `tclaude agent cron add --target <sel> --interval 10m --body "..." [--subject "..."] [--name "..."]` | Schedule a new job. Defaults to self-target when `--target` is omitted. Give the body inline with `--body`, or read it from a file with `--file <path>` (`--file -` reads stdin). |
-| `tclaude agent cron add --cron "*/5 * * * *" --body "..."` | Same, but on a cron expression instead of a fixed interval (mutually exclusive with `--interval`). Standard 5-field syntax plus `@hourly`/`@daily`/…; evaluated in the daemon's local timezone unless prefixed `CRON_TZ=<zone>`. A new expression job waits for its first match rather than firing immediately. |
+| `tclaude agent cron add --target <sel> --interval 10m --body "..." [--subject "..."] [--name "..."]` | Schedule a new job. Defaults to self-target when `--target` is omitted and waits for the first due interval. Give the body inline with `--body`, or read it from a file with `--file <path>` (`--file -` reads stdin). |
+| `tclaude agent cron add --cron "*/5 * * * *" --body "..."` | Same, but on a cron expression instead of a fixed interval (mutually exclusive with `--interval`). Standard 5-field syntax plus `@hourly`/`@daily`/…; evaluated in the daemon's local timezone unless prefixed `CRON_TZ=<zone>`. |
+| `tclaude agent cron add --interval 10m --run-immediately --body "..."` | Opt into exactly one immediate first fire, then continue from that fire on the normal cadence. Omit the flag to wait. |
 | `tclaude agent cron rm <id>`                                | Delete a job by ID (from `cron ls`)                                                   |
 | `tclaude agent cron logs <id> [--limit N]`                  | Show recent fires (newest first), with status (`ok` / `send_failed` / `no_target`)    |
 
@@ -61,9 +62,9 @@ alongside the other self-lifecycle default slugs (`self.rename`,
   v2 may add a one-shot bool flag.
 - **Sub-30s intervals.** The scheduler tick is 30s, so the minimum
   interval is also 30s. The CLI rejects shorter values.
-- **Jobs that need exact wall-clock timing** (e.g. "fire at 09:00
-  daily"). v1 is interval-based only — no cron expressions yet.
-  Use a host cron / systemd-timer for those.
+- **Jobs that need sub-minute precision.** Cron expressions are supported, but
+  the scheduler checks every 30 seconds rather than promising second-level
+  wall-clock delivery.
 
 ## Example — PO pings workers every 10 minutes
 
@@ -91,6 +92,8 @@ tclaude agent cron add \
 Workers will receive these as inbox messages with the subject
 auto-prefixed: `[cron:po-ping-backend] status check`. The prefix
 makes it obvious this is a scheduled nudge vs a hand-typed message.
+Both jobs wait ten minutes before their first delivery. Add
+`--run-immediately` when one immediate first ping is intentional.
 
 ### Long or code-heavy job body — use `--file`
 
