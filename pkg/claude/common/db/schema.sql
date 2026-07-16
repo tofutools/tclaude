@@ -811,3 +811,10 @@ CREATE TABLE spawn_harness_rules (
 CREATE INDEX idx_spawn_harness_rules_group
 			ON spawn_harness_rules(group_id);
 
+CREATE TABLE codex_telemetry_checkpoints (
+			session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+			data       TEXT NOT NULL,
+			failure_count INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+			updated_at TEXT NOT NULL
+		);
+
