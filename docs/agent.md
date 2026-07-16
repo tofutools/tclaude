@@ -264,17 +264,18 @@ target) the sender must be a member of that group. If the target's
 tmux session is alive they get a system-style nudge; otherwise the
 message queues in their inbox until they `inbox ls`.
 
-Short printable, single-line messages are included directly in that nudge and
-their archival inbox copy is atomically marked delivered/read. Longer,
-multiline, or control-bearing bodies use the stable `inbox read <id>` pointer.
-Configure the rune threshold with `agent.message_inline_max_chars` (default
-1000; `0` disables regular-message inlining). Human-authored dashboard mail is
-explicitly labelled **human operator**. Its short inline form contains only the
-system metadata followed by the operator's own body (and attachment paths when
-present). The longer pointer form tells the agent to answer in its regular
-chat/output; `human.notify` remains optional extra feedback for agents that hold
-that permission. Attachments are listed by durable, agent-readable absolute
-path in `inbox read` output.
+Short printable messages are included directly in that nudge and their
+archival inbox copy is atomically marked delivered/read. Newlines and tabs are
+preserved through a bounded bracketed paste; other control-bearing bodies use
+the stable `inbox read <id>` pointer. Configure the rune threshold with
+`agent.message_inline_max_chars` (default 2000; `0` disables regular-message
+inlining). Human-authored dashboard mail is explicitly labelled **human
+operator**. Its inline form contains only the system metadata followed by the
+operator's own body (and attachment paths when present). Pointer nudges contain
+only the message ID and fetch command. `inbox read` explicitly reports whether
+the message is replyable; operator-authored mail is not, while agent-authored
+mail includes the normal reply address and command. Attachments are listed by
+durable, agent-readable absolute path in `inbox read` output.
 
 ```bash
 tclaude agent inbox ls                # last 20, all
@@ -284,7 +285,8 @@ tclaude agent inbox read <id>         # marks read; --keep-unread to defer
 
 `inbox` has aliases `mailbox` / `mail`. Reading a message returns
 RFC-822-shaped headers — `From`, `To`, `Group`, `Subject`, `Date`,
-`Reply-To`, `Reply-Cmd` — followed by the body.
+`Replyable`, and, when replyable, `Reply-To` and `Reply-Cmd` — followed by the
+body.
 
 ### groups
 

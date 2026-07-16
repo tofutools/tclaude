@@ -313,6 +313,7 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		CreatedAt      string            `json:"created_at"`
 		ReplyTo        string            `json:"reply_to"`
 		ReplyCmd       string            `json:"reply_cmd"`
+		Replyable      *bool             `json:"replyable"`
 		InReplyTo      int64             `json:"in_reply_to,omitempty"`
 		ParentSubject  string            `json:"parent_subject,omitempty"`
 		ToRecipients   []recipientLine   `json:"to_recipients,omitempty"`
@@ -369,6 +370,9 @@ func runInboxReadDaemon(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt)
+	if m.Replyable != nil {
+		fmt.Fprintf(stdout, "  Replyable:  %t\n", *m.Replyable)
+	}
 	if m.ReplyTo != "" {
 		fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.ReplyTo))
 	}
@@ -457,8 +461,12 @@ func runInboxReadDirect(p *inboxReadParams, id int64, stdout, stderr io.Writer) 
 		fmt.Fprintf(stdout, "  Subject:    %s\n", m.Subject)
 	}
 	fmt.Fprintf(stdout, "  Date:       %s\n", m.CreatedAt.Format(time.RFC3339))
-	fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.FromConv))
-	fmt.Fprintf(stdout, "  Reply-Cmd:  tclaude agent reply %d \"<your reply body>\"\n", m.ID)
+	replyable := !db.IsOperatorAgentMessage(m.ID) && m.FromConv != ""
+	fmt.Fprintf(stdout, "  Replyable:  %t\n", replyable)
+	if replyable {
+		fmt.Fprintf(stdout, "  Reply-To:   %s\n", actorID(m.FromAgent, m.FromConv))
+		fmt.Fprintf(stdout, "  Reply-Cmd:  tclaude agent reply %d \"<your reply body>\"\n", m.ID)
+	}
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Body:")
 	fmt.Fprintln(stdout, m.Body)

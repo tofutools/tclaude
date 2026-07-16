@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -1170,7 +1171,7 @@ func messageNudgeText(msgID int64) string {
 			return inline
 		}
 		if db.IsOperatorAgentMessage(m.ID) {
-			return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d. Reply only in your regular chat/output; human.notify is optional extra feedback when permitted.]", msgID, msgID)
+			return fmt.Sprintf("[system: new agent message #%d from the human operator. Read it with: tclaude agent inbox read %d.]", msgID, msgID)
 		}
 		if sender := agent.MessageSenderLabel(m.FromConv, m.FromAgent); sender != "" {
 			return fmt.Sprintf("[system: new agent message #%d from %s for you. fetch with: tclaude agent inbox read %d]", msgID, sender, msgID)
@@ -1190,16 +1191,24 @@ func messageInlineMaxChars() int {
 }
 
 // messageInlineText returns a complete server-authored nudge only for bounded,
-// printable, single-line content. That conservative gate keeps user-controlled
-// bytes from becoming tmux control/input syntax while eliminating the inbox
-// round trip for the common short instruction.
+// printable content. Newlines and tabs are safe here because
+// injectTextAndSubmit uses tmux bracketed paste for either one; other control
+// bytes still stay out of the pane injection path.
 func messageInlineText(m *db.AgentMessage) (string, bool) {
 	limit := messageInlineMaxChars()
 	if limit <= 0 || !db.IsOperatorAgentMessage(m.ID) || strings.TrimSpace(m.Body) == "" {
 		return "", false
 	}
-	for _, r := range m.Body + m.Subject {
-		if r == '\n' || r == '\r' || r < 0x20 || r == 0x7f {
+	for _, r := range m.Subject {
+		if r < 0x20 || r == 0x7f {
+			return "", false
+		}
+	}
+	for _, r := range m.Body {
+		if r == '\n' || r == '\t' {
+			continue
+		}
+		if r < 0x20 || r == 0x7f {
 			return "", false
 		}
 	}
@@ -1432,11 +1441,18 @@ func acquirePaneInjectLock(mu *sync.Mutex) error {
 	}
 }
 
-// injectTextAndSubmit types `text` into a CC pane and submits it as a
-// fresh prompt. Splits the text and the submit Enter into separate
-// `send-keys` calls with a 500 ms gap so CC's bracketed-paste mode
-// can't coalesce the trailing Enter into a paste-newline — when that
-// happens, the text gets pasted into the input box but never submitted.
+var panePasteBufferSequence atomic.Uint64
+
+// injectTextAndSubmit types `text` into a harness pane and submits it as a
+// fresh prompt. Multiline/tabbed text is staged in a uniquely named tmux
+// buffer and pasted with bracketed-paste mode, which preserves those bytes in
+// one input turn instead of treating each newline as Enter. Single-line text
+// keeps the smaller send-keys path.
+//
+// The text/paste and submit Enter are split with a 500 ms gap so the harness's
+// bracketed-paste mode can't coalesce the trailing Enter into a paste-newline —
+// when that happens, the text gets pasted into the input box but never
+// submitted.
 // (We learned this the hard way during reincarnate's handoff nudge:
 // rename worked, the [system: new agent message ...] text appeared
 // in the prompt, and neither Enter actually submitted because both
@@ -1463,7 +1479,15 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 	// caller's liveness check and this send — landing the keystrokes in the
 	// wrong agent's prompt. Lock keys stay on the raw target.
 	target := clcommon.ExactTarget(tmuxTarget)
-	if err := runTmuxCommand("send-keys", "-t", target, text); err != nil {
+	if strings.ContainsAny(text, "\n\t") {
+		buffer := fmt.Sprintf("tclaude-inject-%d", panePasteBufferSequence.Add(1))
+		if err := runTmuxCommand("set-buffer", "-b", buffer, text); err != nil {
+			return fmt.Errorf("set-buffer text: %w", err)
+		}
+		if err := runTmuxCommand("paste-buffer", "-d", "-p", "-r", "-b", buffer, "-t", target); err != nil {
+			return fmt.Errorf("paste-buffer text: %w", err)
+		}
+	} else if err := runTmuxCommand("send-keys", "-t", target, text); err != nil {
 		return fmt.Errorf("send-keys text: %w", err)
 	}
 	time.Sleep(injectSettleDelay)
@@ -2363,12 +2387,16 @@ func handleMessageByID(w http.ResponseWriter, r *http.Request) {
 		"body":       m.Body,
 		"created_at": m.CreatedAt.Format(time.RFC3339),
 	}
-	if db.IsOperatorAgentMessage(m.ID) {
+	operatorAuthored := db.IsOperatorAgentMessage(m.ID)
+	replyable := !operatorAuthored && m.FromConv != ""
+	resp["replyable"] = replyable
+	if operatorAuthored {
 		resp["from_title"] = "human operator"
-	} else {
-		// Operator-authored mail has no mailbox return address: its nudge tells
-		// the agent to answer in normal harness output. Agent-authored mail keeps
-		// the existing reply affordances.
+	}
+	if replyable {
+		// Operator-authored mail has no mailbox return address and advertises
+		// replyable=false above. Senderless system mail is likewise not
+		// replyable. Agent-authored mail keeps the existing reply affordances.
 		resp["reply_to"] = m.FromConv
 		resp["reply_cmd"] = fmt.Sprintf("tclaude agent reply %d \"<your reply body>\"", m.ID)
 	}
