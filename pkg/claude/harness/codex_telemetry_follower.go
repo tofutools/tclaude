@@ -43,8 +43,8 @@ type CodexTelemetryFollower struct {
 	checkpointAnchor  []byte
 	restored          bool
 
-	checkpointTooLarge          bool
-	checkpointTooLargeLedgerRev uint64
+	checkpointTooLarge           bool
+	checkpointTooLargeStateBytes int64
 }
 
 // codexTelemetryCheckpoint is the durable form of the follower's cursor and
@@ -90,16 +90,15 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 		return fmt.Errorf("invalid Codex telemetry checkpoint cursor")
 	}
 	state := newCodexRuntimeScanState()
-	state.latest = cp.Latest
-	state.contextReset = cp.ContextReset
+	state.replaceCheckpointContext(cp.Latest, cp.ContextReset)
 	for _, id := range cp.InterruptedSubagents {
 		if id != "" {
-			state.interruptedSubagents[id] = struct{}{}
+			state.addCheckpointSetValue(state.interruptedSubagents, checkpointInterruptedSubagentsPrefix, id)
 		}
 	}
 	for _, id := range cp.FollowupCallIDs {
 		if id != "" {
-			state.followupCallIDs[id] = struct{}{}
+			state.addCheckpointSetValue(state.followupCallIDs, checkpointFollowupCallIDsPrefix, id)
 		}
 	}
 	f.home = cp.Home
@@ -127,10 +126,11 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	if f.path == "" || f.offset <= 0 || f.checkpointSize < f.offset || len(f.checkpointAnchor) == 0 {
 		return nil, false, nil
 	}
-	// An oversized checkpoint is driven by the variable-size collaboration
-	// ledgers. Avoid rebuilding, sorting, and marshaling the same multi-MB state
-	// every dashboard poll; retry only after one of those ledgers changes.
-	if f.checkpointTooLarge && f.checkpointTooLargeLedgerRev == f.state.checkpointLedgerRev {
+	// Avoid rebuilding, sorting, and marshaling a multi-MB checkpoint until its
+	// mutable serialized state has become smaller than at the last failed try.
+	// Growth, including add-then-remove churn back to the same size, cannot make
+	// an append-only rollout's checkpoint fit under the cap.
+	if f.checkpointTooLarge && f.state.checkpointStateBytes >= f.checkpointTooLargeStateBytes {
 		return nil, false, nil
 	}
 	cp := codexTelemetryCheckpoint{
@@ -155,7 +155,7 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	}
 	if len(data) > maxCodexTelemetryCheckpointBytes {
 		f.checkpointTooLarge = true
-		f.checkpointTooLargeLedgerRev = f.state.checkpointLedgerRev
+		f.checkpointTooLargeStateBytes = f.state.checkpointStateBytes
 		return nil, false, fmt.Errorf("%w: %d bytes", ErrCodexTelemetryCheckpointTooLarge, len(data))
 	}
 	f.checkpointTooLarge = false

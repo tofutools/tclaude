@@ -169,7 +169,7 @@ type codexRuntimeScanState struct {
 	contextReset         bool
 	interruptedSubagents map[string]struct{}
 	followupCallIDs      map[string]struct{}
-	checkpointLedgerRev  uint64
+	checkpointStateBytes int64
 }
 
 func newCodexRuntimeScanState() codexRuntimeScanState {
@@ -185,7 +185,7 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		contextReset:         s.contextReset,
 		interruptedSubagents: make(map[string]struct{}, len(s.interruptedSubagents)),
 		followupCallIDs:      make(map[string]struct{}, len(s.followupCallIDs)),
-		checkpointLedgerRev:  s.checkpointLedgerRev,
+		checkpointStateBytes: s.checkpointStateBytes,
 	}
 	for id := range s.interruptedSubagents {
 		out.interruptedSubagents[id] = struct{}{}
@@ -217,10 +217,7 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			return false
 		}
 		if call.Type == "function_call" && call.Name == "followup_task" && call.CallID != "" {
-			if _, exists := s.followupCallIDs[call.CallID]; !exists {
-				s.followupCallIDs[call.CallID] = struct{}{}
-				s.checkpointLedgerRev++
-			}
+			s.addCheckpointSetValue(s.followupCallIDs, checkpointFollowupCallIDsPrefix, call.CallID)
 		}
 		return true
 	}
@@ -240,11 +237,12 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			return false
 		}
 		info := ev.Info
-		s.latest = &info
 		context := contextTelemetryFromTokenCount(info)
+		contextReset := s.contextReset
 		if context.TokensInput != 0 || context.TokensOutput != 0 {
-			s.contextReset = false
+			contextReset = false
 		}
+		s.replaceCheckpointContext(&info, contextReset)
 	case "sub_agent_activity":
 		var ev codexSubagentActivityEvent
 		if json.Unmarshal(env.Payload, &ev) != nil {
@@ -255,34 +253,77 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		switch ev.Kind {
 		case "started":
-			if _, exists := s.interruptedSubagents[ev.AgentThreadID]; exists {
-				delete(s.interruptedSubagents, ev.AgentThreadID)
-				s.checkpointLedgerRev++
-			}
+			s.removeCheckpointSetValue(s.interruptedSubagents, checkpointInterruptedSubagentsPrefix, ev.AgentThreadID)
 		case "interacted":
 			if _, resumes := s.followupCallIDs[ev.EventID]; resumes {
-				if _, exists := s.interruptedSubagents[ev.AgentThreadID]; exists {
-					delete(s.interruptedSubagents, ev.AgentThreadID)
-					s.checkpointLedgerRev++
-				}
+				s.removeCheckpointSetValue(s.interruptedSubagents, checkpointInterruptedSubagentsPrefix, ev.AgentThreadID)
 			}
-			if _, exists := s.followupCallIDs[ev.EventID]; exists {
-				delete(s.followupCallIDs, ev.EventID)
-				s.checkpointLedgerRev++
-			}
+			s.removeCheckpointSetValue(s.followupCallIDs, checkpointFollowupCallIDsPrefix, ev.EventID)
 		case "interrupted":
-			if _, exists := s.interruptedSubagents[ev.AgentThreadID]; !exists {
-				s.interruptedSubagents[ev.AgentThreadID] = struct{}{}
-				s.checkpointLedgerRev++
-			}
+			s.addCheckpointSetValue(s.interruptedSubagents, checkpointInterruptedSubagentsPrefix, ev.AgentThreadID)
 		}
 	}
 	return true
 }
 
 func (s *codexRuntimeScanState) invalidateContext() {
-	s.latest = nil
-	s.contextReset = true
+	s.replaceCheckpointContext(nil, true)
+}
+
+const (
+	checkpointLatestPrefix               = `,"latest":`
+	checkpointContextResetField          = `,"context_reset":true`
+	checkpointInterruptedSubagentsPrefix = `,"interrupted_subagents":[`
+	checkpointFollowupCallIDsPrefix      = `,"followup_call_ids":[`
+)
+
+// checkpointStateBytes tracks the exact JSON size of checkpoint fields whose
+// contents can shrink while an append-only rollout grows. Maintaining it at
+// mutation time makes the oversized-checkpoint suppression gate O(1), without
+// sorting or marshaling multi-megabyte collaboration ledgers on every poll.
+func (s *codexRuntimeScanState) replaceCheckpointContext(latest *codexTokenCountInfo, contextReset bool) {
+	before := checkpointContextStateBytes(s.latest, s.contextReset)
+	s.latest = latest
+	s.contextReset = contextReset
+	s.checkpointStateBytes += checkpointContextStateBytes(s.latest, s.contextReset) - before
+}
+
+func checkpointContextStateBytes(latest *codexTokenCountInfo, contextReset bool) int64 {
+	var size int64
+	if latest != nil {
+		encoded, _ := json.Marshal(latest) // integer-only struct; encoding cannot fail
+		size += int64(len(checkpointLatestPrefix) + len(encoded))
+	}
+	if contextReset {
+		size += int64(len(checkpointContextResetField))
+	}
+	return size
+}
+
+func (s *codexRuntimeScanState) addCheckpointSetValue(set map[string]struct{}, fieldPrefix, value string) {
+	if _, exists := set[value]; exists {
+		return
+	}
+	encoded, _ := json.Marshal(value) // strings are always JSON-encodable
+	if len(set) == 0 {
+		s.checkpointStateBytes += int64(len(fieldPrefix) + len(encoded) + 1) // closing ']'
+	} else {
+		s.checkpointStateBytes += int64(len(encoded) + 1) // separating comma
+	}
+	set[value] = struct{}{}
+}
+
+func (s *codexRuntimeScanState) removeCheckpointSetValue(set map[string]struct{}, fieldPrefix, value string) {
+	if _, exists := set[value]; !exists {
+		return
+	}
+	encoded, _ := json.Marshal(value) // strings are always JSON-encodable
+	if len(set) == 1 {
+		s.checkpointStateBytes -= int64(len(fieldPrefix) + len(encoded) + 1) // closing ']'
+	} else {
+		s.checkpointStateBytes -= int64(len(encoded) + 1) // separating comma
+	}
+	delete(set, value)
 }
 
 // isCodexCompactedRecordPrefix recognizes the stable top-level marker before

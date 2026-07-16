@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,7 +205,10 @@ func TestCodexTelemetryFollower_RejectsOversizedCheckpoint(t *testing.T) {
 		checkpointSize: 64, checkpointAnchor: bytes.Repeat([]byte("a"), 64),
 		state: newCodexRuntimeScanState(),
 	}
-	follower.state.followupCallIDs[string(bytes.Repeat([]byte("x"), maxCodexTelemetryCheckpointBytes))] = struct{}{}
+	oversizedID := string(bytes.Repeat([]byte("x"), maxCodexTelemetryCheckpointBytes))
+	follower.state.addCheckpointSetValue(
+		follower.state.followupCallIDs, checkpointFollowupCallIDsPrefix, oversizedID,
+	)
 	checkpoint, ok, err := follower.Checkpoint()
 	assert.ErrorIs(t, err, ErrCodexTelemetryCheckpointTooLarge)
 	assert.False(t, ok)
@@ -215,15 +219,88 @@ func TestCodexTelemetryFollower_RejectsOversizedCheckpoint(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, checkpoint)
 
-	revisionChangingLine := rolloutEnvelope(t, "response_item", map[string]any{
+	addition := rolloutEnvelope(t, "response_item", map[string]any{
 		"type": "function_call", "name": "followup_task", "call_id": "another-call",
 	})
-	require.True(t, follower.state.consumeLine(revisionChangingLine))
+	require.True(t, follower.state.consumeLine(addition))
 	checkpoint, ok, err = follower.Checkpoint()
-	assert.ErrorIs(t, err, ErrCodexTelemetryCheckpointTooLarge,
-		"a collaboration-ledger change makes the follower retry encoding")
+	assert.NoError(t, err, "ledger growth cannot make the checkpoint fit and stays suppressed")
 	assert.False(t, ok)
 	assert.Nil(t, checkpoint)
+
+	removeAddition := rolloutEnvelope(t, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "event_id": "another-call",
+		"agent_thread_id": "child", "kind": "interacted",
+	})
+	require.True(t, follower.state.consumeLine(removeAddition))
+	checkpoint, ok, err = follower.Checkpoint()
+	assert.NoError(t, err, "add-then-remove churn back to the failed size stays suppressed")
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
+
+	removeOversizedID := rolloutEnvelope(t, "event_msg", map[string]any{
+		"type": "sub_agent_activity", "event_id": oversizedID,
+		"agent_thread_id": "child", "kind": "interacted",
+	})
+	require.True(t, follower.state.consumeLine(removeOversizedID))
+	checkpoint, ok, err = follower.Checkpoint()
+	require.NoError(t, err)
+	assert.True(t, ok, "ledger shrink retries checkpoint encoding")
+	assert.NotEmpty(t, checkpoint)
+}
+
+func TestCodexTelemetryFollower_OversizedCheckpointRetriesAfterTokenStateShrink(t *testing.T) {
+	follower := &CodexTelemetryFollower{
+		home: "/tmp/home", convID: "conv", path: "/tmp/rollout.jsonl", offset: 64,
+		checkpointSize: 64, checkpointAnchor: bytes.Repeat([]byte("a"), 64),
+		state: newCodexRuntimeScanState(),
+	}
+	large := codexTokenCountInfo{
+		TotalTokenUsage: codexTokenUsage{
+			InputTokens: 999999999999999999, CachedInputTokens: 999999999999999999,
+			OutputTokens: 999999999999999999, ReasoningOutputTokens: 999999999999999999,
+			TotalTokens: 999999999999999999,
+		},
+		LastTokenUsage: codexTokenUsage{
+			InputTokens: 999999999999999999, CachedInputTokens: 999999999999999999,
+			OutputTokens: 999999999999999999, ReasoningOutputTokens: 999999999999999999,
+			TotalTokens: 999999999999999999,
+		},
+		ModelContextWindow: 999999999999999999,
+	}
+	follower.state.replaceCheckpointContext(&large, false)
+	base, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// Calibrate the ledger so the large token state puts the checkpoint one
+	// byte over the cap. Replacing only Latest with its smaller form must then
+	// recover without any collaboration-ledger mutation.
+	idLen := maxCodexTelemetryCheckpointBytes + 1 - len(base) - len(checkpointFollowupCallIDsPrefix) - 3
+	require.Positive(t, idLen)
+	barelyOversizedID := strings.Repeat("x", idLen)
+	follower.state.addCheckpointSetValue(
+		follower.state.followupCallIDs, checkpointFollowupCallIDsPrefix, barelyOversizedID,
+	)
+	checkpoint, ok, err := follower.Checkpoint()
+	assert.ErrorIs(t, err, ErrCodexTelemetryCheckpointTooLarge)
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
+
+	grown := large
+	grown.TotalTokenUsage.InputTokens++
+	follower.state.replaceCheckpointContext(&grown, false)
+	checkpoint, ok, err = follower.Checkpoint()
+	assert.NoError(t, err, "token-state growth stays suppressed")
+	assert.False(t, ok)
+	assert.Nil(t, checkpoint)
+
+	small := codexTokenCountInfo{ModelContextWindow: 1}
+	follower.state.replaceCheckpointContext(&small, false)
+	checkpoint, ok, err = follower.Checkpoint()
+	require.NoError(t, err)
+	assert.True(t, ok, "a smaller Latest retries and recovers checkpoint encoding")
+	assert.LessOrEqual(t, len(checkpoint), maxCodexTelemetryCheckpointBytes)
 }
 
 func TestCaptureCodexTelemetryCheckpointUsesScannedDescriptor(t *testing.T) {
