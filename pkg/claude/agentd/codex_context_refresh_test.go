@@ -193,6 +193,72 @@ func TestCodexContextRefreshDeletesCheckpointThatGrowsTooLarge(t *testing.T) {
 	assert.Nil(t, checkpointData)
 }
 
+func TestCodexContextRefreshRecreatesCheckpointAfterTokenStateShrinks(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-shrinking-checkpoint-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354fb"
+		large     = int64(999999999999999999)
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	largeUsage := map[string]any{
+		"input_tokens": large, "cached_input_tokens": large, "output_tokens": large,
+		"reasoning_output_tokens": large, "total_tokens": large,
+	}
+	appendCodexRefreshEnvelope(t, path, "event_msg", map[string]any{
+		"type": "token_count",
+		"info": map[string]any{
+			"total_token_usage": largeUsage, "last_token_usage": largeUsage,
+			"model_context_window": large,
+		},
+	})
+	appendCodexRefreshEnvelope(t, path, "response_item", map[string]any{
+		"type": "function_call", "name": "followup_task",
+		"call_id": strings.Repeat("x", (1<<20)-2000),
+	})
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle", Harness: harness.CodexName,
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+	checkpoint, err := db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, checkpoint)
+	require.Less(t, len(checkpoint.Data), 1<<20)
+
+	// Start from the actual durable size so temp-directory path lengths cannot
+	// make this boundary test flaky. At this rollout size, adding the second ID
+	// does not change the digit width of the cursor fields; its checkpoint JSON
+	// contribution is one comma, two quotes, and the ID bytes.
+	secondIDLen := (1 << 20) + 64 - len(checkpoint.Data) - 3
+	require.Positive(t, secondIDLen)
+	appendCodexRefreshEnvelope(t, path, "response_item", map[string]any{
+		"type": "function_call", "name": "followup_task",
+		"call_id": strings.Repeat("y", secondIDLen),
+	})
+	resetCodexRefreshThrottleForTest(sessionID)
+	refreshCodexContextSnapshotOnRead(sess, true)
+	checkpoint, err = db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	assert.Nil(t, checkpoint, "the large token snapshot makes the checkpoint barely oversized")
+
+	appendCodexRefreshTokenCount(t, path, 1, 1)
+	resetCodexRefreshThrottleForTest(sessionID)
+	refreshCodexContextSnapshotOnRead(sess, true)
+	checkpoint, err = db.LoadCodexTelemetryCheckpoint(sessionID)
+	require.NoError(t, err)
+	require.NotNil(t, checkpoint, "token-only shrink recreates the durable checkpoint row")
+	assert.NotEmpty(t, checkpoint.Data)
+}
+
 func TestCodexContextRefreshDeletesCheckpointWhenRolloutDisappears(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
