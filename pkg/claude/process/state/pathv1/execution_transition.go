@@ -871,6 +871,10 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	if terminalParallelFailure {
 		eventSeq := int64(CurrentLastLogSeq(input.checkpoint) + 1)
 		failed := aggregate.Routing.Paths[source.ID]
+		failed, _, err = inheritPathDetachments(&aggregate.Routing, failed)
+		if err != nil {
+			return nil, err
+		}
 		failed.State = PathFailed
 		failed.UpdatedSeq = eventSeq
 		receiptID, receiptErr := DispositionReceiptIdentity(failed.ID, PathLive, PathFailed, "performer_failed", settle.ID, "", uint64(eventSeq))

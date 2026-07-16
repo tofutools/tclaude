@@ -24,6 +24,20 @@ func validateExactMutationTargets(batch MutationBatch, allowed map[mutationTarge
 
 func validateRouteMutationSet(pre RoutingState, plan RoutePathsPlan, sourceAfter PathRecord) error {
 	allowed := map[mutationTarget]struct{}{{kind: MutationPath, key: plan.SourcePathID}: {}}
+	sourceBefore, ok := pre.Paths[plan.SourcePathID]
+	if !ok {
+		return fmt.Errorf("%w: routed source %q is absent", ErrMutationInvalid, plan.SourcePathID)
+	}
+	inheritedSource, inheritedRecords, err := derivePathDetachmentInheritance(&pre, sourceBefore)
+	if err != nil {
+		return err
+	}
+	if sourceAfter.DetachmentSetID != inheritedSource.DetachmentSetID {
+		return fmt.Errorf("%w: routed source detachment head differs from exact inheritance", ErrMutationInvalid)
+	}
+	if err := authorizeDetachmentSetRecords(plan.Batch, allowed, inheritedRecords); err != nil {
+		return err
+	}
 	producedScopes := map[ScopeID]struct{}{}
 	producedReservations := map[ReservationID]struct{}{}
 	for _, pathID := range plan.ProducedPathIDs {
@@ -37,6 +51,9 @@ func validateRouteMutationSet(pre RoutingState, plan RoutePathsPlan, sourceAfter
 		}
 		if path.ParentPathID != plan.SourcePathID {
 			return fmt.Errorf("%w: produced path %q is not a child of the routed source", ErrMutationInvalid, pathID)
+		}
+		if path.DetachmentSetID != inheritedSource.DetachmentSetID {
+			return fmt.Errorf("%w: produced path %q detachment head differs from routed parent", ErrMutationInvalid, pathID)
 		}
 		if path.Kind == PathImpossibleEdge {
 			if path.ImpossibleCauseDigest == "" {
@@ -96,6 +113,24 @@ func validateRouteMutationSet(pre RoutingState, plan RoutePathsPlan, sourceAfter
 		return err
 	}
 	return validateRouteEventSeq(plan.Batch)
+}
+
+func authorizeDetachmentSetRecords(batch MutationBatch, allowed map[mutationTarget]struct{}, records []DetachmentSetRecord) error {
+	for _, want := range records {
+		mutation, ok := findMutation(batch, MutationDetachmentSet, want.ID)
+		if !ok || len(mutation.Before) != 0 || len(mutation.After) == 0 {
+			return fmt.Errorf("%w: inherited detachment set %q is not an exact create", ErrMutationInvalid, want.ID)
+		}
+		var got DetachmentSetRecord
+		if err := decodeExactPayload(mutation.After, &got); err != nil {
+			return err
+		}
+		if got != want {
+			return fmt.Errorf("%w: inherited detachment set %q differs from exact lineage", ErrMutationInvalid, want.ID)
+		}
+		allowed[mutationTarget{kind: MutationDetachmentSet, key: want.ID}] = struct{}{}
+	}
+	return nil
 }
 
 func authorizeCauseSet(pre RoutingState, batch MutationBatch, allowed map[mutationTarget]struct{}, digest CauseDigest) error {
@@ -179,6 +214,21 @@ func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan
 	allowed := map[mutationTarget]struct{}{{kind: MutationReservation, key: plan.ReservationID}: {}}
 	pathIDs := append([]PathID(nil), plan.InputPathIDs...)
 	pathIDs = append(pathIDs, plan.PreArrivedLoserPathIDs...)
+	inheritedHeads := make(map[PathID]DetachmentSetID, len(pathIDs))
+	for _, pathID := range pathIDs {
+		path, ok := pre.Paths[pathID]
+		if !ok {
+			return fmt.Errorf("%w: activation input path %q is absent", ErrMutationInvalid, pathID)
+		}
+		inherited, records, err := derivePathDetachmentInheritance(&pre, path)
+		if err != nil {
+			return err
+		}
+		if len(records) != 0 {
+			return fmt.Errorf("%w: activation input path %q has non-interned detachment inheritance", ErrMutationInvalid, pathID)
+		}
+		inheritedHeads[pathID] = inherited.DetachmentSetID
+	}
 	if after.State == ReservationActivated {
 		if after.Activation == nil {
 			return fmt.Errorf("%w: activated reservation lacks activation reference", ErrMutationInvalid)
@@ -196,6 +246,26 @@ func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan
 		}
 		allowed[mutationTarget{kind: MutationActivation, key: activation.ID}] = struct{}{}
 		if activation.OutputPathID != "" {
+			outputMutation, exists := findMutation(plan.Batch, MutationPath, activation.OutputPathID)
+			if !exists || len(outputMutation.After) == 0 {
+				return fmt.Errorf("%w: activation output %q is absent", ErrMutationInvalid, activation.OutputPathID)
+			}
+			var output PathRecord
+			if err := decodeExactPayload(outputMutation.After, &output); err != nil {
+				return err
+			}
+			wantHead := DetachmentSetID("")
+			if len(plan.InputPathIDs) > 0 {
+				wantHead = inheritedHeads[plan.InputPathIDs[0]]
+				for _, inputID := range plan.InputPathIDs[1:] {
+					if inheritedHeads[inputID] != wantHead {
+						return fmt.Errorf("%w: activation inputs have different inherited detachment heads", ErrMutationInvalid)
+					}
+				}
+			}
+			if output.DetachmentSetID != wantHead {
+				return fmt.Errorf("%w: activation output detachment head differs from exact inputs", ErrMutationInvalid)
+			}
 			pathIDs = append(pathIDs, activation.OutputPathID)
 		}
 	}
@@ -216,9 +286,25 @@ func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan
 			return err
 		}
 		allowed[mutationTarget{kind: MutationDetachment, key: key}] = struct{}{}
-		setID, _ := DetachmentSetIdentity("", detachment.ID)
-		if _, ok := findMutation(plan.Batch, MutationDetachmentSet, setID); !ok {
-			return fmt.Errorf("%w: detachment %q lacks its exact root set", ErrMutationInvalid, detachment.ID)
+		parentSet := DetachmentSetID("")
+		for _, pathID := range plan.PreArrivedLoserPathIDs {
+			path := pre.Paths[pathID]
+			if path.CandidateID == candidateID {
+				parentSet = inheritedHeads[pathID]
+				break
+			}
+		}
+		setID, _ := DetachmentSetIdentity(parentSet, detachment.ID)
+		setMutation, ok := findMutation(plan.Batch, MutationDetachmentSet, setID)
+		if !ok || len(setMutation.Before) != 0 || len(setMutation.After) == 0 {
+			return fmt.Errorf("%w: detachment %q lacks linked detachment set %q from parent %q", ErrMutationInvalid, detachment.ID, setID, parentSet)
+		}
+		var set DetachmentSetRecord
+		if err := decodeExactPayload(setMutation.After, &set); err != nil {
+			return err
+		}
+		if set.ID != setID || set.ParentSetID != parentSet || set.DetachmentID != detachment.ID {
+			return fmt.Errorf("%w: detachment %q linked set differs from exact loser head", ErrMutationInvalid, detachment.ID)
 		}
 		allowed[mutationTarget{kind: MutationDetachmentSet, key: setID}] = struct{}{}
 	}

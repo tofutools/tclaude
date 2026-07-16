@@ -27,11 +27,11 @@ func FoundationEngineCapabilities() EngineCapabilities {
 	return EngineCapabilities{supported: map[ExecutionCapability]struct{}{CapabilityFoundationV1: {}}}
 }
 
-// ProductionEngineCapabilities is the indivisible TCL-444/445/446 release
-// surface. Parallel fan-out is never advertised without its all reducer.
+// ProductionEngineCapabilities is the monotonic TCL-444/445/446/448 release
+// surface. Any is never advertised without the foundation and all reducer.
 func ProductionEngineCapabilities() EngineCapabilities {
 	return EngineCapabilities{supported: map[ExecutionCapability]struct{}{
-		CapabilityFoundationV1: {}, CapabilityParallelAllV1: {},
+		CapabilityFoundationV1: {}, CapabilityParallelAllV1: {}, CapabilityParallelAnyV1: {},
 	}}
 }
 
@@ -82,7 +82,7 @@ func requireInstantiationCapabilities(tmpl *model.Template, capabilities EngineC
 	if !capabilities.Supports(required) {
 		return fmt.Errorf("template requires process engine capability %s", required)
 	}
-	if hasParallel && capabilities.Supports(CapabilityParallelAllV1) && !capabilities.Supports(CapabilityParallelAnyV1) && !exclusiveV7Eligible(tmpl) {
+	if hasParallel && !exclusiveV7Eligible(tmpl) {
 		return fmt.Errorf("template is outside the executable schema-7 parallel-all subset")
 	}
 	return nil

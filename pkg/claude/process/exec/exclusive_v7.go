@@ -133,6 +133,12 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 		}
 		if pending {
 			if view.Input.ParallelEnabled() {
+				if sink, sinkErr := pathv1.AdvanceParallelDetachedSink(ctx, view.Input); sinkErr == nil {
+					action.transition = sink
+					return nil
+				} else if !errors.Is(sinkErr, pathv1.ErrParallelDetachedSinkNotReady) {
+					return sinkErr
+				}
 				action.transition, err = pathv1.AdvanceParallelRoute(ctx, view.Input)
 			} else {
 				action.transition, err = pathv1.AdvanceExclusiveRoute(ctx, view.Input)
@@ -157,6 +163,12 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 				return nil
 			} else if !errors.Is(readyErr, pathv1.ErrParallelAllNotReady) {
 				return readyErr
+			}
+			if transition, anyErr := pathv1.AdvanceParallelAny(ctx, view.Input); anyErr == nil {
+				action.transition = transition
+				return nil
+			} else if !errors.Is(anyErr, pathv1.ErrParallelAnyNotReady) {
+				return anyErr
 			}
 			if transition, allErr := pathv1.AdvanceParallelAll(ctx, view.Input); allErr == nil {
 				action.transition = transition

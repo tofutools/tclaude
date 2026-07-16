@@ -454,9 +454,6 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 		if node.IsCompound() {
 			return false
 		}
-		if hasParallel && node.Join == model.JoinAny {
-			return false
-		}
 		switch node.Type {
 		case model.NodeTypeTask, model.NodeTypeDecision:
 			if node.Performer == nil || node.Performer.Kind == model.PerformerProgram || node.Performer.Contact != nil {
@@ -485,7 +482,7 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			}
 		case model.NodeTypeStart:
 		case model.NodeTypeParallel:
-			if len(node.Next) < 2 || node.Join == model.JoinAny {
+			if len(node.Next) < 2 {
 				return false
 			}
 		default:

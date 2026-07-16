@@ -182,12 +182,13 @@ const (
 	CommandActivateGeneration        CommandKindV1 = "activate_generation_v1"
 	CommandPropagateCandidateClosure CommandKindV1 = "propagate_candidate_closure_v1"
 	CommandSettleDetachedSink        CommandKindV1 = "settle_detached_sink_v1"
+	CommandInternDetachmentSet       CommandKindV1 = "intern_detachment_set_v1"
 	CommandCompleteRun               CommandKindV1 = "complete_run_v1"
 )
 
 func (v CommandKindV1) Valid() bool {
 	switch v {
-	case CommandInitializeRouting, CommandPerformAttempt, CommandSettleAttempt, CommandRoutePaths, CommandActivateGeneration, CommandPropagateCandidateClosure, CommandSettleDetachedSink, CommandCompleteRun:
+	case CommandInitializeRouting, CommandPerformAttempt, CommandSettleAttempt, CommandRoutePaths, CommandActivateGeneration, CommandPropagateCandidateClosure, CommandSettleDetachedSink, CommandInternDetachmentSet, CommandCompleteRun:
 		return true
 	}
 	return false

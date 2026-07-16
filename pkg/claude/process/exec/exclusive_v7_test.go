@@ -1,6 +1,7 @@
 package processexec
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -159,7 +160,9 @@ func TestExclusiveV7DriveClaimsPerformsObservesRoutesAndCompletes(t *testing.T) 
 	assert.Equal(t, 1, adapter.count())
 	assert.GreaterOrEqual(t, pathv1.CheckpointRevision(checkpoint), uint64(5))
 
-	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
 	require.NoError(t, err)
 	completion, err := pathv1.AssessAggregateCompletion(aggregate.View())
 	require.NoError(t, err)
@@ -219,6 +222,154 @@ func TestExclusiveV7DriveParallelAllTerminalMixturePoisonsJoin(t *testing.T) {
 			assert.Equal(t, string(pathv1.ScopeCloseCandidateNonSuccess), reservation.ClosedReason)
 		}
 	}
+}
+
+func TestExclusiveV7DriveParallelAnyRestartsWithDetachedLoserInFlight(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := parallelAnyV7RunAt(t, root)
+	adapter := &exclusiveV7ControlledDeferredAdapter{}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+	dispatches, reconciles := adapter.counts()
+	assert.Equal(t, 1, dispatches)
+	assert.Equal(t, 0, reconciles)
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
+	require.NoError(t, err)
+	assertParallelAnyActivated(t, aggregate)
+	ended, live := 0, 0
+	for _, path := range aggregate.Routing.Paths {
+		if path.Kind != pathv1.PathActivationOutput {
+			continue
+		}
+		switch path.State {
+		case pathv1.PathEnded:
+			ended++
+		case pathv1.PathLive:
+			live++
+		}
+	}
+	assert.Equal(t, 1, ended, "unrelated live work must not block the winner end")
+	assert.Equal(t, 1, live, "detached loser must remain owned and runnable")
+	_, completionErr := pathv1.AssessAggregateCompletion(aggregate.View())
+	assert.ErrorIs(t, completionErr, pathv1.ErrAggregateUnsettled, "owned detached work must block aggregate completion")
+
+	restarted, err := store.NewFS(root)
+	require.NoError(t, err)
+	adapter.setObserved()
+	restartedExecutor := NewExclusiveV7(restarted, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+	checkpoint, err = restartedExecutor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", pathv1.CurrentRunStatus(checkpoint))
+	dispatches, reconciles = adapter.counts()
+	assert.Equal(t, 1, dispatches, "restart must not redispatch the detached loser")
+	assert.Equal(t, 1, reconciles)
+	aggregate, err = pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	sinks := 0
+	for _, path := range aggregate.Routing.Paths {
+		if path.State == pathv1.PathDetachedSink && path.DetachedSink != nil {
+			sinks++
+		}
+	}
+	assert.Equal(t, 1, sinks)
+}
+
+func TestExclusiveV7DriveParallelAnyAllCandidatesFailClosesWithoutActivation(t *testing.T) {
+	fs, runID := parallelAnyFailureV7Run(t)
+	adapter := &exclusiveV7Adapter{results: []Observation{
+		{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:first-failure"},
+		{Actor: "agent:agt_test1", Verdict: "fail", EvidenceRef: "artifact:second-failure"},
+	}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	found := false
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.JoinPolicy != pathv1.JoinAny || !reservation.IsReducing {
+			continue
+		}
+		found = true
+		assert.Equal(t, pathv1.ReservationClosedNoActivation, reservation.State)
+		assert.Nil(t, reservation.Activation)
+		assert.Equal(t, string(pathv1.ScopeCloseCandidateNonSuccess), reservation.ClosedReason)
+	}
+	assert.True(t, found)
+}
+
+func TestParallelAnyExactCASHasOneWinnerEvent(t *testing.T) {
+	fs, runID := parallelDirectAnyV7Run(t)
+	appendTransition := func(plan func(store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error)) {
+		t.Helper()
+		var transition *pathv1.ExecutionTransition
+		require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+			var err error
+			transition, err = plan(view)
+			return err
+		}))
+		_, err := fs.AppendPathV1(t.Context(), runID, transition)
+		require.NoError(t, err)
+	}
+	appendTransition(func(view store.PathV1ExecutionView) (*pathv1.ExecutionTransition, error) {
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(view.Checkpoint)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range aggregate.Routing.Paths {
+			if path.Kind == pathv1.PathActivationOutput && path.State == pathv1.PathLive {
+				return pathv1.AdvanceParallelSplit(t.Context(), view.Input, path.ID)
+			}
+		}
+		return nil, errors.New("parallel root output not found")
+	})
+	var transition *pathv1.ExecutionTransition
+	require.NoError(t, fs.WithPathV1ExecutionView(t.Context(), runID, func(view store.PathV1ExecutionView) error {
+		var err error
+		transition, err = pathv1.AdvanceParallelAny(t.Context(), view.Input)
+		return err
+	}))
+
+	start := make(chan struct{})
+	results := make(chan store.PathV1AppendDisposition, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			result, appendErr := fs.AppendPathV1(t.Context(), runID, transition)
+			errs <- appendErr
+			results <- result.Disposition
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for appendErr := range errs {
+		require.NoError(t, appendErr)
+	}
+	counts := map[store.PathV1AppendDisposition]int{}
+	for disposition := range results {
+		counts[disposition]++
+	}
+	assert.Equal(t, 1, counts[store.PathV1AppendApplied])
+	assert.Equal(t, 1, counts[store.PathV1AppendAlreadyApplied])
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
+	require.NoError(t, err)
+	assertParallelAnyActivated(t, aggregate)
 }
 
 func TestExclusiveV7ParallelFailurePropagatesThroughUnmaterializedBranchNode(t *testing.T) {
@@ -823,6 +974,77 @@ func parallelAllV7Run(t *testing.T) (*store.FS, string) {
 	require.NoError(t, err)
 	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
 	return fs, runID
+}
+
+func parallelAnyV7RunAt(t *testing.T, root string) (*store.FS, string) {
+	t.Helper()
+	return createParallelAnyV7Run(t, root, "parallel-any-v7", map[string]model.Node{
+		"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"quick": "merge", "slow": "slow"}},
+		"slow":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "slow"}, Next: model.Next{"pass": "merge"}},
+		"merge": {Type: model.NodeTypeEnd, Join: model.JoinAny, Result: "completed"},
+	})
+}
+
+func parallelAnyFailureV7Run(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	return createParallelAnyV7Run(t, t.TempDir(), "parallel-any-failure-v7", map[string]model.Node{
+		"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"left": "left", "right": "right"}},
+		"left":  {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "left"}, Next: model.Next{"pass": "merge"}},
+		"right": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "right"}, Next: model.Next{"pass": "merge"}},
+		"merge": {Type: model.NodeTypeEnd, Join: model.JoinAny, Result: "completed"},
+	})
+}
+
+func parallelDirectAnyV7Run(t *testing.T) (*store.FS, string) {
+	t.Helper()
+	return createParallelAnyV7Run(t, t.TempDir(), "parallel-direct-any-v7", map[string]model.Node{
+		"fork":  {Type: model.NodeTypeParallel, Next: model.Next{"left": "merge", "right": "merge"}},
+		"merge": {Type: model.NodeTypeEnd, Join: model.JoinAny, Result: "completed"},
+	})
+}
+
+func createParallelAnyV7Run(t *testing.T, root, id string, nodes map[string]model.Node) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{APIVersion: model.APIVersion, Kind: model.Kind, ID: id, Start: "fork", Nodes: nodes}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-" + id
+	inits := make([]state.NodeInit, 0, len(nodes))
+	for nodeID, node := range nodes {
+		status := state.NodeStatusPending
+		if nodeID == "fork" {
+			status = state.NodeStatusReady
+		}
+		inits = append(inits, state.NodeInit{ID: nodeID, Type: node.Type, Status: status})
+	}
+	slices.SortFunc(inits, func(a, b state.NodeInit) int { return cmp.Compare(a.ID, b.ID) })
+	st := state.New(runID, record.Ref, record.Ref, inits)
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	result, err := fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
+}
+
+func assertParallelAnyActivated(t *testing.T, aggregate pathv1.AggregateCheckpoint) {
+	t.Helper()
+	found := false
+	for _, reservation := range aggregate.Routing.Reservations {
+		if reservation.JoinPolicy != pathv1.JoinAny || !reservation.IsReducing {
+			continue
+		}
+		found = true
+		assert.Equal(t, pathv1.ReservationActivated, reservation.State)
+		assert.NotNil(t, reservation.Activation)
+		assert.Equal(t, reservation.EventSeq, aggregate.Routing.Scopes[reservation.ReducesScopeID].EventSeq)
+	}
+	assert.True(t, found)
 }
 
 func parallelAllV7RunWithIntermediate(t *testing.T) (*store.FS, string) {

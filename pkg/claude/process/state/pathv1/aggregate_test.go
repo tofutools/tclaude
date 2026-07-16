@@ -454,7 +454,8 @@ func validSlowAnyFixtureState(t *testing.T, finalState slowAnyFinalState) Aggreg
 		view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, SourcePathID: localOutput.ID, TerminalKind: TerminalFailed, DispositionReason: "performer_failed", SourceActivationID: localActivationID, SourceCommandID: failure.ID, EventSeq: 5}
 	case slowAnyDetachedSink:
 		latePathID, _ := EdgePathIdentity(localActivationID, localOutputID, lateEdge.ID, r.ID, d.CandidateID)
-		sink := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1, SourcePathID: latePathID, TargetReservationID: r.ID, TargetGeneration: 1, InputDigest: setID, ResultCode: "detached"}, CommandObserved)
+		settlement := addTerminalAttemptCommands(t, &view, localActivationID, 1, 1, "continue", "", "observed")
+		sink := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1, SourceActivationID: localActivationID, SourceGeneration: 1, SourcePathID: latePathID, Attempt: 1, TargetReservationID: r.ID, TargetGeneration: 1, InputDigest: settlement.ID, ResultCode: "detached"}, CommandObserved)
 		view.Commands[sink.ID] = sink
 		localOutput.State = PathRouted
 		localOutput.ProducedPathIDs = []string{latePathID}

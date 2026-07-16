@@ -482,7 +482,7 @@ func compareString(a, b string) int {
 
 func buildExclusiveSequenceClosure(binding CheckpointBinding, post AggregateView, impossible PathRecord, eventSeq int64) (CommandRecord, AggregateView, error) {
 	reservation, ok := post.Routing.Reservations[impossible.TargetReservationID]
-	if !ok || reservation.JoinPolicy == JoinAny || reservation.State != ReservationOpen {
+	if !ok || reservation.State != ReservationOpen {
 		return CommandRecord{}, AggregateView{}, fmt.Errorf("%w: loser reservation is absent or closed", ErrMutationInconsistent)
 	}
 	candidate, ok := candidateForID(reservation, impossible.CandidateID)
@@ -731,11 +731,15 @@ func buildExclusiveSequenceActivation(binding CheckpointBinding, post AggregateV
 	ref := ActivationRef{ID: activationID, Generation: reservation.Generation}
 	before := Clone(*post.Routing)
 	after := Clone(before)
+	selected, _, err = inheritPathDetachments(&after, after.Paths[selected.ID])
+	if err != nil {
+		return CommandRecord{}, AggregateView{}, err
+	}
 	frames, lineageID, err := PopConsumedLineage([]PathRecord{selected}, reservation.ID)
 	if err != nil {
 		return CommandRecord{}, AggregateView{}, err
 	}
-	consumed := after.Paths[selected.ID]
+	consumed := selected
 	consumed.State = PathConsumed
 	consumed.ConsumedBy = &ref
 	consumed.UpdatedSeq = eventSeq
@@ -752,7 +756,8 @@ func buildExclusiveSequenceActivation(binding CheckpointBinding, post AggregateV
 		ID: outputID, Kind: PathActivationOutput, State: PathLive, SourceActivation: ref,
 		ScopeID: reservation.ScopeID, BranchEdgeID: reservation.BranchEdgeID,
 		CandidateLineage: frames, CandidateLineageID: lineageID, LineageDepth: uint32(len(frames)),
-		CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
+		DetachmentSetID: selected.DetachmentSetID,
+		CreatedSeq:      eventSeq, UpdatedSeq: eventSeq,
 	}
 	receiptID, err := ActivationReceiptIdentity(activationID, reservation.ID, inputDigest, outputID, MutationCommandPlaceholder, uint64(eventSeq))
 	if err != nil {

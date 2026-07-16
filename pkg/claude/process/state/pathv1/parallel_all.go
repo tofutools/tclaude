@@ -25,6 +25,11 @@ func AdvanceParallelAll(ctx context.Context, input *VerifiedExclusiveInput) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	if transition, interned, internErr := advanceReducerDetachmentIntern(ctx, input); internErr != nil {
+		return nil, internErr
+	} else if interned {
+		return transition, nil
+	}
 	ids := make([]ReservationID, 0)
 	for id, reservation := range aggregate.Routing.Reservations {
 		if reservation.State == ReservationOpen && reservation.JoinPolicy == JoinAll {
@@ -956,10 +961,20 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 	ref := ActivationRef{ID: activationID, Generation: reservation.Generation}
 	inputs := make([]PathRecord, len(arrivals))
 	for index, pathID := range arrivals {
-		inputs[index] = after.Paths[pathID]
+		path, ok := after.Paths[pathID]
+		if !ok || path.State != PathArrived || path.TargetReservationID != reservation.ID {
+			return fmt.Errorf("%w: all arrival %q is unavailable", ErrMutationInconsistent, pathID)
+		}
+		path, _, err = inheritPathDetachments(after, path)
+		if err != nil {
+			return err
+		}
+		after.Paths[path.ID] = path
+		inputs[index] = path
 	}
 	var lineage []CandidateLineageFrame
 	lineageID := ""
+	detachmentSetID := DetachmentSetID("")
 	if reservation.IsReducing {
 		scope, ok := after.Scopes[reservation.ReducesScopeID]
 		forkOutput, outputOK := after.Paths[scope.ForkOutputPathID]
@@ -974,8 +989,12 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 			return err
 		}
 	}
-	for _, pathID := range arrivals {
-		path := after.Paths[pathID]
+	detachmentSetID, err = commonInputDetachmentSet(inputs)
+	if err != nil {
+		return err
+	}
+	for index := range arrivals {
+		path := inputs[index]
 		path.State, path.ConsumedBy, path.UpdatedSeq = PathConsumed, &ref, eventSeq
 		receiptID, receiptErr := DispositionReceiptIdentity(path.ID, PathArrived, PathConsumed, "all_input", MutationCommandPlaceholder, "", uint64(eventSeq))
 		if receiptErr != nil {
@@ -994,7 +1013,7 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 		scope.State, scope.CloseReason, scope.ClosedByCommandID, scope.EventSeq = ScopeClosedActivated, ScopeCloseAll, MutationCommandPlaceholder, eventSeq
 		after.Scopes[scope.ID] = scope
 	}
-	after.Paths[outputID] = PathRecord{ID: outputID, Kind: PathActivationOutput, State: PathLive, SourceActivation: ref, ScopeID: outputScope, BranchEdgeID: outputBranch, CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)), CreatedSeq: eventSeq, UpdatedSeq: eventSeq}
+	after.Paths[outputID] = PathRecord{ID: outputID, Kind: PathActivationOutput, State: PathLive, SourceActivation: ref, ScopeID: outputScope, BranchEdgeID: outputBranch, CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)), DetachmentSetID: detachmentSetID, CreatedSeq: eventSeq, UpdatedSeq: eventSeq}
 	receiptID, err := ActivationReceiptIdentity(activationID, reservation.ID, inputDigest, outputID, MutationCommandPlaceholder, uint64(eventSeq))
 	if err != nil {
 		return err
@@ -1009,7 +1028,29 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 
 func buildParallelAllClose(after *RoutingState, reservation ActivationReservation, arrivals []PathID, leafDigest CauseDigest, reason ScopeCloseReason, eventSeq int64) error {
 	leafSet, ok := after.CauseSets[leafDigest]
-	if !ok || len(leafSet.CauseIDs) == 0 {
+	if !ok {
+		leafIDs := make([]CauseID, 0)
+		for _, candidate := range reservation.Candidates {
+			key, _ := CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+			closure, closed := after.CandidateClosures[key]
+			if !closed {
+				continue
+			}
+			set, exists := after.CauseSets[closure.CauseDigest]
+			if !exists {
+				return fmt.Errorf("%w: candidate %q closure cause set is absent", ErrMutationInconsistent, candidate.ID)
+			}
+			leafIDs = append(leafIDs, set.CauseIDs...)
+		}
+		slices.Sort(leafIDs)
+		leafIDs = slices.Compact(leafIDs)
+		derived, err := CauseSetIdentity(leafIDs)
+		if err != nil || derived != leafDigest {
+			return fmt.Errorf("%w: closed fold leaf cause union drift", ErrMutationInconsistent)
+		}
+		leafSet = CauseSetRecord{Digest: leafDigest, CauseIDs: leafIDs}
+	}
+	if len(leafSet.CauseIDs) == 0 {
 		return fmt.Errorf("%w: closed all fold lacks complete leaf causes", ErrMutationInconsistent)
 	}
 	kinds := make([]TerminalKind, 0, len(leafSet.CauseIDs))
@@ -1043,6 +1084,10 @@ func buildParallelAllClose(after *RoutingState, reservation ActivationReservatio
 	after.CauseSets[finalDigest] = CauseSetRecord{Digest: finalDigest, CauseIDs: finalIDs}
 	for _, pathID := range arrivals {
 		path := after.Paths[pathID]
+		path, _, err = inheritPathDetachments(after, path)
+		if err != nil {
+			return err
+		}
 		path.State, path.ConsumedBy, path.UpdatedSeq = PathConsumed, nil, eventSeq
 		receiptID, receiptErr := DispositionReceiptIdentity(path.ID, PathArrived, PathConsumed, "join_non_success", MutationCommandPlaceholder, "", uint64(eventSeq))
 		if receiptErr != nil {

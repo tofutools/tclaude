@@ -110,14 +110,30 @@ type PropagateClosurePlan struct {
 }
 
 type SettleDetachedSinkPlan struct {
-	SourcePathID    PathID          `json:"sourcePathId"`
-	ReservationID   ReservationID   `json:"reservationId"`
-	Generation      uint64          `json:"generation"`
-	DetachmentSetID DetachmentSetID `json:"detachmentSetId"`
-	DetachmentID    DetachmentID    `json:"detachmentId"`
-	CauseDigest     CauseDigest     `json:"causeDigest,omitempty"`
-	ResultCode      string          `json:"resultCode"`
-	Batch           MutationBatch   `json:"batch"`
+	SettlementCommandID  string          `json:"settlementCommandId"`
+	SourceActivationID   ActivationID    `json:"sourceActivationId"`
+	SourceGeneration     uint64          `json:"sourceGeneration"`
+	SourceAttempt        uint64          `json:"sourceAttempt"`
+	SettlementResultCode string          `json:"settlementResultCode"`
+	SourcePathID         PathID          `json:"sourcePathId"`
+	ReservationID        ReservationID   `json:"reservationId"`
+	Generation           uint64          `json:"generation"`
+	DetachmentSetID      DetachmentSetID `json:"detachmentSetId"`
+	DetachmentID         DetachmentID    `json:"detachmentId"`
+	CauseDigest          CauseDigest     `json:"causeDigest,omitempty"`
+	ResultCode           string          `json:"resultCode"`
+	Batch                MutationBatch   `json:"batch"`
+}
+
+// InternDetachmentSetPlan owns one immutable, path-neutral set-node create.
+// Repeating this bounded primitive prepares a reducer activation without
+// expanding its canonical mutation formula.
+type InternDetachmentSetPlan struct {
+	ReservationID ReservationID       `json:"reservationId"`
+	Generation    uint64              `json:"generation"`
+	SourcePathID  PathID              `json:"sourcePathId"`
+	Record        DetachmentSetRecord `json:"record"`
+	Batch         MutationBatch       `json:"batch"`
 }
 
 type mutationPayload[T any] struct {

@@ -41,7 +41,7 @@ func TestActiveV6CapabilitiesCannotRepresentPathV1Execution(t *testing.T) {
 	for _, kind := range []CommandKindV1{
 		CommandInitializeRouting, CommandPerformAttempt, CommandSettleAttempt,
 		CommandRoutePaths, CommandActivateGeneration, CommandPropagateCandidateClosure,
-		CommandSettleDetachedSink, CommandCompleteRun,
+		CommandSettleDetachedSink, CommandInternDetachmentSet, CommandCompleteRun,
 	} {
 		if processstate.CommandKind(kind).IsValid() {
 			t.Fatalf("active v6 command contract accepts dormant path-v1 kind %q", kind)

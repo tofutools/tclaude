@@ -179,10 +179,8 @@ func (i *aggregateIndex) validateAnyDetachmentSet(r ActivationReservation) {
 		if d.WinnerPathID != winner.ID {
 			i.c.add("detachment_winner", path, "loser %q names winner %q, want %q", candidate, d.WinnerPathID, winner.ID)
 		}
-		root, _ := DetachmentSetIdentity("", d.ID)
-		set, ok := i.view.Routing.DetachmentSets[root]
-		if !ok || set.ParentSetID != "" || set.DetachmentID != d.ID {
-			i.c.add("detachment_root_set", path, "loser %q lacks exact root detachment set", candidate)
+		if len(i.detachmentMemberNodes[d.ID]) == 0 {
+			i.c.add("detachment_root_set", path, "loser %q lacks an exact linked detachment set", candidate)
 		}
 	}
 	for candidate := range actual {
@@ -273,7 +271,8 @@ func (i *aggregateIndex) validateDetachedPath(p PathRecord) {
 		if !within(i.scopeIntervals, p.ScopeID, base) {
 			i.c.add("detached_scope_escape", "paths."+p.ID, "detached candidate %q escaped scope %q", frame.CandidateID, base)
 		}
-		if p.TargetReservationID == r.ID && p.State != PathDetachedSink && p.State != PathFailed && p.State != PathCanceled && p.State != PathSkipped {
+		preExistingImpossible := p.State == PathImpossible && p.UpdatedSeq < d.EventSeq
+		if p.TargetReservationID == r.ID && p.State != PathDetachedSink && !preExistingImpossible && p.State != PathFailed && p.State != PathCanceled && p.State != PathSkipped {
 			i.c.add("detached_reactivation", "paths."+p.ID, "detached candidate returned to closed reservation without sink")
 		}
 	}
