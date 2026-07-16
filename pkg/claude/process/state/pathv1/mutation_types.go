@@ -120,6 +120,17 @@ type SettleDetachedSinkPlan struct {
 	Batch           MutationBatch   `json:"batch"`
 }
 
+// InternDetachmentSetPlan owns one immutable, path-neutral set-node create.
+// Repeating this bounded primitive prepares a reducer activation without
+// expanding its canonical mutation formula.
+type InternDetachmentSetPlan struct {
+	ReservationID ReservationID       `json:"reservationId"`
+	Generation    uint64              `json:"generation"`
+	SourcePathID  PathID              `json:"sourcePathId"`
+	Record        DetachmentSetRecord `json:"record"`
+	Batch         MutationBatch       `json:"batch"`
+}
+
 type mutationPayload[T any] struct {
 	TemplateRef        string            `json:"templateRef"`
 	TemplateSourceHash string            `json:"templateSourceHash"`

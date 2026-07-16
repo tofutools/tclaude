@@ -80,6 +80,10 @@ func ValidateCommandIdentity(id CommandIdentity) error {
 		if id.SourceActivationID != "" || id.SourceGeneration != 0 || id.SourcePathID == "" || id.Attempt != 0 || id.TargetReservationID == "" || id.TargetGeneration == 0 || id.InputDigest == "" || id.PlanDigest == "" || id.ResultCode == "" {
 			return fmt.Errorf("settle_detached_sink_v1 identity fields invalid")
 		}
+	case CommandInternDetachmentSet:
+		if id.SourceActivationID != "" || id.SourceGeneration != 0 || id.SourcePathID == "" || id.Attempt != 0 || id.TargetReservationID == "" || id.TargetGeneration == 0 || id.InputDigest == "" || id.CauseDigest != "" || id.PlanDigest == "" || id.ResultCode != "" {
+			return fmt.Errorf("intern_detachment_set_v1 identity fields invalid")
+		}
 	case CommandCompleteRun:
 		if !emptySource() || !emptyTarget() || id.InputDigest == "" || id.CauseDigest != "" || id.PlanDigest == "" || id.ResultCode == "" {
 			return fmt.Errorf("complete_run_v1 identity fields invalid")

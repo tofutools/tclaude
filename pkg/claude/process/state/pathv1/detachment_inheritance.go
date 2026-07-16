@@ -11,6 +11,22 @@ import (
 // never scans or rewrites descendants: missing set nodes are interned only as
 // the path itself next moves.
 func inheritPathDetachments(routing *RoutingState, path PathRecord) (PathRecord, []DetachmentSetID, error) {
+	inherited, records, err := derivePathDetachmentInheritance(routing, path)
+	if err != nil {
+		return PathRecord{}, nil, err
+	}
+	created := make([]DetachmentSetID, 0, len(records))
+	for _, record := range records {
+		routing.DetachmentSets[record.ID] = record
+		created = append(created, record.ID)
+	}
+	return inherited, created, nil
+}
+
+// derivePathDetachmentInheritance returns the exact missing immutable set
+// chain without mutating routing. Replay authority uses the same derivation as
+// reducers, so no command can smuggle an unrelated or orphan set node.
+func derivePathDetachmentInheritance(routing *RoutingState, path PathRecord) (PathRecord, []DetachmentSetRecord, error) {
 	if routing == nil {
 		return PathRecord{}, nil, fmt.Errorf("%w: routing state is required", ErrMutationInvalid)
 	}
@@ -52,7 +68,7 @@ func inheritPathDetachments(routing *RoutingState, path PathRecord) (PathRecord,
 	for _, id := range existing {
 		contained[id] = struct{}{}
 	}
-	created := make([]DetachmentSetID, 0)
+	created := make([]DetachmentSetRecord, 0)
 	parent := path.DetachmentSetID
 	for _, detachment := range applicable {
 		if _, ok := contained[detachment.id]; ok {
@@ -68,8 +84,7 @@ func inheritPathDetachments(routing *RoutingState, path PathRecord) (PathRecord,
 				return PathRecord{}, nil, fmt.Errorf("%w: detachment set %q conflicts with exact inheritance", ErrMutationInconsistent, setID)
 			}
 		} else {
-			routing.DetachmentSets[setID] = want
-			created = append(created, setID)
+			created = append(created, want)
 		}
 		parent = setID
 		contained[detachment.id] = struct{}{}

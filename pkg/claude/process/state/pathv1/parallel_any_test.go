@@ -111,6 +111,184 @@ func TestParallelAnyWinnerTupleProperty(t *testing.T) {
 	}
 }
 
+func TestNestedReducerInternsDetachedAncestorBeforeActivation(t *testing.T) {
+	for _, policy := range []JoinPolicy{JoinAll, JoinAny} {
+		t.Run(string(policy), func(t *testing.T) {
+			source := nestedDetachedReducerSource(policy)
+			input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+			transition, err := AdvanceParallelSplit(t.Context(), input, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input = verifyParallelTransition(t, source, transition)
+			transition, err = AdvanceParallelExclusiveArrival(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input = verifyParallelTransition(t, source, transition)
+			middleFork := livePathForNode(t, input, "middle-fork")
+			transition, err = AdvanceParallelSplit(t.Context(), input, middleFork)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input = verifyParallelTransition(t, source, transition)
+			transition, err = AdvanceParallelExclusiveArrival(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input = verifyParallelTransition(t, source, transition)
+			innerFork := livePathForNode(t, input, "inner-fork")
+			transition, err = AdvanceParallelSplit(t.Context(), input, innerFork)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input = verifyParallelTransition(t, source, transition)
+
+			input = activateSpecificAnyReducer(t, source, input, "middle-merge")
+			input = activateSpecificAnyReducer(t, source, input, "outer-merge")
+			beforeIntern, err := EncodeCheckpointV7(input.checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			advance := AdvanceParallelAll
+			if policy == JoinAny {
+				advance = AdvanceParallelAny
+			}
+			first, err := advance(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := advance(t.Context(), input)
+			if err != nil || first.Kind() != "parallel_detachment_intern" || first.PostBinding() != second.PostBinding() || string(first.postBytes) != string(second.postBytes) {
+				t.Fatalf("intern restart drift: kind=%q err=%v", first.Kind(), err)
+			}
+			if _, _, _, err := ValidateExecutionTransitionForAppend(t.Context(), beforeIntern, source, first); err != nil {
+				t.Fatalf("intern CAS validation: %v", err)
+			}
+			input = verifyParallelTransition(t, source, first)
+
+			activate1, err := advance(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			activate2, err := advance(t.Context(), input)
+			if err != nil || activate1.Kind() == "parallel_detachment_intern" || activate1.PostBinding() != activate2.PostBinding() || string(activate1.postBytes) != string(activate2.postBytes) {
+				t.Fatalf("activation restart drift: kind=%q err=%v", activate1.Kind(), err)
+			}
+			if _, _, _, err := ValidateExecutionTransitionForAppend(t.Context(), beforeIntern, source, activate1); !errors.Is(err, ErrMutationInconsistent) {
+				t.Fatalf("stale activation error = %v", err)
+			}
+			input = verifyParallelTransition(t, source, activate1)
+			after, err := CurrentAggregateCheckpoint(input.checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inner := reservationForNode(t, after.View(), "inner-merge")
+			if inner.State != ReservationActivated || inner.Activation == nil {
+				t.Fatalf("inner reducer = %#v", inner)
+			}
+			output := after.Routing.Paths[after.Routing.Activations[inner.Activation.ID].OutputPathID]
+			members, err := VerifyDetachmentSet(&after.Routing, output.DetachmentSetID)
+			if err != nil || len(members) != 2 {
+				t.Fatalf("inner output detachments = %v, %v", members, err)
+			}
+			if report := ValidateAggregate(after.View()); !report.Valid() {
+				t.Fatalf("nested post-state diagnostics = %#v", report.Diagnostics)
+			}
+		})
+	}
+}
+
+func TestNestedAllNonSuccessInternsBeforeConsumingArrivals(t *testing.T) {
+	source := nestedDetachedReducerSource(JoinAll)
+	input, err := VerifyExecutionInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	for _, nodeID := range []string{"outer-fork", "middle-fork", "inner-fork"} {
+		pathID := root
+		if nodeID != "outer-fork" {
+			transition, activateErr := AdvanceParallelExclusiveArrival(t.Context(), input)
+			if activateErr != nil {
+				t.Fatal(activateErr)
+			}
+			input = verifyParallelTransition(t, source, transition)
+			pathID = livePathForNode(t, input, nodeID)
+		}
+		transition, splitErr := AdvanceParallelSplit(t.Context(), input, pathID)
+		if splitErr != nil {
+			t.Fatal(splitErr)
+		}
+		input = verifyParallelTransition(t, source, transition)
+	}
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := reservationForNode(t, aggregate.View(), "inner-merge")
+	input = failedReducerCandidateInput(t, source, input, inner)
+	input = activateSpecificAnyReducer(t, source, input, "middle-merge")
+	input = activateSpecificAnyReducer(t, source, input, "outer-merge")
+	transition, err := AdvanceParallelAll(t.Context(), input)
+	if err != nil || transition.Kind() != "parallel_detachment_intern" {
+		t.Fatalf("non-success intern = %q, %v", transition.Kind(), err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	transition, err = AdvanceParallelAll(t.Context(), input)
+	if err != nil || transition.Kind() != "parallel_all" {
+		t.Fatalf("non-success close = %q, %v", transition.Kind(), err)
+	}
+	input = verifyParallelTransition(t, source, transition)
+	after, _ := CurrentAggregateCheckpoint(input.checkpoint)
+	inner = after.Routing.Reservations[inner.ID]
+	if inner.State != ReservationClosedNoActivation {
+		t.Fatalf("inner all close = %#v", inner)
+	}
+	for _, path := range after.Routing.Paths {
+		if path.TargetReservationID != inner.ID || path.State != PathConsumed {
+			continue
+		}
+		if _, err := VerifyDetachmentSet(&after.Routing, path.DetachmentSetID); err != nil {
+			t.Fatalf("consumed arrival detachment set: %v", err)
+		}
+	}
+	if report := ValidateAggregate(after.View()); !report.Valid() {
+		t.Fatalf("non-success diagnostics = %#v", report.Diagnostics)
+	}
+}
+
+func activateSpecificAnyReducer(t *testing.T, source []byte, input *VerifiedExclusiveInput, nodeID string) *VerifiedExclusiveInput {
+	t.Helper()
+	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation := reservationForNode(t, aggregate.View(), nodeID)
+	projection, ready, err := reduceParallelAny(input, aggregate.View(), reservation.ID)
+	if err != nil || !ready {
+		t.Fatalf("specific any %s = ready %v, %v", nodeID, ready, err)
+	}
+	last, err := aggregateLogicalLastSeq(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := advanceCheckpointV7To(input.checkpoint, projection, CurrentRunStatus(input.checkpoint), last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := newExecutionTransition(input.checkpoint, next, "parallel_any")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return verifyParallelTransition(t, source, transition)
+}
+
 func TestParallelAnySlowLoserActivatesOrdinaryReservationThenSinksLate(t *testing.T) {
 	source := parallelSlowAnySource()
 	input, anyReservation := advanceToSlowAnyWinner(t, source)
@@ -359,6 +537,38 @@ nodes:
     join: any
     result: completed
 `) + "\n")
+}
+
+func nestedDetachedReducerSource(policy JoinPolicy) []byte {
+	return []byte(fmt.Sprintf(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: nested-detached-%s
+start: outer-fork
+nodes:
+  outer-fork:
+    type: parallel
+    next: {quick: outer-merge, nested: middle-fork}
+  middle-fork:
+    type: parallel
+    next: {quick: middle-merge, nested: inner-fork}
+  inner-fork:
+    type: parallel
+    next: {left: inner-merge, right: inner-merge}
+  inner-merge:
+    type: task
+    join: %s
+    performer: {kind: agent, prompt: inner}
+    next: middle-merge
+  middle-merge:
+    type: task
+    join: any
+    performer: {kind: agent, prompt: middle}
+    next: outer-merge
+  outer-merge:
+    type: end
+    join: any
+    result: completed
+`, policy, policy))
 }
 
 func TestParallelAnyRejectsUnavailableReducer(t *testing.T) {

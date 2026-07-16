@@ -29,6 +29,11 @@ func AdvanceParallelAny(ctx context.Context, input *VerifiedExclusiveInput) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	if transition, interned, internErr := advanceReducerDetachmentIntern(ctx, input); internErr != nil {
+		return nil, internErr
+	} else if interned {
+		return transition, nil
+	}
 	ids := make([]ReservationID, 0)
 	for id, reservation := range aggregate.Routing.Reservations {
 		if reservation.State == ReservationOpen && reservation.JoinPolicy == JoinAny {
@@ -170,6 +175,11 @@ func buildParallelAnyActivation(after *RoutingState, reservation ActivationReser
 		if !ok || path.State != PathArrived || path.TargetReservationID != reservation.ID {
 			return "", nil, nil, fmt.Errorf("%w: any arrival %q is unavailable", ErrMutationInconsistent, pathID)
 		}
+		path, _, err := inheritPathDetachments(after, path)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		after.Paths[path.ID] = path
 		ordered = append(ordered, path)
 	}
 	slices.SortFunc(ordered, func(a, b PathRecord) int {
@@ -203,7 +213,6 @@ func buildParallelAnyActivation(after *RoutingState, reservation ActivationReser
 		}
 		lineage = cloneSlice(forkOutput.CandidateLineage)
 		lineageID = forkOutput.CandidateLineageID
-		outputDetachments = forkOutput.DetachmentSetID
 		outputScope, outputBranch, reduced = scope.ParentScopeID, scope.ParentBranchEdgeID, scope.ID
 		scope.State, scope.CloseReason, scope.ClosedByCommandID, scope.EventSeq = ScopeClosedActivated, ScopeCloseAny, MutationCommandPlaceholder, eventSeq
 		after.Scopes[scope.ID] = scope

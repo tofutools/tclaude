@@ -25,6 +25,11 @@ func AdvanceParallelAll(ctx context.Context, input *VerifiedExclusiveInput) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	if transition, interned, internErr := advanceReducerDetachmentIntern(ctx, input); internErr != nil {
+		return nil, internErr
+	} else if interned {
+		return transition, nil
+	}
 	ids := make([]ReservationID, 0)
 	for id, reservation := range aggregate.Routing.Reservations {
 		if reservation.State == ReservationOpen && reservation.JoinPolicy == JoinAll {
@@ -956,7 +961,16 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 	ref := ActivationRef{ID: activationID, Generation: reservation.Generation}
 	inputs := make([]PathRecord, len(arrivals))
 	for index, pathID := range arrivals {
-		inputs[index] = after.Paths[pathID]
+		path, ok := after.Paths[pathID]
+		if !ok || path.State != PathArrived || path.TargetReservationID != reservation.ID {
+			return fmt.Errorf("%w: all arrival %q is unavailable", ErrMutationInconsistent, pathID)
+		}
+		path, _, err = inheritPathDetachments(after, path)
+		if err != nil {
+			return err
+		}
+		after.Paths[path.ID] = path
+		inputs[index] = path
 	}
 	var lineage []CandidateLineageFrame
 	lineageID := ""
@@ -969,19 +983,18 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 		}
 		lineage = cloneSlice(forkOutput.CandidateLineage)
 		lineageID = forkOutput.CandidateLineageID
-		detachmentSetID = forkOutput.DetachmentSetID
 	} else {
 		lineage, lineageID, err = PopConsumedLineage(inputs, reservation.ID)
 		if err != nil {
 			return err
 		}
-		detachmentSetID, err = commonInputDetachmentSet(inputs)
-		if err != nil {
-			return err
-		}
 	}
-	for _, pathID := range arrivals {
-		path := after.Paths[pathID]
+	detachmentSetID, err = commonInputDetachmentSet(inputs)
+	if err != nil {
+		return err
+	}
+	for index := range arrivals {
+		path := inputs[index]
 		path.State, path.ConsumedBy, path.UpdatedSeq = PathConsumed, &ref, eventSeq
 		receiptID, receiptErr := DispositionReceiptIdentity(path.ID, PathArrived, PathConsumed, "all_input", MutationCommandPlaceholder, "", uint64(eventSeq))
 		if receiptErr != nil {
@@ -1071,6 +1084,10 @@ func buildParallelAllClose(after *RoutingState, reservation ActivationReservatio
 	after.CauseSets[finalDigest] = CauseSetRecord{Digest: finalDigest, CauseIDs: finalIDs}
 	for _, pathID := range arrivals {
 		path := after.Paths[pathID]
+		path, _, err = inheritPathDetachments(after, path)
+		if err != nil {
+			return err
+		}
 		path.State, path.ConsumedBy, path.UpdatedSeq = PathConsumed, nil, eventSeq
 		receiptID, receiptErr := DispositionReceiptIdentity(path.ID, PathArrived, PathConsumed, "join_non_success", MutationCommandPlaceholder, "", uint64(eventSeq))
 		if receiptErr != nil {

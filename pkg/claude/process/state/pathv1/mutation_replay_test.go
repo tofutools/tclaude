@@ -508,6 +508,26 @@ func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) 
 			})
 		}
 	})
+
+	t.Run("unrelated_detachment_parent_chain", func(t *testing.T) {
+		before := makeSource()
+		d1, _ := DetachmentIdentity("r", "c1", "winner", 2)
+		d2, _ := DetachmentIdentity("r", "c2", "winner", 3)
+		key1, _ := DetachmentKeyIdentity("r", "c1")
+		key2, _ := DetachmentKeyIdentity("r", "c2")
+		before.Detachments[key1] = DetachmentRecord{ID: d1, ReservationID: "r", CandidateID: "c1"}
+		before.Detachments[key2] = DetachmentRecord{ID: d2, ReservationID: "r", CandidateID: "c2"}
+		rootSet, _ := DetachmentSetIdentity("", d1)
+		before.DetachmentSets[rootSet] = DetachmentSetRecord{ID: rootSet, DetachmentID: d1}
+		after := Clone(before)
+		unrelated, _ := DetachmentSetIdentity(rootSet, d2)
+		after.DetachmentSets[unrelated] = DetachmentSetRecord{ID: unrelated, ParentSetID: rootSet, DetachmentID: d2}
+		sourceAfter := finishSource(&after, PathRouted, nil)
+		plan, _ := makePlan(t, before, after, nil)
+		if err := validateRouteMutationSet(before, plan, sourceAfter); !errors.Is(err, ErrMutationInvalid) {
+			t.Fatalf("unrelated detachment chain error = %v", err)
+		}
+	})
 }
 
 func TestTypedTerminalRouteRequiresCompleteBatchPostState(t *testing.T) {
@@ -1090,6 +1110,50 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	}
 	command := commandWithPayload(t, identity, CommandObserved, payload)
 	replayView.Aggregate.Commands[command.ID] = command
+
+	// A globally present detachment does not authorize an unrelated immutable
+	// parent chain in this atomic sink route.
+	badBefore := Clone(before)
+	badAfter := Clone(afterTemplate)
+	reservation := badBefore.Reservations[late.TargetReservationID]
+	unrelatedCandidate := CandidateID("")
+	for _, candidate := range reservation.Candidates {
+		if candidate.ID != late.CandidateID {
+			unrelatedCandidate = candidate.ID
+			break
+		}
+	}
+	if unrelatedCandidate == "" {
+		t.Fatal("sink fixture lacks unrelated candidate")
+	}
+	unrelatedKey, _ := DetachmentKeyIdentity(reservation.ID, unrelatedCandidate)
+	unrelatedID, _ := DetachmentIdentity(reservation.ID, unrelatedCandidate, late.ID, uint64(late.UpdatedSeq-1))
+	unrelatedDetachment := DetachmentRecord{ID: unrelatedID, Key: DetachmentKeyRecord{ID: unrelatedKey, ReservationID: reservation.ID, CandidateID: unrelatedCandidate}, ReservationID: reservation.ID, CandidateID: unrelatedCandidate}
+	badBefore.Detachments[unrelatedKey] = unrelatedDetachment
+	badAfter.Detachments[unrelatedKey] = unrelatedDetachment
+	unrelatedSetID, _ := DetachmentSetIdentity(late.DetachmentSetID, unrelatedID)
+	badAfter.DetachmentSets[unrelatedSetID] = DetachmentSetRecord{ID: unrelatedSetID, ParentSetID: late.DetachmentSetID, DetachmentID: unrelatedID}
+	badBatch, err := NewMutationBatch(&badBefore, &badAfter, late.UpdatedSeq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badView := replayView
+	badView.Aggregate.Routing = &badBefore
+	badView.Aggregate.Commands = cloneMap(replayView.Aggregate.Commands)
+	badPlan := plan
+	badPlan.Batch = badBatch
+	badPayload, err := EncodeSettleDetachedSinkPayload(badView, badPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badIdentity := identity
+	badIdentity.PlanDigest = payloadDigest(badPayload)
+	badCommand := commandWithPayload(t, badIdentity, CommandObserved, badPayload)
+	badView.Aggregate.Commands[badCommand.ID] = badCommand
+	if err := ValidateSettleDetachedSinkCommand(badView, badCommand); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("unrelated sink detachment chain error = %v", err)
+	}
+
 	alternateView := replayView
 	alternateView.Checkpoint = CheckpointBinding{Generation: replayView.Checkpoint.Generation + 1, Digest: strings.Repeat("7", 64)}
 	alternatePayload, err := EncodeSettleDetachedSinkPayload(alternateView, plan)
@@ -1113,6 +1177,42 @@ func TestSettleDetachedSinkCreatesLateArrivalAtomically(t *testing.T) {
 	result, err = ReplaySettleDetachedSink(replayView, command)
 	if err != nil || result.Disposition != ReplayAlreadyApplied {
 		t.Fatalf("late sink idempotent replay = %q, %v", result.Disposition, err)
+	}
+}
+
+func TestInternDetachmentSetRejectsOrphanParent(t *testing.T) {
+	before := NewRoutingState()
+	reservationID := ReservationID("reducer")
+	candidateID := CandidateID("candidate")
+	lineageID, _ := CandidateLineageIdentity("", reservationID, candidateID)
+	before.Reservations[reservationID] = ActivationReservation{ID: reservationID, RunID: "run", ScopeID: "scope", Generation: 1, JoinPolicy: JoinAll, IsReducing: true, ReducesScopeID: "inner", Candidates: []CandidateRecord{{ID: candidateID}}, State: ReservationOpen}
+	before.Paths["arrival"] = PathRecord{ID: "arrival", State: PathArrived, TargetReservationID: reservationID, CandidateID: candidateID, CandidateLineage: []CandidateLineageFrame{{ID: lineageID, ReservationID: reservationID, CandidateID: candidateID}}, CandidateLineageID: lineageID, LineageDepth: 1}
+	detachmentKey, _ := DetachmentKeyIdentity(reservationID, candidateID)
+	detachmentID, _ := DetachmentIdentity(reservationID, candidateID, "winner", 2)
+	before.Detachments[detachmentKey] = DetachmentRecord{ID: detachmentID, Key: DetachmentKeyRecord{ID: detachmentKey, ReservationID: reservationID, CandidateID: candidateID}, ReservationID: reservationID, CandidateID: candidateID}
+	after := Clone(before)
+	orphanParent := DetachmentSetID(strings.Repeat("f", 64))
+	orphanID, _ := DetachmentSetIdentity(orphanParent, detachmentID)
+	orphan := DetachmentSetRecord{ID: orphanID, ParentSetID: orphanParent, DetachmentID: detachmentID}
+	after.DetachmentSets[orphanID] = orphan
+	batch, err := NewMutationBatch(&before, &after, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := MutationReplayView{Aggregate: AggregateView{RunID: "run", TemplateRef: "template", TemplateSourceHash: strings.Repeat("a", 64), Routing: &before, Commands: map[string]CommandRecord{}}, Checkpoint: CheckpointBinding{Generation: 2, Digest: strings.Repeat("b", 64)}}
+	plan := InternDetachmentSetPlan{ReservationID: reservationID, Generation: 1, SourcePathID: "arrival", Record: orphan, Batch: batch}
+	payload, err := EncodeInternDetachmentSetPayload(view, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := CommandIdentity{RunID: "run", Kind: CommandInternDetachmentSet, PayloadSchema: 1, SourcePathID: "arrival", TargetReservationID: reservationID, TargetGeneration: 1, InputDigest: orphanID, PlanDigest: payloadDigest(payload)}
+	command, err := observedCommand(identity, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.Aggregate.Commands[command.ID] = command
+	if err := ValidateInternDetachmentSetCommand(view, command); !errors.Is(err, ErrMutationInvalid) {
+		t.Fatalf("orphan detachment-set parent error = %v", err)
 	}
 }
 
