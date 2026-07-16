@@ -130,7 +130,7 @@ func VerifyExclusiveInput(ctx context.Context, checkpointBytes, templateSource [
 }
 
 // VerifyExecutionInput is the production schema-7 gate. It accepts the
-// indivisible foundation+parallel-all surface and rejects authored any joins.
+// monotonic foundation+parallel-all+parallel-any surface.
 // VerifyExclusiveInput remains the stricter public foundation-only verifier.
 func VerifyExecutionInput(ctx context.Context, checkpointBytes, templateSource []byte) (*VerifiedExclusiveInput, error) {
 	input, err := verifyExecutionInput(ctx, checkpointBytes, templateSource)
@@ -138,17 +138,10 @@ func VerifyExecutionInput(ctx context.Context, checkpointBytes, templateSource [
 		return nil, err
 	}
 	hasParallel := false
-	hasAny := false
 	for _, node := range input.template.Nodes {
-		if node.Join == model.JoinAny {
-			hasAny = true
-		}
 		if node.Type == model.NodeTypeParallel {
 			hasParallel = true
 		}
-	}
-	if hasParallel && hasAny {
-		return nil, fmt.Errorf("%w: parallel any is not enabled", ErrParallelUnsupported)
 	}
 	current, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
@@ -575,6 +568,11 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	eventSeq := int64(lastLogSeq + 1)
 	before := Clone(*view.Routing)
 	after := Clone(before)
+	inheritedSource, _, err := inheritPathDetachments(&after, source)
+	if err != nil {
+		return exclusiveRouteDraft{}, err
+	}
+	after.Paths[source.ID] = inheritedSource
 	authority := cloneExclusiveAuthority(view.Authority)
 	produced := make([]PathID, 0, len(outgoing))
 	allCauseIDs := make([]CauseID, 0, max(0, len(outgoing)-1))
@@ -615,7 +613,8 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 				SourceActivation: source.SourceActivation, Edge: cloneEdge(&edge), TargetReservationID: reservation.ID,
 				CandidateID: candidate.ID, ScopeID: source.ScopeID, BranchEdgeID: source.BranchEdgeID,
 				CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)),
-				ArrivalID: arrivalID, ArrivedSeq: eventSeq, CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
+				DetachmentSetID: inheritedSource.DetachmentSetID,
+				ArrivalID:       arrivalID, ArrivedSeq: eventSeq, CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
 			}
 			produced = append(produced, pathID)
 			continue
@@ -644,6 +643,7 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 			SourceActivation: source.SourceActivation, Edge: cloneEdge(&edge), TargetReservationID: reservation.ID,
 			CandidateID: candidate.ID, ScopeID: source.ScopeID, BranchEdgeID: source.BranchEdgeID,
 			CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)),
+			DetachmentSetID:       inheritedSource.DetachmentSetID,
 			ImpossibleCauseDigest: causeDigest, CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
 		}
 		produced = append(produced, pathID)
@@ -775,7 +775,10 @@ func exactRouteReservation(input *VerifiedExclusiveInput, view AggregateView, au
 	if len(candidates) > 1 {
 		policy = JoinAll
 		if input.template.Nodes[edge.ToNodeID].Join == model.JoinAny {
-			return ActivationReservation{}, false, fmt.Errorf("%w: parallel any is not enabled", ErrParallelUnsupported)
+			policy = JoinAny
+			if len(candidates) > MaxAnyCandidates {
+				return ActivationReservation{}, false, fmt.Errorf("%w: any candidate count %d exceeds %d", ErrParallelInputInvalid, len(candidates), MaxAnyCandidates)
+			}
 		}
 	}
 	return ActivationReservation{ID: reservationID, RunID: view.RunID, NodeID: edge.ToNodeID, ScopeID: source.ScopeID, BranchEdgeID: source.BranchEdgeID, Generation: 1, JoinPolicy: policy, Candidates: candidates, PossibleSlots: slots, State: ReservationOpen, EventSeq: eventSeq}, true, nil
@@ -1173,11 +1176,15 @@ func buildExclusiveActivationDraft(ctx context.Context, input *VerifiedExclusive
 	ref := ActivationRef{ID: activationID, Generation: reservation.Generation}
 	before := Clone(*post.Routing)
 	after := Clone(before)
+	selected, _, err = inheritPathDetachments(&after, after.Paths[selected.ID])
+	if err != nil {
+		return exclusiveActivationDraft{}, err
+	}
 	frames, lineageID, err := PopConsumedLineage([]PathRecord{selected}, reservation.ID)
 	if err != nil {
 		return exclusiveActivationDraft{}, err
 	}
-	consumed := after.Paths[selected.ID]
+	consumed := selected
 	consumed.State = PathConsumed
 	consumed.ConsumedBy = &ref
 	consumed.UpdatedSeq = eventSeq
@@ -1191,7 +1198,7 @@ func buildExclusiveActivationDraft(ctx context.Context, input *VerifiedExclusive
 		ID: outputID, Kind: PathActivationOutput, State: PathLive, SourceActivation: ref,
 		ScopeID: reservation.ScopeID, BranchEdgeID: reservation.BranchEdgeID,
 		CandidateLineage: frames, CandidateLineageID: lineageID, LineageDepth: uint32(len(frames)),
-		CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
+		DetachmentSetID: selected.DetachmentSetID, CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
 	}
 	receiptID, err := ActivationReceiptIdentity(activationID, reservation.ID, inputDigest, outputID, MutationCommandPlaceholder, uint64(eventSeq))
 	if err != nil {

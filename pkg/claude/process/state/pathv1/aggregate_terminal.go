@@ -180,7 +180,7 @@ func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route Co
 		if plan.SettlementCommandID != id.InputDigest || plan.SourceActivationID != id.SourceActivationID || plan.SourceGeneration != id.SourceGeneration || plan.SourcePathID != id.SourcePathID || plan.Attempt != id.Attempt || plan.CauseDigest != id.CauseDigest || plan.ResultCode != id.ResultCode {
 			return routeTerminalPayload{}, fmt.Errorf("typed route plan differs from command identity")
 		}
-		if _, err := plan.Batch.preState(i.view.Routing, route.ID); err != nil {
+		if err := validateHistoricalMutationPost(i.view.Routing, plan.Batch, route.ID); err != nil {
 			return routeTerminalPayload{}, fmt.Errorf("typed route plan does not prove the complete durable transition: %w", err)
 		}
 		materialized, err := plan.Batch.materialize(route.ID)
@@ -217,4 +217,85 @@ func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route Co
 	} else {
 		return routeTerminalPayload{}, fmt.Errorf("neither strict typed envelope (%v) nor strict legacy envelope (%v)", typedErr, legacyErr)
 	}
+}
+
+// validateHistoricalMutationPost proves the records owned by an earlier
+// terminal batch without requiring the entire aggregate to remain frozen at
+// that event. Immutable batch outputs must still be byte-exact; mutable
+// non-source records may have advanced under independently validated later
+// commands. The terminal source transition itself is checked byte-exact by
+// decodeRouteTerminalPayload below.
+func validateHistoricalMutationPost(current *RoutingState, batch MutationBatch, commandID string) error {
+	if current == nil {
+		return fmt.Errorf("%w: routing state is absent", ErrMutationInconsistent)
+	}
+	materialized, err := batch.materialize(commandID)
+	if err != nil {
+		return err
+	}
+	for _, mutation := range materialized {
+		actual, exists, err := mutationRecordBytes(current, mutation.Kind, mutation.Key)
+		if err != nil {
+			return err
+		}
+		if len(mutation.After) == 0 {
+			if exists {
+				return fmt.Errorf("%w: deleted batch record %s/%s is present", ErrMutationInconsistent, mutation.Kind, mutation.Key)
+			}
+			continue
+		}
+		if !exists {
+			return fmt.Errorf("%w: batch record %s/%s is absent", ErrMutationInconsistent, mutation.Kind, mutation.Key)
+		}
+		if historicalMutableKind(mutation.Kind) {
+			continue
+		}
+		if !bytes.Equal(actual, mutation.After) {
+			return fmt.Errorf("%w: immutable batch record %s/%s differs", ErrMutationInconsistent, mutation.Kind, mutation.Key)
+		}
+	}
+	return nil
+}
+
+func historicalMutableKind(kind MutationRecordKind) bool {
+	switch kind {
+	case MutationPath, MutationScope, MutationReservation, MutationPropagation:
+		return true
+	default:
+		return false
+	}
+}
+
+func mutationRecordBytes(current *RoutingState, kind MutationRecordKind, key string) ([]byte, bool, error) {
+	var value any
+	var ok bool
+	switch kind {
+	case MutationPath:
+		value, ok = current.Paths[key]
+	case MutationScope:
+		value, ok = current.Scopes[key]
+	case MutationReservation:
+		value, ok = current.Reservations[key]
+	case MutationActivation:
+		value, ok = current.Activations[key]
+	case MutationCandidateClosure:
+		value, ok = current.CandidateClosures[key]
+	case MutationCauseRecord:
+		value, ok = current.CauseRecords[key]
+	case MutationCauseSet:
+		value, ok = current.CauseSets[key]
+	case MutationDetachmentSet:
+		value, ok = current.DetachmentSets[key]
+	case MutationDetachment:
+		value, ok = current.Detachments[key]
+	case MutationPropagation:
+		value, ok = current.Propagation[key]
+	default:
+		return nil, false, fmt.Errorf("%w: invalid mutation kind %q", ErrMutationInvalid, kind)
+	}
+	if !ok {
+		return nil, false, nil
+	}
+	encoded, err := json.Marshal(value)
+	return encoded, true, err
 }

@@ -960,6 +960,7 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 	}
 	var lineage []CandidateLineageFrame
 	lineageID := ""
+	detachmentSetID := DetachmentSetID("")
 	if reservation.IsReducing {
 		scope, ok := after.Scopes[reservation.ReducesScopeID]
 		forkOutput, outputOK := after.Paths[scope.ForkOutputPathID]
@@ -968,8 +969,13 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 		}
 		lineage = cloneSlice(forkOutput.CandidateLineage)
 		lineageID = forkOutput.CandidateLineageID
+		detachmentSetID = forkOutput.DetachmentSetID
 	} else {
 		lineage, lineageID, err = PopConsumedLineage(inputs, reservation.ID)
+		if err != nil {
+			return err
+		}
+		detachmentSetID, err = commonInputDetachmentSet(inputs)
 		if err != nil {
 			return err
 		}
@@ -994,7 +1000,7 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 		scope.State, scope.CloseReason, scope.ClosedByCommandID, scope.EventSeq = ScopeClosedActivated, ScopeCloseAll, MutationCommandPlaceholder, eventSeq
 		after.Scopes[scope.ID] = scope
 	}
-	after.Paths[outputID] = PathRecord{ID: outputID, Kind: PathActivationOutput, State: PathLive, SourceActivation: ref, ScopeID: outputScope, BranchEdgeID: outputBranch, CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)), CreatedSeq: eventSeq, UpdatedSeq: eventSeq}
+	after.Paths[outputID] = PathRecord{ID: outputID, Kind: PathActivationOutput, State: PathLive, SourceActivation: ref, ScopeID: outputScope, BranchEdgeID: outputBranch, CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)), DetachmentSetID: detachmentSetID, CreatedSeq: eventSeq, UpdatedSeq: eventSeq}
 	receiptID, err := ActivationReceiptIdentity(activationID, reservation.ID, inputDigest, outputID, MutationCommandPlaceholder, uint64(eventSeq))
 	if err != nil {
 		return err
@@ -1009,7 +1015,29 @@ func buildParallelAllActivation(after *RoutingState, reservation ActivationReser
 
 func buildParallelAllClose(after *RoutingState, reservation ActivationReservation, arrivals []PathID, leafDigest CauseDigest, reason ScopeCloseReason, eventSeq int64) error {
 	leafSet, ok := after.CauseSets[leafDigest]
-	if !ok || len(leafSet.CauseIDs) == 0 {
+	if !ok {
+		leafIDs := make([]CauseID, 0)
+		for _, candidate := range reservation.Candidates {
+			key, _ := CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+			closure, closed := after.CandidateClosures[key]
+			if !closed {
+				continue
+			}
+			set, exists := after.CauseSets[closure.CauseDigest]
+			if !exists {
+				return fmt.Errorf("%w: candidate %q closure cause set is absent", ErrMutationInconsistent, candidate.ID)
+			}
+			leafIDs = append(leafIDs, set.CauseIDs...)
+		}
+		slices.Sort(leafIDs)
+		leafIDs = slices.Compact(leafIDs)
+		derived, err := CauseSetIdentity(leafIDs)
+		if err != nil || derived != leafDigest {
+			return fmt.Errorf("%w: closed fold leaf cause union drift", ErrMutationInconsistent)
+		}
+		leafSet = CauseSetRecord{Digest: leafDigest, CauseIDs: leafIDs}
+	}
+	if len(leafSet.CauseIDs) == 0 {
 		return fmt.Errorf("%w: closed all fold lacks complete leaf causes", ErrMutationInconsistent)
 	}
 	kinds := make([]TerminalKind, 0, len(leafSet.CauseIDs))

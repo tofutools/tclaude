@@ -92,10 +92,35 @@ func validateRouteMutationSet(pre RoutingState, plan RoutePathsPlan, sourceAfter
 			allowed[mutationTarget{kind: MutationCauseRecord, key: sourceAfter.TerminalCauseID}] = struct{}{}
 		}
 	}
+	for _, mutation := range plan.Batch.Mutations {
+		if mutation.Kind != MutationDetachmentSet {
+			continue
+		}
+		if len(mutation.Before) != 0 || len(mutation.After) == 0 {
+			return fmt.Errorf("%w: route cannot rewrite detachment set %q", ErrMutationInvalid, mutation.Key)
+		}
+		var set DetachmentSetRecord
+		if err := decodeExactPayload(mutation.After, &set); err != nil {
+			return err
+		}
+		if _, ok := pre.Detachments[detachmentKeyByID(pre, set.DetachmentID)]; !ok {
+			return fmt.Errorf("%w: route detachment set %q has no immutable detachment authority", ErrMutationInvalid, set.ID)
+		}
+		allowed[mutationTarget{kind: MutationDetachmentSet, key: mutation.Key}] = struct{}{}
+	}
 	if err := validateExactMutationTargets(plan.Batch, allowed); err != nil {
 		return err
 	}
 	return validateRouteEventSeq(plan.Batch)
+}
+
+func detachmentKeyByID(routing RoutingState, id DetachmentID) DetachmentKey {
+	for key, detachment := range routing.Detachments {
+		if detachment.ID == id {
+			return key
+		}
+	}
+	return ""
 }
 
 func authorizeCauseSet(pre RoutingState, batch MutationBatch, allowed map[mutationTarget]struct{}, digest CauseDigest) error {
@@ -216,9 +241,25 @@ func validateActivationMutationSet(pre RoutingState, plan ActivateGenerationPlan
 			return err
 		}
 		allowed[mutationTarget{kind: MutationDetachment, key: key}] = struct{}{}
-		setID, _ := DetachmentSetIdentity("", detachment.ID)
-		if _, ok := findMutation(plan.Batch, MutationDetachmentSet, setID); !ok {
-			return fmt.Errorf("%w: detachment %q lacks its exact root set", ErrMutationInvalid, detachment.ID)
+		parentSet := DetachmentSetID("")
+		for _, pathID := range plan.PreArrivedLoserPathIDs {
+			path := pre.Paths[pathID]
+			if path.CandidateID == candidateID {
+				parentSet = path.DetachmentSetID
+				break
+			}
+		}
+		setID, _ := DetachmentSetIdentity(parentSet, detachment.ID)
+		setMutation, ok := findMutation(plan.Batch, MutationDetachmentSet, setID)
+		if !ok || len(setMutation.Before) != 0 || len(setMutation.After) == 0 {
+			return fmt.Errorf("%w: detachment %q lacks its exact linked set", ErrMutationInvalid, detachment.ID)
+		}
+		var set DetachmentSetRecord
+		if err := decodeExactPayload(setMutation.After, &set); err != nil {
+			return err
+		}
+		if set.ID != setID || set.ParentSetID != parentSet || set.DetachmentID != detachment.ID {
+			return fmt.Errorf("%w: detachment %q linked set differs from exact loser head", ErrMutationInvalid, detachment.ID)
 		}
 		allowed[mutationTarget{kind: MutationDetachmentSet, key: setID}] = struct{}{}
 	}

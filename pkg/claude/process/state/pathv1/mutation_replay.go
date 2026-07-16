@@ -89,7 +89,12 @@ func (p RoutePathsPlan) Validate() error {
 		if !slices.Equal(p.SelectedEdgeIDs, parallelEdgeIDs(selected)) {
 			return fmt.Errorf("%w: selected edges are not the canonical child EdgeKey tuple order", ErrMutationInvalid)
 		}
-		if len(p.Batch.Mutations) > maximum {
+		for _, mutation := range p.Batch.Mutations {
+			if mutation.Kind == MutationDetachmentSet {
+				maximum++
+			}
+		}
+		if maximum > MaxRoutingMutations || len(p.Batch.Mutations) > maximum {
 			return fmt.Errorf("%w: split mutation count %d exceeds %d", ErrMutationInvalid, len(p.Batch.Mutations), maximum)
 		}
 	}
@@ -128,15 +133,24 @@ func (p ActivateGenerationPlan) Validate() error {
 	}
 	switch p.JoinPolicy {
 	case JoinAny:
-		if p.WinnerPathID == "" || len(p.InputPathIDs) != 1 || p.InputPathIDs[0] != p.WinnerPathID || len(p.LosingCandidateIDs) != len(p.Candidates)-1 {
-			return fmt.Errorf("%w: any activation lacks one winner and every loser", ErrMutationInvalid)
-		}
-		want, err := MutationCountAny(len(p.Candidates), len(p.PreArrivedLoserPathIDs))
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrMutationInvalid, err)
-		}
-		if len(p.Batch.Mutations) != want {
-			return fmt.Errorf("%w: any mutation count %d, want %d", ErrMutationInvalid, len(p.Batch.Mutations), want)
+		if p.WinnerPathID != "" {
+			if p.WinnerPathID == "" || len(p.InputPathIDs) != 1 || p.InputPathIDs[0] != p.WinnerPathID || len(p.LosingCandidateIDs) != len(p.Candidates)-1 {
+				return fmt.Errorf("%w: any activation lacks one winner and every loser", ErrMutationInvalid)
+			}
+			want, err := MutationCountAny(len(p.Candidates), len(p.PreArrivedLoserPathIDs))
+			if err != nil {
+				return fmt.Errorf("%w: %v", ErrMutationInvalid, err)
+			}
+			if len(p.Batch.Mutations) > want {
+				return fmt.Errorf("%w: any mutation count %d exceeds %d", ErrMutationInvalid, len(p.Batch.Mutations), want)
+			}
+		} else {
+			if p.WinnerPathID != "" || len(p.LosingCandidateIDs) != 0 || len(p.PreArrivedLoserPathIDs) != 0 {
+				return fmt.Errorf("%w: closed any plan carries winner/detachment fields", ErrMutationInvalid)
+			}
+			if _, err := normalizePropagationIntents(p.Intents); err != nil {
+				return err
+			}
 		}
 	case JoinAll, JoinExclusive:
 		if p.WinnerPathID != "" || len(p.LosingCandidateIDs) != 0 || len(p.PreArrivedLoserPathIDs) != 0 {
@@ -170,8 +184,13 @@ func (p SettleDetachedSinkPlan) Validate() error {
 		return err
 	}
 	mutation, ok := findMutation(p.Batch, MutationPath, p.SourcePathID)
-	if len(p.Batch.Mutations) != 2 || !ok || len(mutation.Before) != 0 || len(mutation.After) == 0 {
-		return fmt.Errorf("%w: detached-sink command must own exactly its routed parent update and arrived-to-sink child create", ErrMutationInvalid)
+	if len(p.Batch.Mutations) < 2 || !ok || len(mutation.Before) != 0 || len(mutation.After) == 0 {
+		return fmt.Errorf("%w: detached-sink command must own its routed parent update and arrived-to-sink child create", ErrMutationInvalid)
+	}
+	for _, candidate := range p.Batch.Mutations {
+		if candidate.Kind != MutationPath && candidate.Kind != MutationDetachmentSet {
+			return fmt.Errorf("%w: detached-sink command carries unrelated %s mutation", ErrMutationInvalid, candidate.Kind)
+		}
 	}
 	return nil
 }
@@ -368,7 +387,7 @@ func ValidateActivateGenerationCommand(view MutationReplayView, command CommandR
 	if err := validateActivationMutationSet(pre, plan, reservation, afterReservation); err != nil {
 		return err
 	}
-	if plan.JoinPolicy == JoinAny {
+	if plan.JoinPolicy == JoinAny && afterReservation.State == ReservationActivated {
 		return validateAnyPlan(pre, plan)
 	}
 	return nil
@@ -474,10 +493,14 @@ func validateAnyPlan(pre RoutingState, plan ActivateGenerationPlan) error {
 		if detachment.CandidateID != candidateID || detachment.WinnerPathID != winner.ID || detachment.CommandID != MutationCommandPlaceholder || detachment.EventSeq != plan.Batch.EventSeq || detachment.ActivatedSeq != plan.Batch.EventSeq {
 			return fmt.Errorf("%w: any detachment bytes differ from winner event", ErrMutationInvalid)
 		}
-		setID, _ := DetachmentSetIdentity("", detachment.ID)
+		parentSet := DetachmentSetID("")
+		if arrival, arrived := preArrivedByCandidate(pre, plan.PreArrivedLoserPathIDs, candidateID); arrived {
+			parentSet = arrival.DetachmentSetID
+		}
+		setID, _ := DetachmentSetIdentity(parentSet, detachment.ID)
 		setMutation, ok := findMutation(plan.Batch, MutationDetachmentSet, setID)
 		if !ok || len(setMutation.Before) != 0 || len(setMutation.After) == 0 {
-			return fmt.Errorf("%w: any loser %q lacks root detachment set", ErrMutationInvalid, candidateID)
+			return fmt.Errorf("%w: any loser %q lacks linked detachment set", ErrMutationInvalid, candidateID)
 		}
 	}
 	for _, pathID := range preArrived {
@@ -494,6 +517,16 @@ func validateAnyPlan(pre RoutingState, plan ActivateGenerationPlan) error {
 		}
 	}
 	return nil
+}
+
+func preArrivedByCandidate(pre RoutingState, pathIDs []PathID, candidateID CandidateID) (PathRecord, bool) {
+	for _, pathID := range pathIDs {
+		path, ok := pre.Paths[pathID]
+		if ok && path.CandidateID == candidateID {
+			return path, true
+		}
+	}
+	return PathRecord{}, false
 }
 
 func ValidatePropagateClosureCommand(view MutationReplayView, command CommandRecord) error {
@@ -613,6 +646,29 @@ func ValidateSettleDetachedSinkCommand(view MutationReplayView, command CommandR
 	}
 	if after.ID != plan.SourcePathID || after.Kind != PathEdge || after.State != PathDetachedSink || after.SourceActivation.Generation != plan.Generation || after.TargetReservationID != plan.ReservationID || after.DetachmentSetID != plan.DetachmentSetID || after.Disposition == nil || after.DetachedSink == nil || after.Disposition.FromState != PathArrived || after.Disposition.CommandID != MutationCommandPlaceholder || after.Disposition.ReasonCode != "late_any_arrival" || after.DetachedSink.CommandID != MutationCommandPlaceholder || after.DetachedSink.DetachmentID != plan.DetachmentID || after.DetachedSink.ReasonCode != "late_any_arrival" || after.ArrivedSeq != plan.Batch.EventSeq || after.CreatedSeq != plan.Batch.EventSeq || after.UpdatedSeq != plan.Batch.EventSeq {
 		return fmt.Errorf("%w: detached sink post-state differs from exact late-arrival transition", ErrMutationInvalid)
+	}
+	allowed := map[mutationTarget]struct{}{
+		{kind: MutationPath, key: plan.SourcePathID}:  {},
+		{kind: MutationPath, key: after.ParentPathID}: {},
+	}
+	for _, mutation := range plan.Batch.Mutations {
+		if mutation.Kind != MutationDetachmentSet {
+			continue
+		}
+		if len(mutation.Before) != 0 || len(mutation.After) == 0 {
+			return fmt.Errorf("%w: detached sink cannot rewrite detachment set %q", ErrMutationInvalid, mutation.Key)
+		}
+		var set DetachmentSetRecord
+		if err := decodeExactPayload(mutation.After, &set); err != nil {
+			return err
+		}
+		if detachmentKeyByID(pre, set.DetachmentID) == "" {
+			return fmt.Errorf("%w: detached sink set %q has no immutable detachment", ErrMutationInvalid, set.ID)
+		}
+		allowed[mutationTarget{kind: MutationDetachmentSet, key: mutation.Key}] = struct{}{}
+	}
+	if err := validateExactMutationTargets(plan.Batch, allowed); err != nil {
+		return err
 	}
 	return nil
 }

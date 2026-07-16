@@ -293,13 +293,28 @@ func validateParallelMaterializedTopology(ctx context.Context, view AggregateVie
 			return fmt.Errorf("scope %q branch set differs from exact topology", id)
 		}
 		reducer, ok := view.Routing.Reservations[scope.JoinReservationID]
-		if !ok || reducer.NodeID != scope.JoinNodeID || reducer.JoinPolicy != JoinAll || !reducer.IsReducing || reducer.ReducesScopeID != scope.ID {
-			return fmt.Errorf("scope %q reducer reservation is not exact all authority", id)
+		wantPolicy := JoinAll
+		if tmpl.Nodes[scope.JoinNodeID].Join == model.JoinAny {
+			wantPolicy = JoinAny
+		}
+		if !ok || reducer.NodeID != scope.JoinNodeID || reducer.JoinPolicy != wantPolicy || !reducer.IsReducing || reducer.ReducesScopeID != scope.ID {
+			return fmt.Errorf("scope %q reducer reservation is not exact %s authority", id, wantPolicy)
 		}
 	}
 	for id, reservation := range view.Routing.Reservations {
-		if _, ok := tmpl.Nodes[reservation.NodeID]; !ok || reservation.JoinPolicy == JoinAny {
-			return fmt.Errorf("reservation %q node/policy is outside parallel-all authority", id)
+		node, ok := tmpl.Nodes[reservation.NodeID]
+		if !ok {
+			return fmt.Errorf("reservation %q node is outside exact parallel authority", id)
+		}
+		wantPolicy := JoinExclusive
+		if reservation.IsReducing || len(reservation.Candidates) > 1 {
+			wantPolicy = JoinAll
+			if node.Join == model.JoinAny {
+				wantPolicy = JoinAny
+			}
+		}
+		if reservation.JoinPolicy != wantPolicy {
+			return fmt.Errorf("reservation %q policy %q differs from exact %q authority", id, reservation.JoinPolicy, wantPolicy)
 		}
 		wantID, err := ReservationIdentity(view.RunID, reservation.NodeID, reservation.ScopeID, reservation.BranchEdgeID, reservation.Generation)
 		if err != nil || wantID != id {
@@ -540,6 +555,11 @@ func buildParallelSplitDraft(ctx context.Context, input *VerifiedParallelInput, 
 	eventSeq := int64(lastLogSeq + 1)
 	before := *view.Routing
 	after := Clone(before) // one aggregate-event routing clone
+	inheritedSource, inheritedSets, err := inheritPathDetachments(&after, source)
+	if err != nil {
+		return parallelSplitDraft{}, err
+	}
+	after.Paths[source.ID] = inheritedSource
 	authority := cloneExclusiveAuthority(view.Authority)
 
 	scopeID, err := ScopeIdentity(view.RunID, source.ScopeID, source.BranchEdgeID, source.SourceActivation.ID, source.ID, source.SourceActivation.Generation)
@@ -645,7 +665,8 @@ func buildParallelSplitDraft(ctx context.Context, input *VerifiedParallelInput, 
 			SourceActivation: source.SourceActivation, Edge: cloneEdge(&edge), TargetReservationID: reservation.ID,
 			CandidateID: candidate.ID, ScopeID: scopeID, BranchEdgeID: edge.ID,
 			CandidateLineage: lineage, CandidateLineageID: lineageID, LineageDepth: uint32(len(lineage)),
-			ArrivalID: arrivalID, ArrivedSeq: eventSeq, CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
+			DetachmentSetID: inheritedSource.DetachmentSetID,
+			ArrivalID:       arrivalID, ArrivedSeq: eventSeq, CreatedSeq: eventSeq, UpdatedSeq: eventSeq,
 		}
 		produced = append(produced, pathID)
 	}
@@ -668,9 +689,9 @@ func buildParallelSplitDraft(ctx context.Context, input *VerifiedParallelInput, 
 	if err != nil {
 		return parallelSplitDraft{}, err
 	}
-	wantMutations := 1 + len(outgoing) + 1 + createdTargets + 1
-	if len(batch.Mutations) != wantMutations || len(batch.Mutations) > maximum {
-		return parallelSplitDraft{}, fmt.Errorf("%w: split mutation count %d, want %d and at most %d", ErrMutationInconsistent, len(batch.Mutations), wantMutations, maximum)
+	wantMutations := 1 + len(outgoing) + 1 + createdTargets + 1 + len(inheritedSets)
+	if len(batch.Mutations) != wantMutations || len(batch.Mutations) > MaxRoutingMutations {
+		return parallelSplitDraft{}, fmt.Errorf("%w: split mutation count %d, want %d and at most %d", ErrMutationInconsistent, len(batch.Mutations), wantMutations, MaxRoutingMutations)
 	}
 
 	view.Authority = authority
