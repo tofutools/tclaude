@@ -315,7 +315,23 @@ func validAnyFixture(t *testing.T) AggregateView {
 	return view
 }
 
+type slowAnyFinalState uint8
+
+const (
+	slowAnyInFlight slowAnyFinalState = iota
+	slowAnyDetachedSink
+	slowAnyFailed
+)
+
 func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
+	t.Helper()
+	if failBeforeSink {
+		return validSlowAnyFixtureState(t, slowAnyFailed)
+	}
+	return validSlowAnyFixtureState(t, slowAnyDetachedSink)
+}
+
+func validSlowAnyFixtureState(t *testing.T, finalState slowAnyFinalState) AggregateView {
 	t.Helper()
 	view := validAnyFixture(t)
 	g := view.Authority.Genesis
@@ -412,7 +428,9 @@ func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
 	setID, _ := DetachmentSetIdentity("", d.ID)
 	view.Routing.Detachments[key] = d
 	view.Routing.DetachmentSets[setID] = DetachmentSetRecord{ID: setID, DetachmentID: d.ID}
-	localOutput.DetachmentSetID = setID
+	if finalState != slowAnyInFlight {
+		localOutput.DetachmentSetID = setID
+	}
 	view.Routing.Reservations[r.ID] = r
 	view.Routing.Scopes[scope.ID] = scope
 	view.Routing.Activations[anyActivation.ID] = anyActivation
@@ -422,7 +440,10 @@ func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
 	anyAuthority.Candidates = r.Candidates
 	anyAuthority.PossibleSlots = r.PossibleSlots
 	view.Authority.Reservations[r.ID] = anyAuthority
-	if failBeforeSink {
+	switch finalState {
+	case slowAnyInFlight:
+		// Leave the slow branch output live after the quick any winner ends.
+	case slowAnyFailed:
 		failure := addTerminalAttemptCommands(t, &view, localActivationID, 1, 1, "failed", "performer_failed", "failed")
 		localOutput.State = PathFailed
 		localOutput.UpdatedSeq = 5
@@ -431,7 +452,7 @@ func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
 		causeID, _ := CauseIdentity(localOutput.ID, TerminalFailed, "performer_failed", localActivationID, failure.ID, "", 5)
 		localOutput.TerminalCauseID = causeID
 		view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, SourcePathID: localOutput.ID, TerminalKind: TerminalFailed, DispositionReason: "performer_failed", SourceActivationID: localActivationID, SourceCommandID: failure.ID, EventSeq: 5}
-	} else {
+	case slowAnyDetachedSink:
 		latePathID, _ := EdgePathIdentity(localActivationID, localOutputID, lateEdge.ID, r.ID, d.CandidateID)
 		sink := makeTestCommand(t, CommandIdentity{RunID: view.RunID, Kind: CommandSettleDetachedSink, PayloadSchema: 1, SourcePathID: latePathID, TargetReservationID: r.ID, TargetGeneration: 1, InputDigest: setID, ResultCode: "detached"}, CommandObserved)
 		view.Commands[sink.ID] = sink
@@ -444,6 +465,8 @@ func validSlowAnyFixture(t *testing.T, failBeforeSink bool) AggregateView {
 		arrivalID, _ := ArrivalIdentity(latePathID, r.ID, d.CandidateID)
 		sinkDisp, _ := DispositionReceiptIdentity(latePathID, PathArrived, PathDetachedSink, "late_any_arrival", sink.ID, "", 5)
 		view.Routing.Paths[latePathID] = PathRecord{ID: latePathID, Kind: PathEdge, State: PathDetachedSink, ParentPathID: localOutputID, SourceActivation: localRef, Edge: &lateEdge, TargetReservationID: r.ID, CandidateID: d.CandidateID, ScopeID: scope.ID, BranchEdgeID: oldLoser.Edge.ID, CandidateLineage: []CandidateLineageFrame{outerFrame, {ID: lateFrameID, ParentLineageID: outerFrame.ID, ReservationID: r.ID, CandidateID: d.CandidateID}}, CandidateLineageID: lateFrameID, LineageDepth: 2, ArrivalID: arrivalID, ArrivedSeq: 5, Disposition: &DispositionReceipt{ID: sinkDisp, PathID: latePathID, FromState: PathArrived, ToState: PathDetachedSink, ReasonCode: "late_any_arrival", CommandID: sink.ID, EventSeq: 5}, DetachmentSetID: setID, DetachedSink: &DetachedSinkReceipt{DetachmentID: d.ID, CommandID: sink.ID, ReasonCode: "late_any_arrival", EventSeq: 5}, CreatedSeq: 5, UpdatedSeq: 5}
+	default:
+		t.Fatalf("unknown slow-any final state %d", finalState)
 	}
 	view.Routing.Paths[localOutput.ID] = localOutput
 	return view
@@ -709,28 +732,121 @@ func TestAggregateCompletionFailsClosedOnIllegalEdgeState(t *testing.T) {
 
 func TestAggregateCompletionRejectsEveryUnsettledOwner(t *testing.T) {
 	t.Parallel()
+	t.Run("live path", func(t *testing.T) {
+		view := validGenesisFixture(t)
+		path := view.Routing.Paths[view.Authority.Genesis.OutputPathID]
+		path.State = PathLive
+		view.Routing.Paths[path.ID] = path
+		assertAggregateUnsettled(t, view)
+	})
 	t.Run("open reservation", func(t *testing.T) {
 		view := validGenesisFixture(t)
 		addOpenAuthorityReservation(t, &view, "target")
-		if report := ValidateAggregate(view); !report.Valid() {
-			t.Fatalf("fixture invalid: %#v", report.Diagnostics)
-		}
-		if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateUnsettled) {
-			t.Fatalf("open reservation completion = %v", err)
-		}
+		assertAggregateUnsettled(t, view)
 	})
-	t.Run("active side effect", func(t *testing.T) {
+	t.Run("pending propagation", func(t *testing.T) {
+		view := validAnyFixture(t)
+		var reservation ActivationReservation
+		for _, candidate := range view.Routing.Reservations {
+			if len(candidate.Candidates) != 0 {
+				reservation = candidate
+				break
+			}
+		}
+		candidate := reservation.Candidates[0]
+		causeDigest, err := CauseSetIdentity(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.Routing.CauseSets[causeDigest] = CauseSetRecord{Digest: causeDigest, CauseIDs: []CauseID{}}
+		frontierKey, err := CandidateClosureKeyIdentity(reservation.ID, candidate.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		frontier := []CandidateClosureKey{frontierKey}
+		planDigest, err := PropagationPlanIdentity(reservation.ID, candidate.ID, causeDigest, 0, frontier)
+		if err != nil {
+			t.Fatal(err)
+		}
+		command := makeTestCommand(t, CommandIdentity{
+			RunID: view.RunID, Kind: CommandPropagateCandidateClosure, PayloadSchema: 1,
+			TargetReservationID: reservation.ID, TargetGeneration: reservation.Generation,
+			InputDigest: planDigest, CauseDigest: causeDigest, PlanDigest: "pending-propagation",
+		}, CommandObserved)
+		view.Commands[command.ID] = command
+		intentID, err := PropagationIntentIdentity(causeDigest, 0, planDigest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.Routing.Propagation[intentID] = PropagationIntent{
+			ID: intentID, RootReservationID: reservation.ID, RootCandidateID: candidate.ID,
+			RootCauseDigest: causeDigest, Frontier: frontier, PlanDigest: planDigest,
+			State: PropagationPending, CommandID: command.ID,
+		}
+		assertAggregateUnsettled(t, view)
+	})
+	t.Run("active command", func(t *testing.T) {
 		view := validGenesisFixture(t)
-		effect := SideEffectIdentity{Kind: SideEffectWait, RunID: view.RunID, ActivationID: view.Authority.Genesis.ActivationID, Attempt: 1, WaitKind: "human", State: "pending"}
-		effect.ID, _ = WaitIdentity(effect.RunID, effect.ActivationID, effect.Attempt, effect.WaitKind)
-		view.SideEffects[effect.ID] = effect
-		if report := ValidateAggregate(view); !report.Valid() {
-			t.Fatalf("fixture invalid: %#v", report.Diagnostics)
+		command := makeTestCommand(t, CommandIdentity{
+			RunID: view.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1,
+			SourceActivationID: view.Authority.Genesis.ActivationID, SourceGeneration: 1,
+			Attempt: 1, PlanDigest: "perform",
+		}, CommandIssued)
+		view.Commands[command.ID] = command
+		assertAggregateUnsettled(t, view)
+	})
+	t.Run("active side effects", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			kind   SideEffectKind
+			state  string
+			makeID func(SideEffectIdentity) (string, error)
+			mutate func(*SideEffectIdentity)
+		}{
+			{name: "attempt", kind: SideEffectAttempt, state: "claimed", makeID: func(e SideEffectIdentity) (string, error) { return AttemptIdentity(e.RunID, e.ActivationID, e.Attempt) }},
+			{name: "wait", kind: SideEffectWait, state: "pending", mutate: func(e *SideEffectIdentity) { e.WaitKind = "human" }, makeID: func(e SideEffectIdentity) (string, error) {
+				return WaitIdentity(e.RunID, e.ActivationID, e.Attempt, e.WaitKind)
+			}},
+			{name: "timer", kind: SideEffectTimer, state: "pending", mutate: func(e *SideEffectIdentity) { e.SourceCommandID = "timer-source" }, makeID: func(e SideEffectIdentity) (string, error) {
+				return TimerIdentity(e.RunID, e.ActivationID, e.Attempt, e.SourceCommandID)
+			}},
+			{name: "contact", kind: SideEffectContact, state: "scheduled", mutate: func(e *SideEffectIdentity) { e.Assignee = "operator" }, makeID: func(e SideEffectIdentity) (string, error) {
+				return ContactIdentity(e.RunID, e.ActivationID, e.Attempt, e.Assignee)
+			}},
+			{name: "obligation", kind: SideEffectObligation, state: "pending", mutate: func(e *SideEffectIdentity) { e.WaitKind, e.Assignee = "approval", "operator" }, makeID: func(e SideEffectIdentity) (string, error) {
+				return ObligationIdentity(e.RunID, e.ActivationID, e.Attempt, e.WaitKind, e.Assignee)
+			}},
+			{name: "block", kind: SideEffectBlock, state: "blocked", mutate: func(e *SideEffectIdentity) { e.Attempt, e.BlockedAttempt = 0, 1 }, makeID: func(e SideEffectIdentity) (string, error) {
+				return BlockIdentity(e.RunID, e.ActivationID, e.BlockedAttempt)
+			}},
 		}
-		if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateUnsettled) {
-			t.Fatalf("active effect completion = %v", err)
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				view := validGenesisFixture(t)
+				effect := SideEffectIdentity{Kind: tc.kind, RunID: view.RunID, ActivationID: view.Authority.Genesis.ActivationID, Attempt: 1, State: tc.state}
+				if tc.mutate != nil {
+					tc.mutate(&effect)
+				}
+				var err error
+				effect.ID, err = tc.makeID(effect)
+				if err != nil {
+					t.Fatal(err)
+				}
+				view.SideEffects[effect.ID] = effect
+				assertAggregateUnsettled(t, view)
+			})
 		}
 	})
+}
+
+func assertAggregateUnsettled(t *testing.T, view AggregateView) {
+	t.Helper()
+	if report := ValidateAggregate(view); !report.Valid() {
+		t.Fatalf("fixture invalid: %#v", report.Diagnostics)
+	}
+	if _, err := AssessAggregateCompletion(view); !errors.Is(err, ErrAggregateUnsettled) {
+		t.Fatalf("aggregate completion = %v, want ErrAggregateUnsettled", err)
+	}
 }
 
 func TestValidFullyLinkedGenesisTerminates(t *testing.T) {
@@ -768,6 +884,10 @@ func TestValidAnyPreArrivedLoserTerminates(t *testing.T) {
 
 func TestSlowAnyLateSinkAndFailureBeforeSink(t *testing.T) {
 	t.Parallel()
+	t.Run("quick end waits for slow branch", func(t *testing.T) {
+		view := validSlowAnyFixtureState(t, slowAnyInFlight)
+		assertAggregateUnsettled(t, view)
+	})
 	t.Run("late sink", func(t *testing.T) {
 		view := validSlowAnyFixture(t, false)
 		report := ValidateAggregate(view)
@@ -790,6 +910,88 @@ func TestSlowAnyLateSinkAndFailureBeforeSink(t *testing.T) {
 			t.Fatalf("completion=%#v err=%v", completion, err)
 		}
 	})
+}
+
+func TestAggregateCompletionResultPrecedence(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		terminal   PathState
+		reason     string
+		effect     string
+		admin      bool
+		wantResult string
+	}{
+		{name: "completed", wantResult: "completed"},
+		{name: "canceled beats completed", terminal: PathCanceled, reason: "user_canceled", effect: "canceled", admin: true, wantResult: "canceled"},
+		{name: "failed beats canceled and completed", terminal: PathFailed, reason: "performer_failed", effect: "failed", wantResult: "failed"},
+		{name: "skipped is failed and beats canceled and completed", terminal: PathSkipped, reason: "user_skipped", effect: "observed", admin: true, wantResult: "failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.terminal == "" {
+				completion, err := AssessAggregateCompletion(validGenesisFixture(t))
+				if err != nil || completion.Result != test.wantResult {
+					t.Fatalf("completion=%#v err=%v, want %q", completion, err, test.wantResult)
+				}
+				return
+			}
+
+			// The slow-any fixture contains completed paths as well as one
+			// terminal branch, so this exercises precedence at the complete
+			// aggregate fold rather than only TerminalResult.
+			view := validSlowAnyFixture(t, true)
+			if test.terminal != PathFailed {
+				replaceTerminalAttemptState(t, &view, failedPathID(view), test.terminal, test.reason, test.effect, test.admin)
+			}
+			if test.terminal == PathFailed || test.terminal == PathSkipped {
+				terminalizeEndedPathCanceled(t, &view)
+			}
+			if report := ValidateAggregate(view); !report.Valid() {
+				t.Fatalf("fixture invalid: %#v", report.Diagnostics)
+			}
+			completion, err := AssessAggregateCompletion(view)
+			if err != nil || completion.Result != test.wantResult {
+				t.Fatalf("completion=%#v err=%v, want %q", completion, err, test.wantResult)
+			}
+		})
+	}
+}
+
+func terminalizeEndedPathCanceled(t *testing.T, view *AggregateView) {
+	t.Helper()
+	for _, pathID := range sortedMapKeys(view.Routing.Paths) {
+		path := view.Routing.Paths[pathID]
+		if path.State != PathEnded {
+			continue
+		}
+		const reason = "user_canceled"
+		settle := addTerminalAttemptCommands(t, view, path.SourceActivation.ID, path.SourceActivation.Generation, 1, "canceled", reason, "canceled")
+		eventSeq := path.UpdatedSeq + 2
+		admin := PathV1AdminRecord{RunID: view.RunID, EventSeq: eventSeq, AdminType: "terminal_disposition", Actor: "user:test", ReasonCode: reason}
+		var err error
+		admin.ID, err = AdminRecordIdentity(admin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.AdminRecords[admin.ID] = admin
+		dispositionID, err := DispositionReceiptIdentity(path.ID, PathLive, PathCanceled, reason, settle.ID, admin.ID, uint64(eventSeq))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path.State = PathCanceled
+		path.UpdatedSeq = eventSeq
+		path.Disposition = &DispositionReceipt{ID: dispositionID, PathID: path.ID, FromState: PathLive, ToState: PathCanceled, ReasonCode: reason, CommandID: settle.ID, AdminRecordID: admin.ID, EventSeq: eventSeq}
+		causeID, err := CauseIdentity(path.ID, TerminalCanceled, reason, path.SourceActivation.ID, settle.ID, admin.ID, uint64(eventSeq))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path.TerminalCauseID = causeID
+		view.Routing.Paths[path.ID] = path
+		view.Routing.CauseRecords[causeID] = CauseRecord{ID: causeID, SourcePathID: path.ID, TerminalKind: TerminalCanceled, DispositionReason: reason, SourceActivationID: path.SourceActivation.ID, SourceCommandID: settle.ID, AdminRecordID: admin.ID, EventSeq: eventSeq}
+		return
+	}
+	t.Fatal("fixture has no completed path to cancel")
 }
 
 func anyLoser(view AggregateView) (DetachmentKey, DetachmentRecord, PathID) {

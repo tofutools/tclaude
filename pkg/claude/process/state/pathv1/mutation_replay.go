@@ -48,7 +48,69 @@ func (p RoutePathsPlan) Validate() error {
 	if !sortedUnique(p.ProducedPathIDs) {
 		return fmt.Errorf("%w: produced path IDs are not sorted and unique", ErrMutationInvalid)
 	}
-	return p.Batch.Validate()
+	if err := p.Batch.Validate(); err != nil {
+		return err
+	}
+	mutation, ok := findMutation(p.Batch, MutationPath, p.SourcePathID)
+	if !ok || len(mutation.Before) == 0 || len(mutation.After) == 0 {
+		return fmt.Errorf("%w: route plan lacks its source path transition", ErrMutationInvalid)
+	}
+	var after PathRecord
+	if err := decodeExactPayload(mutation.After, &after); err != nil {
+		return fmt.Errorf("%w: route source post-state: %v", ErrMutationInvalid, err)
+	}
+	if after.State == PathSplit {
+		maximum, err := MutationCountSplit(len(p.ProducedPathIDs))
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrMutationInvalid, err)
+		}
+		if after.Disposition == nil || after.Disposition.ReasonCode != "parallel_split" || p.ResultCode != "parallel" {
+			return fmt.Errorf("%w: split route lacks exact disposition/result", ErrMutationInvalid)
+		}
+		if len(p.SelectedEdgeIDs) != len(p.ProducedPathIDs) || !uniqueNonemptyStrings(p.SelectedEdgeIDs) {
+			return fmt.Errorf("%w: split route lacks every unique tuple-ordered selected edge", ErrMutationInvalid)
+		}
+		selected := make([]EdgeKey, 0, len(p.ProducedPathIDs))
+		for _, pathID := range p.ProducedPathIDs {
+			childMutation, found := findMutation(p.Batch, MutationPath, pathID)
+			if !found || len(childMutation.Before) != 0 || len(childMutation.After) == 0 {
+				return fmt.Errorf("%w: split child %q is not an exact create", ErrMutationInvalid, pathID)
+			}
+			var child PathRecord
+			if err := decodeExactPayload(childMutation.After, &child); err != nil {
+				return fmt.Errorf("%w: split child %q: %v", ErrMutationInvalid, pathID, err)
+			}
+			if child.Kind != PathEdge || child.ParentPathID != p.SourcePathID || child.Edge == nil {
+				return fmt.Errorf("%w: split child %q lacks an exact edge", ErrMutationInvalid, pathID)
+			}
+			selected = append(selected, *child.Edge)
+		}
+		slices.SortFunc(selected, compareParallelEdgeTuple)
+		if !slices.Equal(p.SelectedEdgeIDs, parallelEdgeIDs(selected)) {
+			return fmt.Errorf("%w: selected edges are not the canonical child EdgeKey tuple order", ErrMutationInvalid)
+		}
+		if len(p.Batch.Mutations) > maximum {
+			return fmt.Errorf("%w: split mutation count %d exceeds %d", ErrMutationInvalid, len(p.Batch.Mutations), maximum)
+		}
+	}
+	if after.State != PathSplit && len(p.SelectedEdgeIDs) != 0 {
+		return fmt.Errorf("%w: non-split route carries parallel selected edges", ErrMutationInvalid)
+	}
+	return nil
+}
+
+func uniqueNonemptyStrings[T ~string](values []T) bool {
+	seen := make(map[T]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			return false
+		}
+		if _, exists := seen[value]; exists {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
 }
 
 func (p ActivateGenerationPlan) Validate() error {

@@ -676,6 +676,22 @@ func TestPureExclusiveReleaseWiringPreservesLegacyIsolation(t *testing.T) {
 		}
 	}
 
+	// TCL-445 adds a pure split/replay substrate only. The production host,
+	// enabled exclusive schema-7 driver, and daemon bootstrap must have no call
+	// path to it before TCL-446 installs and enables the combined parallel-all
+	// gate.
+	for _, name := range []string{"engine/host.go", "exec/exclusive_v7.go", "../agentd/process_engine.go"} {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fragment := range []string{"VerifyParallelInput", "PlanParallelSplit", "ReduceParallelSplit"} {
+			if bytes.Contains(data, []byte(fragment)) {
+				t.Errorf("released production wiring %s reaches disabled split surface %q", name, fragment)
+			}
+		}
+	}
+
 	// The active v6 state still cannot carry a routing aggregate or accept a
 	// schema-7 checkpoint through its ordinary decoder.
 	if _, ok := reflect.TypeOf(legacy.State{}).FieldByName("Routing"); ok {
