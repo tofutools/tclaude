@@ -19,7 +19,7 @@ func TestDashboardTransactionShutdownExclusiveOwnership(t *testing.T) {
 	css := read("dashboard.css")
 	island := read("js/transaction-dialog-island.js")
 	controller := read("js/transaction-dialog-controller.js")
-	rowActions := read("js/row-actions.js")
+	rowActions := read("js/row-action-handler.js")
 	palette := read("js/palette.js")
 	refresh := read("js/refresh.js")
 	processes := read("js/processes-actions.js")

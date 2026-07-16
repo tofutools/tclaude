@@ -18,11 +18,3 @@ function requireController() {
 export function openCronCreateModal(prefill = {}) {
   return requireController().openCreate(prefill);
 }
-
-export function openCronEditModal(job) {
-  return requireController().openEdit(job);
-}
-
-export function openCronDuplicateModal(job) {
-  return requireController().openDuplicate(job);
-}

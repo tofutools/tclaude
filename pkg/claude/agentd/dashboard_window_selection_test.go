@@ -23,6 +23,7 @@ func TestDashboardWindowSelectionExclusiveOwnership(t *testing.T) {
 	actions := read("js/transaction-dialog-actions.js")
 	controller := read("js/transaction-dialog-controller.js")
 	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	dashboard := read("js/dashboard.js")
 
 	if strings.Contains(html, `id="window-modal"`) {
@@ -60,8 +61,8 @@ func TestDashboardWindowSelectionExclusiveOwnership(t *testing.T) {
 		"function openWindowModal(scope, groupName)",
 		"buildWindowSelectionDescriptor(", "openWindowSelectionDialog(descriptor)",
 	} {
-		if !strings.Contains(refresh, required) {
-			t.Errorf("refresh launcher missing window cutover %q", required)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher missing window cutover %q", required)
 		}
 	}
 	if strings.Contains(refresh, "$('#window-modal')") ||

@@ -30,7 +30,7 @@ export function bindDialogFocus({
       focusable[0];
     target?.focus();
     const selectOnFocus = target?.getAttribute('data-select-on-focus');
-    if (selectOnFocus !== null && selectOnFocus !== 'false') target.select?.();
+    if (target && selectOnFocus !== null && selectOnFocus !== 'false') target.select?.();
   });
   const onKeyDown = (event) => {
     if (!shouldHandle()) return;

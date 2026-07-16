@@ -1,6 +1,6 @@
 import { computed, signal } from '@preact/signals';
 
-export function createMessageAccessDialogState() {
+export function createMessageAccessDialogState({ canRestoreFocus = () => true } = {}) {
   const dialog = signal(null);
   const picker = signal(null);
   const view = computed(() => ({
@@ -24,7 +24,7 @@ export function createMessageAccessDialogState() {
     dialog.value = null;
     if (closed?.kind === 'operator-message' && closed.restoreFocus) {
       setTimeout(() => {
-        if (!dialog.value) closed.restoreFocus();
+        if (!dialog.value && canRestoreFocus()) closed.restoreFocus();
       }, 0);
     }
   }

@@ -62,7 +62,7 @@ func TestHidePathsClosePanes(t *testing.T) {
 	cases := []struct {
 		file, needle, why string
 	}{
-		{"row-actions.js", "closeTerminalsForConvs([agent])",
+		{"row-action-handler.js", "closeTerminalsForConvs([agent])",
 			"the eye-button hide case must close the agent's terminal pane"},
 		{"palette.js", "closeTerminalsForConvs([conv])",
 			"the palette per-agent hide must close that agent's terminal pane"},

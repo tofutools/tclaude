@@ -68,12 +68,12 @@ func TestTerminalShellModalCallersPreserveLiveSessionIdentity(t *testing.T) {
 		t.Error("spawn auto-focus must carry hideConv into the Preact terminal modal")
 	}
 
-	rows := readDashboardJS(t, "row-actions.js")
+	rows := readDashboardJS(t, "row-action-handler.js")
 	if !strings.Contains(rows, "hideConv: agent") {
 		t.Error("open-window fallback must carry hideConv")
 	}
 	if n := strings.Count(rows, "hideConv:"); n != 1 {
-		t.Errorf("exactly one row-actions caller may inline hideConv; found %d", n)
+		t.Errorf("exactly one row-action handler caller may inline hideConv; found %d", n)
 	}
 
 	tab := readDashboardJS(t, "terminals-tab.js")

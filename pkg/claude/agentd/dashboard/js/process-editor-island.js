@@ -373,3 +373,4 @@ export function openStandaloneScribeDialog(descriptor) {
 }
 
 export { StableField };
+// dashboard-imperative-boundary: preact-compat

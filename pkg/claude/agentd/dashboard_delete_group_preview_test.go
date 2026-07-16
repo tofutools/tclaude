@@ -21,7 +21,7 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 		return string(data)
 	}
 	html := read("dashboard.html")
-	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	controller := read("js/transaction-dialog-controller.js")
 	island := read("js/transaction-dialog-island.js")
 	actions := read("js/transaction-dialog-actions.js")
@@ -45,9 +45,9 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 			"async deleteGroupPlan(request)", "pendingRetire", "retireComplete",
 			"deleteComplete", "memberErrors", "method: 'DELETE'",
 		},
-		refresh: {
+		operations: {
 			"function openDeleteGroupModal(group)",
-			"return openDeleteGroupDialog(lastSnapshot, group)", "openDeleteGroupModal,",
+			"return openDeleteGroupDialog(lastSnapshot, group)", "export function openDeleteGroupModal",
 		},
 	} {
 		for _, needle := range required {
@@ -67,8 +67,10 @@ func TestDashboardHTML_DeleteGroupPreviewWired(t *testing.T) {
 // applying a reorder/nest mutation.
 func TestDashboardJS_GroupDragToDeleteWired(t *testing.T) {
 	for _, c := range []struct{ needle, why string }{
-		{"import { refresh, toast, openDeleteGroupModal } from './refresh.js';",
-			"group-reorder imports the shared delete preview"},
+		{"import { refresh, toast } from './refresh.js';",
+			"group-reorder imports poll feedback without transaction launchers"},
+		{"import { openDeleteGroupModal } from './dashboard-operations.js';",
+			"group-reorder imports the shared delete preview from operation ownership"},
 		{"function groupTrashTarget(e)", "group-reorder recognises #dnd-trash as a group drop target"},
 		{"if (trash) trash.classList.add('show');",
 			"group header dragstart reveals the overlay"},

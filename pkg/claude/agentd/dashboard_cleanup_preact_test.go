@@ -21,7 +21,7 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 	}
 	html := read("dashboard.html")
 	dashboard := read("js/dashboard.js")
-	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	controller := read("js/transaction-dialog-controller.js")
 	actions := read("js/transaction-dialog-actions.js")
 	island := read("js/transaction-dialog-island.js")
@@ -80,19 +80,19 @@ func TestDashboardTransactionCleanupExclusiveOwnership(t *testing.T) {
 		"fetchListFull('retired')", "fetchListFull('conversations')",
 		"openCleanupDialog(buildCleanupDescriptor(snapshot, options, completeLists))",
 	} {
-		if !strings.Contains(refresh, required) {
-			t.Errorf("refresh launcher is missing cleanup cutover %q", required)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher is missing cleanup cutover %q", required)
 		}
 	}
 	for _, forbidden := range []string{
 		"$('#cleanup-modal')", "$('#cleanup-list')", "$('#cleanup-submit')",
 		"cleanup-select-all').addEventListener", "function renderResult(resp)",
 	} {
-		if strings.Contains(refresh, forbidden) {
-			t.Errorf("refresh.js retains superseded cleanup ownership %q", forbidden)
+		if strings.Contains(operations, forbidden) {
+			t.Errorf("dashboard-operations.js retains superseded cleanup UI ownership %q", forbidden)
 		}
 	}
-	if strings.Count(dashboard, "openWorktreeCleanup,") < 2 {
+	if strings.Count(dashboard, "openWorktreeCleanup") < 2 {
 		t.Error("transaction island did not receive the worktree follow-up adapter")
 	}
 }

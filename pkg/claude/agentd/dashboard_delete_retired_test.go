@@ -24,7 +24,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 	island := read("js/transaction-dialog-island.js")
 	actions := read("js/transaction-dialog-actions.js")
 	controller := read("js/transaction-dialog-controller.js")
-	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	palette := read("js/palette.js")
 	modalMessage := read("js/modal-message.js")
 
@@ -76,12 +76,12 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		"return openDeleteRetiredPreviewDialog(retired)",
 		"from './transaction-dialog-controller.js';",
 	} {
-		if !strings.Contains(refresh, required) {
-			t.Errorf("refresh launcher is missing delete-retired cutover %q", required)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher is missing delete-retired cutover %q", required)
 		}
 	}
-	if strings.Contains(refresh, "$('#delete-retired-modal')") {
-		t.Error("refresh.js retains the superseded imperative delete-retired owner")
+	if strings.Contains(operations, "$('#delete-retired-modal')") {
+		t.Error("dashboard-operations.js retains the superseded imperative delete-retired owner")
 	}
 	if !strings.Contains(palette, "run: () => openDeleteRetiredPreview()") {
 		t.Error("the command palette lost its delete-retired launcher")
@@ -105,7 +105,7 @@ func TestDashboardTransactionDeleteRetiredExclusiveOwnership(t *testing.T) {
 		"export async function openCleanupModal(options = {})",
 		"function openWorktreeCleanup(group = '')",
 	} {
-		if !strings.Contains(refresh, adjacent) {
+		if !strings.Contains(operations, adjacent) {
 			t.Errorf("adjacent imperative owner changed during delete-retired cutover: %q", adjacent)
 		}
 	}

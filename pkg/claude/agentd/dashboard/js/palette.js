@@ -39,13 +39,13 @@
 // ends), Enter runs it, typing filters.
 
 import { $, $$ } from './helpers.js';
+import { toast, noteGroupDisclosureIntent } from './refresh.js';
 import {
-  toast, openWindowModal,
+  openWindowModal,
   openRetirePreview, openRetireUngroupedPreview, openDeleteRetiredPreview,
   openWorktreeCleanup,
   shutdownScope, powerOnScope, resumeAgentReq,
-  noteGroupDisclosureIntent,
-} from './refresh.js';
+} from './dashboard-operations.js';
 import {
   openRetireAgentDialog, openShutdownAgentDialog,
 } from './transaction-dialog-controller.js';

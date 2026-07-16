@@ -166,7 +166,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("slices[agent.conv_id]", "rows-per-conversation counted to detect multi-day chains")
 	must("↳", "chain-head marker glyph rendered on the latest day")
 	must(".cost-head", "chain-head marker styled")
-	must(`data-conv="`, "chain rows tagged with their shared conv id")
+	must(`data-conv=${chain ? agent.conv_id : undefined}`, "chain rows tagged with their shared conv id")
 	must("setHovered(event.target.closest('tr[data-conv]')", "chain hover-highlight wired")
 	must(".cost-chain-hl", "hovered chain highlight styled")
 	must("#costs-table tr.cost-chain td:first-child", "chain rows carry the left accent")

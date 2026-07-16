@@ -22,6 +22,7 @@ func TestDashboardWorktreeCleanupPreactOwnership(t *testing.T) {
 	dashboard := read("js/dashboard.js")
 	loader := read("js/preact-loader.js")
 	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	controller := read("js/worktree-cleanup-controller.js")
 	model := read("js/worktree-cleanup-model.js")
 	actions := read("js/worktree-cleanup-actions.js")
@@ -59,8 +60,8 @@ func TestDashboardWorktreeCleanupPreactOwnership(t *testing.T) {
 	for _, required := range []string{
 		"function openWorktreeCleanup(group = '')", "openWorktreeCleanupDialog(group)",
 	} {
-		if !strings.Contains(refresh, required) {
-			t.Errorf("refresh compatibility launcher is missing %q", required)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher is missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{

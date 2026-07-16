@@ -171,3 +171,4 @@ export function openProcessParamsDialog({ model, onMutated, onClosed, confirmDis
   dispose.requestClose = () => handle?.requestClose?.() || Promise.resolve(true);
   return dispose;
 }
+// dashboard-imperative-boundary: preact-compat

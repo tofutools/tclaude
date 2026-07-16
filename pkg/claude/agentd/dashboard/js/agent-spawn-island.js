@@ -33,10 +33,7 @@ import {
   syncSpawnWorktree,
   validateSpawnDraft,
 } from './agent-spawn-model.js';
-import {
-  openAgentSpawnModal,
-  registerAgentSpawnController,
-} from './agent-spawn-controller.js';
+import { registerAgentSpawnController } from './agent-spawn-controller.js';
 
 const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
@@ -893,5 +890,3 @@ export function mountAgentSpawnIsland({ host, state, actions, confirmDiscard, re
     render(null, host);
   });
 }
-
-export { openAgentSpawnModal };

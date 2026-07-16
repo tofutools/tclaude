@@ -30,11 +30,11 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 	// The per-agent 'jump' row action must consult the open pane BEFORE the
 	// native /api/jump — otherwise it would raise an OS window even when the
 	// live view is the in-browser terminal.
-	rows := readDashboardJS(t, "row-actions.js")
+	rows := readDashboardJS(t, "row-action-handler.js")
 	focusIdx := strings.Index(rows, "focusTerminalForConv([agent])")
 	jumpIdx := strings.Index(rows, "/api/jump/")
 	if focusIdx < 0 || jumpIdx < 0 || focusIdx > jumpIdx {
-		t.Error("row-actions.js 'jump' case must call focusTerminalForConv([agent]) BEFORE POSTing " +
+		t.Error("row-action-handler.js 'jump' case must call focusTerminalForConv([agent]) BEFORE POSTing " +
 			"/api/jump — so an open web pane is preferred over a native window")
 	}
 

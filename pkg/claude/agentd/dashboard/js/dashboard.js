@@ -1,5 +1,4 @@
-import { esc, pickDirectory, shortId } from './helpers.js';
-import { fmtRemaining } from './tabs.js';
+import { pickDirectory, shortId } from './helpers.js';
 import { applySlopThemeIfRequested, bindSlopHotkey, bindWizardHotkey, wizWord } from './slop.js';
 import {
   bindWizardCursorTrail, bindWizardCastFx, bindWizardStatusWatch,
@@ -16,8 +15,9 @@ import { bindSlopSpectacle } from './slop-spectacle.js';
 import { bindVegasMusic } from './vegas.js';
 import {
   bindTabs, bindTabHotkeys, bindDetailsPersistence, bindGroupTitleToggle,
-  confirmDiscard, confirmModal, isCyclingTabs, openWorktreeCleanup, refresh, toast,
+  confirmDiscard, confirmModal, isCyclingTabs, refresh, toast,
 } from './refresh.js';
+import { openWorktreeCleanup } from './dashboard-operations.js';
 
 // Cosmetic re-skins — slop (?slop=1) and wizard (?wizard=1), mutually
 // exclusive (see `tclaude agent dashboard --slop|--wizard`). Run before any
@@ -63,7 +63,7 @@ import { bindDock } from './dock.js';
 import { bindHScroll } from './hscroll.js';
 import { initNavHistory } from './nav-history.js';
 import {
-  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
+  mountAccessFeature, mountActionDialogsFeature, mountAgentSpawnFeature, mountAuditFeature, mountConfigFeature, mountCostsFeature, mountDebugFeature, mountDirectoryPickerFeature, mountDockFeature, mountGroupCreateFeature, mountGroupsFeature, mountJobsFeature, mountLinksFeature, mountLogsFeature, mountManagementFeature, mountMessageAccessDialogsFeature, mountMessagesFeature, mountPluginsFeature, mountProcessesFeature, mountShellFeature, mountTerminalsFeature, mountToolbarProfilePickerFeature, mountTransactionDialogsFeature, mountWorktreeCleanupFeature,
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
@@ -72,11 +72,8 @@ import { startSnapshotPoll } from './snapshot-poll.js';
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
 export let lastSnapshot = null;
-// setLastSnapshot is the single writer entry-point for lastSnapshot.
-// It has two writers in different modules — refresh() in refresh.js
-// and the rename-rollback in row-actions.js — and an ES-module
-// imported binding is read-only in the importer, so the shared state
-// stays declared here and both writers route through this setter.
+// refresh.js is the sole writer; this setter is required because imported ES
+// module bindings are read-only in the poll/reconciliation module.
 export function setLastSnapshot(v) { lastSnapshot = v; }
 
 // webTerminalDefault reports whether the operator has opted into in-browser
@@ -106,21 +103,6 @@ async function settleInitialLayout() {
       });
     });
   }
-}
-
-// sudoBadge renders the per-row 🔓 indicator when an agent currently
-// holds ≥1 active grant. Tooltip lists the slugs + soonest expiry so
-// hovering tells the human everything they'd want to know without a
-// tab switch.
-export function sudoBadge(activeSudo, fallbackConvID) {
-  if (!activeSudo || !activeSudo.length) return '';
-  const lines = activeSudo.map(g => `${g.slug} (expires in ${fmtRemaining(g.remaining_seconds)})`);
-  const title = `${activeSudo.length} active sudo grant${activeSudo.length === 1 ? '' : 's'} — click to manage:\n` + lines.join('\n');
-  // sudoByConv entries carry their own conv_id; the caller-supplied
-  // fallback (and finally '') just guarantees the badge always has a
-  // click target even on an unexpected entry shape.
-  const convID = activeSudo[0].conv_id || fallbackConvID || '';
-  return `<span class="sudo-badge" data-act="sudo-manage" data-conv="${esc(convID)}" title="${esc(title)}">🔓</span>`;
 }
 
 // Boot. The dashboard's sticky view/config prefs now live server-side
@@ -267,6 +249,10 @@ export function sudoBadge(activeSudo, fallbackConvID) {
       notify: toast,
       downloadExport: triggerExportDownload,
       getSnapshot: () => lastSnapshot,
+    }),
+    mountToolbarProfilePickerFeature({
+      refresh: dashboardActions.refresh,
+      notify: toast,
     }),
     mountWorktreeCleanupFeature({
       refresh: dashboardActions.refresh,

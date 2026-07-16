@@ -9,8 +9,8 @@ import (
 // The dashboard's auto-refresh used to wedge permanently after a
 // drag-and-drop retire because legacy rendering could detach the dragged row
 // before dragend reset its global suspension flag. Preact now owns keyed group
-// rows, menus, modals, and slop machines, so only the transient imperative
-// inline editor still needs to pause a Groups publish.
+// rows, menus, modals, slop machines, and the dashboard profile picker. No UI
+// draft is allowed to suspend the poll or become DOM-backed request state.
 //
 // The fix lives entirely in dashboard.html's embedded JS, so there is
 // no server code path a flow test can exercise. This guards the shape
@@ -41,24 +41,16 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 		}
 	}
 
-	// A single predicate is the source of truth for refresh suspension.
-	must("function refreshSuspended(", "the single refresh-suspension predicate")
-
-	// refresh() must consult it once up front and after each fetch/parse phase —
-	// otherwise a refresh that began before an inline editor opened can publish
-	// into the Groups tree and remove the transient input. Post-request exits also
-	// settle the shared store token instead of leaving its poll state pending.
-	if got := strings.Count(dashboardAssets, "if (refreshSuspended()) {"); got != 3 {
-		t.Errorf("refresh() suspension guard count = %d, want 3", got)
-	}
+	// Preact owns the last transient editor, so refresh is no longer coupled to
+	// draft/UI state. Request generations remain the only stale-publish guard.
+	mustNotRefresh("refreshSuspended", "UI drafts must not pause polling")
+	mustNotRefresh("renameEditing", "toolbar picker state belongs to its Preact island")
 	if got := strings.Count(dashboardAssets, "dashboardState.discardRequest(requestId, { responded });"); got < 2 {
 		t.Errorf("post-request discard count = %d, want at least 2", got)
 	}
-
-	// The transient editor is the sole suspension reason. Preact retains the
-	// keyed modal/menu/drag/slop nodes, so broad DOM selectors would unnecessarily
-	// freeze connection and shell state while those interactions are open.
-	must("if (renameEditing) return true;", "the transient inline editor remains protected")
+	must(`id="toolbar-profile-picker-root"`, "profile picker has a stable Preact host")
+	must("mountToolbarProfilePickerFeature", "profile picker is mounted before row routing")
+	must("createToolbarProfilePickerState", "profile picker draft has a state owner")
 	for _, retired := range []string{
 		"ignoreModals",
 		"document.querySelector('.modal-overlay.show')",
@@ -71,7 +63,7 @@ func TestDashboardHTML_RefreshGuardCannotWedge(t *testing.T) {
 	mustNot("refresh({ force: true })", "all callers use the single ordinary refresh path")
 
 	// Keyed Preact rows survive publishes, so drag routing state must not leak
-	// into refreshSuspended or recreate the old wedge class.
+	// into the poll or recreate the old wedge class.
 	mustNotRefresh("if (dndDragActive) return true;", "a Preact-owned drag must not suspend auto-refresh")
 	mustNotRefresh("import { dndDragActive } from './dnd.js';", "refresh.js must not import drag routing state")
 

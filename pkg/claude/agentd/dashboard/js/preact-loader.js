@@ -358,11 +358,12 @@ const messageAccessDialogsDescriptor = createIslandDescriptor({
     const stateModule = import('./message-access-dialog-state.js');
     const actionsModule = import('./message-access-dialog-actions.js');
     const snapshotModule = import('./snapshot-store.js');
+    const overlayModule = import('./overlay-stack.js');
     const [
       { mountMessageAccessDialogIsland }, { createMessageAccessDialogState },
-      { createMessageAccessDialogActions }, { dashboardState },
-    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotModule]);
-    const state = createMessageAccessDialogState();
+      { createMessageAccessDialogActions }, { dashboardState }, { hasShownOverlay },
+    ] = await Promise.all([islandModule, stateModule, actionsModule, snapshotModule, overlayModule]);
+    const state = createMessageAccessDialogState({ canRestoreFocus: () => !hasShownOverlay() });
     const actions = createMessageAccessDialogActions({ ...dependencies });
     return {
       state,
@@ -376,6 +377,34 @@ const messageAccessDialogsDescriptor = createIslandDescriptor({
 
 export function mountMessageAccessDialogsFeature(dependencies = {}) {
   return mountIslandDescriptor(messageAccessDialogsDescriptor, dependencies);
+}
+
+const toolbarProfilePickerDescriptor = createIslandDescriptor({
+  name: 'toolbar-profile-picker',
+  label: 'Dashboard profile picker',
+  hosts: { host: '#toolbar-profile-picker-root' },
+  failureClass: 'toolbar-profile-picker-error',
+  load: async ({ hosts: { host }, dependencies }) => {
+    const islandModule = import('./toolbar-profile-picker-island.js');
+    const stateModule = import('./toolbar-profile-picker-state.js');
+    const actionsModule = import('./toolbar-profile-picker-actions.js');
+    const [
+      { mountToolbarProfilePickerIsland }, { createToolbarProfilePickerState },
+      { createToolbarProfilePickerActions },
+    ] = await Promise.all([islandModule, stateModule, actionsModule]);
+    const state = createToolbarProfilePickerState();
+    const actions = createToolbarProfilePickerActions(dependencies);
+    return {
+      state,
+      mount: (registerCleanup) => mountToolbarProfilePickerIsland({
+        host, state, actions, registerCleanup,
+      }),
+    };
+  },
+});
+
+export function mountToolbarProfilePickerFeature(dependencies = {}) {
+  return mountIslandDescriptor(toolbarProfilePickerDescriptor, dependencies);
 }
 
 const messagesDescriptor = createIslandDescriptor({

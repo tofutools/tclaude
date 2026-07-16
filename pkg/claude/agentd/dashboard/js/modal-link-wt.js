@@ -169,3 +169,4 @@ async function wtResolveCwd(prefix, repo, fallback) {
 export {
   WT_NEW, wtToggleNew, wtLoad, bindWtPicker, wtResolve, wtResolveCwd,
 };
+// dashboard-imperative-boundary: config-adapter

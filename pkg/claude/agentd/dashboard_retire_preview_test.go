@@ -30,7 +30,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 	island := read("js/transaction-dialog-island.js")
 	actions := read("js/transaction-dialog-actions.js")
 	controller := read("js/transaction-dialog-controller.js")
-	refresh := read("js/refresh.js")
+	operations := read("js/dashboard-operations.js")
 	palette := read("js/palette.js")
 
 	if strings.Contains(html, `id="retire-preview-modal"`) {
@@ -76,12 +76,12 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		"openGroupRetirePreviewDialog(group, status, candidates)",
 		"from './transaction-dialog-controller.js';",
 	} {
-		if !strings.Contains(refresh, required) {
-			t.Errorf("refresh launcher is missing group-retire cutover %q", required)
+		if !strings.Contains(operations, required) {
+			t.Errorf("operation launcher is missing group-retire cutover %q", required)
 		}
 	}
-	if strings.Contains(refresh, "$('#retire-preview-modal')") {
-		t.Error("refresh.js retains the superseded imperative retire-preview owner")
+	if strings.Contains(operations, "$('#retire-preview-modal')") {
+		t.Error("dashboard-operations.js retains the superseded imperative retire-preview owner")
 	}
 	if !strings.Contains(palette, "openRetirePreview(g.name, status)") {
 		t.Error("the per-group palette command lost its preview launcher")
@@ -98,7 +98,7 @@ func TestDashboardTransactionGroupRetireExclusiveOwnership(t *testing.T) {
 		"export async function openCleanupModal(options = {})",
 		"function openWorktreeCleanup(group = '')",
 	} {
-		if !strings.Contains(refresh, adjacent) {
+		if !strings.Contains(operations, adjacent) {
 			t.Errorf("adjacent imperative owner changed during retire cutover: %q", adjacent)
 		}
 	}
