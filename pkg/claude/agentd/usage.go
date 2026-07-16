@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -129,35 +130,78 @@ func refreshUsage() {
 
 // collectUsageSnapshot reads the last-known subscription usage figures
 // from the SQLite cache and formats them for /api/snapshot. It never
-// makes a network call (usageapi.Peek is a pure DB read), so the
-// snapshot handler stays cheap. The 5h and 7d windows are surfaced as a
+// makes a network call; the Claude and Codex cache rows are loaded together,
+// so the snapshot handler stays cheap. The 5h and 7d windows are surfaced as a
 // pair or not at all (see pairUsageWindows): when either is live the
 // other rides along, reset/absent reading as a 0% bar. Returns
 // Available=false — the graceful "n/a" state — when the cache is missing,
 // has gone stale, or carries no live rolling-limit window at all (an
 // API-billing account, or a subscription account idle long enough that
 // both windows have reset).
-func collectUsageSnapshot(idleTimeout time.Duration) dashboardUsage {
-	totalCost, todayCost := dashboardCostTotals(time.Now())
-	out := dashboardUsage{TotalCostUSD: totalCost, TodayCostUSD: todayCost, Codex: collectCodexUsageSnapshot()}
+func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []perfPhase, error) {
+	var phases []perfPhase
+	timed := func(name string, run func()) {
+		start := time.Now()
+		run()
+		phases = append(phases, perfPhase{Name: name, Ms: durMs(time.Since(start))})
+	}
+
+	var totalCost, todayCost float64
+	var hasRealCost bool
+	var costErr error
+	timed("cost_history", func() {
+		rows, err := db.AllCostDailyRows()
+		costErr = err
+		totalCost, todayCost, hasRealCost = dashboardCostTotalsFromRows(rows, time.Now())
+		if costErr != nil {
+			slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", costErr)
+			// Preserve the old visibility behavior on the exceptional path: if the
+			// ordered history read fails, the cheap EXISTS probe can still keep a
+			// real-cost account's Costs tab visible.
+			hasRealCost, costErr = db.HasAnyRealCost()
+		}
+	})
+
+	var usageRow *db.UsageCacheRow
+	var codexRow *db.CodexUsageCacheRow
+	var cacheErr error
+	timed("rate_limit_caches", func() {
+		usageRow, codexRow, cacheErr = db.LoadDashboardUsageCaches()
+	})
+
+	assembleStart := time.Now()
+	out := dashboardUsage{
+		TotalCostUSD: totalCost,
+		TodayCostUSD: todayCost,
+		Codex:        collectCodexUsageSnapshot(codexRow),
+	}
 	if idleTimeout <= 0 {
 		idleTimeout = usageStaleAfter
 	}
-	cached := usageapi.Peek()
+	var cached *usageapi.CachedUsage
+	if cacheErr == nil && usageRow != nil {
+		var decoded usageapi.CachedUsage
+		if json.Unmarshal(usageRow.Data, &decoded) == nil {
+			cached = &decoded
+		}
+	}
 	if cached == nil || cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > idleTimeout {
-		return out
+		phases = append(phases, perfPhase{Name: "assemble", Ms: durMs(time.Since(assembleStart))})
+		return out, hasRealCost, phases, costErr
 	}
 	now := time.Now()
 	fh := liveUsageWindow(cached.FiveHour, now)
 	sd := liveUsageWindow(cached.SevenDay, now)
 	fh, sd, ok := pairUsageWindows(fh, sd)
 	if !ok {
-		return out
+		phases = append(phases, perfPhase{Name: "assemble", Ms: durMs(time.Since(assembleStart))})
+		return out, hasRealCost, phases, costErr
 	}
 	out.Available = true
 	out.FiveHour = fh
 	out.SevenDay = sd
-	return out
+	phases = append(phases, perfPhase{Name: "assemble", Ms: durMs(time.Since(assembleStart))})
+	return out, hasRealCost, phases, costErr
 }
 
 // liveUsageWindow returns the wire shape for a cached bucket while it still
@@ -220,18 +264,19 @@ func usageWindowOrZero(w *usageWindow) *usageWindow {
 	return &usageWindow{}
 }
 
-// dashboardCostTotals computes month-to-date and today spend from one cost
-// history read and one delta walk. The previous pair of helpers each called
-// db.SumCostSinceDay, duplicating the same full-table ordered scan every two
-// seconds. A read failure degrades both display-only figures to zero.
-func dashboardCostTotals(now time.Time) (month, today float64) {
-	rows, err := db.AllCostDailyRows()
-	if err != nil {
-		slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", err)
-		return 0, 0
-	}
+// dashboardCostTotalsFromRows computes month-to-date and today spend plus the
+// Costs-tab real-spend signal from one already-loaded cost history and one
+// delta walk. Keeping the visibility signal in this pass removes a redundant
+// EXISTS query from every dashboard poll.
+func dashboardCostTotalsFromRows(rows []db.CostDailyRow, now time.Time) (month, today float64, hasReal bool) {
 	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
 	todayKey := now.Format(costDayKey)
+	for _, row := range rows {
+		if row.CostUSD > 0 {
+			hasReal = true
+			break
+		}
+	}
 	for _, delta := range db.CostDeltas(rows, false) {
 		if delta.Day >= monthKey {
 			month += delta.USD
@@ -240,7 +285,7 @@ func dashboardCostTotals(now time.Time) (month, today float64) {
 			today += delta.USD
 		}
 	}
-	return month, today
+	return month, today, hasReal
 }
 
 // usageWindowFor converts a cached bucket into the wire shape, or nil

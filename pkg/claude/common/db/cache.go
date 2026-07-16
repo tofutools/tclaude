@@ -139,6 +139,46 @@ func LoadCodexUsageCache() (*CodexUsageCacheRow, error) {
 	return row, nil
 }
 
+// LoadDashboardUsageCaches reads the single-row Claude and Codex usage caches
+// together. The dashboard needs both on every snapshot; using one query avoids
+// a second pool checkout and SQLite round trip while preserving the caches as
+// independently optional rows.
+func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, nil, err
+	}
+	var usageData, fetchedStr, attemptStr sql.NullString
+	var codexData, observedStr, updatedStr, source sql.NullString
+	err = d.QueryRow(`SELECT
+			u.data, u.fetched_at, u.last_attempt_at,
+			c.data, c.observed_at, c.updated_at, c.source
+		FROM (SELECT 1) singleton
+		LEFT JOIN usage_cache u ON u.id = 1
+		LEFT JOIN codex_usage_cache c ON c.id = 1`).Scan(
+		&usageData, &fetchedStr, &attemptStr,
+		&codexData, &observedStr, &updatedStr, &source)
+	if err != nil {
+		return nil, nil, err
+	}
+	var usage *UsageCacheRow
+	if usageData.Valid {
+		usage = &UsageCacheRow{Data: json.RawMessage(usageData.String)}
+		usage.FetchedAt, _ = time.Parse(time.RFC3339Nano, fetchedStr.String)
+		usage.LastAttemptAt, _ = time.Parse(time.RFC3339Nano, attemptStr.String)
+	}
+	var codex *CodexUsageCacheRow
+	if codexData.Valid {
+		codex = &CodexUsageCacheRow{
+			Data:   json.RawMessage(codexData.String),
+			Source: source.String,
+		}
+		codex.ObservedAt, _ = time.Parse(time.RFC3339Nano, observedStr.String)
+		codex.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr.String)
+	}
+	return usage, codex, nil
+}
+
 // TryClaimUsageFetch atomically checks whether a fetch is needed (last_attempt_at
 // older than ttl) and stamps the current time if so. Returns true if the caller
 // should proceed with the fetch, false if another process already claimed it.
