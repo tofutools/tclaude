@@ -1727,12 +1727,29 @@ const snapshotLoadConcurrency = 8
 var snapshotLoadSlots = make(chan struct{}, snapshotLoadConcurrency)
 
 func runSnapshotLoads(loads ...func()) {
-	if len(loads) == 0 {
-		return
+	named := make([]snapshotNamedLoad, len(loads))
+	for i, load := range loads {
+		named[i].run = load
 	}
-	jobs := make(chan func(), len(loads))
-	for _, load := range loads {
-		jobs <- load
+	runSnapshotNamedLoads(named...)
+}
+
+type snapshotNamedLoad struct {
+	name string
+	run  func()
+}
+
+// runSnapshotNamedLoads is the instrumented form of runSnapshotLoads. It
+// returns measurements in declaration order even though the work runs in
+// parallel, which keeps the nested Debug table stable between polls.
+func runSnapshotNamedLoads(loads ...snapshotNamedLoad) []perfPhase {
+	if len(loads) == 0 {
+		return nil
+	}
+	timings := make([]time.Duration, len(loads))
+	jobs := make(chan int, len(loads))
+	for i := range loads {
+		jobs <- i
 	}
 	close(jobs)
 	workers := min(len(loads), snapshotLoadConcurrency)
@@ -1741,16 +1758,25 @@ func runSnapshotLoads(loads ...func()) {
 	for range workers {
 		go func() {
 			defer wg.Done()
-			for load := range jobs {
+			for index := range jobs {
 				snapshotLoadSlots <- struct{}{}
 				func() {
 					defer func() { <-snapshotLoadSlots }()
-					load()
+					start := time.Now()
+					loads[index].run()
+					timings[index] = time.Since(start)
 				}()
 			}
 		}()
 	}
 	wg.Wait()
+	phases := make([]perfPhase, 0, len(loads))
+	for i, load := range loads {
+		if load.name != "" {
+			phases = append(phases, perfPhase{Name: load.name, Ms: durMs(timings[i])})
+		}
+	}
+	return phases
 }
 
 func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1801,19 +1827,19 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// config-file read. Run them as one fan-out so its wall clock is the slowest
 	// read, not the sum of ~dozen fixed round trips (which dominated even with
 	// only a handful of agents).
-	runSnapshotLoads(
-		func() { groups, _ = db.ListAgentGroups() },
-		func() { sandboxProfiles, _ = db.ListSandboxProfiles() },
-		func() { globalSandboxProfile, _ = db.GetGlobalSandboxProfile() },
-		func() { allGrants, _ = db.ListAllAgentPermissions() },
-		func() { allOverrides, _ = db.ListAllAgentPermissionOverrides() },
-		func() { cfg, _ = config.Load() },
-		func() { notifyPrefs, _ = db.ListConvNotifyPrefs() },
-		func() { retiredAgents, _ = db.ListRetiredAgents() },
-		func() { successions, _ = db.ListAgentConvSuccessions() },
-		func() { activeAgents, activeAgentsErr = db.ListActiveAgents() },
-		func() { sudoGrants, _ = db.ListAllActiveSudoGrants() },
-	)
+	span.addChildren("preload", runSnapshotNamedLoads(
+		snapshotNamedLoad{"groups", func() { groups, _ = db.ListAgentGroups() }},
+		snapshotNamedLoad{"sandbox_profiles", func() { sandboxProfiles, _ = db.ListSandboxProfiles() }},
+		snapshotNamedLoad{"global_sandbox", func() { globalSandboxProfile, _ = db.GetGlobalSandboxProfile() }},
+		snapshotNamedLoad{"permissions", func() { allGrants, _ = db.ListAllAgentPermissions() }},
+		snapshotNamedLoad{"permission_overrides", func() { allOverrides, _ = db.ListAllAgentPermissionOverrides() }},
+		snapshotNamedLoad{"config", func() { cfg, _ = config.Load() }},
+		snapshotNamedLoad{"notify_prefs", func() { notifyPrefs, _ = db.ListConvNotifyPrefs() }},
+		snapshotNamedLoad{"retired_agents", func() { retiredAgents, _ = db.ListRetiredAgents() }},
+		snapshotNamedLoad{"successions", func() { successions, _ = db.ListAgentConvSuccessions() }},
+		snapshotNamedLoad{"active_agents", func() { activeAgents, activeAgentsErr = db.ListActiveAgents() }},
+		snapshotNamedLoad{"sudo_grants", func() { sudoGrants, _ = db.ListAllActiveSudoGrants() }},
+	)...)
 	defaults := []string{}
 	if cfg != nil && cfg.Agent != nil {
 		defaults = append(defaults, cfg.Agent.DefaultPermissions...)
@@ -1839,10 +1865,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		membersErr     error
 		ownersErr      error
 	)
-	runSnapshotLoads(
-		func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) },
-		func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) },
-	)
+	span.addChildren("preload", runSnapshotNamedLoads(
+		snapshotNamedLoad{"group_members", func() { membersByGroup, membersErr = db.ListAgentGroupMembersBatch(groupIDs) }},
+		snapshotNamedLoad{"group_owners", func() { ownersByGroup, ownersErr = db.ListAgentGroupOwnersBatch(groupIDs) }},
+	)...)
 	if membersErr != nil {
 		slog.Warn("snapshot: failed to preload group members", "error", membersErr)
 	}
@@ -1912,6 +1938,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// returns a memoized row bundle so the member loop, addAgent and the owners
 	// pass share ONE computation instead of ~13 point queries each, and the
 	// location resolves from the batch without a per-poll .jsonl rescan.
+	convSetStart := time.Now()
 	convSet := map[string]struct{}{}
 	addConv := func(convID string) {
 		if convID != "" {
@@ -1944,17 +1971,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	for convID := range convSet {
 		convIDs = append(convIDs, convID)
 	}
+	span.addChildDuration("preload", "conv_set", time.Since(convSetStart))
 	var (
 		taskRefs     map[string]db.AgentTaskRef
 		presentedPRs map[string][]db.AgentPR
 		allTags      map[string][]string
 	)
-	rc := newSnapshotRowCache(convIDs, aliveSessions)
-	runSnapshotLoads(
-		func() { taskRefs, _ = db.ListAgentTaskRefs() },
-		func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) },
-		func() { allTags, _ = db.ListAllAgentTags() },
-	)
+	rc := newSnapshotRowCache(convIDs, aliveSessions, func(phases []perfPhase) {
+		span.addChildren("preload", phases...)
+	})
+	span.addChildren("preload", runSnapshotNamedLoads(
+		snapshotNamedLoad{"task_refs", func() { taskRefs, _ = db.ListAgentTaskRefs() }},
+		snapshotNamedLoad{"presented_prs", func() { presentedPRs = preloadPresentedPRsForDashboard(time.Now()) }},
+		snapshotNamedLoad{"tags", func() { allTags, _ = db.ListAllAgentTags() }},
+	)...)
 
 	// Preload every agent's task-reference link once (a single query)
 	// rather than a lookup per member/agent in this 2s-polled path.
@@ -2358,20 +2388,20 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// These collectors do not depend on each other. Most are one or two small
 	// SQLite reads; serial execution made their fixed per-query overhead add up
 	// to >10 ms even on tiny rosters.
-	runSnapshotLoads(
-		func() { pending = collectPendingSnapshot(aliveSessions) },
-		func() { cron = collectCronSnapshot() },
-		func() { exportJobsActive, _ = db.CountActiveExportJobs() },
-		func() { links = collectLinksSnapshot() },
-		func() { usage = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout()) },
-		func() { hasRealCost, costErr = db.HasAnyRealCost() },
-		func() { templates = collectTemplatesSnapshot() },
-		func() { profiles = collectProfilesSnapshot() },
-		func() { defaultProfile = globalDefaultProfile() },
-		func() { roles = collectRolesSnapshot() },
-		func() { messages, messagesUnread = buildHumanMessagesSnapshot() },
-		func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() },
-	)
+	span.addChildren("collectors", runSnapshotNamedLoads(
+		snapshotNamedLoad{"pending", func() { pending = collectPendingSnapshot(aliveSessions) }},
+		snapshotNamedLoad{"cron", func() { cron = collectCronSnapshot() }},
+		snapshotNamedLoad{"export_jobs", func() { exportJobsActive, _ = db.CountActiveExportJobs() }},
+		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot() }},
+		snapshotNamedLoad{"usage", func() { usage = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout()) }},
+		snapshotNamedLoad{"real_cost", func() { hasRealCost, costErr = db.HasAnyRealCost() }},
+		snapshotNamedLoad{"templates", func() { templates = collectTemplatesSnapshot() }},
+		snapshotNamedLoad{"profiles", func() { profiles = collectProfilesSnapshot() }},
+		snapshotNamedLoad{"default_profile", func() { defaultProfile = globalDefaultProfile() }},
+		snapshotNamedLoad{"roles", func() { roles = collectRolesSnapshot() }},
+		snapshotNamedLoad{"messages", func() { messages, messagesUnread = buildHumanMessagesSnapshot() }},
+		snapshotNamedLoad{"plugins", func() { plugins, pluginsWarn, pluginsErr = collectPluginsSnapshot() }},
+	)...)
 	out.Pending = pending
 	out.Cron = cron
 	// Badge-only: the Jobs tab's row window comes from /api/jobs, not the

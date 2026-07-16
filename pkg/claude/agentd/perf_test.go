@@ -65,6 +65,7 @@ func TestPerfSpan_NilSafe(t *testing.T) {
 	assert.NotPanics(t, func() {
 		s.mark("anything")
 		s.addDuration("nested", time.Second)
+		s.addChildDuration("parent", "child", time.Second)
 	})
 }
 
@@ -75,6 +76,7 @@ func TestWithPerfTiming_RecordsTotalAndPhases(t *testing.T) {
 	h := withPerfTiming("/api/test", func(w http.ResponseWriter, r *http.Request) {
 		span := perfSpanFrom(r)
 		require.NotNil(t, span, "wrapped handler must find its span in the context")
+		span.addChildDuration("alpha", "nested", time.Microsecond)
 		span.mark("alpha")
 		span.mark("beta")
 		w.WriteHeader(http.StatusOK)
@@ -93,10 +95,12 @@ func TestWithPerfTiming_RecordsTotalAndPhases(t *testing.T) {
 	// phase covering the remainder after the last handler mark.
 	require.Len(t, s.Phases, 3)
 	assert.Equal(t, "alpha", s.Phases[0].Name)
+	require.Len(t, s.Phases[0].Children, 1)
+	assert.Equal(t, "nested", s.Phases[0].Children[0].Name)
 	assert.Equal(t, "beta", s.Phases[1].Name)
 	assert.Equal(t, "write", s.Phases[2].Name)
 	// The total covers the whole request, so it can't be smaller than
-	// the sum of its phases (they partition the same interval).
+	// the sum of its top-level phases (they partition the same interval).
 	var phaseMicros int64
 	for _, p := range s.Phases {
 		// durMs records whole microseconds as fractional milliseconds.
@@ -135,18 +139,45 @@ func TestPerfEndpointViewOf_AggregatesAndLimit(t *testing.T) {
 	}
 	v := perfEndpointViewOf("/api/x", samples, 2)
 	assert.Equal(t, "/api/x", v.Endpoint)
-	// Aggregates cover all 3 samples even though only 2 raw samples ship.
-	assert.Equal(t, 3, v.Count)
+	// Aggregates and raw samples cover the same newest-two window.
+	assert.Equal(t, 2, v.Count)
 	assert.Equal(t, float64(30), v.MaxMs)
 	require.Len(t, v.Samples, 2)
 	assert.Equal(t, float64(20), v.Samples[0].TotalMs)
 	assert.Equal(t, float64(30), v.Samples[1].TotalMs)
 	require.Len(t, v.Phases, 2)
 	assert.Equal(t, "a", v.Phases[0].Name)
-	assert.Equal(t, 3, v.Phases[0].Count)
+	assert.Equal(t, 2, v.Phases[0].Count)
+	assert.Equal(t, float64(12), v.Phases[0].LatestMs)
 	assert.Equal(t, float64(12), v.Phases[0].MaxMs)
 	assert.Equal(t, "b", v.Phases[1].Name)
 	assert.Equal(t, float64(18), v.Phases[1].MaxMs)
+}
+
+func TestPerfEndpointViewLimitAppliesToWholeDistribution(t *testing.T) {
+	samples := []perfSample{
+		{At: time.Unix(1, 0), TotalMs: 1, Phases: []perfPhase{{Name: "read", Ms: 10}}},
+		{At: time.Unix(2, 0), TotalMs: 2, Phases: []perfPhase{{Name: "read", Ms: 20}}},
+		{At: time.Unix(3, 0), TotalMs: 100, Phases: []perfPhase{{
+			Name: "read", Ms: 30,
+			Children: []perfPhase{{Name: "sqlite", Ms: 25}},
+		}}},
+	}
+
+	view := perfEndpointViewOf("/api/example", samples, 2)
+	require.Len(t, view.Samples, 2)
+	assert.Equal(t, 2, view.Count, "endpoint quantiles use the selected sample window")
+	assert.Equal(t, float64(2), view.P50Ms)
+	require.Len(t, view.Phases, 1)
+	assert.Equal(t, 2, view.Phases[0].Count, "phase quantiles use the same window")
+	assert.Equal(t, float64(20), view.Phases[0].P50Ms)
+	assert.Equal(t, float64(30), view.Phases[0].LatestMs)
+	require.Len(t, view.Phases[0].Children, 1)
+	assert.Equal(t, 1, view.Phases[0].Children[0].Count,
+		"a child introduced in the latest sample is not backfilled into older samples")
+
+	full := perfEndpointViewOf("/api/example", samples, 0)
+	assert.Equal(t, 3, full.Count, "limit zero explicitly uses the full ring")
 }
 
 func BenchmarkPerfPayload(b *testing.B) {

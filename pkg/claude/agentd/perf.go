@@ -34,8 +34,9 @@ const perfRingCap = 1024
 const perfSlowLogMs = 100
 
 type perfPhase struct {
-	Name string  `json:"name"`
-	Ms   float64 `json:"ms"`
+	Name     string      `json:"name"`
+	Ms       float64     `json:"ms"`
+	Children []perfPhase `json:"children,omitempty"`
 }
 
 type perfSample struct {
@@ -103,9 +104,10 @@ func perfRecord(endpoint string, s perfSample) {
 // receiver so handlers can mark phases unconditionally whether or not
 // they were invoked through withPerfTiming.
 type perfSpan struct {
-	start  time.Time
-	last   time.Time
-	phases []perfPhase
+	start           time.Time
+	last            time.Time
+	phases          []perfPhase
+	pendingChildren map[string][]perfPhase
 }
 
 // mark closes the phase that started at the previous mark (or at
@@ -115,8 +117,8 @@ func (s *perfSpan) mark(name string) {
 }
 
 // markExcluding closes a sequential phase while removing nested work that is
-// reported as its own metric. This keeps the flat /api/perf phase list a true
-// partition of total request time.
+// reported as its own top-level metric. This keeps the top-level /api/perf
+// phase list a true partition of total request time.
 func (s *perfSpan) markExcluding(name string, excluded time.Duration) {
 	if s == nil {
 		return
@@ -126,7 +128,12 @@ func (s *perfSpan) markExcluding(name string, excluded time.Duration) {
 	if d < 0 {
 		d = 0
 	}
-	s.phases = append(s.phases, perfPhase{Name: name, Ms: durMs(d)})
+	phase := perfPhase{Name: name, Ms: durMs(d)}
+	if children := s.pendingChildren[name]; len(children) > 0 {
+		phase.Children = children
+		delete(s.pendingChildren, name)
+	}
+	s.phases = append(s.phases, phase)
 	s.last = now
 }
 
@@ -137,6 +144,30 @@ func (s *perfSpan) addDuration(name string, d time.Duration) {
 		return
 	}
 	s.phases = append(s.phases, perfPhase{Name: name, Ms: durMs(d)})
+}
+
+// addChildren attaches extra measurements beneath a sequential top-level
+// phase. Child durations may overlap because snapshot preloads run in parallel;
+// keeping them nested makes that explicit and preserves the top-level phases as
+// a true partition of total request time.
+func (s *perfSpan) addChildren(parent string, children ...perfPhase) {
+	if s == nil || len(children) == 0 {
+		return
+	}
+	for i := range s.phases {
+		if s.phases[i].Name == parent {
+			s.phases[i].Children = append(s.phases[i].Children, children...)
+			return
+		}
+	}
+	if s.pendingChildren == nil {
+		s.pendingChildren = map[string][]perfPhase{}
+	}
+	s.pendingChildren[parent] = append(s.pendingChildren[parent], children...)
+}
+
+func (s *perfSpan) addChildDuration(parent, name string, d time.Duration) {
+	s.addChildren(parent, perfPhase{Name: name, Ms: durMs(d)})
 }
 
 func durMs(d time.Duration) float64 {
@@ -189,7 +220,9 @@ type perfQuantiles struct {
 }
 
 type perfPhaseAggregate struct {
-	Name string `json:"name"`
+	Name     string               `json:"name"`
+	LatestMs float64              `json:"latest_ms"`
+	Children []perfPhaseAggregate `json:"children,omitempty"`
 	perfQuantiles
 }
 
@@ -222,42 +255,62 @@ func quantilesOf(values []float64) perfQuantiles {
 }
 
 // perfEndpointViewOf assembles one endpoint's /api/perf block from its
-// ordered samples. sampleLimit > 0 trims the raw sample list to the
-// most recent N (aggregates always cover the full ring).
+// ordered samples. sampleLimit > 0 selects the most recent N before any
+// aggregation, so the raw series and every displayed percentile describe the
+// exact same sample window. A zero limit explicitly selects the full ring.
 func perfEndpointViewOf(endpoint string, samples []perfSample, sampleLimit int) perfEndpointView {
-	totals := make([]float64, 0, len(samples))
-	// Phase order: first-seen scanning newest→oldest, so the payload
-	// leads with the phase set of the current handler version even if
-	// older samples in the ring predate a phase rename.
-	phaseOrder := []string{}
-	phaseSeen := map[string]bool{}
-	phaseValues := map[string][]float64{}
-	for i := len(samples) - 1; i >= 0; i-- {
-		totals = append(totals, samples[i].TotalMs)
-		for _, p := range samples[i].Phases {
-			if !phaseSeen[p.Name] {
-				phaseSeen[p.Name] = true
-				phaseOrder = append(phaseOrder, p.Name)
-			}
-			phaseValues[p.Name] = append(phaseValues[p.Name], p.Ms)
-		}
-	}
-	view := perfEndpointView{Endpoint: endpoint, perfQuantiles: quantilesOf(totals)}
-	for _, name := range phaseOrder {
-		view.Phases = append(view.Phases, perfPhaseAggregate{Name: name, perfQuantiles: quantilesOf(phaseValues[name])})
-	}
 	if sampleLimit > 0 && len(samples) > sampleLimit {
 		samples = samples[len(samples)-sampleLimit:]
 	}
+	totals := make([]float64, 0, len(samples))
+	phaseLists := make([][]perfPhase, 0, len(samples))
+	for i := len(samples) - 1; i >= 0; i-- {
+		totals = append(totals, samples[i].TotalMs)
+		phaseLists = append(phaseLists, samples[i].Phases)
+	}
+	view := perfEndpointView{Endpoint: endpoint, perfQuantiles: quantilesOf(totals)}
+	view.Phases = aggregatePerfPhases(phaseLists)
 	view.Samples = samples
 	return view
 }
 
+// aggregatePerfPhases recursively aggregates newest→oldest phase lists. The
+// first value seen becomes latest_ms and first-seen ordering ensures a new
+// daemon version's phase tree leads even while older ring samples remain.
+func aggregatePerfPhases(lists [][]perfPhase) []perfPhaseAggregate {
+	order := []string{}
+	seen := map[string]bool{}
+	values := map[string][]float64{}
+	latest := map[string]float64{}
+	children := map[string][][]perfPhase{}
+	for _, phases := range lists {
+		for _, phase := range phases {
+			if !seen[phase.Name] {
+				seen[phase.Name] = true
+				order = append(order, phase.Name)
+				latest[phase.Name] = phase.Ms
+			}
+			values[phase.Name] = append(values[phase.Name], phase.Ms)
+			children[phase.Name] = append(children[phase.Name], phase.Children)
+		}
+	}
+	out := make([]perfPhaseAggregate, 0, len(order))
+	for _, name := range order {
+		out = append(out, perfPhaseAggregate{
+			Name:          name,
+			LatestMs:      latest[name],
+			Children:      aggregatePerfPhases(children[name]),
+			perfQuantiles: quantilesOf(values[name]),
+		})
+	}
+	return out
+}
+
 // handleDashboardPerf serves GET /api/perf — the recorded poll-timing
 // distributions, one block per polled endpoint. Cookie-authed
-// (dashboard-only), read-only. `?limit=N` caps the raw samples returned
+// (dashboard-only), read-only. `?limit=N` selects the newest samples returned
 // per endpoint (default 360 ≈ 12 min at the 2s poll; 0 = the full
-// ring). Aggregates always cover every held sample regardless of limit.
+// ring). Aggregates cover that same selected window.
 func handleDashboardPerf(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return

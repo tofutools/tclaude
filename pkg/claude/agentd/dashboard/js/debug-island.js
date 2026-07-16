@@ -1,5 +1,5 @@
 import { Fragment, h, render } from 'preact';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 
 const html = htm.bind(h);
@@ -50,6 +50,13 @@ function Sparkline({ samples }) {
 
 function PhaseBreakdown({ phases }) {
   if (!phases.length) return null;
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggle = (path) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    return next;
+  });
   const total = phases.reduce((sum, phase) => sum + (phase.p50_ms || 0), 0);
   return html`<${Fragment}>
     ${total > 0 && html`<${Fragment}>
@@ -71,16 +78,43 @@ function PhaseBreakdown({ phases }) {
       </div>
     </${Fragment}>`}
     <table class="debug-table">
-      <thead><tr><th scope="col">Phase</th><th scope="col">p50</th><th scope="col">p90</th><th scope="col">p99</th><th scope="col">max</th></tr></thead>
+      <thead><tr><th scope="col">Phase</th><th scope="col">latest</th><th scope="col">p50</th><th scope="col">p90</th><th scope="col">p99</th><th scope="col">max</th></tr></thead>
       <tbody>
-        ${phases.map((phase, index) => html`<tr key=${phase.name} data-key=${`phase-${phase.name}`}>
-          <td><span class="debug-legend-chip" style=${{ background: phaseColor(index) }}></span>${phase.name}</td>
-          <td>${fmtMs(phase.p50_ms)}</td><td>${fmtMs(phase.p90_ms)}</td>
-          <td>${fmtMs(phase.p99_ms)}</td><td>${fmtMs(phase.max_ms)}</td>
-        </tr>`)}
+        <${PhaseRows} phases=${phases} expanded=${expanded} toggle=${toggle} />
       </tbody>
     </table>
   </${Fragment}>`;
+}
+
+function PhaseRows({ phases, expanded, toggle, depth = 0, parentPath = '', parentColor = '' }) {
+  return phases.flatMap((phase, index) => {
+    const path = parentPath ? `${parentPath}.${phase.name}` : phase.name;
+    const children = Array.isArray(phase.children) ? phase.children : [];
+    const hasChildren = children.length > 0;
+    const open = hasChildren && expanded.has(path);
+    const color = depth === 0 ? phaseColor(index) : parentColor;
+    const row = html`<tr key=${path} data-key=${`phase-${path}`} data-depth=${depth} class=${depth ? 'debug-phase-child' : ''}>
+      <td style=${{ paddingLeft: `${8 + depth * 20}px` }}>
+        ${hasChildren
+          ? html`<button type="button" class="debug-phase-toggle" aria-expanded=${open}
+              aria-label=${`${open ? 'Collapse' : 'Expand'} ${phase.name} phase breakdown`}
+              onClick=${() => toggle(path)}>${open ? '▾' : '▸'}</button>`
+          : html`<span class="debug-phase-toggle-placeholder" aria-hidden="true"></span>`}
+        <span class="debug-legend-chip" style=${{ background: color }}></span>${phase.name}
+      </td>
+      <td>${fmtMs(phase.latest_ms)}</td><td>${fmtMs(phase.p50_ms)}</td>
+      <td>${fmtMs(phase.p90_ms)}</td><td>${fmtMs(phase.p99_ms)}</td><td>${fmtMs(phase.max_ms)}</td>
+    </tr>`;
+    if (!open) return [row];
+    return [row, ...PhaseRows({
+      phases: children,
+      expanded,
+      toggle,
+      depth: depth + 1,
+      parentPath: path,
+      parentColor: color,
+    })];
+  });
 }
 
 function EndpointCard({ endpoint }) {
@@ -150,8 +184,8 @@ export function DebugApp({
     <h2 class="debug-wizard-title">🧪 The Alchemist's Observatory</h2>
     <div class="filter-bar">
       <span class="muted">
-        <span class="theme-copy-regular">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (newest ≈ 34 min at the 2s poll; reset on daemon restart).</span>
-        <span class="theme-copy-wizard">Arcane readings of the Tower's background scrying, recorded in this daemon's memory (newest ≈ 34 min at the 2s poll; the readings vanish when the daemon restarts).</span>
+        <span class="theme-copy-regular">Wall-clock timings of the dashboard's background polls, recorded in-memory by this daemon process (reset on daemon restart).</span>
+        <span class="theme-copy-wizard">Arcane readings of the Tower's background scrying, recorded in this daemon's memory (the readings vanish when the daemon restarts).</span>
       </span>
       <span class="spacer"></span>
       <span id="debug-updated" class="muted" aria-live="polite">${updatedLabel(current.response)}</span>
