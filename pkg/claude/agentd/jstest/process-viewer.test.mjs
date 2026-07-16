@@ -51,6 +51,31 @@ test('viewer graph uses exact topology plus checkpoint overlay and ignores evide
   assert.deepEqual(sanitizedTimeline(envelope).map((entry) => entry.seq), [1, 2]);
 });
 
+test('unavailable viewer preserves explicit and implicit exact-topology joins', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { buildViewerGraph } = await harness.importDashboardModule('js/process-viewer-core.js');
+  const explicit = richEnvelope();
+  explicit.viewerV2.routingAvailable = false;
+  delete explicit.viewerV2.routing;
+  const explicitGraph = buildViewerGraph(explicit);
+  assert.match(explicitGraph.nodes.find((node) => node.id === 'merge').overlay.label, /any · exact topology/);
+  assert.equal(explicitGraph.edges.find((edge) => edge.id === 'edge-merge').joinOnTarget, 'any');
+
+  const implicit = structuredClone(explicit);
+  delete implicit.viewerV2.exactTopology.nodes.find((node) => node.id === 'merge').join;
+  implicit.viewerV2.exactTopology.nodes.push({ id: 'right', type: 'task' });
+  implicit.viewerV2.exactTopology.edges.push(
+    { id: 'edge-right', from: 'fork', outcome: 'right', to: 'right' },
+    { id: 'edge-right-merge', from: 'right', outcome: 'pass', to: 'merge' },
+  );
+  const implicitGraph = buildViewerGraph(implicit);
+  assert.match(implicitGraph.nodes.find((node) => node.id === 'merge').overlay.label, /all · exact topology/);
+  assert.deepEqual(
+    implicitGraph.edges.filter((edge) => edge.to === 'merge').map((edge) => edge.joinOnTarget),
+    ['all', 'all'],
+  );
+});
+
 test('viewer graph renders healthy, failed, and terminal-warning edge classes honestly', async (t) => {
   const harness = await createPreactHarness(t);
   const { buildViewerGraph } = await harness.importDashboardModule('js/process-viewer-core.js');
@@ -166,15 +191,22 @@ test('mounted viewer refreshes checkpoint state without resetting active tab or 
     if (checkpoint === 3) return new Promise((resolve) => { pendingResolve = resolve; });
     return envelopeAt(offset);
   } };
-  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+  const viewer = (active = true) => harness.html`<${ProcessViewerBoundary}
     spec=${{ id: 'run-rich', key: 'run-rich' }} actions=${actions}
-    setTimeoutImpl=${setTimeoutImpl} clearTimeoutImpl=${clearTimeoutImpl} />`);
+    active=${active} setTimeoutImpl=${setTimeoutImpl} clearTimeoutImpl=${clearTimeoutImpl} />`;
+  const mounted = await harness.mount(viewer());
   for (let i = 0; i < 6; i++) await harness.act(() => Promise.resolve());
   const scopes = [...mounted.container.querySelectorAll('.process-viewer-tabs button')].find((button) => /Scopes/.test(button.textContent));
   await harness.act(() => harness.fireEvent(scopes, 'click'));
   const next = [...mounted.container.querySelectorAll('.process-viewer-detail-summary button')].find((button) => /next/.test(button.textContent));
   await harness.act(() => harness.fireEvent(next, 'click'));
   for (let i = 0; i < 6; i++) await harness.act(() => Promise.resolve());
+  const graphRoot = mounted.container.querySelector('.process-graph');
+  const viewport = graphRoot.querySelector('.process-graph-viewport');
+  harness.fireEvent(graphRoot.querySelector('.process-graph-svg'), 'wheel', {
+    deltaX: 18, deltaY: 9, deltaMode: 0, ctrlKey: false, shiftKey: false, clientX: 0, clientY: 0,
+  });
+  const viewportBeforeRefresh = viewport.getAttribute('transform');
 
   checkpoint = 2;
   const [timerID, refresh] = timers.entries().next().value;
@@ -187,6 +219,19 @@ test('mounted viewer refreshes checkpoint state without resetting active tab or 
   assert.match(mounted.container.querySelector('.process-node[data-node-id="merge"]').getAttribute('aria-label'), /2 detached/);
   assert.match(mounted.container.querySelector('.process-viewer-tabs button.active').textContent, /Scopes/);
   assert.match(mounted.container.querySelector('.process-viewer-table').textContent, /scope-2-page-25/);
+  assert.equal(mounted.container.querySelector('.process-graph'), graphRoot, 'checkpoint refresh retains one graph widget per run');
+  assert.equal(mounted.container.querySelector('.process-graph-viewport').getAttribute('transform'), viewportBeforeRefresh,
+    'checkpoint refresh preserves operator pan and zoom');
+
+  await mounted.rerender(viewer(false));
+  assert.equal(timers.size, 0, 'inactive Processes tab cancels the viewer poll');
+  const callsWhileInactive = calls.length;
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.equal(calls.length, callsWhileInactive, 'inactive Processes tab does not load a checkpoint');
+  await mounted.rerender(viewer(true));
+  for (let i = 0; i < 6; i++) await harness.act(() => Promise.resolve());
+  assert.equal(calls.at(-1).offset, 25, 'reactivation refreshes the current page immediately');
+  assert.equal(calls.length, callsWhileInactive + 1);
 
   checkpoint = 3;
   const [pendingTimerID, pendingRefresh] = timers.entries().next().value;

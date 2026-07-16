@@ -1,5 +1,5 @@
 import { h, Fragment } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ProcessGraph } from './process-graph.js';
 import {
@@ -12,15 +12,34 @@ export const VIEWER_REFRESH_MS = 5000;
 
 function ViewerGraph({ graph, runID }) {
   const hostRef = useRef(null);
-  const signature = useMemo(() => JSON.stringify(graph), [graph]);
-  useEffect(() => {
+  const widgetRef = useRef(null);
+  const widgetRunRef = useRef('');
+  const graphRef = useRef(null);
+  useLayoutEffect(() => {
     if (!hostRef.current || !graph) return undefined;
-    const widget = new ProcessGraph(hostRef.current, graph, {
-      ariaLabel: `Exact template and checkpoint routing graph for run ${runID}`,
-      colorScheme: 'dark', wheelPan: true, marqueeSelect: false,
-    });
-    return () => widget.destroy();
-  }, [signature, runID]);
+    if (!widgetRef.current || widgetRunRef.current !== runID) {
+      widgetRef.current?.destroy();
+      widgetRef.current = new ProcessGraph(hostRef.current, graph, {
+        ariaLabel: `Exact template and checkpoint routing graph for run ${runID}`,
+        colorScheme: 'dark', wheelPan: true, marqueeSelect: false, fitOnRender: false,
+      });
+      globalThis.requestAnimationFrame?.(() => {
+        if (widgetRef.current && widgetRunRef.current === runID) widgetRef.current.fitToView();
+      });
+      widgetRunRef.current = runID;
+      graphRef.current = graph;
+    } else if (graphRef.current !== graph) {
+      widgetRef.current.setGraph(graph);
+      graphRef.current = graph;
+    }
+    return undefined;
+  });
+  useLayoutEffect(() => () => {
+    widgetRef.current?.destroy();
+    widgetRef.current = null;
+    widgetRunRef.current = '';
+    graphRef.current = null;
+  }, []);
   return html`<div ref=${hostRef} class="process-viewer-graph" data-process-viewer-graph></div>`;
 }
 
@@ -59,7 +78,7 @@ function EvidenceTimeline({ envelope }) {
 }
 
 export function ProcessViewerBoundary({
-  spec, actions,
+  spec, actions, active = true,
   setTimeoutImpl = globalThis.setTimeout,
   clearTimeoutImpl = globalThis.clearTimeout,
 }) {
@@ -69,25 +88,26 @@ export function ProcessViewerBoundary({
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
   useEffect(() => {
-    let active = true;
+    if (!active) return undefined;
+    let mounted = true;
     let timer = null;
     const load = () => {
       const token = ++generation.current;
       setRequest((current) => ({ phase: current.envelope ? 'refreshing' : 'loading', envelope: current.envelope, error: '' }));
       Promise.resolve().then(() => actions.loadRunView(spec.id, offset, VIEWER_PAGE_LIMIT))
-        .then((envelope) => { if (active && generation.current === token) setRequest({ phase: 'ready', envelope, error: '' }); })
-        .catch((error) => { if (active && generation.current === token) setRequest((current) => ({ phase: 'error', envelope: current.envelope, error: error.message })); })
+        .then((envelope) => { if (mounted && generation.current === token) setRequest({ phase: 'ready', envelope, error: '' }); })
+        .catch((error) => { if (mounted && generation.current === token) setRequest((current) => ({ phase: 'error', envelope: current.envelope, error: error.message })); })
         .finally(() => {
-          if (active && generation.current === token) timer = setTimeoutImpl(load, VIEWER_REFRESH_MS);
+          if (mounted && generation.current === token) timer = setTimeoutImpl(load, VIEWER_REFRESH_MS);
         });
     };
     load();
     return () => {
-      active = false;
+      mounted = false;
       generation.current += 1;
       if (timer !== null) clearTimeoutImpl(timer);
     };
-  }, [spec.key, offset, reload, actions, setTimeoutImpl, clearTimeoutImpl]);
+  }, [spec.key, offset, reload, actions, active, setTimeoutImpl, clearTimeoutImpl]);
 
   const envelope = request.envelope;
   const viewer = envelope?.viewerV2;

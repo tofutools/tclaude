@@ -73,9 +73,18 @@ export function buildViewerGraph(envelope) {
     if (!byEdge.has(overlay.edgeId)) byEdge.set(overlay.edgeId, []);
     byEdge.get(overlay.edgeId).push(overlay);
   }
+  const inbound = new Map();
+  for (const edge of topology.edges) {
+    if (edge.from) inbound.set(edge.to, (inbound.get(edge.to) || 0) + 1);
+  }
+  const exactJoins = new Map();
+  for (const node of topology.nodes) {
+    const policy = node.join || ((inbound.get(node.id) || 0) > 1 ? 'all' : '');
+    if (policy) exactJoins.set(node.id, policy);
+  }
   const nodeActivity = new Map();
   for (const edge of topology.edges) {
-	if (!edge.from) continue; // the exact genesis edge is represented by topology.start
+    if (!edge.from) continue; // the exact genesis edge is represented by topology.start
     const overlays = byEdge.get(edge.id) || [];
     if (!overlays.length) continue;
     const count = overlays.reduce((total, entry) => total + (entry.count || 0), 0);
@@ -88,6 +97,7 @@ export function buildViewerGraph(envelope) {
   return {
     nodes: topology.nodes.map((node) => {
       const join = joins.get(node.id);
+      const exactJoin = exactJoins.get(node.id);
       const activity = nodeActivity.get(node.id);
       let overlay;
       if (join) {
@@ -100,6 +110,8 @@ export function buildViewerGraph(envelope) {
           badge: badges.join(' · '),
           progress: `${join.arrived}/${join.arrived + join.open + join.impossible + join.failed + join.skipped + join.canceled}`,
         };
+      } else if (exactJoin) {
+        overlay = { glyph: exactJoin === 'any' ? '∨' : '∧', label: `${exactJoin} · exact topology` };
       } else if (activity) {
         const states = [...activity.states].sort((a, b) => String(a).localeCompare(String(b), 'en'));
         overlay = { glyph: '●', label: states.join(' + '), badge: `${activity.count} path${activity.count === 1 ? '' : 's'}` };
@@ -109,10 +121,10 @@ export function buildViewerGraph(envelope) {
     edges: topology.edges.filter((edge) => edge.from).map((edge) => {
       const overlays = byEdge.get(edge.id) || [];
       const summary = edgeOverlaySummary(overlays);
-      const targetJoin = joins.get(edge.to);
+      const targetJoin = joins.get(edge.to)?.policy || exactJoins.get(edge.to);
       return {
         id: edge.id, from: edge.from, outcome: edge.outcome, to: edge.to,
-        ...(targetJoin ? { joinOnTarget: targetJoin.policy } : {}),
+        ...(targetJoin ? { joinOnTarget: targetJoin } : {}),
         ...(summary ? { badge: summary, badgeSeverity: overlaySeverity(overlays), issues: [summary] } : {}),
       };
     }),
