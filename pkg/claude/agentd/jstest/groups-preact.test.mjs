@@ -118,6 +118,51 @@ test('opaque slop host safely retakes nested-root ownership after an imperative 
     'unmount leaves no mutated pull DOM behind');
 });
 
+test('stale jackpot hold cleanup cannot mark or overwrite a newer slop identity', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `
+    export const lastSnapshot = { groups: [], ungrouped: [] };
+    export function setLastSnapshot() {}
+  `);
+  const [{ SlopMachine }, { bindSlopMachineClicks }] = await Promise.all([
+    harness.importDashboardModule('js/groups-member-table.js'),
+    harness.importDashboardModule('js/slop-fx.js'),
+  ]);
+  const savedRandom = Math.random;
+  Math.random = () => 0; // randomCombo's jackpot branch.
+  t.after(() => { Math.random = savedRandom; });
+  harness.document.body.classList.add('slop');
+  const mounted = await harness.mount(harness.html`
+    <${SlopMachine} state=${{ status: 'working' }} online=${true} conv="jackpot-old" />
+  `);
+  bindSlopMachineClicks();
+
+  const machine = mounted.container.querySelector('.slop-machine');
+  harness.fireEvent(machine, 'click', { button: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 950));
+  assert.equal(machine.dataset.status, 'pull-stopped');
+  assert.equal(machine.classList.contains('slop-pull-win'), true,
+    'the forced jackpot enters its imperative hold phase');
+
+  await mounted.rerender(harness.html`
+    <${SlopMachine} state=${{ status: 'idle' }} online=${true} conv="jackpot-new" />
+  `);
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'jackpot-new');
+  assert.equal(machine.classList.contains('slop-pull-win'), true,
+    'Preact intentionally leaves the unchanged imperative class for token cleanup');
+
+  await new Promise((resolve) => setTimeout(resolve, 1850));
+  assert.equal(machine.classList.contains('slop-pull-win'), false,
+    'the current stale token clears its win class even after losing DOM ownership');
+  assert.equal(machine.dataset.status, 'idle');
+  assert.equal(machine.dataset.conv, 'jackpot-new');
+  assert.equal(machine.querySelectorAll('.slop-reels-root').length, 1);
+  assert.equal(machine.querySelectorAll('.slop-reel').length, 3);
+  assert.equal(machine.querySelector('.slop-pull-reel'), null);
+  await mounted.unmount();
+});
+
 test('Groups list preserves keyed disclosure, focus and nodes across reorder/activity polls', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createGroupsState }, { GroupsList }] = await Promise.all([
