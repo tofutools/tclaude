@@ -1069,7 +1069,7 @@ func baseStates() []dashsnap.State {
 			Title:   "Process editor — contextual commands",
 			Caption: "TCL-435: the shared dashboard command palette contributes selection-aware graph operations, searchable plain copy, disabled reasons, and the documented editor launcher.",
 			JS: processEditorStateJS(`ed.setSelection({type: 'node', id: 'begin'});
-  ed.commandsButton.click();
+  ed.openCommands();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var input = document.querySelector('#palette-input');
   if (!input || !document.querySelector('#command-palette-modal.show')) throw new Error('process command palette did not open');
@@ -1097,12 +1097,16 @@ func baseStates() []dashsnap.State {
 			Key:     "process-editor-edge-drop-chooser",
 			Title:   "Process editor — connector-drop chooser",
 			Caption: "TCL-433: releasing a connector on empty canvas anchors the searchable, keyboard-accessible complete node vocabulary at the intended graph coordinate.",
-			JS: processEditorStateJS(`var p={x:360,y:260},r=ed.graph.svg.getBoundingClientRect();
-  ed.openConnectedNodeChooser({nodeId:'begin',port:'out'},p,{clientX:r.left+ed.graph.view.x+p.x*ed.graph.view.k,clientY:r.top+ed.graph.view.y+p.y*ed.graph.view.k});
+			JS: processEditorStateJS(`var r=document.querySelector('.process-graph-svg').getBoundingClientRect();
+  var client={clientX:r.left+r.width*0.72,clientY:r.top+r.height*0.64};
+  var p=ed.graph.clientToGraph(client.clientX,client.clientY);
+  ed.openConnectedNodeChooser({nodeId:'begin',port:'out'},p,client);
   await Promise.resolve();
   var chooser=document.querySelector('.process-node-chooser');
   if(!chooser||document.activeElement!==chooser.querySelector('.process-node-chooser-input')) throw new Error('edge-drop chooser did not open or focus');
-  if(chooser.querySelectorAll('[role="option"]').length!==5) throw new Error('edge-drop chooser vocabulary incomplete');`),
+  var commandIDs=Array.from(chooser.querySelectorAll('[role="option"]')).map(function(option){return option.dataset.commandId;}).sort();
+  var expectedIDs=['process.create.decision','process.create.end','process.create.parallel','process.create.start','process.create.task','process.create.wait'];
+  if(JSON.stringify(commandIDs)!==JSON.stringify(expectedIDs)) throw new Error('edge-drop chooser vocabulary incomplete: '+JSON.stringify(commandIDs));`),
 			SettleMS: 1100,
 		},
 		{
@@ -1111,7 +1115,7 @@ func baseStates() []dashsnap.State {
 			Caption: "The same TCL-435 command registry under the wizard skin: arcane labels remain searchable by ordinary vocabulary and disabled context stays visibly explained.",
 			Wizard:  true,
 			JS: processEditorStateJS(`ed.setSelection(null);
-  ed.commandsButton.click();
+  ed.openCommands();
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var input = document.querySelector('#palette-input');
   if (!input || !document.querySelector('#command-palette-modal.show')) throw new Error('wizard process command palette did not open');
@@ -1129,17 +1133,22 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "process-editor-browser-node-click",
 			Title:   "Process editor — trusted node click + Delete",
-			Caption: "Real Chrome input: an inspector edit blurs on the first node click, the clicked node remains selected after pointer capture retargeting, and Delete confirms/removes that node.",
+			Caption: "Real Chrome input: an inspector edit commits on blur, the next node click remains selected after pointer capture retargeting, and Delete confirms/removes that node.",
 			JS: processEditorStateJS(`ed.setSelection({type:'node',id:'begin'}); window.__browserEd=ed;
-  var input=ed.inspector.querySelector('.process-inspector-input'); input.value='';`),
+  await editorPaint();
+  var input=document.querySelector('.process-editor-inspector .process-inspector-input');
+  if(!input) throw new Error('node inspector input missing');
+  input.value='';`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "click", Selector: ".process-inspector-input"},
 				{Kind: "input", Selector: ".process-inspector-input", Text: "Renamed begin"},
+				{Kind: "key", Key: "Tab"},
 				{Kind: "click", Selector: `.process-node[data-node-id="ship"] .process-node-shape`},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
-          if(ed.selection?.type!=='node'||ed.selection.id!=='ship') throw new Error('trusted node click did not select ship');
-          if(!ed.graph.nodeLayer.querySelector('[data-node-id="ship"]').classList.contains('is-selected')) throw new Error('ship highlight missing');
-          if(ed.model.node('begin').name!=='Renamed begin') throw new Error('inspector blur change did not commit');`},
+  var selection=ed.snapshot().selection;
+  if(selection?.type!=='node'||selection.id!=='ship') throw new Error('trusted node click did not select ship');
+  if(!document.querySelector('[data-node-id="ship"].is-selected')) throw new Error('ship highlight missing');
+  if(ed.model.node('begin').name!=='Renamed begin') throw new Error('inspector blur change did not commit');`},
 				{Kind: "key", Key: "Delete"},
 				{Kind: "eval", JS: `if(!document.querySelector('.process-editor-modal')) throw new Error('Delete did not open node confirmation');`},
 				{Kind: "click", Selector: ".process-editor-modal .confirm-danger"},
@@ -1155,9 +1164,10 @@ func baseStates() []dashsnap.State {
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
 				{Kind: "eval", JS: `var ed=window.__browserEd;
-          if(ed.selection?.type!=='edge') throw new Error('trusted edge click did not select an edge');
-          if(!ed.inspector.querySelector('.process-inspector-kind')?.textContent.includes('edge')) throw new Error('edge inspector missing');
-          window.__edgeKey=[ed.selection.from,ed.selection.outcome];`},
+  var selection=ed.snapshot().selection;
+  if(selection?.type!=='edge') throw new Error('trusted edge click did not select an edge');
+  if(!document.querySelector('.process-editor-inspector .process-inspector-kind')?.textContent.includes('edge')) throw new Error('edge inspector missing');
+  window.__edgeKey=[selection.from,selection.outcome];`},
 				{Kind: "key", Key: "Delete"},
 				{Kind: "eval", JS: `if(!document.querySelector('.process-editor-modal')) throw new Error('Delete did not open edge confirmation');`},
 				{Kind: "click", Selector: ".process-editor-modal .confirm-danger"},
@@ -1176,9 +1186,9 @@ func baseStates() []dashsnap.State {
 				{Kind: "key-down", Key: "Control"},
 				{Kind: "click", Selector: ".process-edge .process-edge-hit"},
 				{Kind: "key-up", Key: "Control"},
-				{Kind: "eval", JS: `var ed=window.__browserEd,items=ed.selection?.items||[];
-          if(ed.selection?.type!=='multi'||items.length!==2) throw new Error('trusted modifier click did not create two-item selection');
-          if(ed.graph.root.querySelectorAll('.is-selected').length!==2) throw new Error('multi-selection highlights out of sync');`},
+				{Kind: "eval", JS: `var selection=window.__browserEd.snapshot().selection,items=selection?.items||[];
+  if(selection?.type!=='multi'||items.length!==2) throw new Error('trusted modifier click did not create two-item selection');
+  if(document.querySelectorAll('.process-graph-svg .is-selected').length!==2) throw new Error('multi-selection highlights out of sync');`},
 			},
 			SettleMS: 300,
 		},
@@ -1186,15 +1196,20 @@ func baseStates() []dashsnap.State {
 			Key:     "process-editor-browser-drag-live",
 			Title:   "Process editor — live multi-drag connectors",
 			Caption: "Real Chrome drag held mid-frame: both selected nodes move, their internal connector/label/arrow geometry follows, and the model remains unmodified until release.",
-			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layout.nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
-  window.__dragBefore={path:ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d'),rev:ed.model.rev,undo:ed.model.undoStack.length};`),
+			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layoutSnapshot().nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
+  window.__dragBefore={path:document.querySelector('.process-edge-path').getAttribute('d'),
+    begin:document.querySelector('.process-node[data-node-id="begin"]').getAttribute('transform'),
+    ship:document.querySelector('.process-node[data-node-id="ship"]').getAttribute('transform'),
+    rev:ed.model.rev,undo:ed.model.undoStack.length};`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
 				{Kind: "move-by", DX: 120, DY: 65, Steps: 6},
 				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
-          if(!ed.graph.transientLayout) throw new Error('drag did not create transient edge layout');
-          if(ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d')===b.path) throw new Error('connector stayed frozen mid-drag');
-          if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('drag frame mutated model/undo');`},
+  if(!ed.graph.interactionSnapshot().active) throw new Error('drag interaction is not active mid-frame');
+  if(document.querySelector('.process-edge-path').getAttribute('d')===b.path) throw new Error('connector stayed frozen mid-drag');
+  if(document.querySelector('.process-node[data-node-id="begin"]').getAttribute('transform')===b.begin) throw new Error('primary selected node stayed frozen mid-drag');
+  if(document.querySelector('.process-node[data-node-id="ship"]').getAttribute('transform')===b.ship) throw new Error('second selected node stayed frozen mid-drag');
+  if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('drag frame mutated model/undo');`},
 			},
 			SettleMS: 100,
 		},
@@ -1202,7 +1217,7 @@ func baseStates() []dashsnap.State {
 			Key:     "process-editor-browser-drag-commit",
 			Title:   "Process editor — atomic drag commit",
 			Caption: "Real Chrome drag release commits the selected nodes once, clears transient routing, and consumes exactly one undo slot.",
-			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layout.nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
+			JS: processEditorStateJS(`window.__browserEd=ed; var items=ed.graph.layoutSnapshot().nodes.map(function(n){return {type:'node',id:n.id};}); ed.setSelection({type:'multi',items:items});
   window.__dragBefore={rev:ed.model.rev,undo:ed.model.undoStack.length};`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
@@ -1210,8 +1225,8 @@ func baseStates() []dashsnap.State {
 				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('pre-release model mutation');`},
 				{Kind: "mouse-up"},
 				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
-          if(ed.model.undoStack.length!==b.undo+1) throw new Error('drag release was not one atomic undo step');
-          if(ed.graph.transientLayout) throw new Error('transient routing survived release');`},
+  if(ed.model.undoStack.length!==b.undo+1) throw new Error('drag release was not one atomic undo step');
+  if(ed.graph.interactionSnapshot().active) throw new Error('drag interaction survived release');`},
 			},
 			SettleMS: 300,
 		},
@@ -1220,18 +1235,20 @@ func baseStates() []dashsnap.State {
 			Title:   "Process editor — cancelled drag restore",
 			Caption: "A browser drag followed by pointercancel restores node and connector geometry completely and leaves model revision/undo untouched.",
 			JS: processEditorStateJS(`window.__browserEd=ed; window.__dragBefore={
-    path:ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d'),
-    transform:ed.graph.nodeLayer.querySelector('[data-node-id="begin"]').getAttribute('transform'),
+    path:document.querySelector('.process-edge-path').getAttribute('d'),
+    transform:document.querySelector('.process-node[data-node-id="begin"]').getAttribute('transform'),
     rev:ed.model.rev,undo:ed.model.undoStack.length};`),
 			Actions: []dashsnap.BrowserAction{
 				{Kind: "mouse-down", Selector: `.process-node[data-node-id="begin"] .process-node-shape`},
 				{Kind: "move-by", DX: 90, DY: 50, Steps: 5},
-				{Kind: "eval", JS: `var ed=window.__browserEd,id=ed.graph.pointer?.id;if(id==null) throw new Error('drag pointer missing before cancel');
-          ed.graph.svg.dispatchEvent(new PointerEvent('pointercancel',{pointerId:id,bubbles:true}));`},
+				{Kind: "eval", JS: `var ed=window.__browserEd;
+  if(!ed.graph.interactionSnapshot().active) throw new Error('drag interaction missing before cancel');
+  window.dispatchEvent(new Event('blur'));`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,b=window.__dragBefore;
-          if(ed.graph.edgeLayer.querySelector('.process-edge-path').getAttribute('d')!==b.path) throw new Error('cancel did not restore connector');
-          if(ed.graph.nodeLayer.querySelector('[data-node-id="begin"]').getAttribute('transform')!==b.transform) throw new Error('cancel did not restore node');
-          if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('cancel mutated model/undo');`},
+  if(ed.graph.interactionSnapshot().active) throw new Error('drag interaction survived cancel');
+  if(document.querySelector('.process-edge-path').getAttribute('d')!==b.path) throw new Error('cancel did not restore connector');
+  if(document.querySelector('.process-node[data-node-id="begin"]').getAttribute('transform')!==b.transform) throw new Error('cancel did not restore node');
+  if(ed.model.rev!==b.rev||ed.model.undoStack.length!==b.undo) throw new Error('cancel mutated model/undo');`},
 			},
 			SettleMS: 300,
 		},
@@ -1239,8 +1256,11 @@ func baseStates() []dashsnap.State {
 			Key:     "process-editor-marquee-multi",
 			Title:   "Process editor — marquee multi-selection",
 			Caption: "A left-drag marquee selects several nodes at once; every selected node has an accent outline and the inspector summarizes the current set.",
-			JS: processEditorStateJS(`var items = ed.graph.layout.nodes.map(function(node){ return {type:'node',id:node.id}; }); ed.setSelection({type:'multi',items:items});
-  var box = document.createElementNS('http://www.w3.org/2000/svg','rect'); box.setAttribute('class','process-marquee'); box.setAttribute('x','40'); box.setAttribute('y','20'); box.setAttribute('width','430'); box.setAttribute('height','360'); ed.graph.viewport.append(box);`),
+			JS: processEditorStateJS(`var items = ed.graph.layoutSnapshot().nodes.map(function(node){ return {type:'node',id:node.id}; }); ed.setSelection({type:'multi',items:items});
+  await editorPaint();
+  var box = document.createElementNS('http://www.w3.org/2000/svg','rect'); box.setAttribute('class','process-marquee'); box.setAttribute('x','40'); box.setAttribute('y','20'); box.setAttribute('width','430'); box.setAttribute('height','360'); document.querySelector('.process-graph-viewport').append(box);
+  if(document.querySelectorAll('.process-node.is-selected').length!==items.length) throw new Error('marquee selection highlights are incomplete');
+  if(!document.querySelector('.process-editor-inspector')?.textContent.includes(items.length+' items')) throw new Error('marquee selection inspector summary missing');`),
 			SettleMS: 1100,
 		},
 		{
@@ -1248,6 +1268,7 @@ func baseStates() []dashsnap.State {
 			Title:   "Process editor — template name mid-edit",
 			Caption: "Template metadata editor mid-rename: immutable id plus a focused, changed-but-uncommitted display name alongside description and documentation.",
 			JS: processEditorStateJS(`ed.setSelection({type: 'template'});
+  await editorPaint();
   var nameInput = document.querySelector('[aria-label="Template display name"]');
   if (!nameInput) throw new Error('template display-name input missing');
   nameInput.value = 'Release train — renamed';
@@ -1300,8 +1321,9 @@ func baseStates() []dashsnap.State {
   await ed.loadExternalReview();
   ed.observeExternalHead = function(){ return this.externalChange; };
   ed.externalChange.actor = 'agent:agt_11111111111111111111111111111111';
-  ed.externalReviewPanel.hidden = false; ed.renderExternalChange();
-  if (ed.externalChange.kind !== 'clean' || !ed.externalChange.review) throw new Error('clean external review state missing');`),
+  ed.toggleExternalReview(); await editorPaint();
+  if (ed.externalChange.kind !== 'clean' || !ed.externalChange.review) throw new Error('clean external review state missing');
+  if (!document.querySelector('.process-external-review') || !document.querySelector('.process-editor-external .primary')?.textContent.includes('Apply update')) throw new Error('clean external review controls missing');`),
 			SettleMS: 1100,
 		},
 		{
@@ -1318,8 +1340,9 @@ func baseStates() []dashsnap.State {
   await ed.loadExternalReview();
   ed.observeExternalHead = function(){ return this.externalChange; };
   ed.externalChange.actor = 'agent:agt_22222222222222222222222222222222';
-  ed.externalReviewPanel.hidden = false; ed.renderExternalChange();
-  if (ed.externalChange.kind !== 'dirty' || ed.externalKeepButton.hidden || !ed.externalChange.review) throw new Error('dirty external review actions missing');`),
+  ed.toggleExternalReview(); await editorPaint();
+  var externalButtons=Array.from(document.querySelectorAll('.process-editor-external button'));
+  if (ed.externalChange.kind !== 'dirty' || !ed.externalChange.review || !externalButtons.some(function(button){return button.textContent.includes('Keep editing');})) throw new Error('dirty external review actions missing');`),
 			SettleMS: 1100,
 		},
 		{
@@ -1335,14 +1358,14 @@ func baseStates() []dashsnap.State {
 			Key:      "process-node-dialog-task-agent",
 			Title:    "Process node dialog — task, agent work performer",
 			Caption:  "The compound task's stage editor (TCL-298): plan stage with approval policy, agent work performer (profile/prompt/model/effort + contact schedule), ordered checks, review gate, retry policy, captures, and the read-only edges summary.",
-			JS:       nodeDialogStateJS(`ed.openNodeSettings('implement');` + nodeDialogSelfCheck("agent")),
+			JS:       nodeDialogStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("agent")),
 			SettleMS: 1200,
 		},
 		{
 			Key:     "process-node-dialog-resized",
 			Title:   "Process node dialog — resized workspace",
 			Caption: "TCL-419: the standard persisted resize affordance expands the compound task editor into a two-column workspace; the scroll body and fixed action row remain usable in both skins.",
-			JS: nodeDialogStateJS(`ed.openNodeSettings('implement');` + nodeDialogSelfCheck("agent") + `
+			JS: nodeDialogStateJS(`await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("agent") + `
   var dialog = document.querySelector('.process-node-dialog');
   if (getComputedStyle(dialog).resize !== 'both') throw new Error('node dialog resize affordance is not active');
   dialog.style.width = '1000px'; dialog.style.height = '760px';
@@ -1357,7 +1380,7 @@ func baseStates() []dashsnap.State {
 			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'human', profile: 'operator', ask: 'Apply the manual registry update', choices: ['done', 'blocked'], assignee: 'johan'};
   });
-  ed.openNodeSettings('implement');` + nodeDialogSelfCheck("human") + nodeDialogScrollToWork),
+  await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("human") + nodeDialogScrollToWork),
 			SettleMS: 1200,
 		},
 		{
@@ -1367,7 +1390,7 @@ func baseStates() []dashsnap.State {
 			JS: nodeDialogStateJS(`ed.model.updateNode('implement', function(n){
     n.performer = {kind: 'program', profile: 'ci', run: 'go', args: ['test', './...']};
   });
-  ed.openNodeSettings('implement');` + nodeDialogSelfCheck("program") + `
+  await ed.openNodeSettings('implement'); await editorPaint();` + nodeDialogSelfCheck("program") + `
   if (!document.querySelector('.process-node-security-note')) throw new Error('program security note missing');` + nodeDialogScrollToWork),
 			SettleMS: 1200,
 		},
@@ -1375,7 +1398,7 @@ func baseStates() []dashsnap.State {
 			Key:     "process-node-dialog-decision",
 			Title:   "Process node dialog — decision node",
 			Caption: "Decision node dialog: the decider performer (human, with choices) and the read-only choices → edges mapping pointing at the canvas for topology edits.",
-			JS: nodeDialogStateJS(`ed.openNodeSettings('escalate');` + `
+			JS: nodeDialogStateJS(`await ed.openNodeSettings('escalate'); await editorPaint();` + `
   var choiceHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'choices → edges'; });
   if (!choiceHead) throw new Error('decision dialog missing the choices → edges section');`),
 			SettleMS: 1200,
@@ -1385,7 +1408,7 @@ func baseStates() []dashsnap.State {
 			Title:   "Process node detail card — read-only mode",
 			Caption: "The exact same component in view mode (the viewer's node detail card): read-only badge, every control disabled, zero duplicated markup — the §9 unlock later flips this flag back to edit.",
 			JS: nodeDialogStateJS(`ed.model.config.nodeEditable = function(){ return false; };
-  ed.openNodeSettings('implement');
+  await ed.openNodeSettings('implement'); await editorPaint();
   if (!document.querySelector('.process-node-readonly-badge')) throw new Error('read-only badge missing');
   if (!document.querySelector('.process-node-detail.is-readonly')) throw new Error('detail card is not in read-only mode');
   var enabled = document.querySelector('.process-node-detail select:not(:disabled), .process-node-detail input:not(:disabled), .process-node-detail textarea:not(:disabled)');
@@ -2237,6 +2260,9 @@ func processEditorStateJS(extraJS string) string {
   }
   var ed = document.querySelector('#process-editor-canvas').__processEditor;
   if (!ed) throw new Error('process editor instance missing after mount');
+  var editorPaint = function(){
+    return new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  };
   %s
 })();`, extraJS)
 }
