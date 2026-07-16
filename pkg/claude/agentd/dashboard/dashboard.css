@@ -3940,8 +3940,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
    leaves no gap. Once a message is set it renders as a prominent banner —
    red-tinted fill, a left accent bar and a ⚠ glyph — so a validation or
    spawn error can't be mistaken for a throwaway hairline or lost below a
-   tall modal's scroll fold (the showModalError helper also scrolls it into
-   view + flashes it). Server errors can carry JSON / newlines / long
+   tall modal's scroll fold (the controlled spawn/action ErrorBanner also
+   scrolls into view and flashes). Server errors can carry JSON / newlines / long
    worktree paths, so wrap rather than overflow the dialog. */
 .cron-create-error {
   color: #ffa198;
@@ -3957,7 +3957,7 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .cron-create-error:empty { display: none; }
 .cron-create-error::before { content: "⚠ "; font-weight: 600; }
-/* Dismissible variant (built by showModalError): a flex row of ⚠ · message ·
+/* Dismissible controlled-banner variant: a flex row of ⚠ · message ·
    ✕, so the close button sits at the banner's top-right. The ::before ⚠
    becomes the first flex item (gap supplies its spacing, so drop the trailing
    space the block path bakes into the glyph); the message takes the slack. */
@@ -3975,8 +3975,8 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .cron-create-error-x:hover { opacity: 1; color: #ffd7d3; }
 .cron-create-error-x:focus-visible { outline: 1px solid #f85149; outline-offset: 1px; opacity: 1; }
-/* Brief attention flash, re-triggered on every (re)show by showModalError
-   toggling .flash with a reflow — so an identical, resubmitted error still
+/* Brief attention flash, re-triggered on every (re)show by the Preact banner
+   effect toggling .flash with a reflow — so an identical, resubmitted error still
    pulses instead of sitting silent. */
 .cron-create-error.flash { animation: cron-error-flash .9s ease-out; }
 @keyframes cron-error-flash {

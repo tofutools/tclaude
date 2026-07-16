@@ -1,5 +1,7 @@
 import { registerFeatureState } from './feature-state-registry.js';
 
+// dashboard-imperative-boundary: platform-layout
+
 function requireOptions({ name, label, hosts, load }) {
   if (typeof name !== 'string' || !name) throw new TypeError('island name is required');
   if (typeof label !== 'string' || !label) throw new TypeError(`island ${name} requires a label`);

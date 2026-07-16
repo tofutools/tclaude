@@ -1,5 +1,5 @@
 import { h, render } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { registerToolbarProfilePickerController } from './toolbar-profile-picker.js';
@@ -12,9 +12,11 @@ const NEW_PROFILE = '/new-profile';
 function PickerDialog({ current, state, actions }) {
   const [choices, setChoices] = useState([]);
   const [value, setValue] = useState(current.current);
-  const [busy, setBusy] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const selectRef = useRef(null);
+  const cancelRef = useRef(null);
   const submitLock = useRef(false);
   const labels = useMemo(() => current.kind === 'sandbox' ? {
     title: 'Set global sandbox profile', none: '(none)', create: '＋ new sandbox profile…',
@@ -28,14 +30,20 @@ function PickerDialog({ current, state, actions }) {
     actions.load(current.kind).then((result) => {
       if (!live) return;
       setChoices(result.choices);
-      setBusy(false);
+      setLoading(false);
     }).catch((cause) => {
       if (!live) return;
       setError(cause?.message || String(cause));
-      setBusy(false);
+      setLoading(false);
     });
     return () => { live = false; };
   }, [current]);
+
+  useLayoutEffect(() => {
+    const select = selectRef.current;
+    const dialog = select?.closest('[role="dialog"]');
+    if (!loading && dialog?.contains(select.ownerDocument.activeElement)) select.focus();
+  }, [loading]);
 
   const close = () => {
     state.close();
@@ -46,7 +54,7 @@ function PickerDialog({ current, state, actions }) {
     }, 0);
   };
   const submit = async (selected = value) => {
-    if (submitLock.current || busy) return;
+    if (submitLock.current || loading || saving) return;
     if (selected === NEW_PROFILE) {
       state.close();
       actions.openNew(current.kind, (name) => { void actions.commitFromEditor(current.kind, name); });
@@ -54,7 +62,7 @@ function PickerDialog({ current, state, actions }) {
     }
     if (selected === current.current) { close(); return; }
     submitLock.current = true;
-    setBusy(true);
+    setSaving(true);
     setError('');
     try {
       if (await actions.commit(current.kind, selected)) close();
@@ -62,15 +70,15 @@ function PickerDialog({ current, state, actions }) {
       setError(cause?.message || String(cause));
     } finally {
       submitLock.current = false;
-      setBusy(false);
+      setSaving(false);
     }
   };
 
   return html`<${Overlay} id="toolbar-profile-picker-modal" labelledby="toolbar-profile-picker-title"
-    onClose=${close} blocked=${busy} initialFocusRef=${selectRef}>
+    onClose=${close} blocked=${saving} initialFocusRef=${loading ? cancelRef : selectRef}>
     <h3 id="toolbar-profile-picker-title">${labels.title}</h3>
     <label class="cron-create-row"><span class="cron-create-label">Profile</span>
-      <select ref=${selectRef} class="group-default-profile-select" value=${value} disabled=${busy}
+      <select ref=${selectRef} class="group-default-profile-select" value=${value} disabled=${loading || saving}
         onChange=${(event) => {
           const selected = event.currentTarget.value;
           setValue(selected);
@@ -84,8 +92,8 @@ function PickerDialog({ current, state, actions }) {
       </select>
     </label>
     <div class="cron-create-error" role="alert">${error}</div>
-    <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${close}>Cancel</button>
-      <span class="spacer"></span><button type="button" class="primary" disabled=${busy} onClick=${() => { void submit(); }}>Apply</button></div>
+    <div class="modal-buttons"><button ref=${cancelRef} type="button" disabled=${saving} onClick=${close}>Cancel</button>
+      <span class="spacer"></span><button type="button" class="primary" disabled=${loading || saving} onClick=${() => { void submit(); }}>Apply</button></div>
   </${Overlay}>`;
 }
 

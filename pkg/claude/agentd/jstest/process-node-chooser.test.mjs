@@ -77,6 +77,15 @@ test('node chooser pointer choice, Escape, Cancel, and click-away never double-r
   assert.equal(host.querySelector('.process-node-chooser'), null);
   assert.deepEqual(chosen, ['wait']);
   assert.equal(restored, 3);
+
+  dispose = open();
+  await Promise.resolve();
+  dispose();
+  dispose();
+  assert.equal(host.querySelector('.process-node-chooser'), null);
+  assert.equal(restored, 3, 'unmount disposal does not move focus into a retiring graph host');
+  outside.dispatchEvent(new harness.window.Event('pointerdown', { bubbles: true }));
+  assert.equal(restored, 3, 'explicit disposal removes the document click-away listener');
 });
 
 test('wizard chooser changes presentation while plain search terms remain usable', async (t) => {
