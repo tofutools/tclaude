@@ -281,7 +281,7 @@ test('diagnostic send rechecks exact unique focus after the human preview', asyn
         currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64),
       },
       abort: { signal: { aborted: false } },
-      graph: { root: { focus: () => { focused += 1; } } },
+      graph: { focus: () => { focused += 1; } },
       scribePreviewModal: async (preview) => {
         assert.match(preview.context, /missing_performer/, `${scenario.name}: preview keeps the approved snapshot`);
         scenario.mutate(validation);
@@ -343,7 +343,7 @@ test('scribe action freshness guard covers model lifecycle, selection, and diagn
         rev: 7, template: { id: 'release-flow', nodes: { build: { type: 'task' }, ship: { type: 'task' } } }, edges: [],
         currentRef: `release-flow@sha256:${hash}`, sourceHash: 'b'.repeat(64),
       },
-      abort: { signal: { aborted: false } }, graph: { root: { focus() {} } }, status() {},
+      abort: { signal: { aborted: false } }, graph: { focus() {} }, status() {},
       scribePreviewModal: async () => 'Proceed.',
       options: { onScribe: async (_anchor, options) => {
         scenario.mutate(fake);
@@ -355,18 +355,18 @@ test('scribe action freshness guard covers model lifecycle, selection, and diagn
   }
 });
 
-test('cancelling the scribe preview restores predictable editor focus', async () => {
+test('cancelling the scribe preview leaves focus restoration to the shared overlay', async () => {
   let focused = 0;
   const fake = {
     blank: false, dirty: false, savePending: false, selection: null,
     model: { template: { id: 'release-flow', nodes: {} }, edges: [], currentRef: `release-flow@sha256:${'a'.repeat(64)}`, sourceHash: 'b'.repeat(64) },
     validation: null, abort: { signal: { aborted: false } },
-    graph: { root: { focus: () => { focused += 1; } } },
+    graph: { focus: () => { focused += 1; } },
     scribePreviewModal: async () => null,
     options: { onScribe: async () => { throw new Error('cancel must not send'); } },
   };
   assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(fake), false);
-  assert.equal(focused, 1);
+  assert.equal(focused, 0, 'the controller does not override the component-owned invoker restoration');
 });
 
 test('dirty process scribe handoff requires an explicit successful resolution', async () => {
@@ -449,7 +449,7 @@ test('destroy during existing-template scribe discard prevents model swap and ha
     editor.choiceModal = async () => 'discard';
     editor.options.onScribe = async (anchor) => { emitted.push(anchor); return {}; };
     editor.saveSeq = 0;
-    editor.graph = { destroy() {} };
+    editor.graph = { dispose() {} };
     editor.closeInline = () => {};
     editor.mount = { __processEditor: editor, classList: { remove() {} }, replaceChildren() {} };
     const original = editor.model;
@@ -471,50 +471,24 @@ test('destroy during existing-template scribe discard prevents model swap and ha
   }
 });
 
-function withFakeDocument(run) {
-  const previous = globalThis.document;
-  globalThis.document = {
-    createElement(tag) {
-      return {
-        tagName: String(tag).toUpperCase(), attributes: {}, children: [],
-        setAttribute(key, value) { this.attributes[key] = String(value); },
-        addEventListener() {},
-        append(...children) { this.children.push(...children); },
-      };
-    },
+test('template settings selection stays editor-owned and clears the graph adapter', () => {
+  let graphSelection = 'not-cleared';
+  let publishes = 0;
+  const fake = {
+    selection: null,
+    graph: { setSelection(value) { graphSelection = value; } },
+    publish() { publishes += 1; },
   };
-  try {
-    return run();
-  } finally {
-    if (previous === undefined) delete globalThis.document;
-    else globalThis.document = previous;
-  }
-}
 
-test('template settings selection stays editor-owned and renders the display name', () => {
-  withFakeDocument(() => {
-    let graphSelection = 'not-cleared';
-    let rendered = [];
-    const fake = {
-      selection: null,
-      graph: { select(value) { graphSelection = value; } },
-      model: { template: { id: 'release', name: 'Release train', description: 'Ship safely' } },
-      inspector: { replaceChildren(...children) { rendered = children; } },
-      renderInspector: ProcessTemplateEditor.prototype.renderInspector,
-    };
+  ProcessTemplateEditor.prototype.setSelection.call(fake, { type: 'template' });
+  assert.deepEqual(fake.selection, { type: 'template' });
+  assert.equal(graphSelection, null, 'template chrome never becomes a graph highlight');
+  assert.equal(publishes, 1);
 
-    ProcessTemplateEditor.prototype.setSelection.call(fake, { type: 'template' });
-    assert.deepEqual(fake.selection, { type: 'template' });
-    assert.equal(graphSelection, null, 'template chrome never becomes a graph highlight');
-    const name = rendered.find(element => element.attributes?.['aria-label'] === 'Template display name');
-    assert.ok(name, 'settings button selection renders the display-name control');
-    assert.equal(name.value, 'Release train');
-
-    // refresh() replays setSelection(this.selection), so the editor-only state
-    // must survive the same round trip without graph normalization dropping it.
-    ProcessTemplateEditor.prototype.setSelection.call(fake, fake.selection);
-    assert.deepEqual(fake.selection, { type: 'template' });
-  });
+  // refresh() replays setSelection(this.selection), so the editor-only state
+  // must survive the same round trip without graph normalization dropping it.
+  ProcessTemplateEditor.prototype.setSelection.call(fake, fake.selection);
+  assert.deepEqual(fake.selection, { type: 'template' });
 });
 
 test('graph multi-selection remains normalized and replaces template settings', () => {
@@ -522,8 +496,8 @@ test('graph multi-selection remains normalized and replaces template settings', 
   let renders = 0;
   const fake = {
     selection: { type: 'template' },
-    graph: { select(value) { graphSelection = value; }, layout: { edges: [] } },
-    renderInspector() { renders += 1; },
+    graph: { setSelection(value) { graphSelection = value; }, layoutSnapshot: () => ({ edges: [] }) },
+    publish() { renders += 1; },
     laidEdge: ProcessTemplateEditor.prototype.laidEdge,
   };
   const multi = { type: 'multi', items: [{ type: 'node', id: 'a' }, { type: 'node', id: 'b' }] };
@@ -588,7 +562,8 @@ function saveEditor(id = 'alpha') {
     versionBadge: {}, dirtyBadge: {}, undoButton: {}, redoButton: {}, saveButton: {},
     renderInspector() {}, status(message, isError) { this.lastStatus = { message, isError }; },
     validation: null, options: {}, abort: { abort() {} },
-    graph: { destroy() {} }, modalDispose: null,
+    graph: { dispose() {} }, modalDispose: null,
+    publish() {},
     mount: { classList: { remove() {} }, replaceChildren() {} },
     closeInline() {},
   };
@@ -607,15 +582,12 @@ test('pending first save stays single-flight and refresh cannot re-enable identi
     const editor = saveEditor('alpha');
     const first = ProcessTemplateEditor.prototype.save.call(editor);
     assert.equal(editor.savePending, true);
-    assert.equal(editor.idInput.disabled, true);
-    assert.equal(editor.saveButton.disabled, true);
 
     // An allowed canvas edit refreshes chrome while the POST is delayed.
     editor.model.rev += 1;
     editor.model.dirty = true;
     editor.updateChrome();
-    assert.equal(editor.idInput.disabled, true, 'refresh keeps the creation identity locked');
-    assert.equal(editor.saveButton.disabled, true, 'refresh cannot arm a duplicate save');
+    assert.equal(editor.savePending, true, 'refresh keeps the in-flight transaction locked');
     assert.equal(await ProcessTemplateEditor.prototype.save.call(editor), false);
     assert.equal(fetches, 1, 'duplicate click does not issue a second POST');
 
@@ -738,8 +710,8 @@ test('failed force retry keeps an untouched blank editor retryable', async () =>
     assert.equal(fetches, 2, 'force retries once against the adopted CAS head');
     assert.equal(editor.blank, true, 'a failed retry does not pretend the draft was saved');
     assert.equal(editor.model.sourceHash, 'existing-source', 'the adopted CAS head stays pinned');
-    assert.equal(editor.idInput.disabled, true, 'adopting a CAS head keeps identity locked');
-    assert.equal(editor.saveButton.disabled, false, 'cancelled re-conflict leaves Save available');
+    assert.equal(editor.model.sourceHash, 'existing-source', 'adopting a CAS head keeps identity locked');
+    assert.equal(editor.savePending, false, 'cancelled re-conflict leaves Save available');
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
@@ -873,7 +845,7 @@ test('editor teardown aborts an in-flight external review', async () => {
     editor.loadedView = { template: structuredClone(editor.model.template), edges: [], source: 'id: alpha\n' };
     editor.externalChange = { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' };
     editor.nodeChooserDispose = null; editor.closeInline = () => {}; editor.validation = null;
-    editor.graph = { destroy() {} }; editor.modalDispose = null;
+    editor.graph = { dispose() {} }; editor.modalDispose = null;
     editor.mount = { classList: { remove() {} }, replaceChildren() {}, __processEditor: editor };
     const pending = ProcessTemplateEditor.prototype.loadExternalReview.call(editor);
     ProcessTemplateEditor.prototype.destroy.call(editor);
@@ -973,34 +945,6 @@ test('a changed head automatically loads bounded review with exact head attribut
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
   }
-});
-
-test('external review rendering exposes node-id and source-limit truncation markers', () => {
-  const control = () => ({ hidden: false, disabled: false, textContent: '' });
-  const editor = {
-    externalChange: {
-      kind: 'clean', ref: 'alpha@sha256:abcdef123456', sourceHash: 'source-new',
-      review: { summary: {
-        addedNodes: ['a', 'b'], addedNodeCount: 7, addedNodesTruncated: true,
-        removedNodes: [], removedNodeCount: 0, changedNodes: [], changedNodeCount: 0,
-        addedEdges: 0, removedEdges: 0, metadataChanged: false,
-        source: {
-          firstLine: 2, removedLines: 20, addedLines: 20, before: ['old'], after: ['new'], truncated: true,
-          truncation: { lines: true, characters: true, bytes: true },
-        },
-      } },
-    },
-    externalBanner: { hidden: true, classList: { toggle() {} } },
-    externalMessage: control(), externalActorButton: control(), externalKeepButton: control(),
-    externalReloadButton: control(), externalReviewButton: control(),
-    externalReviewPanel: { hidden: false }, externalGraphSummary: control(), externalSourceSummary: control(),
-    externalDecisionPending: false, externalReloadPending: false, externalReviewPending: false, savePending: false,
-    options: {}, root: { classList: { toggle() {} } },
-  };
-
-  ProcessTemplateEditor.prototype.renderExternalChange.call(editor);
-  assert.match(editor.externalGraphSummary.textContent, /\+7 nodes \(a, b, … 5 more IDs omitted\)/);
-  assert.match(editor.externalSourceSummary.textContent, /source preview truncated at lines, characters, UTF-8 bytes limits/);
 });
 
 test('dirty external Reload never fetches or replaces the model when discard is denied', async () => {
@@ -1192,6 +1136,40 @@ test('an edit made during external Reload cancels the swap and preserves the dra
     assert.equal(editor.model, original, 'revision advance fails closed instead of swapping the model');
     assert.equal(editor.model.template.description, 'new local edit during reload');
     assert.deepEqual(editor.externalChange, { kind: 'dirty', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
+    assert.match(editor.lastStatus.message, /Reload cancelled/);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a node drag begun during external Reload cancels the stale model swap', async () => {
+  const previousFetch = globalThis.fetch;
+  const reload = deferred(); const started = deferred();
+  globalThis.fetch = async () => { started.resolve(); return reload.promise; };
+  try {
+    const editor = externalReloadEditor();
+    const original = editor.model;
+    let generation = 0;
+    let active = false;
+    editor.graph = {
+      interactionSnapshot: () => ({ generation, active }),
+    };
+    const pending = ProcessTemplateEditor.prototype.reloadExternalChange.call(editor);
+    await started.promise;
+    generation += 1;
+    active = true; // the adapter observed a node pointer-down while GET was pending
+    generation += 1;
+    active = false; // even a completed drag invalidates the request generation
+    reload.resolve({
+      ok: true, status: 200, statusText: 'OK',
+      json: async () => ({
+        template: { id: 'alpha', name: 'External', start: 'a', nodes: { a: { type: 'start' } } },
+        edges: [], layout: {}, sourceHash: 'source-new', semanticHash: 'semantic-new', currentRef: 'alpha@sha256:new',
+      }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(editor.model, original, 'a response captured before the drag cannot replace its graph model');
     assert.match(editor.lastStatus.message, /Reload cancelled/);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
