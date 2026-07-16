@@ -5,6 +5,7 @@ import { mountTerminalWidget } from './terminals-core.js';
 import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
 import { registerTerminalShellController } from './terminals-tab.js';
+import { hasShownOverlay } from './overlay-stack.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -193,7 +194,8 @@ function PaneTab({ pane, active, actions }) {
 }
 
 function TerminalTabs({
-  state, actions, widgetFactory, onComposeMessage, solo = false, manageTitle = false, empty = false,
+  state, actions, widgetFactory, onComposeMessage, composeMessageDialogKind = () => '',
+  solo = false, manageTitle = false, empty = false,
 }) {
   const current = state.view.value;
   const hasPanes = current.panes.length > 0;
@@ -241,10 +243,11 @@ function TerminalTabs({
     if (solo || !onComposeMessage) return undefined;
     const onComposeShortcut = (event) => {
       const pane = current.panes.find((candidate) => candidate.key === current.activeKey);
+      const dialogKind = composeMessageDialogKind();
       const action = terminalComposeShortcutAction(event, {
         tabActive: document.getElementById('tab-terminals')?.classList.contains('active'),
-        operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),
-        blockingOverlayOpen: Boolean(document.querySelectorAll('.modal-overlay.show, .manage-overlay.show').length),
+        operatorModalOpen: dialogKind === 'operator-message',
+        blockingOverlayOpen: hasShownOverlay(),
         eligiblePane: Boolean(pane?.seed?.agent),
       });
       if (action === 'ignore') return;
@@ -256,7 +259,7 @@ function TerminalTabs({
     // the shortcut available from the pane, tab strip, and header alike.
     document.addEventListener('keydown', onComposeShortcut, true);
     return () => document.removeEventListener('keydown', onComposeShortcut, true);
-  }, [actions, current.activeKey, current.panes, onComposeMessage, solo]);
+  }, [actions, composeMessageDialogKind, current.activeKey, current.panes, onComposeMessage, solo]);
 
   return html`
     <div class="terminal-shell-root">
@@ -358,9 +361,11 @@ export function mountTerminalShellIsland({
   registerCleanup,
   widgetFactory = mountTerminalWidget,
   onComposeMessage = null,
+  composeMessageDialogKind = () => '',
 }) {
   const unregisterController = registerTerminalShellController(actions);
-  render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory} onComposeMessage=${onComposeMessage} />`, host);
+  render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
+    onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {

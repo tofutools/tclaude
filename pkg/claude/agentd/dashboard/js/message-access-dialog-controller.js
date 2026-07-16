@@ -19,6 +19,14 @@ export function openMessageCreateModal(prefill = {}) {
   return requireController().openMessage(prefill);
 }
 
+export function openOperatorMessageDialog(context = {}) {
+  return requireController().openOperatorMessage(context);
+}
+
+export function activeMessageAccessDialogKind() {
+  return controller?.dialogKind?.() || '';
+}
+
 export function openHumanReplyModal(context = {}) {
   return requireController().openHumanReply(context);
 }

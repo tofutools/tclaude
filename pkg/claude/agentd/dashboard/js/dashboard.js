@@ -39,8 +39,8 @@ import { bindGroupReorder } from './group-reorder.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
 import { bindGroupsCleanupButtons } from './modal-message.js';
-import { bindOperatorMessageModal, openOperatorMessageModal } from './modal-operator-message.js';
 import {
+  activeMessageAccessDialogKind, openOperatorMessageDialog,
   openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
@@ -166,7 +166,8 @@ export function sudoBadge(activeSudo, fallbackConvID) {
   const featureCleanups = await Promise.all([
     mountTerminalsFeature({
       confirm: confirmModal,
-      onComposeMessage: (seed) => openOperatorMessageModal(seed),
+      onComposeMessage: (seed) => openOperatorMessageDialog(seed),
+      composeMessageDialogKind: activeMessageAccessDialogKind,
     }),
     mountMessageAccessDialogsFeature({
       refresh: dashboardActions.refresh,
@@ -318,7 +319,6 @@ export function sudoBadge(activeSudo, fallbackConvID) {
     if (event.persisted) return;
     for (const cleanup of pageCleanups.reverse()) cleanup?.();
   });
-  bindOperatorMessageModal();
   bindGroupsCleanupButtons();
   bindTemplatesUI();
   bindProfilesUI();

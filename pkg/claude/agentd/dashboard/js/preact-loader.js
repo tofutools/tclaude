@@ -230,6 +230,7 @@ const terminalsDescriptor = createIslandDescriptor({
         host, badgeHost, modalHost, state: terminalShellState, actions, registerCleanup,
         widgetFactory: dependencies.widgetFactory,
         onComposeMessage: dependencies.onComposeMessage,
+        composeMessageDialogKind: dependencies.composeMessageDialogKind,
       }),
     };
   },

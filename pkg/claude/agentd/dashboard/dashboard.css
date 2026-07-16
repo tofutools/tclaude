@@ -2714,8 +2714,8 @@ details[data-group-key][open] > summary .group-sandbox-profile {
    pattern as the profile editor above — pin it above plain z-index:100 overlays
    so it's always the topmost editor. */
 #role-editor-modal { z-index: 150; }
-/* #confirm-modal is opened FROM inside other modals — by the backdrop-
-   discard guard (bindBackdropDiscard) on every data-entry modal, and
+/* #confirm-modal is opened FROM inside other modals — by each Preact
+   overlay's discard transaction for dirty data-entry dialogs, and
    ahead-of-time by destructive-action confirms invoked from list rows.
    With plain z-index:100 it ties with the modal that triggered it and
    loses on DOM order (it appears earlier in dashboard.html), leaving
@@ -3496,23 +3496,22 @@ body.wizard .group-pending-title-wizard { display: inline; }
   resize: both; overflow: auto;
   max-width: min(1100px, calc(100vw - 32px));
 }
-/* The terminal operator composer benefits from the same persisted two-axis
-   resize escape hatch as the larger form dialogs. Its JS wires this card to
-   makeModalResizable under a dedicated preference key. */
-#operator-message-modal .cron-create-modal {
+/* The Preact-owned terminal operator composer benefits from the same persisted
+   two-axis resize escape hatch as the larger form dialogs. */
+.operator-message-modal {
   resize: both; overflow: auto;
 }
 /* The message is the composer's elastic region: it consumes every extra pixel
    from a vertical resize while the surrounding metadata stays natural-height
    and the action row remains pinned to the bottom. Override the shared 220px
    textarea ceiling; the dialog's own viewport cap remains the only bound. */
-#operator-message-modal .operator-message-body-row {
+.operator-message-modal .operator-message-body-row {
   flex: 1 1 auto; min-height: 100px; align-items: stretch;
 }
-#operator-message-modal .operator-message-body-row textarea {
+.operator-message-modal .operator-message-body-row textarea {
   align-self: stretch; min-height: 0; max-height: none; resize: none;
 }
-#operator-message-modal .modal-buttons { flex: 0 0 auto; }
+.operator-message-modal .modal-buttons { flex: 0 0 auto; }
 /* Theme the scroll container's scrollbar to the dark dialog chrome. Without
    this the tall spawn/clone dialogs (and the Initial-msg textarea) fall back
    to the browser's default light, classic scrollbar — the same white-default
@@ -7200,54 +7199,54 @@ body.wizard #message-create-modal #message-create-submit:disabled { opacity: 0.6
 
 /* ─── Wizard operator missive composer ──────────────────────────────
    This is the terminal-pane Ctrl/Cmd+M composer, not the agent-authored
-   message action above. Keep its arcane skin scoped to its overlay id. */
-body.wizard #operator-message-modal .cron-create-modal {
+   message action above. Keep its arcane skin scoped to its owned overlay. */
+body.wizard .operator-message-overlay .operator-message-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
   color: #e7d9f5;
   scrollbar-color: #7a5db0 #140f28;
 }
-body.wizard #operator-message-modal .cron-create-modal h3 {
+body.wizard .operator-message-overlay .operator-message-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
-body.wizard #operator-message-modal :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
-body.wizard #operator-message-modal .cron-create-target { color: #f3e6c0; }
-body.wizard #operator-message-modal .cron-create-row :is(input[type=text], textarea) {
+body.wizard .operator-message-overlay :is(.modal-hint, .cron-create-label, .spawn-attachments-hint) { color: #b39ddb; }
+body.wizard .operator-message-overlay .cron-create-target { color: #f3e6c0; }
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea) {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard #operator-message-modal .cron-create-row :is(input[type=text], textarea):focus { border-color: #a97bd6; }
-body.wizard #operator-message-modal .spawn-attachments-list li {
+body.wizard .operator-message-overlay .cron-create-row :is(input[type=text], textarea):focus { border-color: #a97bd6; }
+body.wizard .operator-message-overlay .spawn-attachments-list li {
   background: #120c24; border-color: rgba(122, 93, 176, 0.5);
 }
-body.wizard #operator-message-modal .spawn-attachments-list .att-name { color: #f3e6c0; }
-body.wizard #operator-message-modal .spawn-attachments-list .att-size { color: #b39ddb; }
-body.wizard #operator-message-modal button:not(#operator-message-submit):not(.att-remove) {
+body.wizard .operator-message-overlay .spawn-attachments-list .att-name { color: #f3e6c0; }
+body.wizard .operator-message-overlay .spawn-attachments-list .att-size { color: #b39ddb; }
+body.wizard .operator-message-overlay button:not(.operator-message-submit):not(.att-remove) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard #operator-message-modal button:not(#operator-message-submit):not(.att-remove):hover { background: #3a2a63; }
-body.wizard #operator-message-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #operator-message-modal #operator-message-submit {
+body.wizard .operator-message-overlay button:not(.operator-message-submit):not(.att-remove):hover { background: #3a2a63; }
+body.wizard .operator-message-overlay .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard .operator-message-overlay .operator-message-submit {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
   box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
   letter-spacing: 0.5px; font-weight: 700;
 }
-body.wizard #operator-message-modal #operator-message-submit:hover {
+body.wizard .operator-message-overlay .operator-message-submit:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
-body.wizard #operator-message-modal #operator-message-submit:disabled { opacity: 0.6; }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar { width: 10px; height: 10px; }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-track,
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-corner { background: #140f28; }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb {
+body.wizard .operator-message-overlay .operator-message-submit:disabled { opacity: 0.6; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar { width: 10px; height: 10px; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-track,
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb {
   background: #7a5db0; border-radius: 6px; border: 2px solid #140f28;
 }
-body.wizard #operator-message-modal :is(.cron-create-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .operator-message-overlay :is(.operator-message-modal, .cron-create-row textarea)::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
 
 /* ─── Wizard invite-familiar picker ──────────────────────────────────
    #add-member-modal shares .add-member-modal with the sudo/cron target

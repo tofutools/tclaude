@@ -83,10 +83,12 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 
 	for _, needle := range []string{
 		"import { terminalComposeShortcutAction } from './terminal-compose-route.js';",
+		"import { hasShownOverlay } from './overlay-stack.js';",
 		"const pane = current.panes.find((candidate) => candidate.key === current.activeKey);",
 		"restoreFocus: () => actions.activatePane(pane.key)",
-		"operatorModalOpen: document.getElementById('operator-message-modal')?.classList.contains('show'),",
-		"blockingOverlayOpen: Boolean(document.querySelectorAll('.modal-overlay.show, .manage-overlay.show').length),",
+		"const dialogKind = composeMessageDialogKind();",
+		"operatorModalOpen: dialogKind === 'operator-message',",
+		"blockingOverlayOpen: hasShownOverlay(),",
 		"if (action === 'ignore') return;",
 		"document.addEventListener('keydown', onComposeShortcut, true);",
 		"document.removeEventListener('keydown', onComposeShortcut, true);",
@@ -96,15 +98,19 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 			t.Errorf("integrated terminals shortcut missing %q", needle)
 		}
 	}
+	composer := readDashboardJS(t, "message-access-dialog-island.js")
+	actions := readDashboardJS(t, "message-access-dialog-actions.js")
 	for _, needle := range []string{
 		`id="operator-message-modal"`,
 		`id="operator-message-attach-input"`,
 		`id="operator-message-submit"`,
-		`fetch('/api/operator-message'`,
 	} {
-		if !strings.Contains(dashboardAssets, needle) {
+		if !strings.Contains(composer, needle) {
 			t.Errorf("operator message composer missing %q", needle)
 		}
+	}
+	if !strings.Contains(actions, "'/api/operator-message'") {
+		t.Error("operator message action is not wired to /api/operator-message")
 	}
 	if !strings.Contains(shell, "<span class=\"terminal-interaction-hint\">${INTERACTION_HINT}</span>") {
 		t.Error("fallback terminal modal missing persistent selection/copy guidance")

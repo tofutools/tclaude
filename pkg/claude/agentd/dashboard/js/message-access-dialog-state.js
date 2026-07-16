@@ -19,8 +19,14 @@ export function createMessageAccessDialogState() {
   }
 
   function close() {
+    const closed = dialog.value;
     finishPicker('');
     dialog.value = null;
+    if (closed?.kind === 'operator-message' && closed.restoreFocus) {
+      setTimeout(() => {
+        if (!dialog.value) closed.restoreFocus();
+      }, 0);
+    }
   }
 
   function pickAgent(options = {}) {
@@ -44,8 +50,8 @@ export function createMessageAccessDialogState() {
   }
 
   function dispose() {
-    close();
     finishPicker('');
+    dialog.value = null;
   }
 
   return Object.freeze({
@@ -53,6 +59,16 @@ export function createMessageAccessDialogState() {
     openMessage(prefill = {}) {
       return open({ kind: 'message', prefill: { ...prefill } });
     },
+    openOperatorMessage(context = {}) {
+      if (!context.agent) return false;
+      return open({
+        kind: 'operator-message',
+        agent: String(context.agent),
+        label: String(context.label || context.agent),
+        restoreFocus: typeof context.restoreFocus === 'function' ? context.restoreFocus : null,
+      });
+    },
+    dialogKind() { return dialog.value?.kind || ''; },
     openHumanReply(context = {}) {
       return open({ kind: 'human-reply', context: { ...context } });
     },
