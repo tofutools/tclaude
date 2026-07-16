@@ -1466,9 +1466,14 @@ function RetireAgentDialog({ descriptor, actions, confirmDiscard }) {
   };
   const submit = async () => {
     if (busy) return;
+    const deleting = !!worktree?.removable && shutdown && deleteWorktree;
+    // Freeze the probed identity alongside the choice: every retry then names
+    // the exact worktree the operator reviewed, and the daemon rejects the
+    // request outright if the agent has since claimed a different one.
     const choice = submittedChoice || Object.freeze({
       shutdown,
-      deleteWorktree: !!worktree?.removable && shutdown && deleteWorktree,
+      deleteWorktree: deleting,
+      ...(deleting ? { expectedWorktree: worktree.path } : {}),
     });
     if (!submittedChoice) {
       submittedRef.current = choice;

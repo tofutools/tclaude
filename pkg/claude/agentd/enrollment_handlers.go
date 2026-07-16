@@ -179,15 +179,44 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	shutdown := retireShouldShutdown(r)
 	deleteWorktree := retireShouldDeleteWorktree(r)
 
+	query := r.URL.Query()
+	_, hasExpectedWorktree := query["expected_worktree"]
+	if hasExpectedWorktree && !deleteWorktree {
+		writeError(w, http.StatusBadRequest, "request",
+			"expected_worktree requires delete_worktree=1")
+		return
+	}
+	var expectedWorktreePath string
+	if hasExpectedWorktree {
+		expectedWorktreePath = query.Get("expected_worktree")
+		if expectedWorktreePath == "" {
+			writeError(w, http.StatusBadRequest, "request",
+				"expected_worktree must not be empty")
+			return
+		}
+	}
+
 	// Resolve before demotion as well as before shutdown. Historical retired
 	// session rows are not worktree claimants, so the safety view must be taken
 	// while this target and every sibling still have their pre-retire state.
 	var wt agentWorktreeView
 	if deleteWorktree {
 		wt = resolveRetireWorktree(convID)
+		// A Preact opt-in freezes the exact removable path returned by its
+		// earlier probe. Re-check that precondition here, before the demotion
+		// and every later destructive phase, so an agent that moved between
+		// probe and confirmation cannot redirect deletion onto its new
+		// worktree. Older callers that omit the precondition retain the
+		// established delete_worktree contract.
+		if hasExpectedWorktree &&
+			(wt.Path != expectedWorktreePath || !wt.Removable()) {
+			writeError(w, http.StatusConflict, "conflict",
+				"worktree changed since confirmation; reopen retire to re-probe and retry")
+			return
+		}
 	}
 
-	reason := strings.TrimSpace(r.URL.Query().Get("reason"))
+	reason := strings.TrimSpace(query.Get("reason"))
 	outcome, _, err := retireAgentConv(convID, enrollmentActor(caller), reason)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())

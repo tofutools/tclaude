@@ -72,15 +72,29 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	}
 
 	// Endpoint and authority remain daemon-owned; the adapter only preserves
-	// the raw conv id and exact option query.
+	// the raw conv id and exact option query. Worktree deletion additionally
+	// carries the probed path as a precondition, so a retry cannot be
+	// retargeted at whatever worktree the agent claims by then.
 	for _, needle := range []string{
-		"`/api/agents/${encodeURIComponent(conv)}/retire?${query}`",
-		"`shutdown=${choice.shutdown ? 1 : 0}`",
-		"choice.deleteWorktree ? '&delete_worktree=1' : ''",
+		"`/api/agents/${encodeURIComponent(conv)}/retire?${params}`",
+		"params.set('shutdown', choice.shutdown ? '1' : '0')",
+		"params.set('delete_worktree', '1')",
+		"params.set('expected_worktree', choice.expectedWorktree)",
 		"state.handoff()",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("transaction retire adapter missing %q", needle)
+		}
+	}
+
+	// The island is the freezer: the submitted choice must capture the exact
+	// probed path, and the adapter must refuse an unbound deletion opt-in.
+	for _, needle := range []string{
+		"? { expectedWorktree: worktree.path } : {}",
+		"throw new Error('delete worktree requires a freshly probed worktree path')",
+	} {
+		if !strings.Contains(dashboardAssets, needle) {
+			t.Errorf("retire worktree precondition binding missing %q", needle)
 		}
 	}
 }

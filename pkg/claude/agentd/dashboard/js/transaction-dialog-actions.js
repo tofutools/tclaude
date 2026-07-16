@@ -488,18 +488,29 @@ export function createTransactionDialogActions({
       return result;
     },
 
-    async retireAgent({ conv, label, shutdown, deleteWorktree }) {
+    async retireAgent({ conv, label, shutdown, deleteWorktree, expectedWorktree }) {
       // Keep the daemon's deliberately asymmetric defaults explicit at this
       // destructive boundary: shutdown is always named; worktree deletion is
-      // sent only when the frozen choice opted in.
+      // sent only when the frozen choice opted in. The exact probed path rides
+      // along as a server-authoritative precondition so a retry cannot retarget
+      // deletion onto a worktree the operator never confirmed.
       const choice = Object.freeze({
         shutdown: !!shutdown,
         deleteWorktree: !!deleteWorktree,
+        expectedWorktree: !!deleteWorktree && typeof expectedWorktree === 'string'
+          ? expectedWorktree : '',
       });
-      const query = `shutdown=${choice.shutdown ? 1 : 0}`
-        + (choice.deleteWorktree ? '&delete_worktree=1' : '');
+      if (choice.deleteWorktree && !choice.expectedWorktree) {
+        throw new Error('delete worktree requires a freshly probed worktree path');
+      }
+      const params = new URLSearchParams();
+      params.set('shutdown', choice.shutdown ? '1' : '0');
+      if (choice.deleteWorktree) {
+        params.set('delete_worktree', '1');
+        params.set('expected_worktree', choice.expectedWorktree);
+      }
       const response = await fetchImpl(
-        `/api/agents/${encodeURIComponent(conv)}/retire?${query}`,
+        `/api/agents/${encodeURIComponent(conv)}/retire?${params}`,
         { method: 'POST', credentials: 'same-origin' },
       );
       const payload = await responsePayload(response);
