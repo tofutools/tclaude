@@ -716,7 +716,10 @@ func canonicalLegacyTimestamp(value string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("timestamp has an invalid calendar value: %w", err)
 	}
-	return CanonicalTimestamp(parsed), nil
+	// The raw legacy checkpoint must retain an explicit, decodable timestamp.
+	// Path-v1 projection separately maps a decoded zero time to its canonical
+	// empty representation when deriving provenance.
+	return parsed.UTC().Format(time.RFC3339Nano), nil
 }
 
 func deriveLegacyAdminProvenance(st *legacy.State) (map[string]PathV1AdminRecord, map[string]BlockResolution, error) {
