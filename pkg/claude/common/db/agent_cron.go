@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -41,6 +42,11 @@ const (
 	// `groups resume` re-enables exactly the jobs carrying this marker.
 	CronDisabledReasonGroupRetired = "group-retired"
 )
+
+// ErrAgentCronOwnerRetired is the canonical rejection for a cron write whose
+// recorded owner no longer has authority. Callers must classify it with
+// errors.Is; wrapped context is intentionally allowed at each DB operation.
+var ErrAgentCronOwnerRetired = errors.New("cron job owner is retired")
 
 // AgentCronJob is a row in agent_cron_jobs. Recurring scheduled
 // task that the agentd scheduler fires on a wall-clock interval.
@@ -95,7 +101,7 @@ func (j *AgentCronJob) IsGroupTarget() bool {
 	return j.TargetKind == CronTargetGroup
 }
 
-// cronConvToAgent resolves a cron owner/target conv to its stable actor id,
+// cronConvToAgentTx resolves a cron owner/target conv to its stable actor id,
 // enrolling the conv as an agent when it is not already known (JOH-26 PR3a). A
 // job's owner schedules it and a conv-target receives it — both are addressable
 // agents, so they carry an actor like a group member does (mirrors
@@ -104,23 +110,61 @@ func (j *AgentCronJob) IsGroupTarget() bool {
 // actor's id never moves, and the fire path resolves it back to the actor's
 // current conv at fire time. An empty conv — a group-target job, or a
 // human-scheduled job with no owner attribution — maps to "" (no actor).
-func cronConvToAgent(convID string) (string, error) {
+//
+// Resolution runs inside the cron mutation transaction so a denied write
+// cannot leave behind an enrolled owner/target actor. The pending-spawn lookup
+// mirrors EnsureAgentForConv's reserved-identity behavior.
+func cronConvToAgentTx(tx *sql.Tx, convID string) (string, error) {
 	convID = strings.TrimSpace(convID)
 	if convID == "" {
 		return "", nil
 	}
-	agentID, _, err := EnsureAgentForConv(convID, "cron")
-	if err != nil {
+	if agentID, err := agentIDForConvTx(tx, convID); err != nil || agentID != "" {
+		return agentID, err
+	}
+	var reservedAgentID string
+	err := tx.QueryRow(`SELECT p.agent_id
+		FROM pending_spawns p
+		JOIN sessions s ON s.id = p.label
+		WHERE s.conv_id = ? AND p.agent_id <> ''
+		ORDER BY p.created_at ASC
+		LIMIT 1`, convID).Scan(&reservedAgentID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	// Defensive: a non-empty conv must resolve to a real actor — never silently
-	// store owner_agent/target_agent = '' (which would de-own / de-target the
-	// job). The same guard AddAgentGroupMember uses, and the runtime twin of the
-	// migration's strict coverage gate.
-	if agentID == "" {
-		return "", fmt.Errorf("cronConvToAgent: no actor for conv %s", convID)
+	if errors.Is(err, sql.ErrNoRows) {
+		reservedAgentID = ""
 	}
-	return agentID, nil
+	if reservedAgentID == "" {
+		agentID, err := ensureAgentForConvTx(tx, convID, "cron")
+		if err != nil {
+			return "", err
+		}
+		if agentID == "" {
+			return "", fmt.Errorf("cronConvToAgentTx: no actor for conv %s", convID)
+		}
+		return agentID, nil
+	}
+	if !strings.HasPrefix(reservedAgentID, AgentIDPrefix) {
+		return "", fmt.Errorf("cronConvToAgentTx: invalid reserved agent_id %q", reservedAgentID)
+	}
+	var occupiedConv string
+	err = tx.QueryRow(`SELECT current_conv_id FROM agents WHERE agent_id = ?`, reservedAgentID).Scan(&occupiedConv)
+	switch {
+	case err == nil:
+		return "", fmt.Errorf("cronConvToAgentTx: reserved agent %s already heads conv %s",
+			reservedAgentID, occupiedConv)
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", err
+	}
+	now := time.Now()
+	if err := insertAgentTx(tx, reservedAgentID, convID, "cron", now); err != nil {
+		return "", err
+	}
+	if err := linkConvTx(tx, convID, reservedAgentID, ConvRoleHead, "cron", now); err != nil {
+		return "", err
+	}
+	return reservedAgentID, nil
 }
 
 // cronSelect is the shared SELECT for reading cron jobs. owner/target are keyed
@@ -147,11 +191,19 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	ownerAgent, err := cronConvToAgent(j.OwnerConv)
+	tx, err := d.Begin()
 	if err != nil {
 		return 0, err
 	}
-	targetAgent, err := cronConvToAgent(j.TargetConv)
+	defer func() { _ = tx.Rollback() }()
+	ownerAgent, err := cronConvToAgentTx(tx, j.OwnerConv)
+	if err != nil {
+		return 0, err
+	}
+	if err := requireLiveCronOwner(tx, ownerAgent); err != nil {
+		return 0, fmt.Errorf("InsertAgentCronJob: %w", err)
+	}
+	targetAgent, err := cronConvToAgentTx(tx, j.TargetConv)
 	if err != nil {
 		return 0, err
 	}
@@ -160,23 +212,66 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 	if kind == "" {
 		kind = CronTargetConv
 	}
-	res, err := d.Exec(`INSERT INTO agent_cron_jobs
+	res, err := tx.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
 		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, created_at, last_run_at, last_run_status)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ''
-		WHERE ? = '' OR EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = ''
-		)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
-		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), now,
-		ownerAgent, ownerAgent)
+		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), now)
 	if err != nil {
 		return 0, err
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return 0, fmt.Errorf("InsertAgentCronJob: owner agent %s is retired", ownerAgent)
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
 	}
-	return res.LastInsertId()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// requireLiveCronOwner checks authority inside the caller's write transaction.
+// The database DSN makes write transactions BEGIN IMMEDIATE, so retirement
+// cannot change the result between this check and the cron mutation.
+func requireLiveCronOwner(tx *sql.Tx, ownerAgent string) error {
+	if ownerAgent == "" {
+		return nil
+	}
+	var retiredAt string
+	if err := tx.QueryRow(`SELECT retired_at FROM agents WHERE agent_id = ?`, ownerAgent).Scan(&retiredAt); err != nil {
+		return err
+	}
+	if retiredAt != "" {
+		return ErrAgentCronOwnerRetired
+	}
+	return nil
+}
+
+// requireLiveAgentCronJobOwner reports whether id exists and, when it does,
+// rejects a retired owner using the same canonical sentinel as insert and
+// owner reassignment. It runs inside the mutation transaction; classification
+// never depends on RowsAffected being zero.
+func requireLiveAgentCronJobOwner(tx *sql.Tx, id int64) (bool, error) {
+	var ownerAgent string
+	var retiredAt sql.NullString
+	err := tx.QueryRow(`SELECT j.owner_agent, a.retired_at
+		FROM agent_cron_jobs j
+		LEFT JOIN agents a ON a.agent_id = j.owner_agent
+		WHERE j.id = ?`, id).Scan(&ownerAgent, &retiredAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if ownerAgent != "" && !retiredAt.Valid {
+		return true, fmt.Errorf("cron job %d owner agent %s does not exist", id, ownerAgent)
+	}
+	if retiredAt.String != "" {
+		return true, ErrAgentCronOwnerRetired
+	}
+	return true, nil
 }
 
 // GetAgentCronJob returns a single job by ID, or nil if not found.
@@ -215,14 +310,40 @@ func GetRunnableAgentCronJob(id int64) (*AgentCronJob, error) {
 // rows: a manual run-now is independent of the recurring enabled toggle, but
 // must still fail closed after owner retirement.
 func GetLiveOwnerAgentCronJob(id int64) (*AgentCronJob, error) {
+	return getLiveOwnerAgentCronJob(id, nil)
+}
+
+// getLiveOwnerAgentCronJob keeps the live/retired/missing classification in
+// one read snapshot. A reinstate or retirement committed after the first read
+// therefore cannot make the fallback classification disagree with it.
+// afterLiveMiss is a package-test seam used to commit a concurrent authority
+// change at the exact boundary; production callers always pass nil.
+func getLiveOwnerAgentCronJob(id int64, afterLiveMiss func()) (*AgentCronJob, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(cronSelect+` WHERE j.id = ?
+	tx, err := d.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRow(cronSelect+` WHERE j.id = ?
 		AND (j.owner_agent = '' OR ow.retired_at = '')`, id)
 	j, err := scanAgentCronJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
+		if afterLiveMiss != nil {
+			afterLiveMiss()
+		}
+		var retiredOwner int
+		if lookupErr := tx.QueryRow(`SELECT COUNT(*) FROM agent_cron_jobs j
+			JOIN agents a ON a.agent_id = j.owner_agent AND a.retired_at <> ''
+			WHERE j.id = ?`, id).Scan(&retiredOwner); lookupErr != nil {
+			return nil, lookupErr
+		}
+		if retiredOwner > 0 {
+			return nil, fmt.Errorf("GetLiveOwnerAgentCronJob: %w", ErrAgentCronOwnerRetired)
+		}
 		return nil, nil
 	}
 	return j, err
@@ -341,28 +462,23 @@ func SetAgentCronJobEnabled(id int64, enabled bool) error {
 	if err != nil {
 		return err
 	}
-	query := `UPDATE agent_cron_jobs SET enabled = ?, disabled_reason = '' WHERE id = ?`
-	if enabled {
-		query += ` AND (owner_agent = '' OR EXISTS (
-			SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''
-		))`
-	}
-	res, err := d.Exec(query, boolToInt(enabled), id)
+	tx, err := d.Begin()
 	if err != nil {
 		return err
 	}
-	if n, _ := res.RowsAffected(); n == 0 && enabled {
-		var retiredOwner int
-		if err := d.QueryRow(`SELECT COUNT(*) FROM agent_cron_jobs j
-			JOIN agents a ON a.agent_id = j.owner_agent AND a.retired_at <> ''
-			WHERE j.id = ?`, id).Scan(&retiredOwner); err != nil {
-			return err
-		}
-		if retiredOwner > 0 {
-			return fmt.Errorf("SetAgentCronJobEnabled: owner agent is retired")
-		}
+	defer func() { _ = tx.Rollback() }()
+	exists, err := requireLiveAgentCronJobOwner(tx, id)
+	if err != nil {
+		return fmt.Errorf("SetAgentCronJobEnabled: %w", err)
 	}
-	return nil
+	if !exists {
+		return nil
+	}
+	if _, err := tx.Exec(`UPDATE agent_cron_jobs
+		SET enabled = ?, disabled_reason = '' WHERE id = ?`, boolToInt(enabled), id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // DisableGroupTargetCronJobsForRetire disables every currently-ENABLED
@@ -458,6 +574,15 @@ type UpdateCronPatch struct {
 	QueueWhenOffline *bool
 }
 
+// Empty reports whether the patch requests no stored-field mutation.
+func (p UpdateCronPatch) Empty() bool {
+	return p.Name == nil && p.OwnerConv == nil && p.TargetKind == nil &&
+		p.TargetConv == nil && p.GroupID == nil && p.TargetRole == nil &&
+		p.IntervalSeconds == nil && p.CronExpr == nil && p.Subject == nil &&
+		p.Body == nil && p.Enabled == nil && p.RunImmediately == nil &&
+		p.QueueWhenOffline == nil
+}
+
 // UpdateAgentCronJobFields applies a partial update to one row. Only
 // non-nil fields in the patch are written. Returns the number of rows
 // affected (0 → no such id).
@@ -470,6 +595,21 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	if p.Empty() {
+		return 0, nil
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	exists, err := requireLiveAgentCronJobOwner(tx, id)
+	if err != nil {
+		return 0, fmt.Errorf("UpdateAgentCronJobFields: %w", err)
+	}
+	if !exists {
+		return 0, nil
+	}
 	sets := make([]string, 0, 9)
 	args := make([]any, 0, 10)
 	patchedOwnerAgent := ""
@@ -481,7 +621,7 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.OwnerConv != nil {
 		// Re-key the patched owner conv onto its actor (JOH-26 PR3a); a switch
 		// to a group target clears it via TargetConv="" → owner_agent unchanged.
-		ownerAgent, aerr := cronConvToAgent(*p.OwnerConv)
+		ownerAgent, aerr := cronConvToAgentTx(tx, *p.OwnerConv)
 		if aerr != nil {
 			return 0, aerr
 		}
@@ -497,7 +637,7 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 	if p.TargetConv != nil {
 		// "" (a switch to a group target) resolves to "" — clearing the
 		// target_agent, mirroring the pre-cutover target_conv clear.
-		targetAgent, aerr := cronConvToAgent(*p.TargetConv)
+		targetAgent, aerr := cronConvToAgentTx(tx, *p.TargetConv)
 		if aerr != nil {
 			return 0, aerr
 		}
@@ -544,37 +684,25 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 		sets = append(sets, "queue_when_offline = ?")
 		args = append(args, boolToInt(*p.QueueWhenOffline))
 	}
-	if len(sets) == 0 {
-		return 0, nil
+	if hasPatchedOwner {
+		if err := requireLiveCronOwner(tx, patchedOwnerAgent); err != nil {
+			return 0, fmt.Errorf("UpdateAgentCronJobFields: replacement %w", err)
+		}
 	}
 	args = append(args, id)
 	query := `UPDATE agent_cron_jobs SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	enabling := p.Enabled != nil && *p.Enabled
-	ownerMayAffectEnabledJob := hasPatchedOwner && p.Enabled == nil
-	if enabling || ownerMayAffectEnabledJob {
-		if hasPatchedOwner {
-			if ownerMayAffectEnabledJob {
-				query += ` AND (enabled = 0 OR ? = '' OR EXISTS (
-					SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = ''
-				))`
-			} else {
-				query += ` AND (? = '' OR EXISTS (
-					SELECT 1 FROM agents WHERE agent_id = ? AND retired_at = ''
-				))`
-			}
-			args = append(args, patchedOwnerAgent, patchedOwnerAgent)
-		} else {
-			query += ` AND (owner_agent = '' OR EXISTS (
-				SELECT 1 FROM agents WHERE agent_id = owner_agent AND retired_at = ''
-			))`
-		}
-	}
-	res, err := d.Exec(query, args...)
+	res, err := tx.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
 	n, err := res.RowsAffected()
-	return int(n), err
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 // AgentCronRun is a row in agent_cron_runs — one entry per
