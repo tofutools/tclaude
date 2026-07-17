@@ -47,6 +47,9 @@ func ValidateCommandIdentity(id CommandIdentity) error {
 	if id.PayloadSchema != 1 {
 		return fmt.Errorf("command payload schema %d, want 1", id.PayloadSchema)
 	}
+	if id.RunID == "" {
+		return fmt.Errorf("command lacks run identity")
+	}
 	emptySource := func() bool {
 		return id.SourceActivationID == "" && id.SourceGeneration == 0 && id.SourcePathID == "" && id.Attempt == 0
 	}

@@ -67,6 +67,25 @@ func TestCandidateSlotsMissingAndOpenStayOpen(t *testing.T) {
 	}
 }
 
+func TestCandidateSlotsRejectUnknownBeforeOpenDeterministically(t *testing.T) {
+	t.Parallel()
+	candidate := CandidateRecord{ID: "candidate", PossibleSlotIDs: []string{"a", "b"}}
+	for _, settled := range []map[PossibleSlotID]SlotSettlement{
+		{"a": {CauseIDs: []CauseID{"cause"}, CauseKinds: []TerminalKind{TerminalFailed}}, "unknown-z": {}, "unknown-a": {}},
+		{"a": {}, "b": {}, "unknown-z": {}, "unknown-a": {}},
+		{"a": {PathID: "arrival", CauseIDs: []CauseID{"cause"}}, "unknown-z": {}, "unknown-a": {}},
+	} {
+		_, _, _, err := FoldCandidateSlots("reservation", candidate, settled, false)
+		if err == nil || err.Error() != `unknown possible slot "unknown-a"` {
+			t.Fatalf("unknown slot precedence error = %v", err)
+		}
+	}
+	_, _, _, err := FoldCandidateSlots("reservation", candidate, map[PossibleSlotID]SlotSettlement{"": {}}, false)
+	if err == nil || err.Error() != `unknown possible slot ""` {
+		t.Fatalf("empty unknown slot error = %v", err)
+	}
+}
+
 func TestLineageBoundAndReservationRelativeDetachment(t *testing.T) {
 	t.Parallel()
 	path := PathRecord{}
@@ -485,5 +504,37 @@ func TestCommandAndSideEffectIdentityRules(t *testing.T) {
 	effect.Assignee = "unexpected"
 	if err := ValidateSideEffect(effect); err == nil {
 		t.Fatal("noncanonical unused side-effect field accepted")
+	}
+}
+
+func TestCommandIdentityRequiresRunIDAtEveryPrimitiveEntry(t *testing.T) {
+	t.Parallel()
+	identities := []CommandIdentity{
+		{Kind: CommandInitializeRouting, PayloadSchema: 1, InputDigest: "input", PlanDigest: "plan"},
+		{Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: "activation", SourceGeneration: 1, Attempt: 1, PlanDigest: "plan"},
+		{Kind: CommandSettleAttempt, PayloadSchema: 1, SourceActivationID: "activation", SourceGeneration: 1, Attempt: 1, InputDigest: "input", PlanDigest: "plan", ResultCode: "result"},
+		{Kind: CommandRoutePaths, PayloadSchema: 1, SourceActivationID: "activation", SourceGeneration: 1, SourcePathID: "path", Attempt: 1, InputDigest: "input", CauseDigest: "cause", PlanDigest: "plan", ResultCode: "result"},
+		{Kind: CommandActivateGeneration, PayloadSchema: 1, TargetReservationID: "reservation", TargetGeneration: 1, InputDigest: "input", CauseDigest: "cause", PlanDigest: "plan"},
+		{Kind: CommandPropagateCandidateClosure, PayloadSchema: 1, SourcePathID: "path", TargetReservationID: "reservation", TargetGeneration: 1, InputDigest: "input", CauseDigest: "cause", PlanDigest: "plan"},
+		{Kind: CommandSettleDetachedSink, PayloadSchema: 1, SourceActivationID: "activation", SourceGeneration: 1, SourcePathID: "path", Attempt: 1, TargetReservationID: "reservation", TargetGeneration: 1, InputDigest: "input", CauseDigest: "cause", PlanDigest: "plan", ResultCode: "result"},
+		{Kind: CommandInternDetachmentSet, PayloadSchema: 1, SourcePathID: "path", TargetReservationID: "reservation", TargetGeneration: 1, InputDigest: "input", PlanDigest: "plan"},
+		{Kind: CommandCompleteRun, PayloadSchema: 1, InputDigest: "input", PlanDigest: "plan", ResultCode: "completed"},
+	}
+	for _, identity := range identities {
+		if err := ValidateCommandIdentity(identity); err == nil || err.Error() != "command lacks run identity" {
+			t.Errorf("%s empty run error = %v", identity.Kind, err)
+		}
+	}
+
+	identity := identities[1]
+	id, err := CommandIdentityDigest(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := json.RawMessage(`{"x":1}`)
+	sum := sha256.Sum256(payload)
+	record := CommandRecord{ID: id, IdempotencyKey: CommandIdempotencyKey(identity.Kind, id), Identity: identity, Payload: payload, PayloadHash: hex.EncodeToString(sum[:]), State: CommandIssued}
+	if err := ValidateCommand(record); err == nil || err.Error() != "command lacks run identity" {
+		t.Fatalf("command record empty run error = %v", err)
 	}
 }

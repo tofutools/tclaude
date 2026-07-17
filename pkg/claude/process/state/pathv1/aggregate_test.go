@@ -544,6 +544,25 @@ func reportHasCode(report InvariantReport, code string) bool {
 	return false
 }
 
+func TestAggregateCommandRegistryRejectsEmptyRunIdentity(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	identity := CommandIdentity{Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: view.Authority.Genesis.ActivationID, SourceGeneration: 1, Attempt: 1, PlanDigest: "plan"}
+	command := makeTestCommand(t, identity, CommandObserved)
+	view.Commands[command.ID] = command
+	report := ValidateAggregate(view)
+	found := false
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code == "command_invalid" && strings.Contains(diagnostic.Message, "command lacks run identity") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("empty-run command registry diagnostics = %#v", report.Diagnostics)
+	}
+}
+
 func TestMeasureAggregateActualStructureBounds(t *testing.T) {
 	t.Parallel()
 	state := NewRoutingState()

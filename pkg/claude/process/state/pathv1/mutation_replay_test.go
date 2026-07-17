@@ -1583,6 +1583,28 @@ func TestCompleteRunClaimObservationAndRecovery(t *testing.T) {
 	}
 }
 
+func TestCompletionPrimitiveRejectsEmptyRunIdentity(t *testing.T) {
+	t.Parallel()
+	identity := CommandIdentity{Kind: CommandCompleteRun, PayloadSchema: 1, InputDigest: "aggregate", PlanDigest: "commands", ResultCode: "completed"}
+	command := commandWithPayload(t, identity, CommandIssued, []byte(`{"completionBasis":{}}`))
+	if err := validateCompleteRunCommandPrimitive(command); !errors.Is(err, ErrMutationInvalid) || !strings.Contains(err.Error(), "command lacks run identity") {
+		t.Fatalf("empty-run completion primitive error = %v", err)
+	}
+}
+
+func TestCompletionCheckpointRegistryRejectsEmptyRunIdentity(t *testing.T) {
+	t.Parallel()
+	identity := CommandIdentity{Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: "activation", SourceGeneration: 1, Attempt: 1, PlanDigest: "plan"}
+	command := commandWithPayload(t, identity, CommandIssued, []byte(`{"plan":true}`))
+	view := CompletionReplayView{
+		Aggregate:      AggregateView{Commands: map[string]CommandRecord{command.ID: command}},
+		CheckpointJSON: completionCheckpoint(t, "running", 1, "sum", map[string]CommandRecord{command.ID: command}),
+	}
+	if err := reconcileCheckpointCommands(view); !errors.Is(err, ErrMutationInconsistent) || !strings.Contains(err.Error(), "command lacks run identity") {
+		t.Fatalf("empty-run checkpoint command error = %v", err)
+	}
+}
+
 func commandWithPayload(t *testing.T, identity CommandIdentity, state CommandState, payload []byte) CommandRecord {
 	t.Helper()
 	id, err := CommandIdentityDigest(identity)

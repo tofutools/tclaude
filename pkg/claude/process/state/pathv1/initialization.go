@@ -541,11 +541,7 @@ func canonicalJSON(value any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out bytes.Buffer
-	if err := writeJCS(&out, parsed); err != nil {
-		return nil, err
-	}
-	return out.Bytes(), nil
+	return encodeJCS(parsed)
 }
 
 func decodeExactJSON(data []byte, target any) error {
