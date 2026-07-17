@@ -179,7 +179,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
-	mux.HandleFunc("/api/usage-history", handleDashboardUsageHistory)
+	mux.HandleFunc("/api/usage-history", withGzip(handleDashboardUsageHistory))
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.HandleFunc("/api/logs", handleDashboardLogs)
 	// The Processes tab consumes the same versioned REST surface as other
@@ -265,7 +265,7 @@ func handleDashboardStatic() http.Handler {
 // is not URL-routed; neither is a bookmarkable location.
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "jobs": true, "processes": true, "plugins": true, "access": true,
-	"messages": true, "costs": true, "audit": true, "logs": true, "config": true,
+	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
 	"debug": true,
 }
 

@@ -16,6 +16,9 @@ const (
 	usageResetDropPercent    = 2.0
 	usageForecastMinSamples  = 3
 	usageForecastMinElapsed  = 30 * time.Minute
+	usageForecastStaleAfter  = 2 * time.Hour
+	maxUsageChartPoints      = 1200
+	maxUsageResetMarkers     = 500
 )
 
 type usageHistoryPoint struct {
@@ -46,6 +49,7 @@ type usageHistorySeries struct {
 	DurationSeconds int64                `json:"duration_seconds,omitempty"`
 	Points          []usageHistoryPoint  `json:"points"`
 	Resets          []usageHistoryReset  `json:"resets"`
+	ResetCount      int                  `json:"reset_count"`
 	Forecast        usageHistoryForecast `json:"forecast"`
 }
 
@@ -88,29 +92,89 @@ func collectUsageHistory(since, now time.Time) (usageHistoryResponse, error) {
 		rows := bySeries[key]
 		series := usageHistorySeries{
 			Provider: key.provider, WindowName: key.window,
-			Points: make([]usageHistoryPoint, 0, len(rows)), Resets: make([]usageHistoryReset, 0),
+			Points: make([]usageHistoryPoint, 0), Resets: make([]usageHistoryReset, 0),
 		}
+		visibleRows := make([]db.SubscriptionUsageHistoryRow, 0, len(rows))
 		for _, row := range rows {
 			if row.ObservedAt.Before(since) {
 				continue
 			}
+			visibleRows = append(visibleRows, row)
 			if row.Duration > 0 {
 				series.DurationSeconds = int64(row.Duration / time.Second)
 			}
+		}
+		if len(visibleRows) == 0 {
+			continue
+		}
+		series.Forecast, series.Resets = forecastUsage(rows, now)
+		series.Resets = resetMarkersSince(series.Resets, since)
+		series.ResetCount = len(series.Resets)
+		series.Resets = downsampleUsageResets(series.Resets, maxUsageResetMarkers)
+		visibleRows = downsampleUsageRows(visibleRows, series.Resets, maxUsageChartPoints)
+		series.Points = make([]usageHistoryPoint, 0, len(visibleRows))
+		for _, row := range visibleRows {
 			point := usageHistoryPoint{At: row.ObservedAt.UTC().Format(time.RFC3339Nano), Pct: row.UsedPercent, Source: row.Source}
 			if !row.ResetsAt.IsZero() {
 				point.ResetsAt = row.ResetsAt.UTC().Format(time.RFC3339Nano)
 			}
 			series.Points = append(series.Points, point)
 		}
-		if len(series.Points) == 0 {
-			continue
-		}
-		series.Forecast, series.Resets = forecastUsage(rows)
-		series.Resets = resetMarkersSince(series.Resets, since)
 		out.Series = append(out.Series, series)
 	}
 	return out, nil
+}
+
+func downsampleUsageResets(resets []usageHistoryReset, max int) []usageHistoryReset {
+	if max < 2 || len(resets) <= max {
+		return resets
+	}
+	stride := int(math.Ceil(float64(len(resets)-1) / float64(max-1)))
+	out := make([]usageHistoryReset, 0, max)
+	for i := 0; i < len(resets)-1; i += stride {
+		out = append(out, resets[i])
+	}
+	return append(out, resets[len(resets)-1])
+}
+
+// downsampleUsageRows bounds the chart wire shape while retaining the first
+// and latest observation plus both sides of every displayed reset. Forecasts
+// are computed from the full rows before this display-only reduction.
+func downsampleUsageRows(rows []db.SubscriptionUsageHistoryRow, resets []usageHistoryReset, max int) []db.SubscriptionUsageHistoryRow {
+	if max < 2 || len(rows) <= max {
+		return rows
+	}
+	required := map[int]bool{0: true, len(rows) - 1: true}
+	resetAt := make(map[string]struct{}, len(resets))
+	for _, reset := range resets {
+		resetAt[reset.At] = struct{}{}
+	}
+	for i, row := range rows {
+		at := row.ObservedAt.UTC().Format(time.RFC3339Nano)
+		if _, ok := resetAt[at]; ok {
+			required[i] = true
+			if i > 0 {
+				required[i-1] = true
+			}
+		}
+	}
+	remaining := max - len(required)
+	if remaining > 0 {
+		stride := int(math.Ceil(float64(len(rows)) / float64(remaining)))
+		for i := 0; i < len(rows) && len(required) < max; i += stride {
+			required[i] = true
+		}
+	}
+	indices := make([]int, 0, len(required))
+	for index := range required {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	out := make([]db.SubscriptionUsageHistoryRow, 0, len(indices))
+	for _, index := range indices {
+		out = append(out, rows[index])
+	}
+	return out
 }
 
 func resetMarkersSince(resets []usageHistoryReset, since time.Time) []usageHistoryReset {
@@ -129,7 +193,9 @@ func resetMarkersSince(resets []usageHistoryReset, since time.Time) []usageHisto
 // new segment starts at the observed post-reset minimum rather than inventing
 // a 0% sample. A least-squares slope anchored at that baseline then estimates
 // the current segment's consumption rate.
-func forecastUsage(points []db.SubscriptionUsageHistoryRow) (usageHistoryForecast, []usageHistoryReset) {
+// A forecast is paused once its declared reset passes or its newest sample is
+// older than usageForecastStaleAfter; retained history must not read as live.
+func forecastUsage(points []db.SubscriptionUsageHistoryRow, now time.Time) (usageHistoryForecast, []usageHistoryReset) {
 	if len(points) == 0 {
 		return usageHistoryForecast{Status: "insufficient"}, []usageHistoryReset{}
 	}
@@ -154,6 +220,12 @@ func forecastUsage(points []db.SubscriptionUsageHistoryRow) (usageHistoryForecas
 	}
 	if !last.ResetsAt.IsZero() {
 		forecast.ResetAt = last.ResetsAt.UTC().Format(time.RFC3339Nano)
+	}
+	knownResetPassed := !last.ResetsAt.IsZero() && !now.Before(last.ResetsAt)
+	observationStale := now.Sub(last.ObservedAt) > usageForecastStaleAfter
+	if knownResetPassed || observationStale {
+		forecast.Status = "stale"
+		return forecast, resets
 	}
 	if last.UsedPercent >= 100 {
 		forecast.Status = "limit"

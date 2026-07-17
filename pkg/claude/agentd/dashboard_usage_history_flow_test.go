@@ -85,3 +85,23 @@ func TestDashboardUsageTabStaysHiddenForCacheWithoutQuotaHistory(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
 	assert.False(t, snap.UsageTabVisible, "pay-per-token cache rows do not expose an empty Usage tab")
 }
+
+func TestDashboardUsageHistoryPausesExpiredForecast(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	base := time.Now().UTC().Add(-4 * time.Hour).Truncate(15 * time.Minute)
+	for i, pct := range []float64{10, 15, 20} {
+		_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderAnthropic, ObservedAt: base.Add(time.Duration(i) * 15 * time.Minute),
+			Windows: []db.SubscriptionUsageWindow{{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: pct}},
+		})
+		require.NoError(t, err)
+	}
+	rec := testharness.Serve(agentd.BuildDashboardHandlerForTest(),
+		testharness.JSONRequest(t, http.MethodGet, "/api/usage-history?hours=24", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out usageHistoryResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Series, 1)
+	assert.Equal(t, "stale", out.Series[0].Forecast.Status)
+}

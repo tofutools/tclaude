@@ -61,6 +61,7 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		`<a class="active" data-tab="groups" href="/">`,
 		`<a data-tab="jobs" href="/jobs"`,
 		`<a data-tab="access" href="/access"`,
+		`<a data-tab="usage" href="/usage"`,
 		`<a data-tab="config" href="/config"`,
 		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
 		`<button data-tab="vegas">`,

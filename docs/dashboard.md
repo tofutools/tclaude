@@ -626,9 +626,12 @@ the projected 100% time with the provider's reported reset time. A declared
 reset boundary or a downward step of at least two percentage points begins a
 new segment; the observed post-reset percentage is used as its baseline, so an
 out-of-cycle reset does not need to be sampled at exactly 0%. Forecasts wait
-for at least three post-reset samples spanning 30 minutes. Provider quota data
-is account-wide and does not reliably attribute consumption to individual
-models, so forecasts are per provider and window rather than per model.
+for at least three post-reset samples spanning 30 minutes, and pause when the
+provider's declared reset has passed or the latest sample is over two hours
+old. Long views are downsampled for display while forecast calculations still
+use the full retained series. Provider quota data is account-wide and does not
+reliably attribute consumption to individual models, so forecasts are per
+provider and window rather than per model.
 
 ### Debug
 

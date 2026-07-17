@@ -11,6 +11,13 @@ function finiteDate(value) {
   return Number.isFinite(result) ? result : null;
 }
 
+function sampledPoints(points, maxPoints) {
+  if (points.length <= maxPoints) return points;
+  const stride = Math.ceil((points.length - 1) / (maxPoints - 1));
+  const sampled = points.filter((_, index) => index === 0 || index === points.length - 1 || index % stride === 0);
+  return sampled.length <= maxPoints ? sampled : [...sampled.slice(0, maxPoints - 1), points[points.length - 1]];
+}
+
 export function UsageHistoryChart({ series, from, generatedAt }) {
   const points = (series.points || []).map((point) => ({ ...point, time: finiteDate(point.at) })).filter((point) => point.time !== null);
   if (!points.length) return html`<div class="usage-chart-empty">No samples in this range.</div>`;
@@ -23,17 +30,22 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
   const start = Math.max(requestedStart, points[0].time - observedWidth * 0.05);
   const historyWidth = Math.max(60_000, now - start);
   const forecast = series.forecast || {};
+  const rate = Number(forecast.rate_pct_per_hour) || 0;
   const hitAt = finiteDate(forecast.hits_limit_at);
   const resetAt = finiteDate(forecast.reset_at);
-  const eventAt = forecast.status === 'after_reset' ? resetAt : (hitAt ?? resetAt);
-  const horizon = Math.max(now + historyWidth * 0.18, eventAt && eventAt > now ? eventAt : 0);
+  const projecting = rate > 0 && ['before_reset', 'after_reset', 'projected'].includes(forecast.status);
+  const eventAt = forecast.status === 'after_reset'
+    ? resetAt
+    : ['before_reset', 'projected'].includes(forecast.status) ? (hitAt ?? resetAt) : null;
+  const horizon = projecting ? Math.max(now + historyWidth * 0.18, eventAt && eventAt > now ? eventAt : 0) : now;
   const x = (time) => PAD.left + Math.max(0, Math.min(1, (time - start) / (horizon - start))) * (W - PAD.left - PAD.right);
   const y = (pct) => PAD.top + (1 - Math.max(0, Math.min(100, pct)) / 100) * (H - PAD.top - PAD.bottom);
   const resetTimes = new Set((series.resets || []).map((reset) => finiteDate(reset.at)));
   const segments = [];
   let current = [];
   for (const point of points) {
-    if (resetTimes.has(point.time) && current.length) {
+    const previous = current[current.length - 1];
+    if ((resetTimes.has(point.time) || (previous && previous.pct - point.pct >= 2)) && current.length) {
       segments.push(current);
       current = [];
     }
@@ -41,9 +53,9 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
   }
   if (current.length) segments.push(current);
   const latest = points[points.length - 1];
-  const rate = Number(forecast.rate_pct_per_hour) || 0;
   const forecastAt = Math.min(horizon, hitAt ?? horizon, resetAt ?? horizon);
   const forecastPct = Math.min(100, latest.pct + rate * Math.max(0, forecastAt - latest.time) / 3600000);
+  const pointMarkers = sampledPoints(points, 240);
   return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="img"
     aria-label=${`${series.provider} ${series.window_name} subscription usage history`}>
     ${[0, 50, 100].map((tick) => html`<g class="usage-grid" key=${tick}>
@@ -62,11 +74,11 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
     })}
     ${rate > 0 && forecastAt > latest.time && html`<line class="usage-forecast-line"
       x1=${x(latest.time)} y1=${y(latest.pct)} x2=${x(forecastAt)} y2=${y(forecastPct)} />`}
-    ${points.map((point) => html`<circle class="usage-point" key=${point.at} cx=${x(point.time)} cy=${y(point.pct)} r="2.5">
+    ${pointMarkers.map((point) => html`<circle class="usage-point" key=${point.at} cx=${x(point.time)} cy=${y(point.pct)} r="2.5">
       <title>${`${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}${point.source ? ` · ${point.source}` : ''}`}</title>
     </circle>`)}
     <text class="usage-x-label" x=${PAD.left} y=${H - 6}>${new Date(start).toLocaleDateString()}</text>
     <text class="usage-x-label" x=${x(now)} y=${H - 6} text-anchor="end">now</text>
-    <text class="usage-x-label forecast" x=${W - PAD.right} y=${H - 6} text-anchor="end">forecast</text>
+    ${projecting && html`<text class="usage-x-label forecast" x=${W - PAD.right} y=${H - 6} text-anchor="end">forecast</text>`}
   </svg>`;
 }

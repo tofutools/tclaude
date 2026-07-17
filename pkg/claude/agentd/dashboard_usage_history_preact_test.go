@@ -31,6 +31,9 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		`data-tab="usage"`, `<div id="usage-root"></div>`, "mountUsageHistoryFeature(),",
 		"name: 'usage'", "/api/usage-history?hours=", "Forecasts are per provider × quota window",
 		"body.hide-usage-tab nav [data-tab=\"usage\"]",
+		"if (name === 'seven_day_sonnet') return '7 day Sonnet';",
+		"sampledPoints(points, 240)",
+		"headline: 'Forecast paused'",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)

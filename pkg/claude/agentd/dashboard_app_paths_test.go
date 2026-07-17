@@ -59,7 +59,7 @@ func TestDashboardAppPaths_SPAFallback(t *testing.T) {
 	// Deep dashboard paths — top-level and nested — serve the SPA HTML.
 	for _, path := range []string{
 		"/", "/dashboard", "/jobs", "/processes", "/access", "/access/sudo",
-		"/processes/runs/run-42", "/costs", "/audit", "/logs", "/debug", "/plugins", "/messages", "/config",
+		"/processes/runs/run-42", "/usage", "/costs", "/audit", "/logs", "/debug", "/plugins", "/messages", "/config",
 	} {
 		rec := authedGet(path)
 		assert.Equal(t, http.StatusOK, rec.Code, "GET %s should serve the SPA; body=%s", path, rec.Body.String())

@@ -11,18 +11,20 @@ const html = htm.bind(h);
 
 function UsageSeriesCard({ series, payload }) {
   const latest = series.points?.[series.points.length - 1];
-  const forecast = usageForecastView(series.forecast, new Date(payload.generated_at).getTime());
+  const now = new Date(payload.generated_at).getTime();
+  const forecast = usageForecastView(series.forecast, now, latest?.at);
+  const resetCount = series.reset_count ?? series.resets?.length ?? 0;
   return html`<article class="usage-series-card">
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${usageWindowLabel(series.window_name, series.duration_seconds)} window</h3></div>
       <div class="usage-current"><strong>${latest ? `${latest.pct.toFixed(1)}%` : '—'}</strong>
-        <span>${latest?.resets_at ? `resets ${formatUsageTime(latest.resets_at, new Date(payload.generated_at).getTime())}` : 'reset unknown'}</span></div>
+        <span>${latest ? `sampled ${formatUsageTime(latest.at, now)}` : 'no sample'} · ${latest?.resets_at ? `resets ${formatUsageTime(latest.resets_at, now)}` : 'reset unknown'}</span></div>
     </div>
     <${UsageHistoryChart} series=${series} from=${payload.from} generatedAt=${payload.generated_at} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong><span>${forecast.detail}</span>
-      ${series.resets?.length ? html`<span class="usage-reset-count">${series.resets.length} reset${series.resets.length === 1 ? '' : 's'} detected in view</span>` : null}
+      ${resetCount ? html`<span class="usage-reset-count">${resetCount} reset${resetCount === 1 ? '' : 's'} detected in view</span>` : null}
     </div>
   </article>`;
 }

@@ -14,6 +14,7 @@ export function usageProviderLabel(provider) {
 export function usageWindowLabel(name, durationSeconds = 0) {
   if (name === 'five_hour') return '5 hour';
   if (name === 'seven_day') return '7 day';
+  if (name === 'seven_day_sonnet') return '7 day Sonnet';
   if (durationSeconds > 0) {
     const hours = durationSeconds / 3600;
     return hours >= 24 && hours % 24 === 0 ? `${hours / 24} day` : `${hours} hour`;
@@ -31,9 +32,16 @@ export function formatUsageTime(value, now = Date.now()) {
   return delta >= 0 ? `in ${amount}` : `${amount} ago`;
 }
 
-export function usageForecastView(forecast, now = Date.now()) {
+export function usageForecastView(forecast, now = Date.now(), latestAt = '') {
   if (!forecast) return { tone: 'muted', headline: 'No forecast', detail: '' };
   const rate = forecast.rate_pct_per_hour ? `${forecast.rate_pct_per_hour.toFixed(1)}%/h` : '';
+  if (forecast.status === 'stale') {
+    const resetPassed = forecast.reset_at && new Date(forecast.reset_at).getTime() <= now;
+    return {
+      tone: 'muted', headline: 'Forecast paused',
+      detail: resetPassed ? `reported reset ${formatUsageTime(forecast.reset_at, now)}` : `last sample ${formatUsageTime(latestAt, now)}`,
+    };
+  }
   if (forecast.status === 'limit') return { tone: 'danger', headline: 'Limit reached', detail: '' };
   if (forecast.status === 'before_reset') return {
     tone: 'danger', headline: `Limit ${formatUsageTime(forecast.hits_limit_at, now)}`,
