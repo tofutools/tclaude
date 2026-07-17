@@ -1,6 +1,7 @@
 package pathv1
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,8 +97,9 @@ type legacyTimestampReplacement struct {
 	value      []byte
 }
 
-// PredecodeLegacyState performs the raw declared-timestamp pass, then the
-// ordinary strict legacy decode, then derives index-bound admin provenance.
+// PredecodeLegacyState performs the raw declared-timestamp pass, the ordinary
+// legacy decode, raw duplicate-name rejection, then derives index-bound admin
+// provenance.
 func PredecodeLegacyState(data []byte) (LegacyStatePredecode, error) {
 	return PredecodeLegacyStateContext(context.Background(), data)
 }
@@ -114,11 +116,143 @@ func PredecodeLegacyStateContext(ctx context.Context, data []byte) (LegacyStateP
 	if err != nil {
 		return LegacyStatePredecode{}, err
 	}
+	// Decode first so the existing timestamp, syntax, Unicode, and
+	// single-document errors retain their established precedence. No decoded
+	// state can escape until the untouched raw names pass duplicate validation.
+	if err := validateLegacyDuplicateKeys(ctx, data); err != nil {
+		return LegacyStatePredecode{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return LegacyStatePredecode{}, err
+	}
 	records, resolutions, err := deriveLegacyAdminProvenance(st)
 	if err != nil {
 		return LegacyStatePredecode{}, fmt.Errorf("derive legacy admin provenance: %w", err)
 	}
 	return LegacyStatePredecode{CanonicalJSON: canonical, State: st, AdminRecords: records, AdminResolutions: resolutions}, nil
+}
+
+// validateLegacyDuplicateKeys walks the bounded raw token stream without
+// retaining values. Only each active object's decoded keys and the nesting
+// stack remain live; the original byte slice remains the sole rewrite source.
+func validateLegacyDuplicateKeys(ctx context.Context, data []byte) error {
+	dec := json.NewDecoder(&legacyDuplicateContextReader{ctx: ctx, reader: bytes.NewReader(data)})
+	dec.UseNumber()
+	stack := make([]legacyDuplicateFrame, 0, 16)
+	started := false
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		token, err := dec.Token()
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			// The legacy decoder retains ownership of non-duplicate syntax and
+			// single-document errors.
+			return nil
+		}
+
+		delimiter, isDelimiter := token.(json.Delim)
+		if !started {
+			started = true
+			if !isDelimiter || (delimiter != '{' && delimiter != '[') {
+				return nil
+			}
+			stack = appendLegacyDuplicateFrame(stack, delimiter)
+			continue
+		}
+		if len(stack) == 0 {
+			return nil
+		}
+
+		if isDelimiter {
+			switch delimiter {
+			case '{', '[':
+				if !consumeLegacyDuplicateValue(stack) {
+					return nil
+				}
+				stack = appendLegacyDuplicateFrame(stack, delimiter)
+			case '}', ']':
+				last := stack[len(stack)-1]
+				if (delimiter == '}') != last.object {
+					return nil
+				}
+				stack[len(stack)-1] = legacyDuplicateFrame{}
+				stack = stack[:len(stack)-1]
+				if len(stack) == 0 {
+					return nil
+				}
+			default:
+				return nil
+			}
+			continue
+		}
+
+		last := &stack[len(stack)-1]
+		if last.object && last.expectingKey {
+			key, ok := token.(string)
+			if !ok {
+				return nil
+			}
+			if _, duplicate := last.keys[key]; duplicate {
+				return &duplicateObjectKeyError{key: key}
+			}
+			last.keys[key] = struct{}{}
+			last.expectingKey = false
+			continue
+		}
+		if !consumeLegacyDuplicateValue(stack) {
+			return nil
+		}
+	}
+}
+
+type legacyDuplicateFrame struct {
+	object       bool
+	expectingKey bool
+	keys         map[string]struct{}
+}
+
+func appendLegacyDuplicateFrame(stack []legacyDuplicateFrame, delimiter json.Delim) []legacyDuplicateFrame {
+	object := delimiter == '{'
+	frame := legacyDuplicateFrame{object: object, expectingKey: object}
+	if object {
+		frame.keys = make(map[string]struct{})
+	}
+	return append(stack, frame)
+}
+
+func consumeLegacyDuplicateValue(stack []legacyDuplicateFrame) bool {
+	last := &stack[len(stack)-1]
+	if !last.object {
+		return true
+	}
+	if last.expectingKey {
+		return false
+	}
+	last.expectingKey = true
+	return true
+}
+
+type legacyDuplicateContextReader struct {
+	ctx    context.Context
+	reader *bytes.Reader
+}
+
+func (r *legacyDuplicateContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(p) > 32<<10 {
+		p = p[:32<<10]
+	}
+	n, err := r.reader.Read(p)
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return n, ctxErr
+	}
+	return n, err
 }
 
 func buildLegacyTimestampSchema() *legacyTimestampSchemaNode {
@@ -156,8 +290,8 @@ func buildLegacyTimestampSchema() *legacyTimestampSchemaNode {
 
 // rewriteLegacyTimestamps walks the raw checkpoint once and replaces only the
 // byte ranges of declared timestamp string values. It deliberately does not
-// round-trip containers through encoding/json: sibling lexemes, object order,
-// and duplicate keys remain byte-for-byte intact, and the output is bounded by
+// round-trip containers through encoding/json: sibling lexemes and object
+// order remain byte-for-byte intact, and the output is bounded by
 // MaxCheckpointBytes.
 func rewriteLegacyTimestamps(ctx context.Context, raw []byte) ([]byte, error) {
 	scanner := legacyTimestampScanner{ctx: ctx, raw: raw, nextContextCheck: 32 << 10}

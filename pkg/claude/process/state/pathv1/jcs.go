@@ -15,6 +15,20 @@ import (
 
 type jcsObject map[string]any
 
+type duplicateObjectKeyError struct{ key string }
+
+func (e *duplicateObjectKeyError) Error() string {
+	const maxDiagnosticRunes = 128
+	runes := 0
+	for offset := range e.key {
+		if runes == maxDiagnosticRunes {
+			return fmt.Sprintf("duplicate object key %q (name truncated)", e.key[:offset]+"…")
+		}
+		runes++
+	}
+	return fmt.Sprintf("duplicate object key %q", e.key)
+}
+
 // CanonicalCheckpointProjection applies the exact completion projection and
 // emits RFC 8785 JSON Canonicalization Scheme bytes.
 func CanonicalCheckpointProjection(checkpoint []byte, selfCommandID string) ([]byte, error) {
@@ -131,7 +145,7 @@ func parseJCSValue(dec *json.Decoder) (any, error) {
 				return nil, fmt.Errorf("object key is not a string")
 			}
 			if _, exists := object[key]; exists {
-				return nil, fmt.Errorf("duplicate object key %q", key)
+				return nil, &duplicateObjectKeyError{key: key}
 			}
 			value, err := parseJCSValue(dec)
 			if err != nil {

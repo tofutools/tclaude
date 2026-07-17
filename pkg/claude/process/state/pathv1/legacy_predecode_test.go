@@ -2,6 +2,7 @@ package pathv1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -48,6 +49,7 @@ func TestPredecodeLegacyStateRejectsMalformedDeclaredTimestamps(t *testing.T) {
 		{"invalid calendar", `"2026-02-30T12:00:00Z"`},
 		{"leap second", `"2026-07-15T12:00:60Z"`},
 		{"finer than nanoseconds", `"2026-07-15T12:00:00.1234567890Z"`},
+		{"malformed unicode", `"\ud800"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := PredecodeLegacyState(legacyStateWithPauseUntil(tc.raw))
@@ -92,10 +94,129 @@ func TestPredecodeLegacyStateCanonicalizesOnlyDeclaredTimestamps(t *testing.T) {
 	}
 }
 
+func TestPredecodeLegacyStateRejectsDuplicateKeysDuringTimestampNormalization(t *testing.T) {
+	const offsetTimestamp = `"2026-07-15T14:34:56.123400000+02:00"`
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "top-level unrelated key before rewritten field",
+			raw:  `{"stateSchemaVersion":6,"runId":"first","runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"rate","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "top-level unrelated key after rewritten field",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"rate","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"lastLogSeq":1,"logChecksum":""}`,
+		},
+		{
+			name: "top-level timestamp-bearing key",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"first","until":` + offsetTimestamp + `},"pause":{"kind":"rate_limited","reason":"second","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "nested unrelated key before rewritten field",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"first","reason":"second","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "nested unrelated key after rewritten field",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","until":` + offsetTimestamp + `,"reason":"first","reason":"second"},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "nested timestamp key",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"rate","until":` + offsetTimestamp + `,"until":"2026-07-15T12:34:56.1234Z"},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "nested map key",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"rate","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{"work":{},"work":{}},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "nested array object key",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"pending","originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"adminRecords":[{"type":"repair_recorded","actor":"human:operator","reason":"first","reason":"second","timestamp":` + offsetTimestamp + `}],"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "nested raw payload array object key",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"rate","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"outstandingCommands":{"cmd":{"id":"cmd","payload":{"outer":[{"x":1,"x":2}]},"nodeId":"work","kind":"start_attempt","status":"issued"}},"lastLogSeq":0,"logChecksum":""}`,
+		},
+		{
+			name: "escaped equivalent key",
+			raw:  `{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"first","rea\u0073on":"second","until":` + offsetTimestamp + `},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			decoded, err := PredecodeLegacyState([]byte(tc.raw))
+			if err == nil {
+				t.Fatalf("duplicate-key checkpoint accepted: %#v", decoded.State)
+			}
+			if !strings.Contains(err.Error(), "duplicate object key") {
+				t.Fatalf("error = %v, want duplicate-key rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateLegacyDuplicateKeysUsesDecodedPerObjectNames(t *testing.T) {
+	tests := []struct {
+		name          string
+		raw           string
+		wantDuplicate bool
+	}{
+		{name: "escaped ASCII equivalent", raw: `{"name":1,"\u006eame":2}`, wantDuplicate: true},
+		{name: "escaped surrogate-pair equivalent", raw: `{"😀":1,"\ud83d\ude00":2}`, wantDuplicate: true},
+		{name: "case-sensitive", raw: `{"Name":1,"name":2}`},
+		{name: "same name in separate objects", raw: `{"left":{"id":1},"right":{"id":2}}`},
+		{name: "same name in separate array objects", raw: `[{"id":1},{"id":2}]`},
+		{name: "duplicate nested through array", raw: `{"payload":[{"outer":{"id":1,"id":2}}]}`, wantDuplicate: true},
+		{name: "malformed JSON remains legacy decoder concern", raw: `{"id":`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateLegacyDuplicateKeys(t.Context(), []byte(tc.raw))
+			var duplicate *duplicateObjectKeyError
+			if errors.As(err, &duplicate) != tc.wantDuplicate {
+				t.Fatalf("error = %v, want duplicate = %t", err, tc.wantDuplicate)
+			}
+		})
+	}
+
+	key := strings.Repeat("x", 4<<10)
+	err := validateLegacyDuplicateKeys(t.Context(), []byte(`{"`+key+`":1,"`+key+`":2}`))
+	if err == nil || !strings.Contains(err.Error(), "name truncated") || len(err.Error()) > 1<<10 {
+		t.Fatalf("duplicate diagnostic is not bounded: length=%d error=%v", len(err.Error()), err)
+	}
+
+	cancelCtx := &cancelAfterErrChecksContext{Context: t.Context(), remaining: 10, done: make(chan struct{})}
+	err = validateLegacyDuplicateKeys(cancelCtx, []byte(`[`+strings.Repeat(`0,`, 100)+`0]`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("mid-pass cancellation error = %v, want %v", err, context.Canceled)
+	}
+}
+
+func TestPredecodeLegacyStatePreservesExistingErrorPrecedence(t *testing.T) {
+	duplicateRunID := func(data []byte) []byte {
+		return bytes.Replace(data, []byte(`"runId":"run"`), []byte(`"runId":"first","runId":"run"`), 1)
+	}
+
+	_, err := PredecodeLegacyState(duplicateRunID(legacyStateWithPauseUntil(`"not-a-time"`)))
+	if !errors.Is(err, ErrLegacyTimestampMalformed) {
+		t.Fatalf("invalid timestamp plus duplicate error = %v, want %v", err, ErrLegacyTimestampMalformed)
+	}
+
+	_, err = PredecodeLegacyState([]byte(`{"stateSchemaVersion":6,"runId":"first","runId":"run",`))
+	if err == nil || strings.Contains(err.Error(), "duplicate object key") {
+		t.Fatalf("malformed JSON precedence changed: %v", err)
+	}
+
+	trailing := append(duplicateRunID(legacyStateWithPauseUntil(`"2026-07-15T14:34:56+02:00"`)), []byte(` {}`)...)
+	_, err = PredecodeLegacyState(trailing)
+	if err == nil || !strings.Contains(err.Error(), "multiple JSON values") || strings.Contains(err.Error(), "duplicate object key") {
+		t.Fatalf("trailing JSON precedence changed: %v", err)
+	}
+}
+
 func TestPredecodeLegacyStateNearLimitPreservesSiblingLexemes(t *testing.T) {
 	const sourceTimestamp = "2026-07-15T14:34:56.123400000+02:00"
 	const canonicalTimestamp = "2026-07-15T12:34:56.1234Z"
-	prefix := []byte(`{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"duplicate","reason":"`)
+	prefix := []byte(`{"stateSchemaVersion":6,"runId":"run","status":"paused","pause":{"kind":"rate_limited","reason":"`)
 	timestampPrefix := []byte(`","until":"`)
 	suffix := []byte(`"},"originalTemplateRef":"demo@sha256:x","currentTemplateRef":"demo@sha256:x","nodes":{},"lastLogSeq":0,"logChecksum":""}`)
 	payloadSize := MaxCheckpointBytes - len(prefix) - len(timestampPrefix) - len(sourceTimestamp) - len(suffix)
@@ -132,10 +253,6 @@ func TestPredecodeLegacyStateNearLimitPreservesSiblingLexemes(t *testing.T) {
 	if bytes.Contains(decoded.CanonicalJSON, []byte(`\u003c`)) || bytes.Contains(decoded.CanonicalJSON, []byte(`\u003e`)) || bytes.Contains(decoded.CanonicalJSON, []byte(`\u0026`)) {
 		t.Fatal("sibling string was HTML-escaped")
 	}
-	if bytes.Count(decoded.CanonicalJSON, []byte(`"reason"`)) != 2 {
-		t.Fatal("duplicate sibling key was not preserved")
-	}
-
 	_, err = PredecodeLegacyState(append(input, ' '))
 	var overBudget *OverBudgetError
 	if !errors.As(err, &overBudget) || overBudget.Limit != "checkpoint_bytes" || overBudget.Value != MaxCheckpointBytes+1 || overBudget.Maximum != MaxCheckpointBytes {

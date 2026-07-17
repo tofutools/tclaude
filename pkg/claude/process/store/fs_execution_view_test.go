@@ -3,6 +3,7 @@
 package store_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -629,6 +630,47 @@ func TestWithExecutionViewUsesCanonicalLegacyPredecodeAndProvenance(t *testing.T
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestWithExecutionViewRejectsDuplicateLegacyKeysDuringTimestampNormalization(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := initializedRunAt(t, root)
+	snapshot, err := fs.LoadRun(t.Context(), runID)
+	require.NoError(t, err)
+	snapshot.State.AdminRecords = append(snapshot.State.AdminRecords, state.AdminRecord{
+		Type: state.EventAdminRepairRecorded, Actor: "human:johan", Reason: "repair",
+		EvidenceRef: "ticket-1", Timestamp: time.Date(2026, 7, 15, 14, 0, 0, 123400000, time.FixedZone("CEST", 2*60*60)),
+	})
+	data, err := state.Encode(snapshot.State)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "+02:00", "fixture must require timestamp normalization")
+	runIDField := []byte(`"runId": "` + runID + `"`)
+	duplicateRunID := append(append([]byte(nil), runIDField...), append([]byte(",\n  "), runIDField...)...)
+	data = bytes.Replace(data, runIDField, duplicateRunID, 1)
+	require.Equal(t, 2, bytes.Count(data, []byte(`"runId"`)))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), data, 0o644))
+
+	called := false
+	err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+		called = true
+		return nil
+	})
+	require.ErrorIs(t, err, store.ErrRunInconsistent)
+	assert.False(t, called)
+	var decodeErr *store.DecodeError
+	require.ErrorAs(t, err, &decodeErr)
+	assert.Equal(t, "run state", decodeErr.Component)
+	assert.Contains(t, err.Error(), `duplicate object key "runId"`)
+
+	phases := executionViewBytePhasesAt(t, root, runID, 0)
+	maxTotal := phases.Baseline + phases.MainRun + int64(len(data)) - 1
+	restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile, maxTotal, 100, 100)
+	err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+		t.Fatal("over-budget duplicate-key callback ran")
+		return nil
+	})
+	restore()
+	assertExecutionViewBudgetOnly(t, err)
 }
 
 func assertStillBlocked(t *testing.T, done <-chan error, operation string) {
