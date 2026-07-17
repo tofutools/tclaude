@@ -252,6 +252,30 @@ func TestInitializePathV1ReplayValidatesEmbeddedTemplateIdentity(t *testing.T) {
 		assert.Equal(t, pathv1.InitializationAlreadyApplied, result.Disposition)
 	})
 
+	t.Run("legacy nil embedded template is already applied", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID, proof := pristineInitializationRun(t, root)
+
+		runPath := filepath.Join(root, "runs", runID, "run.json")
+		runData, err := os.ReadFile(runPath)
+		require.NoError(t, err)
+		var run store.RunRecord
+		require.NoError(t, json.Unmarshal(runData, &run))
+		require.NotNil(t, run.Template)
+		run.Template = nil
+		runData, err = json.MarshalIndent(run, "", "  ")
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(runPath, append(runData, '\n'), 0o644))
+
+		installed, err := fs.InitializePathV1(t.Context(), runID, proof)
+		require.NoError(t, err)
+		assert.Equal(t, pathv1.InitializationApplied, installed.Disposition)
+
+		replay, err := fs.InitializePathV1(t.Context(), runID, proof)
+		require.NoError(t, err)
+		assert.Equal(t, pathv1.InitializationAlreadyApplied, replay.Disposition)
+	})
+
 	for _, tc := range []struct {
 		name   string
 		mutate func(*model.Template)
