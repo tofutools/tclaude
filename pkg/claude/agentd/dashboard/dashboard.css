@@ -5325,6 +5325,8 @@ body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
 .process-viewer-tabs button.active { color: #fff; border-color: #388bfd; background: #1f6feb; }
 .process-viewer-tabs button span { min-width: 14px; text-align: center; color: #8b949e; font-size: 9px; }
 .process-viewer-tabs button.active span { color: #c6dbff; }
+.process-viewer-tabpanel { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.process-viewer-tabpanel[hidden] { display: none; }
 .process-viewer-detail-summary { display: flex; align-items: center; gap: 6px; padding: 7px 9px; color: #8b949e; font-size: 10px; }
 .process-viewer-detail-summary .process-action { padding: 3px 7px; font-size: 10px; }
 .process-viewer-detail-summary .process-action:disabled { opacity: .4; cursor: default; }

@@ -10,6 +10,14 @@ import {
 const html = htm.bind(h);
 export const VIEWER_REFRESH_MS = 5000;
 
+function detailTabID(key) {
+  return `process-viewer-detail-tab-${key}`;
+}
+
+function detailPanelID(key) {
+  return `process-viewer-detail-panel-${key}`;
+}
+
 function ViewerGraph({ graph, runID }) {
   const hostRef = useRef(null);
   const widgetRef = useRef(null);
@@ -116,6 +124,21 @@ export function ProcessViewerBoundary({
   const unavailable = viewerUnavailable(viewer);
   const tab = VIEWER_DETAIL_TABS.find((candidate) => candidate.key === tabKey) || VIEWER_DETAIL_TABS[0];
   const selectTab = (key) => { setTabKey(key); setOffset(0); };
+  const selectTabFromKeyboard = (event, key) => {
+    const index = VIEWER_DETAIL_TABS.findIndex((candidate) => candidate.key === key);
+    let nextIndex;
+    switch (event.key) {
+      case 'ArrowLeft': nextIndex = (index - 1 + VIEWER_DETAIL_TABS.length) % VIEWER_DETAIL_TABS.length; break;
+      case 'ArrowRight': nextIndex = (index + 1) % VIEWER_DETAIL_TABS.length; break;
+      case 'Home': nextIndex = 0; break;
+      case 'End': nextIndex = VIEWER_DETAIL_TABS.length - 1; break;
+      default: return;
+    }
+    event.preventDefault();
+    const next = VIEWER_DETAIL_TABS[nextIndex];
+    setTabKey(next.key);
+    globalThis.document?.getElementById(detailTabID(next.key))?.focus();
+  };
 
   if (!envelope && request.phase === 'loading') return html`<div id="process-viewer-canvas" class="process-canvas-mount process-viewer" data-process-mount="viewer"><p class="muted">Loading exact process view…</p></div>`;
   if (!envelope) return html`<div id="process-viewer-canvas" class="process-canvas-mount process-viewer" data-process-mount="viewer"><div class="island-error" role="alert">Could not load run ${spec.id}: ${request.error} <button class="process-action" type="button" onClick=${() => setReload((value) => value + 1)}>retry</button></div></div>`;
@@ -133,7 +156,25 @@ export function ProcessViewerBoundary({
       <section class="process-viewer-graph-panel" aria-label="Exact process topology">${graph ? html`<${ViewerGraph} graph=${graph} runID=${spec.id} />` : html`<div class="process-placeholder"><h3>Exact topology unavailable</h3><p>The viewer failed closed and will not fall back to evidence-derived graph data.</p></div>`}</section>
       <section class="process-viewer-details" aria-labelledby="process-viewer-details-title">
         <div class="process-viewer-section-head"><h4 id="process-viewer-details-title">Checkpoint details</h4>${routing?.aggregate && html`<span>${routing.aggregate.paths} paths · ${routing.aggregate.reservations} generations</span>`}</div>
-        ${routing ? html`<${Fragment}><div class="process-viewer-tabs" role="tablist" aria-label="Routing detail tables">${VIEWER_DETAIL_TABS.map((candidate) => html`<button key=${candidate.key} type="button" role="tab" aria-selected=${candidate.key === tab.key} class=${candidate.key === tab.key ? 'active' : ''} onClick=${() => selectTab(candidate.key)}>${candidate.label}<span>${routing.details?.[candidate.key]?.page?.total || 0}</span></button>`)}</div><${DetailTable} tab=${tab} routing=${routing} onPage=${setOffset} /></${Fragment}>` : html`<p class="process-viewer-empty">Checkpoint-derived detail tables are unavailable.</p>`}
+        ${routing ? html`<${Fragment}>
+          <div class="process-viewer-tabs" role="tablist" aria-label="Routing detail tables">${VIEWER_DETAIL_TABS.map((candidate) => {
+            const selected = candidate.key === tab.key;
+            return html`<button
+              key=${candidate.key} id=${detailTabID(candidate.key)} type="button" role="tab"
+              aria-controls=${detailPanelID(candidate.key)} aria-selected=${selected} tabIndex=${selected ? '0' : '-1'}
+              class=${selected ? 'active' : ''} onClick=${() => selectTab(candidate.key)}
+              onKeyDown=${(event) => selectTabFromKeyboard(event, candidate.key)}
+            >${candidate.label}<span>${routing.details?.[candidate.key]?.page?.total || 0}</span></button>`;
+          })}</div>
+          ${VIEWER_DETAIL_TABS.map((candidate) => {
+            const selected = candidate.key === tab.key;
+            return html`<div
+              key=${candidate.key} id=${detailPanelID(candidate.key)} class="process-viewer-tabpanel"
+              role="tabpanel" aria-labelledby=${detailTabID(candidate.key)} tabIndex=${selected ? '0' : '-1'}
+              hidden=${!selected}
+            >${selected && html`<${DetailTable} tab=${candidate} routing=${routing} onPage=${setOffset} />`}</div>`;
+          })}
+        </${Fragment}>` : html`<p class="process-viewer-empty">Checkpoint-derived detail tables are unavailable.</p>`}
       </section>
     </div>
     <${EvidenceTimeline} envelope=${envelope} />
