@@ -530,7 +530,7 @@ func TestRouteMutationAuthorityImpossibleCauseClosureAndForkEvent(t *testing.T) 
 	})
 }
 
-func TestTypedTerminalRouteRequiresCompleteBatchPostState(t *testing.T) {
+func TestTypedTerminalRouteEnforcesExactMutationAuthority(t *testing.T) {
 	view := validGenesisFixture(t)
 	pathID := view.Authority.Genesis.OutputPathID
 	path := view.Routing.Paths[pathID]
@@ -546,18 +546,164 @@ func TestTypedTerminalRouteRequiresCompleteBatchPostState(t *testing.T) {
 	dispositionID, _ := DispositionReceiptIdentity(path.ID, PathLive, PathEnded, "completed", MutationCommandPlaceholder, "", 2)
 	path.Disposition = &DispositionReceipt{ID: dispositionID, PathID: path.ID, FromState: PathLive, ToState: PathEnded, ReasonCode: "completed", CommandID: MutationCommandPlaceholder, EventSeq: 2}
 	afterTemplate.Paths[path.ID] = path
-	extraDigest, _ := CauseSetIdentity(nil)
-	afterTemplate.CauseSets[extraDigest] = CauseSetRecord{Digest: extraDigest, CauseIDs: []CauseID{}}
+	view.Routing = &before
+	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 12, Digest: strings.Repeat("c", 64)}}
+	baseCommands := cloneMap(replayView.Aggregate.Commands)
+	makeCommand := func(t *testing.T, batch MutationBatch) CommandRecord {
+		t.Helper()
+		plan := RoutePathsPlan{
+			SettlementCommandID: settlement.ID, SourceActivationID: path.SourceActivation.ID,
+			SourceGeneration: path.SourceActivation.Generation, SourcePathID: path.ID, Attempt: 1,
+			CauseDigest: "complete-route", ResultCode: "pass", ProducedPathIDs: []PathID{}, Batch: batch,
+		}
+		payload, err := EncodeRoutePathsPayload(replayView, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		identity := CommandIdentity{
+			RunID: view.RunID, Kind: CommandRoutePaths, PayloadSchema: 1,
+			SourceActivationID: path.SourceActivation.ID, SourceGeneration: path.SourceActivation.Generation,
+			SourcePathID: path.ID, Attempt: 1, InputDigest: settlement.ID,
+			CauseDigest: plan.CauseDigest, PlanDigest: payloadDigest(payload), ResultCode: plan.ResultCode,
+		}
+		return commandWithPayload(t, identity, CommandObserved, payload)
+	}
+	assertRecoveryRejects := func(t *testing.T, replayBefore RoutingState, batch MutationBatch, command CommandRecord) {
+		t.Helper()
+		badView := replayView
+		badView.Aggregate.Commands = cloneMap(baseCommands)
+		badView.Aggregate.Commands[command.ID] = command
+		badView.Aggregate.Routing = &replayBefore
+		if err := ValidateRoutePathsCommand(badView, command); !errors.Is(err, ErrMutationInvalid) {
+			t.Fatalf("live route validator error = %v, want ErrMutationInvalid", err)
+		}
+		routing, disposition, err := batch.replay(&replayBefore, command.ID)
+		if err != nil || disposition != ReplayApplied {
+			t.Fatalf("durable unauthorized batch application = %q, %v", disposition, err)
+		}
+		badView.Aggregate.Routing = &routing
+		report := ValidateAggregate(badView.Aggregate)
+		if !reportHasCode(report, "terminal_command_provenance") {
+			t.Fatalf("terminal recovery diagnostics: %#v", report.Diagnostics)
+		}
+		for _, diagnostic := range report.Diagnostics {
+			if diagnostic.Code != "terminal_command_provenance" {
+				t.Fatalf("unauthorized batch was not otherwise globally valid: %#v", report.Diagnostics)
+			}
+		}
+		if _, err := AssessAggregateCompletion(badView.Aggregate); !errors.Is(err, ErrAggregateInvalid) {
+			t.Fatalf("completion recovery error = %v, want ErrAggregateInvalid", err)
+		}
+	}
+
+	validBatch, err := NewMutationBatch(&before, &afterTemplate, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validCommand := makeCommand(t, validBatch)
+	replayView.Aggregate.Commands[validCommand.ID] = validCommand
+	if err := ValidateRoutePathsCommand(replayView, validCommand); err != nil {
+		t.Fatalf("valid live route validator: %v", err)
+	}
+	result, err := ReplayRoutePaths(replayView, validCommand)
+	if err != nil || result.Disposition != ReplayApplied {
+		t.Fatalf("valid typed terminal replay = %q, %v", result.Disposition, err)
+	}
+	post := replayView.Aggregate
+	post.Routing = &result.Routing
+	if report := ValidateAggregate(post); !report.Valid() {
+		t.Fatalf("valid complete typed terminal provenance diagnostics: %#v", report.Diagnostics)
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*RoutingState)
+	}{
+		{name: "extra_globally_valid_cause_set", mutate: func(state *RoutingState) {
+			digest, _ := CauseSetIdentity(nil)
+			state.CauseSets[digest] = CauseSetRecord{Digest: digest, CauseIDs: []CauseID{}}
+		}},
+		{name: "unrelated_globally_valid_cause_record", mutate: func(state *RoutingState) {
+			causeID, _ := CauseIdentity("", TerminalImpossible, "unrelated_route_audit", "", MutationCommandPlaceholder, "", 2)
+			state.CauseRecords[causeID] = CauseRecord{
+				ID: causeID, TerminalKind: TerminalImpossible, DispositionReason: "unrelated_route_audit",
+				SourceCommandID: MutationCommandPlaceholder, EventSeq: 2,
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			unauthorizedAfter := Clone(afterTemplate)
+			test.mutate(&unauthorizedAfter)
+			batch, err := NewMutationBatch(&before, &unauthorizedAfter, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRecoveryRejects(t, before, batch, makeCommand(t, batch))
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*PathRecord)
+	}{
+		{name: "terminal_source_before", mutate: func(source *PathRecord) { source.State = PathEnded }},
+		{name: "different_source_activation_generation", mutate: func(source *PathRecord) {
+			source.SourceActivation = ActivationRef{ID: "other-activation", Generation: source.SourceActivation.Generation + 1}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			forgedBefore := Clone(before)
+			forgedSource := forgedBefore.Paths[path.ID]
+			test.mutate(&forgedSource)
+			forgedBefore.Paths[path.ID] = forgedSource
+			batch, err := NewMutationBatch(&forgedBefore, &afterTemplate, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertRecoveryRejects(t, forgedBefore, batch, makeCommand(t, batch))
+		})
+	}
+}
+
+func TestTypedTerminalRouteAcceptsMaterializedCauseAuthority(t *testing.T) {
+	view := validGenesisFixture(t)
+	pathID := view.Authority.Genesis.OutputPathID
+	path := view.Routing.Paths[pathID]
+	settlement := addTerminalAttemptCommands(t, &view, path.SourceActivation.ID, path.SourceActivation.Generation, 1, "failed", "performer_failed", "failed")
+	before := Clone(*view.Routing)
+	beforePath := before.Paths[path.ID]
+	beforePath.State = PathLive
+	beforePath.UpdatedSeq = 1
+	before.Paths[path.ID] = beforePath
+	afterTemplate := Clone(before)
+	causeID, err := CauseIdentity(path.ID, TerminalFailed, "performer_failed", path.SourceActivation.ID, MutationCommandPlaceholder, "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path.State = PathFailed
+	path.TerminalCauseID = causeID
+	path.UpdatedSeq = 2
+	dispositionID, _ := DispositionReceiptIdentity(path.ID, PathLive, PathFailed, "performer_failed", MutationCommandPlaceholder, "", 2)
+	path.Disposition = &DispositionReceipt{
+		ID: dispositionID, PathID: path.ID, FromState: PathLive, ToState: PathFailed,
+		ReasonCode: "performer_failed", CommandID: MutationCommandPlaceholder, EventSeq: 2,
+	}
+	afterTemplate.Paths[path.ID] = path
+	afterTemplate.CauseRecords[causeID] = CauseRecord{
+		ID: causeID, SourcePathID: path.ID, TerminalKind: TerminalFailed,
+		DispositionReason: "performer_failed", SourceActivationID: path.SourceActivation.ID,
+		SourceCommandID: MutationCommandPlaceholder, EventSeq: 2,
+	}
 	batch, err := NewMutationBatch(&before, &afterTemplate, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	view.Routing = &before
-	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 12, Digest: strings.Repeat("c", 64)}}
+	replayView := MutationReplayView{Aggregate: view, Checkpoint: CheckpointBinding{Generation: 14, Digest: strings.Repeat("e", 64)}}
 	plan := RoutePathsPlan{
 		SettlementCommandID: settlement.ID, SourceActivationID: path.SourceActivation.ID,
 		SourceGeneration: path.SourceActivation.Generation, SourcePathID: path.ID, Attempt: 1,
-		CauseDigest: "complete-route", ResultCode: "pass", ProducedPathIDs: []PathID{}, Batch: batch,
+		CauseDigest: "terminal-failure", ResultCode: "failed", ProducedPathIDs: []PathID{}, Batch: batch,
 	}
 	payload, err := EncodeRoutePathsPayload(replayView, plan)
 	if err != nil {
@@ -571,36 +717,14 @@ func TestTypedTerminalRouteRequiresCompleteBatchPostState(t *testing.T) {
 	}
 	command := commandWithPayload(t, identity, CommandObserved, payload)
 	replayView.Aggregate.Commands[command.ID] = command
-	routing, disposition, err := batch.replay(&before, command.ID)
-	if err != nil || disposition != ReplayApplied {
-		t.Fatalf("full typed terminal batch application = %q, %v", disposition, err)
+	result, err := ReplayRoutePaths(replayView, command)
+	if err != nil || result.Disposition != ReplayApplied {
+		t.Fatalf("materialized-cause terminal replay = %q, %v", result.Disposition, err)
 	}
 	post := replayView.Aggregate
-	post.Routing = &routing
+	post.Routing = &result.Routing
 	if report := ValidateAggregate(post); !report.Valid() {
-		t.Fatalf("complete typed terminal batch diagnostics: %#v", report.Diagnostics)
-	}
-	for _, test := range []struct {
-		name   string
-		mutate func(*RoutingState)
-	}{
-		{name: "missing_non_source_record", mutate: func(state *RoutingState) { delete(state.CauseSets, extraDigest) }},
-		{name: "different_non_source_record", mutate: func(state *RoutingState) {
-			set := state.CauseSets[extraDigest]
-			set.CauseIDs = []CauseID{"different"}
-			state.CauseSets[extraDigest] = set
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			partial := Clone(routing)
-			test.mutate(&partial)
-			aggregate := post
-			aggregate.Routing = &partial
-			report := ValidateAggregate(aggregate)
-			if !reportHasCode(report, "terminal_command_provenance") {
-				t.Fatalf("partial typed terminal batch diagnostics: %#v", report.Diagnostics)
-			}
-		})
+		t.Fatalf("materialized-cause terminal provenance diagnostics: %#v", report.Diagnostics)
 	}
 }
 

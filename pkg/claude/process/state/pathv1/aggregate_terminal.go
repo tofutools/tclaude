@@ -151,7 +151,7 @@ func (i *aggregateIndex) validateRouteTerminal(path string, p PathRecord, d Disp
 	if !exact || outcome != settle.Identity.ResultCode {
 		fail("terminal route result %q does not conserve settlement result %q", id.ResultCode, settle.Identity.ResultCode)
 	}
-	payload, err := i.decodeRouteTerminalPayload(p, route)
+	payload, err := i.decodeRouteTerminalPayload(p, route, settle.Identity.ResultCode)
 	if err != nil {
 		fail("terminal route payload is invalid: %v", err)
 		return
@@ -162,7 +162,7 @@ func (i *aggregateIndex) validateRouteTerminal(path string, p PathRecord, d Disp
 	}
 }
 
-func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route CommandRecord) (routeTerminalPayload, error) {
+func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route CommandRecord, settlementResult string) (routeTerminalPayload, error) {
 	var envelope mutationPayload[RoutePathsPlan]
 	typedErr := decodeExactPayload(route.Payload, &envelope)
 	if typedErr == nil {
@@ -198,6 +198,13 @@ func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route Co
 		if !canonicalEqual(after, current) || after.Disposition == nil {
 			return routeTerminalPayload{}, fmt.Errorf("typed route source transition differs from durable terminal path")
 		}
+		pre, err := historicalMutationPre(i.view.Routing, plan.Batch, route.ID)
+		if err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan historical pre-state: %w", err)
+		}
+		if err := validateRouteTransitionAuthority(pre, plan, settlementResult); err != nil {
+			return routeTerminalPayload{}, fmt.Errorf("typed route plan transition authority: %w", err)
+		}
 		return routeTerminalPayload{
 			TemplateRef:         envelope.TemplateRef,
 			SettlementCommandID: plan.SettlementCommandID,
@@ -217,6 +224,32 @@ func (i *aggregateIndex) decodeRouteTerminalPayload(current PathRecord, route Co
 	} else {
 		return routeTerminalPayload{}, fmt.Errorf("neither strict typed envelope (%v) nor strict legacy envelope (%v)", typedErr, legacyErr)
 	}
+}
+
+// historicalMutationPre reconstructs the route-time pre-state for the exact
+// records owned by a durable batch while preserving unrelated records that
+// may have advanced later. Materialized keys are reversed because command
+// ownership can transitively change create-only cause, cause-set, and path
+// identities. The result is used only by the canonical route mutation-set
+// authority validator; whole-state replay classification remains the live
+// replay path's responsibility.
+func historicalMutationPre(current *RoutingState, batch MutationBatch, commandID string) (RoutingState, error) {
+	if current == nil {
+		return RoutingState{}, fmt.Errorf("%w: routing state is absent", ErrMutationInconsistent)
+	}
+	materialized, err := batch.materialize(commandID)
+	if err != nil {
+		return RoutingState{}, err
+	}
+	pre := Clone(*current)
+	for index := len(materialized) - 1; index >= 0; index-- {
+		mutation := materialized[index]
+		reverse := RecordMutation{Kind: mutation.Kind, Key: mutation.Key, After: mutation.Before}
+		if err := applyRecordMutation(&pre, reverse); err != nil {
+			return RoutingState{}, err
+		}
+	}
+	return pre, nil
 }
 
 // validateHistoricalMutationPost proves the records owned by an earlier
