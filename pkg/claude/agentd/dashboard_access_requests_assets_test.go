@@ -48,6 +48,9 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		// Recently-handled history: outcome chips + the divider stay in the list.
 		"function accessOutcome(",
 		"function accessIsPending(",
+		"const id = shortAgentId(r.agent_id, r.conv_id)",
+		"request.current_conv_id || request.conv_id",
+		"Request generation",
 		`data-key="__access_handled__"`,
 		// CSS presence (row + reader actions + blink + handled history).
 		".access-row-wrap.handled .mail-row",

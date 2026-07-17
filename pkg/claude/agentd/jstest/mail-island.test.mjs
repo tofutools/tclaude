@@ -122,7 +122,8 @@ test('Messages island preserves native controls, CSS hooks, focus, reader, and k
 test('Messages access request view retains decree hooks and decision controls', async (t) => {
   const harness = await createPreactHarness(t);
   const { MailApp } = await harness.importDashboardModule('js/mail-island.js');
-  const request = { id: 'req-1', conv_id: 'conv-a', agent_id: 'agt_alpha', conv_title: 'Alpha',
+  const request = { id: 'req-1', conv_id: 'conv-a', current_conv_id: 'conv-b', agent_id: 'agt_alpha', conv_title: 'Alpha',
+    caller_state: 'active', title_status: 'current',
     perm: 'human.clipboard', created_at: '2026-07-12T00:00:00Z', deadline: '2026-07-12T00:05:00Z', auto_grantable: true };
   const value = { ...populated(), selected: 'access-requests', selectedMsgId: 'req-1', messages: [] };
   const state = harness.signals.signal(value);
@@ -132,6 +133,12 @@ test('Messages access request view retains decree hooks and decision controls', 
   const mounted = await harness.mount(harness.html`<${MailApp} controller=${controller} />`);
   assert.equal(mounted.container.querySelector('.access-row-wrap').dataset.kind, 'decree');
   assert.equal(mounted.container.querySelector('#mail-reader').dataset.kind, 'decree');
+  const headerRows = [...mounted.container.querySelectorAll('.mail-headers .mail-hrow')]
+    .map((row) => row.textContent.replace(/\s+/g, ' ').trim());
+  assert.ok(headerRows.some((row) => row.startsWith('Fromagt_alpha · Alpha')),
+    'stable caller agent id must lead the mutable title');
+  assert.ok(headerRows.some((row) => row.startsWith('Request generationconv-a')));
+  assert.ok(headerRows.some((row) => row.startsWith('Current generationconv-b')));
   assert.match(mounted.container.textContent, /Always allow/);
   assert.match(mounted.container.textContent, /Approve/);
   await mounted.unmount();

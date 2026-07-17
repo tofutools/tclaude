@@ -26,6 +26,8 @@ func TestAlwaysAllow_PersistsGrantAndSkipsPopupNextTime(t *testing.T) {
 
 	const conv = "alw0-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "worker")
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
 
 	// First copy: no grant, but --ask-human + the stubbed "always" click.
 	r := testharness.JSONRequest(t, http.MethodPost, "/v1/clipboard",
@@ -147,6 +149,8 @@ func TestAlwaysAllow_LiveDecisionThroughWaiterPersists(t *testing.T) {
 
 	const conv = "alw3-1111-2222-3333-4444"
 	const id = "alw-live-0001"
+	_, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
 
 	// A real waiter consumes the decision the handler sends, exactly as
 	// production does (applyApprovalOutcome → audit + persist).
@@ -165,4 +169,52 @@ func TestAlwaysAllow_LiveDecisionThroughWaiterPersists(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok, "the real decision must persist the override through the waiter")
 	assert.Equal(t, "grant", effect)
+}
+
+// Scenario: the request captures actor X on generation A. While it is pending,
+// the actor rotates A→B and A is deleted/unlinked. "Always allow" must grant X
+// directly and attribute the audit decision to X; it must never re-enroll A as
+// a new actor merely because A is the immutable request-generation reference.
+func TestAlwaysAllow_RotationAndDeletedPredecessorUseCapturedAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const oldConv = "alw4-aaaa-2222-3333-4444"
+	const newConv = "alw4-bbbb-2222-3333-4444"
+	const id = "alw-rotated-0001"
+
+	agentID, _, err := db.EnsureAgentForConv(oldConv, "test")
+	require.NoError(t, err)
+	done, cleanup := agentd.SeedApprovalCallerWithWaiterForTest(
+		id, agentd.PermHumanClipboard, oldConv, agentID, true)
+	t.Cleanup(cleanup)
+
+	_, err = db.RotateAgentConv(oldConv, newConv, "clear")
+	require.NoError(t, err)
+	_, err = db.DeleteAgentByConvID(oldConv)
+	require.NoError(t, err, "unlink predecessor")
+
+	h := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+id+"/decision", map[string]any{"decision": "always"}))
+	require.Equal(t, http.StatusOK, rec.Code, "always decision; body=%s", rec.Body.String())
+	require.True(t, <-done)
+
+	oldAgent, err := db.AgentIDForConv(oldConv)
+	require.NoError(t, err)
+	assert.Empty(t, oldAgent, "stale predecessor must remain unlinked")
+	newAgent, err := db.AgentIDForConv(newConv)
+	require.NoError(t, err)
+	assert.Equal(t, agentID, newAgent, "live generation retains the captured actor")
+
+	effect, ok, err := db.AgentPermissionOverride(newConv, agentd.PermHumanClipboard)
+	require.NoError(t, err)
+	require.True(t, ok, "captured stable actor receives the durable grant")
+	assert.Equal(t, db.PermEffectGrant, effect)
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.approve-always"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, oldConv, rows[0].TargetConv, "audit retains the request generation")
+	assert.Equal(t, agentID, rows[0].TargetAgent, "audit attributes the captured stable actor")
 }

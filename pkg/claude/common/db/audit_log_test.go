@@ -127,6 +127,34 @@ func TestAuditLog_AgentColumnsSurfaced(t *testing.T) {
 	require.Len(t, hit, 1, "audit search matches the stable agent_id")
 }
 
+func TestAuditLog_ExplicitAgentIdentityPrecedesConvLookup(t *testing.T) {
+	setupTestDB(t)
+
+	derivedActor, _, err := EnsureAgentForConv("actor-conv", "test")
+	require.NoError(t, err)
+	derivedTarget, _, err := EnsureAgentForConv("target-conv", "test")
+	require.NoError(t, err)
+
+	_, err = InsertAuditLog(AuditLogEntry{
+		ActorKind:   AuditActorAgent,
+		ActorConv:   "actor-conv",
+		ActorAgent:  "agt_captured_actor",
+		Verb:        "approval.approve-always",
+		TargetConv:  "target-conv",
+		TargetAgent: "agt_captured_target",
+		Source:      AuditSourcePopup,
+	})
+	require.NoError(t, err)
+
+	rows, err := ListAuditLog(AuditLogFilter{Verb: "approval.approve-always"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "agt_captured_actor", rows[0].ActorAgent)
+	assert.Equal(t, "agt_captured_target", rows[0].TargetAgent)
+	assert.NotEqual(t, derivedActor, rows[0].ActorAgent, "explicit actor must not be replaced from conv metadata")
+	assert.NotEqual(t, derivedTarget, rows[0].TargetAgent, "explicit target must not be replaced from conv metadata")
+}
+
 // TestAuditLog_SearchSortPaginate exercises the server-side query knobs
 // the dashboard relies on: substring search, whitelisted sort, and
 // limit/offset pagination.

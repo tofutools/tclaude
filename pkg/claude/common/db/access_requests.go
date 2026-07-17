@@ -32,9 +32,10 @@ type AccessRequest struct {
 	DecidedAt       time.Time
 }
 
-// UpsertAccessRequest records or updates one access request. It snapshots the
-// stable requester agent_id from ConvID on every write, mirroring the
-// human_messages companion-column pattern.
+// UpsertAccessRequest records or updates one access request. A caller-captured
+// AgentID wins; legacy callers that omit it still resolve the stable requester
+// from ConvID. Keeping the captured ID avoids re-attributing a request if its
+// original conversation metadata later disappears or changes.
 func UpsertAccessRequest(ar *AccessRequest) error {
 	if ar == nil || ar.ID == "" {
 		return nil
@@ -63,17 +64,23 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 	if ar.AutoGrantable {
 		autoGrantable = 1
 	}
+	explicitAgentID := 0
+	if ar.AgentID != "" {
+		explicitAgentID = 1
+	}
 	_, err = d.Exec(`
 		INSERT INTO access_requests
 			(id, perm, conv_id, agent_id, conv_title, method, path, raw_query,
 			 body_preview, body_label, target_group, target_conv_id, target_conv_title,
 			 auto_grantable, status, created_at, deadline_at, decided_at)
 		VALUES
-			(?, ?, ?, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(?, ?, ?, COALESCE(NULLIF(?, ''),
+				(SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''),
+			 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			perm = excluded.perm,
 			conv_id = excluded.conv_id,
-			agent_id = excluded.agent_id,
+			agent_id = CASE WHEN ? != 0 THEN excluded.agent_id ELSE access_requests.agent_id END,
 			conv_title = excluded.conv_title,
 			method = excluded.method,
 			path = excluded.path,
@@ -88,9 +95,9 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 			created_at = excluded.created_at,
 			deadline_at = excluded.deadline_at,
 			decided_at = excluded.decided_at`,
-		ar.ID, ar.Perm, ar.ConvID, ar.ConvID, ar.ConvTitle, ar.Method, ar.Path, ar.RawQuery,
+		ar.ID, ar.Perm, ar.ConvID, ar.AgentID, ar.ConvID, ar.ConvTitle, ar.Method, ar.Path, ar.RawQuery,
 		ar.BodyPreview, ar.BodyLabel, ar.TargetGroup, ar.TargetConvID, ar.TargetConvTitle,
-		autoGrantable, status, created.Format(time.RFC3339Nano), deadline, decided)
+		autoGrantable, status, created.Format(time.RFC3339Nano), deadline, decided, explicitAgentID)
 	if err != nil {
 		return fmt.Errorf("upsert access request: %w", err)
 	}

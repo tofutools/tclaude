@@ -214,26 +214,33 @@ func TestFormatApprovalSlotLabel_UsesConvTitleWhenPresent(t *testing.T) {
 	row := pendingApprovalSummary{
 		ID:        "abcdef0123",
 		Perm:      "groups.spawn",
+		AgentID:   "agt_1234567890abcdef",
 		ConvTitle: "alice",
 		ConvID:    "aaaa-bbbb",
 		CreatedAt: time.Now().Add(-90 * time.Second),
 	}
 	label := formatApprovalSlotLabel(row)
 	assert.Contains(t, label, "groups.spawn", "label should mention perm")
+	assert.Contains(t, label, "agt_12345678", "label should lead caller metadata with the stable id")
 	assert.Contains(t, label, "alice", "label should mention conv title")
+	assert.Less(t, strings.Index(label, "agt_12345678"), strings.Index(label, "alice"),
+		"stable id must appear before mutable title")
 	assert.Contains(t, label, "ago", "label should mention age")
 }
 
-func TestFormatApprovalSlotLabel_FallsBackToShortIDWhenNoTitle(t *testing.T) {
+func TestFormatApprovalSlotLabel_ExplicitlyDegradesMissingIdentityAndTitle(t *testing.T) {
 	row := pendingApprovalSummary{
-		ID:        "id-001",
-		Perm:      "agent.clone",
-		ConvTitle: "",
-		ConvID:    "12345678abcdef",
-		CreatedAt: time.Now(),
+		ID:          "id-001",
+		Perm:        "agent.clone",
+		ConvTitle:   "",
+		ConvID:      "12345678abcdef",
+		CallerState: approvalCallerMissing,
+		CreatedAt:   time.Now(),
 	}
 	label := formatApprovalSlotLabel(row)
 	assert.Contains(t, label, "12345678", "label should fall back to 8-char conv prefix when no title")
+	assert.Contains(t, label, approvalTitleMissing)
+	assert.Contains(t, label, "metadata missing")
 	assert.NotContains(t, label, "abcdef", "label should truncate at 8 chars; full conv-id leaked")
 }
 
@@ -241,9 +248,9 @@ func TestFormatApprovalSlotLabel_FallsBackToShortIDWhenNoTitle(t *testing.T) {
 // rebind slots. Pin its zero / equal / unequal behaviour.
 func TestSliceEq(t *testing.T) {
 	cases := []struct {
-		name    string
-		a, b    []string
-		wantEq  bool
+		name   string
+		a, b   []string
+		wantEq bool
 	}{
 		{"both nil", nil, nil, true},
 		{"nil vs empty", nil, []string{}, true},

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
@@ -127,6 +128,7 @@ type approvalRequest struct {
 	id              string
 	perm            string
 	convID          string // requester
+	agentID         string // requester's stable actor, captured once for display/grant/audit
 	convTitle       string // requester's display title
 	method          string
 	path            string
@@ -202,11 +204,95 @@ func outcomeLabel(o approvalOutcome) string {
 // references to *approvalRequest (which is mutex-protected and would
 // race if read off the registry).
 type pendingApprovalSummary struct {
-	ID        string
-	Perm      string
-	ConvTitle string
-	ConvID    string
-	CreatedAt time.Time
+	ID            string
+	Perm          string
+	AgentID       string
+	ConvID        string
+	CurrentConvID string
+	ConvTitle     string
+	CallerState   string
+	TitleStatus   string
+	CreatedAt     time.Time
+}
+
+const (
+	approvalCallerActive     = "active"
+	approvalCallerRetired    = "retired"
+	approvalCallerMissing    = "missing"
+	approvalTitleCurrent     = "current"
+	approvalTitleUnavailable = "unavailable"
+	approvalTitleMissing     = "(title unavailable)"
+)
+
+type approvalCallerDisplay struct {
+	AgentID       string
+	CurrentConvID string
+	Title         string
+	CallerState   string
+	TitleStatus   string
+}
+
+// loadApprovalCallerDisplays refreshes display-only caller metadata strictly
+// from stable agent IDs. It intentionally performs only batched SQLite reads:
+// no selector enumeration, transcript scan, or config/filesystem read belongs
+// on the dashboard/tray polling path. Callers invoke it only after releasing
+// approvalRegistry.mu.
+func loadApprovalCallerDisplays(agentIDs []string) map[string]approvalCallerDisplay {
+	unique := make([]string, 0, len(agentIDs))
+	seen := make(map[string]struct{}, len(agentIDs))
+	for _, id := range agentIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	displays := make(map[string]approvalCallerDisplay, len(unique))
+	for _, id := range unique {
+		displays[id] = approvalCallerDisplay{
+			AgentID: id, Title: approvalTitleMissing,
+			CallerState: approvalCallerMissing, TitleStatus: approvalTitleUnavailable,
+		}
+	}
+	actors, err := db.AgentsByID(unique)
+	if err != nil {
+		slog.Warn("access requests: failed to refresh stable caller actors", "err", err)
+		return displays
+	}
+	currentConvs := make([]string, 0, len(actors))
+	for id, actor := range actors {
+		state := approvalCallerActive
+		if actor.Retired {
+			state = approvalCallerRetired
+		}
+		displays[id] = approvalCallerDisplay{
+			AgentID: id, CurrentConvID: actor.CurrentConvID,
+			Title: approvalTitleMissing, CallerState: state,
+			TitleStatus: approvalTitleUnavailable,
+		}
+		if actor.CurrentConvID != "" {
+			currentConvs = append(currentConvs, actor.CurrentConvID)
+		}
+	}
+	indexRows, err := db.GetConvIndexBatch(currentConvs)
+	if err != nil {
+		slog.Warn("access requests: failed to refresh current caller titles", "err", err)
+		return displays
+	}
+	for id, actor := range actors {
+		display := displays[id]
+		title := agent.CachedTitleFromParts(indexRows[actor.CurrentConvID], actor.PendingName)
+		if title != agent.UnknownTitle && strings.TrimSpace(title) != "" {
+			display.Title = title
+			display.TitleStatus = approvalTitleCurrent
+		}
+		displays[id] = display
+	}
+	return displays
 }
 
 // snapshotPendingApprovals returns a snapshot of every in-flight
@@ -217,16 +303,29 @@ type pendingApprovalSummary struct {
 func (a *approvalRegistry) snapshot() []pendingApprovalSummary {
 	a.mu.Lock()
 	out := make([]pendingApprovalSummary, 0, len(a.pending))
+	agentIDs := make([]string, 0, len(a.pending))
 	for _, req := range a.pending {
 		out = append(out, pendingApprovalSummary{
-			ID:        req.id,
-			Perm:      req.perm,
-			ConvTitle: req.convTitle,
-			ConvID:    req.convID,
-			CreatedAt: req.createdAt,
+			ID: req.id, Perm: req.perm, AgentID: req.agentID,
+			ConvID: req.convID, CreatedAt: req.createdAt,
 		})
+		agentIDs = append(agentIDs, req.agentID)
 	}
 	a.mu.Unlock()
+	displays := loadApprovalCallerDisplays(agentIDs)
+	for i := range out {
+		display, ok := displays[out[i].AgentID]
+		if !ok {
+			out[i].ConvTitle = approvalTitleMissing
+			out[i].CallerState = approvalCallerMissing
+			out[i].TitleStatus = approvalTitleUnavailable
+			continue
+		}
+		out[i].CurrentConvID = display.CurrentConvID
+		out[i].ConvTitle = display.Title
+		out[i].CallerState = display.CallerState
+		out[i].TitleStatus = display.TitleStatus
+	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
@@ -253,6 +352,12 @@ var (
 // http://127.0.0.1:<port>/approve/{id}) renders the page and writes
 // back to the channel on user click.
 func requestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
+	// Capture the stable identity once at the popup boundary. Display refresh,
+	// persistent grants, and audit attribution all follow this actor even if its
+	// conversation generation rotates while the request is pending.
+	if req != nil && req.agentID == "" {
+		req.agentID = peerAgentID(req.convID)
+	}
 	return RequestHumanApprovalImpl(req, popupBaseURL)
 }
 
@@ -363,10 +468,10 @@ func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
 }
 
 // persistAlwaysAllowGrant writes the popup-origin allow override for the
-// deciding agent (JOH-367). The override is keyed on the agent's stable
-// identity (db.SetAgentPermissionOverride resolves conv → agent_id), so it
-// follows the agent through /clear conv-rotation and reincarnation — the
-// operator's "always allow for THIS agent" intent, not "this one conv".
+// deciding agent (JOH-367). The override is written directly against the
+// stable identity captured when the request was raised, so it follows the
+// actor through /clear conv-rotation and reincarnation without resolving or
+// re-enrolling a stale request generation.
 //
 // Defense in depth: re-checks IsAutoGrantableSlug even though the POST
 // handler already gated on req.autoGrantable, so a malformed caller can
@@ -379,12 +484,14 @@ func persistAlwaysAllowGrant(req *approvalRequest) {
 			"perm", req.perm, "conv", req.convID)
 		return
 	}
-	if req.convID == "" {
+	if req.agentID == "" {
+		slog.Warn("popup: cannot persist always-allow without stable caller identity",
+			"perm", req.perm, "conv", req.convID)
 		return
 	}
-	if err := db.SetAgentPermissionOverride(req.convID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
+	if err := db.SetAgentPermissionOverrideByAgentID(req.agentID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
 		slog.Warn("popup: failed to persist always-allow grant",
-			"perm", req.perm, "conv", req.convID, "err", err)
+			"perm", req.perm, "agent", req.agentID, "conv", req.convID, "err", err)
 	}
 }
 
@@ -428,6 +535,7 @@ func recordApprovalRequest(req *approvalRequest) {
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{
 		ActorKind:   db.AuditActorAgent,
 		ActorConv:   req.convID,
+		ActorAgent:  req.agentID,
 		ActorLabel:  label,
 		Verb:        "approval.request",
 		TargetConv:  req.targetConvID,
@@ -494,6 +602,7 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 		ActorLabel:  "operator",
 		Verb:        verb,
 		TargetConv:  req.convID,
+		TargetAgent: req.agentID,
 		TargetLabel: req.convTitle,
 		GroupName:   req.targetGroup,
 		Detail:      auditClip(detail, 120),

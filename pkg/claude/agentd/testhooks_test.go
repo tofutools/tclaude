@@ -687,10 +687,18 @@ func ResetApprovalsForTest() {
 // decision lands (or the internal timeout fires); cleanup removes the
 // pending entry.
 func SeedApprovalWithWaiterForTest(id, perm, convID string, autoGrantable bool) (<-chan bool, func()) {
+	return SeedApprovalCallerWithWaiterForTest(id, perm, convID, peerAgentID(convID), autoGrantable)
+}
+
+// SeedApprovalCallerWithWaiterForTest is the stable-caller form of
+// SeedApprovalWithWaiterForTest. Keeping agentID independent from convID lets
+// display-flow tests prove that refreshes never borrow another actor's title.
+func SeedApprovalCallerWithWaiterForTest(id, perm, convID, agentID string, autoGrantable bool) (<-chan bool, func()) {
 	req := &approvalRequest{
 		id:            id,
 		perm:          perm,
 		convID:        convID,
+		agentID:       agentID,
 		autoGrantable: autoGrantable,
 		decision:      make(chan approvalOutcome, 1),
 		extend:        make(chan time.Duration, 1),

@@ -236,6 +236,7 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	req := &approvalRequest{
 		perm:        "tool.bash",
 		convID:      "019ec010-1111-1111-1111-111111111111",
+		agentID:     "agt_stable_requester",
 		convTitle:   "worker",
 		method:      http.MethodPost,
 		path:        "/v1/messages",
@@ -256,6 +257,9 @@ func TestRecordApprovalDecision_WritesPopupRow(t *testing.T) {
 	}
 	if row.TargetConv != req.convID || row.TargetLabel != "worker" {
 		t.Errorf("target = (%q,%q), want (%q,worker)", row.TargetConv, row.TargetLabel, req.convID)
+	}
+	if row.TargetAgent != req.agentID {
+		t.Errorf("target agent = %q, want captured %q", row.TargetAgent, req.agentID)
 	}
 	if row.GroupName != "crew" {
 		t.Errorf("group = %q, want crew", row.GroupName)
@@ -302,6 +306,7 @@ func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
 	req := &approvalRequest{
 		perm:        "human.clipboard",
 		convID:      "019ec010-2222-2222-2222-222222222222",
+		agentID:     "agt_stable_requester",
 		convTitle:   "worker",
 		method:      http.MethodPost,
 		path:        "/v1/clipboard",
@@ -321,6 +326,9 @@ func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
 	// gap the decision-only trail left (JOH-392).
 	if row.ActorKind != db.AuditActorAgent || row.ActorConv != req.convID || row.ActorLabel != "worker" {
 		t.Errorf("actor = (%q,%q,%q), want (agent,%q,worker)", row.ActorKind, row.ActorConv, row.ActorLabel, req.convID)
+	}
+	if row.ActorAgent != req.agentID {
+		t.Errorf("actor agent = %q, want captured %q", row.ActorAgent, req.agentID)
 	}
 	if row.GroupName != "crew" {
 		t.Errorf("group = %q, want crew", row.GroupName)

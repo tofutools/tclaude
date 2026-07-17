@@ -50,6 +50,12 @@ type dashboardAccessRequest struct {
 	ConvID    string `json:"conv_id,omitempty"`
 	ConvTitle string `json:"conv_title,omitempty"`
 	AgentID   string `json:"agent_id,omitempty"`
+	// CurrentConvID / caller and title states are display metadata refreshed
+	// from AgentID on every snapshot. ConvID above remains the immutable
+	// request-generation correlation key.
+	CurrentConvID string `json:"current_conv_id,omitempty"`
+	CallerState   string `json:"caller_state"`
+	TitleStatus   string `json:"title_status"`
 	// Path / Body / BodyLabel describe the action being gated (the HTTP path
 	// the agent called and a prettified body preview) so the operator can see
 	// WHAT they are approving, not just which slug.
@@ -95,7 +101,7 @@ func toDashboardAccessRequest(req *approvalRequest) dashboardAccessRequest {
 		Perm:            req.perm,
 		ConvID:          req.convID,
 		ConvTitle:       req.convTitle,
-		AgentID:         peerAgentID(req.convID),
+		AgentID:         req.agentID,
 		Path:            req.path,
 		Body:            req.bodyPreview,
 		BodyLabel:       req.bodyLabel,
@@ -119,6 +125,7 @@ func accessRequestDB(req *approvalRequest, status string, decidedAt time.Time) *
 		ID:              req.id,
 		Perm:            req.perm,
 		ConvID:          req.convID,
+		AgentID:         req.agentID,
 		ConvTitle:       req.convTitle,
 		Method:          req.method,
 		Path:            req.path,
@@ -133,6 +140,27 @@ func accessRequestDB(req *approvalRequest, status string, decidedAt time.Time) *
 		CreatedAt:       req.createdAt,
 		DeadlineAt:      deadline,
 		DecidedAt:       decidedAt,
+	}
+}
+
+func refreshDashboardAccessRequestCallers(requests []dashboardAccessRequest) {
+	agentIDs := make([]string, 0, len(requests))
+	for i := range requests {
+		agentIDs = append(agentIDs, requests[i].AgentID)
+	}
+	displays := loadApprovalCallerDisplays(agentIDs)
+	for i := range requests {
+		display, ok := displays[requests[i].AgentID]
+		if !ok {
+			requests[i].ConvTitle = approvalTitleMissing
+			requests[i].CallerState = approvalCallerMissing
+			requests[i].TitleStatus = approvalTitleUnavailable
+			continue
+		}
+		requests[i].CurrentConvID = display.CurrentConvID
+		requests[i].ConvTitle = display.Title
+		requests[i].CallerState = display.CallerState
+		requests[i].TitleStatus = display.TitleStatus
 	}
 }
 
@@ -193,11 +221,13 @@ func (a *approvalRegistry) dashboardSnapshot() []dashboardAccessRequest {
 	handled, err := db.ListRecentHandledAccessRequests(maxResolvedApprovals)
 	if err != nil {
 		slog.Warn("access requests: failed to load handled history", "err", err)
+		refreshDashboardAccessRequestCallers(out)
 		return out
 	}
 	for _, ar := range handled {
 		out = append(out, dbAccessRequestToDashboard(ar))
 	}
+	refreshDashboardAccessRequestCallers(out)
 	return out
 }
 

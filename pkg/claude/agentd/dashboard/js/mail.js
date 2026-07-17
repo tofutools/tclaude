@@ -1064,7 +1064,8 @@ function accessMatchesSearch(r, q) {
   if (!q) return true;
   q = q.toLowerCase();
   return [
-    r.id, r.perm, r.conv_id, r.agent_id, r.conv_title, r.path, r.body,
+    r.id, r.perm, r.conv_id, r.current_conv_id, r.agent_id, r.conv_title,
+    r.caller_state, r.title_status, r.path, r.body,
     r.body_label, r.target_group, r.target_conv_id, r.target_conv_title,
     r.status,
   ].some(v => String(v || '').toLowerCase().includes(q));
@@ -1076,7 +1077,12 @@ function accessRequestById(id) {
 }
 
 function accessWho(r) {
-  return r.conv_title || shortAgentId(r.agent_id, r.conv_id) || wz('an agent', 'a familiar');
+  const id = shortAgentId(r.agent_id, r.conv_id) || wz('unknown agent', 'unknown familiar');
+  const title = r.conv_title || '(title unavailable)';
+  const state = r.caller_state === 'retired'
+    ? wz(' · retired', ' · banished')
+    : r.caller_state === 'missing' ? wz(' · metadata missing', ' · lost to the mists') : '';
+  return `${id} · ${title}${state}`;
 }
 
 function accessSubject(r) {
