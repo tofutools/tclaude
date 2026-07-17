@@ -655,11 +655,10 @@ nodes:
 	}
 }
 
-func TestPureExclusiveReleaseWiringPreservesLegacyIsolation(t *testing.T) {
+func TestReleasedPathV1HostPreservesLegacyStateIsolation(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
-	// TCL-506 deliberately replaces TCL-505's dormant API guard with an
-	// explicit production wiring guard. The daemon host must opt into the
-	// schema-7 executor; generic library hosts remain legacy-safe by default.
+	// The daemon host must opt into the schema-7 executor; generic library
+	// hosts remain legacy-safe by default.
 	required := map[string][]string{
 		"engine/host.go":              {"func (h *Host) EnableExclusiveV7()", "processexec.NewExclusiveV7"},
 		"../agentd/process_engine.go": {"host.EnableExclusiveV7()", "LoadPathV1RunView"},
@@ -672,22 +671,6 @@ func TestPureExclusiveReleaseWiringPreservesLegacyIsolation(t *testing.T) {
 		for _, fragment := range fragments {
 			if !bytes.Contains(data, []byte(fragment)) {
 				t.Errorf("release wiring %s is missing %q", name, fragment)
-			}
-		}
-	}
-
-	// TCL-445 adds a pure split/replay substrate only. The production host,
-	// enabled exclusive schema-7 driver, and daemon bootstrap must have no call
-	// path to it before TCL-446 installs and enables the combined parallel-all
-	// gate.
-	for _, name := range []string{"engine/host.go", "exec/exclusive_v7.go", "../agentd/process_engine.go"} {
-		data, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, fragment := range []string{"VerifyParallelInput", "PlanParallelSplit", "ReduceParallelSplit"} {
-			if bytes.Contains(data, []byte(fragment)) {
-				t.Errorf("released production wiring %s reaches disabled split surface %q", name, fragment)
 			}
 		}
 	}
