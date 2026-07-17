@@ -13,6 +13,22 @@ type joinCauseKey struct {
 	command string
 	event   int64
 }
+type terminalAttemptKey struct {
+	run, activation string
+	generation, try uint64
+}
+type terminalInputKey struct {
+	run, activation, input string
+	generation             uint64
+}
+type slotSourceKey struct {
+	node, scope, branch string
+	generation          uint64
+}
+type registryMultiplicity struct {
+	count int
+	sole  string
+}
 
 type aggregateIndex struct {
 	view AggregateView
@@ -23,6 +39,7 @@ type aggregateIndex struct {
 	slots                    map[PossibleSlotID]PossibleSlotRecord
 	pathsBySlot              map[PossibleSlotID][]PathID
 	pathsByTarget            map[candidateKey][]PathID
+	childrenByParent         map[PathID]map[PathID]struct{}
 	openDescendants          map[candidateKey]bool
 	outputs                  map[ActivationID]PathID
 	forkScopeByOutput        map[PathID]ScopeID
@@ -33,6 +50,13 @@ type aggregateIndex struct {
 	detachmentMemberNodes    map[DetachmentID][]DetachmentSetID
 	scopeIntervals           map[ScopeID]treeInterval
 	commandRefs              map[string]struct{}
+	performAttempts          map[terminalAttemptKey]registryMultiplicity
+	settlementAttempts       map[terminalAttemptKey]registryMultiplicity
+	settlementInputs         map[terminalInputKey]registryMultiplicity
+	maxSideEffectAttempt     map[ActivationID]uint64
+	reducingSlotSources      map[slotSourceKey][]ReservationID
+	propagationArrivalSeq    map[CandidateClosureKey]int64
+	propagationArrivalKnown  map[CandidateClosureKey]bool
 }
 
 func sortedMapKeys[V any](values map[string]V) []string {
@@ -65,15 +89,8 @@ func ValidateAggregate(view AggregateView) InvariantReport {
 	if view.RunID == "" {
 		c.add("run_id_empty", "runId", "run ID is empty")
 	}
-	if !validateAuthority(view, c) {
-		return report
-	}
 	if view.Commands == nil || view.SideEffects == nil || view.AdminRecords == nil || view.AdminResolutions == nil {
 		c.add("aggregate_maps_nil", "aggregate", "commands, side effects, admin records, and admin resolutions must be complete non-nil maps")
-		return report
-	}
-	if err := validateSerializationEnvelope(view.Routing); err != nil {
-		c.add("routing_envelope", "routing", "%v", err)
 		return report
 	}
 	usage, err := MeasureAggregate(view)
@@ -84,6 +101,13 @@ func ValidateAggregate(view AggregateView) InvariantReport {
 	report.Usage = usage
 	if err := usage.Validate(); err != nil {
 		c.add("routing_over_budget", "routing", "%v", err)
+		return report
+	}
+	if !validateAuthority(view, c) {
+		return report
+	}
+	if err := validateSerializationEnvelope(view.Routing); err != nil {
+		c.add("routing_envelope", "routing", "%v", err)
 		return report
 	}
 	if data, err := Encode(view.Routing); err != nil {
@@ -98,16 +122,23 @@ func ValidateAggregate(view AggregateView) InvariantReport {
 		view: view, c: c,
 		candidates: map[candidateKey]CandidateRecord{}, candidateByClosureKey: map[CandidateClosureKey]candidateKey{}, slots: map[PossibleSlotID]PossibleSlotRecord{},
 		pathsBySlot: map[PossibleSlotID][]PathID{}, pathsByTarget: map[candidateKey][]PathID{},
-		openDescendants: map[candidateKey]bool{}, outputs: map[ActivationID]PathID{},
+		childrenByParent: map[PathID]map[PathID]struct{}{},
+		openDescendants:  map[candidateKey]bool{}, outputs: map[ActivationID]PathID{},
 		forkScopeByOutput: map[PathID]ScopeID{},
 		detachmentsByID:   map[DetachmentID]DetachmentRecord{}, detachmentsByReservation: map[ReservationID]map[CandidateID]DetachmentRecord{}, joinCauses: map[joinCauseKey][]CauseID{},
 		detachmentSetIntervals: map[DetachmentSetID]treeInterval{}, detachmentMemberNodes: map[DetachmentID][]DetachmentSetID{},
-		scopeIntervals: map[ScopeID]treeInterval{},
-		commandRefs:    map[string]struct{}{},
+		scopeIntervals:  map[ScopeID]treeInterval{},
+		commandRefs:     map[string]struct{}{},
+		performAttempts: map[terminalAttemptKey]registryMultiplicity{}, settlementAttempts: map[terminalAttemptKey]registryMultiplicity{}, settlementInputs: map[terminalInputKey]registryMultiplicity{},
+		maxSideEffectAttempt:  map[ActivationID]uint64{},
+		reducingSlotSources:   map[slotSourceKey][]ReservationID{},
+		propagationArrivalSeq: map[CandidateClosureKey]int64{}, propagationArrivalKnown: map[CandidateClosureKey]bool{},
 	}
 	i.indexReservations()
+	i.indexReducingSlotSources()
 	i.indexPaths()
 	i.indexCauses()
+	i.indexTerminalAuthority()
 	i.validateCommandsAndAuthority()
 	i.validateScopes()
 	i.validatePaths()
@@ -119,8 +150,57 @@ func ValidateAggregate(view AggregateView) InvariantReport {
 	return report
 }
 
+func (i *aggregateIndex) indexReducingSlotSources() {
+	if i.reducingSlotSources == nil {
+		i.reducingSlotSources = map[slotSourceKey][]ReservationID{}
+	}
+	for _, id := range sortedMapKeys(i.view.Routing.Reservations) {
+		reservation := i.view.Routing.Reservations[id]
+		if !reservation.IsReducing {
+			continue
+		}
+		scope, ok := i.view.Routing.Scopes[reservation.ReducesScopeID]
+		if !ok {
+			continue
+		}
+		key := slotSourceKey{node: reservation.NodeID, scope: scope.ParentScopeID, branch: scope.ParentBranchEdgeID, generation: reservation.Generation}
+		i.reducingSlotSources[key] = append(i.reducingSlotSources[key], id)
+	}
+}
+
+func (i *aggregateIndex) indexTerminalAuthority() {
+	for _, id := range sortedMapKeys(i.view.Commands) {
+		command := i.view.Commands[id]
+		identity := command.Identity
+		key := terminalAttemptKey{run: identity.RunID, activation: identity.SourceActivationID, generation: identity.SourceGeneration, try: identity.Attempt}
+		switch identity.Kind {
+		case CommandPerformAttempt:
+			i.performAttempts[key] = addRegistryID(i.performAttempts[key], id)
+		case CommandSettleAttempt:
+			i.settlementAttempts[key] = addRegistryID(i.settlementAttempts[key], id)
+			input := terminalInputKey{run: identity.RunID, activation: identity.SourceActivationID, generation: identity.SourceGeneration, input: identity.InputDigest}
+			i.settlementInputs[input] = addRegistryID(i.settlementInputs[input], id)
+		}
+	}
+	for _, id := range sortedMapKeys(i.view.SideEffects) {
+		effect := i.view.SideEffects[id]
+		if effect.Kind == SideEffectAttempt && effect.Attempt > i.maxSideEffectAttempt[effect.ActivationID] {
+			i.maxSideEffectAttempt[effect.ActivationID] = effect.Attempt
+		}
+	}
+}
+
+func addRegistryID(value registryMultiplicity, id string) registryMultiplicity {
+	value.count++
+	if value.count == 1 {
+		value.sole = id
+	}
+	return value
+}
+
 func (i *aggregateIndex) indexCauses() {
-	for id, cause := range i.view.Routing.CauseRecords {
+	for _, id := range sortedMapKeys(i.view.Routing.CauseRecords) {
+		cause := i.view.Routing.CauseRecords[id]
 		if cause.SourcePathID == "" {
 			key := joinCauseKey{command: cause.SourceCommandID, event: cause.EventSeq}
 			i.joinCauses[key] = append(i.joinCauses[key], id)
@@ -130,20 +210,24 @@ func (i *aggregateIndex) indexCauses() {
 
 func (i *aggregateIndex) validateGenesis() {
 	g := i.view.Authority.Genesis
-	a, ok := i.view.Routing.Activations[g.ActivationID]
-	if !ok {
+	a, activationOK := i.view.Routing.Activations[g.ActivationID]
+	if !activationOK {
 		i.c.add("genesis_activation_missing", "activations", "authorized genesis activation %q is missing", g.ActivationID)
 	} else if len(a.InputPathIDs) != 0 || a.ReservationID != g.ReservationID || a.OutputPathID != g.OutputPathID {
 		i.c.add("genesis_activation_mismatch", "activations."+g.ActivationID, "genesis activation differs from authority")
 	}
-	p, ok := i.view.Routing.Paths[g.OutputPathID]
-	if !ok {
+	p, pathOK := i.view.Routing.Paths[g.OutputPathID]
+	if !pathOK {
 		i.c.add("genesis_path_missing", "paths", "authorized genesis path %q is missing", g.OutputPathID)
 	} else if p.Kind != PathActivationOutput || p.SourceActivation.ID != g.ActivationID || p.SourceActivation.Generation != g.Generation || p.ScopeID != g.RootScopeID || p.BranchEdgeID != "" || p.ParentPathID != "" {
 		i.c.add("genesis_path_mismatch", "paths."+g.OutputPathID, "genesis path differs from authority")
 	}
+	if scope, scopeOK := i.view.Routing.Scopes[g.RootScopeID]; scopeOK && scope.State == ScopeOpen && activationOK && scope.EventSeq != a.EventSeq {
+		i.c.add("genesis_scope_event", "scopes."+g.RootScopeID, "open genesis scope event differs from genesis activation")
+	}
 	zeroInputs := 0
-	for _, activation := range i.view.Routing.Activations {
+	for _, id := range sortedMapKeys(i.view.Routing.Activations) {
+		activation := i.view.Routing.Activations[id]
 		if len(activation.InputPathIDs) == 0 {
 			zeroInputs++
 		}
@@ -189,8 +273,18 @@ func (i *aggregateIndex) indexReservations() {
 }
 
 func (i *aggregateIndex) indexPaths() {
+	if i.childrenByParent == nil {
+		i.childrenByParent = map[PathID]map[PathID]struct{}{}
+	}
 	for _, id := range sortedMapKeys(i.view.Routing.Paths) {
 		path := i.view.Routing.Paths[id]
+		if len(path.ProducedPathIDs) > 0 {
+			children := make(map[PathID]struct{}, len(path.ProducedPathIDs))
+			for _, childID := range path.ProducedPathIDs {
+				children[childID] = struct{}{}
+			}
+			i.childrenByParent[id] = children
+		}
 		if path.Kind == PathActivationOutput && path.SourceActivation.ID != "" {
 			if previous, exists := i.outputs[path.SourceActivation.ID]; exists && previous != id {
 				i.c.add("activation_output_duplicate", "paths."+id, "activation %q has outputs %q and %q", path.SourceActivation.ID, previous, id)
@@ -288,6 +382,17 @@ func (i *aggregateIndex) validateCommandsAndAuthority() {
 			i.c.add("admin_actor_invalid", "adminRecords."+id+".actor", "user/admin authority cannot use automatic actor %q", record.Actor)
 		}
 	}
+	for _, id := range sortedMapKeys(i.view.AdminResolutions) {
+		resolution := i.view.AdminResolutions[id]
+		if _, err := ValidateBlockResolution(resolution); err != nil {
+			if _, owned := i.view.AdminRecords[id]; !owned {
+				i.c.add("admin_resolution_invalid", "adminResolutions."+id, "%v", err)
+			}
+		}
+		if _, ok := i.view.AdminRecords[id]; !ok {
+			i.c.add("admin_resolution_orphan", "adminResolutions."+id, "resolution has no owning admin record")
+		}
+	}
 }
 
 func (i *aggregateIndex) validateScopes() {
@@ -306,6 +411,9 @@ func (i *aggregateIndex) validateScopes() {
 		}
 		if !s.State.Valid() || !s.CloseReason.Valid() {
 			i.c.add("scope_state_invalid", path, "invalid state/reason %q/%q", s.State, s.CloseReason)
+		}
+		if s.EventSeq < 0 {
+			i.c.add("scope_sequence", path, "negative event sequence")
 		}
 		if !sortedUnique(s.ExpectedBranchEdgeIDs) {
 			i.c.add("scope_branches_noncanonical", path+".expectedBranchEdgeIds", "expected branches are not sorted and unique")
@@ -346,6 +454,11 @@ func (i *aggregateIndex) validateScopes() {
 			if s.CloseReason != ScopeCloseNone || s.ClosedByCommandID != "" {
 				i.c.add("open_scope_closed_fields", path, "open scope has close authority")
 			}
+			if !root {
+				if output, ok := i.view.Routing.Paths[s.ForkOutputPathID]; ok && s.EventSeq != output.UpdatedSeq {
+					i.c.add("scope_open_event", path, "open child scope event differs from its exact fork-output split event")
+				}
+			}
 		case ScopeClosedActivated:
 			if s.CloseReason != ScopeCloseAll && s.CloseReason != ScopeCloseAny {
 				i.c.add("scope_close_reason", path, "closed activated scope has reason %q", s.CloseReason)
@@ -379,18 +492,22 @@ func (i *aggregateIndex) validateScopes() {
 }
 
 func (i *aggregateIndex) validateRootScopeClosure(path string, scope ScopeRecord, noActivation bool) {
-	var reducer *ActivationReservation
-	for _, candidate := range i.view.Routing.Reservations {
+	reducers := make([]ActivationReservation, 0, 1)
+	for _, id := range sortedMapKeys(i.view.Routing.Reservations) {
+		candidate := i.view.Routing.Reservations[id]
 		if candidate.IsReducing && candidate.ReducesScopeID == scope.ID {
-			copy := candidate
-			reducer = &copy
-			break
+			reducers = append(reducers, candidate)
 		}
 	}
-	if reducer == nil {
+	if len(reducers) == 0 {
 		i.c.add("root_scope_close_authority", path, "closed root scope lacks an exact reducing reservation")
 		return
 	}
+	if len(reducers) != 1 {
+		i.c.add("root_scope_close_authority", path, "closed root scope has %d reducing reservations, want exactly one", len(reducers))
+		return
+	}
+	reducer := reducers[0]
 	if reducer.CommandID != scope.ClosedByCommandID {
 		i.c.add("root_scope_close_authority", path, "root scope close command does not match reducing reservation")
 	}
@@ -456,9 +573,13 @@ func indexForest(parents map[string]string, maxDepth int, diagnose func(code, id
 			if color[f.id] == 2 {
 				continue
 			}
-			if f.depth > maxDepth {
-				diagnose("ancestry_depth_over_budget", f.id, fmt.Sprintf("ancestry exceeds %d", maxDepth))
-				continue
+			// Forest depth is a node count: a root has count 1. The internal
+			// zero-based depth therefore accepts 0..maxDepth-1 and rejects
+			// maxDepth. Once saturated, descendants remain at maxDepth so the
+			// entire malformed subtree is visited exactly once rather than
+			// being retried as roots in the final unreachable-node pass.
+			if f.depth >= maxDepth {
+				diagnose("ancestry_depth_over_budget", f.id, fmt.Sprintf("ancestry node count exceeds %d", maxDepth))
 			}
 			color[f.id] = 1
 			intervals[f.id] = treeInterval{in: clock, depth: f.depth}
@@ -471,7 +592,11 @@ func indexForest(parents map[string]string, maxDepth int, diagnose func(code, id
 					diagnose("ancestry_cycle", child, "ancestry cycle detected")
 					continue
 				}
-				stack = append(stack, frame{id: child, depth: f.depth + 1})
+				childDepth := f.depth
+				if childDepth < maxDepth {
+					childDepth++
+				}
+				stack = append(stack, frame{id: child, depth: childDepth})
 			}
 		}
 	}
@@ -503,7 +628,8 @@ func compareActivationRef(a, b *ActivationRef) bool {
 func (i *aggregateIndex) validatePaths() {
 	childSeen := map[string]string{}
 	inputSeen := map[string]string{}
-	for activationID, activation := range i.view.Routing.Activations {
+	for _, activationID := range sortedMapKeys(i.view.Routing.Activations) {
+		activation := i.view.Routing.Activations[activationID]
 		for _, pathID := range activation.InputPathIDs {
 			if previous, ok := inputSeen[pathID]; ok {
 				i.c.add("path_double_consumed", "activations."+activationID, "path %q is input to %q and %q", pathID, previous, activationID)
@@ -555,10 +681,10 @@ func (i *aggregateIndex) validatePaths() {
 			}
 		}
 		if p.ParentPathID != "" {
-			parent, ok := i.view.Routing.Paths[p.ParentPathID]
+			_, ok := i.view.Routing.Paths[p.ParentPathID]
 			if !ok {
 				i.c.add("path_parent_missing", path, "parent %q is missing", p.ParentPathID)
-			} else if !slices.Contains(parent.ProducedPathIDs, id) {
+			} else if _, exists := i.childrenByParent[p.ParentPathID][id]; !exists {
 				i.c.add("path_parent_forward_link", path, "parent %q does not list child", p.ParentPathID)
 			}
 		}
@@ -966,7 +1092,7 @@ func (i *aggregateIndex) validateActivation(id string, a ActivationRecord) {
 			i.c.add("activation_command_authority", path, "command does not authorize this activation generation")
 		}
 	}
-	if a.EventSeq < 0 {
+	if a.EventSeq < 0 || a.Receipt.EventSeq < 0 {
 		i.c.add("activation_sequence", path, "negative event sequence")
 	}
 	if a.Receipt.ActivationID != a.ID || a.Receipt.ReservationID != a.ReservationID || a.Receipt.InputSetDigest != a.InputSetDigest || a.Receipt.OutputPathID != a.OutputPathID || a.Receipt.Result != ReceiptActivated || a.Receipt.CommandID != a.CommandID || a.Receipt.EventSeq != a.EventSeq {
@@ -999,6 +1125,9 @@ func (i *aggregateIndex) validateReservation(id string, r ActivationReservation)
 	}
 	if !r.JoinPolicy.Valid() || !r.State.Valid() {
 		i.c.add("reservation_state_policy", path, "invalid state/policy %q/%q", r.State, r.JoinPolicy)
+	}
+	if r.EventSeq < 0 {
+		i.c.add("reservation_sequence", path, "negative event sequence")
 	}
 	if !slices.IsSortedFunc(r.Candidates, func(a, b CandidateRecord) int { return cmp.Compare(a.ID, b.ID) }) {
 		i.c.add("reservation_candidates_order", path+".candidates", "candidates are not sorted by ID")
@@ -1109,6 +1238,9 @@ func (i *aggregateIndex) validateReservation(id string, r ActivationReservation)
 		i.validateReservationCommand(path, r)
 		if r.CloseReceipt != nil {
 			receipt := r.CloseReceipt
+			if receipt.EventSeq < 0 {
+				i.c.add("reservation_sequence", path+".closeReceipt", "negative event sequence")
+			}
 			i.refCommand(receipt.CommandID, path+".closeReceipt.commandId")
 			if receipt.ActivationID != "" || receipt.ReservationID != r.ID || receipt.OutputPathID != "" || receipt.Result != ReceiptClosedNoActivation || receipt.JoinPolicy != r.JoinPolicy || receipt.CauseDigest != r.CauseDigest || receipt.CommandID != r.CommandID || receipt.EventSeq != r.EventSeq {
 				i.c.add("close_receipt_fields", path+".closeReceipt", "close receipt does not match reservation")

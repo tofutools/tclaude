@@ -81,24 +81,13 @@ func (i *aggregateIndex) validateSettleAttemptTerminal(path string, p PathRecord
 	if !ok || source.Identity.Kind != CommandPerformAttempt || source.ID != id.InputDigest || source.Identity.RunID != id.RunID || source.Identity.SourceActivationID != id.SourceActivationID || source.Identity.SourceGeneration != id.SourceGeneration || source.Identity.Attempt != id.Attempt || (source.State != CommandObserved && source.State != CommandReconciled) {
 		fail("settlement input does not name its exact settled perform-attempt command")
 	}
-	for otherID, other := range i.view.Commands {
-		if otherID == source.ID || other.Identity.Kind != CommandPerformAttempt {
-			continue
-		}
-		if other.Identity.RunID == id.RunID && other.Identity.SourceActivationID == id.SourceActivationID && other.Identity.SourceGeneration == id.SourceGeneration && other.Identity.Attempt == id.Attempt {
-			fail("performer attempt has multiple source commands")
-			break
-		}
+	attemptKey := terminalAttemptKey{run: id.RunID, activation: id.SourceActivationID, generation: id.SourceGeneration, try: id.Attempt}
+	if hasOtherRegistryID(i.performAttempts[attemptKey], source.ID) {
+		fail("performer attempt has multiple source commands")
 	}
-	for otherID, other := range i.view.Commands {
-		if otherID == settle.ID || other.Identity.Kind != CommandSettleAttempt {
-			continue
-		}
-		otherIdentity := other.Identity
-		if otherIdentity.RunID == id.RunID && otherIdentity.SourceActivationID == id.SourceActivationID && otherIdentity.SourceGeneration == id.SourceGeneration && (otherIdentity.Attempt == id.Attempt || otherIdentity.InputDigest == id.InputDigest) {
-			fail("performer attempt has multiple settlement observations")
-			break
-		}
+	inputKey := terminalInputKey{run: id.RunID, activation: id.SourceActivationID, generation: id.SourceGeneration, input: id.InputDigest}
+	if hasOtherRegistryID(i.settlementAttempts[attemptKey], settle.ID) || hasOtherRegistryID(i.settlementInputs[inputKey], settle.ID) {
+		fail("performer attempt has multiple settlement observations")
 	}
 	attemptID, err := AttemptIdentity(i.view.RunID, id.SourceActivationID, id.Attempt)
 	effect, effectOK := i.view.SideEffects[attemptID]
@@ -106,11 +95,8 @@ func (i *aggregateIndex) validateSettleAttemptTerminal(path string, p PathRecord
 	if err != nil || !effectOK || effect.Kind != SideEffectAttempt || effect.ActivationID != id.SourceActivationID || effect.Attempt != id.Attempt || effect.State != wantEffect {
 		fail("settlement lacks its exact terminal attempt lifecycle evidence")
 	}
-	for _, other := range i.view.SideEffects {
-		if other.Kind == SideEffectAttempt && other.ActivationID == id.SourceActivationID && other.Attempt > id.Attempt {
-			fail("settlement replays attempt %d after later attempt %d", id.Attempt, other.Attempt)
-			break
-		}
+	if later := i.maxSideEffectAttempt[id.SourceActivationID]; later > id.Attempt {
+		fail("settlement replays attempt %d after later attempt %d", id.Attempt, later)
 	}
 	wantResult := string(p.State)
 	if p.State == PathEnded {
@@ -134,6 +120,10 @@ func (i *aggregateIndex) validateSettleAttemptTerminal(path string, p PathRecord
 		id.PlanDigest != payloadDigest(settle.Payload) || id.PlanDigest != settle.PayloadHash {
 		fail("settlement observation digest does not bind the exact source, attempt, result, and reason")
 	}
+}
+
+func hasOtherRegistryID(value registryMultiplicity, own string) bool {
+	return value.count > 1 || value.count == 1 && value.sole != own
 }
 
 func (i *aggregateIndex) validateRouteTerminal(path string, p PathRecord, d DispositionReceipt, route CommandRecord) {

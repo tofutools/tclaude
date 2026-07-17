@@ -82,6 +82,50 @@ func validateAuthority(view AggregateView, c diagnosticCollector) bool {
 		c.add("authority_maps_nil", "authority", "scope/reservation authority maps must be non-nil")
 		return false
 	}
+	authorityRecords := boundedRegistryCount(MaxRoutingRecords, len(a.Scopes), len(a.Reservations))
+	if authorityRecords > MaxRoutingRecords {
+		c.add("authority_records_over_budget", "authority", "%d records exceed %d", authorityRecords, MaxRoutingRecords)
+		return false
+	}
+	// Bound list cardinality and its minimum reference cost before validating
+	// list elements. At most MaxIDReferences candidate elements can reach the
+	// detailed pass below, even when authority is adversarial.
+	preflight := usageCounter{}
+	for _, id := range sortedMapKeys(a.Scopes) {
+		scope := a.Scopes[id]
+		if len(scope.ExpectedBranchEdgeIDs) > MaxRoutingList {
+			c.add("authority_list_over_budget", "authority", "list length %d exceeds %d", len(scope.ExpectedBranchEdgeIDs), MaxRoutingList)
+			return false
+		}
+		preflight.reference(uint64(len(scope.ExpectedBranchEdgeIDs)) + 6)
+		if preflight.referencesOverBudget() {
+			c.add("authority_references_over_budget", "authority", "%d references exceed %d", preflight.references, MaxIDReferences)
+			return false
+		}
+	}
+	for _, id := range sortedMapKeys(a.Reservations) {
+		reservation := a.Reservations[id]
+		if len(reservation.Candidates) > MaxRoutingList || len(reservation.PossibleSlots) > MaxRoutingList {
+			c.add("authority_list_over_budget", "authority", "list length exceeds %d", MaxRoutingList)
+			return false
+		}
+		preflight.reference(uint64(len(reservation.Candidates)) + 6*uint64(len(reservation.PossibleSlots)) + 5)
+		if preflight.referencesOverBudget() {
+			c.add("authority_references_over_budget", "authority", "%d references exceed %d", preflight.references, MaxIDReferences)
+			return false
+		}
+		for _, candidate := range reservation.Candidates {
+			if len(candidate.PossibleSlotIDs) > MaxRoutingList {
+				c.add("authority_list_over_budget", "authority", "list length %d exceeds %d", len(candidate.PossibleSlotIDs), MaxRoutingList)
+				return false
+			}
+			preflight.reference(uint64(len(candidate.PossibleSlotIDs)) + 2)
+			if preflight.referencesOverBudget() {
+				c.add("authority_references_over_budget", "authority", "%d references exceed %d", preflight.references, MaxIDReferences)
+				return false
+			}
+		}
+	}
 	counter := usageCounter{records: uint64(len(a.Scopes)) + uint64(len(a.Reservations))}
 	addReferences := func(n uint64) {
 		if err := counter.add(&counter.references, n); err != nil {
