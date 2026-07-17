@@ -75,6 +75,34 @@ func TestAgentsByConvCarriesActorLifecycleState(t *testing.T) {
 	assert.True(t, rows["current-conv"].Retired)
 }
 
+func TestAgentsByIDUsesStableActorKey(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := AllocateAgent("old-conv", "spawn")
+	require.NoError(t, err)
+	require.NoError(t, SetAgentPendingName(agentID, "pending-name"))
+	require.NoError(t, LinkConvToAgent("current-conv", agentID, ConvRoleHead, "reincarnate"))
+	moved, err := SetAgentCurrentConv(agentID, "old-conv", "current-conv")
+	require.NoError(t, err)
+	require.True(t, moved)
+	otherID, err := AllocateAgent("other-conv", "spawn")
+	require.NoError(t, err)
+
+	rows, err := AgentsByID([]string{otherID, "agt_missing", agentID})
+	require.NoError(t, err)
+	assert.Equal(t, "current-conv", rows[agentID].CurrentConvID)
+	assert.Equal(t, "pending-name", rows[agentID].PendingName)
+	assert.False(t, rows[agentID].Retired)
+	assert.Equal(t, "other-conv", rows[otherID].CurrentConvID)
+	assert.NotContains(t, rows, "agt_missing")
+
+	retired, err := RetireAgentByID(agentID, "human", "done")
+	require.NoError(t, err)
+	require.True(t, retired)
+	rows, err = AgentsByID([]string{agentID})
+	require.NoError(t, err)
+	assert.True(t, rows[agentID].Retired)
+}
+
 func TestAgentsByConvMarksSupersededOrphanActor(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, RecordConvSuccession("predecessor", "successor", "reincarnate"))

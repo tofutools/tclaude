@@ -57,6 +57,7 @@ func TestAccessRequests_RoundTripHandledHistory(t *testing.T) {
 		ID:              "ar-1",
 		Perm:            "human.notify",
 		ConvID:          "conv-a",
+		AgentID:         "agt_captured_caller",
 		ConvTitle:       "tester",
 		Path:            "POST /v1/notify-human",
 		BodyPreview:     `{"subject":"hi"}`,
@@ -67,6 +68,18 @@ func TestAccessRequests_RoundTripHandledHistory(t *testing.T) {
 		Status:          "approved",
 		CreatedAt:       created,
 		DecidedAt:       decided,
+	}))
+	// A later lifecycle write from a legacy caller must not erase the stable
+	// identity already captured on the pending/request write.
+	require.NoError(t, UpsertAccessRequest(&AccessRequest{
+		ID:            "ar-1",
+		Perm:          "human.notify",
+		ConvID:        "conv-a",
+		ConvTitle:     "tester",
+		AutoGrantable: true,
+		Status:        "approved",
+		CreatedAt:     created,
+		DecidedAt:     decided,
 	}))
 	require.NoError(t, UpsertAccessRequest(&AccessRequest{
 		ID:        "ar-pending",
@@ -83,6 +96,8 @@ func TestAccessRequests_RoundTripHandledHistory(t *testing.T) {
 	assert.Equal(t, "ar-1", got.ID)
 	assert.Equal(t, "human.notify", got.Perm)
 	assert.Equal(t, "conv-a", got.ConvID)
+	assert.Equal(t, "agt_captured_caller", got.AgentID,
+		"explicitly captured identity must not be re-resolved from mutable conv metadata")
 	assert.Equal(t, "tester", got.ConvTitle)
 	assert.Equal(t, "approved", got.Status)
 	assert.True(t, got.AutoGrantable)

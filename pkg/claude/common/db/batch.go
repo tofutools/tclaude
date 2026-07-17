@@ -451,6 +451,49 @@ func PendingNamesByAgent(agentIDs []string) (map[string]string, error) {
 	return out, nil
 }
 
+// AgentsByID bulk-loads the requested stable actors, keyed by agent_id. It is
+// the stable-keyed companion to AgentsByConv: callers that already captured an
+// actor identity must not walk back through a conversation generation to
+// refresh display metadata, because that generation may be stale or no longer
+// belong to a live actor.
+func AgentsByID(agentIDs []string) (map[string]ConvAgent, error) {
+	out := make(map[string]ConvAgent, len(agentIDs))
+	if len(agentIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkStrings(agentIDs, batchChunkSize) {
+		clause, args := inClause(chunk)
+		rows, err := d.Query(`SELECT agent_id, current_conv_id, pending_name,
+				created_at, retired_at
+			FROM agents WHERE agent_id `+clause, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var ca ConvAgent
+			var createdAt, retiredAt string
+			if err := rows.Scan(&ca.AgentID, &ca.CurrentConvID, &ca.PendingName,
+				&createdAt, &retiredAt); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			ca.Retired = retiredAt != ""
+			ca.CreatedAt = CanonicalAgeTimestamp(createdAt)
+			out[ca.AgentID] = ca
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // AgentsByConv bulk-resolves each conv-id to its owning actor via the
 // agent_conversations JOIN, keyed by conv-id. CurrentConvID, Retired, and the
 // indexed succession existence check let snapshot callers reject a retired

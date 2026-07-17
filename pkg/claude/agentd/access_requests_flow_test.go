@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -18,7 +19,11 @@ type accessReqSnapshot struct {
 		ID            string `json:"id"`
 		Perm          string `json:"perm"`
 		ConvID        string `json:"conv_id"`
+		AgentID       string `json:"agent_id"`
+		CurrentConvID string `json:"current_conv_id"`
 		ConvTitle     string `json:"conv_title"`
+		CallerState   string `json:"caller_state"`
+		TitleStatus   string `json:"title_status"`
 		AutoGrantable bool   `json:"auto_grantable"`
 		CreatedAt     string `json:"created_at"`
 		Deadline      string `json:"deadline"`
@@ -26,6 +31,80 @@ type accessReqSnapshot struct {
 		DecidedAt     string `json:"decided_at"`
 	} `json:"access_requests"`
 	AccessRequestsPending int `json:"access_requests_pending"`
+}
+
+func TestAccessRequests_RefreshesCallerMetadataByStableAgent(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+
+	const requestConv = "access-old-generation"
+	const currentConv = "access-current-generation"
+	const unrelatedConv = "access-unrelated-generation"
+	const id = "access-refresh-stable-caller"
+	agentID, _, err := db.EnsureAgentForConv(requestConv, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: requestConv, CustomTitle: "title-at-request",
+	}))
+	unrelatedID, _, err := db.EnsureAgentForConv(unrelatedConv, "test")
+	require.NoError(t, err)
+	require.NotEqual(t, agentID, unrelatedID)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: unrelatedConv, CustomTitle: "wrong-actor-title",
+	}))
+
+	done, cleanup := agentd.SeedApprovalCallerWithWaiterForTest(
+		id, "self.rename", unrelatedConv, agentID, false)
+	t.Cleanup(cleanup)
+	h := agentd.BuildDashboardHandlerForTest()
+
+	assertCaller := func(wantTitle, wantCurrent, wantState, wantTitleStatus string) accessReqSnapshot {
+		t.Helper()
+		snap := fetchAccessReqSnapshot(t, h)
+		require.Len(t, snap.AccessRequests, 1)
+		got := snap.AccessRequests[0]
+		assert.Equal(t, agentID, got.AgentID, "captured stable caller leads identity")
+		assert.Equal(t, unrelatedConv, got.ConvID, "request correlation generation stays immutable")
+		assert.Equal(t, wantCurrent, got.CurrentConvID)
+		assert.Equal(t, wantTitle, got.ConvTitle)
+		assert.Equal(t, wantState, got.CallerState)
+		assert.Equal(t, wantTitleStatus, got.TitleStatus)
+		assert.NotEqual(t, "wrong-actor-title", got.ConvTitle,
+			"display refresh must never borrow metadata from the request conv's other actor")
+		return snap
+	}
+
+	assertCaller("title-at-request", requestConv, "active", "current")
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: requestConv, CustomTitle: "renamed-while-pending",
+	}))
+	assertCaller("renamed-while-pending", requestConv, "active", "current")
+
+	require.NoError(t, db.LinkConvToAgent(currentConv, agentID, db.ConvRoleHead, "reincarnate"))
+	moved, err := db.SetAgentCurrentConv(agentID, requestConv, currentConv)
+	require.NoError(t, err)
+	require.True(t, moved)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: currentConv, CustomTitle: "current-incarnation",
+	}))
+	assertCaller("current-incarnation", currentConv, "active", "current")
+
+	retired, err := db.RetireAgentByID(agentID, "human", "test")
+	require.NoError(t, err)
+	require.True(t, retired)
+	assertCaller("current-incarnation", currentConv, "retired", "current")
+
+	require.NoError(t, db.DeleteConvIndex(currentConv))
+	assertCaller("(title unavailable)", currentConv, "retired", "unavailable")
+
+	rec := testharness.Serve(h, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+id+"/decision", map[string]any{"decision": "deny"}))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.False(t, <-done)
+
+	// Handled history preserves the captured stable identity and continues to
+	// degrade explicitly after the in-memory request is gone.
+	assertCaller("(title unavailable)", currentConv, "retired", "unavailable")
 }
 
 func fetchAccessReqSnapshot(t *testing.T, mux http.Handler) accessReqSnapshot {

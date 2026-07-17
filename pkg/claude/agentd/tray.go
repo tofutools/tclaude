@@ -408,22 +408,40 @@ func refreshApprovalsSubmenu(header *systray.MenuItem, slots []*approvalSlot, su
 		label := formatApprovalSlotLabel(row)
 		s.setID(row.ID)
 		s.item.SetTitle(label)
-		s.item.SetTooltip(fmt.Sprintf("perm=%s · conv=%s · id=%s",
-			row.Perm, row.ConvTitle, row.ID))
+		s.item.SetTooltip(fmt.Sprintf("perm=%s · agent=%s · request-conv=%s · current-conv=%s · id=%s",
+			row.Perm, row.AgentID, row.ConvID, row.CurrentConvID, row.ID))
 		s.item.Show()
 	}
 }
 
 // formatApprovalSlotLabel renders one menu-item label. Kept short so
-// it fits typical tray-menu width: "<perm> · <who> · 24s ago".
-// Conv-title falls back to a short id when no title is known.
+// it fits typical tray-menu width. The stable agent id leads the caller
+// identity; the current title follows as mutable display metadata.
 func formatApprovalSlotLabel(row pendingApprovalSummary) string {
-	who := row.ConvTitle
-	if who == "" {
-		who = shortApprovalID(row.ConvID)
+	stableID := shortApprovalAgentID(row.AgentID)
+	if stableID == "" {
+		stableID = shortApprovalID(row.ConvID)
+	}
+	title := row.ConvTitle
+	if title == "" {
+		title = approvalTitleMissing
+	}
+	state := ""
+	switch row.CallerState {
+	case approvalCallerRetired:
+		state = " · retired"
+	case approvalCallerMissing:
+		state = " · metadata missing"
 	}
 	age := time.Since(row.CreatedAt).Round(time.Second)
-	return fmt.Sprintf("%s · %s · %s ago", row.Perm, who, age)
+	return fmt.Sprintf("%s · %s · %s%s · %s ago", row.Perm, stableID, title, state, age)
+}
+
+func shortApprovalAgentID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func shortApprovalID(id string) string {
