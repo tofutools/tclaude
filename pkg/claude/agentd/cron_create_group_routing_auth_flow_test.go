@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -117,8 +116,6 @@ func TestCronCreateRoutingGroup_CanonicalTargetCannotHideForeignRawRoute(t *test
 
 func TestCronCreateRoutingGroup_MissingArchivedAndUnauthorizedAreNonEnumeratingBeforeApproval(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
-	t.Cleanup(restoreApproval)
 
 	var denialBodies []string
 	for _, kind := range []string{"unauthorized", "missing", "archived"} {
@@ -148,15 +145,11 @@ func TestCronCreateRoutingGroup_MissingArchivedAndUnauthorizedAreNonEnumeratingB
 					"interval": "30s", "body": "must-not-land",
 					"run_immediately": true, "queue_when_offline": true,
 				}), caller)
-			req.Header.Set("X-Tclaude-Ask-Human", "5s")
-			result := make(chan *httptest.ResponseRecorder, 1)
-			go func() { result <- testharness.Serve(f.Mux, req) }()
-			var rec *httptest.ResponseRecorder
-			select {
-			case rec = <-result:
-			case <-time.After(time.Second):
-				t.Fatal("routing-group denial waited for current-target approval")
-			}
+			// A short real timeout keeps a regression bounded while the
+			// production audit and dashboard stores, rather than an approval
+			// stub, prove that this denial never opened an interactive request.
+			req.Header.Set("X-Tclaude-Ask-Human", "1ms")
+			rec := testharness.Serve(f.Mux, req)
 			assertDeniedCronCreateHasNoSideEffects(t, f, rec, caller)
 			denialBodies = append(denialBodies, rec.Body.String())
 
@@ -171,13 +164,10 @@ func TestCronCreateRoutingGroup_MissingArchivedAndUnauthorizedAreNonEnumeratingB
 	require.Len(t, denialBodies, 3)
 	assert.Equal(t, denialBodies[0], denialBodies[1])
 	assert.Equal(t, denialBodies[0], denialBodies[2])
-	assert.Zero(t, approvalCalls())
 }
 
 func TestCronCreateRoutingGroup_ReauthorizesAtomicallyBeforeImmediateInsertAndFire(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
-	t.Cleanup(restoreApproval)
 	f := newFlow(t)
 	const caller = "crcg-race-aaaa-bbbb-cccc-000000000001"
 	prepareCronRoutingCaller(t, f, caller, "race-create-caller")
@@ -194,15 +184,17 @@ func TestCronCreateRoutingGroup_ReauthorizesAtomicallyBeforeImmediateInsertAndFi
 		"target": "race-create-caller", "group_id": g.ID, "interval": "30s",
 		"body": "must-not-land", "run_immediately": true, "queue_when_offline": true,
 	}), caller)
-	req.Header.Set("X-Tclaude-Ask-Human", "5s")
+	req.Header.Set("X-Tclaude-Ask-Human", "1ms")
 	rec := testharness.Serve(f.Mux, req)
 
 	assert.Equal(t, int32(1), hookCalls.Load())
 	assertDeniedCronCreateHasNoSideEffects(t, f, rec, caller)
-	assert.Zero(t, approvalCalls(), "locked reauthorization must remain non-interactive")
 	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.request"})
 	require.NoError(t, err)
 	assert.Empty(t, rows)
+	snapshot := fetchAccessReqSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	assert.Zero(t, snapshot.AccessRequestsPending)
+	assert.Empty(t, snapshot.AccessRequests)
 }
 
 func TestCronCreateRoutingGroup_GroupTargetStillIgnoresSiblingRawOverride(t *testing.T) {

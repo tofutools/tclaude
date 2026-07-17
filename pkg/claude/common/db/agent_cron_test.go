@@ -1,13 +1,96 @@
 package db
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"modernc.org/sqlite"
 )
+
+const beginObservedSQLiteDriverName = "sqlite-cron-begin-observer"
+
+var (
+	registerBeginObservedSQLiteDriver sync.Once
+	beginObservedSQLiteDriver         = &beginObservedDriver{inner: &sqlite.Driver{}}
+)
+
+// beginObservedDriver preserves the production SQLite driver behavior and
+// exposes only the instant immediately before a connection attempts BeginTx.
+// The signal lets the concurrency test below release a real SQLite writer
+// without sleeps or an application-level test hook.
+type beginObservedDriver struct {
+	inner driver.Driver
+	mu    sync.Mutex
+	next  func()
+}
+
+func (d *beginObservedDriver) Open(name string) (driver.Conn, error) {
+	conn, err := d.inner.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return &beginObservedConn{Conn: conn, driver: d}, nil
+}
+
+func (d *beginObservedDriver) arm(next func()) {
+	d.mu.Lock()
+	d.next = next
+	d.mu.Unlock()
+}
+
+func (d *beginObservedDriver) observeBegin() {
+	d.mu.Lock()
+	next := d.next
+	d.next = nil
+	d.mu.Unlock()
+	if next != nil {
+		next()
+	}
+}
+
+type beginObservedConn struct {
+	driver.Conn
+	driver *beginObservedDriver
+}
+
+func (c *beginObservedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	if !opts.ReadOnly {
+		c.driver.observeBegin()
+	}
+	return c.Conn.(driver.ConnBeginTx).BeginTx(ctx, opts)
+}
+
+func reopenWithBeginObservedSQLite(t *testing.T) *sql.DB {
+	t.Helper()
+	database, err := Open()
+	require.NoError(t, err)
+	dbPath := globalDBPath
+	require.NoError(t, database.Close())
+
+	registerBeginObservedSQLiteDriver.Do(func() {
+		sql.Register(beginObservedSQLiteDriverName, beginObservedSQLiteDriver)
+	})
+	dsn := dbPath + "?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	observed, err := sql.Open(beginObservedSQLiteDriverName, dsn)
+	require.NoError(t, err)
+	observed.SetMaxIdleConns(sqliteMaxIdleConnections)
+	require.NoError(t, observed.Ping())
+
+	stateMu.Lock()
+	globalDB = observed
+	dbReady = true
+	initErr = nil
+	stateMu.Unlock()
+	t.Cleanup(func() { beginObservedSQLiteDriver.arm(nil) })
+	return observed
+}
 
 func TestAgentCronJob_InsertGetList(t *testing.T) {
 	setupTestDB(t)
@@ -92,6 +175,95 @@ func TestInsertAgentCronJobWithRoutingAuthority_IsAtomicWithGroupAuthority(t *te
 	rows, listErr = ListAgentCronJobs()
 	require.NoError(t, listErr)
 	require.Len(t, rows, 1, "only the authorized row may persist")
+}
+
+func TestInsertAgentCronJobWithRoutingAuthority_ReadsAuthorityAfterBeginImmediate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mutate    func(*testing.T, *sql.Tx, int64, string)
+		wantError error
+	}{
+		{
+			name: "membership removed",
+			mutate: func(t *testing.T, tx *sql.Tx, groupID int64, agentID string) {
+				t.Helper()
+				_, err := tx.Exec(`DELETE FROM agent_group_members WHERE group_id = ? AND agent_id = ?`,
+					groupID, agentID)
+				require.NoError(t, err)
+			},
+			wantError: ErrAgentCronRoutingGroupUnauthorized,
+		},
+		{
+			name: "group archived",
+			mutate: func(t *testing.T, tx *sql.Tx, groupID int64, _ string) {
+				t.Helper()
+				_, err := tx.Exec(`UPDATE agent_groups SET archived_at = ? WHERE id = ?`,
+					time.Now().UTC().Format(time.RFC3339Nano), groupID)
+				require.NoError(t, err)
+			},
+			wantError: ErrAgentCronRoutingGroupArchived,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			const caller = "cron-routing-boundary-caller"
+			_, _, err := EnsureAgentForConv(caller, "test")
+			require.NoError(t, err)
+			agentID, err := AgentIDForConv(caller)
+			require.NoError(t, err)
+			require.NotEmpty(t, agentID)
+			groupID, err := CreateAgentGroup("cron-routing-boundary", "")
+			require.NoError(t, err)
+			require.NoError(t, AddAgentGroupMember(&AgentGroupMember{
+				GroupID: groupID,
+				ConvID:  caller,
+			}))
+
+			database := reopenWithBeginObservedSQLite(t)
+			authorityMutation, err := database.Begin()
+			require.NoError(t, err)
+			tc.mutate(t, authorityMutation, groupID, agentID)
+
+			beginAttempted := make(chan struct{})
+			beginObservedSQLiteDriver.arm(func() { close(beginAttempted) })
+			type insertResult struct {
+				id  int64
+				err error
+			}
+			result := make(chan insertResult, 1)
+			go func() {
+				id, insertErr := InsertAgentCronJobWithRoutingAuthority(&AgentCronJob{
+					OwnerConv: caller, TargetKind: CronTargetConv, TargetConv: caller,
+					GroupID: groupID, IntervalSeconds: 60, Body: "must not persist", Enabled: false,
+				}, caller)
+				result <- insertResult{id: id, err: insertErr}
+			}()
+
+			select {
+			case <-beginAttempted:
+				// The production insert is now attempting BEGIN IMMEDIATE behind
+				// authorityMutation's real SQLite writer lock. If the authority
+				// SELECT were moved before Begin, it would already have observed
+				// the still-committed member/active-group state at this point.
+			case <-time.After(5 * time.Second):
+				_ = authorityMutation.Rollback()
+				t.Fatal("cron insert did not attempt BEGIN IMMEDIATE")
+			}
+			require.NoError(t, authorityMutation.Commit())
+
+			var inserted insertResult
+			select {
+			case inserted = <-result:
+			case <-time.After(5 * time.Second):
+				t.Fatal("cron insert did not resume after authority mutation committed")
+			}
+			assert.Zero(t, inserted.id)
+			require.ErrorIs(t, inserted.err, tc.wantError)
+			rows, err := ListAgentCronJobs()
+			require.NoError(t, err)
+			assert.Empty(t, rows, "stale authority persisted a cron row")
+		})
+	}
 }
 
 func TestAgentCronJob_DueLogic(t *testing.T) {
