@@ -101,6 +101,59 @@ func TestCronPatchRetarget_DeniesUnauthorizedAgentWithoutMutationOrTargetLeak(t 
 	assert.NotContains(t, rec.Body.String(), "private-destination")
 }
 
+func TestCronPatchRetarget_AskHumanCannotBlockOrCreateTargetOracle(t *testing.T) {
+	var denialBodies []string
+	for _, tc := range []struct {
+		name     string
+		target   string
+		existing bool
+	}{
+		{name: "existing unauthorized target", target: "crta-existing-aaaa-bbbb-cccc-000000000002", existing: true},
+		{name: "missing target", target: "crta-missing-aaaa-bbbb-cccc-000000000003"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+			f := newFlow(t)
+			const caller = "crta-ask-caller-aaaa-bbbb-cccc-000000000001"
+			job := createSelfManagedCron(t, f, caller)
+			if tc.existing {
+				f.HaveConvWithTitle(tc.target, "ask-human-private-target")
+				f.HaveEnrolledAgent(tc.target)
+			}
+			before, err := db.GetAgentCronJob(job.ID)
+			require.NoError(t, err)
+
+			req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+				"/v1/cron/"+strconv.FormatInt(job.ID, 10), map[string]any{
+					"target": tc.target, "body": "must-not-land", "run_immediately": true,
+				}), caller)
+			req.Header.Set("X-Tclaude-Ask-Human", "5s")
+			result := make(chan *httptest.ResponseRecorder, 1)
+			started := time.Now()
+			go func() { result <- testharness.Serve(f.Mux, req) }()
+			var rec *httptest.ResponseRecorder
+			select {
+			case rec = <-result:
+			case <-time.After(time.Second):
+				t.Fatal("retarget waited for interactive approval while holding cron authority")
+			}
+			assert.Less(t, time.Since(started), time.Second)
+			assertDeniedCronRetargetHasNoSideEffects(t, f, before, rec, caller, tc.target)
+			denialBodies = append(denialBodies, rec.Body.String())
+
+			rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "approval.request"})
+			require.NoError(t, err)
+			assert.Empty(t, rows, "retarget created a target-specific approval audit")
+			snapshot := fetchAccessReqSnapshot(t, agentd.BuildDashboardHandlerForTest())
+			assert.Zero(t, snapshot.AccessRequestsPending)
+			assert.Empty(t, snapshot.AccessRequests, "retarget created durable/pending approval state")
+		})
+	}
+	require.Len(t, denialBodies, 2)
+	assert.Equal(t, denialBodies[0], denialBodies[1],
+		"ask-human must not distinguish an existing proposed target from a missing one")
+}
+
 func TestCronPatchRetarget_UsesCanonicalAgentAndGroupAuthority(t *testing.T) {
 	t.Run("agent schedule grant allows cross-agent retarget", func(t *testing.T) {
 		f := newFlow(t)

@@ -978,12 +978,22 @@ func (w *cronAuthRecorder) Write(p []byte) (int, error) {
 }
 
 func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronTarget) bool {
+	// A proposed retarget is intentionally non-interactive. Starting a
+	// target-specific approval would distinguish an existing unauthorized
+	// selector from an unresolved one through timing and durable pending/audit
+	// state, and this gate runs under cronAuthorityMu where a 300s approval wait
+	// would stop scheduler ticks, retirement ordering, and every cron mutation.
+	// Static/default/sudo/ownership authority and already-bound approval proofs
+	// still flow through the canonical gates; only a new popup is suppressed.
+	authRequest := r.Clone(r.Context())
+	authRequest.Header = r.Header.Clone()
+	authRequest.Header.Del("X-Tclaude-Ask-Human")
 	rec := &cronAuthRecorder{}
 	var ok bool
 	if target.Kind == db.CronTargetGroup {
-		_, ok = authCronWriteGroup(rec, r, target.Group.ID)
+		_, ok = authCronWriteGroup(rec, authRequest, target.Group.ID)
 	} else {
-		_, ok = authCronWrite(rec, r, target.Conv)
+		_, ok = authCronWrite(rec, authRequest, target.Conv)
 	}
 	if ok {
 		return true
