@@ -56,8 +56,11 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   const failing = createJobsActions({
     state,
     requestMutation: async () => {
-      const error = new Error('dashboard mutation failed: HTTP 403');
-      error.body = 'permission denied for this job';
+      const error = new Error('dashboard mutation failed: HTTP 409');
+      error.body = {
+        code: 'not_runnable',
+        error: 'cron job owner is retired; the requested action was not applied',
+      };
       throw error;
     },
     refresh: async () => {}, confirm: async () => true,
@@ -66,7 +69,7 @@ test('Jobs actions preserve confirmation, mutation, modal, download, and error b
   });
   assert.equal(await failing.toggleCron({ id: 7, name: 'broken', enabled: false }), false);
   assert.deepEqual(notices.at(-1), [
-    'Request failed: dashboard mutation failed: HTTP 403: permission denied for this job', true,
+    'Request failed: dashboard mutation failed: HTTP 409: cron job owner is retired; the requested action was not applied', true,
   ]);
 });
 

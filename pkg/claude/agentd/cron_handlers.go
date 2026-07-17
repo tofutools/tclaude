@@ -188,10 +188,22 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
 	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
+		writeCronMutationError(w, "update", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeCronMutationError keeps retired-owner denials stable across the CLI and
+// dashboard twins. The wire deliberately reports only the authority state of
+// the cron job, never the owner's identity or retirement metadata.
+func writeCronMutationError(w http.ResponseWriter, operation string, err error) {
+	if errors.Is(err, db.ErrAgentCronOwnerRetired) {
+		writeError(w, http.StatusConflict, "not_runnable",
+			"cron job owner is retired; the requested action was not applied")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "io", operation+": "+err.Error())
 }
 
 func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
@@ -220,21 +232,11 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 	// manual fire agree on the latest cadence anchor.
 	job, err = db.GetLiveOwnerAgentCronJob(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "refresh before fire: "+err.Error())
+		writeCronMutationError(w, "refresh before fire", err)
 		return
 	}
 	if job == nil {
-		current, lookupErr := db.GetAgentCronJob(id)
-		if lookupErr != nil {
-			writeError(w, http.StatusInternalServerError, "io", "refresh before fire: "+lookupErr.Error())
-			return
-		}
-		if current == nil {
-			writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
-			return
-		}
-		writeError(w, http.StatusConflict, "not_runnable",
-			"job owner retired before the manual fire could run")
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
 	status, err := fireCronJobAndRecord(job, time.Now())
@@ -528,7 +530,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := db.InsertAgentCronJob(job)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "insert: "+err.Error())
+		writeCronMutationError(w, "insert", err)
 		return
 	}
 	row, _ := db.GetAgentCronJob(id)
@@ -671,16 +673,22 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	if !ok {
 		return
 	}
-	// Serialize flag transitions with scheduled delivery. Re-read after taking
-	// the lock so two concurrent false→true PATCHes cannot both observe false.
-	if patch.RunImmediately != nil || patch.Enabled != nil || patch.QueueWhenOffline != nil {
+	// Serialize every real mutation with scheduled delivery and retirement.
+	// Re-read after taking the lock so two concurrent false→true PATCHes cannot
+	// both observe false, and so a retired owner can never race a body/schedule
+	// edit into a misleading success response.
+	if !patch.Empty() {
 		if cronBeforeAuthorityLockForTest != nil {
 			cronBeforeAuthorityLockForTest("patch")
 		}
 		cronAuthorityMu.Lock()
 		defer cronAuthorityMu.Unlock()
 		job, err = db.GetAgentCronJob(id)
-		if err != nil || job == nil {
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "refresh before update: "+err.Error())
+			return
+		}
+		if job == nil {
 			writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 			return
 		}
@@ -697,7 +705,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	n, err := db.UpdateAgentCronJobFields(id, patch)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "update: "+err.Error())
+		writeCronMutationError(w, "update", err)
 		return
 	}
 	// Setting an expression re-anchors the schedule at "now" (keeping the

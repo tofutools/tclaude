@@ -118,13 +118,16 @@ func TestAgentCronJob_DueLogicExcludesRetiredOwner(t *testing.T) {
 	require.True(t, out.Retired)
 	require.Equal(t, int64(1), out.CronDisabled)
 
-	// The supported writer refuses to restore scheduled authority. The due
-	// query is an independent defense against a stale/hand-edited row.
-	require.ErrorContains(t, SetAgentCronJobEnabled(jobID, true), "owner agent is retired")
+	// Every supported writer returns the same classifiable denial. The due query
+	// is an independent defense against a stale/hand-edited row.
+	require.ErrorIs(t, SetAgentCronJobEnabled(jobID, true), ErrAgentCronOwnerRetired)
+	require.ErrorIs(t, SetAgentCronJobEnabled(jobID, false), ErrAgentCronOwnerRetired)
 	enabled := true
 	n, err := UpdateAgentCronJobFields(jobID, UpdateCronPatch{Enabled: &enabled})
-	require.NoError(t, err)
-	assert.Zero(t, n, "patch writer cannot restore a retired owner's job")
+	require.ErrorIs(t, err, ErrAgentCronOwnerRetired)
+	assert.Zero(t, n, "denied patch reports no affected row")
+	_, err = GetLiveOwnerAgentCronJob(jobID)
+	require.ErrorIs(t, err, ErrAgentCronOwnerRetired)
 	d, err := Open()
 	require.NoError(t, err)
 	_, err = d.Exec(`UPDATE agent_cron_jobs SET enabled = 1 WHERE id = ?`, jobID)
@@ -132,6 +135,137 @@ func TestAgentCronJob_DueLogicExcludesRetiredOwner(t *testing.T) {
 	due, err := ListDueAgentCronJobs(time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Empty(t, due)
+}
+
+func TestAgentCronJob_RetiredOwnerRejectsEveryFieldMutationAtomically(t *testing.T) {
+	setupTestDB(t)
+	const owner = "cron-retired-patch-owner"
+	const target = "cron-retired-patch-target"
+	jobID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "before", OwnerConv: owner, TargetConv: target,
+		IntervalSeconds: 60, Subject: "before-subject", Body: "before-body",
+		Enabled: true, QueueWhenOffline: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, UpdateAgentCronJobLastRun(jobID,
+		time.Now().Add(-time.Hour).UTC().Truncate(time.Second), "ok"))
+	_, err = RetireAgentAuthorizationByConv(owner, "human", "test")
+	require.NoError(t, err)
+
+	before, err := GetAgentCronJob(jobID)
+	require.NoError(t, err)
+	require.NotNil(t, before)
+	name := "after"
+	interval := int64(3600)
+	cronExpr := "0 9 * * *"
+	subject := "after-subject"
+	body := "after-body"
+	enabled := true
+	runImmediately := true
+	queueWhenOffline := false
+	replacementOwner := "cron-denied-replacement-owner"
+	replacementTarget := "cron-denied-replacement-target"
+	for label, patch := range map[string]UpdateCronPatch{
+		"name":                {Name: &name},
+		"owner":               {OwnerConv: &replacementOwner},
+		"target":              {TargetConv: &replacementTarget},
+		"interval":            {IntervalSeconds: &interval},
+		"cron expression":     {CronExpr: &cronExpr},
+		"subject":             {Subject: &subject},
+		"body":                {Body: &body},
+		"enable":              {Enabled: &enabled},
+		"run immediately":     {RunImmediately: &runImmediately},
+		"queue while offline": {QueueWhenOffline: &queueWhenOffline},
+	} {
+		t.Run(label, func(t *testing.T) {
+			n, updateErr := UpdateAgentCronJobFields(jobID, patch)
+			require.ErrorIs(t, updateErr, ErrAgentCronOwnerRetired)
+			assert.Zero(t, n)
+			after, getErr := GetAgentCronJob(jobID)
+			require.NoError(t, getErr)
+			assert.Equal(t, before, after, "denied mutation changed the stored row")
+		})
+	}
+	for _, conv := range []string{replacementOwner, replacementTarget} {
+		agentID, lookupErr := AgentIDForConv(conv)
+		require.NoError(t, lookupErr)
+		assert.Empty(t, agentID, "denied patch enrolled %s outside the rolled-back transaction", conv)
+	}
+}
+
+func TestAgentCronJob_RetiredOwnerDenialIsNotOrdinaryNoop(t *testing.T) {
+	setupTestDB(t)
+	const liveOwner = "cron-live-noop-owner"
+	liveID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "same", OwnerConv: liveOwner, TargetConv: liveOwner,
+		IntervalSeconds: 60, Body: "same-body", Enabled: false,
+	})
+	require.NoError(t, err)
+	before, err := GetAgentCronJob(liveID)
+	require.NoError(t, err)
+
+	// Exact unchanged writes from a live owner retain their historical success
+	// semantics; classification is based on owner state, not RowsAffected.
+	name := before.Name
+	body := before.Body
+	enabled := before.Enabled
+	n, err := UpdateAgentCronJobFields(liveID, UpdateCronPatch{
+		Name: &name, Body: &body, Enabled: &enabled,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	require.NoError(t, SetAgentCronJobEnabled(liveID, before.Enabled))
+	after, err := GetAgentCronJob(liveID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+
+	_, err = RetireAgentAuthorizationByConv(liveOwner, "human", "test")
+	require.NoError(t, err)
+	retiredBefore, err := GetAgentCronJob(liveID)
+	require.NoError(t, err)
+	n, err = UpdateAgentCronJobFields(liveID, UpdateCronPatch{Name: &name})
+	require.ErrorIs(t, err, ErrAgentCronOwnerRetired)
+	assert.Zero(t, n)
+	retiredAfter, err := GetAgentCronJob(liveID)
+	require.NoError(t, err)
+	assert.Equal(t, retiredBefore, retiredAfter)
+}
+
+func TestAgentCronJob_RejectsRetiredOwnerOnInsertAndReassignment(t *testing.T) {
+	setupTestDB(t)
+	const retiredOwner = "cron-retired-new-owner"
+	if _, _, err := EnsureAgentForConv(retiredOwner, "test"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := RetireAgentAuthorizationByConv(retiredOwner, "human", "test")
+	require.NoError(t, err)
+
+	_, err = InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: retiredOwner, TargetConv: "cron-insert-target",
+		IntervalSeconds: 60, Body: "must not insert", Enabled: true,
+	})
+	require.ErrorIs(t, err, ErrAgentCronOwnerRetired)
+	jobs, err := ListAgentCronJobs()
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
+	insertTargetAgent, err := AgentIDForConv("cron-insert-target")
+	require.NoError(t, err)
+	assert.Empty(t, insertTargetAgent, "denied insert enrolled its target")
+
+	liveID, err := InsertAgentCronJob(&AgentCronJob{
+		OwnerConv: "cron-live-reassign-owner", TargetConv: "cron-reassign-target",
+		IntervalSeconds: 60, Body: "must stay live-owned", Enabled: false,
+	})
+	require.NoError(t, err)
+	before, err := GetAgentCronJob(liveID)
+	require.NoError(t, err)
+	replacementOwner := retiredOwner
+	n, err := UpdateAgentCronJobFields(liveID, UpdateCronPatch{OwnerConv: &replacementOwner})
+	require.ErrorIs(t, err, ErrAgentCronOwnerRetired)
+	assert.Zero(t, n)
+	after, err := GetAgentCronJob(liveID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }
 
 func TestRetireRestampsAlreadyPausedOwnedCronJob(t *testing.T) {

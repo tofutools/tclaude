@@ -265,7 +265,14 @@ func TestCronRunNow_RevalidatesRetirementUnderAuthorityLock(t *testing.T) {
 	t.Cleanup(restore)
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
 		t, http.MethodPost, "/v1/cron/"+strconv.FormatInt(job.ID, 10)+"/run-now", nil)))
-	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	assertCronRetiredOwnerResponse(t, rec)
+	after, err := db.GetAgentCronJob(job.ID)
+	require.NoError(t, err)
+	assert.False(t, after.Enabled)
+	assert.True(t, after.LastRunAt.IsZero())
+	runs, err := db.ListAgentCronRunsForJob(job.ID, 0)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
 	assert.Zero(t, msgRowCount(t, target), "retired authority cannot deliver after commit")
 }
 
@@ -291,7 +298,10 @@ func TestCronCreateImmediate_RetirementWinsBeforeAuthorityLock(t *testing.T) {
 			"owner": owner, "target": target, "interval": "1h", "body": "must not fire",
 			"run_immediately": true,
 		})))
-	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assertCronRetiredOwnerResponse(t, rec)
+	jobs, err := db.ListAgentCronJobs()
+	require.NoError(t, err)
+	assert.Empty(t, jobs, "retirement before insert leaves no job to run later")
 	assert.Zero(t, msgRowCount(t, target), "retirement before insert prevents immediate delivery")
 }
 
