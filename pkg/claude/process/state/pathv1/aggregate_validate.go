@@ -454,6 +454,11 @@ func (i *aggregateIndex) validateScopes() {
 			if s.CloseReason != ScopeCloseNone || s.ClosedByCommandID != "" {
 				i.c.add("open_scope_closed_fields", path, "open scope has close authority")
 			}
+			if !root {
+				if output, ok := i.view.Routing.Paths[s.ForkOutputPathID]; ok && s.EventSeq != output.UpdatedSeq {
+					i.c.add("scope_open_event", path, "open child scope event differs from its exact fork-output split event")
+				}
+			}
 		case ScopeClosedActivated:
 			if s.CloseReason != ScopeCloseAll && s.CloseReason != ScopeCloseAny {
 				i.c.add("scope_close_reason", path, "closed activated scope has reason %q", s.CloseReason)

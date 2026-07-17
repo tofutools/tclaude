@@ -22,6 +22,8 @@ type LegacyAdminTimestampMissingError struct {
 	ResolutionTimestampMissing bool
 }
 
+const blockResolutionAdminType = string(legacy.EventBlockResolutionRecorded)
+
 func (e *LegacyAdminTimestampMissingError) Error() string {
 	if e == nil {
 		return ""
@@ -85,10 +87,16 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 		return err
 	}
 	if resolution == nil {
+		if !legacy && record.AdminType == blockResolutionAdminType {
+			return fmt.Errorf("block-resolution admin record lacks resolution")
+		}
 		if record.ResolutionDigest != "" {
 			return fmt.Errorf("admin record has digest without resolution")
 		}
 	} else {
+		if !legacy && record.AdminType != blockResolutionAdminType {
+			return fmt.Errorf("admin type %q cannot carry block resolution", record.AdminType)
+		}
 		digest, err := ValidateBlockResolution(*resolution)
 		if err != nil {
 			return err

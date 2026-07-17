@@ -227,7 +227,7 @@ func (i *aggregateIndex) validatePropagation() {
 	for _, id := range sortedMapKeys(i.view.Routing.Propagation) {
 		intent := i.view.Routing.Propagation[id]
 		path := "propagation." + id
-		if intent.ID != id || !intent.State.Valid() || int(intent.Cursor) > len(intent.Frontier) {
+		if intent.ID != id || !intent.State.Valid() || intent.Cursor > uint32(len(intent.Frontier)) {
 			i.c.add("propagation_shape", path, "intent key/state/cursor is invalid")
 		}
 		if intent.EventSeq < 0 {
@@ -252,10 +252,10 @@ func (i *aggregateIndex) validatePropagation() {
 			}
 			seen[key] = struct{}{}
 		}
-		if intent.State == PropagationComplete && int(intent.Cursor) != len(intent.Frontier) {
+		if intent.State == PropagationComplete && intent.Cursor != uint32(len(intent.Frontier)) {
 			i.c.add("propagation_complete_cursor", path, "complete intent cursor is %d of %d", intent.Cursor, len(intent.Frontier))
 		}
-		if intent.State == PropagationPending && int(intent.Cursor) == len(intent.Frontier) {
+		if intent.State == PropagationPending && intent.Cursor == uint32(len(intent.Frontier)) {
 			i.c.add("propagation_pending_cursor", path, "pending intent has exhausted frontier")
 		}
 		plan, err := PropagationPlanIdentity(intent.RootReservationID, intent.RootCandidateID, intent.RootCauseDigest, uint64(intent.Shard), intent.Frontier)
@@ -278,7 +278,7 @@ func (i *aggregateIndex) validatePropagation() {
 				continue
 			}
 			_, closed := i.view.Routing.CandidateClosures[key]
-			processed := index < int(intent.Cursor)
+			processed := uint32(index) < intent.Cursor
 			if processed && !closed && !i.propagationEntryArrived(key) {
 				i.c.add("propagation_frontier_unclosed", path, "processed frontier key %q has no required closure or arrival", key)
 			}

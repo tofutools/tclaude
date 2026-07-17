@@ -114,7 +114,7 @@ func checkedUsageInt(name string, value uint64) (int, error) {
 //     target reservation, input digest, cause digest, and plan digest;
 //   - side effect: activation and source command;
 //   - admin record: evidence and resolution digest;
-//   - admin resolution: node and evidence.
+//   - admin resolution: owning admin-record map key, node, and evidence.
 //
 // Registry cardinality is saturated at MaxRoutingRecords+1 before any record
 // is scanned. The reference pass is therefore record-bounded and itself stops
@@ -338,7 +338,7 @@ func MeasureAggregate(view AggregateView) (Usage, error) {
 	}
 	for _, id := range sortedMapKeys(view.AdminResolutions) {
 		resolution := view.AdminResolutions[id]
-		if err := u.ids(resolution.NodeID, resolution.EvidenceRef); err != nil {
+		if err := u.ids(id, resolution.NodeID, resolution.EvidenceRef); err != nil {
 			return Usage{}, err
 		}
 		if u.referencesOverBudget() {

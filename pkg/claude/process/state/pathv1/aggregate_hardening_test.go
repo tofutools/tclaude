@@ -253,6 +253,42 @@ func TestAggregateSequenceDomainPreservesLegitimateZeroAndPositive(t *testing.T)
 	}
 }
 
+func TestOpenChildScopeEventMatchesExactForkOutput(t *testing.T) {
+	t.Parallel()
+	source := parallelSplitSource(2)
+	checkpoint := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyParallelInput(t.Context(), checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathID := input.base.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	command, err := PlanParallelSplit(t.Context(), input, pathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := ReduceParallelSplit(t.Context(), input, pathID, command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := projection.aggregate.View()
+	for _, id := range sortedMapKeys(view.Routing.Scopes) {
+		scope := view.Routing.Scopes[id]
+		if scope.ParentScopeID == "" {
+			continue
+		}
+		if scope.State != ScopeOpen || scope.EventSeq != view.Routing.Paths[scope.ForkOutputPathID].UpdatedSeq {
+			t.Fatalf("constructor child scope chronology = %#v", scope)
+		}
+		scope.EventSeq = 0
+		view.Routing.Scopes[id] = scope
+		if report := ValidateAggregate(view); !reportHasCode(report, "scope_open_event") {
+			t.Fatalf("diagnostics = %#v", report.Diagnostics)
+		}
+		return
+	}
+	t.Fatal("parallel split did not create an open child scope")
+}
+
 func TestPropagationCursorRequiresExactProcessedPrefix(t *testing.T) {
 	t.Parallel()
 	base := func(cursor uint32, state PropagationState) (*aggregateIndex, CandidateClosureKey, PropagationIntentID) {
@@ -302,6 +338,46 @@ func TestPropagationCursorRequiresExactProcessedPrefix(t *testing.T) {
 		index.validatePropagation()
 		if reportHasCode(*index.c.report, "propagation_frontier_unclosed") || reportHasCode(*index.c.report, "propagation_frontier_out_of_order") {
 			t.Fatalf("diagnostics = %#v", index.c.report.Diagnostics)
+		}
+	})
+	t.Run("cursor partitions a multi-entry frontier", func(t *testing.T) {
+		setup := func() (*aggregateIndex, CandidateClosureKey, CandidateClosureKey) {
+			index, first, oldID := base(1, PropagationPending)
+			second, err := CandidateClosureKeyIdentity("reservation", "candidate-2")
+			if err != nil {
+				t.Fatal(err)
+			}
+			frontier := []CandidateClosureKey{first, second}
+			plan, err := PropagationPlanIdentity("reservation", "candidate", "cause", 0, frontier)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intentID, err := PropagationIntentIdentity("cause", 0, plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent := index.view.Routing.Propagation[oldID]
+			delete(index.view.Routing.Propagation, oldID)
+			intent.ID, intent.Frontier, intent.PlanDigest = intentID, frontier, plan
+			index.view.Routing.Propagation[intentID] = intent
+			candidate := candidateKey{"reservation", "candidate-2"}
+			index.candidates[candidate] = CandidateRecord{ID: "candidate-2"}
+			index.candidateByClosureKey[second] = candidate
+			return index, first, second
+		}
+
+		index, _, second := setup()
+		index.view.Routing.CandidateClosures[second] = CandidateClosure{}
+		index.validatePropagation()
+		if !reportHasCode(*index.c.report, "propagation_frontier_unclosed") || !reportHasCode(*index.c.report, "propagation_frontier_out_of_order") {
+			t.Fatalf("misordered diagnostics = %#v", index.c.report.Diagnostics)
+		}
+
+		index, first, _ := setup()
+		index.view.Routing.CandidateClosures[first] = CandidateClosure{}
+		index.validatePropagation()
+		if reportHasCode(*index.c.report, "propagation_frontier_unclosed") || reportHasCode(*index.c.report, "propagation_frontier_out_of_order") {
+			t.Fatalf("valid partition diagnostics = %#v", index.c.report.Diagnostics)
 		}
 	})
 	t.Run("arrival is exact no-closure step", func(t *testing.T) {
@@ -387,10 +463,36 @@ func TestAggregateRejectsEveryAdminResolution(t *testing.T) {
 	}
 	t.Run("unreferenced by owner", func(t *testing.T) {
 		view := validGenesisFixture(t)
-		record := PathV1AdminRecord{RunID: view.RunID, AdminType: "block_resolution", Actor: "user:test", ReasonCode: "retry", Timestamp: valid.Timestamp}
+		record := PathV1AdminRecord{RunID: view.RunID, AdminType: "block_resolution_recorded", Actor: valid.Actor, ReasonCode: "retry", EvidenceRef: valid.EvidenceRef, Timestamp: valid.Timestamp}
 		record.ID, _ = AdminRecordIdentity(record)
 		view.AdminRecords[record.ID] = record
 		view.AdminResolutions[record.ID] = valid
+		if report := ValidateAggregate(view); !reportHasCode(report, "admin_invalid") {
+			t.Fatalf("diagnostics = %#v", report.Diagnostics)
+		}
+	})
+	t.Run("wrong owner type", func(t *testing.T) {
+		view := validGenesisFixture(t)
+		digest, err := ValidateBlockResolution(valid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		record := PathV1AdminRecord{RunID: view.RunID, AdminType: "admin_repair_recorded", Actor: valid.Actor, ReasonCode: "retry", EvidenceRef: valid.EvidenceRef, Timestamp: valid.Timestamp, ResolutionDigest: digest}
+		record.ID, err = AdminRecordIdentity(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view.AdminRecords[record.ID] = record
+		view.AdminResolutions[record.ID] = valid
+		if report := ValidateAggregate(view); !reportHasCode(report, "admin_invalid") {
+			t.Fatalf("diagnostics = %#v", report.Diagnostics)
+		}
+	})
+	t.Run("block-resolution owner requires resolution", func(t *testing.T) {
+		view := validGenesisFixture(t)
+		record := PathV1AdminRecord{RunID: view.RunID, AdminType: "block_resolution_recorded", Actor: valid.Actor, ReasonCode: "retry", EvidenceRef: valid.EvidenceRef, Timestamp: valid.Timestamp}
+		record.ID, _ = AdminRecordIdentity(record)
+		view.AdminRecords[record.ID] = record
 		if report := ValidateAggregate(view); !reportHasCode(report, "admin_invalid") {
 			t.Fatalf("diagnostics = %#v", report.Diagnostics)
 		}
@@ -401,7 +503,7 @@ func TestAggregateRejectsEveryAdminResolution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		record := PathV1AdminRecord{RunID: view.RunID, AdminType: "block_resolution", Actor: "system", ReasonCode: "retry", Timestamp: valid.Timestamp, ResolutionDigest: digest}
+		record := PathV1AdminRecord{RunID: view.RunID, AdminType: "block_resolution_recorded", Actor: "system", ReasonCode: "retry", EvidenceRef: valid.EvidenceRef, Timestamp: valid.Timestamp, ResolutionDigest: digest}
 		record.ID, err = AdminRecordIdentity(record)
 		if err != nil {
 			t.Fatal(err)
@@ -441,8 +543,8 @@ func TestMeasureAggregateIncludesEveryRegistryAndExternalReference(t *testing.T)
 	if usage.Records != 14 {
 		t.Fatalf("records = %d, want all 14 registries", usage.Records)
 	}
-	if usage.References != 14 {
-		t.Fatalf("external references = %d, want 14", usage.References)
+	if usage.References != 15 {
+		t.Fatalf("external references = %d, want 15", usage.References)
 	}
 }
 
@@ -461,7 +563,7 @@ func TestMeasureAggregateExternalRecordExactLimitAndBoundPlusOne(t *testing.T) {
 	}
 	view.AdminResolutions = map[string]BlockResolution{"over": {NodeID: strings.Repeat("n", 1)}}
 	usage, err = MeasureAggregate(view)
-	if err != nil || usage.Records != MaxRoutingRecords+1 {
+	if err != nil || usage.Records != MaxRoutingRecords+1 || usage.References != 0 {
 		t.Fatalf("bound+1 measurement: usage=%#v err=%v", usage, err)
 	}
 	var over *OverBudgetError
@@ -504,6 +606,40 @@ func TestMeasureAggregateExternalReferenceExactLimitAndBoundPlusOne(t *testing.T
 	}
 }
 
+func TestMeasureAggregateAdminResolutionOwnerReferenceAtExactLimit(t *testing.T) {
+	routing := NewRoutingState()
+	resolutions := make(map[string]BlockResolution, 50_000)
+	for n := 0; n < 50_000; n++ {
+		resolutions[fmt.Sprintf("resolution-%05d", n)] = BlockResolution{NodeID: "node", EvidenceRef: "evidence"}
+	}
+	record := CommandRecord{
+		IdempotencyKey: "idempotency",
+		PayloadHash:    "payload",
+		Identity: CommandIdentity{
+			SourceActivationID:  "activation",
+			SourcePathID:        "path",
+			TargetReservationID: "reservation",
+			InputDigest:         "input",
+			CauseDigest:         "cause",
+			PlanDigest:          "plan",
+		},
+	}
+	commands := make(map[string]CommandRecord, 31_250)
+	for n := 0; n < 31_250; n++ {
+		commands[fmt.Sprintf("command-%05d", n)] = record
+	}
+	view := AggregateView{Routing: &routing, Commands: commands, AdminResolutions: resolutions}
+	usage, err := MeasureAggregate(view)
+	if err != nil || usage.References != MaxIDReferences || usage.Validate() != nil {
+		t.Fatalf("exact resolution-owner reference limit: usage=%#v err=%v validate=%v", usage, err, usage.Validate())
+	}
+	view.SideEffects = map[string]SideEffectIdentity{"over": {ActivationID: "over"}}
+	usage, err = MeasureAggregate(view)
+	if err != nil || usage.References != MaxIDReferences+1 {
+		t.Fatalf("resolution-owner bound+1: usage=%#v err=%v", usage, err)
+	}
+}
+
 func BenchmarkIndexForestExactLimit(b *testing.B) {
 	for _, count := range []int{MaxLineageDepth, MaxLineageDepth + 1} {
 		parents := make(map[string]string, count)
@@ -536,7 +672,7 @@ func BenchmarkMeasureAggregatePreflight(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
 			usage, err := MeasureAggregate(view)
-			if err != nil || usage.Records != MaxRoutingRecords+1 {
+			if err != nil || usage.Records != MaxRoutingRecords+1 || usage.References != 0 {
 				b.Fatalf("usage=%#v err=%v", usage, err)
 			}
 		}
