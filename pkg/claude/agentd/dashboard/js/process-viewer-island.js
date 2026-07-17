@@ -136,7 +136,11 @@ export function ProcessViewerBoundary({
     }
     event.preventDefault();
     const next = VIEWER_DETAIL_TABS[nextIndex];
+    const page = detailPage(routing, next.key).page;
+    const limit = Math.max(1, page.limit || VIEWER_PAGE_LIMIT);
+    const maxOffset = page.total > 0 ? Math.floor((page.total - 1) / limit) * limit : 0;
     setTabKey(next.key);
+    if (offset > maxOffset) setOffset(maxOffset);
     globalThis.document?.getElementById(detailTabID(next.key))?.focus();
   };
 

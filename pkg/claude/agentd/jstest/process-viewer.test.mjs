@@ -132,13 +132,14 @@ test('viewer detail tabs expose complete ARIA relationships and automatic keyboa
   const harness = await createPreactHarness(t);
   const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');
   const keys = ['generations', 'scopes', 'closures', 'causeSets', 'causes', 'detachments', 'detachedSinks'];
+  const totals = { generations: 51, scopes: 51, closures: 3, causeSets: 51, causes: 51, detachments: 51, detachedSinks: 51 };
   const calls = [];
   const actions = { loadRunView: async (_id, offset, limit) => {
     calls.push({ offset, limit });
     const envelope = richEnvelope();
     envelope.viewerV2.routing.details = Object.fromEntries(keys.map((key) => [key, {
-      page: { offset, limit, total: 51, hasMore: offset + limit < 51 },
-      items: Array.from({ length: Math.min(limit, 51 - offset) }, () => ({})),
+      page: { offset, limit, total: totals[key], hasMore: offset + limit < totals[key] },
+      items: Array.from({ length: Math.min(limit, Math.max(0, totals[key] - offset)) }, () => ({})),
     }]));
     return envelope;
   } };
@@ -176,18 +177,27 @@ test('viewer detail tabs expose complete ARIA relationships and automatic keyboa
   await press('ArrowRight');
   assert.equal(selectedTab().id, 'process-viewer-detail-tab-scopes');
   assert.equal(harness.document.activeElement, selectedTab());
-  await press('ArrowLeft');
+  assert.deepEqual(calls, [{ offset: 0, limit: 25 }, { offset: 25, limit: 25 }],
+    'keyboard selection retains a page that is valid for the target tab');
+  assert.match(mounted.container.querySelector('.process-viewer-detail-summary').textContent, /26–50 of 51/);
+  await press('ArrowRight');
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-closures');
+  assert.deepEqual(calls.at(-1), { offset: 0, limit: 25 }, 'keyboard selection clamps an invalid target page');
+  assert.match(mounted.container.querySelector('.process-viewer-detail-summary').textContent, /1–3 of 3/);
+  await press('Home');
   assert.equal(selectedTab().id, 'process-viewer-detail-tab-generations');
   await press('ArrowLeft');
   assert.equal(selectedTab().id, 'process-viewer-detail-tab-detachedSinks', 'Left wraps to the last tab');
-  await press('Home');
+  await press('ArrowRight');
   assert.equal(selectedTab().id, 'process-viewer-detail-tab-generations');
   await press('End');
   assert.equal(selectedTab().id, 'process-viewer-detail-tab-detachedSinks');
-  assert.deepEqual(calls, [{ offset: 0, limit: 25 }, { offset: 25, limit: 25 }],
-    'keyboard selection retains the current bounded detail page');
-  assert.match(mounted.container.querySelector('.process-viewer-detail-summary').textContent, /26–50 of 51/);
 
+  const nextLastPage = [...mounted.container.querySelectorAll('.process-viewer-detail-summary button')]
+    .find((button) => /next/.test(button.textContent));
+  await harness.act(() => harness.fireEvent(nextLastPage, 'click'));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
   const closures = mounted.container.querySelector('#process-viewer-detail-tab-closures');
   await harness.act(() => harness.fireEvent(closures, 'click'));
   for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
