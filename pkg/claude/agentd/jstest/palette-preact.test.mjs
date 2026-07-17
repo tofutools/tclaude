@@ -179,6 +179,29 @@ test('palette island preserves markup, keyboard/mouse behavior, theme copy, focu
   assert.equal(state.open.value, false, 'another visible modal blocks the hotkey');
   blocker.remove();
 
+  const modal = harness.document.body.appendChild(harness.document.createElement('div'));
+  modal.className = 'modal-overlay show';
+  const modalInput = modal.appendChild(harness.document.createElement('input'));
+  let modalInputHotkey;
+  await harness.act(() => {
+    modalInputHotkey = harness.fireEvent(modalInput, 'keydown', { key: 'k', ctrlKey: true });
+  });
+  assert.equal(modalInputHotkey.defaultPrevented, false,
+    'a form control inside an ordinary modal retains Ctrl/Cmd-K ownership');
+  assert.equal(state.open.value, false, 'the palette still cannot stack over the ordinary modal');
+  modal.remove();
+
+  const chooser = harness.document.body.appendChild(harness.document.createElement('div'));
+  chooser.className = 'process-node-chooser';
+  const chooserCancel = chooser.appendChild(harness.document.createElement('button'));
+  let chooserHotkey;
+  await harness.act(() => {
+    chooserHotkey = harness.fireEvent(chooserCancel, 'keydown', { key: 'k', ctrlKey: true });
+  });
+  assert.equal(chooserHotkey.defaultPrevented, true, 'the anchored chooser claims Ctrl/Cmd-K');
+  assert.equal(state.open.value, false, 'the palette cannot stack over the anchored chooser');
+  chooser.remove();
+
   await harness.act(() => harness.fireEvent(button, 'click'));
   assert.equal(state.open.value, true, 'the discoverable button opens without hotkey gating');
   await harness.act(() => harness.fireEvent(overlay, 'click'));

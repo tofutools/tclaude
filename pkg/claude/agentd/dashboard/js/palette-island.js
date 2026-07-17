@@ -12,6 +12,9 @@ export const WIZARD_PLACEHOLDER =
   'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
 export const WIZARD_EMPTY = 'No such incantation in this tome';
 export const PAGE_FALLBACK = 10;
+export const PROCESS_NODE_CHOOSER_SELECTOR = '.process-node-chooser';
+export const PALETTE_BLOCKING_OVERLAY_SELECTOR =
+  `.modal-overlay.show, .manage-overlay.show, ${PROCESS_NODE_CHOOSER_SELECTOR}`;
 
 export function isCommandPaletteShortcutTarget(target) {
   const element = target?.nodeType === 1 ? target : target?.parentElement;
@@ -27,6 +30,13 @@ export function PaletteLauncher({ state, documentRef = document }) {
     const onKeyDown = (event) => {
       if (event.repeat || !(event.ctrlKey || event.metaKey)) return;
       if ((event.key || '').toLowerCase() !== 'k') return;
+      // An anchored graph chooser is dialog state even though it deliberately
+      // does not use the full-screen modal overlay. Claim the shortcut there
+      // so the browser and global palette cannot steal it from the chooser.
+      if (!state.open.value && documentRef.querySelector(PROCESS_NODE_CHOOSER_SELECTOR)) {
+        event.preventDefault();
+        return;
+      }
       // Ctrl/Cmd-K belongs to inputs and embedded editors while the palette is
       // closed. Once open, its own input intentionally keeps the toggle-close
       // behavior.
@@ -39,12 +49,12 @@ export function PaletteLauncher({ state, documentRef = document }) {
       // Do not stack the launcher over a form or management dialog. The
       // palette's own closed overlay is present but lacks .show, so it does not
       // block itself.
-      if (documentRef.querySelector('.modal-overlay.show, .manage-overlay.show')) return;
+      if (documentRef.querySelector(PALETTE_BLOCKING_OVERLAY_SELECTOR)) return;
       state.show();
     };
     const onOpenRequest = () => {
       if (state.open.value) return;
-      if (documentRef.querySelector('.modal-overlay.show, .manage-overlay.show')) return;
+      if (documentRef.querySelector(PALETTE_BLOCKING_OVERLAY_SELECTOR)) return;
       state.show();
     };
     documentRef.addEventListener('keydown', onKeyDown);

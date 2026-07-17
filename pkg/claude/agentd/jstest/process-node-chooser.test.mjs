@@ -107,3 +107,45 @@ test('wizard chooser changes presentation while plain search terms remain usable
   key(harness.window, dispose.input, 'Enter');
   assert.deepEqual(chosen, ['wait']);
 });
+
+test('directionally unavailable types stay visible, disabled, and keep the chooser open', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { openProcessNodeTypeChooser } = await harness.importDashboardModule('js/process-node-chooser.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const chosen = [];
+  const dispose = openProcessNodeTypeChooser({
+    host, anchor: { x: 20, y: 20 }, onChoose: (type) => chosen.push(type),
+    availability: (type) => type === 'end' ? {
+      enabled: false, disabledReason: 'End nodes cannot be sources because they cannot have outgoing edges.',
+    } : null,
+    documentRef: harness.document, wizard: false,
+  });
+  await Promise.resolve();
+
+  dispose.input.value = 'end';
+  dispose.input.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  const end = host.querySelector('[data-command-id="process.create.end"]');
+  assert.equal(end.getAttribute('aria-disabled'), 'true');
+  assert.match(end.textContent, /cannot have outgoing edges/);
+  end.click();
+  key(harness.window, dispose.input, 'Enter');
+  assert.deepEqual(chosen, []);
+  assert.equal(dispose.element.isConnected, true, 'a rejected directional choice preserves its reason');
+});
+
+test('Escape from the Cancel button closes and restores focus', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { openProcessNodeTypeChooser } = await harness.importDashboardModule('js/process-node-chooser.js');
+  const trigger = harness.document.body.appendChild(harness.document.createElement('button'));
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const dispose = openProcessNodeTypeChooser({
+    host, anchor: { x: 20, y: 20 }, onChoose() {}, restoreFocus: () => trigger.focus(),
+    documentRef: harness.document, wizard: false,
+  });
+  await Promise.resolve();
+  const cancel = host.querySelector('.process-node-chooser-cancel');
+  cancel.focus();
+  key(harness.window, cancel, 'Escape');
+  assert.equal(dispose.element.isConnected, false);
+  assert.equal(harness.document.activeElement, trigger);
+});

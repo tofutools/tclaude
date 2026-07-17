@@ -124,7 +124,8 @@ type State struct {
 	// does not abort the run — the sheet records the error under the tile.
 	JS string
 	// Actions run after JS using Chrome's input domain. Supported kinds: click,
-	// key-down, key-up, key, mouse-down, mouse-down-at, move-by, mouse-up, eval.
+	// key-down, key-up, key, mouse-down, mouse-down-at, move-by, move-to-at,
+	// mouse-up, eval.
 	Actions []BrowserAction
 	// SettleMS optionally overrides the post-JS settle wait (ms) for states with
 	// animations/transitions that need longer to paint. 0 uses cfg.SettleMS.
@@ -409,6 +410,15 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 					steps = 1
 				}
 				if err := sp.Mouse.MoveLinear(proto.NewPoint(position.X+action.DX, position.Y+action.DY), steps); err != nil {
+					panic(err)
+				}
+			case "move-to-at":
+				position := sp.MustEval(`() => { ` + action.JS + ` }`)
+				steps := action.Steps
+				if steps < 1 {
+					steps = 1
+				}
+				if err := sp.Mouse.MoveLinear(proto.NewPoint(position.Get("x").Num(), position.Get("y").Num()), steps); err != nil {
 					panic(err)
 				}
 			case "mouse-up":

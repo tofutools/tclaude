@@ -797,6 +797,10 @@ export class ProcessTemplateEditor {
       host: this.stage,
       anchor: { x: anchor.left, y: anchor.top },
       restoreFocus: () => this.graph.focus(),
+      availability: (type) => source.port === 'in' && type === 'end' ? {
+        enabled: false,
+        disabledReason: 'End nodes cannot be sources because they cannot have outgoing edges.',
+      } : null,
       onChoose: (type) => this.addConnectedNodeType(type, source, dropPoint),
       onClose: () => {
         if (this.nodeChooserDispose === dispose) this.nodeChooserDispose = null;
