@@ -80,6 +80,10 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
 	must(`class="spawn-ico"`, "the group spawn button carries the user-plus icon")
 	must(`class="subgroup-ico"`, "the subgroup button carries a portable two-person-plus icon")
 	must(`openGroupCreateModal(undefined, group)`, "the subgroup shortcut opens group create pinned to its parent")
+	must(`labelledby="group-create-title"
+    onClose=${state.close}
+    onSubmitHotkey=${submit}`,
+		"the subgroup create dialog submits through the shared Ctrl/Cmd+Enter hotkey")
 	must(`parent ? parentPrefill(null, parent)`,
 		"switching a subgroup form back to blank restores the parent's editable defaults")
 	must(`parentPrefill(template, parent)`,
