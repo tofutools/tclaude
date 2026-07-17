@@ -6,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
+	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -36,7 +39,6 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("parse process template YAML: %w", err)
 	}
-
 	diagnosticBudget := &templateDiagnosticBudget{}
 	diagnostics := duplicateKeyDiagnostics(&root, diagnosticBudget)
 	if diagnosticBudget.exhausted {
@@ -45,7 +47,7 @@ func parseSource(data []byte, authoring bool) (*ParsedTemplate, error) {
 			SourceHash:  hashBytes(data),
 		}, nil
 	}
-	pruneDuplicateKeys(&root)
+	root = *pruneDuplicateKeys(&root)
 	cardinality, cardinalityStatus, structuralDiagnostics := rawNormalizedGraphCardinality(&root)
 	if cardinalityDiagnostics := normalizedGraphCardinalityDiagnostics(cardinality); cardinalityDiagnostics.HasErrors() {
 		for _, diagnostic := range cardinalityDiagnostics {
@@ -519,32 +521,81 @@ func mappingKeyID(node *yaml.Node) string {
 	return node.Value
 }
 
+// freeformMappingKeyIdentity mirrors both stages of scalar-key identity below
+// freeform fields: yaml.v3 first resolves keys into a map[any]any, then
+// normalizeInterfaceAnyMap stringifies them. Either stage can collide. Keeping
+// both identities matters for signed zero: float64(-0) equals float64(0) as a
+// Go map key, but stringifies as "-0", which is distinct from integer 0's "0".
+type freeformMappingKeyIdentity struct {
+	normalized string
+	decoded    any
+	comparable bool
+}
+
+func freeformMappingKeyIdentityOf(node *yaml.Node) freeformMappingKeyIdentity {
+	node = resolvedScalarNode(node)
+	if node == nil {
+		return freeformMappingKeyIdentity{normalized: mappingKeyID(node)}
+	}
+	var value any
+	if err := node.Decode(&value); err != nil {
+		return freeformMappingKeyIdentity{normalized: mappingKeyID(node)}
+	}
+	normalized, ok := value.(string)
+	if !ok {
+		normalized = fmt.Sprint(value)
+	}
+	comparable := value == nil
+	if valueType := reflect.TypeOf(value); valueType != nil {
+		comparable = valueType.Comparable()
+	}
+	if comparable && value != nil {
+		// NaN is comparable but not equal to itself, so Go maps preserve each
+		// occurrence as a distinct decoded key. It must not participate in the
+		// decoded-key index; normalized string identity still handles any later
+		// collision during freeform normalization.
+		comparable = value == value
+	}
+	return freeformMappingKeyIdentity{
+		normalized: normalized,
+		decoded:    value,
+		comparable: comparable,
+	}
+}
+
+func resolvedScalarNode(node *yaml.Node) *yaml.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.ScalarNode {
+		return node
+	}
+	if node.Kind != yaml.AliasNode {
+		return nil
+	}
+	seen := make(map[*yaml.Node]struct{})
+	for node.Kind == yaml.AliasNode {
+		if _, cycle := seen[node]; cycle {
+			return nil
+		}
+		seen[node] = struct{}{}
+		node = node.Alias
+		if node == nil {
+			return nil
+		}
+	}
+	if node.Kind != yaml.ScalarNode {
+		return nil
+	}
+	return node
+}
+
 // decodedStructuralScalar mirrors yaml.v3's Decode-to-string semantics for
 // Template.Start and string-keyed graph maps. It follows scalar aliases with
 // cycle protection; complex/wrong-kind keys remain the decoder's error.
 func decodedStructuralScalar(node *yaml.Node) (string, bool) {
+	node = resolvedScalarNode(node)
 	if node == nil {
-		return "", false
-	}
-	if node.Kind != yaml.AliasNode {
-		if node.Kind != yaml.ScalarNode {
-			return "", false
-		}
-		var value string
-		if err := node.Decode(&value); err != nil {
-			return "", false
-		}
-		return value, true
-	}
-	seen := make(map[*yaml.Node]struct{})
-	for node != nil && node.Kind == yaml.AliasNode {
-		if _, cycle := seen[node]; cycle {
-			return "", false
-		}
-		seen[node] = struct{}{}
-		node = node.Alias
-	}
-	if node == nil || node.Kind != yaml.ScalarNode {
 		return "", false
 	}
 	var value string
@@ -554,42 +605,161 @@ func decodedStructuralScalar(node *yaml.Node) (string, bool) {
 	return value, true
 }
 
-func pruneDuplicateKeys(root *yaml.Node) {
-	var walk func(node *yaml.Node)
-	walk = func(node *yaml.Node) {
-		if node == nil {
-			return
+type yamlMappingContext uint8
+
+const (
+	yamlMappingRoot yamlMappingContext = iota
+	yamlMappingParams
+	yamlMappingParam
+	yamlMappingNodes
+	yamlMappingNode
+	yamlMappingMetadata
+	yamlMappingFreeform
+	yamlMappingTyped
+)
+
+func yamlMappingChildContext(context yamlMappingContext, key string) yamlMappingContext {
+	switch context {
+	case yamlMappingRoot:
+		switch key {
+		case "params":
+			return yamlMappingParams
+		case "nodes":
+			return yamlMappingNodes
+		default:
+			return yamlMappingTyped
 		}
-		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
-			walk(node.Content[0])
-			return
+	case yamlMappingParams:
+		return yamlMappingParam
+	case yamlMappingParam:
+		if key == "default" {
+			return yamlMappingFreeform
+		}
+		return yamlMappingTyped
+	case yamlMappingNodes:
+		return yamlMappingNode
+	case yamlMappingNode:
+		if key == "metadata" {
+			return yamlMappingMetadata
+		}
+		return yamlMappingTyped
+	case yamlMappingMetadata, yamlMappingFreeform:
+		return yamlMappingFreeform
+	default:
+		return yamlMappingTyped
+	}
+}
+
+func mappingKeyIdentityForContext(node *yaml.Node, context yamlMappingContext) freeformMappingKeyIdentity {
+	if context == yamlMappingFreeform {
+		return freeformMappingKeyIdentityOf(node)
+	}
+	return freeformMappingKeyIdentity{normalized: mappingKeyID(node)}
+}
+
+type contextualYAMLNode struct {
+	node    *yaml.Node
+	context yamlMappingContext
+}
+
+// pruneDuplicateKeys applies last-wins pruning with immutable copy-on-write
+// views. Aliases reused under typed and freeform maps may need different key
+// identities, but unchanged subtrees remain shared; only mappings that lose a
+// duplicate and the ancestor pointers leading to them are copied.
+func pruneDuplicateKeys(root *yaml.Node) *yaml.Node {
+	memo := make(map[contextualYAMLNode]*yaml.Node)
+	active := make(map[contextualYAMLNode]struct{})
+	var walk func(node *yaml.Node, context yamlMappingContext) *yaml.Node
+	walk = func(node *yaml.Node, context yamlMappingContext) *yaml.Node {
+		if node == nil {
+			return nil
+		}
+		key := contextualYAMLNode{node: node, context: context}
+		if result := memo[key]; result != nil {
+			return result
+		}
+		if _, cycle := active[key]; cycle {
+			return node
+		}
+		active[key] = struct{}{}
+		defer delete(active, key)
+
+		if node.Kind == yaml.AliasNode {
+			target := walk(node.Alias, context)
+			if target == node.Alias {
+				memo[key] = node
+				return node
+			}
+			out := *node
+			out.Alias = target
+			memo[key] = &out
+			return &out
 		}
 		if node.Kind == yaml.MappingNode {
 			// YAML convention is last-wins for duplicate keys; keep each key at
 			// its final occurrence so the decoded template (and its semantic
 			// hash) match standard YAML semantics.
-			lastIndex := map[string]int{}
+			lastNormalized := map[string]int{}
+			lastDecoded := map[any]int{}
 			for i := 0; i < len(node.Content); i += 2 {
-				lastIndex[mappingKeyID(node.Content[i])] = i
+				identity := mappingKeyIdentityForContext(node.Content[i], context)
+				lastNormalized[identity.normalized] = i
+				if identity.comparable {
+					lastDecoded[identity.decoded] = i
+				}
 			}
-			pruned := make([]*yaml.Node, 0, len(node.Content))
+			var pruned []*yaml.Node
 			for i := 0; i < len(node.Content); i += 2 {
-				if lastIndex[mappingKeyID(node.Content[i])] != i {
+				identity := mappingKeyIdentityForContext(node.Content[i], context)
+				duplicate := lastNormalized[identity.normalized] != i
+				if identity.comparable && lastDecoded[identity.decoded] != i {
+					duplicate = true
+				}
+				if duplicate {
+					if pruned == nil {
+						pruned = append(make([]*yaml.Node, 0, len(node.Content)), node.Content[:i]...)
+					}
 					continue
 				}
-				pruned = append(pruned, node.Content[i], node.Content[i+1])
-				walk(node.Content[i+1])
+				value := walk(node.Content[i+1], yamlMappingChildContext(context, identity.normalized))
+				if value != node.Content[i+1] && pruned == nil {
+					pruned = append(make([]*yaml.Node, 0, len(node.Content)), node.Content[:i]...)
+				}
+				if pruned != nil {
+					pruned = append(pruned, node.Content[i], value)
+				}
 			}
-			node.Content = pruned
-			return
+			if pruned == nil {
+				memo[key] = node
+				return node
+			}
+			out := *node
+			out.Content = pruned
+			memo[key] = &out
+			return &out
 		}
-		if node.Kind == yaml.SequenceNode {
-			for _, child := range node.Content {
-				walk(child)
+		if node.Kind == yaml.DocumentNode || node.Kind == yaml.SequenceNode {
+			var content []*yaml.Node
+			for i, child := range node.Content {
+				result := walk(child, context)
+				if result != child && content == nil {
+					content = append([]*yaml.Node(nil), node.Content...)
+				}
+				if content != nil {
+					content[i] = result
+				}
+			}
+			if content != nil {
+				out := *node
+				out.Content = content
+				memo[key] = &out
+				return &out
 			}
 		}
+		memo[key] = node
+		return node
 	}
-	walk(root)
+	return walk(root, yamlMappingRoot)
 }
 
 // NormalizeEdges is the low-level deterministic projection. Production entry
@@ -659,7 +829,15 @@ func CanonicalYAML(tmpl *Template) ([]byte, error) {
 	}
 	clone := cloneTemplate(tmpl)
 	normalizeTemplate(&clone)
-	data, err := yaml.Marshal(&clone)
+	var root yaml.Node
+	if err := root.Encode(&clone); err != nil {
+		return nil, fmt.Errorf("canonicalize process template YAML: %w", err)
+	}
+	if err := restoreCanonicalYAMLStrings(&root, reflect.ValueOf(&clone)); err != nil {
+		return nil, fmt.Errorf("canonicalize process template YAML: %w", err)
+	}
+	quoteAmbiguousCanonicalYAMLKeys(&root)
+	data, err := yaml.Marshal(&root)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize process template YAML: %w", err)
 	}
@@ -667,6 +845,176 @@ func CanonicalYAML(tmpl *Template) ([]byte, error) {
 		data = append(data, '\n')
 	}
 	return data, nil
+}
+
+var nextReflectType = reflect.TypeFor[Next]()
+
+// restoreCanonicalYAMLStrings repairs a yaml.v3 node tree against the modeled
+// Go value. yaml.Node.Encode internally emits and reparses YAML, which can
+// normalize line endings or lose a leading newline in literal-block strings.
+// Restoring the exact value and quoting any scalar changed by that internal
+// round trip keeps CanonicalYAML lossless.
+func restoreCanonicalYAMLStrings(node *yaml.Node, value reflect.Value) error {
+	for value.IsValid() && (value.Kind() == reflect.Pointer || value.Kind() == reflect.Interface) {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
+	if node == nil || !value.IsValid() {
+		return nil
+	}
+	if value.Type() == nextReflectType && node.Kind == yaml.ScalarNode {
+		target := value.MapIndex(reflect.ValueOf(DefaultOutcome))
+		if target.IsValid() {
+			return restoreCanonicalYAMLStrings(node, target)
+		}
+		return nil
+	}
+	switch value.Kind() {
+	case reflect.String:
+		if node.Kind != yaml.ScalarNode {
+			return nil
+		}
+		if !utf8.ValidString(value.String()) {
+			// Node.Encode already represented this modeled string safely as a
+			// binary scalar. Replacing it with raw invalid UTF-8 tagged !!str
+			// would make the final yaml.Marshal fail.
+			return nil
+		}
+		modeled := value.String()
+		changedByEncode := node.Value != modeled
+		node.Value = modeled
+		node.Tag = "!!str"
+		if changedByEncode || strings.HasPrefix(node.Value, "\n") {
+			node.Style = yaml.DoubleQuotedStyle
+		}
+	case reflect.Struct:
+		if node.Kind != yaml.MappingNode {
+			return nil
+		}
+		valueType := value.Type()
+		for i := 0; i < value.NumField(); i++ {
+			fieldType := valueType.Field(i)
+			if !fieldType.IsExported() {
+				continue
+			}
+			name := strings.Split(fieldType.Tag.Get("yaml"), ",")[0]
+			if name == "-" {
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(fieldType.Name)
+			}
+			if child := yamlMappingValueNode(node, name); child != nil {
+				if err := restoreCanonicalYAMLStrings(child, value.Field(i)); err != nil {
+					return err
+				}
+			}
+		}
+	case reflect.Map:
+		if node.Kind != yaml.MappingNode || value.Type().Key().Kind() != reflect.String {
+			return nil
+		}
+		keys, err := canonicalYAMLStringMapKeys(value)
+		if err != nil {
+			return err
+		}
+		for nodeIndex := 0; nodeIndex+1 < len(node.Content); nodeIndex += 2 {
+			keyNode := node.Content[nodeIndex]
+			key, ok := keys[canonicalYAMLScalarFingerprintOf(keyNode)]
+			if !ok {
+				return fmt.Errorf("cannot associate encoded map key tag=%q value=%q", keyNode.Tag, keyNode.Value)
+			}
+			mapValue := value.MapIndex(key)
+			if !mapValue.IsValid() {
+				return fmt.Errorf("cannot find modeled map key %q", key.String())
+			}
+			if err := restoreCanonicalYAMLStrings(keyNode, key); err != nil {
+				return err
+			}
+			if err := restoreCanonicalYAMLStrings(node.Content[nodeIndex+1], mapValue); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if node.Kind != yaml.SequenceNode {
+			return nil
+		}
+		for i := 0; i < value.Len() && i < len(node.Content); i++ {
+			if err := restoreCanonicalYAMLStrings(node.Content[i], value.Index(i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type canonicalYAMLScalarFingerprint struct {
+	tag   string
+	value string
+	style yaml.Style
+}
+
+func canonicalYAMLScalarFingerprintOf(node *yaml.Node) canonicalYAMLScalarFingerprint {
+	return canonicalYAMLScalarFingerprint{tag: node.Tag, value: node.Value, style: node.Style}
+}
+
+// canonicalYAMLStringMapKeys matches each modeled key by the scalar yaml.v3
+// itself emits for that string. Unlike comparing a second map's iteration
+// order, this remains correct when invalid UTF-8 keys compare equal as runes.
+func canonicalYAMLStringMapKeys(value reflect.Value) (map[canonicalYAMLScalarFingerprint]reflect.Value, error) {
+	keys := make(map[canonicalYAMLScalarFingerprint]reflect.Value, value.Len())
+	for _, key := range value.MapKeys() {
+		var encoded yaml.Node
+		if err := encoded.Encode(key.Interface()); err != nil {
+			return nil, fmt.Errorf("encode modeled map key %q: %w", key.String(), err)
+		}
+		fingerprint := canonicalYAMLScalarFingerprintOf(&encoded)
+		if previous, duplicate := keys[fingerprint]; duplicate {
+			return nil, fmt.Errorf("modeled map keys %q and %q have the same YAML scalar representation", previous.String(), key.String())
+		}
+		keys[fingerprint] = key
+	}
+	return keys, nil
+}
+
+func yamlMappingValueNode(node *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// quoteAmbiguousCanonicalYAMLKeys makes the string identity of canonical map
+// keys explicit whenever their plain spelling would resolve to a non-string
+// YAML tag. This is especially important after freeform-key normalization:
+// reparsing must not turn the modeled string key back into an int, bool, null,
+// float, or timestamp before duplicate pruning and decoding run again.
+func quoteAmbiguousCanonicalYAMLKeys(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+	switch node.Kind {
+	case yaml.DocumentNode, yaml.SequenceNode:
+		for _, child := range node.Content {
+			quoteAmbiguousCanonicalYAMLKeys(child)
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i]
+			if key.Kind == yaml.ScalarNode && key.Tag == "!!str" {
+				probe := yaml.Node{Kind: yaml.ScalarNode, Value: key.Value}
+				if probe.ShortTag() != "!!str" {
+					key.Style = yaml.DoubleQuotedStyle
+				}
+			}
+			quoteAmbiguousCanonicalYAMLKeys(key)
+			quoteAmbiguousCanonicalYAMLKeys(node.Content[i+1])
+		}
+	}
 }
 
 func hashBytes(data []byte) string {
@@ -764,40 +1112,60 @@ func sortAnyValues(values []any) {
 
 func duplicateKeyDiagnostics(root *yaml.Node, budget *templateDiagnosticBudget) Diagnostics {
 	var diagnostics Diagnostics
-	var walk func(node *yaml.Node, path string)
-	walk = func(node *yaml.Node, path string) {
+	visited := make(map[contextualYAMLNode]struct{})
+	var walk func(node *yaml.Node, path string, context yamlMappingContext)
+	walk = func(node *yaml.Node, path string, context yamlMappingContext) {
 		if node == nil || budget.exhausted {
 			return
 		}
+		if node.Kind == yaml.AliasNode {
+			walk(node.Alias, path, context)
+			return
+		}
+		key := contextualYAMLNode{node: node, context: context}
+		if _, ok := visited[key]; ok {
+			return
+		}
+		visited[key] = struct{}{}
 		if node.Kind == yaml.DocumentNode && len(node.Content) > 0 {
-			walk(node.Content[0], path)
+			walk(node.Content[0], path, context)
 			return
 		}
 		if node.Kind == yaml.MappingNode {
-			seen := map[string]struct{}{}
+			seenNormalized := map[string]struct{}{}
+			seenDecoded := map[any]struct{}{}
 			for i := 0; i < len(node.Content); i += 2 {
 				if budget.exhausted {
 					break
 				}
 				key := node.Content[i]
 				value := node.Content[i+1]
-				id := mappingKeyID(key)
-				keyPath := joinPath(path, id)
-				if _, ok := seen[id]; ok {
+				identity := mappingKeyIdentityForContext(key, context)
+				keyPath := joinPath(path, identity.normalized)
+				_, duplicate := seenNormalized[identity.normalized]
+				if identity.comparable {
+					if _, ok := seenDecoded[identity.decoded]; ok {
+						duplicate = true
+					}
+				}
+				if duplicate {
 					budget.append(&diagnostics, diagErrorAt("duplicate_key", keyPath, "duplicate YAML mapping key", key))
 				}
-				seen[id] = struct{}{}
-				walk(value, keyPath)
+				seenNormalized[identity.normalized] = struct{}{}
+				if identity.comparable {
+					seenDecoded[identity.decoded] = struct{}{}
+				}
+				walk(value, keyPath, yamlMappingChildContext(context, identity.normalized))
 			}
 			return
 		}
 		if node.Kind == yaml.SequenceNode {
 			for i, child := range node.Content {
-				walk(child, fmt.Sprintf("%s[%d]", path, i))
+				walk(child, fmt.Sprintf("%s[%d]", path, i), context)
 			}
 		}
 	}
-	walk(root, "")
+	walk(root, "", yamlMappingRoot)
 	return diagnostics
 }
 
