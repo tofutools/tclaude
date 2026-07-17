@@ -242,6 +242,45 @@ func TestCronPatchOwner_CanonicalEquivalentSpellingsNeedNoAdditionalAuthority(t 
 	assert.Equal(t, "same-owner-2", after.Subject)
 }
 
+func TestCronPatchOwner_EmptyAndRelativeSelectorsPreserveCanonicalBehavior(t *testing.T) {
+	t.Run("empty owner is rejected without mutation", func(t *testing.T) {
+		f := newFlow(t)
+		const caller = "croa-empty-caller-aaaa-bbbb-cccc-000000000001"
+		job := createSelfManagedCron(t, f, caller)
+		before, err := db.GetAgentCronJob(job.ID)
+		require.NoError(t, err)
+
+		rec := patchCronAsAgent(t, f, caller, job.ID, map[string]any{
+			"owner": "", "body": "must-not-land",
+		})
+		assertDeniedCronOwnerHasNoSideEffects(t, f, before, rec, caller)
+	})
+
+	for _, selector := range []string{".", "-"} {
+		t.Run("relative owner "+selector+" resolves to self", func(t *testing.T) {
+			f := newFlow(t)
+			const caller = "croa-relative-caller-aaaa-bbbb-cccc-000000000001"
+			const priorOwner = "croa-relative-prior-aaaa-bbbb-cccc-000000000002"
+			f.HaveConvWithTitle(caller, "relative-owner-caller")
+			f.HaveEnrolledAgent(caller)
+			f.HaveConvWithTitle(priorOwner, "relative-prior-owner")
+			f.HaveEnrolledAgent(priorOwner)
+			t.Setenv("TCLAUDE_SESSION_ID", caller)
+			require.NoError(t, db.SetAgentPermissionOverride(
+				caller, agentd.PermSelfSchedule, db.PermEffectGrant, "test"))
+			job := createCronAsHuman(t, f, map[string]any{
+				"owner": priorOwner, "target": caller, "interval": "1h", "body": "before",
+			})
+
+			rec := patchCronAsAgent(t, f, caller, job.ID, map[string]any{"owner": selector})
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			after, err := db.GetAgentCronJob(job.ID)
+			require.NoError(t, err)
+			assert.True(t, sameCronActor(t, after.OwnerConv, caller))
+		})
+	}
+}
+
 func TestCronPatchOwner_PreservesTargetAndRoutingGates(t *testing.T) {
 	t.Run("authorized retarget does not bypass owner authority", func(t *testing.T) {
 		f := newFlow(t)

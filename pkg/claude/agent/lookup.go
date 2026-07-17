@@ -316,6 +316,16 @@ func ResolveSelector(selector string) (*Resolved, []*Resolved, error) {
 // and cache writes. Callers that are entitled to discovery diagnostics should
 // keep using ResolveSelector.
 func ResolveSelectorCached(selector string) (*Resolved, []*Resolved, error) {
+	if selector == "" {
+		return nil, nil, fmt.Errorf("selector is required")
+	}
+	if selector == "." || selector == "-" {
+		id, err := currentConvID()
+		if err != nil {
+			return nil, nil, err
+		}
+		selector = id
+	}
 	r, matches, err := tryResolve(selector)
 	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
 }
