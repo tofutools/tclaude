@@ -40,6 +40,22 @@ func TestLegacyTimestampInventoryCoversStateSchema(t *testing.T) {
 	}
 }
 
+func TestDeclaredTimePathsRecognizesPointerWrappedTimestamps(t *testing.T) {
+	type timestampFields struct {
+		Direct        time.Time     `json:"direct"`
+		Pointer       *time.Time    `json:"pointer"`
+		NestedPointer ****time.Time `json:"nestedPointer"`
+	}
+
+	want := []string{"direct", "nestedPointer", "pointer"}
+	for range 2 {
+		got := declaredTimePaths(reflect.TypeFor[timestampFields](), "")
+		if !slices.Equal(got, want) {
+			t.Fatalf("declared timestamp paths = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestPredecodeLegacyStateRejectsMalformedDeclaredTimestamps(t *testing.T) {
 	for _, tc := range []struct {
 		name, raw string
@@ -442,11 +458,11 @@ func legacyStateWithAdminRecords(records string) []byte {
 
 func declaredTimePaths(typ reflect.Type, prefix string) []string {
 	timeType := reflect.TypeFor[time.Time]()
-	if typ == timeType {
-		return []string{prefix}
-	}
 	for typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
+	}
+	if typ == timeType {
+		return []string{prefix}
 	}
 	switch typ.Kind() {
 	case reflect.Map:
