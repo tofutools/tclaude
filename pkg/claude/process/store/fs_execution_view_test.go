@@ -282,18 +282,30 @@ func TestExecutionViewTrailingJSONDecodePrecedence(t *testing.T) {
 func TestWithExecutionViewTypedBudgetBoundaries(t *testing.T) {
 	root := t.TempDir()
 	fs, runID := initializedRunAt(t, root)
-	total, largest := executionViewFileBounds(t, root, runID)
-	restore := fs.SetViewerResourceLimitsForTest(largest, total, 100, 100)
+	phases := executionViewBytePhasesAt(t, root, runID, 0)
+	total := phases.Baseline + phases.Main + phases.Final
+	require.Positive(t, phases.Baseline)
+	require.Positive(t, phases.Main)
+	require.Positive(t, phases.Final)
+
+	reads := map[string]int{}
+	restoreHooks := fs.SetViewerIOHooksForTest(func(name string, _ int64) { reads[name]++ }, nil)
+	restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile, total, 100, 100)
 	require.NoError(t, fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error { return nil }))
 	restore()
+	restoreHooks()
+	assert.Equal(t, 3, reads["run.json"], "baseline, main, and final reads must each be charged")
+	assert.Equal(t, 3, reads["state.json"], "baseline, main, and final reads must each be charged")
 
 	for _, tc := range []struct {
 		name              string
 		maxFile, maxTotal int64
 		limit             string
 	}{
-		{"file plus one", largest - 1, total * 2, "file_bytes"},
-		{"total plus one", largest, total - 1, "total_bytes"},
+		{"file plus one", phases.LargestFile - 1, total * 2, "file_bytes"},
+		{"operation total plus one", phases.LargestFile, total - 1, "total_bytes"},
+		{"baseline consumes allowance", phases.LargestFile, phases.Baseline, "total_bytes"},
+		{"main consumes remainder", phases.LargestFile, phases.Baseline + phases.Main, "total_bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			restore := fs.SetViewerResourceLimitsForTest(tc.maxFile, tc.maxTotal, 100, 100)
@@ -305,11 +317,165 @@ func TestWithExecutionViewTypedBudgetBoundaries(t *testing.T) {
 			var budgetErr *store.ExecutionViewOverBudgetError
 			require.ErrorAs(t, err, &budgetErr)
 			assert.Equal(t, tc.limit, budgetErr.Limit)
+			if tc.name == "operation total plus one" {
+				assert.Equal(t, tc.maxTotal+1, budgetErr.Value)
+				assert.Equal(t, tc.maxTotal, budgetErr.Maximum)
+			}
 			assert.ErrorIs(t, err, store.ErrExecutionViewOverBudget)
 			var readErr *evidence.ReadError
 			assert.False(t, errors.As(err, &readErr), "budget failure was classified as torn evidence")
 		})
 	}
+
+	t.Run("total plus one classification is deterministic", func(t *testing.T) {
+		var first *store.ExecutionViewOverBudgetError
+		for range 3 {
+			restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile, total-1, 100, 100)
+			err := fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+				t.Fatal("over-budget callback ran")
+				return nil
+			})
+			restore()
+			var got *store.ExecutionViewOverBudgetError
+			require.ErrorAs(t, err, &got)
+			if first == nil {
+				first = got
+				continue
+			}
+			assert.Equal(t, first, got)
+		}
+	})
+}
+
+func TestExecutionViewBudgetPrecedesReobservationClassifications(t *testing.T) {
+	t.Run("missing exact template", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		phases := executionViewBytePhasesAt(t, root, runID, 0)
+		require.NoError(t, os.RemoveAll(filepath.Dir(exactTemplateBodyPathForRun(t, root, runID))))
+		consumed := phases.Baseline + phases.MainRun + phases.Final
+
+		restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile, consumed, 100, 100)
+		err := fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("callback ran without the exact template")
+			return nil
+		})
+		restore()
+		require.ErrorIs(t, err, store.ErrRunInconsistent)
+		assert.NotErrorIs(t, err, store.ErrExecutionViewOverBudget)
+
+		restore = fs.SetViewerResourceLimitsForTest(phases.LargestFile, consumed-1, 100, 100)
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("over-budget callback ran")
+			return nil
+		})
+		restore()
+		assertExecutionViewBudgetOnly(t, err)
+	})
+
+	t.Run("stable torn evidence", func(t *testing.T) {
+		fixture := storetest.BuildCrashFixture(t, storetest.CrashTornFinalLogLine)
+		phases := executionViewBytePhasesAt(t, fixture.Root, fixture.RunID, 0)
+		consumed := phases.Baseline + phases.MainSnapshot + phases.Final
+
+		restore := fixture.Store.SetViewerResourceLimitsForTest(phases.LargestFile, consumed, 100, 100)
+		err := fixture.Store.WithExecutionView(t.Context(), fixture.RunID, func(store.ExecutionView) error {
+			t.Fatal("callback ran for torn evidence")
+			return nil
+		})
+		restore()
+		require.ErrorIs(t, err, store.ErrRunInconsistent)
+		var readErr *evidence.ReadError
+		require.ErrorAs(t, err, &readErr)
+
+		restore = fixture.Store.SetViewerResourceLimitsForTest(phases.LargestFile, consumed-1, 100, 100)
+		err = fixture.Store.WithExecutionView(t.Context(), fixture.RunID, func(store.ExecutionView) error {
+			t.Fatal("over-budget callback ran")
+			return nil
+		})
+		restore()
+		assertExecutionViewBudgetOnly(t, err)
+	})
+
+	t.Run("mutation during final observation", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		phases := executionViewBytePhasesAt(t, root, runID, 0)
+		total := phases.Baseline + phases.Main + phases.Final
+		statePath := filepath.Join(root, "runs", runID, "state.json")
+		restoreHook := fs.SetExecutionViewHooksForTest(nil, nil, func() {
+			data, err := os.ReadFile(statePath)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(statePath, append(data, ' '), 0o644))
+		})
+		defer restoreHook()
+		restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile+1, total, 100, 100)
+		err := fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("callback ran after over-budget mutation")
+			return nil
+		})
+		restore()
+		assertExecutionViewBudgetOnly(t, err)
+	})
+}
+
+func TestExecutionViewBudgetPrecedesTrailingJSONDecode(t *testing.T) {
+	t.Run("run record", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		path := filepath.Join(root, "runs", runID, "run.json")
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, append(data, []byte(`{}`)...), 0o644))
+		phases := executionViewBytePhasesAt(t, root, runID, 0)
+		consumed := phases.Baseline + phases.MainRun + phases.Final
+
+		restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile, consumed, 100, 100)
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("callback ran for trailing run JSON")
+			return nil
+		})
+		restore()
+		require.ErrorIs(t, err, store.ErrRunInconsistent)
+		var decodeErr *store.DecodeError
+		require.ErrorAs(t, err, &decodeErr)
+
+		restore = fs.SetViewerResourceLimitsForTest(phases.LargestFile, consumed-1, 100, 100)
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("over-budget callback ran")
+			return nil
+		})
+		restore()
+		assertExecutionViewBudgetOnly(t, err)
+	})
+
+	t.Run("exact template", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := initializedRunAt(t, root)
+		path := exactTemplateBodyPathForRun(t, root, runID)
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, append(data, []byte(`{}`)...), 0o644))
+		phases := executionViewBytePhasesAt(t, root, runID, 0)
+		consumed := phases.Baseline + phases.MainSnapshot + phases.TemplateBody
+
+		restore := fs.SetViewerResourceLimitsForTest(phases.LargestFile, consumed, 100, 100)
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("callback ran for trailing template JSON")
+			return nil
+		})
+		restore()
+		require.ErrorIs(t, err, store.ErrRunInconsistent)
+		assert.Contains(t, err.Error(), "unexpected trailing JSON value")
+
+		restore = fs.SetViewerResourceLimitsForTest(phases.LargestFile, consumed-1, 100, 100)
+		err = fs.WithExecutionView(t.Context(), runID, func(store.ExecutionView) error {
+			t.Fatal("over-budget callback ran")
+			return nil
+		})
+		restore()
+		assertExecutionViewBudgetOnly(t, err)
+	})
 }
 
 func TestOrdinaryViewerRetainsLegacyBudgetError(t *testing.T) {
@@ -474,35 +640,82 @@ func assertStillBlocked(t *testing.T, done <-chan error, operation string) {
 	}
 }
 
-func executionViewFileBounds(t *testing.T, root, runID string) (total, largest int64) {
+type executionViewBytePhases struct {
+	Baseline, Main, Final                     int64
+	MainRun, MainSnapshot                     int64
+	TemplateBody, TemplateSource, LargestFile int64
+}
+
+func executionViewBytePhasesAt(t *testing.T, root, runID string, fallbackSourceBytes int64) executionViewBytePhases {
 	t.Helper()
 	runDir := filepath.Join(root, "runs", runID)
-	paths := []string{
-		filepath.Join(runDir, "run.json"),
-		filepath.Join(runDir, "state.json"),
-		filepath.Join(runDir, "manifest.jsonl"),
-	}
-	var record store.RunRecord
-	runData, err := os.ReadFile(paths[0])
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(runData, &record))
-	_, hash, err := splitTemplateRef(record.TemplateRef)
-	require.NoError(t, err)
-	versionDir := filepath.Join(root, "templates", "demo", "sha256-"+hash)
-	paths = append(paths,
-		filepath.Join(versionDir, "template.json"),
-		filepath.Join(versionDir, "template.yaml"),
-	)
-	for _, path := range paths {
+	var phases executionViewBytePhases
+	fileSize := func(path string) int64 {
 		info, err := os.Stat(path)
 		if errors.Is(err, os.ErrNotExist) {
-			continue
+			return 0
 		}
 		require.NoError(t, err)
-		total += info.Size()
-		largest = max(largest, info.Size())
+		phases.LargestFile = max(phases.LargestFile, info.Size())
+		return info.Size()
 	}
-	return total, largest
+	runBytes := fileSize(filepath.Join(runDir, "run.json"))
+	stateBytes := fileSize(filepath.Join(runDir, "state.json"))
+	manifestBytes := fileSize(filepath.Join(runDir, "manifest.jsonl"))
+	phases.MainRun = runBytes
+	phases.MainSnapshot = runBytes + stateBytes + manifestBytes
+	phases.Baseline = runBytes + stateBytes + min(manifestBytes, int64(64<<10))
+
+	for _, logsDir := range []string{filepath.Join(runDir, "nodes"), filepath.Join(runDir, "run")} {
+		err := filepath.WalkDir(logsDir, func(path string, entry os.DirEntry, walkErr error) error {
+			if errors.Is(walkErr, os.ErrNotExist) {
+				return filepath.SkipDir
+			}
+			require.NoError(t, walkErr)
+			if entry.IsDir() || entry.Name() != "log.jsonl" {
+				return nil
+			}
+			size := fileSize(path)
+			phases.MainSnapshot += size
+			phases.Baseline += min(size, int64(64<<10))
+			return nil
+		})
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			require.NoError(t, err)
+		}
+	}
+	phases.Final = phases.Baseline
+
+	var record store.RunRecord
+	runData, err := os.ReadFile(filepath.Join(runDir, "run.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.NewDecoder(strings.NewReader(string(runData))).Decode(&record))
+	id, hash, err := splitTemplateRef(record.TemplateRef)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "templates", id, "sha256-"+hash)
+	phases.TemplateBody = fileSize(filepath.Join(versionDir, "template.json"))
+	phases.TemplateSource = fileSize(filepath.Join(versionDir, "template.yaml"))
+	if phases.TemplateSource == 0 {
+		require.Positive(t, fallbackSourceBytes, "missing template source requires its generated fallback size")
+		phases.TemplateSource = fallbackSourceBytes
+		phases.LargestFile = max(phases.LargestFile, fallbackSourceBytes)
+	}
+	phases.Main = phases.MainSnapshot + phases.TemplateBody + phases.TemplateSource
+	return phases
+}
+
+func assertExecutionViewBudgetOnly(t *testing.T, err error) {
+	t.Helper()
+	var budgetErr *store.ExecutionViewOverBudgetError
+	require.ErrorAs(t, err, &budgetErr)
+	assert.Equal(t, "total_bytes", budgetErr.Limit)
+	assert.ErrorIs(t, err, store.ErrExecutionViewOverBudget)
+	assert.NotErrorIs(t, err, store.ErrRunInconsistent)
+	assert.NotErrorIs(t, err, store.ErrWriterInProgress)
+	var readErr *evidence.ReadError
+	assert.False(t, errors.As(err, &readErr), "budget failure was classified as torn evidence")
+	var decodeErr *store.DecodeError
+	assert.False(t, errors.As(err, &decodeErr), "budget failure was classified as decode failure")
 }
 
 func executionJSONSuffixCases() []struct {

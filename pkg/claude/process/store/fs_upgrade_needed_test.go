@@ -163,21 +163,11 @@ func TestUpgradeNeededLegacyTemplateSourceFallbackIsBounded(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, parsed.SourceHash, needed.TemplateSourceHash)
 
-	// Find the minimum cumulative budget for the complete fallback view, then
-	// prove that one byte less is attributed to the generated source itself.
-	low, high := int64(1), int64(64<<20)
-	for low < high {
-		middle := low + (high-low)/2
-		restore := fs.SetViewerResourceLimitsForTest(16<<20, middle, 100_000, 4_096)
-		_, probeErr := fs.UpgradeNeeded(t.Context(), runID)
-		restore()
-		if probeErr == nil {
-			high = middle
-		} else {
-			low = middle + 1
-		}
-	}
-	restore := fs.SetViewerResourceLimitsForTest(16<<20, low-1, 100_000, 4_096)
+	// The generated source shares the operation-wide allowance with the
+	// baseline and snapshot reads; one byte less than that prefix plus the
+	// fallback must be attributed to the fallback itself.
+	phases := executionViewBytePhasesAt(t, root, runID, int64(len(source)))
+	restore := fs.SetViewerResourceLimitsForTest(16<<20, phases.Baseline+phases.Main-1, 100_000, 4_096)
 	_, err = fs.UpgradeNeeded(t.Context(), runID)
 	restore()
 	var over *store.ExecutionViewOverBudgetError
