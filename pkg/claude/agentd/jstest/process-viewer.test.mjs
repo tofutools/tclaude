@@ -128,6 +128,84 @@ test('viewer component renders explicit unavailable state without evidence fallb
   await mounted.unmount();
 });
 
+test('viewer detail tabs expose complete ARIA relationships and automatic keyboard activation without resetting pagination', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');
+  const keys = ['generations', 'scopes', 'closures', 'causeSets', 'causes', 'detachments', 'detachedSinks'];
+  const totals = { generations: 51, scopes: 51, closures: 3, causeSets: 51, causes: 51, detachments: 51, detachedSinks: 51 };
+  const calls = [];
+  const actions = { loadRunView: async (_id, offset, limit) => {
+    calls.push({ offset, limit });
+    const envelope = richEnvelope();
+    envelope.viewerV2.routing.details = Object.fromEntries(keys.map((key) => [key, {
+      page: { offset, limit, total: totals[key], hasMore: offset + limit < totals[key] },
+      items: Array.from({ length: Math.min(limit, Math.max(0, totals[key] - offset)) }, () => ({})),
+    }]));
+    return envelope;
+  } };
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-rich', key: 'run-rich' }} actions=${actions} />`);
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+
+  const tabs = [...mounted.container.querySelectorAll('[role="tab"]')];
+  assert.equal(tabs.length, keys.length);
+  for (const [index, button] of tabs.entries()) {
+    assert.equal(button.id, `process-viewer-detail-tab-${keys[index]}`);
+    assert.equal(button.getAttribute('aria-controls'), `process-viewer-detail-panel-${keys[index]}`);
+    const panel = mounted.container.querySelector(`#${button.getAttribute('aria-controls')}`);
+    assert.ok(panel, `${keys[index]} tab controls a stable panel`);
+    assert.equal(panel.getAttribute('role'), 'tabpanel');
+    assert.equal(panel.getAttribute('aria-labelledby'), button.id);
+  }
+  assert.deepEqual(tabs.map((button) => button.getAttribute('aria-selected')), ['true', 'false', 'false', 'false', 'false', 'false', 'false']);
+  assert.deepEqual(tabs.map((button) => button.getAttribute('tabIndex')), ['0', '-1', '-1', '-1', '-1', '-1', '-1']);
+  assert.equal(mounted.container.querySelectorAll('[role="tabpanel"]:not([hidden])').length, 1);
+
+  const nextPage = [...mounted.container.querySelectorAll('.process-viewer-detail-summary button')]
+    .find((button) => /next/.test(button.textContent));
+  await harness.act(() => harness.fireEvent(nextPage, 'click'));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls, [{ offset: 0, limit: 25 }, { offset: 25, limit: 25 }]);
+
+  const selectedTab = () => mounted.container.querySelector('[role="tab"][aria-selected="true"]');
+  const press = async (key) => {
+    let event;
+    await harness.act(() => { event = harness.fireEvent(harness.document.activeElement, 'keydown', { key }); });
+    assert.equal(event.defaultPrevented, true, `${key} prevents page-level keyboard behavior`);
+  };
+  tabs[0].focus();
+  await press('ArrowRight');
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-scopes');
+  assert.equal(harness.document.activeElement, selectedTab());
+  assert.deepEqual(calls, [{ offset: 0, limit: 25 }, { offset: 25, limit: 25 }],
+    'keyboard selection retains a page that is valid for the target tab');
+  assert.match(mounted.container.querySelector('.process-viewer-detail-summary').textContent, /26–50 of 51/);
+  await press('ArrowRight');
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-closures');
+  assert.deepEqual(calls.at(-1), { offset: 0, limit: 25 }, 'keyboard selection clamps an invalid target page');
+  assert.match(mounted.container.querySelector('.process-viewer-detail-summary').textContent, /1–3 of 3/);
+  await press('Home');
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-generations');
+  await press('ArrowLeft');
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-detachedSinks', 'Left wraps to the last tab');
+  await press('ArrowRight');
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-generations');
+  await press('End');
+  assert.equal(selectedTab().id, 'process-viewer-detail-tab-detachedSinks');
+
+  const nextLastPage = [...mounted.container.querySelectorAll('.process-viewer-detail-summary button')]
+    .find((button) => /next/.test(button.textContent));
+  await harness.act(() => harness.fireEvent(nextLastPage, 'click'));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  const closures = mounted.container.querySelector('#process-viewer-detail-tab-closures');
+  await harness.act(() => harness.fireEvent(closures, 'click'));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  assert.deepEqual(calls.at(-1), { offset: 0, limit: 25 }, 'mouse activation preserves its existing first-page behavior');
+  assert.equal(selectedTab(), closures);
+  await mounted.unmount();
+});
+
 test('viewer component requests bounded next pages and preserves aggregate context', async (t) => {
   const harness = await createPreactHarness(t);
   const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');

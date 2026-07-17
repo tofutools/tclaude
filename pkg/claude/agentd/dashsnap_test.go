@@ -2310,7 +2310,15 @@ func processViewerStateJS(runID string, rich bool) string {
 	if rich {
 		expected = `
   if (canvas.querySelector('.process-viewer-unavailable')) throw new Error('schema-7 routing unexpectedly unavailable');
-  if (!canvas.querySelector('.process-viewer-tabs button[role="tab"]')) throw new Error('routing detail tabs missing');
+  var activeDetailTab = canvas.querySelector('.process-viewer-tabs button[role="tab"][aria-selected="true"]');
+  if (!activeDetailTab || activeDetailTab.tabIndex !== 0) throw new Error('routing detail tabs missing selected roving tab');
+  var activeDetailPanel = canvas.querySelector('#' + activeDetailTab.getAttribute('aria-controls'));
+  if (!activeDetailPanel || activeDetailPanel.getAttribute('role') !== 'tabpanel' || activeDetailPanel.getAttribute('aria-labelledby') !== activeDetailTab.id) throw new Error('routing detail tabpanel relationship missing');
+  activeDetailTab.focus();
+  activeDetailTab.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true}));
+  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  var nextDetailTab = canvas.querySelector('.process-viewer-tabs button[role="tab"][aria-selected="true"]');
+  if (!nextDetailTab || nextDetailTab === activeDetailTab || document.activeElement !== nextDetailTab || nextDetailTab.tabIndex !== 0) throw new Error('routing detail keyboard activation did not move selection and focus');
   if (!canvas.querySelector('.process-viewer-state-chips span')) throw new Error('checkpoint state counts missing');`
 	}
 	return fmt.Sprintf(`return (async function(){
