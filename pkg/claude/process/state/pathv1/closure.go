@@ -24,6 +24,21 @@ func FoldCandidateSlots(reservationID ReservationID, candidate CandidateRecord, 
 	expected := map[string]struct{}{}
 	for _, slotID := range candidate.PossibleSlotIDs {
 		expected[slotID] = struct{}{}
+	}
+	var unknown string
+	hasUnknown := false
+	for slotID := range settled {
+		if _, ok := expected[slotID]; !ok {
+			if !hasUnknown || slotID < unknown {
+				unknown = slotID
+				hasUnknown = true
+			}
+		}
+	}
+	if hasUnknown {
+		return CandidateFoldEntry{}, nil, "", fmt.Errorf("unknown possible slot %q", unknown)
+	}
+	for _, slotID := range candidate.PossibleSlotIDs {
 		slot, ok := settled[slotID]
 		if !ok {
 			return CandidateFoldEntry{CandidateID: candidate.ID, FoldKind: CandidateFoldOpen}, nil, "", nil
@@ -51,11 +66,6 @@ func FoldCandidateSlots(reservationID ReservationID, candidate CandidateRecord, 
 		}
 		causeIDs = append(causeIDs, slot.CauseIDs...)
 		kinds = append(kinds, slot.CauseKinds...)
-	}
-	for slotID := range settled {
-		if _, ok := expected[slotID]; !ok {
-			return CandidateFoldEntry{}, nil, "", fmt.Errorf("unknown possible slot %q", slotID)
-		}
 	}
 	if arrival != "" {
 		return CandidateFoldEntry{CandidateID: candidate.ID, FoldKind: "arrived", PathOrClosureID: arrival}, nil, "", nil

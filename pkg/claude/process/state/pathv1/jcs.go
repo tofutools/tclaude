@@ -56,11 +56,33 @@ func CanonicalCheckpointProjection(checkpoint []byte, selfCommandID string) ([]b
 		}
 		delete(commands, selfCommandID)
 	}
-	var out bytes.Buffer
-	if err := writeJCS(&out, object); err != nil {
+	return encodeJCSBounded(object, MaxCheckpointBytes)
+}
+
+func encodeJCS(value any) ([]byte, error) {
+	var size jcsSizer
+	return encodeJCSMeasured(value, &size)
+}
+
+func encodeJCSBounded(value any, maximum int) ([]byte, error) {
+	size := jcsSizer{maximum: maximum}
+	return encodeJCSMeasured(value, &size)
+}
+
+func encodeJCSMeasured(value any, size *jcsSizer) ([]byte, error) {
+	// Measure first so number normalization cannot grow a geometrically
+	// over-allocated buffer, then allocate exactly the returned byte count.
+	if err := writeJCS(size, value); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	out := jcsBuffer{data: make([]byte, 0, size.size)}
+	if err := writeJCS(&out, value); err != nil {
+		return nil, err
+	}
+	if len(out.data) != size.size {
+		return nil, fmt.Errorf("canonical JCS size changed during encoding")
+	}
+	return out.data, nil
 }
 
 func parseJCS(data []byte) (any, error) {
@@ -177,16 +199,70 @@ func parseJCSValue(dec *json.Decoder) (any, error) {
 	}
 }
 
-func writeJCS(out *bytes.Buffer, value any) error {
+type jcsSink interface {
+	writeByte(byte) error
+	writeString(string) error
+	writeRune(rune) error
+}
+
+// A bounded jcsSizer stops at the first byte beyond its ceiling. Its reported
+// value is saturated at limit+1 because the rest of an adversarial value is
+// deliberately never materialized or traversed. A zero maximum is unbounded
+// for internal canonical digest encodings that have their own container limit.
+type jcsSizer struct {
+	size    int
+	maximum int
+}
+
+func (s *jcsSizer) add(size int) error {
+	const maxInt = int(^uint(0) >> 1)
+	if size < 0 || size > maxInt-s.size {
+		return fmt.Errorf("canonical JCS size overflows int")
+	}
+	if s.maximum > 0 && size > s.maximum-s.size {
+		s.size = s.maximum + 1
+		return &OverBudgetError{Limit: "checkpoint_bytes", Value: s.size, Maximum: s.maximum}
+	}
+	s.size += size
+	return nil
+}
+
+func (s *jcsSizer) writeByte(byte) error           { return s.add(1) }
+func (s *jcsSizer) writeString(value string) error { return s.add(len(value)) }
+func (s *jcsSizer) writeRune(value rune) error {
+	size := utf8.RuneLen(value)
+	if size < 0 {
+		return fmt.Errorf("invalid UTF-8 JSON rune")
+	}
+	return s.add(size)
+}
+
+type jcsBuffer struct{ data []byte }
+
+func (b *jcsBuffer) writeByte(value byte) error {
+	b.data = append(b.data, value)
+	return nil
+}
+
+func (b *jcsBuffer) writeString(value string) error {
+	b.data = append(b.data, value...)
+	return nil
+}
+
+func (b *jcsBuffer) writeRune(value rune) error {
+	b.data = utf8.AppendRune(b.data, value)
+	return nil
+}
+
+func writeJCS(out jcsSink, value any) error {
 	switch value := value.(type) {
 	case nil:
-		out.WriteString("null")
+		return out.writeString("null")
 	case bool:
 		if value {
-			out.WriteString("true")
-		} else {
-			out.WriteString("false")
+			return out.writeString("true")
 		}
+		return out.writeString("false")
 	case string:
 		return writeJCSString(out, value)
 	case json.Number:
@@ -194,102 +270,156 @@ func writeJCS(out *bytes.Buffer, value any) error {
 		if err != nil {
 			return err
 		}
-		out.WriteString(number)
+		return out.writeString(number)
 	case []any:
-		out.WriteByte('[')
+		if err := out.writeByte('['); err != nil {
+			return err
+		}
 		for i, item := range value {
 			if i > 0 {
-				out.WriteByte(',')
+				if err := out.writeByte(','); err != nil {
+					return err
+				}
 			}
 			if err := writeJCS(out, item); err != nil {
 				return err
 			}
 		}
-		out.WriteByte(']')
+		return out.writeByte(']')
 	case jcsObject:
 		keys := make([]string, 0, len(value))
 		for key := range value {
 			keys = append(keys, key)
 		}
 		sortUTF16(keys)
-		out.WriteByte('{')
+		if err := out.writeByte('{'); err != nil {
+			return err
+		}
 		for i, key := range keys {
 			if i > 0 {
-				out.WriteByte(',')
+				if err := out.writeByte(','); err != nil {
+					return err
+				}
 			}
 			if err := writeJCSString(out, key); err != nil {
 				return err
 			}
-			out.WriteByte(':')
+			if err := out.writeByte(':'); err != nil {
+				return err
+			}
 			if err := writeJCS(out, value[key]); err != nil {
 				return err
 			}
 		}
-		out.WriteByte('}')
+		return out.writeByte('}')
 	default:
 		return fmt.Errorf("unsupported checkpoint JSON value %T", value)
 	}
-	return nil
 }
 
-func writeJCSString(out *bytes.Buffer, value string) error {
+func writeJCSString(out jcsSink, value string) error {
 	if !utf8.ValidString(value) {
 		return fmt.Errorf("invalid UTF-8 JSON string")
 	}
-	out.WriteByte('"')
+	if err := out.writeByte('"'); err != nil {
+		return err
+	}
 	const hex = "0123456789abcdef"
 	for _, r := range value {
 		switch r {
 		case '"', '\\':
-			out.WriteByte('\\')
-			out.WriteRune(r)
+			if err := out.writeByte('\\'); err != nil {
+				return err
+			}
+			if err := out.writeRune(r); err != nil {
+				return err
+			}
 		case '\b':
-			out.WriteString(`\b`)
+			if err := out.writeString(`\b`); err != nil {
+				return err
+			}
 		case '\t':
-			out.WriteString(`\t`)
+			if err := out.writeString(`\t`); err != nil {
+				return err
+			}
 		case '\n':
-			out.WriteString(`\n`)
+			if err := out.writeString(`\n`); err != nil {
+				return err
+			}
 		case '\f':
-			out.WriteString(`\f`)
+			if err := out.writeString(`\f`); err != nil {
+				return err
+			}
 		case '\r':
-			out.WriteString(`\r`)
+			if err := out.writeString(`\r`); err != nil {
+				return err
+			}
 		default:
 			if r < 0x20 {
-				out.WriteString(`\u00`)
-				out.WriteByte(hex[byte(r)>>4])
-				out.WriteByte(hex[byte(r)&15])
+				if err := out.writeString(`\u00`); err != nil {
+					return err
+				}
+				if err := out.writeByte(hex[byte(r)>>4]); err != nil {
+					return err
+				}
+				if err := out.writeByte(hex[byte(r)&15]); err != nil {
+					return err
+				}
 			} else {
-				out.WriteRune(r)
+				if err := out.writeRune(r); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	out.WriteByte('"')
-	return nil
+	return out.writeByte('"')
 }
 
 func sortUTF16(values []string) {
-	type key struct {
-		value string
-		units []uint16
+	slices.SortFunc(values, compareUTF16)
+}
+
+type utf16Iterator struct {
+	value   string
+	pending uint16
+}
+
+func (i *utf16Iterator) next() (uint16, bool) {
+	if i.pending != 0 {
+		value := i.pending
+		i.pending = 0
+		return value, true
 	}
-	keys := make([]key, len(values))
-	for i, value := range values {
-		keys[i] = key{value: value, units: utf16.Encode([]rune(value))}
+	if i.value == "" {
+		return 0, false
 	}
-	slices.SortFunc(keys, func(a, b key) int {
-		left, right := a.units, b.units
-		for i := 0; i < len(left) && i < len(right); i++ {
-			if left[i] != right[i] {
-				if left[i] < right[i] {
-					return -1
-				}
-				return 1
-			}
+	r, size := utf8.DecodeRuneInString(i.value)
+	i.value = i.value[size:]
+	if r <= 0xffff {
+		return uint16(r), true
+	}
+	high, low := utf16.EncodeRune(r)
+	i.pending = uint16(low)
+	return uint16(high), true
+}
+
+func compareUTF16(left, right string) int {
+	a, b := utf16Iterator{value: left}, utf16Iterator{value: right}
+	for {
+		leftUnit, leftOK := a.next()
+		rightUnit, rightOK := b.next()
+		switch {
+		case !leftOK && !rightOK:
+			return 0
+		case !leftOK:
+			return -1
+		case !rightOK:
+			return 1
+		case leftUnit < rightUnit:
+			return -1
+		case leftUnit > rightUnit:
+			return 1
 		}
-		return len(left) - len(right)
-	})
-	for i := range keys {
-		values[i] = keys[i].value
 	}
 }
 

@@ -267,6 +267,9 @@ func reconcileCheckpointCommands(view CompletionReplayView) error {
 		if err := decodeExactPayload(raw, &command); err != nil || command.ID != id {
 			return fmt.Errorf("%w: checkpoint command %q is not an exact command record", ErrMutationInconsistent, id)
 		}
+		if command.Identity.RunID != view.Aggregate.RunID {
+			return fmt.Errorf("%w: checkpoint command %q belongs to run %q, want %q", ErrMutationInconsistent, id, command.Identity.RunID, view.Aggregate.RunID)
+		}
 		var validationErr error
 		if command.Identity.Kind == CommandCompleteRun {
 			validationErr = validateCompleteRunCommandPrimitive(command)

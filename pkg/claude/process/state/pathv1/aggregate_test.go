@@ -544,6 +544,40 @@ func reportHasCode(report InvariantReport, code string) bool {
 	return false
 }
 
+func TestAggregateCommandRegistryRejectsEmptyRunIdentity(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	identity := CommandIdentity{Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: view.Authority.Genesis.ActivationID, SourceGeneration: 1, Attempt: 1, PlanDigest: "plan"}
+	command := makeTestCommand(t, identity, CommandObserved)
+	view.Commands[command.ID] = command
+	report := ValidateAggregate(view)
+	found := false
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code == "command_invalid" && strings.Contains(diagnostic.Message, "command lacks run identity") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("empty-run command registry diagnostics = %#v", report.Diagnostics)
+	}
+}
+
+func TestAggregateCommandRegistryRejectsForeignRunIdentity(t *testing.T) {
+	t.Parallel()
+	view := validGenesisFixture(t)
+	identity := CommandIdentity{RunID: "foreign-run", Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: view.Authority.Genesis.ActivationID, SourceGeneration: 1, Attempt: 1, PlanDigest: "plan"}
+	command := makeTestCommand(t, identity, CommandObserved)
+	if err := ValidateCommand(command); err != nil {
+		t.Fatalf("standalone foreign-run command is invalid: %v", err)
+	}
+	view.Commands[command.ID] = command
+	report := ValidateAggregate(view)
+	if !reportHasCode(report, "command_run_mismatch") {
+		t.Fatalf("foreign-run command registry diagnostics = %#v", report.Diagnostics)
+	}
+}
+
 func TestMeasureAggregateActualStructureBounds(t *testing.T) {
 	t.Parallel()
 	state := NewRoutingState()
