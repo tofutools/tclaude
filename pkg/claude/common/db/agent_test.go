@@ -145,6 +145,28 @@ func TestAgentPermissions_GrantRevokeIdempotent(t *testing.T) {
 	assert.Equal(t, "member.add", got[0])
 }
 
+func TestSetAgentPermissionOverrideByAgentID_RejectsMissingAndRetired(t *testing.T) {
+	setupTestDB(t)
+
+	err := SetAgentPermissionOverrideByAgentID("agt_missing", "human.clipboard", PermEffectGrant, "test")
+	assert.ErrorContains(t, err, "does not exist")
+
+	agentID, _, err := EnsureAgentForConv("stable-perm-conv", "test")
+	require.NoError(t, err)
+	retired, err := RetireAgentByID(agentID, "human", "test")
+	require.NoError(t, err)
+	require.True(t, retired)
+
+	err = SetAgentPermissionOverrideByAgentID(agentID, "human.clipboard", PermEffectGrant, "test")
+	assert.ErrorContains(t, err, "is retired")
+
+	d, err := Open()
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM agent_permissions WHERE agent_id = ?`, agentID).Scan(&count))
+	assert.Zero(t, count, "rejected stable-id writes must not persist authority")
+}
+
 func TestAgentPermissions_ApplyOverridesPreservesProvenanceAndClearsAtomically(t *testing.T) {
 	setupTestDB(t)
 

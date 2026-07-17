@@ -368,10 +368,6 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 	if effect != PermEffectGrant && effect != PermEffectDeny {
 		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
 	}
-	db, err := Open()
-	if err != nil {
-		return err
-	}
 	// Holding a permission override (grant or deny) makes the conv an agent —
 	// a deny is still per-agent permission config. EnsureAgentForConv mints /
 	// links the stable actor; we then key the override on agent_id (JOH-26) so
@@ -386,6 +382,25 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 	if agentID == "" {
 		return fmt.Errorf("SetAgentPermissionOverride: no actor for conv %s", convID)
 	}
+	return SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy)
+}
+
+// SetAgentPermissionOverrideByAgentID writes a permission override directly
+// against an existing, active stable actor. Unlike the conv-scoped writer, it
+// never enrolls or relinks a conversation. Callers that captured identity at
+// an earlier security boundary use this form so a stale generation cannot be
+// resurrected as a different actor while a decision is pending.
+func SetAgentPermissionOverrideByAgentID(agentID, slug, effect, grantedBy string) error {
+	if effect != PermEffectGrant && effect != PermEffectDeny {
+		return fmt.Errorf("invalid permission effect %q (want %q or %q)", effect, PermEffectGrant, PermEffectDeny)
+	}
+	if agentID == "" {
+		return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agentID is required")
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
 	res, err := db.Exec(`INSERT INTO agent_permissions
 		(agent_id, slug, effect, granted_at, granted_by)
 		SELECT ?, ?, ?, ?, ? FROM agents WHERE agent_id = ? AND retired_at = ''
@@ -399,7 +414,17 @@ func SetAgentPermissionOverride(convID, slug, effect, grantedBy string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("SetAgentPermissionOverride: agent %s is retired", agentID)
+		var retiredAt string
+		switch err := db.QueryRow(`SELECT retired_at FROM agents WHERE agent_id = ?`, agentID).Scan(&retiredAt); {
+		case errors.Is(err, sql.ErrNoRows):
+			return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agent %s does not exist", agentID)
+		case err != nil:
+			return err
+		case retiredAt != "":
+			return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agent %s is retired", agentID)
+		default:
+			return fmt.Errorf("SetAgentPermissionOverrideByAgentID: agent %s is not active", agentID)
+		}
 	}
 	return nil
 }

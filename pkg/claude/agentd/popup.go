@@ -128,7 +128,7 @@ type approvalRequest struct {
 	id              string
 	perm            string
 	convID          string // requester
-	agentID         string // requester's stable actor, captured once for display/persistence
+	agentID         string // requester's stable actor, captured once for display/grant/audit
 	convTitle       string // requester's display title
 	method          string
 	path            string
@@ -352,9 +352,9 @@ var (
 // http://127.0.0.1:<port>/approve/{id}) renders the page and writes
 // back to the channel on user click.
 func requestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
-	// Capture the stable display identity once at the popup boundary. The
-	// authorization decision and continuation remain conv-/agent-keyed exactly
-	// as before; this companion is only for popup metadata and persistence.
+	// Capture the stable identity once at the popup boundary. Display refresh,
+	// persistent grants, and audit attribution all follow this actor even if its
+	// conversation generation rotates while the request is pending.
 	if req != nil && req.agentID == "" {
 		req.agentID = peerAgentID(req.convID)
 	}
@@ -468,10 +468,10 @@ func applyApprovalOutcome(req *approvalRequest, outcome approvalOutcome) bool {
 }
 
 // persistAlwaysAllowGrant writes the popup-origin allow override for the
-// deciding agent (JOH-367). The override is keyed on the agent's stable
-// identity (db.SetAgentPermissionOverride resolves conv → agent_id), so it
-// follows the agent through /clear conv-rotation and reincarnation — the
-// operator's "always allow for THIS agent" intent, not "this one conv".
+// deciding agent (JOH-367). The override is written directly against the
+// stable identity captured when the request was raised, so it follows the
+// actor through /clear conv-rotation and reincarnation without resolving or
+// re-enrolling a stale request generation.
 //
 // Defense in depth: re-checks IsAutoGrantableSlug even though the POST
 // handler already gated on req.autoGrantable, so a malformed caller can
@@ -484,12 +484,14 @@ func persistAlwaysAllowGrant(req *approvalRequest) {
 			"perm", req.perm, "conv", req.convID)
 		return
 	}
-	if req.convID == "" {
+	if req.agentID == "" {
+		slog.Warn("popup: cannot persist always-allow without stable caller identity",
+			"perm", req.perm, "conv", req.convID)
 		return
 	}
-	if err := db.SetAgentPermissionOverride(req.convID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
+	if err := db.SetAgentPermissionOverrideByAgentID(req.agentID, req.perm, db.PermEffectGrant, "human:popup-always"); err != nil {
 		slog.Warn("popup: failed to persist always-allow grant",
-			"perm", req.perm, "conv", req.convID, "err", err)
+			"perm", req.perm, "agent", req.agentID, "conv", req.convID, "err", err)
 	}
 }
 
@@ -533,6 +535,7 @@ func recordApprovalRequest(req *approvalRequest) {
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{
 		ActorKind:   db.AuditActorAgent,
 		ActorConv:   req.convID,
+		ActorAgent:  req.agentID,
 		ActorLabel:  label,
 		Verb:        "approval.request",
 		TargetConv:  req.targetConvID,
@@ -599,6 +602,7 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 		ActorLabel:  "operator",
 		Verb:        verb,
 		TargetConv:  req.convID,
+		TargetAgent: req.agentID,
 		TargetLabel: req.convTitle,
 		GroupName:   req.targetGroup,
 		Detail:      auditClip(detail, 120),

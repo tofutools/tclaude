@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -66,11 +67,24 @@ func TestPersistAlwaysAllowGrant_WritesEligible(t *testing.T) {
 	resetTestDB(t)
 
 	const conv = "bbbb-1111-2222-3333-4444"
-	req := &approvalRequest{perm: PermHumanClipboard, convID: conv}
+	agentID, _, err := db.EnsureAgentForConv(conv, "test")
+	require.NoError(t, err)
+	req := &approvalRequest{perm: PermHumanClipboard, convID: conv, agentID: agentID}
 	persistAlwaysAllowGrant(req)
 
 	effect, ok, err := db.AgentPermissionOverride(conv, PermHumanClipboard)
 	assert.NoError(t, err)
 	assert.True(t, ok, "an eligible slug must be persisted")
 	assert.Equal(t, "grant", effect)
+}
+
+func TestPersistAlwaysAllowGrant_MissingStableIdentityDoesNotEnrollConv(t *testing.T) {
+	resetTestDB(t)
+
+	const conv = "cccc-1111-2222-3333-4444"
+	persistAlwaysAllowGrant(&approvalRequest{perm: PermHumanClipboard, convID: conv})
+
+	agentID, err := db.AgentIDForConv(conv)
+	require.NoError(t, err)
+	assert.Empty(t, agentID, "a stale request generation must never be enrolled as a fallback")
 }
