@@ -1,0 +1,126 @@
+package agentd
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+func usageHistoryRows(base time.Time, values ...float64) []db.SubscriptionUsageHistoryRow {
+	rows := make([]db.SubscriptionUsageHistoryRow, len(values))
+	for i, value := range values {
+		rows[i] = db.SubscriptionUsageHistoryRow{
+			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
+			ObservedAt: base.Add(time.Duration(i) * 15 * time.Minute), UsedPercent: value,
+		}
+	}
+	return rows
+}
+
+func TestForecastUsageDetectsUnexpectedNonzeroReset(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, 80, 20, 25, 30)
+	for i := range rows {
+		rows[i].ResetsAt = base.Add(10 * time.Hour)
+	}
+
+	forecast, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt)
+	require.Len(t, resets, 1)
+	assert.Equal(t, 20.0, resets[0].Pct, "the observed post-reset minimum is retained; no synthetic zero")
+	assert.Equal(t, "before_reset", forecast.Status)
+	assert.Equal(t, 20.0, forecast.BaselinePct)
+	assert.Equal(t, 3, forecast.SampleCount)
+	assert.InDelta(t, 20.0, forecast.RatePctPerHour, 1e-9)
+	assert.Equal(t, base.Add(4*time.Hour+15*time.Minute).Format(time.RFC3339Nano), forecast.HitsLimitAt)
+}
+
+func TestForecastUsageKnownBoundaryStartsNewSegmentWithoutDrop(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, 10, 15, 20, 25)
+	rows[0].ResetsAt = base.Add(15 * time.Minute)
+	for i := 1; i < len(rows); i++ {
+		rows[i].ResetsAt = base.Add(5 * time.Hour)
+	}
+
+	forecast, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt)
+	require.Len(t, resets, 1, "a crossed declared boundary is recorded exactly once")
+	assert.Equal(t, 15.0, forecast.BaselinePct)
+	assert.Equal(t, 3, forecast.SampleCount)
+	assert.Equal(t, "before_reset", forecast.Status)
+}
+
+func TestForecastUsageRequiresEnoughPostResetHistory(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, 12, 13)
+	forecast, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt)
+	assert.Empty(t, resets)
+	assert.Equal(t, "insufficient", forecast.Status)
+	assert.Zero(t, forecast.RatePctPerHour)
+}
+
+func TestForecastUsageReportsResetFirstAndFlatPaces(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	slow := usageHistoryRows(base, 10, 11, 12)
+	for i := range slow {
+		slow[i].ResetsAt = base.Add(time.Hour)
+	}
+	forecast, _ := forecastUsage(slow, slow[len(slow)-1].ObservedAt)
+	assert.Equal(t, "after_reset", forecast.Status)
+	assert.NotEmpty(t, forecast.HitsLimitAt, "the response still exposes the straight-line crossing for comparison")
+
+	flatRows := usageHistoryRows(base, 10, 10, 10)
+	flat, _ := forecastUsage(flatRows, flatRows[len(flatRows)-1].ObservedAt)
+	assert.Equal(t, "flat", flat.Status)
+	assert.Empty(t, flat.HitsLimitAt)
+}
+
+func TestForecastUsagePausesStaleReadings(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, 10, 15, 20)
+	forecast, _ := forecastUsage(rows, rows[len(rows)-1].ObservedAt.Add(usageForecastStaleAfter+time.Minute))
+	assert.Equal(t, "stale", forecast.Status, "an old sample cannot masquerade as a current pace")
+	assert.Empty(t, forecast.HitsLimitAt)
+
+	for i := range rows {
+		rows[i].ResetsAt = rows[len(rows)-1].ObservedAt
+	}
+	forecast, _ = forecastUsage(rows, rows[len(rows)-1].ObservedAt.Add(time.Minute))
+	assert.Equal(t, "stale", forecast.Status, "a passed declared reset invalidates the old percentage immediately")
+}
+
+func TestDownsampleUsageRowsBoundsWireAndPreservesReset(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, make([]float64, 2000)...)
+	for i := range rows {
+		rows[i].UsedPercent = float64(i % 100)
+	}
+	resetIndex := 1000
+	resets := []usageHistoryReset{{
+		At: rows[resetIndex].ObservedAt.Format(time.RFC3339Nano), Pct: rows[resetIndex].UsedPercent,
+	}}
+	downsampled := downsampleUsageRows(rows, resets, 120)
+	require.LessOrEqual(t, len(downsampled), 120)
+	assert.Equal(t, rows[0].ObservedAt, downsampled[0].ObservedAt)
+	assert.Equal(t, rows[len(rows)-1].ObservedAt, downsampled[len(downsampled)-1].ObservedAt)
+	present := map[time.Time]bool{}
+	for _, row := range downsampled {
+		present[row.ObservedAt] = true
+	}
+	assert.True(t, present[rows[resetIndex-1].ObservedAt], "pre-reset point retained so the old segment has an endpoint")
+	assert.True(t, present[rows[resetIndex].ObservedAt], "post-reset minimum retained so the new segment has a baseline")
+}
+
+func TestDownsampleUsageResetsBoundsMarkers(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	resets := make([]usageHistoryReset, 2000)
+	for i := range resets {
+		resets[i] = usageHistoryReset{At: base.Add(time.Duration(i) * time.Minute).Format(time.RFC3339Nano)}
+	}
+	downsampled := downsampleUsageResets(resets, 120)
+	require.LessOrEqual(t, len(downsampled), 120)
+	assert.Equal(t, resets[0].At, downsampled[0].At)
+	assert.Equal(t, resets[len(resets)-1].At, downsampled[len(downsampled)-1].At)
+}

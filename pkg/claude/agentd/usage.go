@@ -67,6 +67,9 @@ type dashboardUsage struct {
 	// above stay Claude's (historical names), so an existing client that
 	// doesn't know about Codex is unaffected.
 	Codex *codexDashboardUsage `json:"codex,omitempty"`
+	// historyAvailable stays server-local: it gates the dedicated Usage tab
+	// without adding internal storage state to the public usage readout.
+	historyAvailable bool
 }
 
 // usageWindow is one rolling-limit bucket: percent consumed plus the
@@ -164,16 +167,18 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 
 	var usageRow *db.UsageCacheRow
 	var codexRow *db.CodexUsageCacheRow
+	var hasUsageHistory bool
 	var cacheErr error
 	timed("rate_limit_caches", func() {
-		usageRow, codexRow, cacheErr = db.LoadDashboardUsageCaches()
+		usageRow, codexRow, hasUsageHistory, cacheErr = db.LoadDashboardUsageCaches()
 	})
 
 	assembleStart := time.Now()
 	out := dashboardUsage{
-		TotalCostUSD: totalCost,
-		TodayCostUSD: todayCost,
-		Codex:        collectCodexUsageSnapshot(codexRow),
+		TotalCostUSD:     totalCost,
+		TodayCostUSD:     todayCost,
+		Codex:            collectCodexUsageSnapshot(codexRow),
+		historyAvailable: hasUsageHistory,
 	}
 	if idleTimeout <= 0 {
 		idleTimeout = usageStaleAfter

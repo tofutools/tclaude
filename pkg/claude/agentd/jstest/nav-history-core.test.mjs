@@ -100,6 +100,12 @@ test('toPath / fromPath round-trip includes the terminals tab', () => {
   assert.deepEqual(fromPath('/terminals'), { tab: 'terminals' });
 });
 
+test('toPath / fromPath round-trip includes the Usage tab', () => {
+  const usage = { tab: 'usage' };
+  assert.equal(toPath(usage), '/usage');
+  assert.deepEqual(fromPath('/usage'), usage);
+});
+
 test('go() jumps to an absolute index and clamps-ignores out-of-range', () => {
   let s = initialState(groups);
   s = push(s, jobs);

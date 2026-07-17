@@ -239,6 +239,35 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 
 	seedPalette(t, f)
 	seedProcessDashSnap(t, f)
+	seedUsageHistoryDashSnap(t)
+}
+
+func seedUsageHistoryDashSnap(t *testing.T) {
+	t.Helper()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(15 * time.Minute)
+	claudeFiveHour := []float64{72, 18, 25, 31}
+	claudeWeekly := []float64{40, 42, 45, 48}
+	codexWeekly := []float64{55, 59, 62, 66}
+	for i := range claudeFiveHour {
+		observedAt := base.Add(time.Duration(i) * 15 * time.Minute)
+		if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderAnthropic, ObservedAt: observedAt, Source: "dashsnap",
+			Windows: []db.SubscriptionUsageWindow{
+				{Name: "five_hour", Duration: 5 * time.Hour, UsedPercent: claudeFiveHour[i], ResetsAt: base.Add(5 * time.Hour)},
+				{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: claudeWeekly[i], ResetsAt: base.Add(6 * 24 * time.Hour)},
+			},
+		}); err != nil {
+			t.Fatalf("seed Claude usage history: %v", err)
+		}
+		if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderOpenAI, ObservedAt: observedAt, Source: "dashsnap",
+			Windows: []db.SubscriptionUsageWindow{
+				{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: codexWeekly[i], ResetsAt: base.Add(5 * 24 * time.Hour)},
+			},
+		}); err != nil {
+			t.Fatalf("seed Codex usage history: %v", err)
+		}
+	}
 }
 
 func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
@@ -859,6 +888,13 @@ func baseStates() []dashsnap.State {
 			Title:    "Bounded Preact — Costs normal",
 			Caption:  "Costs island completed its request and rendered controls for the fixture's empty-cost span.",
 			JS:       boundedTabJS("costs", "#costs-factor"),
+			SettleMS: 500,
+		},
+		{
+			Key:      "bounded-usage-normal",
+			Title:    "Bounded Preact — Usage forecasts",
+			Caption:  "Subscription quota history renders provider/window line charts, a detected nonzero reset, and post-reset forecasts.",
+			JS:       boundedTabJS("usage", ".usage-series-card"),
 			SettleMS: 500,
 		},
 		{
@@ -2612,9 +2648,9 @@ func boundedTabJS(tab, readySelector string) string {
 var store = modules[0], registry = modules[1];
 var __tab = document.querySelector('nav [data-tab=%q]');
 if (!__tab) throw new Error('missing bounded tab: %s');
-if (%q === 'plugins' || %q === 'costs') {
+if (%q === 'plugins' || %q === 'costs' || %q === 'usage') {
   store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
-    plugins_tab_visible: true, cost_tab_visible: true
+    plugins_tab_visible: true, cost_tab_visible: true, usage_tab_visible: true
   });
   await Promise.resolve();
 }
@@ -2634,7 +2670,7 @@ return new Promise(function(resolve, reject) {
     setTimeout(ready, 25);
   })();
 });
-});`, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, tab)
+});`, tab, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, tab)
 }
 
 func boundedJobsEmptyJS() string {

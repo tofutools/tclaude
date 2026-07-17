@@ -344,6 +344,28 @@ export async function mountCostsFeature(actionDependencies = {}) {
   });
 }
 
+export async function mountUsageHistoryFeature(actionDependencies = {}) {
+  const host = document.querySelector('#usage-root');
+  if (!host) return null;
+  return mountFeatureIsland({
+    name: 'usage', label: 'Usage', hosts: [host], failureClass: 'usage-history-error',
+    load: async () => {
+      const islandModule = import('./usage-history-island.js');
+      const stateModule = import('./usage-history-state.js');
+      const actionsModule = import('./usage-history-actions.js');
+      const [{ mountUsageHistoryIsland }, { usageHistoryState }, { createUsageHistoryActions }] =
+        await Promise.all([islandModule, stateModule, actionsModule]);
+      const actions = createUsageHistoryActions({ state: usageHistoryState, ...actionDependencies });
+      return {
+        state: usageHistoryState,
+        mount: (registerCleanup) => mountUsageHistoryIsland({
+          host, state: usageHistoryState, actions, registerCleanup,
+        }),
+      };
+    },
+  });
+}
+
 export async function mountAccessFeature(actionDependencies) {
   const host = document.querySelector('#access-root');
   if (!host) return null;

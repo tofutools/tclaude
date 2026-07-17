@@ -43,10 +43,11 @@ func TestUsageCacheCRUD(t *testing.T) {
 func TestLoadDashboardUsageCaches(t *testing.T) {
 	setupTestDB(t)
 
-	usage, codex, err := LoadDashboardUsageCaches()
+	usage, codex, hasHistory, err := LoadDashboardUsageCaches()
 	require.NoError(t, err)
 	assert.Nil(t, usage)
 	assert.Nil(t, codex)
+	assert.False(t, hasHistory)
 
 	fetchedAt := time.Date(2026, 7, 16, 10, 0, 0, 123_000_000, time.UTC)
 	lastAttemptAt := fetchedAt.Add(time.Minute)
@@ -54,13 +55,14 @@ func TestLoadDashboardUsageCaches(t *testing.T) {
 		json.RawMessage(`{"five_hour":{"pct":42}}`), fetchedAt, lastAttemptAt,
 	))
 
-	usage, codex, err = LoadDashboardUsageCaches()
+	usage, codex, hasHistory, err = LoadDashboardUsageCaches()
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	assert.JSONEq(t, `{"five_hour":{"pct":42}}`, string(usage.Data))
 	assert.Equal(t, fetchedAt, usage.FetchedAt)
 	assert.Equal(t, lastAttemptAt, usage.LastAttemptAt)
 	assert.Nil(t, codex, "the two cache rows remain independently optional")
+	assert.False(t, hasHistory, "cache presence alone does not identify a subscription")
 
 	observedAt := fetchedAt.Add(2 * time.Minute)
 	stored, err := SaveCodexUsageCacheIfNewer(
@@ -69,7 +71,7 @@ func TestLoadDashboardUsageCaches(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, stored)
 
-	usage, codex, err = LoadDashboardUsageCaches()
+	usage, codex, hasHistory, err = LoadDashboardUsageCaches()
 	require.NoError(t, err)
 	require.NotNil(t, usage)
 	require.NotNil(t, codex)
@@ -77,13 +79,25 @@ func TestLoadDashboardUsageCaches(t *testing.T) {
 	assert.Equal(t, observedAt, codex.ObservedAt)
 	assert.False(t, codex.UpdatedAt.IsZero())
 	assert.Equal(t, "rollout.jsonl", codex.Source)
+	assert.False(t, hasHistory, "a Codex cache without quota windows remains pay-per-token shaped")
 
 	require.NoError(t, DeleteUsageCache())
-	usage, codex, err = LoadDashboardUsageCaches()
+	usage, codex, hasHistory, err = LoadDashboardUsageCaches()
 	require.NoError(t, err)
 	assert.Nil(t, usage, "Codex remains readable without a Claude cache row")
 	require.NotNil(t, codex)
 	assert.Equal(t, observedAt, codex.ObservedAt)
+	assert.False(t, hasHistory)
+
+	stored, err = SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"primary":{"used_percent":19}}`), observedAt.Add(time.Minute), "rollout.jsonl",
+		SubscriptionUsageWindow{Name: "five_hour", Duration: 5 * time.Hour, UsedPercent: 19},
+	)
+	require.NoError(t, err)
+	require.True(t, stored)
+	_, _, hasHistory, err = LoadDashboardUsageCaches()
+	require.NoError(t, err)
+	assert.True(t, hasHistory, "retained quota windows identify a subscription account")
 }
 
 func TestSaveCodexUsageCacheRecordsOpenAIHistory(t *testing.T) {

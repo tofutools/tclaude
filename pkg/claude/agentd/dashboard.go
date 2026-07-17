@@ -179,6 +179,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/perf", withGzip(handleDashboardPerf))
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
+	mux.HandleFunc("/api/usage-history", withGzip(handleDashboardUsageHistory))
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.HandleFunc("/api/logs", handleDashboardLogs)
 	// The Processes tab consumes the same versioned REST surface as other
@@ -264,7 +265,7 @@ func handleDashboardStatic() http.Handler {
 // is not URL-routed; neither is a bookmarkable location.
 var dashboardAppTabs = map[string]bool{
 	"groups": true, "jobs": true, "processes": true, "plugins": true, "access": true,
-	"messages": true, "costs": true, "audit": true, "logs": true, "config": true,
+	"messages": true, "usage": true, "costs": true, "audit": true, "logs": true, "config": true,
 	"debug": true,
 }
 
@@ -996,6 +997,10 @@ type snapshotPayload struct {
 	// than real spend — the front-end renders the WHAT-IF banner and fetches
 	// /api/costs?whatif=1. Implies CostTabVisible.
 	CostTabWhatIf bool `json:"cost_tab_whatif"`
+	// UsageTabVisible is true while either subscription provider has retained
+	// quota samples in the 90-day history window. It stays true between live
+	// rolling windows, but a pay-per-token-only cache never exposes an empty tab.
+	UsageTabVisible bool `json:"usage_tab_visible"`
 	// RemoteAccess surfaces the optional network-exposed dashboard listener's
 	// live state so the Config tab can guide setup: whether the cert/passphrase
 	// material has been generated (run `tclaude remote-access setup` first) and
@@ -2428,6 +2433,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
 	out.CostTabVisible = hasRealCost || showOnSub
 	out.CostTabWhatIf = !hasRealCost && showOnSub
+	out.UsageTabVisible = usage.historyAvailable
 	out.Templates = templates
 	out.Profiles = profiles
 	if defaultProfile != nil {

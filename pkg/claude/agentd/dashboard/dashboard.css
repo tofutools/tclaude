@@ -1604,6 +1604,63 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    hint, slid out of alignment. (reset)/(6d23h) are the 7ch cases. */
 #usage.multiline .urem   { display: inline-block; min-width: 8ch; }            /* up to "(23h59m)" */
 
+/* -- Usage history tab -------------------------------------------------- */
+.usage-history-controls button.tool.active {
+  border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
+}
+.usage-history-note {
+  margin: 0 0 14px; padding: 8px 10px;
+  color: #8b949e; background: #161b22; border: 1px solid #2a3340;
+  border-radius: 5px; font-size: 12px;
+}
+.usage-series-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  gap: 14px;
+}
+.usage-series-card {
+  min-width: 0; padding: 14px; background: #0d1117;
+  border: 1px solid #2a3340; border-radius: 7px;
+}
+.usage-card-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  margin-bottom: 4px;
+}
+.usage-provider { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.usage-series-card h3 { margin: 2px 0 0; font-size: 15px; font-weight: 600; }
+.usage-current { display: flex; flex-direction: column; align-items: flex-end; white-space: nowrap; }
+.usage-current strong { color: #d4d4d4; font-size: 20px; line-height: 1; }
+.usage-current span { color: #7d8590; font-size: 11px; margin-top: 4px; }
+.usage-line-chart { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
+.usage-grid line { stroke: #1c2430; stroke-width: 1; }
+.usage-grid text, .usage-x-label { fill: #6e7681; font-size: 10px; }
+.usage-x-label.forecast { fill: #484f58; }
+.usage-observed-line {
+  fill: none; stroke: #58a6ff; stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round;
+}
+.usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; }
+.usage-point:hover { r: 4px; fill: #cae8ff; }
+.usage-forecast-line { stroke: #d29922; stroke-width: 2; stroke-dasharray: 6 5; }
+.usage-reset-mark line { stroke: #a371f7; stroke-width: 1; stroke-dasharray: 3 4; opacity: .8; }
+.usage-reset-mark circle { fill: #a371f7; }
+.usage-chart-empty { height: 180px; display: grid; place-items: center; color: #6e7681; }
+.usage-card-footer.usage-forecast {
+  padding: 9px 10px 0; margin-top: 2px;
+  display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline;
+  background: transparent; border: 0; font-size: 12px;
+}
+.usage-card-footer.usage-forecast strong { color: #d4d4d4; }
+.usage-card-footer.usage-forecast span { color: #7d8590; }
+.usage-card-footer.usage-forecast.good strong { color: #3fb950; }
+.usage-card-footer.usage-forecast.warn strong { color: #d29922; }
+.usage-card-footer.usage-forecast.danger strong { color: #f85149; }
+.usage-reset-count { margin-left: auto; }
+.usage-history-error { margin-bottom: 12px; color: #f85149; }
+@media (max-width: 600px) {
+  .usage-series-grid { grid-template-columns: minmax(0, 1fr); }
+  .usage-series-card { padding: 10px; }
+  .usage-history-controls .muted { display: none; }
+}
+
 /* -- Costs tab ------------------------------------------------------
    Per-day spend bars in the same money-green as the cost tokens.
    Projected (future) bars are hollow + dashed so estimated spend
@@ -5118,6 +5175,12 @@ body.vegas nav [data-tab="vegas"] { display: block; }
 body.hide-costs nav [data-tab="costs"],
 body.hide-costs #tab-costs { display: none; }
 body.hide-costs #groups-cost-toggle { display: none; }
+
+/* Usage-history auto-hide. A cache row is enough to keep the tab visible even
+   between live quota windows; accounts without subscription readings never
+   see an empty destination. */
+body.hide-usage-tab nav [data-tab="usage"],
+body.hide-usage-tab #tab-usage { display: none; }
 
 /* Plugins-tab auto-hide. body.hide-plugins is set by refresh.js when the
    server's plugins_tab_visible is false — no plugins installed, no broken
