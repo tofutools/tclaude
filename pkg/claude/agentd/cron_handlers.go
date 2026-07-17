@@ -772,14 +772,14 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			decoded.target = &ct
 		}
 	}
-	var resolvedOwner string
+	var resolvedOwner cronActor
 	var ownerResolveErr error
 	if decoded.owner != nil {
 		res, _, err := agent.ResolveSelector(*decoded.owner)
 		if err != nil {
 			ownerResolveErr = err
 		} else {
-			resolvedOwner = res.ConvID
+			resolvedOwner = cronActor{Agent: res.AgentID, Conv: res.ConvID}
 		}
 	}
 	authRequest := nonInteractiveCronAuthRequest(r)
@@ -833,10 +833,15 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		}
 		if decoded.owner != nil {
 			if ownerResolveErr != nil {
-				writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+ownerResolveErr.Error())
+				writeCronProposedOwnerResolutionError(w, r, ownerResolveErr)
 				return
 			}
-			patch.OwnerConv = &resolvedOwner
+			if !cronOwnerMatchesJob(resolvedOwner, job) {
+				if !authCronProposedOwner(w, authRequest, resolvedOwner) {
+					return
+				}
+				patch.OwnerConv = &resolvedOwner.Conv
+			}
 		}
 	}
 	triggerImmediate := patch.RunImmediately != nil && *patch.RunImmediately && !job.RunImmediately
@@ -851,6 +856,12 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	n, err := db.UpdateAgentCronJobFields(id, patch)
 	if err != nil {
+		if decoded.owner != nil && patch.OwnerConv != nil &&
+			classify(peerFromContext(r.Context())) != classHuman &&
+			errors.Is(err, db.ErrAgentCronOwnerRetired) {
+			writeError(w, http.StatusForbidden, "permission", cronProposedOwnerDeniedMessage)
+			return
+		}
 		writeCronMutationError(w, "update", err)
 		return
 	}
@@ -906,6 +917,17 @@ type decodedCronPatch struct {
 	targetSelector *string
 	target         *cronTarget
 	owner          *string
+}
+
+// cronActor is a selector resolved to both forms of one actor identity. Agent
+// is the canonical, rotation-immune key used for equality; Conv is the current
+// generation passed to the existing authority and DB compatibility seams.
+// Agent may be empty for a legacy, resolvable conversation that the cron DB
+// layer will enroll atomically when the human or an authorized agent assigns
+// it as owner.
+type cronActor struct {
+	Agent string
+	Conv  string
 }
 
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPatch, bool) {
@@ -1096,6 +1118,18 @@ func cronTargetMatchesJob(target cronTarget, job *db.AgentCronJob) bool {
 	return target.Conv == job.TargetConv || sameActor(target.Conv, job.TargetConv)
 }
 
+// cronOwnerMatchesJob compares the proposed owner at the canonical actor
+// boundary. Dashboard edits send owner on every save, and callers may spell the
+// same actor by title, current/old conv-id, or stable agent_id; none of those
+// aliases should turn an unchanged attribution into a new authority check or
+// redundant owner write.
+func cronOwnerMatchesJob(owner cronActor, job *db.AgentCronJob) bool {
+	if owner.Agent != "" && job.OwnerAgent != "" {
+		return owner.Agent == job.OwnerAgent
+	}
+	return owner.Conv == job.OwnerConv || sameActor(owner.Conv, job.OwnerConv)
+}
+
 // cronAuthRecorder lets the proposed-target gate reuse the canonical auth
 // functions without exposing their target-specific denial detail. The caller
 // supplied a selector, but resolution may reveal a private canonical conv-id;
@@ -1108,6 +1142,7 @@ type cronAuthRecorder struct {
 }
 
 const cronProposedTargetDeniedMessage = "caller is not authorized to schedule the proposed cron target"
+const cronProposedOwnerDeniedMessage = "caller is not authorized to assign the proposed cron owner"
 
 func (w *cronAuthRecorder) Header() http.Header {
 	if w.header == nil {
@@ -1159,6 +1194,50 @@ func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronT
 	return false
 }
 
+// authCronProposedOwner applies the existing scheduling authority contract to
+// a changed sender-attribution actor. That is the canonical owner policy: self
+// requires self.schedule; another actor requires agent.schedule or ownership
+// of a group containing that actor; an explicit deny suppresses structural
+// ownership. Like proposed-target authorization, this path is non-interactive
+// because it runs under cronAuthorityMu and owner existence must not be exposed
+// through popup timing or durable approval state.
+func authCronProposedOwner(w http.ResponseWriter, r *http.Request, owner cronActor) bool {
+	// Retirement uses cronAuthorityMu too, so this classification and the later
+	// DB mutation share one refreshed authority boundary. A direct DB retirement
+	// racing after this check is still rejected transactionally by the cron DB
+	// layer and translated to the same agent-facing denial in handleCronPatch.
+	if owner.Agent != "" && classify(peerFromContext(r.Context())) != classHuman {
+		state, err := db.AgentState(owner.Conv)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "resolve owner state: "+err.Error())
+			return false
+		}
+		if state == db.AgentStateRetired {
+			writeError(w, http.StatusForbidden, "permission", cronProposedOwnerDeniedMessage)
+			return false
+		}
+	}
+	rec := &cronAuthRecorder{}
+	_, ok := authCronWrite(rec, r, owner.Conv)
+	if ok {
+		return true
+	}
+	if rec.status == http.StatusForbidden {
+		writeError(w, http.StatusForbidden, "permission", cronProposedOwnerDeniedMessage)
+		return false
+	}
+	for key, values := range rec.Header() {
+		w.Header()[key] = append([]string(nil), values...)
+	}
+	status := rec.status
+	if status == 0 {
+		status = http.StatusInternalServerError
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(rec.body.Bytes())
+	return false
+}
+
 func nonInteractiveCronAuthRequest(r *http.Request) *http.Request {
 	authRequest := r.Clone(r.Context())
 	authRequest.Header = r.Header.Clone()
@@ -1177,6 +1256,17 @@ func writeCronProposedTargetResolutionError(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeError(w, http.StatusForbidden, "permission", cronProposedTargetDeniedMessage)
+}
+
+// writeCronProposedOwnerResolutionError keeps a missing selector and an
+// existing-but-unauthorized owner behind one agent-facing response. Human and
+// dashboard operator calls retain the precise selector diagnostic.
+func writeCronProposedOwnerResolutionError(w http.ResponseWriter, r *http.Request, err error) {
+	if classify(peerFromContext(r.Context())) == classHuman {
+		writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+err.Error())
+		return
+	}
+	writeError(w, http.StatusForbidden, "permission", cronProposedOwnerDeniedMessage)
 }
 
 // writeCronProposedRoutingGroupResolutionError keeps missing, archived, and
