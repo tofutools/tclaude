@@ -27,6 +27,9 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 			t.Errorf("Usage line chart missing %q", needle)
 		}
 	}
+	if strings.Contains(chart, "previous.pct - point.pct") {
+		t.Error("Usage chart infers reset boundaries after downsampling instead of using server markers")
+	}
 	for _, needle := range []string{
 		`data-tab="usage"`, `<div id="usage-root"></div>`, "mountUsageHistoryFeature(),",
 		"name: 'usage'", "/api/usage-history?hours=", "Forecasts are per provider × quota window",

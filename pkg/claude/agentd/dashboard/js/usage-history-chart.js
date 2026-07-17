@@ -44,8 +44,7 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
   const segments = [];
   let current = [];
   for (const point of points) {
-    const previous = current[current.length - 1];
-    if ((resetTimes.has(point.time) || (previous && previous.pct - point.pct >= 2)) && current.length) {
+    if (resetTimes.has(point.time) && current.length) {
       segments.push(current);
       current = [];
     }
