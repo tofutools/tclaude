@@ -453,7 +453,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
 	title := ""
-	row := agent.FreshConvRow(p.ConvID)
+	row, _ := db.GetConvIndex(p.ConvID)
 	if row != nil {
 		title = agent.DisplayTitle(row)
 	}

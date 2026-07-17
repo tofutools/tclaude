@@ -587,17 +587,6 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 // `tclaude agent message` — resolves to a group; anything else resolves
 // to a single conv via agent.ResolveSelector.
 func resolveCronTarget(selector string) (cronTarget, error) {
-	return resolveCronTargetWith(selector, agent.ResolveSelector)
-}
-
-// resolveCronTargetIndexed is the bounded resolver used while
-// cronAuthorityMu is held. Unlike the create-path resolver, it never scans
-// project files or refreshes the conversation index.
-func resolveCronTargetIndexed(selector string) (cronTarget, error) {
-	return resolveCronTargetWith(selector, agent.ResolveSelectorIndexed)
-}
-
-func resolveCronTargetWith(selector string, resolve func(string) (*agent.Resolved, []*agent.Resolved, error)) (cronTarget, error) {
 	if strings.HasPrefix(selector, multicastPrefix) {
 		token := strings.TrimPrefix(selector, multicastPrefix)
 		g, err := resolveGroupToken(token)
@@ -606,7 +595,7 @@ func resolveCronTargetWith(selector string, resolve func(string) (*agent.Resolve
 		}
 		return cronTarget{Kind: db.CronTargetGroup, Group: g}, nil
 	}
-	res, _, err := resolve(selector)
+	res, _, err := agent.ResolveSelector(selector)
 	if err != nil {
 		return cronTarget{}, err
 	}
@@ -670,15 +659,7 @@ func resolveGroupToken(token string) (*db.AgentGroup, error) {
 // id. On a resolution failure the 404 response is already written and
 // ok is false.
 func resolveCronOwner(w http.ResponseWriter, selector string) (string, bool) {
-	return resolveCronOwnerWith(w, selector, agent.ResolveSelector)
-}
-
-func resolveCronOwnerIndexed(w http.ResponseWriter, selector string) (string, bool) {
-	return resolveCronOwnerWith(w, selector, agent.ResolveSelectorIndexed)
-}
-
-func resolveCronOwnerWith(w http.ResponseWriter, selector string, resolve func(string) (*agent.Resolved, []*agent.Resolved, error)) (string, bool) {
-	res, _, err := resolve(selector)
+	res, _, err := agent.ResolveSelector(selector)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+err.Error())
 		return "", false
@@ -727,6 +708,42 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	patch := decoded.patch
+	// Resolve user-facing selectors before taking cronAuthorityMu: the normal
+	// resolver may refresh the conversation index from project files. Errors are
+	// deliberately held until after the common locked boundary so an agent
+	// cannot distinguish a missing selector from an existing unauthorized one
+	// by whether the response waited behind scheduler/mutation contention.
+	var targetResolveErr error
+	if decoded.targetSelector != nil {
+		ct, err := resolveCronTarget(*decoded.targetSelector)
+		if err != nil {
+			targetResolveErr = err
+		} else {
+			if ct.Kind == db.CronTargetGroup {
+				kind := db.CronTargetGroup
+				gid := ct.Group.ID
+				empty := ""
+				patch.TargetKind = &kind
+				patch.GroupID = &gid
+				patch.TargetConv = &empty
+			} else {
+				kind := db.CronTargetConv
+				patch.TargetKind = &kind
+				patch.TargetConv = &ct.Conv
+			}
+			decoded.target = &ct
+		}
+	}
+	var resolvedOwner string
+	var ownerResolveErr error
+	if decoded.owner != nil {
+		res, _, err := agent.ResolveSelector(*decoded.owner)
+		if err != nil {
+			ownerResolveErr = err
+		} else {
+			resolvedOwner = res.ConvID
+		}
+	}
 	// Serialize every real mutation with scheduled delivery and retirement.
 	// Re-read after taking the lock so two concurrent false→true PATCHes cannot
 	// both observe false, and so a retired owner can never race a body/schedule
@@ -755,25 +772,9 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
 			return
 		}
-		if decoded.targetSelector != nil {
-			ct, err := resolveCronTargetIndexed(*decoded.targetSelector)
-			if err != nil {
-				writeCronProposedTargetResolutionError(w, r, err)
-				return
-			}
-			if ct.Kind == db.CronTargetGroup {
-				kind := db.CronTargetGroup
-				gid := ct.Group.ID
-				empty := ""
-				patch.TargetKind = &kind
-				patch.GroupID = &gid
-				patch.TargetConv = &empty
-			} else {
-				kind := db.CronTargetConv
-				patch.TargetKind = &kind
-				patch.TargetConv = &ct.Conv
-			}
-			decoded.target = &ct
+		if targetResolveErr != nil {
+			writeCronProposedTargetResolutionError(w, r, targetResolveErr)
+			return
 		}
 		proposed, changed, err := proposedCronPatchTarget(job, decoded)
 		if err != nil {
@@ -784,11 +785,11 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			return
 		}
 		if decoded.owner != nil {
-			o, ok := resolveCronOwnerIndexed(w, *decoded.owner)
-			if !ok {
+			if ownerResolveErr != nil {
+				writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+ownerResolveErr.Error())
 				return
 			}
-			patch.OwnerConv = &o
+			patch.OwnerConv = &resolvedOwner
 		}
 	}
 	triggerImmediate := patch.RunImmediately != nil && *patch.RunImmediately && !job.RunImmediately
@@ -970,7 +971,8 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 
 // proposedCronPatchTarget returns the canonical destination requested by a
 // PATCH, and whether it differs from the refreshed stored destination. The
-// explicit target selector is resolved under cronAuthorityMu before this runs.
+// explicit target selector is resolved before cronAuthorityMu and its outcome
+// is withheld until the locked mutation boundary before this runs.
 // A raw group_id is routing metadata for a conv job, but it is the destination
 // itself for a group job, so that legacy wire shape must take the same gate.
 func proposedCronPatchTarget(job *db.AgentCronJob, decoded decodedCronPatch) (cronTarget, bool, error) {
