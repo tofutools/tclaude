@@ -56,15 +56,23 @@ func CanonicalCheckpointProjection(checkpoint []byte, selfCommandID string) ([]b
 		}
 		delete(commands, selfCommandID)
 	}
-	return encodeJCS(object)
+	return encodeJCSBounded(object, MaxCheckpointBytes)
 }
 
 func encodeJCS(value any) ([]byte, error) {
-	// The checkpoint byte ceiling applies to canonical JCS output as well as
-	// its source. Measure first so number normalization cannot grow an
-	// unbounded buffer, then allocate exactly the returned byte count.
 	var size jcsSizer
-	if err := writeJCS(&size, value); err != nil {
+	return encodeJCSMeasured(value, &size)
+}
+
+func encodeJCSBounded(value any, maximum int) ([]byte, error) {
+	size := jcsSizer{maximum: maximum}
+	return encodeJCSMeasured(value, &size)
+}
+
+func encodeJCSMeasured(value any, size *jcsSizer) ([]byte, error) {
+	// Measure first so number normalization cannot grow a geometrically
+	// over-allocated buffer, then allocate exactly the returned byte count.
+	if err := writeJCS(size, value); err != nil {
 		return nil, err
 	}
 	out := jcsBuffer{data: make([]byte, 0, size.size)}
@@ -197,15 +205,23 @@ type jcsSink interface {
 	writeRune(rune) error
 }
 
-// jcsSizer stops at the first byte beyond the public checkpoint ceiling. Its
-// reported value is saturated at limit+1 because the rest of an adversarial
-// projection is deliberately never materialized or traversed.
-type jcsSizer struct{ size int }
+// A bounded jcsSizer stops at the first byte beyond its ceiling. Its reported
+// value is saturated at limit+1 because the rest of an adversarial value is
+// deliberately never materialized or traversed. A zero maximum is unbounded
+// for internal canonical digest encodings that have their own container limit.
+type jcsSizer struct {
+	size    int
+	maximum int
+}
 
 func (s *jcsSizer) add(size int) error {
-	if size > MaxCheckpointBytes-s.size {
-		s.size = MaxCheckpointBytes + 1
-		return &OverBudgetError{Limit: "checkpoint_bytes", Value: s.size, Maximum: MaxCheckpointBytes}
+	const maxInt = int(^uint(0) >> 1)
+	if size < 0 || size > maxInt-s.size {
+		return fmt.Errorf("canonical JCS size overflows int")
+	}
+	if s.maximum > 0 && size > s.maximum-s.size {
+		s.size = s.maximum + 1
+		return &OverBudgetError{Limit: "checkpoint_bytes", Value: s.size, Maximum: s.maximum}
 	}
 	s.size += size
 	return nil

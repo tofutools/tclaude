@@ -50,6 +50,22 @@ func TestCanonicalCheckpointProjectionExpansionBound(t *testing.T) {
 	}
 }
 
+func TestCanonicalJSONInternalDigestEncodingIsNotCheckpointBounded(t *testing.T) {
+	const framing = len(`{"padding":""}`)
+	wantSize := MaxCheckpointBytes + 1
+	value := struct {
+		Padding string `json:"padding"`
+	}{Padding: strings.Repeat("x", wantSize-framing)}
+
+	got, err := canonicalJSON(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != wantSize {
+		t.Fatalf("canonical internal digest encoding size = %d, want %d", len(got), wantSize)
+	}
+}
+
 func TestJCSAppendixBNumberVectors(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

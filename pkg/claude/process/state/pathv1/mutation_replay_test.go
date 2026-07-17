@@ -1605,6 +1605,22 @@ func TestCompletionCheckpointRegistryRejectsEmptyRunIdentity(t *testing.T) {
 	}
 }
 
+func TestCompletionCheckpointRegistryRejectsForeignRunIdentity(t *testing.T) {
+	t.Parallel()
+	identity := CommandIdentity{RunID: "run-b", Kind: CommandPerformAttempt, PayloadSchema: 1, SourceActivationID: "activation", SourceGeneration: 1, Attempt: 1, PlanDigest: "plan"}
+	command := commandWithPayload(t, identity, CommandIssued, []byte(`{"plan":true}`))
+	if err := ValidateCommand(command); err != nil {
+		t.Fatalf("standalone foreign-run command is invalid: %v", err)
+	}
+	view := CompletionReplayView{
+		Aggregate:      AggregateView{RunID: "run-a", Commands: map[string]CommandRecord{command.ID: command}},
+		CheckpointJSON: completionCheckpoint(t, "running", 1, "sum", map[string]CommandRecord{command.ID: command}),
+	}
+	if err := reconcileCheckpointCommands(view); !errors.Is(err, ErrMutationInconsistent) || !strings.Contains(err.Error(), `belongs to run "run-b", want "run-a"`) {
+		t.Fatalf("foreign-run checkpoint command error = %v", err)
+	}
+}
+
 func commandWithPayload(t *testing.T, identity CommandIdentity, state CommandState, payload []byte) CommandRecord {
 	t.Helper()
 	id, err := CommandIdentityDigest(identity)
