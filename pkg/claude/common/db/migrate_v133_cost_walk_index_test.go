@@ -11,7 +11,6 @@ import (
 )
 
 func TestMigrateV132toV133AddsCostWalkIndex(t *testing.T) {
-	require.Equal(t, 133, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v133?mode=memory&cache=shared")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

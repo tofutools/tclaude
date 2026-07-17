@@ -86,6 +86,65 @@ func TestLoadDashboardUsageCaches(t *testing.T) {
 	assert.Equal(t, observedAt, codex.ObservedAt)
 }
 
+func TestSaveCodexUsageCacheRecordsOpenAIHistory(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC()
+	stored, err := SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"Observed":"`+now.Format(time.RFC3339Nano)+`"}`),
+		now,
+		"rollout.jsonl",
+		SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour,
+			UsedPercent: 27, ResetsAt: now.Add(5 * 24 * time.Hour),
+		},
+	)
+	require.NoError(t, err)
+	assert.True(t, stored)
+
+	d, err := Open()
+	require.NoError(t, err)
+	var provider, name string
+	var pct float64
+	require.NoError(t, d.QueryRow(`SELECT s.provider, w.window_name, w.used_percent
+		FROM subscription_usage_samples s JOIN subscription_usage_windows w ON w.sample_id = s.id`).
+		Scan(&provider, &name, &pct))
+	assert.Equal(t, SubscriptionProviderOpenAI, provider)
+	assert.Equal(t, "seven_day", name)
+	assert.Equal(t, 27.0, pct)
+}
+
+func TestSaveCodexUsageCacheOlderSnapshotCanFillMissingHistoryWindow(t *testing.T) {
+	setupTestDB(t)
+	base := time.Now().UTC().Truncate(SubscriptionUsageSampleInterval)
+	newer := base.Add(10 * time.Minute)
+	stored, err := SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"observed":"newer"}`), newer, "newer.jsonl",
+		SubscriptionUsageWindow{Name: "five_hour", UsedPercent: 12},
+	)
+	require.NoError(t, err)
+	assert.True(t, stored)
+
+	older := base.Add(9 * time.Minute)
+	stored, err = SaveCodexUsageCacheIfNewer(
+		json.RawMessage(`{"observed":"older"}`), older, "older.jsonl",
+		SubscriptionUsageWindow{Name: "seven_day", UsedPercent: 34},
+	)
+	require.NoError(t, err)
+	assert.False(t, stored, "older snapshot must not replace the current-value cache")
+
+	row, err := LoadCodexUsageCache()
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, newer, row.ObservedAt)
+	assert.Equal(t, "newer.jsonl", row.Source)
+
+	d, err := Open()
+	require.NoError(t, err)
+	var windows int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM subscription_usage_windows`).Scan(&windows))
+	assert.Equal(t, 2, windows, "older weekly observation fills the child the newer five-hour snapshot omitted")
+}
+
 func TestTryClaimUsageFetch_FirstClaim(t *testing.T) {
 	setupTestDB(t)
 

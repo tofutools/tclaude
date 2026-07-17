@@ -113,7 +113,7 @@ func TestGetCached_ErrorReturnsStaleCacheAndError(t *testing.T) {
 	stale := loadCacheStale()
 	require.NotNil(t, stale, "expected stale cache")
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(stale)
+	saveCache(stale, "", nil)
 
 	// Now make fetch fail
 	stubFuncs(t, okToken, failFetch)
@@ -135,7 +135,7 @@ func TestGetCached_BackoffAfterError(t *testing.T) {
 	// Expire
 	stale := loadCacheStale()
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(stale)
+	saveCache(stale, "", nil)
 
 	// Fail once — should stamp LastAttemptAt
 	var fetchCount atomic.Int32
@@ -162,7 +162,7 @@ func TestRefreshCache_BackoffAfterError(t *testing.T) {
 	// Expire
 	stale := loadCacheStale()
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(stale)
+	saveCache(stale, "", nil)
 
 	// Fail once
 	var fetchCount atomic.Int32
@@ -206,7 +206,7 @@ func TestLoadCacheWithTTL_RespectsLastAttemptAt(t *testing.T) {
 		LastAttemptAt: time.Now(),
 		FiveHour:      &CachedBucket{Pct: 10.0},
 	}
-	saveCache(cached)
+	saveCache(cached, "", nil)
 
 	// Should be considered fresh (LastAttemptAt is recent)
 	result := loadCache()
@@ -214,7 +214,7 @@ func TestLoadCacheWithTTL_RespectsLastAttemptAt(t *testing.T) {
 
 	// Now backdate LastAttemptAt too
 	cached.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(cached)
+	saveCache(cached, "", nil)
 
 	result = loadCache()
 	require.Nil(t, result, "expected expired cache")
@@ -260,7 +260,7 @@ func TestGetCached_429ReturnsErrorByDefault(t *testing.T) {
 	require.NoError(t, err, "seed fetch failed")
 	stale := loadCacheStale()
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(stale)
+	saveCache(stale, "", nil)
 
 	stubFuncs(t, okToken, rateLimitFetch)
 
@@ -311,7 +311,7 @@ func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
 	// Expire cache
 	stale := loadCacheStale()
 	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(stale)
+	saveCache(stale, "", nil)
 
 	// Now return 429 and fail the refresh too
 	stubFuncsWithRefresh(t, okToken, rateLimitFetch,
@@ -659,6 +659,57 @@ func TestUpdateFromStatusLine_CarriesForwardOmittedSevenDay(t *testing.T) {
 	assert.Equal(t, 35.0, cached.SevenDay.Pct, "carried-forward 7d keeps its last-known percent")
 	require.NotNil(t, cached.FiveHour, "5h still present")
 	assert.Equal(t, 22.0, cached.FiveHour.Pct, "fresh 5h reading wins")
+}
+
+func TestUpdateFromStatusLineRecordsSubscriptionUsageHistory(t *testing.T) {
+	setupTestCache(t)
+	now := time.Now().UTC()
+	UpdateFromStatusLine(
+		&CachedBucket{Pct: 18, ResetsAt: now.Add(2 * time.Hour)},
+		&CachedBucket{Pct: 31, ResetsAt: now.Add(5 * 24 * time.Hour)},
+		nil,
+	)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	var provider, source string
+	var windows int
+	require.NoError(t, d.QueryRow(`SELECT s.provider, w.source FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id LIMIT 1`).Scan(&provider, &source))
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM subscription_usage_windows`).Scan(&windows))
+	assert.Equal(t, db.SubscriptionProviderAnthropic, provider)
+	assert.Equal(t, "statusline", source)
+	assert.Equal(t, 2, windows)
+}
+
+func TestUpdateFromStatusLineHistoryDoesNotRefreshCarriedWindow(t *testing.T) {
+	setupTestCache(t)
+	now := time.Now().UTC()
+	UpdateFromStatusLine(
+		&CachedBucket{Pct: 18, ResetsAt: now.Add(2 * time.Hour)},
+		&CachedBucket{Pct: 31, ResetsAt: now.Add(5 * 24 * time.Hour)},
+		nil,
+	)
+	d, err := db.Open()
+	require.NoError(t, err)
+	var firstWeeklyObserved string
+	require.NoError(t, d.QueryRow(`SELECT observed_at FROM subscription_usage_windows
+		WHERE window_name = 'seven_day'`).Scan(&firstWeeklyObserved))
+
+	UpdateFromStatusLine(
+		&CachedBucket{Pct: 20, ResetsAt: now.Add(90 * time.Minute)},
+		nil,
+		nil,
+	)
+
+	var weeklyRows int
+	var weeklyPct float64
+	var lastWeeklyObserved string
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*), MAX(used_percent), MAX(observed_at)
+		FROM subscription_usage_windows WHERE window_name = 'seven_day'`).Scan(&weeklyRows, &weeklyPct, &lastWeeklyObserved))
+	assert.Equal(t, 1, weeklyRows, "display-only carry-forward must not create a fresh weekly history point")
+	assert.Equal(t, 31.0, weeklyPct)
+	assert.Equal(t, firstWeeklyObserved, lastWeeklyObserved, "carried weekly value must not gain a fresh observation timestamp")
 }
 
 // Once the carried 7d window's own reset time has passed, a render that

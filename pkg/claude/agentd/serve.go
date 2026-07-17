@@ -375,6 +375,11 @@ func runServe(p *serveParams) error {
 	// audit_cleanup.go.
 	startAuditLogCleanup(cronStop)
 
+	// Subscription usage history retention. The current-value caches stay
+	// untouched; only 15-minute graph samples older than the default 90-day
+	// window are removed. See usage_history_cleanup.go.
+	startSubscriptionUsageCleanup(cronStop)
+
 	// Unread-message reminder sweep. Re-nudges an online, idle, non-retired
 	// agent every ~10 minutes about a delivered message it hasn't read yet;
 	// a pane blocked on a permission/elicitation dialog is left alone until

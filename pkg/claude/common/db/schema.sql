@@ -823,3 +823,24 @@ CREATE TABLE codex_telemetry_checkpoints (
 			updated_at TEXT NOT NULL
 		);
 
+CREATE TABLE subscription_usage_samples (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			provider   TEXT NOT NULL,
+			sampled_at TEXT NOT NULL,
+			UNIQUE(provider, sampled_at)
+		);
+
+CREATE INDEX idx_subscription_usage_samples_sampled_at
+			ON subscription_usage_samples(sampled_at);
+
+CREATE TABLE subscription_usage_windows (
+			sample_id        INTEGER NOT NULL REFERENCES subscription_usage_samples(id) ON DELETE CASCADE,
+			window_name      TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL DEFAULT 0,
+			used_percent     REAL NOT NULL,
+			resets_at        TEXT NOT NULL DEFAULT '',
+			observed_at      TEXT NOT NULL,
+			source           TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY(sample_id, window_name)
+		);
+
