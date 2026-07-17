@@ -198,10 +198,16 @@ func TestAgentCronJob_RetiredOwnerRejectsEveryFieldMutationAtomically(t *testing
 	queueWhenOffline := false
 	replacementOwner := "cron-denied-replacement-owner"
 	replacementTarget := "cron-denied-replacement-target"
+	targetKind := CronTargetGroup
+	groupID := int64(42)
+	targetRole := "worker"
 	for label, patch := range map[string]UpdateCronPatch{
 		"name":                {Name: &name},
 		"owner":               {OwnerConv: &replacementOwner},
+		"target kind":         {TargetKind: &targetKind},
 		"target":              {TargetConv: &replacementTarget},
+		"group":               {GroupID: &groupID},
+		"target role":         {TargetRole: &targetRole},
 		"interval":            {IntervalSeconds: &interval},
 		"cron expression":     {CronExpr: &cronExpr},
 		"subject":             {Subject: &subject},
