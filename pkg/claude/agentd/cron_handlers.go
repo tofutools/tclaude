@@ -787,6 +787,14 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		if changed && !authCronProposedTarget(w, authRequest, proposed) {
 			return
 		}
+		routingGroup, changed, err := proposedCronPatchRoutingGroup(job, decoded)
+		if err != nil {
+			writeCronProposedRoutingGroupResolutionError(w, r, err)
+			return
+		}
+		if changed && !authCronProposedTarget(w, authRequest, routingGroup) {
+			return
+		}
 		if decoded.owner != nil {
 			if ownerResolveErr != nil {
 				writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+ownerResolveErr.Error())
@@ -995,6 +1003,42 @@ func proposedCronPatchTarget(job *db.AgentCronJob, decoded decodedCronPatch) (cr
 	return cronTarget{Kind: db.CronTargetGroup, Group: g}, true, nil
 }
 
+// proposedCronPatchRoutingGroup returns the canonical group requested by an
+// explicit raw group_id when the effective PATCH target is a single conv. For
+// conv jobs group_id is authority-bearing routing metadata: it stamps the
+// delivered message onto that group's channel even though it does not change
+// the execution target itself.
+//
+// Keep this gate separate from proposedCronPatchTarget. A target selector may
+// be canonically equivalent to the stored execution target while a sibling
+// raw group_id still changes the routing destination. Conversely, an unchanged
+// group_id must not start requiring fresh group authority merely because some
+// unrelated field is edited.
+func proposedCronPatchRoutingGroup(job *db.AgentCronJob, decoded decodedCronPatch) (cronTarget, bool, error) {
+	groupID := decoded.patch.GroupID
+	if groupID == nil || *groupID == 0 || *groupID == job.GroupID {
+		return cronTarget{}, false, nil
+	}
+	targetKind := job.TargetKind
+	if decoded.patch.TargetKind != nil {
+		targetKind = *decoded.patch.TargetKind
+	}
+	if targetKind != db.CronTargetConv {
+		return cronTarget{}, false, nil
+	}
+	g, err := db.GetAgentGroupByID(*groupID)
+	if err != nil {
+		return cronTarget{}, false, err
+	}
+	if g == nil {
+		return cronTarget{}, false, fmt.Errorf("no group numbered %d", *groupID)
+	}
+	if g.IsArchived() {
+		return cronTarget{}, false, errGroupArchived
+	}
+	return cronTarget{Kind: db.CronTargetGroup, Group: g}, true, nil
+}
+
 func cronTargetMatchesJob(target cronTarget, job *db.AgentCronJob) bool {
 	if target.Kind == db.CronTargetGroup {
 		return job.IsGroupTarget() && target.Group != nil && target.Group.ID == job.GroupID
@@ -1018,6 +1062,8 @@ type cronAuthRecorder struct {
 	status int
 	body   bytes.Buffer
 }
+
+const cronProposedTargetDeniedMessage = "caller is not authorized to schedule the proposed cron target"
 
 func (w *cronAuthRecorder) Header() http.Header {
 	if w.header == nil {
@@ -1054,8 +1100,7 @@ func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronT
 		return true
 	}
 	if rec.status == http.StatusForbidden {
-		writeError(w, http.StatusForbidden, "permission",
-			"caller is not authorized to schedule the proposed cron target")
+		writeError(w, http.StatusForbidden, "permission", cronProposedTargetDeniedMessage)
 		return false
 	}
 	for key, values := range rec.Header() {
@@ -1087,8 +1132,22 @@ func writeCronProposedTargetResolutionError(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
 		return
 	}
-	writeError(w, http.StatusForbidden, "permission",
-		"caller is not authorized to schedule the proposed cron target")
+	writeError(w, http.StatusForbidden, "permission", cronProposedTargetDeniedMessage)
+}
+
+// writeCronProposedRoutingGroupResolutionError keeps missing, archived, and
+// unauthorized routing groups behind the same agent-facing denial. The human
+// operator keeps precise diagnostics for administrative repair.
+func writeCronProposedRoutingGroupResolutionError(w http.ResponseWriter, r *http.Request, err error) {
+	if classify(peerFromContext(r.Context())) != classHuman {
+		writeError(w, http.StatusForbidden, "permission", cronProposedTargetDeniedMessage)
+		return
+	}
+	if errors.Is(err, errGroupArchived) {
+		writeError(w, http.StatusConflict, "archived", err.Error())
+		return
+	}
+	writeError(w, http.StatusNotFound, "not_found", "resolve routing group: "+err.Error())
 }
 
 func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
