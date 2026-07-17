@@ -319,6 +319,10 @@ func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) e
 	if err != nil {
 		return err
 	}
+	return validateRouteTransitionAuthority(pre, plan, settlement.Identity.ResultCode)
+}
+
+func validateRouteTransitionAuthority(pre RoutingState, plan RoutePathsPlan, settlementResult string) error {
 	path, ok := pre.Paths[plan.SourcePathID]
 	if !ok || path.State != PathLive || path.SourceActivation.ID != plan.SourceActivationID || path.SourceActivation.Generation != plan.SourceGeneration {
 		return fmt.Errorf("%w: route source is not the bound live activation output", ErrMutationInvalid)
@@ -338,7 +342,7 @@ func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) e
 		return fmt.Errorf("%w: route post-state differs from exact output/command/event plan", ErrMutationInvalid)
 	}
 	outcome, exact := exactSettlementResult(plan.ResultCode, after.Disposition.ReasonCode == "exclusive_route")
-	if !exact || settlement.Identity.ResultCode != outcome {
+	if !exact || settlementResult != outcome {
 		return fmt.Errorf("%w: route result form does not conserve settlement result for transition %q", ErrMutationInvalid, after.Disposition.ReasonCode)
 	}
 	return validateRouteMutationSet(pre, plan, after)
