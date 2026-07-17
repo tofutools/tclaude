@@ -22,7 +22,7 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		}
 	}
 	chart := read("js/usage-history-chart.js")
-	for _, needle := range []string{"<polyline", "usage-observed-line", "usage-forecast-line", "usage-reset-mark"} {
+	for _, needle := range []string{"<polyline", "usage-observed-line", "usage-forecast-line", "usage-reset-mark", "usageAxisTicks(start, horizon)"} {
 		if !strings.Contains(chart, needle) {
 			t.Errorf("Usage line chart missing %q", needle)
 		}
@@ -37,6 +37,8 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"if (name === 'seven_day_sonnet') return '7 day Sonnet';",
 		"sampledPoints(points, 240)",
 		"headline: 'Forecast paused'",
+		"Usage chart legend",
+		"source: ${point.source}",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)
