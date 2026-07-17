@@ -55,7 +55,7 @@ type aggregateIndex struct {
 	settlementInputs         map[terminalInputKey]registryMultiplicity
 	maxSideEffectAttempt     map[ActivationID]uint64
 	reducingSlotSources      map[slotSourceKey][]ReservationID
-	propagationArrival       map[CandidateClosureKey]bool
+	propagationArrivalSeq    map[CandidateClosureKey]int64
 	propagationArrivalKnown  map[CandidateClosureKey]bool
 }
 
@@ -130,9 +130,9 @@ func ValidateAggregate(view AggregateView) InvariantReport {
 		scopeIntervals:  map[ScopeID]treeInterval{},
 		commandRefs:     map[string]struct{}{},
 		performAttempts: map[terminalAttemptKey]registryMultiplicity{}, settlementAttempts: map[terminalAttemptKey]registryMultiplicity{}, settlementInputs: map[terminalInputKey]registryMultiplicity{},
-		maxSideEffectAttempt: map[ActivationID]uint64{},
-		reducingSlotSources:  map[slotSourceKey][]ReservationID{},
-		propagationArrival:   map[CandidateClosureKey]bool{}, propagationArrivalKnown: map[CandidateClosureKey]bool{},
+		maxSideEffectAttempt:  map[ActivationID]uint64{},
+		reducingSlotSources:   map[slotSourceKey][]ReservationID{},
+		propagationArrivalSeq: map[CandidateClosureKey]int64{}, propagationArrivalKnown: map[CandidateClosureKey]bool{},
 	}
 	i.indexReservations()
 	i.indexReducingSlotSources()

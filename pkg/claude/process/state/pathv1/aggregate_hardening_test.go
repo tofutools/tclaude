@@ -340,6 +340,14 @@ func TestPropagationCursorRequiresExactProcessedPrefix(t *testing.T) {
 			t.Fatalf("diagnostics = %#v", index.c.report.Diagnostics)
 		}
 	})
+	t.Run("closure cannot postdate cursor advancement", func(t *testing.T) {
+		index, key, _ := base(1, PropagationComplete)
+		index.view.Routing.CandidateClosures[key] = CandidateClosure{CommandID: "other", EventSeq: 8}
+		index.validatePropagation()
+		if !reportHasCode(*index.c.report, "propagation_frontier_late") {
+			t.Fatalf("diagnostics = %#v", index.c.report.Diagnostics)
+		}
+	})
 	t.Run("cursor partitions a multi-entry frontier", func(t *testing.T) {
 		setup := func() (*aggregateIndex, CandidateClosureKey, CandidateClosureKey) {
 			index, first, oldID := base(1, PropagationPending)
@@ -383,11 +391,22 @@ func TestPropagationCursorRequiresExactProcessedPrefix(t *testing.T) {
 	t.Run("arrival is exact no-closure step", func(t *testing.T) {
 		index, key, _ := base(1, PropagationComplete)
 		candidate := index.candidateByClosureKey[key]
-		index.view.Routing.Paths["arrival"] = PathRecord{ID: "arrival", Kind: PathEdge, State: PathConsumed}
+		index.view.Routing.Paths["arrival"] = PathRecord{ID: "arrival", Kind: PathEdge, State: PathConsumed, ArrivedSeq: 7, UpdatedSeq: 8}
 		index.pathsByTarget[candidate] = []PathID{"arrival"}
 		index.pathsBySlot["slot"] = []PathID{"arrival"}
 		index.validatePropagation()
 		if reportHasCode(*index.c.report, "propagation_frontier_unclosed") {
+			t.Fatalf("diagnostics = %#v", index.c.report.Diagnostics)
+		}
+	})
+	t.Run("later arrival cannot retroactively close prefix", func(t *testing.T) {
+		index, key, _ := base(1, PropagationComplete)
+		candidate := index.candidateByClosureKey[key]
+		index.view.Routing.Paths["arrival"] = PathRecord{ID: "arrival", Kind: PathEdge, State: PathConsumed, ArrivedSeq: 8, UpdatedSeq: 8}
+		index.pathsByTarget[candidate] = []PathID{"arrival"}
+		index.pathsBySlot["slot"] = []PathID{"arrival"}
+		index.validatePropagation()
+		if !reportHasCode(*index.c.report, "propagation_frontier_unclosed") {
 			t.Fatalf("diagnostics = %#v", index.c.report.Diagnostics)
 		}
 	})

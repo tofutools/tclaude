@@ -277,10 +277,13 @@ func (i *aggregateIndex) validatePropagation() {
 				i.c.add("propagation_frontier_unknown", path, "frontier key %q is unknown", key)
 				continue
 			}
-			_, closed := i.view.Routing.CandidateClosures[key]
+			closure, closed := i.view.Routing.CandidateClosures[key]
 			processed := uint32(index) < intent.Cursor
-			if processed && !closed && !i.propagationEntryArrived(key) {
+			if processed && !closed && !i.propagationEntryArrived(key, intent.EventSeq) {
 				i.c.add("propagation_frontier_unclosed", path, "processed frontier key %q has no required closure or arrival", key)
+			}
+			if processed && closed && closure.EventSeq > intent.EventSeq {
+				i.c.add("propagation_frontier_late", path, "processed frontier closure %q was recorded after the cursor event", key)
 			}
 			if !processed && closed {
 				i.c.add("propagation_frontier_out_of_order", path, "unprocessed frontier key %q already has a closure", key)
@@ -299,16 +302,18 @@ func (i *aggregateIndex) validatePropagation() {
 }
 
 // A propagated candidate that already has an exact arrival is a deliberate
-// no-closure cursor step: propagation must not convert success into a terminal
-// closure. All other processed frontier entries require the canonical closure
-// record at their key.
-func (i *aggregateIndex) propagationEntryArrived(key CandidateClosureKey) bool {
+// no-closure cursor step when that arrival existed by the cursor event:
+// propagation must not convert success into a terminal closure or let later
+// state retroactively justify advancement. All other processed frontier
+// entries require the canonical closure record at their key.
+func (i *aggregateIndex) propagationEntryArrived(key CandidateClosureKey, eventSeq int64) bool {
 	if i.propagationArrivalKnown == nil {
 		i.propagationArrivalKnown = map[CandidateClosureKey]bool{}
-		i.propagationArrival = map[CandidateClosureKey]bool{}
+		i.propagationArrivalSeq = map[CandidateClosureKey]int64{}
 	}
 	if i.propagationArrivalKnown[key] {
-		return i.propagationArrival[key]
+		arrivalSeq, arrived := i.propagationArrivalSeq[key]
+		return arrived && arrivalSeq <= eventSeq
 	}
 	i.propagationArrivalKnown[key] = true
 	candidate, ok := i.candidateByClosureKey[key]
@@ -330,9 +335,15 @@ func (i *aggregateIndex) propagationEntryArrived(key CandidateClosureKey) bool {
 		}
 	}
 	entry, _, _, err := FoldCandidateSlots(candidate.reservation, record, settled, i.openDescendants[candidate])
-	arrived := err == nil && entry.FoldKind == "arrived"
-	i.propagationArrival[key] = arrived
-	return arrived
+	if err != nil || entry.FoldKind != "arrived" {
+		return false
+	}
+	arrival, ok := i.view.Routing.Paths[entry.PathOrClosureID]
+	if !ok || arrival.ArrivedSeq < 0 {
+		return false
+	}
+	i.propagationArrivalSeq[key] = arrival.ArrivedSeq
+	return arrival.ArrivedSeq <= eventSeq
 }
 
 func foldReservationCandidates(i *aggregateIndex, r ActivationReservation) map[string]string {
