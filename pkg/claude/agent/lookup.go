@@ -84,6 +84,20 @@ type resolved = Resolved
 // conv without callers having to thread `db.ResolveLatestConv` through
 // every code path.
 func resolveSelector(selector string) (*resolved, []*resolved, error) {
+	r, matches, err := resolveSelectorIndexed(selector)
+	if err == nil || errors.Is(err, errAmbiguous) || errors.Is(err, errNoAgentMatch) {
+		return r, matches, err
+	}
+
+	// Cache miss. Refresh the index across all projects and try again.
+	refreshAllProjects()
+	return resolveSelectorIndexed(selector)
+}
+
+// resolveSelectorIndexed resolves only from bounded SQLite-backed state. It
+// deliberately skips resolveSelector's project-filesystem rescan, making it
+// suitable for callers that already hold a global mutation/scheduler lock.
+func resolveSelectorIndexed(selector string) (*resolved, []*resolved, error) {
 	if selector == "" {
 		return nil, nil, fmt.Errorf("selector is required")
 	}
@@ -96,12 +110,6 @@ func resolveSelector(selector string) (*resolved, []*resolved, error) {
 		selector = id
 	}
 
-	if r, matches, err := tryResolve(selector); err == nil || errors.Is(err, errAmbiguous) || errors.Is(err, errNoAgentMatch) {
-		return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
-	}
-
-	// Cache miss. Refresh the index across all projects and try again.
-	refreshAllProjects()
 	r, matches, err := tryResolve(selector)
 	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
 }
@@ -307,6 +315,12 @@ var refreshAllProjects = func() {
 // may be ErrAmbiguous with candidates populated.
 func ResolveSelector(selector string) (*Resolved, []*Resolved, error) {
 	return resolveSelector(selector)
+}
+
+// ResolveSelectorIndexed is the bounded, SQLite-only form of ResolveSelector.
+// It never scans project files or refreshes the conversation index.
+func ResolveSelectorIndexed(selector string) (*Resolved, []*Resolved, error) {
+	return resolveSelectorIndexed(selector)
 }
 
 // CurrentConvID returns the conv-id of the conversation invoking the

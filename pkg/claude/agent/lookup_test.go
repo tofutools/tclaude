@@ -418,6 +418,18 @@ func TestResolveSelector_ConvMissRefreshes(t *testing.T) {
 	assert.Equal(t, 1, refreshed, "a conv/title miss must trigger the project rescan")
 }
 
+func TestResolveSelectorIndexed_ConvMissDoesNotRefresh(t *testing.T) {
+	setupTestDB(t)
+	prev := refreshAllProjects
+	refreshed := 0
+	refreshAllProjects = func() { refreshed++ }
+	t.Cleanup(func() { refreshAllProjects = prev })
+
+	_, _, err := ResolveSelectorIndexed("nope-no-such-conv")
+	require.Error(t, err, "expected error for missing conv")
+	assert.Equal(t, 0, refreshed, "the indexed resolver must not scan project files")
+}
+
 // TestResolveSelector_AgentIDSurvivesRotation is the headline guarantee: a
 // reincarnation rotates the conv-id, but the SAME agent_id keeps resolving
 // to the live generation. This is the exact case where a conv-id selector

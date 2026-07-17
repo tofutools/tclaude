@@ -587,6 +587,17 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 // `tclaude agent message` — resolves to a group; anything else resolves
 // to a single conv via agent.ResolveSelector.
 func resolveCronTarget(selector string) (cronTarget, error) {
+	return resolveCronTargetWith(selector, agent.ResolveSelector)
+}
+
+// resolveCronTargetIndexed is the bounded resolver used while
+// cronAuthorityMu is held. Unlike the create-path resolver, it never scans
+// project files or refreshes the conversation index.
+func resolveCronTargetIndexed(selector string) (cronTarget, error) {
+	return resolveCronTargetWith(selector, agent.ResolveSelectorIndexed)
+}
+
+func resolveCronTargetWith(selector string, resolve func(string) (*agent.Resolved, []*agent.Resolved, error)) (cronTarget, error) {
 	if strings.HasPrefix(selector, multicastPrefix) {
 		token := strings.TrimPrefix(selector, multicastPrefix)
 		g, err := resolveGroupToken(token)
@@ -595,7 +606,7 @@ func resolveCronTarget(selector string) (cronTarget, error) {
 		}
 		return cronTarget{Kind: db.CronTargetGroup, Group: g}, nil
 	}
-	res, _, err := agent.ResolveSelector(selector)
+	res, _, err := resolve(selector)
 	if err != nil {
 		return cronTarget{}, err
 	}
@@ -659,7 +670,15 @@ func resolveGroupToken(token string) (*db.AgentGroup, error) {
 // id. On a resolution failure the 404 response is already written and
 // ok is false.
 func resolveCronOwner(w http.ResponseWriter, selector string) (string, bool) {
-	res, _, err := agent.ResolveSelector(selector)
+	return resolveCronOwnerWith(w, selector, agent.ResolveSelector)
+}
+
+func resolveCronOwnerIndexed(w http.ResponseWriter, selector string) (string, bool) {
+	return resolveCronOwnerWith(w, selector, agent.ResolveSelectorIndexed)
+}
+
+func resolveCronOwnerWith(w http.ResponseWriter, selector string, resolve func(string) (*agent.Resolved, []*agent.Resolved, error)) (string, bool) {
+	res, _, err := resolve(selector)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+err.Error())
 		return "", false
@@ -737,7 +756,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			return
 		}
 		if decoded.targetSelector != nil {
-			ct, err := resolveCronTarget(*decoded.targetSelector)
+			ct, err := resolveCronTargetIndexed(*decoded.targetSelector)
 			if err != nil {
 				writeCronProposedTargetResolutionError(w, r, err)
 				return
@@ -765,7 +784,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			return
 		}
 		if decoded.owner != nil {
-			o, ok := resolveCronOwner(w, *decoded.owner)
+			o, ok := resolveCronOwnerIndexed(w, *decoded.owner)
 			if !ok {
 				return
 			}
