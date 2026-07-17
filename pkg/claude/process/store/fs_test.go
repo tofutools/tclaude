@@ -1446,14 +1446,17 @@ func TestConcurrentAppendHammer(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			for {
-				snapshot, err := fs.LoadRun(ctx, runID)
+				// LoadRun is intentionally unlocked and may observe a JSONL write
+				// in progress. The atomically replaced checkpoint is the safe CAS
+				// head here; Append still validates it against the locked manifest.
+				st, err := fs.LoadRunState(ctx, runID)
 				if err != nil {
-					t.Errorf("load run: %v", err)
+					t.Errorf("load run state: %v", err)
 					return
 				}
 				entry := storetest.AdminLogEntry(runID, "implement", 0)
 				entry.Event.Reason = "concurrent append probe " + string(rune('a'+i))
-				_, err = fs.Append(ctx, runID, snapshot.State.LastLogSeq, []evidence.LogEntry{entry})
+				_, err = fs.Append(ctx, runID, st.LastLogSeq, []evidence.LogEntry{entry})
 				if err == nil {
 					return
 				}
