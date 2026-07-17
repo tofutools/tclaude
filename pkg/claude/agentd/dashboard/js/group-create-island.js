@@ -189,6 +189,7 @@ function GroupCreateDialog({
     id="group-create-modal"
     labelledby="group-create-title"
     onClose=${state.close}
+    onSubmitHotkey=${submit}
     dirty=${dirty}
     blocked=${busy}
     confirmDiscard=${confirmDiscard}
