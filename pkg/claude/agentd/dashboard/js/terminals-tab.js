@@ -2,23 +2,52 @@
 // launcher outside the Preact Terminal Shell feature. Callers keep stable
 // functions while the mounted feature owns descriptors, chrome and lifecycle.
 
-import { createAgentRosterReconciler } from './terminals-core.js';
+import { createAgentRosterReconciler, normalizeSeed } from './terminals-core.js';
 
 let controller = null;
+let prepareRuntime = null;
 const reconcileAgentRoster = createAgentRosterReconciler();
 
-export function registerTerminalShellController(next) {
+export function registerTerminalShellController(next, runtimeLoader = null) {
   if (controller) throw new Error('terminal shell controller already registered');
   controller = next;
-  return () => { if (controller === next) controller = null; };
+  prepareRuntime = runtimeLoader;
+  return () => {
+    if (controller !== next) return;
+    controller = null;
+    prepareRuntime = null;
+  };
 }
 
 export function openTermModal(options) {
-  return controller?.openModal(options) || null;
+  const current = controller;
+  if (!current) return null;
+  if (!normalizeSeed({ ws: options?.wsPath || options?.ws })) return null;
+  if (!prepareRuntime) return current.openModal(options);
+  return prepareRuntime().then(
+    () => controller === current ? current.openModal(options) : null,
+    (error) => {
+      console.error('terminal runtime load failed:', error);
+      return null;
+    },
+  );
 }
 
 export function openTerminalPane(seedOrPromise) {
-  Promise.resolve(seedOrPromise).then((seed) => controller?.openPane(seed));
+  return Promise.resolve(seedOrPromise).then((rawSeed) => {
+    const seed = normalizeSeed(rawSeed);
+    if (!seed) return null;
+    const current = controller;
+    if (!current) return null;
+    if (!prepareRuntime) return current.openPane(seed);
+    return prepareRuntime().then(
+      () => controller === current ? current.openPane(seed) : null,
+      (error) => {
+        console.error('terminal runtime load failed:', error);
+        return null;
+      },
+    );
+  });
 }
 
 export function openWebWindowPane(agent, label) {

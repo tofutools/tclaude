@@ -107,6 +107,33 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	}
 }
 
+// TestDashboardTerminals_XtermCoreIsLazy keeps the large classic xterm core
+// out of the ordinary dashboard response. The standalone popout is already a
+// terminal surface, so it intentionally retains the eager script tag.
+func TestDashboardTerminals_XtermCoreIsLazy(t *testing.T) {
+	dashboard := string(dashboardIndexHTML)
+	popout := string(terminalsPageHTML)
+	const core = `<script src="/static/vendor/xterm/xterm.min.js"></script>`
+	if strings.Contains(dashboard, core) {
+		t.Error("dashboard must not fetch xterm core before a terminal is requested")
+	}
+	if !strings.Contains(popout, core) {
+		t.Error("standalone terminals page must load xterm core immediately")
+	}
+	loader := string(mustReadFS(dashboardAssetsFS, "js/xterm-loader.js"))
+	for _, needle := range []string{"loadXtermRuntime", "/static/vendor/xterm/xterm.min.js", "runtimePromise"} {
+		if !strings.Contains(loader, needle) {
+			t.Errorf("lazy xterm loader missing %q", needle)
+		}
+	}
+	shell := string(mustReadFS(dashboardAssetsFS, "js/terminal-shell-island.js"))
+	for _, needle := range []string{"import { loadXtermRuntime }", "widgetFactory === mountTerminalWidget", "registerTerminalShellController(actions, runtimeLoader)"} {
+		if !strings.Contains(shell, needle) {
+			t.Errorf("terminal shell lazy-runtime wiring missing %q", needle)
+		}
+	}
+}
+
 // TestDashboardTerminals_PlainServesSPA: a plain /terminals (no ?solo) is the
 // dashboard's own Terminals TAB under path routing (TCL-317) — it serves the
 // SPA index so the URL and the visible tab agree, NOT the standalone popout.

@@ -5,10 +5,11 @@
 // this module. Each adapter instance streams one xterm over the existing PTY
 // WebSocket endpoints and owns only the descendants of its stable host.
 //
-// Terminal / FitAddon / WebLinksAddon are globals from the vendored classic xterm scripts
-// loaded before the module graph (both dashboard.html and terminals.html load
-// them). The core imports nothing from the dashboard SPA, so the standalone
-// page stays free of dashboard.css / helpers.js.
+// Terminal / FitAddon / WebLinksAddon are globals from the vendored classic
+// xterm scripts. The standalone page loads them before its module graph; the
+// dashboard loads the xterm core on the first terminal request. This module
+// imports nothing from the dashboard SPA, so the standalone page stays free of
+// dashboard.css / helpers.js.
 
 import { attachTerminalInteractions } from './terminal-interactions.js';
 import { terminalThemeFor } from './terminal-theme.js';

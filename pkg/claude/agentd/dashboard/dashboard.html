@@ -547,14 +547,13 @@
      DOM-order topmost check must give the picker Escape/Tab ownership. -->
 <div id="directory-picker-root"></div>
 
-<!-- Vendored xterm.js, classic (non-module) scripts so they run before
-     dashboard.js's module graph mounts the terminal shell — they
-     attach plain globals (Terminal, FitAddon, WebLinksAddon), not ES exports. -->
+<!-- Vendored xterm addons are small classic scripts which attach plain globals.
+     The larger xterm core is loaded by js/xterm-loader.js only when the first
+     terminal is requested, keeping it off ordinary dashboard page loads. -->
 <!-- Install the auth-aware fetch wrapper before any feature code captures
      window.fetch. When agentd says the HttpOnly session is no longer valid,
      the top-level page reloads into the server-rendered sign-in screen. -->
 <script src="/static/js/auth-session.js"></script>
-<script src="/static/vendor/xterm/xterm.min.js"></script>
 <script src="/static/vendor/xterm/addon-fit.min.js"></script>
 <script src="/static/vendor/xterm/addon-web-links.min.js"></script>
 <!-- Browser-native package resolution for the no-build Preact/HTM islands.

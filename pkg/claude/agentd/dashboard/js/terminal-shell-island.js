@@ -6,6 +6,7 @@ import { arcanePaletteEnabled } from './terminal-theme.js';
 import { terminalComposeShortcutAction } from './terminal-compose-route.js';
 import { registerTerminalShellController } from './terminals-tab.js';
 import { hasShownOverlay } from './overlay-stack.js';
+import { loadXtermRuntime } from './xterm-loader.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -377,7 +378,11 @@ export function mountTerminalShellIsland({
   onComposeMessage = null,
   composeMessageDialogKind = () => '',
 }) {
-  const unregisterController = registerTerminalShellController(actions);
+  // A custom widget factory (tests or another embedding) owns its own runtime.
+  // The production xterm adapter asks the facade to load the classic core
+  // before it lets the first pane/modal enter Preact state.
+  const runtimeLoader = widgetFactory === mountTerminalWidget ? loadXtermRuntime : null;
+  const unregisterController = registerTerminalShellController(actions, runtimeLoader);
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
