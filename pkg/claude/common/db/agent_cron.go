@@ -48,6 +48,17 @@ const (
 // errors.Is; wrapped context is intentionally allowed at each DB operation.
 var ErrAgentCronOwnerRetired = errors.New("cron job owner is retired")
 
+// ErrAgentCronRoutingGroupNotFound, ErrAgentCronRoutingGroupArchived, and
+// ErrAgentCronRoutingGroupUnauthorized classify the atomic routing-authority
+// check performed by InsertAgentCronJobWithRoutingAuthority. The daemon keeps
+// these distinctions private from agent callers while retaining precise
+// operator diagnostics.
+var (
+	ErrAgentCronRoutingGroupNotFound     = errors.New("cron routing group not found")
+	ErrAgentCronRoutingGroupArchived     = errors.New("cron routing group is archived")
+	ErrAgentCronRoutingGroupUnauthorized = errors.New("cron routing group is not writable by caller")
+)
+
 // AgentCronJob is a row in agent_cron_jobs. Recurring scheduled
 // task that the agentd scheduler fires on a wall-clock interval.
 type AgentCronJob struct {
@@ -184,9 +195,24 @@ const cronSelect = `SELECT j.id, j.name,
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
 
-// InsertAgentCronJob writes a new job row. Returns the new ID.
-// CreatedAt is stamped server-side; the caller's value is ignored.
+// InsertAgentCronJob writes a new job row. Returns the new ID. CreatedAt is
+// stamped server-side; the caller's value is ignored.
 func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
+	return insertAgentCronJob(j, nil)
+}
+
+// InsertAgentCronJobWithRoutingAuthority writes a conv-target job whose
+// explicit nonzero GroupID is authority-bearing routing metadata. callerConv
+// is the authenticated agent that requested the row, or "" for the human
+// operator. Group existence, active state, and member-or-owner authority are
+// rechecked inside the same BEGIN IMMEDIATE transaction as the insert, so a
+// concurrent archive, delete, membership removal, ownership removal, or agent
+// retirement cannot land between authorization and persistence.
+func InsertAgentCronJobWithRoutingAuthority(j *AgentCronJob, callerConv string) (int64, error) {
+	return insertAgentCronJob(j, &callerConv)
+}
+
+func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 	d, err := Open()
 	if err != nil {
 		return 0, err
@@ -196,6 +222,18 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if routingCaller != nil {
+		kind := j.TargetKind
+		if kind == "" {
+			kind = CronTargetConv
+		}
+		if kind != CronTargetConv || j.GroupID == 0 {
+			return 0, errors.New("routing authority requires a conv-target job with nonzero group_id")
+		}
+		if err := requireCronRoutingGroupWrite(tx, j.GroupID, *routingCaller); err != nil {
+			return 0, fmt.Errorf("InsertAgentCronJobWithRoutingAuthority: %w", err)
+		}
+	}
 	ownerAgent, err := cronConvToAgentTx(tx, j.OwnerConv)
 	if err != nil {
 		return 0, err
@@ -229,6 +267,47 @@ func InsertAgentCronJob(j *AgentCronJob) (int64, error) {
 		return 0, err
 	}
 	return id, nil
+}
+
+func requireCronRoutingGroupWrite(tx *sql.Tx, groupID int64, callerConv string) error {
+	var archivedAt string
+	if err := tx.QueryRow(`SELECT archived_at FROM agent_groups WHERE id = ?`, groupID).Scan(&archivedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrAgentCronRoutingGroupNotFound
+		}
+		return err
+	}
+	if archivedAt != "" {
+		return ErrAgentCronRoutingGroupArchived
+	}
+	// The human operator is entitled to route through any active group.
+	if callerConv == "" {
+		return nil
+	}
+	agentID, err := agentIDForConvTx(tx, callerConv)
+	if err != nil {
+		return err
+	}
+	if agentID == "" {
+		return ErrAgentCronRoutingGroupUnauthorized
+	}
+	var allowed int
+	err = tx.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM agents a
+		WHERE a.agent_id = ? AND a.retired_at = '' AND (
+			EXISTS (SELECT 1 FROM agent_group_members m
+				WHERE m.group_id = ? AND m.agent_id = a.agent_id)
+			OR EXISTS (SELECT 1 FROM agent_group_owners o
+				WHERE o.group_id = ? AND o.agent_id = a.agent_id)
+		)
+	)`, agentID, groupID, groupID).Scan(&allowed)
+	if err != nil {
+		return err
+	}
+	if allowed == 0 {
+		return ErrAgentCronRoutingGroupUnauthorized
+	}
+	return nil
 }
 
 // requireLiveCronOwner checks authority inside the caller's write transaction.

@@ -55,6 +55,45 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 	require.Len(t, all, 1, "expected 1 job")
 }
 
+func TestInsertAgentCronJobWithRoutingAuthority_IsAtomicWithGroupAuthority(t *testing.T) {
+	setupTestDB(t)
+	const caller = "cron-routing-caller"
+	_, _, err := EnsureAgentForConv(caller, "test")
+	require.NoError(t, err)
+	groupID, err := CreateAgentGroup("cron-routing", "")
+	require.NoError(t, err)
+	job := func(id int64) *AgentCronJob {
+		return &AgentCronJob{
+			OwnerConv: caller, TargetKind: CronTargetConv, TargetConv: caller,
+			GroupID: id, IntervalSeconds: 60, Body: "route", Enabled: false,
+		}
+	}
+
+	_, err = InsertAgentCronJobWithRoutingAuthority(job(groupID), caller)
+	require.ErrorIs(t, err, ErrAgentCronRoutingGroupUnauthorized)
+	rows, listErr := ListAgentCronJobs()
+	require.NoError(t, listErr)
+	assert.Empty(t, rows, "failed authority check must share the insert transaction")
+
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: groupID, ConvID: caller}))
+	id, err := InsertAgentCronJobWithRoutingAuthority(job(groupID), caller)
+	require.NoError(t, err)
+	require.NotZero(t, id)
+
+	archivedID, err := CreateAgentGroup("cron-routing-archived", "")
+	require.NoError(t, err)
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: archivedID, ConvID: caller}))
+	require.NoError(t, ArchiveAgentGroup("cron-routing-archived"))
+	_, err = InsertAgentCronJobWithRoutingAuthority(job(archivedID), caller)
+	require.ErrorIs(t, err, ErrAgentCronRoutingGroupArchived)
+
+	_, err = InsertAgentCronJobWithRoutingAuthority(job(archivedID+10_000), caller)
+	require.ErrorIs(t, err, ErrAgentCronRoutingGroupNotFound)
+	rows, listErr = ListAgentCronJobs()
+	require.NoError(t, listErr)
+	require.Len(t, rows, 1, "only the authorized row may persist")
+}
+
 func TestAgentCronJob_DueLogic(t *testing.T) {
 	setupTestDB(t)
 

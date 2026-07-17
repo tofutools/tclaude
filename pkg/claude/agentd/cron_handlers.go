@@ -465,6 +465,25 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 			"role is only valid for a group: target (it filters group members)")
 		return
 	}
+	// For a conv target, an explicit nonzero raw group_id is a second,
+	// authority-bearing routing destination: every delivered message is stamped
+	// onto that group's channel. Resolve and gate it before target authorization
+	// so a missing/foreign/archived route cannot use --ask-human on the current
+	// target to create a popup, approval audit, or existence/timing oracle.
+	var explicitRoutingGroup *db.AgentGroup
+	if ct.Kind == db.CronTargetConv && body.GroupID != 0 {
+		g, err := resolveCronRoutingGroupByID(body.GroupID)
+		if err != nil {
+			writeCronProposedRoutingGroupResolutionError(w, r, err)
+			return
+		}
+		if !authCronProposedTarget(w, nonInteractiveCronAuthRequest(r), cronTarget{
+			Kind: db.CronTargetGroup, Group: g,
+		}) {
+			return
+		}
+		explicitRoutingGroup = g
+	}
 
 	enabled := true
 	if body.Enabled != nil {
@@ -485,6 +504,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		RunImmediately:   body.RunImmediately,
 		QueueWhenOffline: body.QueueWhenOffline,
 	}
+	var createCaller string
 
 	if ct.Kind == db.CronTargetGroup {
 		// Group-target job: the scheduler fans the body out to the
@@ -525,6 +545,7 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		createCaller = caller
 		owner := caller
 		if owner == "" {
 			// Human caller — record the target as owner so the job is
@@ -544,6 +565,9 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		// (group_id=0) when there's no shared group — the scheduler then
 		// direct mailbox delivery.
 		groupID := body.GroupID
+		if explicitRoutingGroup != nil {
+			groupID = explicitRoutingGroup.ID
+		}
 		if groupID == 0 && owner != targetConv {
 			shared, _ := db.SharedGroupsForConvs(owner, targetConv)
 			if len(shared) > 0 {
@@ -556,15 +580,27 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		job.OwnerConv = owner
 	}
 
-	if job.RunImmediately {
+	if job.RunImmediately || explicitRoutingGroup != nil {
 		if cronBeforeAuthorityLockForTest != nil {
-			cronBeforeAuthorityLockForTest("create-immediate")
+			operation := "create-routing"
+			if job.RunImmediately {
+				operation = "create-immediate"
+			}
+			cronBeforeAuthorityLockForTest(operation)
 		}
 		cronAuthorityMu.Lock()
 		defer cronAuthorityMu.Unlock()
 	}
-	id, err := db.InsertAgentCronJob(job)
+	var id int64
+	if explicitRoutingGroup != nil {
+		id, err = db.InsertAgentCronJobWithRoutingAuthority(job, createCaller)
+	} else {
+		id, err = db.InsertAgentCronJob(job)
+	}
 	if err != nil {
+		if explicitRoutingGroup != nil && writeCronRoutingGroupInsertError(w, r, job.GroupID, err) {
+			return
+		}
 		writeCronMutationError(w, "insert", err)
 		return
 	}
@@ -1026,17 +1062,25 @@ func proposedCronPatchRoutingGroup(job *db.AgentCronJob, decoded decodedCronPatc
 	if targetKind != db.CronTargetConv {
 		return cronTarget{}, false, nil
 	}
-	g, err := db.GetAgentGroupByID(*groupID)
+	g, err := resolveCronRoutingGroupByID(*groupID)
 	if err != nil {
 		return cronTarget{}, false, err
 	}
+	return cronTarget{Kind: db.CronTargetGroup, Group: g}, true, nil
+}
+
+func resolveCronRoutingGroupByID(groupID int64) (*db.AgentGroup, error) {
+	g, err := db.GetAgentGroupByID(groupID)
+	if err != nil {
+		return nil, err
+	}
 	if g == nil {
-		return cronTarget{}, false, fmt.Errorf("no group numbered %d", *groupID)
+		return nil, fmt.Errorf("no group numbered %d", groupID)
 	}
 	if g.IsArchived() {
-		return cronTarget{}, false, errGroupArchived
+		return nil, errGroupArchived
 	}
-	return cronTarget{Kind: db.CronTargetGroup, Group: g}, true, nil
+	return g, nil
 }
 
 func cronTargetMatchesJob(target cronTarget, job *db.AgentCronJob) bool {
@@ -1148,6 +1192,21 @@ func writeCronProposedRoutingGroupResolutionError(w http.ResponseWriter, r *http
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found", "resolve routing group: "+err.Error())
+}
+
+func writeCronRoutingGroupInsertError(w http.ResponseWriter, r *http.Request, groupID int64, err error) bool {
+	switch {
+	case errors.Is(err, db.ErrAgentCronRoutingGroupNotFound):
+		writeCronProposedRoutingGroupResolutionError(w, r,
+			fmt.Errorf("no group numbered %d", groupID))
+	case errors.Is(err, db.ErrAgentCronRoutingGroupArchived):
+		writeCronProposedRoutingGroupResolutionError(w, r, errGroupArchived)
+	case errors.Is(err, db.ErrAgentCronRoutingGroupUnauthorized):
+		writeError(w, http.StatusForbidden, "permission", cronProposedTargetDeniedMessage)
+	default:
+		return false
+	}
+	return true
 }
 
 func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {

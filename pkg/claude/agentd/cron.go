@@ -130,7 +130,8 @@ func SetCronAfterAuthorityRevalidationForTest(fn func(int64)) func() {
 
 // SetCronBeforeAuthorityLockForTest installs a deterministic race hook for
 // HTTP mutations that are about to take cronAuthorityMu. operation identifies
-// "create-immediate", "delete", "patch", or "run-now".
+// "create-immediate", "create-routing", "enable", "disable", "delete",
+// "patch", or "run-now".
 func SetCronBeforeAuthorityLockForTest(fn func(string)) func() {
 	old := cronBeforeAuthorityLockForTest
 	cronBeforeAuthorityLockForTest = fn
