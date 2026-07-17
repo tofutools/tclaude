@@ -94,7 +94,8 @@ func (i *aggregateIndex) indexAllDetachmentSets() {
 		i.detachmentMemberNodes[set.DetachmentID] = append(i.detachmentMemberNodes[set.DetachmentID], id)
 	}
 	i.detachmentSetIntervals = indexForest(parents, MaxLineageDepth, func(code, id, message string) { i.c.add("detachment_set_"+code, "detachmentSets."+id, "%s", message) })
-	for detachmentID, nodes := range i.detachmentMemberNodes {
+	for _, detachmentID := range sortedMapKeys(i.detachmentMemberNodes) {
+		nodes := i.detachmentMemberNodes[detachmentID]
 		slices.SortFunc(nodes, func(a, b DetachmentSetID) int {
 			return cmp.Compare(i.detachmentSetIntervals[a].in, i.detachmentSetIntervals[b].in)
 		})
@@ -170,7 +171,7 @@ func (i *aggregateIndex) validateAnyDetachmentSet(r ActivationReservation) {
 	if len(actual) != len(losers) {
 		i.c.add("detachment_loser_count", path, "has %d detachments, want %d losing candidates", len(actual), len(losers))
 	}
-	for candidate := range losers {
+	for _, candidate := range sortedMapKeys(losers) {
 		d, ok := actual[candidate]
 		if !ok {
 			i.c.add("detachment_loser_missing", path, "loser candidate %q has no detachment", candidate)
@@ -183,7 +184,7 @@ func (i *aggregateIndex) validateAnyDetachmentSet(r ActivationReservation) {
 			i.c.add("detachment_root_set", path, "loser %q lacks an exact linked detachment set", candidate)
 		}
 	}
-	for candidate := range actual {
+	for _, candidate := range sortedMapKeys(actual) {
 		if _, ok := losers[candidate]; !ok {
 			i.c.add("detachment_extra", path, "candidate %q is not a loser", candidate)
 		}
@@ -207,7 +208,8 @@ func (i *aggregateIndex) validateAnyDetachmentSet(r ActivationReservation) {
 	if len(arrivals) == 0 || arrivals[0].ID != winner.ID {
 		i.c.add("any_winner_not_minimum", path, "winner %q is not minimum committed arrival", winner.ID)
 	}
-	for candidate, d := range actual {
+	for _, candidate := range sortedMapKeys(actual) {
+		d := actual[candidate]
 		for _, id := range i.pathsByTarget[candidateKey{r.ID, candidate}] {
 			p := i.view.Routing.Paths[id]
 			if p.Kind != PathEdge {
@@ -280,7 +282,7 @@ func (i *aggregateIndex) validateDetachedPath(p PathRecord) {
 		i.c.add("detachment_set_missing", "paths."+p.ID, "path lacks its applicable causal detachment set")
 	}
 	if p.DetachmentSetID != "" {
-		for detachmentID := range applicable {
+		for _, detachmentID := range sortedMapKeys(applicable) {
 			if !i.detachmentSetContains(p.DetachmentSetID, detachmentID) {
 				i.c.add("detachment_set_lineage", "paths."+p.ID, "set omits applicable causal detachment %q", detachmentID)
 			}

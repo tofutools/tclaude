@@ -124,23 +124,20 @@ func (i *aggregateIndex) slotSettlement(slot PossibleSlotRecord) (SlotSettlement
 	}
 	source, ok := i.view.Routing.Reservations[sourceID]
 	if !ok {
+		if i.reducingSlotSources == nil {
+			i.indexReducingSlotSources()
+		}
 		// A reducing join is reserved inside the scope it pops, while an
 		// outgoing possible slot names the parent context reached after that
-		// pop. Resolve that exact one-scope relationship without treating an
-		// unrelated same-node reservation as authority.
-		for _, candidate := range i.view.Routing.Reservations {
-			if candidate.NodeID != slot.SourceNodeID || candidate.Generation != slot.Generation || !candidate.IsReducing {
-				continue
-			}
-			scope, exists := i.view.Routing.Scopes[candidate.ReducesScopeID]
-			if !exists || scope.ParentScopeID != slot.SourceScopeID || scope.ParentBranchEdgeID != slot.SourceBranchEdgeID {
-				continue
-			}
-			if ok {
-				return SlotSettlement{}, false
-			}
-			source, ok = candidate, true
+		// pop. Resolve that exact one-scope relationship through the bounded
+		// index. Multiplicity is ambiguous authority and is rejected rather
+		// than canonically choosing one reducer.
+		key := slotSourceKey{node: slot.SourceNodeID, scope: slot.SourceScopeID, branch: slot.SourceBranchEdgeID, generation: slot.Generation}
+		ids := i.reducingSlotSources[key]
+		if len(ids) != 1 {
+			return SlotSettlement{}, false
 		}
+		source, ok = i.view.Routing.Reservations[ids[0]]
 	}
 	if !ok {
 		return SlotSettlement{}, false
@@ -233,6 +230,9 @@ func (i *aggregateIndex) validatePropagation() {
 		if intent.ID != id || !intent.State.Valid() || int(intent.Cursor) > len(intent.Frontier) {
 			i.c.add("propagation_shape", path, "intent key/state/cursor is invalid")
 		}
+		if intent.EventSeq < 0 {
+			i.c.add("propagation_sequence", path, "negative event sequence")
+		}
 		if len(intent.Frontier) == 0 || len(intent.Frontier) > MaxRoutingList {
 			i.c.add("propagation_frontier_bound", path, "frontier length %d is outside 1..%d", len(intent.Frontier), MaxRoutingList)
 		}
@@ -272,9 +272,18 @@ func (i *aggregateIndex) validatePropagation() {
 		if _, ok := i.view.Routing.CauseSets[intent.RootCauseDigest]; !ok {
 			i.c.add("propagation_cause_missing", path, "root cause set is missing")
 		}
-		for _, key := range intent.Frontier {
+		for index, key := range intent.Frontier {
 			if _, found := i.candidateByClosureKey[key]; !found {
 				i.c.add("propagation_frontier_unknown", path, "frontier key %q is unknown", key)
+				continue
+			}
+			_, closed := i.view.Routing.CandidateClosures[key]
+			processed := index < int(intent.Cursor)
+			if processed && !closed && !i.propagationEntryArrived(key) {
+				i.c.add("propagation_frontier_unclosed", path, "processed frontier key %q has no required closure or arrival", key)
+			}
+			if !processed && closed {
+				i.c.add("propagation_frontier_out_of_order", path, "unprocessed frontier key %q already has a closure", key)
 			}
 		}
 		i.refCommand(intent.CommandID, path+".commandId")
@@ -287,6 +296,43 @@ func (i *aggregateIndex) validatePropagation() {
 			}
 		}
 	}
+}
+
+// A propagated candidate that already has an exact arrival is a deliberate
+// no-closure cursor step: propagation must not convert success into a terminal
+// closure. All other processed frontier entries require the canonical closure
+// record at their key.
+func (i *aggregateIndex) propagationEntryArrived(key CandidateClosureKey) bool {
+	if i.propagationArrivalKnown == nil {
+		i.propagationArrivalKnown = map[CandidateClosureKey]bool{}
+		i.propagationArrival = map[CandidateClosureKey]bool{}
+	}
+	if i.propagationArrivalKnown[key] {
+		return i.propagationArrival[key]
+	}
+	i.propagationArrivalKnown[key] = true
+	candidate, ok := i.candidateByClosureKey[key]
+	if !ok {
+		return false
+	}
+	record, ok := i.candidates[candidate]
+	if !ok {
+		return false
+	}
+	settled := make(map[string]SlotSettlement, len(record.PossibleSlotIDs))
+	for _, slotID := range record.PossibleSlotIDs {
+		slot, exists := i.slots[slotID]
+		if !exists {
+			continue
+		}
+		if value, proved := i.slotSettlement(slot); proved {
+			settled[slotID] = value
+		}
+	}
+	entry, _, _, err := FoldCandidateSlots(candidate.reservation, record, settled, i.openDescendants[candidate])
+	arrived := err == nil && entry.FoldKind == "arrived"
+	i.propagationArrival[key] = arrived
+	return arrived
 }
 
 func foldReservationCandidates(i *aggregateIndex, r ActivationReservation) map[string]string {

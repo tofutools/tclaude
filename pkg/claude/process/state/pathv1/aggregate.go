@@ -71,27 +71,32 @@ func AssessAggregateCompletion(view AggregateView) (AggregateCompletion, error) 
 		return AggregateCompletion{}, fmt.Errorf("%w: %d diagnostics (%d suppressed)", ErrAggregateInvalid, len(report.Diagnostics), report.Suppressed)
 	}
 
-	for _, path := range view.Routing.Paths {
+	for _, id := range sortedMapKeys(view.Routing.Paths) {
+		path := view.Routing.Paths[id]
 		if path.State == PathLive || path.State == PathArrived {
 			return AggregateCompletion{}, fmt.Errorf("%w: active path %q in state %q", ErrAggregateUnsettled, path.ID, path.State)
 		}
 	}
-	for _, reservation := range view.Routing.Reservations {
+	for _, id := range sortedMapKeys(view.Routing.Reservations) {
+		reservation := view.Routing.Reservations[id]
 		if reservation.State == ReservationOpen {
 			return AggregateCompletion{}, fmt.Errorf("%w: open reservation %q", ErrAggregateUnsettled, reservation.ID)
 		}
 	}
-	for _, intent := range view.Routing.Propagation {
+	for _, id := range sortedMapKeys(view.Routing.Propagation) {
+		intent := view.Routing.Propagation[id]
 		if intent.State == PropagationPending {
 			return AggregateCompletion{}, fmt.Errorf("%w: pending propagation %q", ErrAggregateUnsettled, intent.ID)
 		}
 	}
-	for _, command := range view.Commands {
+	for _, id := range sortedMapKeys(view.Commands) {
+		command := view.Commands[id]
 		if command.State.Active() {
 			return AggregateCompletion{}, fmt.Errorf("%w: active command %q", ErrAggregateUnsettled, command.ID)
 		}
 	}
-	for _, effect := range view.SideEffects {
+	for _, id := range sortedMapKeys(view.SideEffects) {
+		effect := view.SideEffects[id]
 		if ActiveSideEffect(effect) {
 			return AggregateCompletion{}, fmt.Errorf("%w: active %s %q", ErrAggregateUnsettled, effect.Kind, effect.ID)
 		}
@@ -99,7 +104,8 @@ func AssessAggregateCompletion(view AggregateView) (AggregateCompletion, error) 
 
 	ids := make([]CauseID, 0)
 	kinds := make([]TerminalKind, 0)
-	for _, path := range view.Routing.Paths {
+	for _, id := range sortedMapKeys(view.Routing.Paths) {
+		path := view.Routing.Paths[id]
 		if !path.State.TerminalNonSuccess() {
 			continue
 		}

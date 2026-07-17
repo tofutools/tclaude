@@ -3,6 +3,7 @@ package pathv1
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	legacy "github.com/tofutools/tclaude/pkg/claude/process/state"
 )
@@ -38,11 +39,24 @@ func (e *LegacyAdminTimestampMissingError) Error() string {
 func (e *LegacyAdminTimestampMissingError) Unwrap() error { return ErrLegacyAdminTimestampMissing }
 
 func ValidateBlockResolution(resolution BlockResolution) (string, error) {
-	if resolution.NodeID == "" || resolution.Actor == "" {
-		return "", fmt.Errorf("block resolution lacks node/actor")
+	if resolution.NodeID == "" || resolution.NodeID != strings.TrimSpace(resolution.NodeID) {
+		return "", fmt.Errorf("block resolution node is empty or noncanonical")
+	}
+	actor := legacy.ActorRef(resolution.Actor)
+	if !legacy.ValidateActorRef(actor) || legacy.IsEngineActor(actor) {
+		return "", fmt.Errorf("block resolution requires valid non-engine actor authority")
+	}
+	if resolution.BlockedAttempt == 0 {
+		return "", fmt.Errorf("block resolution lacks blocked attempt")
 	}
 	if resolution.Decision != "retry" && resolution.Decision != "skip" && resolution.Decision != "cancel" {
 		return "", fmt.Errorf("invalid block resolution decision %q", resolution.Decision)
+	}
+	if resolution.Reason == "" || resolution.Reason != strings.TrimSpace(resolution.Reason) {
+		return "", fmt.Errorf("block resolution reason is empty or noncanonical")
+	}
+	if resolution.EvidenceRef == "" || resolution.EvidenceRef != strings.TrimSpace(resolution.EvidenceRef) {
+		return "", fmt.Errorf("block resolution evidence is empty or noncanonical")
 	}
 	if resolution.Timestamp == "" {
 		return "", fmt.Errorf("block resolution lacks timestamp")
@@ -81,6 +95,9 @@ func ValidateAdminRecord(record PathV1AdminRecord, legacy bool, resolution *Bloc
 		}
 		if record.ResolutionDigest != digest {
 			return fmt.Errorf("admin resolution digest mismatch")
+		}
+		if record.Actor != resolution.Actor || record.EvidenceRef != resolution.EvidenceRef || record.Timestamp != resolution.Timestamp {
+			return fmt.Errorf("admin resolution authority mismatch")
 		}
 	}
 	var want string
