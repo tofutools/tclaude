@@ -265,38 +265,33 @@ func comparePropagationIntent(a, b PropagationIntent) int {
 	return cmp.Compare(a.ID, b.ID)
 }
 
+type mutationCommandHandler struct {
+	validate func(MutationReplayView, CommandRecord) error
+	replay   func(MutationReplayView, CommandRecord) (MutationReplayResult, error)
+}
+
+var mutationCommandHandlers = map[CommandKindV1]mutationCommandHandler{
+	CommandRoutePaths:                {validate: ValidateRoutePathsCommand, replay: ReplayRoutePaths},
+	CommandActivateGeneration:        {validate: ValidateActivateGenerationCommand, replay: ReplayActivateGeneration},
+	CommandPropagateCandidateClosure: {validate: ValidatePropagateClosureCommand, replay: ReplayPropagateClosure},
+	CommandSettleDetachedSink:        {validate: ValidateSettleDetachedSinkCommand, replay: ReplaySettleDetachedSink},
+	CommandInternDetachmentSet:       {validate: ValidateInternDetachmentSetCommand, replay: ReplayInternDetachmentSet},
+}
+
 func ValidateMutationCommand(view MutationReplayView, command CommandRecord) error {
-	switch command.Identity.Kind {
-	case CommandRoutePaths:
-		return ValidateRoutePathsCommand(view, command)
-	case CommandActivateGeneration:
-		return ValidateActivateGenerationCommand(view, command)
-	case CommandPropagateCandidateClosure:
-		return ValidatePropagateClosureCommand(view, command)
-	case CommandSettleDetachedSink:
-		return ValidateSettleDetachedSinkCommand(view, command)
-	case CommandInternDetachmentSet:
-		return ValidateInternDetachmentSetCommand(view, command)
-	default:
+	handler, ok := mutationCommandHandlers[command.Identity.Kind]
+	if !ok {
 		return fmt.Errorf("%w: command kind %q is not a mutation replay command", ErrMutationInvalid, command.Identity.Kind)
 	}
+	return handler.validate(view, command)
 }
 
 func ReplayMutationCommand(view MutationReplayView, command CommandRecord) (MutationReplayResult, error) {
-	switch command.Identity.Kind {
-	case CommandRoutePaths:
-		return ReplayRoutePaths(view, command)
-	case CommandActivateGeneration:
-		return ReplayActivateGeneration(view, command)
-	case CommandPropagateCandidateClosure:
-		return ReplayPropagateClosure(view, command)
-	case CommandSettleDetachedSink:
-		return ReplaySettleDetachedSink(view, command)
-	case CommandInternDetachmentSet:
-		return ReplayInternDetachmentSet(view, command)
-	default:
+	handler, ok := mutationCommandHandlers[command.Identity.Kind]
+	if !ok {
 		return MutationReplayResult{}, fmt.Errorf("%w: command kind %q is not replayable here", ErrMutationInvalid, command.Identity.Kind)
 	}
+	return handler.replay(view, command)
 }
 
 func ValidateRoutePathsCommand(view MutationReplayView, command CommandRecord) error {
@@ -780,6 +775,9 @@ func decodeMutationCommand[T any](view MutationReplayView, command CommandRecord
 	}
 	if view.Aggregate.Routing == nil || view.Aggregate.Commands == nil {
 		return payload, fmt.Errorf("%w: incomplete aggregate replay view", ErrMutationInvalid)
+	}
+	if command.Identity.RunID != view.Aggregate.RunID {
+		return payload, fmt.Errorf("%w: command run differs from aggregate", ErrMutationInvalid)
 	}
 	stored, ok := view.Aggregate.Commands[command.ID]
 	if !ok || !canonicalEqual(stored, command) {
