@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -146,6 +147,36 @@ func TestDotToggle_OfflineDotWakesAgent(t *testing.T) {
 	a := findDashAgent(snap, conv)
 	require.NotNil(t, a, "the agent is still on the roster after waking")
 	assert.True(t, a.Online, "after the toggle the agent's dot must read online again")
+}
+
+// Legacy stopped sessions intentionally have no trustworthy physical resume
+// provenance. A dashboard click is an explicit human trust boundary, so it
+// must recapture the current directory identity and wake the agent instead of
+// returning error:resume_provenance (the unattended agent path still fails
+// closed and requires --ask-human approval).
+func TestDotToggle_ManualWakeRecoversMissingResumeProvenance(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dtrp-1111-2222-3333-444444444444"
+	const sessionID = "spwn-dtrp"
+	const tmuxSes = "tmux-dtrp"
+	f.HaveConvWithTitle(conv, "legacy-stopped-worker")
+	f.HaveAliveSession(conv, sessionID, tmuxSes, f.World.HomeDir)
+	f.HaveEnrolledAgent(conv)
+	f.MarkOffline(tmuxSes)
+	require.NoError(t, db.SetSessionResumeProvenance(sessionID, ""))
+
+	code, resp := postDotVerb(t, mux, conv, "resume", "")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "resumed", resp.Action,
+		"a human dashboard wake must recover provenance; detail=%s", resp.Detail)
+
+	source, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, source.ResumeProvenance,
+		"human recovery must persist the newly trusted physical identity")
 }
 
 // Scenario: the toggle is safe to mash. The dashboard re-renders

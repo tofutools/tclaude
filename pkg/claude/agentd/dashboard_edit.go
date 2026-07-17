@@ -1372,10 +1372,11 @@ func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convSelector s
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	recreate := r.URL.Query().Get("recreate") == "1"
-	out := resumeOneConvRecreate(res.ConvID, recreate)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	// The dashboard cookie is the human-consent boundary. Route through the
+	// shared handler under a synthetic human peer so a manual wake can recover
+	// missing or stale resume provenance instead of taking the unattended,
+	// agent-initiated fail-closed path.
+	handleAgentResume(w, asDashboardHumanPeer(r), res.ConvID)
 }
 
 // dashboardSetAgentNotify sets (or clears) the per-agent OS-notification
