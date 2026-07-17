@@ -93,6 +93,45 @@ func TestResolveSelector_NotFound(t *testing.T) {
 	require.Error(t, err, "expected error for missing selector")
 }
 
+func TestResolveSelectorCached_MissDoesNotRefreshProjects(t *testing.T) {
+	setupTestDB(t)
+	refreshes := 0
+	previous := refreshAllProjects
+	refreshAllProjects = func() { refreshes++ }
+	t.Cleanup(func() { refreshAllProjects = previous })
+
+	resolved, matches, err := ResolveSelectorCached("missing-sensitive-owner")
+	require.Error(t, err)
+	assert.Nil(t, resolved)
+	assert.Empty(t, matches)
+	assert.Zero(t, refreshes, "authorization-sensitive lookup performed a project refresh")
+}
+
+func TestResolveSelectorCached_PreservesValidationAndRelativeSelectors(t *testing.T) {
+	setupTestDB(t)
+	refreshes := 0
+	previous := refreshAllProjects
+	refreshAllProjects = func() { refreshes++ }
+	t.Cleanup(func() { refreshAllProjects = previous })
+
+	resolved, matches, err := ResolveSelectorCached("")
+	require.EqualError(t, err, "selector is required")
+	assert.Nil(t, resolved)
+	assert.Empty(t, matches)
+
+	const conv = "caca1111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, conv, "cached-self", "", "")
+	t.Setenv("TCLAUDE_SESSION_ID", conv)
+	for _, selector := range []string{".", "-"} {
+		resolved, matches, err = ResolveSelectorCached(selector)
+		require.NoError(t, err, selector)
+		require.NotNil(t, resolved, selector)
+		assert.Equal(t, conv, resolved.ConvID, selector)
+		assert.Empty(t, matches, selector)
+	}
+	assert.Zero(t, refreshes, "validated/relative cache lookups performed a project refresh")
+}
+
 // TestResolveSelector_ByGroupConvID covers the membership fallback: a
 // conv that only lives in agent_group_members (no conv_index row, e.g.
 // fresh from `agent spawn` before its /rename is scanned) is still

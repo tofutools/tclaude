@@ -106,7 +106,7 @@ test('Jobs cron transport returns canonical rows without awaiting the follow-up 
   ]);
 });
 
-test('Jobs cron PATCH denial rejects without optimistic success state', async (t) => {
+test('Jobs cron PATCH target and owner denials reject without optimistic success state', async (t) => {
   const harness = await createPreactHarness(t);
   const { createJobsActions } = await harness.importDashboardModule('js/jobs-actions.js');
   const upserts = [];
@@ -116,28 +116,36 @@ test('Jobs cron PATCH denial rejects without optimistic success state', async (t
     upsertCron: (cron) => upserts.push(cron),
     openCronCreate: () => {}, openCronEdit: () => {}, openCronDuplicate: () => {}, closeCronDialog: () => {},
   };
-  const actions = createJobsActions({
-    state,
-    requestMutation: async () => {
-      const error = new Error('dashboard mutation failed: HTTP 403');
-      error.body = {
-        code: 'permission',
-        error: 'caller is not authorized to schedule the proposed cron target',
-      };
-      throw error;
+  for (const denied of [
+    {
+      payload: { target: 'private-agent' },
+      message: 'caller is not authorized to schedule the proposed cron target',
     },
-    refresh: async () => { refreshed += 1; },
-    confirm: async () => true,
-    notify: (...args) => notices.push(args),
-    download: () => {},
-  });
+    {
+      payload: { owner: 'private-agent' },
+      message: 'caller is not authorized to assign the proposed cron owner',
+    },
+  ]) {
+    const actions = createJobsActions({
+      state,
+      requestMutation: async () => {
+        const error = new Error('dashboard mutation failed: HTTP 403');
+        error.body = { code: 'permission', error: denied.message };
+        throw error;
+      },
+      refresh: async () => { refreshed += 1; },
+      confirm: async () => true,
+      notify: (...args) => notices.push(args),
+      download: () => {},
+    });
 
-  await assert.rejects(
-    actions.saveCron({
-      path: '/api/cron/7', method: 'PATCH', payload: { target: 'private-agent' },
-    }),
-    /HTTP 403: caller is not authorized to schedule the proposed cron target/,
-  );
+    await assert.rejects(
+      actions.saveCron({
+        path: '/api/cron/7', method: 'PATCH', payload: denied.payload,
+      }),
+      new RegExp(`HTTP 403: ${denied.message}`),
+    );
+  }
   assert.deepEqual(upserts, [], 'a denied PATCH must not optimistically replace the stored row');
   assert.equal(refreshed, 0, 'a denied PATCH must not schedule a success refresh');
   assert.deepEqual(notices, [], 'the dialog owns error presentation; no success notice is emitted');
