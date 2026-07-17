@@ -701,6 +701,36 @@ func TestPreDecodeDiagnosticBudgetIncludesDuplicateAndSchemaFindings(t *testing.
 	})
 }
 
+func TestContextAwareDuplicatePruningSharesLargeUniqueAliasTree(t *testing.T) {
+	shared := &yaml.Node{Kind: yaml.MappingNode}
+	for i := 0; i < 10_000; i++ {
+		shared.Content = append(shared.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: fmt.Sprintf("key-%05d", i)},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "value"},
+		)
+	}
+	param := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Value: "default"}, shared,
+	}}
+	params := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Value: "settings"}, param,
+	}}
+	mapping := &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+		{Kind: yaml.ScalarNode, Value: "params"}, params,
+		{Kind: yaml.ScalarNode, Value: "nodes"}, {Kind: yaml.AliasNode, Alias: shared},
+	}}
+	root := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{mapping}}
+
+	pruned := pruneDuplicateKeys(root)
+	assert.Same(t, root, pruned, "unique alias tree should remain structurally shared")
+	assert.Same(t, shared, pruned.Content[0].Content[1].Content[1].Content[1])
+	assert.Less(t, testing.AllocsPerRun(1, func() {
+		if pruneDuplicateKeys(root) != root {
+			panic("unique alias tree was copied")
+		}
+	}), float64(220_000), "context-aware pruning must not clone the dense alias tree")
+}
+
 func TestTemplateDiagnosticBudgetExactCountBoundaryAndWireBound(t *testing.T) {
 	t.Run("count", func(t *testing.T) {
 		budget := &templateDiagnosticBudget{}

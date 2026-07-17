@@ -37,6 +37,8 @@ func normalizeAny(value any, path string, diagnostics *templateDiagnosticCollect
 	switch typed := value.(type) {
 	case nil:
 		return nil, true
+	case Metadata:
+		return normalizeStringAnyMap(map[string]any(typed), path, diagnostics)
 	case map[string]any:
 		return normalizeStringAnyMap(typed, path, diagnostics)
 	case map[any]any:

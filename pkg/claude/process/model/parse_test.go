@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // FuzzCanonicalYAMLRoundTrip pins the editor's lossless Go round-trip
@@ -15,6 +17,7 @@ import (
 // semantic identity remains stable.
 func FuzzCanonicalYAMLRoundTrip(f *testing.F) {
 	f.Add([]byte(validTemplateYAML))
+	f.Add([]byte(canonicalYAMLDuplicateScalarKeyRegression))
 	f.Add([]byte(`
 apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
@@ -50,7 +53,7 @@ layout:
 `))
 	f.Fuzz(func(t *testing.T, source []byte) {
 		parsed, err := Parse(source)
-		if err != nil {
+		if err != nil || parsed.Template == nil {
 			return
 		}
 		canonical, err := CanonicalYAML(parsed.Template)
@@ -68,6 +71,549 @@ layout:
 			t.Fatalf("modeled template changed\nbefore: %#v\nafter:  %#v", parsed.Template, roundTrip.Template)
 		}
 	})
+}
+
+const canonicalYAMLDuplicateScalarKeyRegression = `0: 0
+0: 000
+00: 0000000000
+0000: 0000000000000000000
+00000000000: 000000000000000000000
+doc: |
+
+ 0
+`
+
+func TestCanonicalYAMLRoundTripDuplicateScalarKeys(t *testing.T) {
+	parsed, err := Parse([]byte(canonicalYAMLDuplicateScalarKeyRegression))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Diagnostics) == 0 || parsed.Diagnostics[0].Code != "duplicate_key" ||
+		parsed.Diagnostics[0].Path != "0" || parsed.Diagnostics[0].Line != 2 || parsed.Diagnostics[0].Col != 1 {
+		t.Fatalf("first diagnostic = %#v, want duplicate_key at 0 (2:1)", parsed.Diagnostics)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatalf("parse canonical output: %v\n%s", err, canonical)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) {
+		t.Fatalf("modeled template changed\nbefore: %#v\nafter:  %#v\n%s", parsed.Template, roundTrip.Template, canonical)
+	}
+	if parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("semantic hash changed: %s != %s\n%s", parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
+}
+
+func TestFreeformDecodedScalarKeyCollisionsAreDeterministic(t *testing.T) {
+	const source = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: freeform-key-collisions
+start: a
+nodes:
+  a:
+    type: wait
+    wait: { duration: 1m }
+    metadata:
+      nested:
+        0: first
+        "0": second
+        00: last
+      ordered:
+        1: first
+        01: last
+      sequence:
+        - false: first
+          "false": last
+    next: done
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Diagnostic{
+		{Severity: SeverityError, Code: "duplicate_key", Path: "nodes.a.metadata.nested.0", Message: "duplicate YAML mapping key", Line: 12, Col: 9},
+		{Severity: SeverityError, Code: "duplicate_key", Path: "nodes.a.metadata.nested.0", Message: "duplicate YAML mapping key", Line: 13, Col: 9},
+		{Severity: SeverityError, Code: "duplicate_key", Path: "nodes.a.metadata.ordered.1", Message: "duplicate YAML mapping key", Line: 16, Col: 9},
+		{Severity: SeverityError, Code: "duplicate_key", Path: "nodes.a.metadata.sequence[0].false", Message: "duplicate YAML mapping key", Line: 19, Col: 11},
+	}
+	if len(parsed.Diagnostics) < len(want) || !reflect.DeepEqual(parsed.Diagnostics[:len(want)], Diagnostics(want)) {
+		t.Fatalf("duplicate diagnostic prefix\n got: %#v\nwant: %#v", parsed.Diagnostics, want)
+	}
+	metadata := parsed.Template.Nodes["a"].Metadata
+	if got := metadata["nested"]; !reflect.DeepEqual(got, map[string]any{"0": "last"}) {
+		t.Fatalf("nested last-wins value = %#v", got)
+	}
+	if got := metadata["ordered"]; !reflect.DeepEqual(got, map[string]any{"1": "last"}) {
+		t.Fatalf("ordered last-wins value = %#v", got)
+	}
+	if got := metadata["sequence"]; !reflect.DeepEqual(got, []any{map[string]any{"false": "last"}}) {
+		t.Fatalf("sequence last-wins value = %#v", got)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, quotedKey := range []string{`"0": last`, `"1": last`, `"false": last`} {
+		if !strings.Contains(string(canonical), quotedKey) {
+			t.Fatalf("canonical output does not preserve ambiguous string key %q:\n%s", quotedKey, canonical)
+		}
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) {
+		t.Fatalf("modeled template changed\nbefore: %#v\nafter:  %#v\n%s", parsed.Template, roundTrip.Template, canonical)
+	}
+	if parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("semantic hash changed: %s != %s\n%s", parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
+}
+
+func TestParamDefaultDecodedScalarKeyCollisionLastWins(t *testing.T) {
+	const source = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: param-default-key-collision
+params:
+  settings:
+    type: object
+    default:
+      2: first
+      02: last
+start: done
+nodes:
+  done: { type: end }
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Diagnostics) == 0 || parsed.Diagnostics[0].Code != "duplicate_key" ||
+		parsed.Diagnostics[0].Path != "params.settings.default.2" || parsed.Diagnostics[0].Line != 9 {
+		t.Fatalf("first diagnostic = %#v, want duplicate_key at params.settings.default.2 line 9", parsed.Diagnostics)
+	}
+	if got := parsed.Template.Params["settings"].Default; !reflect.DeepEqual(got, map[string]any{"2": "last"}) {
+		t.Fatalf("default last-wins value = %#v", got)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(canonical), `"2": last`) {
+		t.Fatalf("canonical output did not quote normalized string key:\n%s", canonical)
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("param default changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+			parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
+}
+
+func TestFreeformSignedZeroKeyCollisionLastWins(t *testing.T) {
+	tests := []struct {
+		name        string
+		keys        string
+		wantKey     string
+		wantValue   string
+		wantDupLine int
+	}{
+		{name: "positive then negative", keys: "      0.0: positive\n      -0.0: negative", wantKey: "-0", wantValue: "negative", wantDupLine: 9},
+		{name: "negative then positive", keys: "      -0.0: negative\n      0.0: positive", wantKey: "0", wantValue: "positive", wantDupLine: 9},
+	}
+	for _, test := range tests {
+		t.Run("param default "+test.name, func(t *testing.T) {
+			source := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: signed-zero-key-collision
+params:
+  settings:
+    type: object
+    default:
+` + test.keys + `
+start: done
+nodes:
+  done: { type: end }
+`
+			parsed, err := Parse([]byte(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Diagnostics) == 0 || parsed.Diagnostics[0].Code != "duplicate_key" ||
+				parsed.Diagnostics[0].Path != "params.settings.default."+test.wantKey || parsed.Diagnostics[0].Line != test.wantDupLine {
+				t.Fatalf("first diagnostic = %#v, want signed-zero duplicate_key", parsed.Diagnostics)
+			}
+			want := map[string]any{test.wantKey: test.wantValue}
+			if got := parsed.Template.Params["settings"].Default; !reflect.DeepEqual(got, want) {
+				t.Fatalf("signed-zero last-wins value = %#v, want %#v", got, want)
+			}
+			canonical, err := CanonicalYAML(parsed.Template)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roundTrip, err := Parse(canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+				t.Fatalf("signed-zero key changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+					parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+			}
+		})
+		t.Run("nested metadata "+test.name, func(t *testing.T) {
+			source := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: signed-zero-key-collision
+start: a
+nodes:
+  a:
+    type: end
+    metadata:
+      nested:
+` + strings.ReplaceAll(test.keys, "      ", "        ") + `
+`
+			parsed, err := Parse([]byte(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Diagnostics) == 0 || parsed.Diagnostics[0].Code != "duplicate_key" ||
+				parsed.Diagnostics[0].Path != "nodes.a.metadata.nested."+test.wantKey {
+				t.Fatalf("first diagnostic = %#v, want nested signed-zero duplicate_key", parsed.Diagnostics)
+			}
+			want := map[string]any{test.wantKey: test.wantValue}
+			if got := parsed.Template.Nodes["a"].Metadata["nested"]; !reflect.DeepEqual(got, want) {
+				t.Fatalf("nested signed-zero last-wins value = %#v, want %#v", got, want)
+			}
+			canonical, err := CanonicalYAML(parsed.Template)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roundTrip, err := Parse(canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+				t.Fatalf("nested signed-zero key changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+					parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+			}
+		})
+	}
+}
+
+func TestFreeformMixedSignedZeroKeyIdentity(t *testing.T) {
+	tests := []struct {
+		name           string
+		keys           string
+		want           map[string]any
+		wantDuplicates int
+	}{
+		{
+			name: "integer then negative float stay distinct",
+			keys: "0: integer\n-0.0: negative",
+			want: map[string]any{"0": "integer", "-0": "negative"},
+		},
+		{
+			name: "negative float then integer stay distinct",
+			keys: "-0.0: negative\n0: integer",
+			want: map[string]any{"0": "integer", "-0": "negative"},
+		},
+		{
+			name:           "string then negative float collide",
+			keys:           `"-0": string` + "\n-0.0: negative",
+			want:           map[string]any{"-0": "negative"},
+			wantDuplicates: 2,
+		},
+		{
+			name:           "negative float then string collide",
+			keys:           `-0.0: negative` + "\n\"-0\": string",
+			want:           map[string]any{"-0": "string"},
+			wantDuplicates: 2,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			paramKeys := strings.ReplaceAll(test.keys, "\n", "\n      ")
+			metadataKeys := strings.ReplaceAll(test.keys, "\n", "\n        ")
+			source := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: mixed-signed-zero-key-identity
+params:
+  settings:
+    type: object
+    default:
+      ` + paramKeys + `
+start: a
+nodes:
+  a:
+    type: end
+    metadata:
+      nested:
+        ` + metadataKeys + `
+`
+			parsed, err := Parse([]byte(source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			duplicates := 0
+			for _, diagnostic := range parsed.Diagnostics {
+				if diagnostic.Code == "duplicate_key" {
+					duplicates++
+				}
+			}
+			if duplicates != test.wantDuplicates {
+				t.Fatalf("duplicate diagnostics = %d, want %d: %#v", duplicates, test.wantDuplicates, parsed.Diagnostics)
+			}
+			if got := parsed.Template.Params["settings"].Default; !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("param default = %#v, want %#v", got, test.want)
+			}
+			if got := parsed.Template.Nodes["a"].Metadata["nested"]; !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("nested metadata = %#v, want %#v", got, test.want)
+			}
+			canonical, err := CanonicalYAML(parsed.Template)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roundTrip, err := Parse(canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+				t.Fatalf("mixed signed-zero keys changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+					parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+			}
+		})
+	}
+}
+
+func TestStringKeyedScalarKeysPreserveLexicalIdentity(t *testing.T) {
+	const source = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: lexical-string-keys
+start: "0"
+nodes:
+  0: { type: end }
+  00: { type: end }
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range parsed.Diagnostics {
+		if diagnostic.Code == "duplicate_key" {
+			t.Fatalf("lexically distinct keys in a string-keyed graph map collided: %#v", parsed.Diagnostics)
+		}
+	}
+	if _, ok := parsed.Template.Nodes["0"]; !ok {
+		t.Fatalf("plain numeric-looking node key 0 was not preserved: %#v", parsed.Template.Nodes)
+	}
+	if _, ok := parsed.Template.Nodes["00"]; !ok {
+		t.Fatalf("plain numeric-looking node key 00 was not preserved: %#v", parsed.Template.Nodes)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, quotedKey := range []string{`"0":`, `"00":`} {
+		if !strings.Contains(string(canonical), quotedKey) {
+			t.Fatalf("canonical output did not quote graph string key %q:\n%s", quotedKey, canonical)
+		}
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("string-keyed graph map changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+			parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
+}
+
+func TestAliasedMappingUsesOccurrenceKeyContext(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "freeform anchor before typed alias",
+			source: `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: aliased-key-context
+params:
+  settings:
+    type: object
+    default: &shared
+      0: { type: end }
+      00: { type: end }
+start: "0"
+nodes: *shared
+`,
+		},
+		{
+			name: "typed anchor before freeform alias",
+			source: `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: aliased-key-context
+start: "0"
+nodes: &shared
+  0: { type: end }
+  00: { type: end }
+params:
+  settings:
+    type: object
+    default: *shared
+`,
+		},
+	}
+	var baseline *ParsedTemplate
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := Parse([]byte(test.source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(parsed.Diagnostics) == 0 || parsed.Diagnostics[0].Code != "duplicate_key" ||
+				parsed.Diagnostics[0].Path != "params.settings.default.0" {
+				t.Fatalf("first diagnostic = %#v, want freeform duplicate_key", parsed.Diagnostics)
+			}
+			if _, ok := parsed.Template.Nodes["0"]; !ok {
+				t.Fatalf("typed alias lost lexical key 0: %#v", parsed.Template.Nodes)
+			}
+			if _, ok := parsed.Template.Nodes["00"]; !ok {
+				t.Fatalf("typed alias lost lexical key 00: %#v", parsed.Template.Nodes)
+			}
+			wantDefault := map[string]any{"0": map[string]any{"type": "end"}}
+			if got := parsed.Template.Params["settings"].Default; !reflect.DeepEqual(got, wantDefault) {
+				t.Fatalf("freeform alias did not prune last-wins: %#v", got)
+			}
+			if baseline == nil {
+				baseline = parsed
+				return
+			}
+			if !reflect.DeepEqual(baseline.Template, parsed.Template) || baseline.SemanticHash != parsed.SemanticHash {
+				t.Fatalf("alias declaration order changed modeled identity\nbefore: %#v\nafter:  %#v\nhashes: %s != %s",
+					baseline.Template, parsed.Template, baseline.SemanticHash, parsed.SemanticHash)
+			}
+		})
+	}
+}
+
+func TestCanonicalYAMLPreservesLeadingNewlineMapKey(t *testing.T) {
+	const source = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: leading-newline-key
+start: a
+nodes:
+  a:
+    type: end
+    metadata:
+      "\n0": leading
+      "0": plain
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("leading-newline map key changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+			parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
+}
+
+func TestCanonicalYAMLPreservesCRLFModeledStrings(t *testing.T) {
+	const source = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: crlf-modeled-strings
+doc: "first\r\nsecond"
+start: a
+nodes:
+  a:
+    type: end
+    metadata:
+      crlfValue: "first\r\nsecond"
+      "key\r\nline": keyed
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("CRLF modeled string changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+			parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
+}
+
+func TestRestoreCanonicalYAMLStringsQuotesChangedScalar(t *testing.T) {
+	node := &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Value: "first\nsecond",
+		Style: yaml.LiteralStyle,
+	}
+	modeled := "first\r\nsecond"
+	if err := restoreCanonicalYAMLStrings(node, reflect.ValueOf(modeled)); err != nil {
+		t.Fatal(err)
+	}
+	if node.Value != modeled || node.Style != yaml.DoubleQuotedStyle {
+		t.Fatalf("restored node = value %q style %v, want exact CRLF value in double quotes", node.Value, node.Style)
+	}
+}
+
+func TestCanonicalYAMLPreservesBinaryModeledStrings(t *testing.T) {
+	const source = `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: binary-modeled-strings
+doc: !!binary /w==
+start: a
+nodes:
+  a:
+    type: end
+    metadata:
+      binaryValue: !!binary /g==
+      ? !!binary /w==
+      : ffKey
+      ? !!binary /g==
+      : feKey
+      "\uFFFD": replacementKey
+`
+	parsed, err := Parse([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalYAML(parsed.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := Parse(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed.Template, roundTrip.Template) || parsed.SemanticHash != roundTrip.SemanticHash {
+		t.Fatalf("binary modeled string changed across canonical round trip\nbefore: %#v\nafter:  %#v\nhashes: %s != %s\n%s",
+			parsed.Template, roundTrip.Template, parsed.SemanticHash, roundTrip.SemanticHash, canonical)
+	}
 }
 
 const validTemplateYAML = `
