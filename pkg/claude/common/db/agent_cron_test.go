@@ -137,6 +137,39 @@ func TestAgentCronJob_DueLogicExcludesRetiredOwner(t *testing.T) {
 	assert.Empty(t, due)
 }
 
+func TestAgentCronJob_LiveOwnerLookupClassifiesConcurrentReinstateFromOneSnapshot(t *testing.T) {
+	setupTestDB(t)
+	const owner = "cron-owner-reinstated-during-lookup"
+	jobID, err := InsertAgentCronJob(&AgentCronJob{
+		Name: "reinstate-overlap", OwnerConv: owner, TargetConv: owner,
+		IntervalSeconds: 60, Body: "run once", Enabled: true,
+	})
+	require.NoError(t, err)
+	ownerAgent, err := AgentIDForConv(owner)
+	require.NoError(t, err)
+	require.NotEmpty(t, ownerAgent)
+	retired, err := RetireAgentAuthorizationByConv(owner, "human", "test")
+	require.NoError(t, err)
+	require.True(t, retired.Retired)
+
+	// Commit the reinstate after the live-owner SELECT has missed but before
+	// the fallback classifies that miss. Both reads must retain the pre-reinstate
+	// snapshot: returning nil would misreport the job as missing even though it
+	// existed throughout.
+	job, err := getLiveOwnerAgentCronJob(jobID, func() {
+		reinstated, reinstateErr := ReinstateAgentByID(ownerAgent)
+		require.NoError(t, reinstateErr)
+		require.True(t, reinstated)
+	})
+	require.ErrorIs(t, err, ErrAgentCronOwnerRetired)
+	assert.Nil(t, job)
+
+	job, err = GetLiveOwnerAgentCronJob(jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	assert.Equal(t, jobID, job.ID)
+}
+
 func TestAgentCronJob_RetiredOwnerRejectsEveryFieldMutationAtomically(t *testing.T) {
 	setupTestDB(t)
 	const owner = "cron-retired-patch-owner"

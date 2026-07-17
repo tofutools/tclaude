@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -309,16 +310,33 @@ func GetRunnableAgentCronJob(id int64) (*AgentCronJob, error) {
 // rows: a manual run-now is independent of the recurring enabled toggle, but
 // must still fail closed after owner retirement.
 func GetLiveOwnerAgentCronJob(id int64) (*AgentCronJob, error) {
+	return getLiveOwnerAgentCronJob(id, nil)
+}
+
+// getLiveOwnerAgentCronJob keeps the live/retired/missing classification in
+// one read snapshot. A reinstate or retirement committed after the first read
+// therefore cannot make the fallback classification disagree with it.
+// afterLiveMiss is a package-test seam used to commit a concurrent authority
+// change at the exact boundary; production callers always pass nil.
+func getLiveOwnerAgentCronJob(id int64, afterLiveMiss func()) (*AgentCronJob, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
-	row := d.QueryRow(cronSelect+` WHERE j.id = ?
+	tx, err := d.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRow(cronSelect+` WHERE j.id = ?
 		AND (j.owner_agent = '' OR ow.retired_at = '')`, id)
 	j, err := scanAgentCronJob(row)
 	if errors.Is(err, sql.ErrNoRows) {
+		if afterLiveMiss != nil {
+			afterLiveMiss()
+		}
 		var retiredOwner int
-		if lookupErr := d.QueryRow(`SELECT COUNT(*) FROM agent_cron_jobs j
+		if lookupErr := tx.QueryRow(`SELECT COUNT(*) FROM agent_cron_jobs j
 			JOIN agents a ON a.agent_id = j.owner_agent AND a.retired_at <> ''
 			WHERE j.id = ?`, id).Scan(&retiredOwner); lookupErr != nil {
 			return nil, lookupErr
