@@ -106,7 +106,20 @@ func saveCodexUsageSnapshot(u *harness.CodexUsage, source string) {
 		slog.Debug("codex usage: marshal failed", "error", err)
 		return
 	}
-	if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, source); err != nil {
+	windows := make([]db.SubscriptionUsageWindow, 0, 2)
+	if u.FiveHour != nil {
+		windows = append(windows, db.SubscriptionUsageWindow{
+			Name: "five_hour", Duration: 5 * time.Hour,
+			UsedPercent: u.FiveHour.UsedPercent, ResetsAt: u.FiveHour.ResetsAt,
+		})
+	}
+	if u.Weekly != nil {
+		windows = append(windows, db.SubscriptionUsageWindow{
+			Name: "seven_day", Duration: 7 * 24 * time.Hour,
+			UsedPercent: u.Weekly.UsedPercent, ResetsAt: u.Weekly.ResetsAt,
+		})
+	}
+	if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, source, windows...); err != nil {
 		slog.Debug("codex usage: cache write failed", "error", err)
 	}
 }

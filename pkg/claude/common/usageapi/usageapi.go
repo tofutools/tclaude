@@ -145,15 +145,44 @@ func loadCacheWithTTL(ttl time.Duration) *CachedUsage {
 	return &cached
 }
 
-// saveCache persists usage data to SQLite.
-func saveCache(usage *CachedUsage) {
+// saveCache persists usage data to SQLite and, for a fresh successful reading,
+// records a bounded history sample for the future Usage graph. An empty source
+// means cache-only (used when stamping a failed fetch attempt, whose retained
+// windows are not a new observation).
+func saveCache(usage *CachedUsage, source string, windows []db.SubscriptionUsageWindow) {
 	data, err := json.Marshal(usage)
 	if err != nil {
 		return
 	}
 	if err := db.SaveUsageCache(data, usage.FetchedAt, usage.LastAttemptAt); err != nil {
 		slog.Warn("failed to save usage cache", "error", err)
+		return
 	}
+	if source == "" || usage.FetchedAt.IsZero() || len(windows) == 0 {
+		return
+	}
+	if _, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderAnthropic, ObservedAt: usage.FetchedAt,
+		Source: source, Windows: windows,
+	}); err != nil {
+		slog.Warn("failed to save subscription usage history", "provider", db.SubscriptionProviderAnthropic, "error", err)
+	}
+}
+
+func subscriptionHistoryWindows(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) []db.SubscriptionUsageWindow {
+	windows := make([]db.SubscriptionUsageWindow, 0, 3)
+	appendWindow := func(name string, duration time.Duration, bucket *CachedBucket) {
+		if bucket == nil {
+			return
+		}
+		windows = append(windows, db.SubscriptionUsageWindow{
+			Name: name, Duration: duration, UsedPercent: bucket.Pct, ResetsAt: bucket.ResetsAt,
+		})
+	}
+	appendWindow("five_hour", 5*time.Hour, fiveHour)
+	appendWindow("seven_day", 7*24*time.Hour, sevenDay)
+	appendWindow("seven_day_sonnet", 7*24*time.Hour, sevenDaySonnet)
+	return windows
 }
 
 func credentialsPath() string {
@@ -688,7 +717,7 @@ func stampLastAttemptAt(err error, now time.Time) {
 	if err != nil {
 		cached.LastError = err.Error()
 	}
-	saveCache(cached)
+	saveCache(cached, "", nil)
 }
 
 // fetchWithSources tries each credential source's token against the usage API,
@@ -760,7 +789,7 @@ func fetchWithRateLimitRetry() (*Response, error) {
 // response omits are carried forward from the last-known cache (see
 // carryForwardWindows) so the dashboard's 5h/7d bars don't flicker out the
 // instant a poll happens to drop a bucket.
-func buildCachedUsage(resp *Response) *CachedUsage {
+func buildCachedUsage(resp *Response) (*CachedUsage, []db.SubscriptionUsageWindow) {
 	now := time.Now()
 	cached := &CachedUsage{
 		FetchedAt:     now,
@@ -781,8 +810,9 @@ func buildCachedUsage(resp *Response) *CachedUsage {
 	if resp.ExtraUsage != nil {
 		cached.ExtraUsage = resp.ExtraUsage
 	}
+	historyWindows := subscriptionHistoryWindows(cached.FiveHour, cached.SevenDay, cached.SevenDaySonnet)
 	carryForwardWindows(cached, loadCacheStale(), now)
-	return cached
+	return cached, historyWindows
 }
 
 // carryForwardWindows fills in any rolling-limit window that a fresh
@@ -863,7 +893,8 @@ func RefreshCache() {
 		stampLastAttempt(err)
 		return
 	}
-	saveCache(buildCachedUsage(resp))
+	cached, windows := buildCachedUsage(resp)
+	saveCache(cached, "api", windows)
 }
 
 // UpdateFromStatusLine updates the usage cache with rate limit data received
@@ -872,6 +903,7 @@ func RefreshCache() {
 // first API response) see up-to-date data.
 func UpdateFromStatusLine(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) {
 	now := time.Now()
+	historyWindows := subscriptionHistoryWindows(fiveHour, sevenDay, sevenDaySonnet)
 	cached := &CachedUsage{
 		FiveHour:       fiveHour,
 		SevenDay:       sevenDay,
@@ -888,7 +920,7 @@ func UpdateFromStatusLine(fiveHour, sevenDay, sevenDaySonnet *CachedBucket) {
 	if existing != nil {
 		cached.ExtraUsage = existing.ExtraUsage
 	}
-	saveCache(cached)
+	saveCache(cached, "statusline", historyWindows)
 }
 
 // Peek returns whatever usage data is cached in SQLite, regardless of
@@ -918,7 +950,7 @@ func GetCached() (*CachedUsage, error) {
 		return nil, err
 	}
 
-	cached := buildCachedUsage(resp)
-	saveCache(cached)
+	cached, windows := buildCachedUsage(resp)
+	saveCache(cached, "api", windows)
 	return cached, nil
 }

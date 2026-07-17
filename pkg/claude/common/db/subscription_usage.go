@@ -1,0 +1,183 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+)
+
+const (
+	// SubscriptionUsageSampleInterval bounds history growth while retaining
+	// enough resolution for 5-hour consumption forecasts.
+	SubscriptionUsageSampleInterval = 15 * time.Minute
+	// DefaultSubscriptionUsageRetention keeps several weekly cycles without
+	// allowing the history tables to grow indefinitely.
+	DefaultSubscriptionUsageRetention = 90 * 24 * time.Hour
+
+	SubscriptionProviderAnthropic = "anthropic"
+	SubscriptionProviderOpenAI    = "openai"
+)
+
+// SubscriptionUsageWindow is one rate-limit window in an account-wide
+// subscription reading. Name is a stable provider-independent identifier
+// such as "five_hour" or "seven_day". Duration may be zero when the source
+// does not report a window length.
+type SubscriptionUsageWindow struct {
+	Name        string
+	Duration    time.Duration
+	UsedPercent float64
+	ResetsAt    time.Time
+}
+
+// SubscriptionUsageSample is an account-wide reading captured from a
+// provider. ObservedAt is the timestamp supplied by (or assigned to) the
+// source; storage derives the 15-minute SampledAt bucket from it.
+type SubscriptionUsageSample struct {
+	Provider   string
+	ObservedAt time.Time
+	Source     string
+	Windows    []SubscriptionUsageWindow
+}
+
+// SaveSubscriptionUsageSample stores the newest observation in a provider's
+// 15-minute UTC bucket. It returns true when a new bucket was inserted or an
+// existing bucket was replaced by a newer observation. Invalid/empty samples
+// return an error and never disturb history.
+//
+// Retention is also enforced on every write attempt, including a duplicate,
+// so hook/statusline activity naturally keeps the table bounded even when
+// agentd is not running continuously.
+func SaveSubscriptionUsageSample(sample SubscriptionUsageSample) (bool, error) {
+	validated, err := validateSubscriptionUsageSample(sample)
+	if err != nil {
+		return false, err
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stored, err := saveSubscriptionUsageSampleTx(tx, validated, time.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return stored, nil
+}
+
+func validateSubscriptionUsageSample(sample SubscriptionUsageSample) (SubscriptionUsageSample, error) {
+	sample.Provider = strings.TrimSpace(sample.Provider)
+	if sample.Provider == "" {
+		return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: provider is required")
+	}
+	if sample.ObservedAt.IsZero() {
+		return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: observed_at is required")
+	}
+	if len(sample.Windows) == 0 {
+		return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: at least one window is required")
+	}
+	sample.Windows = append([]SubscriptionUsageWindow(nil), sample.Windows...)
+	seen := make(map[string]struct{}, len(sample.Windows))
+	for i := range sample.Windows {
+		w := &sample.Windows[i]
+		w.Name = strings.TrimSpace(w.Name)
+		name := w.Name
+		if name == "" {
+			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: window name is required")
+		}
+		if _, exists := seen[name]; exists {
+			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: duplicate window %q", name)
+		}
+		seen[name] = struct{}{}
+		if w.Duration < 0 {
+			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: window %q has negative duration", name)
+		}
+		if math.IsNaN(w.UsedPercent) || math.IsInf(w.UsedPercent, 0) {
+			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: window %q has non-finite percent", name)
+		}
+	}
+	return sample, nil
+}
+
+func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, now time.Time) (bool, error) {
+	cutoff := now.Add(-DefaultSubscriptionUsageRetention).Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`DELETE FROM subscription_usage_samples WHERE sampled_at < ?`, cutoff); err != nil {
+		return false, fmt.Errorf("save subscription usage sample: prune: %w", err)
+	}
+
+	observedAt := sample.ObservedAt.UTC()
+	sampledAt := observedAt.Truncate(SubscriptionUsageSampleInterval)
+	if sampledAt.Before(now.Add(-DefaultSubscriptionUsageRetention)) {
+		return false, nil // delayed stale observations must not regrow pruned history.
+	}
+	sampledStr := sampledAt.Format(time.RFC3339Nano)
+	var id int64
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO subscription_usage_samples
+		(provider, sampled_at) VALUES (?, ?)`, sample.Provider, sampledStr); err != nil {
+		return false, fmt.Errorf("save subscription usage sample: insert bucket: %w", err)
+	}
+	if err := tx.QueryRow(`SELECT id FROM subscription_usage_samples
+		WHERE provider = ? AND sampled_at = ?`, sample.Provider, sampledStr).Scan(&id); err != nil {
+		return false, fmt.Errorf("save subscription usage sample: find bucket: %w", err)
+	}
+
+	stored := false
+	for _, w := range sample.Windows {
+		var existingObserved string
+		err := tx.QueryRow(`SELECT observed_at FROM subscription_usage_windows
+			WHERE sample_id = ? AND window_name = ?`, id, w.Name).Scan(&existingObserved)
+		switch err {
+		case nil:
+			if existing, parseErr := time.Parse(time.RFC3339Nano, existingObserved); parseErr == nil && !observedAt.After(existing) {
+				continue
+			}
+		case sql.ErrNoRows:
+			// Insert below.
+		default:
+			return false, fmt.Errorf("save subscription usage sample: find window %q: %w", w.Name, err)
+		}
+		resetsAt := ""
+		if !w.ResetsAt.IsZero() {
+			resetsAt = w.ResetsAt.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := tx.Exec(`INSERT INTO subscription_usage_windows
+			(sample_id, window_name, duration_seconds, used_percent, resets_at, observed_at, source)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(sample_id, window_name) DO UPDATE SET
+				duration_seconds = excluded.duration_seconds,
+				used_percent = excluded.used_percent,
+				resets_at = excluded.resets_at,
+				observed_at = excluded.observed_at,
+				source = excluded.source`,
+			id, w.Name, int64(w.Duration/time.Second), w.UsedPercent, resetsAt,
+			observedAt.Format(time.RFC3339Nano), sample.Source); err != nil {
+			return false, fmt.Errorf("save subscription usage sample: insert window %q: %w", w.Name, err)
+		}
+		stored = true
+	}
+	return stored, nil
+}
+
+// PruneSubscriptionUsageHistory deletes complete samples older than cutoff.
+// Child windows are removed by the ON DELETE CASCADE foreign key.
+func PruneSubscriptionUsageHistory(cutoff time.Time) (int64, error) {
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	result, err := d.Exec(`DELETE FROM subscription_usage_samples WHERE sampled_at < ?`,
+		cutoff.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, fmt.Errorf("prune subscription usage history: %w", err)
+	}
+	return result.RowsAffected()
+}

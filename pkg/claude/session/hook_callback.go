@@ -1387,7 +1387,20 @@ func persistCodexRolloutProjection(state *SessionState, input HookCallbackInput,
 			// another callback already stored. Making position authoritative
 			// across processes would require the durable cursor/CAS state this
 			// projection deliberately avoids.
-			if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, path); err != nil {
+			windows := make([]db.SubscriptionUsageWindow, 0, 2)
+			if u.FiveHour != nil {
+				windows = append(windows, db.SubscriptionUsageWindow{
+					Name: "five_hour", Duration: 5 * time.Hour,
+					UsedPercent: u.FiveHour.UsedPercent, ResetsAt: u.FiveHour.ResetsAt,
+				})
+			}
+			if u.Weekly != nil {
+				windows = append(windows, db.SubscriptionUsageWindow{
+					Name: "seven_day", Duration: 7 * 24 * time.Hour,
+					UsedPercent: u.Weekly.UsedPercent, ResetsAt: u.Weekly.ResetsAt,
+				})
+			}
+			if _, err := db.SaveCodexUsageCacheIfNewer(data, u.Observed, path, windows...); err != nil {
 				slog.Warn("codex-usage: failed to persist usage snapshot",
 					"session_id", state.ID, "error", err, "module", "hooks")
 			}

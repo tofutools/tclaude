@@ -71,9 +71,11 @@ func DeleteUsageCache() error {
 
 // SaveCodexUsageCacheIfNewer stores a Codex usage snapshot when its rollout
 // observation timestamp is newer than the current cache row. Equal or older
-// observations are ignored so concurrent hook callbacks cannot regress the
-// account-wide readout.
-func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, source string) (bool, error) {
+// observations cannot regress the account-wide readout, but their genuinely
+// observed windows still pass through the per-window history freshness gate:
+// an out-of-order weekly-only event may fill a history child that a newer
+// five-hour-only cache snapshot did not contain.
+func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, source string, historyWindows ...SubscriptionUsageWindow) (bool, error) {
 	if observedAt.IsZero() {
 		return false, nil
 	}
@@ -92,26 +94,44 @@ func SaveCodexUsageCacheIfNewer(data json.RawMessage, observedAt time.Time, sour
 	if err != nil && err != sql.ErrNoRows {
 		return false, err
 	}
+	cacheNewer := true
 	if err == nil {
 		if existing, parseErr := time.Parse(time.RFC3339Nano, observedStr); parseErr == nil && !observedAt.After(existing) {
-			return false, nil
+			cacheNewer = false
 		}
+	}
+	if !cacheNewer && len(historyWindows) == 0 {
+		return false, nil
 	}
 
 	now := time.Now()
-	_, err = tx.Exec(`INSERT OR REPLACE INTO codex_usage_cache (id, data, observed_at, updated_at, source)
-		VALUES (1, ?, ?, ?, ?)`,
-		string(data),
-		observedAt.UTC().Format(time.RFC3339Nano),
-		now.UTC().Format(time.RFC3339Nano),
-		source)
-	if err != nil {
-		return false, err
+	if cacheNewer {
+		_, err = tx.Exec(`INSERT OR REPLACE INTO codex_usage_cache (id, data, observed_at, updated_at, source)
+			VALUES (1, ?, ?, ?, ?)`,
+			string(data),
+			observedAt.UTC().Format(time.RFC3339Nano),
+			now.UTC().Format(time.RFC3339Nano),
+			source)
+		if err != nil {
+			return false, err
+		}
+	}
+	if len(historyWindows) > 0 {
+		sample, err := validateSubscriptionUsageSample(SubscriptionUsageSample{
+			Provider: SubscriptionProviderOpenAI, ObservedAt: observedAt,
+			Source: source, Windows: historyWindows,
+		})
+		if err != nil {
+			return false, err
+		}
+		if _, err := saveSubscriptionUsageSampleTx(tx, sample, now.UTC()); err != nil {
+			return false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
-	return true, nil
+	return cacheNewer, nil
 }
 
 // LoadCodexUsageCache returns the cached Codex usage snapshot, or nil if none
