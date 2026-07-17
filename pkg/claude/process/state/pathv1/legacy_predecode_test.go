@@ -2,6 +2,7 @@ package pathv1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -169,7 +170,7 @@ func TestValidateLegacyDuplicateKeysUsesDecodedPerObjectNames(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateLegacyDuplicateKeys([]byte(tc.raw))
+			err := validateLegacyDuplicateKeys(t.Context(), []byte(tc.raw))
 			var duplicate *duplicateObjectKeyError
 			if errors.As(err, &duplicate) != tc.wantDuplicate {
 				t.Fatalf("error = %v, want duplicate = %t", err, tc.wantDuplicate)
@@ -178,9 +179,15 @@ func TestValidateLegacyDuplicateKeysUsesDecodedPerObjectNames(t *testing.T) {
 	}
 
 	key := strings.Repeat("x", 4<<10)
-	err := validateLegacyDuplicateKeys([]byte(`{"` + key + `":1,"` + key + `":2}`))
+	err := validateLegacyDuplicateKeys(t.Context(), []byte(`{"`+key+`":1,"`+key+`":2}`))
 	if err == nil || !strings.Contains(err.Error(), "name truncated") || len(err.Error()) > 1<<10 {
 		t.Fatalf("duplicate diagnostic is not bounded: length=%d error=%v", len(err.Error()), err)
+	}
+
+	cancelCtx := &cancelAfterErrChecksContext{Context: t.Context(), remaining: 10, done: make(chan struct{})}
+	err = validateLegacyDuplicateKeys(cancelCtx, []byte(`[`+strings.Repeat(`0,`, 100)+`0]`))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("mid-pass cancellation error = %v, want %v", err, context.Canceled)
 	}
 }
 

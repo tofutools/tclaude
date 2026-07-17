@@ -19,9 +19,12 @@ type duplicateObjectKeyError struct{ key string }
 
 func (e *duplicateObjectKeyError) Error() string {
 	const maxDiagnosticRunes = 128
-	runes := []rune(e.key)
-	if len(runes) > maxDiagnosticRunes {
-		return fmt.Sprintf("duplicate object key %q (name truncated)", string(runes[:maxDiagnosticRunes])+"…")
+	runes := 0
+	for offset := range e.key {
+		if runes == maxDiagnosticRunes {
+			return fmt.Sprintf("duplicate object key %q (name truncated)", e.key[:offset]+"…")
+		}
+		runes++
 	}
 	return fmt.Sprintf("duplicate object key %q", e.key)
 }
