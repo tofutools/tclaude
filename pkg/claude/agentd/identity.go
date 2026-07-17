@@ -25,6 +25,20 @@ import (
 // identity for the lifetime of a request.
 type peerKey struct{}
 
+type permissionDefaultsKey struct{}
+
+// withPermissionDefaults snapshots config-backed defaults before a caller
+// enters a global mutation lock. DB-backed grants/denies are still evaluated
+// at the authorization point; only filesystem config loading is prepaid.
+func withPermissionDefaults(r *http.Request, slugs ...string) *http.Request {
+	cfg, _ := config.Load()
+	defaults := make(map[string]bool, len(slugs))
+	for _, slug := range slugs {
+		defaults[slug] = cfg.HasDefaultPermission(slug)
+	}
+	return r.WithContext(context.WithValue(r.Context(), permissionDefaultsKey{}, defaults))
+}
+
 // peer is the identity resolved from the connecting socket peer. It is
 // raw material: no handler reads these fields directly for an
 // authorization decision — every human-vs-agent decision routes through
@@ -366,6 +380,19 @@ func resolvePermission(convID, slug string) permResolution {
 // Callers writing an audit record can therefore preserve decision-time
 // provenance without re-querying a grant that may expire or be replaced.
 func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int64) {
+	cfg, _ := config.Load()
+	return resolvePermissionWithDefault(convID, slug, cfg.HasDefaultPermission(slug))
+}
+
+func resolvePermissionForRequest(r *http.Request, convID, slug string) permResolution {
+	if defaults, ok := r.Context().Value(permissionDefaultsKey{}).(map[string]bool); ok {
+		resolution, _ := resolvePermissionWithDefault(convID, slug, defaults[slug])
+		return resolution
+	}
+	return resolvePermission(convID, slug)
+}
+
+func resolvePermissionWithDefault(convID, slug string, defaultAllowed bool) (permResolution, int64) {
 	if convID == "" {
 		return permUndecided, 0
 	}
@@ -385,8 +412,7 @@ func resolvePermissionWithSudoGrantID(convID, slug string) (permResolution, int6
 	if ok, err := db.HasAgentGroupPermission(convID, slug); err == nil && ok {
 		return permAllow, 0
 	}
-	cfg, _ := config.Load()
-	if cfg.HasDefaultPermission(slug) {
+	if defaultAllowed {
 		return permAllow, 0
 	}
 	return permUndecided, 0
@@ -478,7 +504,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 		hasHumanApprovalContinuation(r, perm, p.ConvID) {
 		allowed = true
 	} else {
-		switch resolvePermission(p.ConvID, perm) {
+		switch resolvePermissionForRequest(r, p.ConvID, perm) {
 		case permAllow:
 			allowed = true
 		case permUndecided:

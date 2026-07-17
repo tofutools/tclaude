@@ -186,6 +186,7 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	if cronBeforeAuthorityLockForTest != nil {
 		operation := "disable"
 		if enabled {
@@ -204,7 +205,7 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+	if _, ok := authCronJob(w, authRequest, job); !ok {
 		return
 	}
 	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
@@ -243,6 +244,7 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	if cronBeforeAuthorityLockForTest != nil {
 		cronBeforeAuthorityLockForTest("run-now")
 	}
@@ -260,7 +262,7 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+	if _, ok := authCronJob(w, authRequest, job); !ok {
 		return
 	}
 	job, err = db.GetLiveOwnerAgentCronJob(id)
@@ -744,6 +746,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			resolvedOwner = res.ConvID
 		}
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	// Serialize every real mutation with scheduled delivery and retirement.
 	// Re-read after taking the lock so two concurrent false→true PATCHes cannot
 	// both observe false, and so a retired owner can never race a body/schedule
@@ -769,7 +772,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		// mutation boundary between that gate and persistence. A prior approval is
 		// carried in the request context, but this recheck must never open a new
 		// popup while the global lock is held.
-		if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+		if _, ok := authCronJob(w, authRequest, job); !ok {
 			return
 		}
 		if targetResolveErr != nil {
@@ -781,7 +784,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 			writeCronProposedTargetResolutionError(w, r, err)
 			return
 		}
-		if changed && !authCronProposedTarget(w, r, proposed) {
+		if changed && !authCronProposedTarget(w, authRequest, proposed) {
 			return
 		}
 		if decoded.owner != nil {
@@ -1040,13 +1043,12 @@ func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronT
 	// would stop scheduler ticks, retirement ordering, and every cron mutation.
 	// Static/default/sudo/ownership authority and already-bound approval proofs
 	// still flow through the canonical gates; only a new popup is suppressed.
-	authRequest := nonInteractiveCronAuthRequest(r)
 	rec := &cronAuthRecorder{}
 	var ok bool
 	if target.Kind == db.CronTargetGroup {
-		_, ok = authCronWriteGroup(rec, authRequest, target.Group.ID)
+		_, ok = authCronWriteGroup(rec, r, target.Group.ID)
 	} else {
-		_, ok = authCronWrite(rec, authRequest, target.Conv)
+		_, ok = authCronWrite(rec, r, target.Conv)
 	}
 	if ok {
 		return true
@@ -1072,7 +1074,7 @@ func nonInteractiveCronAuthRequest(r *http.Request) *http.Request {
 	authRequest := r.Clone(r.Context())
 	authRequest.Header = r.Header.Clone()
 	authRequest.Header.Del("X-Tclaude-Ask-Human")
-	return authRequest
+	return withPermissionDefaults(authRequest, PermSelfSchedule, PermAgentSchedule)
 }
 
 // writeCronProposedTargetResolutionError keeps target existence out of the
@@ -1102,6 +1104,7 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	if cronBeforeAuthorityLockForTest != nil {
 		cronBeforeAuthorityLockForTest("delete")
 	}
@@ -1116,7 +1119,7 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 		return
 	}
-	if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+	if _, ok := authCronJob(w, authRequest, job); !ok {
 		return
 	}
 	if err := db.DeleteAgentCronJob(id); err != nil {

@@ -358,6 +358,23 @@ func TestAgentGroupOwnerCRUD(t *testing.T) {
 	assert.Equal(t, int64(0), n, "second RemoveAgentGroupOwner")
 }
 
+func TestOwnerHasGroupContaining(t *testing.T) {
+	setupTestDB(t)
+	g, _ := CreateAgentGroup("owner-membership", "")
+	require.NoError(t, AddAgentGroupOwner(g, "boss", ""))
+	require.NoError(t, AddAgentGroupMember(&AgentGroupMember{GroupID: g, ConvID: "member"}))
+
+	ok, err := OwnerHasGroupContaining("boss", "member")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	ok, err = OwnerHasGroupContaining("boss", "outsider")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	ok, err = OwnerHasGroupContaining("stranger", "member")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
 // TestCanSenderReachTarget exercises the auth helper that drives
 // `agent message`. Three interesting cases:
 //
