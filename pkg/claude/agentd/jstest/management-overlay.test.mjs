@@ -62,8 +62,10 @@ test('guarded overlay Cancel shares busy, dirty-confirmation, stack, and focus c
 
   cancel().click();
   harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
-  harness.fireEvent(overlay(), 'mousedown');
+  const blockedBackdrop = harness.fireEvent(overlay(), 'mousedown');
   await flush(harness);
+  assert.equal(blockedBackdrop.defaultPrevented, false,
+    'a blocked backdrop retains its native pointer default');
   assert.equal(confirmations, 0, 'busy blocks every close entry point');
   assert.equal(closes, 0);
 

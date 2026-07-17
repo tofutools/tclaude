@@ -330,6 +330,155 @@ test('production scribe modal owns focus, inertness, and every close path inside
   editor.destroy();
 });
 
+test('scribe preview backdrop cancels without sending and restores editor interaction', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const invoker = host.querySelector('.process-scribe-action');
+  const editorRoot = host.querySelector('.process-editor');
+  let sends = 0;
+  editor.options.onScribe = async () => {
+    sends += 1;
+    return {};
+  };
+
+  invoker.focus();
+  let request;
+  await harness.act(() => {
+    request = editor.requestScribe('template');
+  });
+  const overlay = host.querySelector('.process-scribe-preview-overlay');
+  assert.ok(overlay, 'the request reached the production preview');
+  assert.equal(editorRoot.hasAttribute('inert'), true);
+  assert.equal(harness.document.activeElement, overlay.querySelector('textarea'));
+
+  let backdrop;
+  await harness.act(() => {
+    backdrop = harness.fireEvent(overlay, 'mousedown');
+  });
+  assert.equal(backdrop.defaultPrevented, true,
+    'backdrop close cancels the native pointer focus step before restoring the invoker');
+  assert.equal(await request, false);
+  assert.equal(sends, 0, 'backdrop cancellation never crosses the scribe send boundary');
+  assert.equal(host.querySelector('.process-scribe-preview-overlay'), null);
+  assert.equal(editorRoot.hasAttribute('inert'), false);
+  assert.equal(harness.document.activeElement, invoker);
+  editor.destroy();
+});
+
+test('forced scribe modal disposal removes its listener, inert boundary, and focus ownership', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const invoker = host.querySelector('.process-scribe-action');
+  const editorRoot = host.querySelector('.process-editor');
+  const keydownListeners = new Set();
+  const addEventListener = harness.document.addEventListener;
+  const removeEventListener = harness.document.removeEventListener;
+  harness.document.addEventListener = function addTracked(type, listener, options) {
+    if (type === 'keydown') keydownListeners.add(listener);
+    return addEventListener.call(this, type, listener, options);
+  };
+  harness.document.removeEventListener = function removeTracked(type, listener, options) {
+    if (type === 'keydown') keydownListeners.delete(listener);
+    return removeEventListener.call(this, type, listener, options);
+  };
+  t.after(() => {
+    harness.document.addEventListener = addEventListener;
+    harness.document.removeEventListener = removeEventListener;
+  });
+
+  invoker.focus();
+  let pending;
+  await harness.act(() => {
+    pending = editor.scribePreviewModal({
+      kind: 'template', prompt: 'Review the flow.', context: '{"templateId":"preact-flow"}',
+    });
+  });
+  assert.equal(keydownListeners.size, 1, 'the open preview owns one document focus listener');
+  assert.equal(editorRoot.hasAttribute('inert'), true);
+  assert.notEqual(harness.document.activeElement, invoker);
+
+  await harness.act(() => editor.modalDispose(null));
+  assert.equal(await pending, null);
+  assert.equal(host.querySelector('.process-scribe-preview-overlay'), null);
+  assert.equal(editorRoot.hasAttribute('inert'), false);
+  assert.equal(harness.document.activeElement, invoker);
+  assert.equal(keydownListeners.size, 0, 'forced disposal removes the document focus listener');
+  editor.destroy();
+});
+
+test('stacked scribe preview alone owns Tab and Escape, then returns focus to the open lower overlay', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const { ManagementOverlay } = await harness.importDashboardModule('js/management-overlay.js');
+  const { useRef, useState } = harness.hooks;
+  const editorInvoker = host.querySelector('.process-scribe-action');
+  let lowerCloses = 0;
+
+  function LowerOverlay() {
+    const [open, setOpen] = useState(true);
+    const initial = useRef(null);
+    if (!open) return null;
+    return harness.html`<${ManagementOverlay}
+      id="scribe-preview-lower-overlay"
+      labelledby="scribe-preview-lower-title"
+      initialFocusRef=${initial}
+      onClose=${() => { lowerCloses += 1; setOpen(false); }}
+      dirty=${false}
+      confirmDiscard=${async () => false}
+    >
+      <h3 id="scribe-preview-lower-title">Underlying workflow</h3>
+      <button ref=${initial} id="scribe-preview-lower-opener" type="button">Open preview</button>
+      <button id="scribe-preview-lower-last" type="button">Lower last action</button>
+    </${ManagementOverlay}>`;
+  }
+
+  editorInvoker.focus();
+  const lowerMount = await harness.mount(harness.html`<${LowerOverlay} />`);
+  await harness.act(async () => {});
+  const lower = harness.document.querySelector('#scribe-preview-lower-overlay');
+  lower.style.zIndex = '100';
+  const lowerOpener = lower.querySelector('#scribe-preview-lower-opener');
+  assert.equal(harness.document.activeElement, lowerOpener);
+
+  let pending;
+  await harness.act(() => {
+    pending = editor.scribePreviewModal({
+      kind: 'selection', prompt: 'Check this selection.', context: '{"nodeIds":["start"]}',
+    });
+  });
+  const preview = host.querySelector('.process-scribe-preview-overlay');
+  preview.style.zIndex = '200';
+  const textarea = preview.querySelector('textarea');
+  assert.equal(harness.document.activeElement, textarea);
+
+  const dialogPointer = harness.fireEvent(preview.querySelector('[role="dialog"]'), 'mousedown');
+  assert.equal(dialogPointer.defaultPrevented, false,
+    'pointer defaults inside the preview dialog remain untouched');
+  const lowerPointer = harness.fireEvent(lower, 'mousedown');
+  assert.equal(lowerPointer.defaultPrevented, false,
+    'a synthetically targeted underlying backdrop retains its pointer default');
+  assert.equal(lowerCloses, 0);
+  assert.ok(host.querySelector('.process-scribe-preview-overlay'));
+
+  lower.querySelector('#scribe-preview-lower-last').focus();
+  const tab = harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Tab' });
+  assert.equal(tab.defaultPrevented, true);
+  assert.equal(harness.document.activeElement, textarea,
+    'the top preview contains focus while the lower overlay yields');
+
+  await harness.act(() => harness.fireEvent(textarea, 'keydown', { key: 'Escape' }));
+  assert.equal(await pending, null);
+  assert.equal(host.querySelector('.process-scribe-preview-overlay'), null);
+  assert.ok(harness.document.querySelector('#scribe-preview-lower-overlay'));
+  assert.equal(lowerCloses, 0, 'the preview Escape does not dismiss the lower overlay');
+  assert.equal(harness.document.activeElement, lowerOpener,
+    'preview cleanup returns focus to its still-open owning overlay');
+
+  await harness.act(() => harness.fireEvent(lowerOpener, 'keydown', { key: 'Escape' }));
+  assert.equal(harness.document.querySelector('#scribe-preview-lower-overlay'), null);
+  assert.equal(lowerCloses, 1);
+  assert.equal(harness.document.activeElement, editorInvoker);
+  await lowerMount.unmount();
+  editor.destroy();
+});
+
 test('real graph adapter centers node and edge diagnostics without exposing widget state', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   const svg = host.querySelector('.process-graph-svg');

@@ -167,7 +167,16 @@ export function ManagementOverlay({
     onMouseDown=${(event) => {
       if (guardBackdropDrag) {
         pressedOnBackdrop.current = event.target === event.currentTarget;
-      } else if (event.target === event.currentTarget) {
+      } else if (
+        event.target === event.currentTarget &&
+        !blocked &&
+        !confirming.current &&
+        isTopmostOverlay(overlayRef.current)
+      ) {
+        // Chrome's default mousedown focus step runs after this synchronous
+        // close unmounts the overlay. Without cancelling that default, it can
+        // overwrite bindDialogFocus's invoker restoration with <body> focus.
+        event.preventDefault();
         void close();
       }
     }}
