@@ -1,17 +1,18 @@
 package pathv1
 
 import (
+	"embed"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
+
+//go:embed *.go
+var pathV1SourceFiles embed.FS
 
 // These two sets deliberately classify the declared path-v1 command kinds
 // independently of mutationCommandHandlers. A new declaration must be placed
@@ -68,12 +69,12 @@ func TestMutationCommandKindCompletenessRejectsUnclassifiedDeclaration(t *testin
 	}
 	file, err := parser.ParseFile(token.NewFileSet(), "future.go", `package pathv1
 
-const CommandFutureMutation CommandKindV1 = "future_mutation_v1"
+const CommandFutureMutation = CommandRoutePaths + "_future"
 `, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	collectDeclaredCommandKindNames(file, declared)
+	collectDeclaredCommandKindNames([]*ast.File{file}, declared)
 	if _, ok := declared["CommandFutureMutation"]; !ok {
 		t.Fatal("future CommandKindV1 declaration was not discovered")
 	}
@@ -128,55 +129,84 @@ func validateCommandKindPartition(declared map[string]struct{}) error {
 }
 
 func declaredCommandKindNames() (map[string]struct{}, error) {
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return nil, fmt.Errorf("locate mutation kind oracle source")
-	}
-	dir := filepath.Dir(currentFile)
-	files, err := os.ReadDir(dir)
+	entries, err := pathV1SourceFiles.ReadDir(".")
 	if err != nil {
-		return nil, fmt.Errorf("read path-v1 package: %w", err)
+		return nil, fmt.Errorf("read embedded path-v1 package: %w", err)
 	}
 
-	declared := make(map[string]struct{})
 	fset := token.NewFileSet()
-	for _, entry := range files {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
+	files := make([]*ast.File, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
-		file, err := parser.ParseFile(fset, filepath.Join(dir, entry.Name()), nil, 0)
+		source, err := pathV1SourceFiles.ReadFile(entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("read embedded %s: %w", entry.Name(), err)
+		}
+		file, err := parser.ParseFile(fset, entry.Name(), source, 0)
 		if err != nil {
 			return nil, fmt.Errorf("parse %s: %w", entry.Name(), err)
 		}
-		collectDeclaredCommandKindNames(file, declared)
+		files = append(files, file)
 	}
+	declared := make(map[string]struct{})
+	collectDeclaredCommandKindNames(files, declared)
 	return declared, nil
 }
 
-func collectDeclaredCommandKindNames(file *ast.File, declared map[string]struct{}) {
-	for _, declaration := range file.Decls {
-		group, ok := declaration.(*ast.GenDecl)
-		if !ok || group.Tok != token.CONST {
-			continue
-		}
-		var inheritedType ast.Expr
-		var inheritedValues []ast.Expr
-		for _, rawSpec := range group.Specs {
-			spec := rawSpec.(*ast.ValueSpec)
-			if spec.Type != nil {
-				inheritedType = spec.Type
-			} else if len(spec.Values) != 0 {
-				inheritedType = nil
-			}
-			if len(spec.Values) != 0 {
-				inheritedValues = spec.Values
-			}
-			if !isCommandKindType(inheritedType) && !declaresCommandKindByConversion(inheritedValues) {
+type commandKindConstCandidate struct {
+	name         string
+	explicitType bool
+	value        ast.Expr
+}
+
+func collectDeclaredCommandKindNames(files []*ast.File, declared map[string]struct{}) {
+	var candidates []commandKindConstCandidate
+	for _, file := range files {
+		for _, declaration := range file.Decls {
+			group, ok := declaration.(*ast.GenDecl)
+			if !ok || group.Tok != token.CONST {
 				continue
 			}
-			for _, name := range spec.Names {
-				declared[name.Name] = struct{}{}
+			var inheritedType ast.Expr
+			var inheritedValues []ast.Expr
+			for _, rawSpec := range group.Specs {
+				spec := rawSpec.(*ast.ValueSpec)
+				if spec.Type != nil {
+					inheritedType = spec.Type
+				} else if len(spec.Values) != 0 {
+					inheritedType = nil
+				}
+				if len(spec.Values) != 0 {
+					inheritedValues = spec.Values
+				}
+				for index, name := range spec.Names {
+					var value ast.Expr
+					if index < len(inheritedValues) {
+						value = inheritedValues[index]
+					}
+					candidates = append(candidates, commandKindConstCandidate{
+						name:         name.Name,
+						explicitType: isCommandKindType(inheritedType),
+						value:        value,
+					})
+				}
 			}
+		}
+	}
+
+	for changed := true; changed; {
+		changed = false
+		for _, candidate := range candidates {
+			if _, ok := declared[candidate.name]; ok {
+				continue
+			}
+			if !candidate.explicitType && !isCommandKindExpression(candidate.value, declared) {
+				continue
+			}
+			declared[candidate.name] = struct{}{}
+			changed = true
 		}
 	}
 }
@@ -186,12 +216,20 @@ func isCommandKindType(expr ast.Expr) bool {
 	return ok && name.Name == "CommandKindV1"
 }
 
-func declaresCommandKindByConversion(values []ast.Expr) bool {
-	for _, value := range values {
-		call, ok := value.(*ast.CallExpr)
-		if ok && isCommandKindType(call.Fun) {
-			return true
-		}
+func isCommandKindExpression(expr ast.Expr, declared map[string]struct{}) bool {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		_, ok := declared[value.Name]
+		return ok
+	case *ast.ParenExpr:
+		return isCommandKindExpression(value.X, declared)
+	case *ast.UnaryExpr:
+		return isCommandKindExpression(value.X, declared)
+	case *ast.BinaryExpr:
+		return isCommandKindExpression(value.X, declared) || isCommandKindExpression(value.Y, declared)
+	case *ast.CallExpr:
+		return isCommandKindType(value.Fun)
+	default:
+		return false
 	}
-	return false
 }
