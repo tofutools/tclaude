@@ -253,7 +253,7 @@ func TestCronPatchRetarget_RawGroupIDCannotBypassDestinationGate(t *testing.T) {
 }
 
 func TestCronPatchRetarget_MissingAndRetiredTargetsRemainClassifiedWithoutMutation(t *testing.T) {
-	t.Run("missing selector stays not found", func(t *testing.T) {
+	t.Run("missing selector is non-enumerating for agent caller", func(t *testing.T) {
 		f := newFlow(t)
 		const caller = "crtn-caller-aaaa-bbbb-cccc-000000000001"
 		job := createSelfManagedCron(t, f, caller)
@@ -261,6 +261,23 @@ func TestCronPatchRetarget_MissingAndRetiredTargetsRemainClassifiedWithoutMutati
 		require.NoError(t, err)
 
 		rec := patchCronAsAgent(t, f, caller, job.ID, map[string]any{"target": "missing-cron-target"})
+		assertDeniedCronRetargetHasNoSideEffects(t, f, before, rec, caller)
+		assert.NotContains(t, rec.Body.String(), "missing-cron-target")
+	})
+
+	t.Run("missing selector stays not found for human operator", func(t *testing.T) {
+		f := newFlow(t)
+		const owner = "crtn-owner-aaaa-bbbb-cccc-000000000001"
+		f.HaveConvWithTitle(owner, "missing-target-owner")
+		job := createCronAsHuman(t, f, map[string]any{
+			"owner": owner, "target": owner, "interval": "1h", "body": "before",
+		})
+		before, err := db.GetAgentCronJob(job.ID)
+		require.NoError(t, err)
+
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t,
+			http.MethodPatch, "/v1/cron/"+strconv.FormatInt(job.ID, 10),
+			map[string]any{"target": "missing-cron-target"})))
 		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 		var body struct {
 			Code string `json:"code"`

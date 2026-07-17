@@ -704,7 +704,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		}
 		proposed, changed, err := proposedCronPatchTarget(job, decoded)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
+			writeCronProposedTargetResolutionError(w, r, err)
 			return
 		}
 		if changed && !authCronProposedTarget(w, r, proposed) {
@@ -885,7 +885,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 	if body.Target != nil {
 		ct, err := resolveCronTarget(*body.Target)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
+			writeCronProposedTargetResolutionError(w, r, err)
 			return decodedCronPatch{}, false
 		}
 		if ct.Kind == db.CronTargetGroup {
@@ -1003,6 +1003,20 @@ func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronT
 	w.WriteHeader(status)
 	_, _ = w.Write(rec.body.Bytes())
 	return false
+}
+
+// writeCronProposedTargetResolutionError keeps target existence out of the
+// agent-facing PATCH contract. An agent already authorized for the stored job
+// must not be able to distinguish an unresolved selector from an existing but
+// unauthorized destination. The human/operator remains entitled to precise
+// not-found diagnostics so administrative correction stays usable.
+func writeCronProposedTargetResolutionError(w http.ResponseWriter, r *http.Request, err error) {
+	if classify(peerFromContext(r.Context())) == classHuman {
+		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
+		return
+	}
+	writeError(w, http.StatusForbidden, "permission",
+		"caller is not authorized to schedule the proposed cron target")
 }
 
 func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
