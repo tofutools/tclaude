@@ -64,6 +64,10 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 	if ar.AutoGrantable {
 		autoGrantable = 1
 	}
+	explicitAgentID := 0
+	if ar.AgentID != "" {
+		explicitAgentID = 1
+	}
 	_, err = d.Exec(`
 		INSERT INTO access_requests
 			(id, perm, conv_id, agent_id, conv_title, method, path, raw_query,
@@ -76,7 +80,7 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 		ON CONFLICT(id) DO UPDATE SET
 			perm = excluded.perm,
 			conv_id = excluded.conv_id,
-			agent_id = CASE WHEN excluded.agent_id != '' THEN excluded.agent_id ELSE access_requests.agent_id END,
+			agent_id = CASE WHEN ? != 0 THEN excluded.agent_id ELSE access_requests.agent_id END,
 			conv_title = excluded.conv_title,
 			method = excluded.method,
 			path = excluded.path,
@@ -93,7 +97,7 @@ func UpsertAccessRequest(ar *AccessRequest) error {
 			decided_at = excluded.decided_at`,
 		ar.ID, ar.Perm, ar.ConvID, ar.AgentID, ar.ConvID, ar.ConvTitle, ar.Method, ar.Path, ar.RawQuery,
 		ar.BodyPreview, ar.BodyLabel, ar.TargetGroup, ar.TargetConvID, ar.TargetConvTitle,
-		autoGrantable, status, created.Format(time.RFC3339Nano), deadline, decided)
+		autoGrantable, status, created.Format(time.RFC3339Nano), deadline, decided, explicitAgentID)
 	if err != nil {
 		return fmt.Errorf("upsert access request: %w", err)
 	}

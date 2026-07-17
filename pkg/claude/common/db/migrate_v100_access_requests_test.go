@@ -70,7 +70,11 @@ func TestAccessRequests_RoundTripHandledHistory(t *testing.T) {
 		DecidedAt:       decided,
 	}))
 	// A later lifecycle write from a legacy caller must not erase the stable
-	// identity already captured on the pending/request write.
+	// identity already captured on the pending/request write, even if the
+	// conversation now resolves to another actor.
+	otherAgentID, err := AllocateAgent("conv-a", "test")
+	require.NoError(t, err)
+	require.NotEqual(t, "agt_captured_caller", otherAgentID)
 	require.NoError(t, UpsertAccessRequest(&AccessRequest{
 		ID:            "ar-1",
 		Perm:          "human.notify",
