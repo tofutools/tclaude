@@ -41,6 +41,68 @@ type SubscriptionUsageSample struct {
 	Windows    []SubscriptionUsageWindow
 }
 
+// SubscriptionUsageHistoryRow is one retained provider/window observation.
+// ObservedAt, rather than the coalescing bucket's SampledAt, is the chart's
+// time coordinate so replacements within a bucket keep their real timestamp.
+type SubscriptionUsageHistoryRow struct {
+	Provider    string
+	WindowName  string
+	Duration    time.Duration
+	UsedPercent float64
+	ResetsAt    time.Time
+	ObservedAt  time.Time
+	Source      string
+}
+
+// SubscriptionUsageHistorySince returns retained observations at or after
+// since, ordered so callers can group and walk each provider/window series.
+func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryRow, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	bucketCutoff := since.UTC().Truncate(SubscriptionUsageSampleInterval).Format(time.RFC3339Nano)
+	observedCutoff := since.UTC().Format(time.RFC3339Nano)
+	rows, err := d.Query(`SELECT s.provider, w.window_name, w.duration_seconds,
+		w.used_percent, w.resets_at, w.observed_at, w.source
+		FROM subscription_usage_samples s
+		JOIN subscription_usage_windows w ON w.sample_id = s.id
+		WHERE s.sampled_at >= ? AND w.observed_at >= ?
+		ORDER BY s.provider, w.window_name, w.observed_at`,
+		bucketCutoff, observedCutoff)
+	if err != nil {
+		return nil, fmt.Errorf("read subscription usage history: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]SubscriptionUsageHistoryRow, 0)
+	for rows.Next() {
+		var row SubscriptionUsageHistoryRow
+		var durationSeconds int64
+		var resetsAt, observedAt string
+		if err := rows.Scan(&row.Provider, &row.WindowName, &durationSeconds,
+			&row.UsedPercent, &resetsAt, &observedAt, &row.Source); err != nil {
+			return nil, fmt.Errorf("read subscription usage history: scan: %w", err)
+		}
+		row.Duration = time.Duration(durationSeconds) * time.Second
+		if resetsAt != "" {
+			row.ResetsAt, err = time.Parse(time.RFC3339Nano, resetsAt)
+			if err != nil {
+				return nil, fmt.Errorf("read subscription usage history: resets_at: %w", err)
+			}
+		}
+		row.ObservedAt, err = time.Parse(time.RFC3339Nano, observedAt)
+		if err != nil {
+			return nil, fmt.Errorf("read subscription usage history: observed_at: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read subscription usage history: rows: %w", err)
+	}
+	return out, nil
+}
+
 // SaveSubscriptionUsageSample stores the newest observation in a provider's
 // 15-minute UTC bucket. It returns true when a new bucket was inserted or an
 // existing bucket was replaced by a newer observation. Invalid/empty samples

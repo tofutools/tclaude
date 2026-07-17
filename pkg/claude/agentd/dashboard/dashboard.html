@@ -130,6 +130,7 @@
   <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge-root"></span></a>
   <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></a>
   <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
+  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard">📈 Reserves</span></a>
   <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></a>
   <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></a>
   <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></a>
@@ -302,6 +303,11 @@
     <!-- Preact exclusively owns Costs controls, summaries, factor editing and
          table. costs-chart.js owns the imperative chart below that boundary. -->
     <div id="costs-root"></div>
+  </section>
+  <!-- Subscription quota history and post-reset forecasts. Preact owns the
+       cards and declarative SVG line charts inside this stable feature host. -->
+  <section id="tab-usage">
+    <div id="usage-root"></div>
   </section>
   <!-- Preact owns the Audit query, filtering, paging, slow snapshot-triggered
        refresh, and stable keyed command rows inside this feature host. -->

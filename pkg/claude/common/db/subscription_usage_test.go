@@ -88,6 +88,28 @@ func TestSaveSubscriptionUsageSampleSeparatesProvidersAndBuckets(t *testing.T) {
 	assert.Equal(t, 3, count)
 }
 
+func TestSubscriptionUsageHistorySinceReturnsChartRows(t *testing.T) {
+	setupTestDB(t)
+	base := time.Now().UTC().Truncate(time.Hour)
+	for i, pct := range []float64{10, 20, 30} {
+		stored, err := SaveSubscriptionUsageSample(SubscriptionUsageSample{
+			Provider: SubscriptionProviderOpenAI, ObservedAt: base.Add(time.Duration(i) * 15 * time.Minute), Source: "rollout",
+			Windows: []SubscriptionUsageWindow{{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: pct, ResetsAt: base.Add(6 * 24 * time.Hour)}},
+		})
+		require.NoError(t, err)
+		assert.True(t, stored)
+	}
+
+	rows, err := SubscriptionUsageHistorySince(base.Add(15 * time.Minute))
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.Equal(t, 20.0, rows[0].UsedPercent)
+	assert.Equal(t, base.Add(15*time.Minute), rows[0].ObservedAt)
+	assert.Equal(t, 7*24*time.Hour, rows[0].Duration)
+	assert.Equal(t, "rollout", rows[0].Source)
+	assert.Equal(t, base.Add(6*24*time.Hour), rows[0].ResetsAt)
+}
+
 func TestPruneSubscriptionUsageHistoryCascadesWindows(t *testing.T) {
 	setupTestDB(t)
 	d, err := Open()

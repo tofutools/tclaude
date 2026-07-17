@@ -160,26 +160,29 @@ func LoadCodexUsageCache() (*CodexUsageCacheRow, error) {
 }
 
 // LoadDashboardUsageCaches reads the single-row Claude and Codex usage caches
-// together. The dashboard needs both on every snapshot; using one query avoids
-// a second pool checkout and SQLite round trip while preserving the caches as
-// independently optional rows.
-func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, error) {
+// together, plus whether retained subscription history exists. The dashboard
+// needs all three on every snapshot; one query avoids extra pool checkouts and
+// SQLite round trips while preserving the caches as independently optional.
+func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, bool, error) {
 	d, err := Open()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	var usageData, fetchedStr, attemptStr sql.NullString
 	var codexData, observedStr, updatedStr, source sql.NullString
+	var hasHistory bool
+	historyCutoff := time.Now().UTC().Add(-DefaultSubscriptionUsageRetention).Format(time.RFC3339Nano)
 	err = d.QueryRow(`SELECT
 			u.data, u.fetched_at, u.last_attempt_at,
-			c.data, c.observed_at, c.updated_at, c.source
+			c.data, c.observed_at, c.updated_at, c.source,
+			EXISTS(SELECT 1 FROM subscription_usage_samples WHERE sampled_at >= ? LIMIT 1)
 		FROM (SELECT 1) singleton
 		LEFT JOIN usage_cache u ON u.id = 1
-		LEFT JOIN codex_usage_cache c ON c.id = 1`).Scan(
+		LEFT JOIN codex_usage_cache c ON c.id = 1`, historyCutoff).Scan(
 		&usageData, &fetchedStr, &attemptStr,
-		&codexData, &observedStr, &updatedStr, &source)
+		&codexData, &observedStr, &updatedStr, &source, &hasHistory)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	var usage *UsageCacheRow
 	if usageData.Valid {
@@ -196,7 +199,7 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, error) {
 		codex.ObservedAt, _ = time.Parse(time.RFC3339Nano, observedStr.String)
 		codex.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedStr.String)
 	}
-	return usage, codex, nil
+	return usage, codex, hasHistory, nil
 }
 
 // TryClaimUsageFetch atomically checks whether a fetch is needed (last_attempt_at
