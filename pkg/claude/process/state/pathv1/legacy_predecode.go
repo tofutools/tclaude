@@ -1,6 +1,7 @@
 package pathv1
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -96,8 +97,9 @@ type legacyTimestampReplacement struct {
 	value      []byte
 }
 
-// PredecodeLegacyState performs the raw declared-timestamp pass, then the
-// ordinary strict legacy decode, then derives index-bound admin provenance.
+// PredecodeLegacyState performs the raw declared-timestamp pass, the ordinary
+// legacy decode, raw duplicate-name rejection, then derives index-bound admin
+// provenance.
 func PredecodeLegacyState(data []byte) (LegacyStatePredecode, error) {
 	return PredecodeLegacyStateContext(context.Background(), data)
 }
@@ -114,11 +116,34 @@ func PredecodeLegacyStateContext(ctx context.Context, data []byte) (LegacyStateP
 	if err != nil {
 		return LegacyStatePredecode{}, err
 	}
+	// Decode first so the existing timestamp, syntax, Unicode, and
+	// single-document errors retain their established precedence. No decoded
+	// state can escape until the untouched raw names pass duplicate validation.
+	if err := validateLegacyDuplicateKeys(data); err != nil {
+		return LegacyStatePredecode{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return LegacyStatePredecode{}, err
+	}
 	records, resolutions, err := deriveLegacyAdminProvenance(st)
 	if err != nil {
 		return LegacyStatePredecode{}, fmt.Errorf("derive legacy admin provenance: %w", err)
 	}
 	return LegacyStatePredecode{CanonicalJSON: canonical, State: st, AdminRecords: records, AdminResolutions: resolutions}, nil
+}
+
+// validateLegacyDuplicateKeys uses the bounded raw-token parser and discards
+// its semantic tree. The checkpoint byte limit bounds retained keys and values;
+// the original byte slice remains the sole rewrite source.
+func validateLegacyDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	_, err := parseJCSValue(dec)
+	var duplicate *duplicateObjectKeyError
+	if errors.As(err, &duplicate) {
+		return duplicate
+	}
+	return nil
 }
 
 func buildLegacyTimestampSchema() *legacyTimestampSchemaNode {
@@ -156,8 +181,8 @@ func buildLegacyTimestampSchema() *legacyTimestampSchemaNode {
 
 // rewriteLegacyTimestamps walks the raw checkpoint once and replaces only the
 // byte ranges of declared timestamp string values. It deliberately does not
-// round-trip containers through encoding/json: sibling lexemes, object order,
-// and duplicate keys remain byte-for-byte intact, and the output is bounded by
+// round-trip containers through encoding/json: sibling lexemes and object
+// order remain byte-for-byte intact, and the output is bounded by
 // MaxCheckpointBytes.
 func rewriteLegacyTimestamps(ctx context.Context, raw []byte) ([]byte, error) {
 	scanner := legacyTimestampScanner{ctx: ctx, raw: raw, nextContextCheck: 32 << 10}
