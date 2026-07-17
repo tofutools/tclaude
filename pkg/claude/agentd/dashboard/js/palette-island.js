@@ -12,8 +12,9 @@ export const WIZARD_PLACEHOLDER =
   'Speak an incantation…  (banish a familiar · scry a tab · summon…)';
 export const WIZARD_EMPTY = 'No such incantation in this tome';
 export const PAGE_FALLBACK = 10;
+export const PROCESS_NODE_CHOOSER_SELECTOR = '.process-node-chooser';
 export const PALETTE_BLOCKING_OVERLAY_SELECTOR =
-  '.modal-overlay.show, .manage-overlay.show, .process-node-chooser';
+  `.modal-overlay.show, .manage-overlay.show, ${PROCESS_NODE_CHOOSER_SELECTOR}`;
 
 export function isCommandPaletteShortcutTarget(target) {
   const element = target?.nodeType === 1 ? target : target?.parentElement;
@@ -32,7 +33,7 @@ export function PaletteLauncher({ state, documentRef = document }) {
       // An anchored graph chooser is dialog state even though it deliberately
       // does not use the full-screen modal overlay. Claim the shortcut there
       // so the browser and global palette cannot steal it from the chooser.
-      if (!state.open.value && documentRef.querySelector(PALETTE_BLOCKING_OVERLAY_SELECTOR)) {
+      if (!state.open.value && documentRef.querySelector(PROCESS_NODE_CHOOSER_SELECTOR)) {
         event.preventDefault();
         return;
       }
