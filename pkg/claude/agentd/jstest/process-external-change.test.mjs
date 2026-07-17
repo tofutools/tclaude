@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CHANGE_SUMMARY_LIMITS, NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
+  CHANGE_SUMMARY_LIMITS, CHANGE_SUMMARY_MARKERS, NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
   summarizeTemplateChange, templateHeadFromEditView, templateHeadSignature,
 } from '../dashboard/js/process-external-change.js';
 
@@ -181,4 +181,109 @@ test('change summaries retain exact totals while bounding node ids and source pr
   assert.ok(preview.reduce((total, line) => total + new TextEncoder().encode(line).length, 0) <= CHANGE_SUMMARY_LIMITS.sourceBytes);
   assert.ok(preview.every((line) => line.length <= CHANGE_SUMMARY_LIMITS.sourceCharactersPerLine));
   assert.ok(preview.every((line) => new TextEncoder().encode(line).length <= CHANGE_SUMMARY_LIMITS.sourceBytesPerLine));
+});
+
+test('node ID previews honor exact character and UTF-8 boundaries without splitting Unicode', () => {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const preview = (id) => summarizeTemplateChange(
+    { template: { id: 'bounded', nodes: {} } },
+    { template: { id: 'bounded', nodes: { [id]: { type: 'task' } } } },
+  ).addedNodes[0];
+  const assertBounded = (value) => {
+    assert.ok([...value].length <= CHANGE_SUMMARY_LIMITS.nodeIDCharacters, `${[...value].length} characters`);
+    const encoded = encoder.encode(value);
+    assert.ok(encoded.length <= CHANGE_SUMMARY_LIMITS.nodeIDBytes, `${encoded.length} UTF-8 bytes`);
+    assert.equal(decoder.decode(encoded), value, 'the preview ends on a valid Unicode/UTF-8 boundary');
+  };
+
+  const exactCharacters = 'a'.repeat(CHANGE_SUMMARY_LIMITS.nodeIDCharacters);
+  assert.equal(preview(exactCharacters), exactCharacters);
+  const overCharacters = preview(`${exactCharacters}b`);
+  assert.match(overCharacters, /\u2026 \[ID shortened\]$/);
+  assertBounded(overCharacters);
+
+  const exactBytes = '界'.repeat(Math.floor(CHANGE_SUMMARY_LIMITS.nodeIDBytes / 3));
+  assert.equal(encoder.encode(exactBytes).length, CHANGE_SUMMARY_LIMITS.nodeIDBytes);
+  assert.equal(preview(exactBytes), exactBytes);
+  const overBytes = preview(`${exactBytes}界`);
+  assert.match(overBytes, /\u2026 \[ID shortened\]$/);
+  assertBounded(overBytes);
+
+  const exactSurrogates = '🚀'.repeat(Math.floor(CHANGE_SUMMARY_LIMITS.nodeIDBytes / 4));
+  assert.equal(preview(exactSurrogates), exactSurrogates, 'complete surrogate pairs fit at the byte boundary');
+  assertBounded(preview(`${exactSurrogates}🚀`));
+
+  const combining = 'e\u0301'.repeat(CHANGE_SUMMARY_LIMITS.nodeIDCharacters / 2);
+  assert.equal(preview(combining), combining, 'a complete combining sequence at the character boundary is retained');
+  const shortenedPrefixCharacters = CHANGE_SUMMARY_LIMITS.nodeIDCharacters
+    - [...CHANGE_SUMMARY_MARKERS.shortenedNodeID].length;
+  const combiningOver = preview(`${'a'.repeat(shortenedPrefixCharacters - 1)}e\u0301${'z'.repeat(100)}`);
+  assert.match(combiningOver, /\u2026 \[ID shortened\]$/);
+  assert.doesNotMatch(combiningOver.slice(0, -CHANGE_SUMMARY_MARKERS.shortenedNodeID.length), /e$/,
+    'a base whose combining mark crosses the boundary is omitted with the mark');
+  assertBounded(combiningOver);
+
+  for (const [name, cluster, partial] of [
+    ['emoji modifier', '👍🏽', '👍'],
+    ['emoji ZWJ sequence', '👩\u200D💻', '👩'],
+    ['regional-indicator flag', '🇸🇪', '🇸'],
+    ['astral combining mark', `e\u{1D165}`, 'e'],
+  ]) {
+    const clustered = preview(`${'a'.repeat(shortenedPrefixCharacters - 1)}${cluster}${'z'.repeat(100)}`);
+    const prefix = clustered.slice(0, -CHANGE_SUMMARY_MARKERS.shortenedNodeID.length);
+    assert.equal(prefix.includes(partial), false, `${name} is omitted rather than rendered as a different partial glyph`);
+    assertBounded(clustered);
+  }
+
+  const malformed = preview(`safe-\uD800-tail`);
+  assert.match(malformed, /\uFFFD.*\u2026 \[ID shortened\]$/,
+    'a wire-level lone surrogate is replaced and visibly classified as shortened');
+  assertBounded(malformed);
+});
+
+test('all node categories together keep exact totals, list caps, markers, and a fixed JSON ceiling', () => {
+  const count = CHANGE_SUMMARY_LIMITS.nodeIDs + 1;
+  const hugeASCII = `a-000-${'a'.repeat((1 << 20) - 6)}`;
+  const hugeUTF8Removed = `r-000-${'界'.repeat(200_000)}`;
+  const hugeUTF8Changed = `c-000-${'🚀'.repeat(150_000)}`;
+  const addedIDs = [hugeASCII, ...Array.from({ length: count - 1 }, (_, index) => `a-${String(index + 1).padStart(3, '0')}`)];
+  const removedIDs = [hugeUTF8Removed, ...Array.from({ length: count - 1 }, (_, index) => `r-${String(index + 1).padStart(3, '0')}`)];
+  const changedIDs = [hugeUTF8Changed, ...Array.from({ length: count - 1 }, (_, index) => `c-${String(index + 1).padStart(3, '0')}`)];
+  const beforeNodes = Object.fromEntries([
+    ...removedIDs.map((id) => [id, { type: 'task' }]),
+    ...changedIDs.map((id) => [id, { type: 'task', prompt: 'before' }]),
+  ]);
+  const afterNodes = Object.fromEntries([
+    ...addedIDs.map((id) => [id, { type: 'task' }]),
+    ...changedIDs.map((id) => [id, { type: 'task', prompt: 'after' }]),
+  ]);
+  const summary = summarizeTemplateChange(
+    { template: { id: 'bounded', name: 'before', nodes: beforeNodes }, edges: [{ from: 'old', outcome: 'pass', to: 'done' }], source: `id: bounded\n${'界'.repeat(4_000)}\n` },
+    { template: { id: 'bounded', name: 'after', nodes: afterNodes }, edges: [{ from: 'new', outcome: 'pass', to: 'done' }], source: `id: bounded\n${'🚀'.repeat(4_000)}\n` },
+  );
+
+  for (const [ids, total, omitted] of [
+    [summary.addedNodes, summary.addedNodeCount, summary.addedNodesTruncated],
+    [summary.removedNodes, summary.removedNodeCount, summary.removedNodesTruncated],
+    [summary.changedNodes, summary.changedNodeCount, summary.changedNodesTruncated],
+  ]) {
+    assert.equal(total, count);
+    assert.equal(ids.length, CHANGE_SUMMARY_LIMITS.nodeIDs);
+    assert.equal(omitted, true);
+    assert.ok(ids.some((id) => id.endsWith(CHANGE_SUMMARY_MARKERS.shortenedNodeID)));
+    assert.ok(ids.every((id) => [...id].length <= CHANGE_SUMMARY_LIMITS.nodeIDCharacters));
+    assert.ok(ids.every((id) => new TextEncoder().encode(id).length <= CHANGE_SUMMARY_LIMITS.nodeIDBytes));
+  }
+  assert.equal(summary.addedEdges, 1);
+  assert.equal(summary.removedEdges, 1);
+  assert.equal(summary.metadataChanged, true);
+  assert.equal(summary.source.truncated, true);
+  const serialized = JSON.stringify(summary);
+  assert.ok([...serialized].length <= CHANGE_SUMMARY_LIMITS.serializedCharacters);
+  assert.ok(new TextEncoder().encode(serialized).length <= CHANGE_SUMMARY_LIMITS.serializedBytes);
+  assert.deepEqual(summary, summarizeTemplateChange(
+    { template: { id: 'bounded', name: 'before', nodes: beforeNodes }, edges: [{ from: 'old', outcome: 'pass', to: 'done' }], source: `id: bounded\n${'界'.repeat(4_000)}\n` },
+    { template: { id: 'bounded', name: 'after', nodes: afterNodes }, edges: [{ from: 'new', outcome: 'pass', to: 'done' }], source: `id: bounded\n${'🚀'.repeat(4_000)}\n` },
+  ), 'sorting and previews remain deterministic');
 });

@@ -6,11 +6,26 @@
 export const NO_EXTERNAL_CHANGE = Object.freeze({ kind: 'none', ref: '' });
 export const CHANGE_SUMMARY_LIMITS = Object.freeze({
   nodeIDs: 12,
+  // Every listed ID includes its shortening marker inside both limits. The
+  // complete summary ceilings cover JSON.stringify(summary); the rendered
+  // ceilings cover the graph and source textContent combined. They reserve
+  // room for every category plus worst-case JSON escaping of bounded text.
+  nodeIDCharacters: 96,
+  nodeIDBytes: 192,
   sourceLinesPerSide: 4,
   sourceCharactersPerLine: 240,
   sourceBytesPerLine: 512,
   sourceCharacters: 1920,
   sourceBytes: 4096,
+  serializedCharacters: 65536,
+  serializedBytes: 65536,
+  renderedCharacters: 8192,
+  renderedBytes: 16384,
+});
+
+export const CHANGE_SUMMARY_MARKERS = Object.freeze({
+  shortenedNodeID: '… [ID shortened]',
+  omittedNodeIDs: 'more IDs omitted',
 });
 
 function normalizedHead(head = {}) {
@@ -104,12 +119,84 @@ function comparisonTemplate(template = {}) {
   return { metadata, nodes: normalizedNodes };
 }
 
-function boundedNodeIDs(ids) {
-  const total = ids.length;
-  return { ids: ids.slice(0, CHANGE_SUMMARY_LIMITS.nodeIDs), total, truncated: total > CHANGE_SUMMARY_LIMITS.nodeIDs };
+const utf8 = new TextEncoder();
+const graphemes = typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
+
+function scalarAt(value, offset) {
+  const first = value.charCodeAt(offset);
+  if (first >= 0xD800 && first <= 0xDBFF) {
+    const second = value.charCodeAt(offset + 1);
+    if (second >= 0xDC00 && second <= 0xDFFF) {
+      return { value: value.slice(offset, offset + 2), width: 2, bytes: 4, replaced: false };
+    }
+    return { value: '\uFFFD', width: 1, bytes: 3, replaced: true };
+  }
+  if (first >= 0xDC00 && first <= 0xDFFF) {
+    return { value: '\uFFFD', width: 1, bytes: 3, replaced: true };
+  }
+  const scalar = value[offset];
+  return {
+    value: scalar,
+    width: 1,
+    bytes: first <= 0x7F ? 1 : first <= 0x7FF ? 2 : 3,
+    replaced: false,
+  };
 }
 
-const utf8 = new TextEncoder();
+// Walk only enough Unicode scalars to fill the short preview. This avoids a
+// TextEncoder result (and another proportional allocation) for a near-4 MiB
+// valid ID. Intl.Segmenter then selects complete extended grapheme clusters
+// from that bounded prefix, covering combining marks, emoji modifiers, ZWJ
+// sequences, and flags. Malformed UTF-16 is replaced so the preview itself
+// always round-trips through UTF-8.
+function boundedNodeID(value) {
+  const id = String(value ?? '');
+  const units = [];
+  let offset = 0; let bytes = 0; let replaced = false;
+  while (offset < id.length && units.length <= CHANGE_SUMMARY_LIMITS.nodeIDCharacters
+      && bytes <= CHANGE_SUMMARY_LIMITS.nodeIDBytes) {
+    const scalar = scalarAt(id, offset);
+    units.push(scalar);
+    bytes += scalar.bytes;
+    replaced ||= scalar.replaced;
+    offset += scalar.width;
+  }
+  if (offset === id.length && units.length <= CHANGE_SUMMARY_LIMITS.nodeIDCharacters
+      && bytes <= CHANGE_SUMMARY_LIMITS.nodeIDBytes && !replaced) return id;
+
+  const marker = CHANGE_SUMMARY_MARKERS.shortenedNodeID;
+  const markerCharacters = [...marker].length;
+  const markerBytes = utf8.encode(marker).length;
+  const characterBudget = CHANGE_SUMMARY_LIMITS.nodeIDCharacters - markerCharacters;
+  const byteBudget = CHANGE_SUMMARY_LIMITS.nodeIDBytes - markerBytes;
+  // Older engines without Segmenter get a conservative marker-only preview;
+  // exact in-budget IDs already returned above and remain fully visible.
+  if (!graphemes) return marker;
+  const candidate = units.map((scalar) => scalar.value).join('');
+  const candidateEndsAtInputEnd = offset === id.length;
+  let preview = ''; let previewCharacters = 0; let previewBytes = 0;
+  for (const part of graphemes.segment(candidate)) {
+    const end = part.index + part.segment.length;
+    if (end === candidate.length && !candidateEndsAtInputEnd) break;
+    const characters = [...part.segment].length;
+    const segmentBytes = utf8.encode(part.segment).length;
+    if (previewCharacters + characters > characterBudget || previewBytes + segmentBytes > byteBudget) break;
+    preview += part.segment;
+    previewCharacters += characters;
+    previewBytes += segmentBytes;
+  }
+  return preview + marker;
+}
+
+function boundedNodeIDs(ids) {
+  const total = ids.length;
+  return {
+    ids: ids.slice(0, CHANGE_SUMMARY_LIMITS.nodeIDs).map(boundedNodeID),
+    total,
+    truncated: total > CHANGE_SUMMARY_LIMITS.nodeIDs,
+  };
+}
 
 function truncateSourceLine(value, characterBudget, byteBudget) {
   const line = String(value || '');
