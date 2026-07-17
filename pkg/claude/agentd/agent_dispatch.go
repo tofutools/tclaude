@@ -150,10 +150,11 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
-	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) {
+	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) ||
+		hasHumanApprovalContinuation(r, perm, targetConv) {
 		return p.ConvID, true
 	}
-	switch resolvePermission(p.ConvID, perm) {
+	switch resolvePermissionForRequest(r, p.ConvID, perm) {
 	case permAllow:
 		return p.ConvID, true
 	case permUndecided:
@@ -274,9 +275,7 @@ func requireInboxAccess(w http.ResponseWriter, r *http.Request) (effectiveConv s
 }
 
 // ownerOfGroupContaining returns true if ownerConv owns at least one
-// group whose membership includes targetConv. Linear scan over owned
-// groups; expected to be cheap (most agents own a handful of groups
-// at most).
+// group whose membership includes targetConv.
 //
 // Membership is matched on the stable agent (JOH-323): db.FindMemberInGroup
 // resolves targetConv to its agent_id and looks the member up by that, so a
@@ -287,14 +286,6 @@ func requireInboxAccess(w http.ResponseWriter, r *http.Request) (effectiveConv s
 // member's conv under the old compare either, and FindMemberInGroup likewise
 // returns no match for a conv with no actor row.
 func ownerOfGroupContaining(ownerConv, targetConv string) bool {
-	owned, err := db.ListGroupsOwnedBy(ownerConv)
-	if err != nil || len(owned) == 0 {
-		return false
-	}
-	for _, gID := range owned {
-		if m, err := db.FindMemberInGroup(gID, targetConv); err == nil && m != nil {
-			return true
-		}
-	}
-	return false
+	ok, err := db.OwnerHasGroupContaining(ownerConv, targetConv)
+	return err == nil && ok
 }

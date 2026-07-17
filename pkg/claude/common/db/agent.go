@@ -2159,6 +2159,31 @@ func IsAgentGroupOwner(groupID int64, convID string) (bool, error) {
 	return n > 0, nil
 }
 
+// OwnerHasGroupContaining reports whether ownerConv owns any group containing
+// targetConv. Both conversations are matched through their stable agent IDs,
+// and the existence check stays a single bounded query rather than an N+1
+// owned-groups/membership scan.
+func OwnerHasGroupContaining(ownerConv, targetConv string) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var exists int
+	err = d.QueryRow(`SELECT EXISTS (
+		SELECT 1
+		FROM agent_group_owners o
+		JOIN agent_group_members m ON m.group_id = o.group_id
+		WHERE o.agent_id = (
+			SELECT agent_id FROM agent_conversations WHERE conv_id = ?
+		)
+		AND m.agent_id = (
+			SELECT agent_id FROM agent_conversations WHERE conv_id = ?
+		)
+		LIMIT 1
+	)`, ownerConv, targetConv).Scan(&exists)
+	return exists != 0, err
+}
+
 // ListAgentGroupOwners returns every owner row for the given group,
 // most-recently-granted first.
 func ListAgentGroupOwners(groupID int64) ([]*AgentGroupOwner, error) {

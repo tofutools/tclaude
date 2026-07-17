@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -185,8 +186,28 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
+	if cronBeforeAuthorityLockForTest != nil {
+		operation := "disable"
+		if enabled {
+			operation = "enable"
+		}
+		cronBeforeAuthorityLockForTest(operation)
+	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
+	job, err = db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before update: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronJob(w, authRequest, job); !ok {
+		return
+	}
 	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
 		writeCronMutationError(w, "update", err)
 		return
@@ -223,13 +244,27 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	if cronBeforeAuthorityLockForTest != nil {
 		cronBeforeAuthorityLockForTest("run-now")
 	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
-	// Refresh under the scheduler lock so a cached due candidate and this
-	// manual fire agree on the latest cadence anchor.
+	// Refresh and re-authorize under the scheduler lock so a cached due
+	// candidate, a concurrent retarget, and this manual fire agree on both the
+	// latest authority boundary and cadence anchor.
+	job, err = db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before fire: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronJob(w, authRequest, job); !ok {
+		return
+	}
 	job, err = db.GetLiveOwnerAgentCronJob(id)
 	if err != nil {
 		writeCronMutationError(w, "refresh before fire", err)
@@ -566,13 +601,14 @@ func resolveCronTarget(selector string) (cronTarget, error) {
 	if err != nil {
 		return cronTarget{}, err
 	}
-	return cronTarget{Kind: db.CronTargetConv, Conv: res.ConvID}, nil
+	return cronTarget{Kind: db.CronTargetConv, Agent: res.AgentID, Conv: res.ConvID}, nil
 }
 
 // cronTarget is the resolved target of a cron `target` selector —
 // either a single conv or a whole group.
 type cronTarget struct {
 	Kind  string         // db.CronTargetConv | db.CronTargetGroup
+	Agent string         // stable actor key when Kind == db.CronTargetConv
 	Conv  string         // set when Kind == db.CronTargetConv
 	Group *db.AgentGroup // set when Kind == db.CronTargetGroup
 }
@@ -669,15 +705,53 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
-	patch, ok := decodeCronPatchBody(w, r)
+	decoded, ok := decodeCronPatchBody(w, r)
 	if !ok {
 		return
 	}
+	patch := decoded.patch
+	// Resolve user-facing selectors before taking cronAuthorityMu: the normal
+	// resolver may refresh the conversation index from project files. Errors are
+	// deliberately held until after the common locked boundary so an agent
+	// cannot distinguish a missing selector from an existing unauthorized one
+	// by whether the response waited behind scheduler/mutation contention.
+	var targetResolveErr error
+	if decoded.targetSelector != nil {
+		ct, err := resolveCronTarget(*decoded.targetSelector)
+		if err != nil {
+			targetResolveErr = err
+		} else {
+			if ct.Kind == db.CronTargetGroup {
+				kind := db.CronTargetGroup
+				gid := ct.Group.ID
+				empty := ""
+				patch.TargetKind = &kind
+				patch.GroupID = &gid
+				patch.TargetConv = &empty
+			} else {
+				kind := db.CronTargetConv
+				patch.TargetKind = &kind
+				patch.TargetConv = &ct.Conv
+			}
+			decoded.target = &ct
+		}
+	}
+	var resolvedOwner string
+	var ownerResolveErr error
+	if decoded.owner != nil {
+		res, _, err := agent.ResolveSelector(*decoded.owner)
+		if err != nil {
+			ownerResolveErr = err
+		} else {
+			resolvedOwner = res.ConvID
+		}
+	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	// Serialize every real mutation with scheduled delivery and retirement.
 	// Re-read after taking the lock so two concurrent false→true PATCHes cannot
 	// both observe false, and so a retired owner can never race a body/schedule
 	// edit into a misleading success response.
-	if !patch.Empty() {
+	if !patch.Empty() || decoded.targetSelector != nil || decoded.owner != nil {
 		if cronBeforeAuthorityLockForTest != nil {
 			cronBeforeAuthorityLockForTest("patch")
 		}
@@ -691,6 +765,34 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		if job == nil {
 			writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
 			return
+		}
+		// The pre-decode gate above prevents an unauthorized caller from using
+		// PATCH validation as a read oracle. Re-authorize the refreshed row while
+		// holding the cron authority lock so a concurrent retarget cannot swap the
+		// mutation boundary between that gate and persistence. A prior approval is
+		// carried in the request context, but this recheck must never open a new
+		// popup while the global lock is held.
+		if _, ok := authCronJob(w, authRequest, job); !ok {
+			return
+		}
+		if targetResolveErr != nil {
+			writeCronProposedTargetResolutionError(w, r, targetResolveErr)
+			return
+		}
+		proposed, changed, err := proposedCronPatchTarget(job, decoded)
+		if err != nil {
+			writeCronProposedTargetResolutionError(w, r, err)
+			return
+		}
+		if changed && !authCronProposedTarget(w, authRequest, proposed) {
+			return
+		}
+		if decoded.owner != nil {
+			if ownerResolveErr != nil {
+				writeError(w, http.StatusNotFound, "not_found", "resolve owner: "+ownerResolveErr.Error())
+				return
+			}
+			patch.OwnerConv = &resolvedOwner
 		}
 	}
 	triggerImmediate := patch.RunImmediately != nil && *patch.RunImmediately && !job.RunImmediately
@@ -755,7 +857,14 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 // Returns ok=false (and writes the error response) on bad input.
 // Empty body / no recognised fields is allowed and produces an
 // empty patch — handleCronPatch then no-ops cleanly.
-func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronPatch, bool) {
+type decodedCronPatch struct {
+	patch          db.UpdateCronPatch
+	targetSelector *string
+	target         *cronTarget
+	owner          *string
+}
+
+func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPatch, bool) {
 	var body struct {
 		Name             *string `json:"name,omitempty"`
 		Target           *string `json:"target,omitempty"`
@@ -773,7 +882,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return db.UpdateCronPatch{}, false
+			return decodedCronPatch{}, false
 		}
 	}
 	patch := db.UpdateCronPatch{
@@ -797,13 +906,13 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 	if body.Name != nil {
 		if err := validateCronName(*body.Name); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-			return db.UpdateCronPatch{}, false
+			return decodedCronPatch{}, false
 		}
 	}
 	if body.Body != nil && *body.Body == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"body must not be empty when present (the message text the cron job sends)")
-		return db.UpdateCronPatch{}, false
+		return decodedCronPatch{}, false
 	}
 	// Schedule fields preserve the exactly-one-mode invariant without
 	// reading the row: setting either mode also clears the other. A
@@ -826,11 +935,11 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 			if body.Interval != nil {
 				writeError(w, http.StatusBadRequest, "invalid_arg",
 					"interval and cron_expr are mutually exclusive — pick one schedule mode")
-				return db.UpdateCronPatch{}, false
+				return decodedCronPatch{}, false
 			}
 			if err := cronexpr.Validate(expr); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
-				return db.UpdateCronPatch{}, false
+				return decodedCronPatch{}, false
 			}
 			zero := int64(0)
 			patch.CronExpr = &expr
@@ -838,7 +947,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		} else if body.Interval == nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"clearing cron_expr requires an interval in the same patch (a job must keep a schedule)")
-			return db.UpdateCronPatch{}, false
+			return decodedCronPatch{}, false
 		}
 	}
 	if body.Interval != nil {
@@ -846,48 +955,140 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (db.UpdateCronP
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"interval must be a Go duration like 10m / 1h / 30s; got: "+*body.Interval)
-			return db.UpdateCronPatch{}, false
+			return decodedCronPatch{}, false
 		}
 		if d < 30*time.Second {
 			writeError(w, http.StatusBadRequest, "invalid_arg",
 				"interval must be >= 30s (the scheduler tick interval)")
-			return db.UpdateCronPatch{}, false
+			return decodedCronPatch{}, false
 		}
 		secs := int64(d.Seconds())
 		patch.IntervalSeconds = &secs
 		empty := ""
 		patch.CronExpr = &empty
 	}
-	if body.Target != nil {
-		ct, err := resolveCronTarget(*body.Target)
-		if err != nil {
-			writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
-			return db.UpdateCronPatch{}, false
-		}
-		if ct.Kind == db.CronTargetGroup {
-			// Switch the job to a group target: group_id becomes the
-			// target group and target_conv is cleared. This overrides any
-			// group_id the body also carried.
-			kind := db.CronTargetGroup
-			gid := ct.Group.ID
-			empty := ""
-			patch.TargetKind = &kind
-			patch.GroupID = &gid
-			patch.TargetConv = &empty
-		} else {
-			kind := db.CronTargetConv
-			patch.TargetKind = &kind
-			patch.TargetConv = &ct.Conv
-		}
+	return decodedCronPatch{
+		patch: patch, targetSelector: body.Target, owner: body.Owner,
+	}, true
+}
+
+// proposedCronPatchTarget returns the canonical destination requested by a
+// PATCH, and whether it differs from the refreshed stored destination. The
+// explicit target selector is resolved before cronAuthorityMu and its outcome
+// is withheld until the locked mutation boundary before this runs.
+// A raw group_id is routing metadata for a conv job, but it is the destination
+// itself for a group job, so that legacy wire shape must take the same gate.
+func proposedCronPatchTarget(job *db.AgentCronJob, decoded decodedCronPatch) (cronTarget, bool, error) {
+	if decoded.target != nil {
+		return *decoded.target, !cronTargetMatchesJob(*decoded.target, job), nil
 	}
-	if body.Owner != nil {
-		o, ok := resolveCronOwner(w, *body.Owner)
-		if !ok {
-			return db.UpdateCronPatch{}, false
-		}
-		patch.OwnerConv = &o
+	if !job.IsGroupTarget() || decoded.patch.GroupID == nil || *decoded.patch.GroupID == job.GroupID {
+		return cronTarget{}, false, nil
 	}
-	return patch, true
+	g, err := db.GetAgentGroupByID(*decoded.patch.GroupID)
+	if err != nil {
+		return cronTarget{}, false, err
+	}
+	if g == nil {
+		return cronTarget{}, false, fmt.Errorf("no group numbered %d", *decoded.patch.GroupID)
+	}
+	return cronTarget{Kind: db.CronTargetGroup, Group: g}, true, nil
+}
+
+func cronTargetMatchesJob(target cronTarget, job *db.AgentCronJob) bool {
+	if target.Kind == db.CronTargetGroup {
+		return job.IsGroupTarget() && target.Group != nil && target.Group.ID == job.GroupID
+	}
+	if job.IsGroupTarget() {
+		return false
+	}
+	if target.Agent != "" && job.TargetAgent != "" {
+		return target.Agent == job.TargetAgent
+	}
+	return target.Conv == job.TargetConv || sameActor(target.Conv, job.TargetConv)
+}
+
+// cronAuthRecorder lets the proposed-target gate reuse the canonical auth
+// functions without exposing their target-specific denial detail. The caller
+// supplied a selector, but resolution may reveal a private canonical conv-id;
+// only the stable status/code/message below crosses the wire on a 403. Internal
+// failures retain their original response for diagnostics.
+type cronAuthRecorder struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (w *cronAuthRecorder) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *cronAuthRecorder) WriteHeader(status int) { w.status = status }
+
+func (w *cronAuthRecorder) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(p)
+}
+
+func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronTarget) bool {
+	// A proposed retarget is intentionally non-interactive. Starting a
+	// target-specific approval would distinguish an existing unauthorized
+	// selector from an unresolved one through timing and durable pending/audit
+	// state, and this gate runs under cronAuthorityMu where a 300s approval wait
+	// would stop scheduler ticks, retirement ordering, and every cron mutation.
+	// Static/default/sudo/ownership authority and already-bound approval proofs
+	// still flow through the canonical gates; only a new popup is suppressed.
+	rec := &cronAuthRecorder{}
+	var ok bool
+	if target.Kind == db.CronTargetGroup {
+		_, ok = authCronWriteGroup(rec, r, target.Group.ID)
+	} else {
+		_, ok = authCronWrite(rec, r, target.Conv)
+	}
+	if ok {
+		return true
+	}
+	if rec.status == http.StatusForbidden {
+		writeError(w, http.StatusForbidden, "permission",
+			"caller is not authorized to schedule the proposed cron target")
+		return false
+	}
+	for key, values := range rec.Header() {
+		w.Header()[key] = append([]string(nil), values...)
+	}
+	status := rec.status
+	if status == 0 {
+		status = http.StatusInternalServerError
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(rec.body.Bytes())
+	return false
+}
+
+func nonInteractiveCronAuthRequest(r *http.Request) *http.Request {
+	authRequest := r.Clone(r.Context())
+	authRequest.Header = r.Header.Clone()
+	authRequest.Header.Del("X-Tclaude-Ask-Human")
+	return withPermissionDefaults(authRequest, PermSelfSchedule, PermAgentSchedule)
+}
+
+// writeCronProposedTargetResolutionError keeps target existence out of the
+// agent-facing PATCH contract. An agent already authorized for the stored job
+// must not be able to distinguish an unresolved selector from an existing but
+// unauthorized destination. The human/operator remains entitled to precise
+// not-found diagnostics so administrative correction stays usable.
+func writeCronProposedTargetResolutionError(w http.ResponseWriter, r *http.Request, err error) {
+	if classify(peerFromContext(r.Context())) == classHuman {
+		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
+		return
+	}
+	writeError(w, http.StatusForbidden, "permission",
+		"caller is not authorized to schedule the proposed cron target")
 }
 
 func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
@@ -903,11 +1104,24 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	authRequest := nonInteractiveCronAuthRequest(r)
 	if cronBeforeAuthorityLockForTest != nil {
 		cronBeforeAuthorityLockForTest("delete")
 	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
+	job, err = db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before delete: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronJob(w, authRequest, job); !ok {
+		return
+	}
 	if err := db.DeleteAgentCronJob(id); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "delete: "+err.Error())
 		return
