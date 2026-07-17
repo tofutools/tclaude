@@ -64,6 +64,67 @@ func TestPredecodeLegacyStateRejectsMalformedDeclaredTimestamps(t *testing.T) {
 	}
 }
 
+func TestPredecodeLegacyStatePreservesMissingDeclaredTimestamp(t *testing.T) {
+	input := legacyStateWithAdminRecords(`[{"type":"admin_repair_recorded","actor":"human:operator","reason":"historical audit","evidenceRef":"ticket:TCL-500"}]`)
+	decoded, err := PredecodeLegacyState(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.CanonicalJSON, input) {
+		t.Fatal("checkpoint with missing timestamp was rewritten")
+	}
+	if len(decoded.State.AdminRecords) != 1 || !decoded.State.AdminRecords[0].Timestamp.IsZero() {
+		t.Fatalf("decoded missing timestamp = %#v", decoded.State.AdminRecords)
+	}
+}
+
+func TestPredecodeLegacyStateRejectsNullDeclaredTimestamp(t *testing.T) {
+	_, err := PredecodeLegacyState(legacyStateWithAdminRecords(`[{"type":"admin_repair_recorded","actor":"human:operator","reason":"historical audit","evidenceRef":"ticket:TCL-500","timestamp":null}]`))
+	if !errors.Is(err, ErrLegacyTimestampMalformed) {
+		t.Fatalf("error = %v, want %v", err, ErrLegacyTimestampMalformed)
+	}
+}
+
+func TestPredecodeLegacyStateRejectsEmptyDeclaredTimestamp(t *testing.T) {
+	_, err := PredecodeLegacyState(legacyStateWithAdminRecords(`[{"type":"admin_repair_recorded","actor":"human:operator","reason":"historical audit","evidenceRef":"ticket:TCL-500","timestamp":""}]`))
+	if !errors.Is(err, ErrLegacyTimestampMalformed) {
+		t.Fatalf("error = %v, want %v", err, ErrLegacyTimestampMalformed)
+	}
+}
+
+func TestPredecodeLegacyStatePreservesExplicitZeroTimestampAndDerivesDeterministicProvenance(t *testing.T) {
+	const explicitZero = "0001-01-01T00:00:00Z"
+	input := legacyStateWithAdminRecords(`[{"type":"admin_repair_recorded","actor":"human:operator","reason":"historical audit","evidenceRef":"ticket:TCL-500","timestamp":"` + explicitZero + `"}]`)
+
+	first, err := PredecodeLegacyState(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.CanonicalJSON, input) {
+		t.Fatalf("canonical checkpoint did not preserve explicit zero timestamp:\n%s", first.CanonicalJSON)
+	}
+	strict, err := legacy.Decode(first.CanonicalJSON)
+	if err != nil {
+		t.Fatalf("strict legacy decode rejected explicit zero timestamp: %v", err)
+	}
+	if len(strict.AdminRecords) != 1 || !strict.AdminRecords[0].Timestamp.IsZero() {
+		t.Fatalf("strict decoded timestamp = %#v", strict.AdminRecords)
+	}
+
+	second, err := PredecodeLegacyState(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first.AdminRecords, second.AdminRecords) || len(first.AdminRecords) != 1 {
+		t.Fatalf("explicit-zero provenance is not deterministic:\nfirst:  %#v\nsecond: %#v", first.AdminRecords, second.AdminRecords)
+	}
+	for id, record := range first.AdminRecords {
+		if record.ID != id || record.Timestamp != "" {
+			t.Fatalf("path-v1 explicit-zero provenance = %#v", record)
+		}
+	}
+}
+
 func TestPredecodeLegacyStateCanonicalizesOnlyDeclaredTimestamps(t *testing.T) {
 	input := legacyStateWithPauseUntil(`"2026-07-15T14:34:56.123400000+02:00"`)
 	input = []byte(strings.Replace(string(input), `"reason":"rate"`, `"reason":"2026-07-15T14:34:56.123400000+02:00"`, 1))
