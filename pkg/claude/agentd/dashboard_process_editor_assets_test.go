@@ -58,6 +58,11 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"export function summarizeTemplateChange(",
 		"export function attachExternalReview(",
 		"export function templateHeadSignature(",
+		"nodeIDCharacters: 96",
+		"nodeIDBytes: 192",
+		"serializedBytes: 65536",
+		"renderedBytes: 16384",
+		"shortenedNodeID: '… [ID shortened]'",
 		"prior.kind === 'kept' && prior.ref === current && prior.sourceHash === currentSource",
 		"sourceHash: String(head?.sourceHash || '')",
 	)
@@ -95,6 +100,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.externalChange.sourceHash === decision.targetSourceHash",
 		"guardedModel.rev !== guardedRev",
 		"externalInteractionPending(this)",
+		"const { review: exactExternalReview, ...externalChange } = this.externalChange",
+		"review: { summary: structuredClone(exactExternalReview.summary) }",
 		"this.refresh();",
 		// IDs are creation-time store keys and mutations cross the semantic
 		// controller boundary rather than reading controls from the DOM.

@@ -167,6 +167,7 @@ export class ProcessTemplateEditor {
 
   snapshot() {
     const model = this.model;
+    const { review: exactExternalReview, ...externalChange } = this.externalChange;
     const selectedNode = this.selection?.type === 'node' ? model.node(this.selection.id) : null;
     const selectedEdge = this.selection?.type === 'edge'
       ? model.findEdge(this.selection.from, this.selection.outcome) : null;
@@ -194,7 +195,11 @@ export class ProcessTemplateEditor {
       inline: { ...this.inlineState },
       inspectorFocusRequest: this.inspectorFocusRequest,
       external: {
-        ...structuredClone(this.externalChange),
+        ...structuredClone(externalChange),
+        // The exact view remains private controller state for Apply Update.
+        // Only its bounded summary crosses into the Preact/DOM snapshot, which
+        // avoids cloning a near-limit node ID on every unrelated render.
+        ...(exactExternalReview ? { review: { summary: structuredClone(exactExternalReview.summary) } } : {}),
         actorDescription,
         reviewOpen: this.externalReviewOpen,
         reviewPending: this.externalReviewPending,

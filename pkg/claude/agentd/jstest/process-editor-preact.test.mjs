@@ -210,24 +210,61 @@ test('external Apply update cannot commit a focused stale inspector buffer after
 
 test('external review summaries render bounded identity and truncation details through Preact', async (t) => {
   const { harness, host, editor } = await openBlank(t);
+  const { CHANGE_SUMMARY_LIMITS, CHANGE_SUMMARY_MARKERS, summarizeTemplateChange } = await harness.importDashboardModule('js/process-external-change.js');
+  const count = CHANGE_SUMMARY_LIMITS.nodeIDs + 1;
+  const addedIDs = [
+    `<em>unsafe</em>`,
+    `a-000-${'a'.repeat((1 << 20) - 6)}`,
+    ...Array.from({ length: count - 2 }, (_, index) => `a-${String(index + 1).padStart(3, '0')}`),
+  ];
+  const removedIDs = [
+    `r-000-${'界'.repeat(100_000)}`,
+    ...Array.from({ length: count - 1 }, (_, index) => `r-${String(index + 1).padStart(3, '0')}`),
+  ];
+  const changedIDs = [
+    `c-000-${'🚀'.repeat(75_000)}`,
+    ...Array.from({ length: count - 1 }, (_, index) => `c-${String(index + 1).padStart(3, '0')}`),
+  ];
+  const summary = summarizeTemplateChange({
+    template: { id: 'bounded', nodes: Object.fromEntries([
+      ...removedIDs.map((id) => [id, { type: 'task' }]),
+      ...changedIDs.map((id) => [id, { type: 'task', prompt: 'before' }]),
+    ]) },
+    edges: [{ from: 'old', outcome: 'pass', to: 'done' }],
+    source: `id: bounded\n${'界'.repeat(4_000)}\n`,
+  }, {
+    template: { id: 'bounded', nodes: Object.fromEntries([
+      ...addedIDs.map((id) => [id, { type: 'task' }]),
+      ...changedIDs.map((id) => [id, { type: 'task', prompt: 'after' }]),
+    ]) },
+    edges: [{ from: 'new', outcome: 'pass', to: 'done' }],
+    source: `id: bounded\n${'🚀'.repeat(4_000)}\n`,
+  });
   editor.externalChange = {
     kind: 'clean', ref: 'preact-flow@sha256:abcdef123456', sourceHash: 'source-new',
-    review: { summary: {
-      addedNodes: ['a', 'b'], addedNodeCount: 7, addedNodesTruncated: true,
-      removedNodes: [], removedNodeCount: 0, changedNodes: [], changedNodeCount: 0,
-      addedEdges: 0, removedEdges: 0, metadataChanged: false,
-      source: {
-        firstLine: 2, removedLines: 20, addedLines: 20, before: ['old'], after: ['new'], truncated: true,
-        truncation: { lines: true, characters: true, bytes: true },
-      },
-    } },
+    review: { view: { template: { nodes: { [addedIDs[1]]: { type: 'task' } } } }, summary },
   };
+  const snapshot = editor.snapshot();
+  assert.equal(snapshot.external.review.view, undefined, 'the exact raw review view never crosses into DOM state');
+  assert.ok(editor.externalChange.review.view.template.nodes[addedIDs[1]], 'Apply Update retains the exact view internally');
   editor.externalReviewOpen = true;
   await harness.act(() => editor.renderExternalChange());
-  assert.match(host.querySelector('.process-external-graph-summary').textContent,
-    /\+7 nodes \(a, b, … 5 more IDs omitted\)/);
-  assert.match(host.querySelector('.process-external-source-summary').textContent,
-    /source preview truncated at lines, characters, UTF-8 bytes limits/);
+  const graph = host.querySelector('.process-external-graph-summary').textContent;
+  const source = host.querySelector('.process-external-source-summary').textContent;
+  assert.match(graph, /\+13 nodes/);
+  assert.match(graph, /−13 nodes/);
+  assert.match(graph, /13 changed nodes/);
+  assert.match(graph, /\+1 edge/);
+  assert.match(graph, /−1 edge/);
+  assert.ok((graph.match(/\[ID shortened\]/g) || []).length >= 3, 'each category marks its shortened long ID');
+  assert.equal((graph.match(new RegExp(CHANGE_SUMMARY_MARKERS.omittedNodeIDs, 'g')) || []).length, 3,
+    'each category separately marks IDs omitted by the 12-item list cap');
+  assert.match(source, /source preview truncated at characters, UTF-8 bytes limits/);
+  assert.equal(host.querySelector('.process-external-graph-summary em'), null,
+    'ID text resembling markup remains a text node rather than becoming HTML');
+  const rendered = `${graph}\n${source}`;
+  assert.ok([...rendered].length <= CHANGE_SUMMARY_LIMITS.renderedCharacters);
+  assert.ok(new TextEncoder().encode(rendered).length <= CHANGE_SUMMARY_LIMITS.renderedBytes);
   editor.destroy();
 });
 

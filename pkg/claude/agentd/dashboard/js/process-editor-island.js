@@ -9,6 +9,7 @@ import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeDialog } from './process-node-dialog.js';
 import { ParamsDialog } from './process-params-dialog.js';
+import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
 
 const html = htm.bind(h);
 
@@ -97,7 +98,7 @@ function externalSummary(change) {
   const nodePart = (prefix, label, ids = [], count = ids.length, truncated = false) => {
     if (!count) return;
     const omitted = Math.max(0, count - ids.length);
-    const listed = [...ids, ...(truncated ? [`… ${omitted} more IDs omitted`] : [])].join(', ');
+    const listed = [...ids, ...(truncated ? [`… ${omitted} ${CHANGE_SUMMARY_MARKERS.omittedNodeIDs}`] : [])].join(', ');
     parts.push(`${prefix}${count} ${label}${count === 1 ? '' : 's'} (${listed})`);
   };
   nodePart('+', 'node', summary.addedNodes, summary.addedNodeCount, summary.addedNodesTruncated);
