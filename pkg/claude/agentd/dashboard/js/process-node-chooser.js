@@ -33,6 +33,7 @@ export function openProcessNodeTypeChooser({
   onChoose,
   onClose = null,
   restoreFocus = null,
+  availability = null,
   wizard = isWizardActive(),
   documentRef = document,
 } = {}) {
@@ -65,7 +66,7 @@ export function openProcessNodeTypeChooser({
     class: 'process-node-chooser-title', text: wizard ? 'Conjure the next rune' : 'Create connected node',
   }), input, list, empty, cancel);
 
-  const commands = buildProcessNodeTypeCommands({ onCreate: onChoose, wizard });
+  const commands = buildProcessNodeTypeCommands({ onCreate: onChoose, availability, wizard });
   let filtered = commands.slice();
   let selected = 0;
   let closed = false;
@@ -113,14 +114,18 @@ export function openProcessNodeTypeChooser({
     filtered.forEach((command, index) => {
       const optionID = `process-node-chooser-option-${chooserID}-${index}`;
       const option = h(documentRef, 'button', {
-        class: `process-node-chooser-option${index === selected ? ' is-selected' : ''}`,
+        class: `process-node-chooser-option${index === selected ? ' is-selected' : ''}${command.enabled === false ? ' is-disabled' : ''}`,
         type: 'button', role: 'option', id: optionID, tabindex: '-1',
         'aria-selected': index === selected ? 'true' : 'false',
+        'aria-disabled': command.enabled === false ? 'true' : 'false',
         'data-command-id': command.id,
       }, h(documentRef, 'span', { class: 'process-node-chooser-icon', text: command.icon }),
       h(documentRef, 'span', { class: 'process-node-chooser-copy' },
         h(documentRef, 'span', { class: 'process-node-chooser-label', text: command.label }),
-        h(documentRef, 'span', { class: 'process-node-chooser-hint', text: command.hint })));
+        h(documentRef, 'span', {
+          class: 'process-node-chooser-hint',
+          text: command.enabled === false ? command.disabledReason : command.hint,
+        })));
       option.addEventListener('pointermove', () => {
         if (selected === index) return;
         selected = index;
@@ -160,11 +165,13 @@ export function openProcessNodeTypeChooser({
     } else if (event.key === 'Enter') {
       event.preventDefault();
       choose(selected);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      close('escape');
     }
+  });
+  chooser.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    close('escape');
   });
   cancel.addEventListener('click', () => close('cancel'));
 

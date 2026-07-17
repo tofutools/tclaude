@@ -19,18 +19,25 @@ export function buildProcessNodeTypeCommands({
   onCreate,
   canCreate = true,
   disabledReason = 'Adding nodes is not available in this view.',
+  availability = null,
   wizard = false,
 } = {}) {
   if (typeof onCreate !== 'function') throw new TypeError('node-type commands require onCreate');
-  return PROCESS_NODE_TYPES.map((node) => available({
-    id: `process.create.${node.type}`,
-    group: 'process-node-type',
-    icon: node.type === 'decision' ? '◇' : node.type === 'wait' ? '◷' : node.type === 'end' ? '⏹' : '＋',
-    label: presented(`Create ${node.label.toLowerCase()} node`, `Conjure ${node.wizardLabel.toLowerCase()}`, wizard),
-    hint: node.hint,
-    keywords: `process graph node add insert create ${node.type} ${node.label} conjure rune sigil`,
-    run: () => onCreate(node.type),
-  }, canCreate, disabledReason));
+  return PROCESS_NODE_TYPES.map((node) => {
+    const nodeAvailability = typeof availability === 'function' ? availability(node.type) : null;
+    const enabled = canCreate !== false && nodeAvailability?.enabled !== false;
+    const reason = canCreate === false ? disabledReason
+      : nodeAvailability?.disabledReason || 'This node type is not available here.';
+    return available({
+      id: `process.create.${node.type}`,
+      group: 'process-node-type',
+      icon: node.type === 'decision' ? '◇' : node.type === 'wait' ? '◷' : node.type === 'end' ? '⏹' : '＋',
+      label: presented(`Create ${node.label.toLowerCase()} node`, `Conjure ${node.wizardLabel.toLowerCase()}`, wizard),
+      hint: node.hint,
+      keywords: `process graph node add insert create ${node.type} ${node.label} conjure rune sigil`,
+      run: () => onCreate(node.type),
+    }, enabled, reason);
+  });
 }
 
 export function buildProcessEditorCommands({ editor, actions, wizard = isWizardActive() } = {}) {

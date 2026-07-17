@@ -96,6 +96,19 @@ test('node-type chooser substrate is injectable for a future positioned chooser'
   assert.deepEqual(created, ['end']);
 });
 
+test('node-type chooser substrate carries contextual directional availability', () => {
+  const commands = buildProcessNodeTypeCommands({
+    onCreate() {},
+    availability: (type) => type === 'end'
+      ? { enabled: false, disabledReason: 'End nodes cannot have outgoing edges.' }
+      : null,
+  });
+  const end = commands.find((command) => command.id === 'process.create.end');
+  assert.equal(end.enabled, false);
+  assert.equal(end.disabledReason, 'End nodes cannot have outgoing edges.');
+  assert.equal(commands.find((command) => command.id === 'process.create.task').enabled, true);
+});
+
 test('feature providers contribute live context and unregister cleanly', () => {
   let selected = 'a';
   const unregister = registerCommandProvider('test-process-provider', ({ snapshot }) => [{

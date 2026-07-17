@@ -1110,6 +1110,56 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-browser-input-edge-drop",
+			Title:   "Process editor — trusted input-port edge drop",
+			Caption: "Real Chrome input: an input-port pointer drag releases on native-hit-tested empty canvas, disables impossible source types, opens required task configuration, and undo removes the node plus edge atomically.",
+			JS: processEditorStateJS(`window.__browserEd=ed;
+  await editorPaint();
+  var svg=document.querySelector('.process-graph-svg');
+  var port=document.querySelector('.process-node-ports[data-node-id="ship"] .process-port-in');
+  if(!svg||!port) throw new Error('input-port browser fixture is missing');
+  var svgRect=svg.getBoundingClientRect(),nativeElementFromPoint=document.elementFromPoint.bind(document);
+  var drop=null;
+  for(var yi=2;yi<=8&&!drop;yi+=1){
+    for(var xi=2;xi<=8;xi+=1){
+      var candidate={x:svgRect.left+svgRect.width*xi/10,y:svgRect.top+svgRect.height*yi/10};
+      var hit=nativeElementFromPoint(candidate.x,candidate.y);
+      if(hit&&svg.contains(hit)&&!hit.closest('[data-node-id],[data-edge-index],[data-port]')){drop=candidate;break;}
+    }
+  }
+  if(!drop) throw new Error('no native-hit-tested empty canvas point found');
+  window.__edgeDrop={drop:drop,nodes:Object.keys(ed.model.template.nodes).length,edges:ed.model.edges.length,undo:ed.model.undoStack.length,hitTests:0,lastHit:null};
+  document.elementFromPoint=function(x,y){
+    var hit=nativeElementFromPoint(x,y);window.__edgeDrop.hitTests+=1;window.__edgeDrop.lastHit=hit;return hit;
+  };`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "mouse-down-at", JS: `var r=document.querySelector('.process-node-ports[data-node-id="ship"] .process-port-in').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`},
+				{Kind: "move-to-at", JS: `return window.__edgeDrop.drop;`, Steps: 6},
+				{Kind: "mouse-up"},
+				{Kind: "eval", JS: `var state=window.__edgeDrop,chooser=document.querySelector('.process-node-chooser');
+  if(state.hitTests!==1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG');
+  if(!chooser) throw new Error('trusted empty-canvas pointerup did not open the chooser');
+  var end=chooser.querySelector('[data-command-id="process.create.end"]');
+  if(!end||end.getAttribute('aria-disabled')!=='true'||!end.textContent.includes('cannot have outgoing edges')) throw new Error('input direction did not clearly disable End');`},
+				{Kind: "click", Selector: `.process-node-chooser [data-command-id="process.create.task"]`},
+				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
+  if(!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('configuration-required task editor did not open');
+  if(Object.keys(ed.model.template.nodes).length!==state.nodes+1||ed.model.edges.length!==state.edges+1) throw new Error('node and edge were not both created');
+  if(ed.model.undoStack.length!==state.undo+1) throw new Error('connected insertion was not one undo operation');
+  var created=Object.keys(ed.model.template.nodes).find(function(id){return !['begin','ship'].includes(id);});
+  var edge=ed.model.edges.find(function(candidate){return candidate.from===created&&candidate.to==='ship';});
+  if(!created||ed.model.node(created).type!=='task'||!edge) throw new Error('input-port drop did not create new-source → existing-target direction');
+  window.__edgeDrop.created=created;`},
+				{Kind: "click", Selector: ".process-node-modal .process-node-cancel"},
+				{Kind: "click", Selector: `.process-editor-header button[title="Undo (Ctrl+Z)"]`},
+				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
+  if(document.querySelector('.process-node-modal')) throw new Error('configuration editor did not close');
+  if(ed.model.node(state.created)||Object.keys(ed.model.template.nodes).length!==state.nodes||ed.model.edges.length!==state.edges) throw new Error('one undo did not remove the connected node and edge');
+  if(ed.model.undoStack.length!==state.undo) throw new Error('atomic undo did not restore the prior history depth');`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-commands-wizard",
 			Title:   "Process editor — contextual commands (wizard)",
 			Caption: "The same TCL-435 command registry under the wizard skin: arcane labels remain searchable by ordinary vocabulary and disabled context stays visibly explained.",
