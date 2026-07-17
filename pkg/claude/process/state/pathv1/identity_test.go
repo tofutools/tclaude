@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// alternateField deliberately does not call Encoder or any production
+// identity helper. It is the independent reproduction for published vectors.
 type alternateField func([]byte) []byte
 
 func alternateString(value string) alternateField {
@@ -145,14 +147,22 @@ func TestPublishedGoldenVectors(t *testing.T) {
 		{"cause_set", "c591f2e737139b498a520151563a39f9c67d62152b2701f8c805652c9d242c22", mustIdentity(t)(CauseSetIdentity([]string{"c2", "c1"})), alternateHash("cause-set/v1", alternateStringList("c2", "c1"))},
 		{"closure", "9f86fcb881ceac3bb003915b4aff42672182a749e8300d96ff9679fe383405de", mustIdentity(t)(CandidateClosureIdentity("res-b", "cand-c", TerminalFailed, "cause-d")), alternateHash("candidate-closure/v1", alternateString("res-b"), alternateString("cand-c"), alternateString("failed"), alternateString("cause-d"))},
 		{"lineage", "508af37e054365e2184286757d2f79c5e4420dedfa02d9ddde132fee3f5e74ff", mustIdentity(t)(CandidateLineageIdentity("lineage-parent", "res-b", "cand-c")), alternateHash("candidate-lineage/v1", alternateString("lineage-parent"), alternateString("res-b"), alternateString("cand-c"))},
+		{"detachment_key", "5a760e871f61f6b2210b809871b54123f74cfc4953c9cc5f518f904bb0d2335f", mustIdentity(t)(DetachmentKeyIdentity("res-b", "cand-c")), alternateHash("detachment-key/v1", alternateString("res-b"), alternateString("cand-c"))},
 		{"detachment", "1a1f2628ae837ffbd3c276a7668d3db730928d3ed7f86dbc32878703bd985c49", mustIdentity(t)(DetachmentIdentity("res-b", "cand-c", "winner-p", 11)), alternateHash("detachment/v1", alternateString("res-b"), alternateString("cand-c"), alternateString("winner-p"), alternateUint(11))},
 		{"detachment_set", "1499abfa6038ff3b36c867af3a80028d6c5cd5788b980bbdac09ca664b919ebb", mustIdentity(t)(DetachmentSetIdentity("set-parent", "detach-d")), alternateHash("detachment-set/v1", alternateString("set-parent"), alternateString("detach-d"))},
+		{"attempt", "a1aad17b6206534abf418f1d46e8dbdc5745563a57941d9e1369966e5974fe37", mustIdentity(t)(AttemptIdentity("run-7", "act-a", 2)), alternateHash("attempt/v1", alternateString("run-7"), alternateString("act-a"), alternateUint(2))},
+		{"wait", "01e0abc320a26f67810dacc9dd0613947ec292dc175d04a30f9b02159db1bae9", mustIdentity(t)(WaitIdentity("run-7", "act-a", 2, "approval")), alternateHash("wait/v1", alternateString("run-7"), alternateString("act-a"), alternateUint(2), alternateString("approval"))},
+		{"timer", "9d7e6d96885c6c82ffab9a35c9b27a81b4dd3b9c99c7837e61cded7e1899f272", mustIdentity(t)(TimerIdentity("run-7", "act-a", 2, "cmd-x")), alternateHash("timer/v1", alternateString("run-7"), alternateString("act-a"), alternateUint(2), alternateString("cmd-x"))},
+		{"contact", "f1b35782a391d457d963a61f36f081a762dda56d6a675eb233fd669646d55ba1", mustIdentity(t)(ContactIdentity("run-7", "act-a", 2, "human:johan")), alternateHash("contact/v1", alternateString("run-7"), alternateString("act-a"), alternateUint(2), alternateString("human:johan"))},
+		{"obligation", "9f3b41dc4767e46494a7616ea737daae740d29d7c516e158bacedc169a6ee2d8", mustIdentity(t)(ObligationIdentity("run-7", "act-a", 2, "approval", "human:johan")), alternateHash("obligation/v1", alternateString("run-7"), alternateString("act-a"), alternateUint(2), alternateString("approval"), alternateString("human:johan"))},
+		{"block", "ac25c139cdaa21b48c436cfd43e3e0eb572a39e505c459cdcf519ff1204d53f1", mustIdentity(t)(BlockIdentity("run-7", "act-a", 2)), alternateHash("block/v1", alternateString("run-7"), alternateString("act-a"), alternateUint(2))},
 		{"disposition", "fee13d63a10301872edef935ca63c952b05dc65f613bed78d5149ed393938ccc", mustIdentity(t)(DispositionReceiptIdentity("path-o", PathArrived, PathConsumed, "join_non_success", "cmd-x", "", 12)), alternateHash("disposition/v1", alternateString("path-o"), alternateString("arrived"), alternateString("consumed"), alternateString("join_non_success"), alternateString("cmd-x"), alternateString(""), alternateUint(12))},
 		{"activation_receipt", "a9bfbb062843970c33ddb19860c4238801b64b1304d5a0f98d5cf65781c28cf1", mustIdentity(t)(ActivationReceiptIdentity("act-a", "res-b", "input-d", "path-o", "cmd-x", 12)), alternateHash("activation-receipt/v1", alternateString("act-a"), alternateString("res-b"), alternateString("input-d"), alternateString("path-o"), alternateString("cmd-x"), alternateUint(12))},
 		{"propagation_plan", "5023f501363bb42e4e8cb9dadcaf9656d08a39feadc9205a10b9202b899aeed2", mustIdentity(t)(PropagationPlanIdentity("res-b", "cand-c", "cause-d", 0, []string{"key-a", "key-b"})), alternateHash("propagation-plan/v1", alternateString("res-b"), alternateString("cand-c"), alternateString("cause-d"), alternateUint(0), alternateStringList("key-b", "key-a"))},
 		{"propagation_intent", "e714f2717d330c87843668e1ff3ea01b24d2d359801cbba11777324be545520a", mustIdentity(t)(PropagationIntentIdentity("cause-d", 0, "plan-d")), alternateHash("propagation-intent/v1", alternateString("cause-d"), alternateUint(0), alternateString("plan-d"))},
 		{"candidate_fold", "7cd993cf837436660f79eb4c76d27e3a6d64fc745674c79d905c81231d07f255", mustIdentity(t)(CandidateFoldIdentity([]CandidateFoldEntry{{"cand-b", "failed", "closure-b"}, {"cand-a", "arrived", "path-a"}})), alternateHash("candidate-fold/v1", alternateTupleList([]alternateField{alternateString("cand-b"), alternateString("failed"), alternateString("closure-b")}, []alternateField{alternateString("cand-a"), alternateString("arrived"), alternateString("path-a")}))},
 		{"active_command_empty", "1c776baca9ecc06a768d259f54acfa6d1aa4c46c24fa05e2a6e9b3196285e607", mustIdentity(t)(ActiveCommandIdentity(nil)), alternateHash("active-command-set/v1", alternateStringList())},
+		{"checkpoint", "8185146d28a339658d271bae9b4f96a03f5f58d04e526ae8e6ab55234e3d13a8", mustIdentity(t)(CheckpointIdentity("running", 42, "log-d", []byte("{}"))), alternateHash("checkpoint/v1", alternateString("running"), alternateUint(42), alternateString("log-d"), alternateString("{}"))},
 		{"path_fold", "ffd03c06b9fde14f6ff5f2252079e6a5a00ee52f3244dc29d0f05fde6a483806", mustIdentity(t)(PathFoldIdentity([]PathFoldEntry{{"p2", PathFailed, 8}, {"p1", PathEnded, 7}})), alternateHash("aggregate-paths/v1", alternateTupleList([]alternateField{alternateString("p2"), alternateString("failed"), alternateUint(8)}, []alternateField{alternateString("p1"), alternateString("ended"), alternateUint(7)}))},
 		{"reservation_fold", "caa693eca50cc07fb23202565ac2eae2ef80d9c80e581697e2fd8a204129a63e", mustIdentity(t)(ReservationFoldIdentity([]ReservationFoldEntry{{"r2", ReservationClosedNoActivation, 8}, {"r1", ReservationActivated, 7}})), alternateHash("aggregate-reservations/v1", alternateTupleList([]alternateField{alternateString("r2"), alternateString("closed_no_activation"), alternateUint(8)}, []alternateField{alternateString("r1"), alternateString("activated"), alternateUint(7)}))},
 		{"propagation_fold", "493dc7a063bb5d7d4515b708ab618570c4f4c8c178c76d074ff14a5b09a1f423", mustIdentity(t)(PropagationFoldIdentity([]PropagationFoldEntry{{"i2", PropagationComplete, 4}, {"i1", PropagationPending, 2}})), alternateHash("aggregate-propagation/v1", alternateTupleList([]alternateField{alternateString("i2"), alternateString("complete"), alternateUint(4)}, []alternateField{alternateString("i1"), alternateString("pending"), alternateUint(2)}))},
@@ -170,8 +180,9 @@ func TestPublishedGoldenVectors(t *testing.T) {
 		fields := []alternateField{alternateString(identity.RunID), alternateString(string(identity.Kind)), alternateUint(identity.PayloadSchema), alternateString(identity.SourceActivationID), alternateUint(identity.SourceGeneration), alternateString(identity.SourcePathID), alternateString(identity.TargetReservationID), alternateUint(identity.TargetGeneration), alternateUint(identity.Attempt), alternateString(identity.InputDigest), alternateString(identity.CauseDigest), alternateString(identity.PlanDigest), alternateString(identity.ResultCode)}
 		vectors = append(vectors, struct{ name, want, primary, alternate string }{command.name, command.want, mustIdentity(t)(CommandIdentityDigest(identity)), alternateHash("command/v1", fields...)})
 	}
-	if len(vectors) != 44 {
-		t.Fatalf("vector count = %d, want 44", len(vectors))
+	// The publication has 43 identity/admin/fold rows and nine command rows.
+	if len(vectors) != 52 {
+		t.Fatalf("vector count = %d, want 52", len(vectors))
 	}
 	for _, vector := range vectors {
 		vector := vector
