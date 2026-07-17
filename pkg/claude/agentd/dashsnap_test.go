@@ -1140,7 +1140,13 @@ func baseStates() []dashsnap.State {
   if(state.hitTests!==1||!state.lastHit||!document.querySelector('.process-graph-svg').contains(state.lastHit)) throw new Error('pointerup did not use elementFromPoint on the SVG');
   if(!chooser) throw new Error('trusted empty-canvas pointerup did not open the chooser');
   var end=chooser.querySelector('[data-command-id="process.create.end"]');
-  if(!end||end.getAttribute('aria-disabled')!=='true'||!end.textContent.includes('cannot have outgoing edges')) throw new Error('input direction did not clearly disable End');`},
+  if(!end||end.getAttribute('aria-disabled')!=='true'||!end.textContent.includes('cannot have outgoing edges')) throw new Error('input direction did not clearly disable End');
+  var hint=end.querySelector('.process-node-chooser-hint'),hintStyle=getComputedStyle(hint),optionStyle=getComputedStyle(end),surfaceStyle=getComputedStyle(chooser);
+  if(optionStyle.opacity!=='1'||hintStyle.opacity!=='1') throw new Error('disabled reason is opacity-dimmed');
+  var rgb=function(value){var parts=value.match(/[\d.]+/g).slice(0,3).map(Number);return parts;};
+  var luminance=function(value){return rgb(value).map(function(channel){channel/=255;return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4);}).reduce(function(total,channel,index){return total+channel*[.2126,.7152,.0722][index];},0);};
+  var foreground=luminance(hintStyle.color),background=luminance(surfaceStyle.backgroundColor),contrast=(Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05);
+  if(contrast<4.5) throw new Error('disabled reason contrast is '+contrast.toFixed(2)+':1');`},
 				{Kind: "click", Selector: `.process-node-chooser [data-command-id="process.create.task"]`},
 				{Kind: "eval", JS: `var ed=window.__browserEd,state=window.__edgeDrop;
   if(!document.querySelector('.process-node-modal .process-node-detail')) throw new Error('configuration-required task editor did not open');
