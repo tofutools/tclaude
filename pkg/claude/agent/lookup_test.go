@@ -93,6 +93,20 @@ func TestResolveSelector_NotFound(t *testing.T) {
 	require.Error(t, err, "expected error for missing selector")
 }
 
+func TestResolveSelectorCached_MissDoesNotRefreshProjects(t *testing.T) {
+	setupTestDB(t)
+	refreshes := 0
+	previous := refreshAllProjects
+	refreshAllProjects = func() { refreshes++ }
+	t.Cleanup(func() { refreshAllProjects = previous })
+
+	resolved, matches, err := ResolveSelectorCached("missing-sensitive-owner")
+	require.Error(t, err)
+	assert.Nil(t, resolved)
+	assert.Empty(t, matches)
+	assert.Zero(t, refreshes, "authorization-sensitive lookup performed a project refresh")
+}
+
 // TestResolveSelector_ByGroupConvID covers the membership fallback: a
 // conv that only lives in agent_group_members (no conv_index row, e.g.
 // fresh from `agent spawn` before its /rename is scanned) is still

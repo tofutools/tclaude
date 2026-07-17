@@ -775,7 +775,13 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	var resolvedOwner cronActor
 	var ownerResolveErr error
 	if decoded.owner != nil {
-		res, _, err := agent.ResolveSelector(*decoded.owner)
+		resolveOwner := agent.ResolveSelectorCached
+		if classify(peerFromContext(r.Context())) == classHuman {
+			// The operator is entitled to discovery and precise diagnostics;
+			// retain the compatibility refresh for a newly indexed conversation.
+			resolveOwner = agent.ResolveSelector
+		}
+		res, _, err := resolveOwner(*decoded.owner)
 		if err != nil {
 			ownerResolveErr = err
 		} else {

@@ -309,6 +309,17 @@ func ResolveSelector(selector string) (*Resolved, []*Resolved, error) {
 	return resolveSelector(selector)
 }
 
+// ResolveSelectorCached is ResolveSelector without the global project refresh
+// on a cache miss. Use it when the existence of a caller-controlled selector
+// is authorization-sensitive: a miss must stay bounded to SQLite lookups
+// instead of revealing itself through a filesystem walk
+// and cache writes. Callers that are entitled to discovery diagnostics should
+// keep using ResolveSelector.
+func ResolveSelectorCached(selector string) (*Resolved, []*Resolved, error) {
+	r, matches, err := tryResolve(selector)
+	return stampAgentID(redirectResolvedToLatest(r)), stampAgentIDs(matches), err
+}
+
 // CurrentConvID returns the conv-id of the conversation invoking the
 // caller, expanded to a full UUID via the DB if necessary. Exported for
 // callers outside this package.
