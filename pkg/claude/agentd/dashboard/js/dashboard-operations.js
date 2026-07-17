@@ -448,7 +448,13 @@ export async function resumeAgentReq(conv, label, recreate) {
     }
     return resumeAgentReq(conv, label, true);
   }
-  toast(`wake ${label}: ${out.action || 'ok'}`);
+  const action = String(out.action || '');
+  if (action === 'error' || action.startsWith('error:')) {
+    const detail = out.detail ? ` — ${out.detail}` : '';
+    toast(`wake ${label}: ${action}${detail}`, true);
+    return false;
+  }
+  toast(`wake ${label}: ${action || 'ok'}`);
   refresh();
   return true;
 }
