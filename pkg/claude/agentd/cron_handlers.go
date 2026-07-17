@@ -680,7 +680,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	// Re-read after taking the lock so two concurrent false→true PATCHes cannot
 	// both observe false, and so a retired owner can never race a body/schedule
 	// edit into a misleading success response.
-	if !patch.Empty() {
+	if !patch.Empty() || decoded.owner != nil {
 		if cronBeforeAuthorityLockForTest != nil {
 			cronBeforeAuthorityLockForTest("patch")
 		}
@@ -698,8 +698,10 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		// The pre-decode gate above prevents an unauthorized caller from using
 		// PATCH validation as a read oracle. Re-authorize the refreshed row while
 		// holding the cron authority lock so a concurrent retarget cannot swap the
-		// mutation boundary between that gate and persistence.
-		if _, ok := authCronJob(w, r, job); !ok {
+		// mutation boundary between that gate and persistence. A prior approval is
+		// carried in the request context, but this recheck must never open a new
+		// popup while the global lock is held.
+		if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
 			return
 		}
 		proposed, changed, err := proposedCronPatchTarget(job, decoded)
@@ -709,6 +711,13 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		}
 		if changed && !authCronProposedTarget(w, r, proposed) {
 			return
+		}
+		if decoded.owner != nil {
+			o, ok := resolveCronOwner(w, *decoded.owner)
+			if !ok {
+				return
+			}
+			patch.OwnerConv = &o
 		}
 	}
 	triggerImmediate := patch.RunImmediately != nil && *patch.RunImmediately && !job.RunImmediately
@@ -776,6 +785,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 type decodedCronPatch struct {
 	patch  db.UpdateCronPatch
 	target *cronTarget
+	owner  *string
 }
 
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPatch, bool) {
@@ -905,14 +915,7 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 		}
 		target = &ct
 	}
-	if body.Owner != nil {
-		o, ok := resolveCronOwner(w, *body.Owner)
-		if !ok {
-			return decodedCronPatch{}, false
-		}
-		patch.OwnerConv = &o
-	}
-	return decodedCronPatch{patch: patch, target: target}, true
+	return decodedCronPatch{patch: patch, target: target, owner: body.Owner}, true
 }
 
 // proposedCronPatchTarget returns the canonical destination requested by a
@@ -985,9 +988,7 @@ func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronT
 	// would stop scheduler ticks, retirement ordering, and every cron mutation.
 	// Static/default/sudo/ownership authority and already-bound approval proofs
 	// still flow through the canonical gates; only a new popup is suppressed.
-	authRequest := r.Clone(r.Context())
-	authRequest.Header = r.Header.Clone()
-	authRequest.Header.Del("X-Tclaude-Ask-Human")
+	authRequest := nonInteractiveCronAuthRequest(r)
 	rec := &cronAuthRecorder{}
 	var ok bool
 	if target.Kind == db.CronTargetGroup {
@@ -1013,6 +1014,13 @@ func authCronProposedTarget(w http.ResponseWriter, r *http.Request, target cronT
 	w.WriteHeader(status)
 	_, _ = w.Write(rec.body.Bytes())
 	return false
+}
+
+func nonInteractiveCronAuthRequest(r *http.Request) *http.Request {
+	authRequest := r.Clone(r.Context())
+	authRequest.Header = r.Header.Clone()
+	authRequest.Header.Del("X-Tclaude-Ask-Human")
+	return authRequest
 }
 
 // writeCronProposedTargetResolutionError keeps target existence out of the

@@ -168,7 +168,8 @@ func markWriteProofHumanApproval(r *http.Request, perm, authTarget string) {
 // markHumanApprovalContinuation records that this exact in-flight operation
 // was approved by the human. Unlike the write-proof continuation it never
 // crosses requests, so it does not need to canonicalise or retain request body
-// data. Resume provenance recovery consumes this same audited trust-root signal.
+// data. Repeated permission gates in the same handler and resume provenance
+// recovery consume this same audited trust-root signal.
 func markHumanApprovalContinuation(r *http.Request, perm, authTarget string) {
 	if r == nil {
 		return

@@ -154,6 +154,96 @@ func TestCronPatchRetarget_AskHumanCannotBlockOrCreateTargetOracle(t *testing.T)
 		"ask-human must not distinguish an existing proposed target from a missing one")
 }
 
+func TestCronPatch_CurrentTargetApprovalIsReusedWithoutLockedPopup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+	f := newFlow(t)
+	const caller = "crta-current-ask-aaaa-bbbb-cccc-000000000001"
+	f.HaveConvWithTitle(caller, "current-approval-caller")
+	f.HaveEnrolledAgent(caller)
+	job := createCronAsHuman(t, f, map[string]any{
+		"owner": caller, "target": caller, "interval": "1h", "body": "before",
+	})
+	require.NoError(t, db.SetAgentPermissionOverride(
+		caller, agentd.PermSelfSchedule, db.PermEffectDeny, "test"))
+
+	req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(job.ID, 10), map[string]any{"body": "after"}), caller)
+	req.Header.Set("X-Tclaude-Ask-Human", "30s")
+	rec := testharness.Serve(f.Mux, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, int32(1), approvalCalls(),
+		"the locked refreshed-target check must reuse the in-flight approval")
+	after, err := db.GetAgentCronJob(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "after", after.Body)
+}
+
+func TestCronPatch_CrossAgentCurrentApprovalIsReusedWithoutLockedPopup(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
+	f := newFlow(t)
+	const caller = "crta-cross-ask-caller-bbbb-cccc-000000000001"
+	const target = "crta-cross-ask-target-bbbb-cccc-000000000002"
+	f.HaveConvWithTitle(caller, "cross-approval-caller")
+	f.HaveEnrolledAgent(caller)
+	f.HaveConvWithTitle(target, "cross-approval-target")
+	f.HaveEnrolledAgent(target)
+	job := createCronAsHuman(t, f, map[string]any{
+		"owner": caller, "target": target, "interval": "1h", "body": "before",
+	})
+	require.NoError(t, db.SetAgentPermissionOverride(
+		caller, agentd.PermAgentSchedule, db.PermEffectDeny, "test"))
+
+	req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+		"/v1/cron/"+strconv.FormatInt(job.ID, 10), map[string]any{"body": "after"}), caller)
+	req.Header.Set("X-Tclaude-Ask-Human", "30s")
+	rec := testharness.Serve(f.Mux, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, int32(1), approvalCalls(),
+		"the locked refreshed-target check must reuse the cross-agent approval")
+	after, err := db.GetAgentCronJob(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "after", after.Body)
+}
+
+func TestCronPatchRetarget_InvalidOwnerCannotRevealProposedTarget(t *testing.T) {
+	var denialBodies []string
+	for _, tc := range []struct {
+		name     string
+		target   string
+		existing bool
+	}{
+		{name: "existing unauthorized target", target: "crta-owner-existing-aaaa-bbbb-000000000002", existing: true},
+		{name: "missing target", target: "crta-owner-missing-aaaa-bbbb-000000000003"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			const caller = "crta-owner-caller-aaaa-bbbb-cccc-000000000001"
+			job := createSelfManagedCron(t, f, caller)
+			if tc.existing {
+				f.HaveConvWithTitle(tc.target, "owner-private-target")
+				f.HaveEnrolledAgent(tc.target)
+			}
+			before, err := db.GetAgentCronJob(job.ID)
+			require.NoError(t, err)
+
+			rec := patchCronAsAgent(t, f, caller, job.ID, map[string]any{
+				"target": tc.target,
+				"owner":  "crta-owner-does-not-exist",
+				"body":   "must-not-land",
+			})
+			assertDeniedCronRetargetHasNoSideEffects(t, f, before, rec, caller, tc.target)
+			denialBodies = append(denialBodies, rec.Body.String())
+		})
+	}
+	require.Len(t, denialBodies, 2)
+	assert.Equal(t, denialBodies[0], denialBodies[1],
+		"owner validation must not reveal whether the proposed target resolved")
+}
+
 func TestCronPatchRetarget_UsesCanonicalAgentAndGroupAuthority(t *testing.T) {
 	t.Run("agent schedule grant allows cross-agent retarget", func(t *testing.T) {
 		f := newFlow(t)
@@ -387,6 +477,9 @@ func TestCronPatchRetarget_HumanMayRetargetAgentAndGroup(t *testing.T) {
 }
 
 func TestCronPatchRetarget_ReauthorizesRefreshedCurrentTargetBeforeWrite(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	approvalCalls, restoreApproval := agentd.StubCountingApprovalForTest(true)
+	t.Cleanup(restoreApproval)
 	f := newFlow(t)
 	const caller = "crtc-caller-aaaa-bbbb-cccc-000000000001"
 	const replacement = "crtc-target-aaaa-bbbb-cccc-000000000002"
@@ -405,7 +498,11 @@ func TestCronPatchRetarget_ReauthorizesRefreshedCurrentTargetBeforeWrite(t *test
 
 	result := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
-		result <- patchCronAsAgent(t, f, caller, job.ID, map[string]any{"body": "stale-boundary-write"})
+		req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+			"/v1/cron/"+strconv.FormatInt(job.ID, 10),
+			map[string]any{"body": "stale-boundary-write"}), caller)
+		req.Header.Set("X-Tclaude-Ask-Human", "30s")
+		result <- testharness.Serve(f.Mux, req)
 	}()
 	<-entered
 	patchCronAsHuman(t, f, job.ID, map[string]any{"target": replacement})
@@ -417,6 +514,8 @@ func TestCronPatchRetarget_ReauthorizesRefreshedCurrentTargetBeforeWrite(t *test
 	}
 	testharness.DecodeJSON(t, rec, &denial)
 	assert.Equal(t, "permission", denial.Code)
+	assert.Zero(t, approvalCalls(),
+		"a refreshed-target mismatch must not open an approval while holding cron authority")
 
 	after, err := db.GetAgentCronJob(job.ID)
 	require.NoError(t, err)

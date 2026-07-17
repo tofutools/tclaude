@@ -150,7 +150,8 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.
 	}
-	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) {
+	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, targetConv) ||
+		hasHumanApprovalContinuation(r, perm, targetConv) {
 		return p.ConvID, true
 	}
 	switch resolvePermission(p.ConvID, perm) {

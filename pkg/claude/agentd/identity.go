@@ -474,7 +474,8 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 	// authoritative and (like an undecided with no bypass) falls through
 	// to the popup-or-403 path below.
 	allowed := false
-	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) {
+	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
+		hasHumanApprovalContinuation(r, perm, p.ConvID) {
 		allowed = true
 	} else {
 		switch resolvePermission(p.ConvID, perm) {
