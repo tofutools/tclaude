@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,6 +153,62 @@ func TestCronPatchRetarget_AskHumanCannotBlockOrCreateTargetOracle(t *testing.T)
 	require.Len(t, denialBodies, 2)
 	assert.Equal(t, denialBodies[0], denialBodies[1],
 		"ask-human must not distinguish an existing proposed target from a missing one")
+}
+
+func TestCronPatchRetarget_ResolutionWaitsForAuthorityBoundary(t *testing.T) {
+	f := newFlow(t)
+	const caller = "crta-lock-caller-aaaa-bbbb-cccc-000000000001"
+	const existing = "crta-lock-existing-aaaa-bbbb-cccc-000000000002"
+	const missing = "crta-lock-missing-aaaa-bbbb-cccc-000000000003"
+	job := createSelfManagedCron(t, f, caller)
+	f.HaveConvWithTitle(existing, "lock-private-target")
+	f.HaveEnrolledAgent(existing)
+	before, err := db.GetAgentCronJob(job.ID)
+	require.NoError(t, err)
+
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	t.Cleanup(agentd.SetCronBeforeAuthorityLockForTest(func(operation string) {
+		if operation == "patch" {
+			entered <- struct{}{}
+			<-release
+		}
+	}))
+
+	results := make(chan *httptest.ResponseRecorder, 2)
+	for _, target := range []string{existing, missing} {
+		req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPatch,
+			"/v1/cron/"+strconv.FormatInt(job.ID, 10), map[string]any{"target": target}), caller)
+		go func() { results <- testharness.Serve(f.Mux, req) }()
+	}
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatal("target resolution returned before reaching the common authority-lock boundary")
+		}
+	}
+	releaseOnce.Do(func() { close(release) })
+	recA, recB := <-results, <-results
+	requireCronRetargetDenied(t, recA)
+	requireCronRetargetDenied(t, recB)
+	assert.Equal(t, recA.Body.String(), recB.Body.String())
+
+	after, err := db.GetAgentCronJob(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	runs, err := db.ListAgentCronRunsForJob(job.ID, 0)
+	require.NoError(t, err)
+	assert.Empty(t, runs)
+	assert.Zero(t, msgRowCount(t, existing))
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "cron.update", Outcome: "success"})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+	rows, err = db.ListAuditLog(db.AuditLogFilter{Verb: "cron.update", Outcome: "failure"})
+	require.NoError(t, err)
+	assert.Len(t, rows, 2)
 }
 
 func TestCronPatch_CurrentTargetApprovalIsReusedWithoutLockedPopup(t *testing.T) {
@@ -522,6 +579,63 @@ func TestCronPatchRetarget_ReauthorizesRefreshedCurrentTargetBeforeWrite(t *test
 	assert.Equal(t, replacement, after.TargetConv)
 	assert.Equal(t, "before-body", after.Body, "request authorized against the stale target mutated the refreshed row")
 	assert.False(t, strings.Contains(rec.Body.String(), "replacement-target"))
+}
+
+func TestCronByIDMutations_ReauthorizeRefreshedTargetBeforeAction(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		operation string
+		method    string
+		suffix    string
+	}{
+		{name: "enable", operation: "enable", method: http.MethodPost, suffix: "/enable"},
+		{name: "run now", operation: "run-now", method: http.MethodPost, suffix: "/run-now"},
+		{name: "delete", operation: "delete", method: http.MethodDelete},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			const caller = "crtb-caller-aaaa-bbbb-cccc-000000000001"
+			const replacement = "crtb-target-aaaa-bbbb-cccc-000000000002"
+			job := createSelfManagedCron(t, f, caller)
+			f.HaveConvWithTitle(replacement, "by-id-replacement")
+			f.HaveEnrolledAgent(replacement)
+
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+			t.Cleanup(agentd.SetCronBeforeAuthorityLockForTest(func(operation string) {
+				if operation == tc.operation {
+					close(entered)
+					<-release
+				}
+			}))
+
+			result := make(chan *httptest.ResponseRecorder, 1)
+			req := agentd.AsAgentPeer(testharness.JSONRequest(t, tc.method,
+				"/v1/cron/"+strconv.FormatInt(job.ID, 10)+tc.suffix, nil), caller)
+			go func() { result <- testharness.Serve(f.Mux, req) }()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("by-ID mutation did not reach the authority-lock boundary")
+			}
+			patchCronAsHuman(t, f, job.ID, map[string]any{"target": replacement})
+			releaseOnce.Do(func() { close(release) })
+			rec := <-result
+			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+			after, err := db.GetAgentCronJob(job.ID)
+			require.NoError(t, err)
+			require.NotNil(t, after, "stale delete authority removed the retargeted job")
+			assert.Equal(t, replacement, after.TargetConv)
+			assert.False(t, after.Enabled, "stale enable authority mutated the retargeted job")
+			runs, err := db.ListAgentCronRunsForJob(job.ID, 0)
+			require.NoError(t, err)
+			assert.Empty(t, runs, "stale run-now authority recorded a run")
+			assert.Zero(t, msgRowCount(t, replacement), "stale run-now authority delivered to the refreshed target")
+		})
+	}
 }
 
 func TestDashboardCronPatchRetarget_HumanUsesSharedAuthorizedHandler(t *testing.T) {

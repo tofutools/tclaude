@@ -186,8 +186,27 @@ func handleCronSetEnabled(w http.ResponseWriter, r *http.Request, id int64, enab
 	if _, ok := authCronJob(w, r, job); !ok {
 		return
 	}
+	if cronBeforeAuthorityLockForTest != nil {
+		operation := "disable"
+		if enabled {
+			operation = "enable"
+		}
+		cronBeforeAuthorityLockForTest(operation)
+	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
+	job, err = db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before update: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+		return
+	}
 	if err := db.SetAgentCronJobEnabled(id, enabled); err != nil {
 		writeCronMutationError(w, "update", err)
 		return
@@ -229,8 +248,21 @@ func handleCronRunNow(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
-	// Refresh under the scheduler lock so a cached due candidate and this
-	// manual fire agree on the latest cadence anchor.
+	// Refresh and re-authorize under the scheduler lock so a cached due
+	// candidate, a concurrent retarget, and this manual fire agree on both the
+	// latest authority boundary and cadence anchor.
+	job, err = db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before fire: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+		return
+	}
 	job, err = db.GetLiveOwnerAgentCronJob(id)
 	if err != nil {
 		writeCronMutationError(w, "refresh before fire", err)
@@ -680,7 +712,7 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	// Re-read after taking the lock so two concurrent false→true PATCHes cannot
 	// both observe false, and so a retired owner can never race a body/schedule
 	// edit into a misleading success response.
-	if !patch.Empty() || decoded.owner != nil {
+	if !patch.Empty() || decoded.targetSelector != nil || decoded.owner != nil {
 		if cronBeforeAuthorityLockForTest != nil {
 			cronBeforeAuthorityLockForTest("patch")
 		}
@@ -703,6 +735,26 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 		// popup while the global lock is held.
 		if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
 			return
+		}
+		if decoded.targetSelector != nil {
+			ct, err := resolveCronTarget(*decoded.targetSelector)
+			if err != nil {
+				writeCronProposedTargetResolutionError(w, r, err)
+				return
+			}
+			if ct.Kind == db.CronTargetGroup {
+				kind := db.CronTargetGroup
+				gid := ct.Group.ID
+				empty := ""
+				patch.TargetKind = &kind
+				patch.GroupID = &gid
+				patch.TargetConv = &empty
+			} else {
+				kind := db.CronTargetConv
+				patch.TargetKind = &kind
+				patch.TargetConv = &ct.Conv
+			}
+			decoded.target = &ct
 		}
 		proposed, changed, err := proposedCronPatchTarget(job, decoded)
 		if err != nil {
@@ -783,9 +835,10 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 // Empty body / no recognised fields is allowed and produces an
 // empty patch — handleCronPatch then no-ops cleanly.
 type decodedCronPatch struct {
-	patch  db.UpdateCronPatch
-	target *cronTarget
-	owner  *string
+	patch          db.UpdateCronPatch
+	targetSelector *string
+	target         *cronTarget
+	owner          *string
 }
 
 func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPatch, bool) {
@@ -891,36 +944,14 @@ func decodeCronPatchBody(w http.ResponseWriter, r *http.Request) (decodedCronPat
 		empty := ""
 		patch.CronExpr = &empty
 	}
-	var target *cronTarget
-	if body.Target != nil {
-		ct, err := resolveCronTarget(*body.Target)
-		if err != nil {
-			writeCronProposedTargetResolutionError(w, r, err)
-			return decodedCronPatch{}, false
-		}
-		if ct.Kind == db.CronTargetGroup {
-			// Switch the job to a group target: group_id becomes the
-			// target group and target_conv is cleared. This overrides any
-			// group_id the body also carried.
-			kind := db.CronTargetGroup
-			gid := ct.Group.ID
-			empty := ""
-			patch.TargetKind = &kind
-			patch.GroupID = &gid
-			patch.TargetConv = &empty
-		} else {
-			kind := db.CronTargetConv
-			patch.TargetKind = &kind
-			patch.TargetConv = &ct.Conv
-		}
-		target = &ct
-	}
-	return decodedCronPatch{patch: patch, target: target, owner: body.Owner}, true
+	return decodedCronPatch{
+		patch: patch, targetSelector: body.Target, owner: body.Owner,
+	}, true
 }
 
 // proposedCronPatchTarget returns the canonical destination requested by a
 // PATCH, and whether it differs from the refreshed stored destination. The
-// explicit target selector has already been fully resolved by the decoder.
+// explicit target selector is resolved under cronAuthorityMu before this runs.
 // A raw group_id is routing metadata for a conv job, but it is the destination
 // itself for a group job, so that legacy wire shape must take the same gate.
 func proposedCronPatchTarget(job *db.AgentCronJob, decoded decodedCronPatch) (cronTarget, bool, error) {
@@ -1055,6 +1086,18 @@ func handleCronDelete(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	cronAuthorityMu.Lock()
 	defer cronAuthorityMu.Unlock()
+	job, err = db.GetAgentCronJob(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "refresh before delete: "+err.Error())
+		return
+	}
+	if job == nil {
+		writeError(w, http.StatusNotFound, "not_found", "job "+strconv.FormatInt(id, 10)+" not found")
+		return
+	}
+	if _, ok := authCronJob(w, nonInteractiveCronAuthRequest(r), job); !ok {
+		return
+	}
 	if err := db.DeleteAgentCronJob(id); err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "delete: "+err.Error())
 		return
