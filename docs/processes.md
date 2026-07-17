@@ -543,6 +543,15 @@ contact schedules on schema-7 performer nodes, and unsafe nested-fork shapes
 remain outside that parallel subset and are rejected rather than silently
 falling back.
 
+The allowed dependency direction is from process hosts and API/CLI entry
+points through the released engine, executor, store/migration, and viewer
+boundaries into `state/pathv1`. The low-level pure exclusive planner/reducer
+exports in `exclusive_pure.go` are not production entry points: only their
+owning `pathv1` package may compose them. A recursive architecture test scans
+all non-test Go sources outside that package, including aliases, wrappers,
+subpackages, and generated registration files, and fails closed when the pure
+file gains an unclassified export.
+
 Migration is checkpoint-bound:
 
 - New production runs that match the executable subset initialize schema 7
