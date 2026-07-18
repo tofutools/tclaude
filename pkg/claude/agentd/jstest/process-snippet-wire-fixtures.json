@@ -16,6 +16,31 @@
       "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"cadence":"5m","budget":3,"escalationTarget":"operator"}}},"position":{"x":1,"y":2}}],"edges":[]}
     },
     {
+      "name": "exponent selection version",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1e0,"nodes":[{"id":"task","node":{"type":"task"},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "exponent contact budget",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":1e3}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "integral decimal retry attempts",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","retry":{"maxAttempts":2.0}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "negative zero contact budget",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":-0.0}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "negative zero retry attempts",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","retry":{"maxAttempts":-0.0}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
       "name": "fractional contact budget",
       "accepted": false,
       "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":1.5}}},"position":{"x":1,"y":2}}],"edges":[]}

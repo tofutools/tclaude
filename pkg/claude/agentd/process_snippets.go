@@ -36,7 +36,7 @@ var processSnippetNodeID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
 type processSnippetEnvelope struct {
 	Kind    string                       `json:"kind"`
-	Version int                          `json:"version"`
+	Version json.Number                  `json:"version"`
 	Nodes   []processSnippetEnvelopeNode `json:"nodes"`
 	Edges   []model.Edge                 `json:"edges"`
 }
@@ -244,13 +244,32 @@ func snippetStringMap(value any) error {
 	return nil
 }
 
-func snippetSafeInteger(value any) bool {
+func snippetSafeInteger(value any) (int64, bool) {
 	number, ok := value.(json.Number)
 	if !ok {
-		return false
+		return 0, false
 	}
 	parsed, err := strconv.ParseFloat(number.String(), 64)
-	return err == nil && math.Trunc(parsed) == parsed && math.Abs(parsed) <= 9_007_199_254_740_991
+	if err != nil || math.Trunc(parsed) != parsed || math.Abs(parsed) > 9_007_199_254_740_991 {
+		return 0, false
+	}
+	return int64(parsed), true
+}
+
+func normalizeSnippetSafeInteger(record map[string]any, field string) error {
+	value, present := record[field]
+	if !present {
+		return nil
+	}
+	normalized, ok := snippetSafeInteger(value)
+	if !ok {
+		return errors.New("custom snippet contains incompatible process node data")
+	}
+	// JSON.parse erases exponent, decimal, and negative-zero spellings before
+	// the browser authority applies Number.isSafeInteger. Mirror that semantic
+	// value before decoding into the model's typed int fields.
+	record[field] = json.Number(strconv.FormatInt(normalized, 10))
+	return nil
 }
 
 func validateSnippetRetryWire(value any) error {
@@ -258,8 +277,8 @@ func validateSnippetRetryWire(value any) error {
 	if err != nil {
 		return err
 	}
-	if maxAttempts, present := record["maxAttempts"]; present && !snippetSafeInteger(maxAttempts) {
-		return errors.New("custom snippet contains incompatible process node data")
+	if err := normalizeSnippetSafeInteger(record, "maxAttempts"); err != nil {
+		return err
 	}
 	return snippetOptionalStrings(record, "backoff", "onFail")
 }
@@ -295,8 +314,8 @@ func validateSnippetPerformerWire(value any) error {
 		if err != nil {
 			return err
 		}
-		if budget, present := contact["budget"]; present && !snippetSafeInteger(budget) {
-			return errors.New("custom snippet contains incompatible process node data")
+		if err := normalizeSnippetSafeInteger(contact, "budget"); err != nil {
+			return err
 		}
 		if err := snippetOptionalStrings(contact, "cadence", "escalationTarget"); err != nil {
 			return err
@@ -530,7 +549,8 @@ func canonicalizeProcessSnippetEnvelope(raw []byte) ([]byte, error) {
 	if err := strictJSON(raw, &envelope); err != nil {
 		return nil, errors.New("custom snippet has an invalid selection envelope")
 	}
-	if envelope.Kind != processSnippetEnvelopeKind || envelope.Version != processSnippetEnvelopeVersion {
+	version, versionOK := snippetSafeInteger(envelope.Version)
+	if envelope.Kind != processSnippetEnvelopeKind || !versionOK || version != processSnippetEnvelopeVersion {
 		return nil, errors.New("custom snippet uses an unsupported selection format version")
 	}
 	if len(envelope.Nodes) == 0 {
@@ -566,7 +586,8 @@ func canonicalizeProcessSnippetEnvelope(raw []byte) ([]byte, error) {
 		if err := decoder.Decode(&generic); err != nil || validateSnippetJSONValue(generic) != nil || validateSnippetNodeWire(generic) != nil {
 			return nil, errors.New("custom snippet contains incompatible process node data")
 		}
-		if err := strictJSON(entry.Node, &entry.decoded); err != nil {
+		normalizedNode, err := json.Marshal(generic)
+		if err != nil || strictJSON(normalizedNode, &entry.decoded) != nil {
 			return nil, errors.New("custom snippet contains incompatible process node data")
 		}
 		var position struct {
