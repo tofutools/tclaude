@@ -197,6 +197,59 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
   adapter.dispose();
 });
 
+test('undo-style graph removal cancels a missing pointer source exactly once', async (t) => {
+  const received = [];
+  const feedback = ({ phase, source, candidate = {} }) => {
+    if (phase === 'source') return { state: 'available', enabled: true, message: 'Start a connection.' };
+    if (candidate.nodeId === source.nodeId && candidate.port === source.port) {
+      return { state: 'source', enabled: true, message: 'Start a connection.' };
+    }
+    return { state: 'valid', enabled: true, message: 'Drop to connect.' };
+  };
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    portDragStart: (payload) => received.push(['start', payload]),
+    portDragEnd: (payload) => received.push(['end', payload]),
+  }, { connectionFeedback: feedback });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => {};
+  const source = host.querySelector('[data-node-id="start"] .process-port-out');
+  harness.fireEvent(source, 'pointerdown', {
+    button: 0, pointerId: 63, pointerType: 'mouse', clientX: 12, clientY: 24,
+  });
+  const active = adapter.interactionSnapshot();
+  assert.equal(active.active, true);
+  assert.ok(host.querySelector('.process-editor-band'));
+  assert.ok(host.querySelector('.process-graph').classList.contains('is-connecting'));
+
+  adapter.setGraph({ nodes: [{ id: 'end', type: 'end', label: 'End' }], edges: [] });
+  const ends = received.filter(([kind]) => kind === 'end');
+  assert.equal(ends.length, 1, 'source removal emits one canonical pointer end');
+  const { event, point, ...payload } = ends[0][1];
+  assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y));
+  assert.equal(event.type, 'source-removed');
+  assert.deepEqual(payload, {
+    nodeId: 'start', port: 'out', targetNodeId: null, targetPort: null,
+    cancelled: true, cancellation: 'source-removed',
+  });
+  assert.equal(host.querySelector('.process-editor-band'), null);
+  assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
+  assert.deepEqual(adapter.interactionSnapshot(), {
+    generation: active.generation + 1, active: false,
+  }, 'reload freshness observes the pointer cancellation generation');
+  assert.equal(harness.document.activeElement, host.querySelector('.process-graph'),
+    'stable graph focus survives removal of the captured connector');
+  assert.equal(host.querySelector('[data-node-id="end"] .process-port-out').getAttribute('r'), '6');
+
+  harness.fireEvent(svg, 'pointerup', {
+    pointerId: 63, pointerType: 'mouse', clientX: 12, clientY: 24,
+  });
+  harness.fireEvent(svg, 'keydown', { key: 'Escape' });
+  assert.equal(received.filter(([kind]) => kind === 'end').length, 1,
+    'late release and Escape cannot double-cancel the removed pointer source');
+  adapter.dispose();
+});
+
 test('same-source activation toggles keyboard feedback off with pointer lifecycle parity', async (t) => {
   const received = [];
   const feedback = ({ phase, source, candidate = {} }) => {
@@ -301,6 +354,40 @@ test('disabled pointer feedback rebinds after a synchronous focus rerender', asy
     'detached event target never owns the live tooltip relationship');
   assert.ok(tooltip.classList.contains('is-visible'));
   assert.match(tooltip.textContent, /End nodes cannot/);
+  adapter.dispose();
+});
+
+test('pointerleave invalidates queued feedback before its animation frame', async (t) => {
+  const feedback = ({ phase }) => ({
+    state: phase === 'source' ? 'available' : 'valid', enabled: true, message: 'Connect from this port.',
+  });
+  const { harness, adapter, host } = await mountedAdapter(t, {}, {
+    connectionFeedback: feedback, actionFeedbackDelay: 0, keyboardFeedbackDelay: 0,
+  });
+  const frames = [];
+  const previousRAF = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+  t.after(() => { globalThis.requestAnimationFrame = previousRAF; });
+  const svg = host.querySelector('.process-graph-svg');
+  const port = host.querySelector('[data-node-id="start"] .process-port-out');
+  const tooltip = host.querySelector('.process-action-tooltip');
+
+  harness.fireEvent(port, 'pointermove', { pointerId: 64, pointerType: 'mouse', clientX: 1, clientY: 2 });
+  assert.equal(frames.length, 1);
+  harness.fireEvent(svg, 'pointerleave', { pointerId: 64, pointerType: 'mouse' });
+  frames.shift()();
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.equal(tooltip.textContent, '');
+  assert.equal(port.hasAttribute('aria-describedby'), false);
+  assert.equal(port.classList.contains('is-connection-hover'), false);
+
+  harness.fireEvent(port, 'pointermove', { pointerId: 64, pointerType: 'mouse', clientX: 3, clientY: 4 });
+  assert.equal(frames.length, 1, 'a fresh move schedules independently of the invalidated frame');
+  frames.shift()();
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.ok(tooltip.classList.contains('is-visible'));
+  assert.equal(port.getAttribute('aria-describedby'), tooltip.id);
+  harness.fireEvent(svg, 'pointerleave', { pointerId: 64, pointerType: 'mouse' });
   adapter.dispose();
 });
 

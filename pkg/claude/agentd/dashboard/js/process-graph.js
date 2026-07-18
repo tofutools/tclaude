@@ -528,6 +528,7 @@ export class ProcessGraph {
     }
     this.applyView();
     this.applySelection();
+    this.cancelMissingPointerPort();
     this.connectionEvaluation = this.connectionSource
       ? this.options.connectionFeedbackPreparation?.() || null : null;
     this.applyKeyboardPort();
@@ -640,6 +641,7 @@ export class ProcessGraph {
     this.svg.addEventListener('lostpointercapture', (event) => this.onLostPointerCapture(event), { signal });
     this.svg.addEventListener('pointerleave', () => {
       this.updatePortHover(null);
+      this.cancelQueuedPointerFeedback();
       this.clearActionFeedback();
     }, { signal });
     this.svg.addEventListener('click', (event) => this.onClick(event), { signal });
@@ -813,7 +815,10 @@ export class ProcessGraph {
     if (this.feedbackFrame != null) return;
     const schedule = typeof requestAnimationFrame === 'function'
       ? requestAnimationFrame : (callback) => setTimeout(callback, 16);
-    this.feedbackFrame = schedule(() => {
+    const frame = {};
+    this.feedbackFrame = frame;
+    schedule(() => {
+      if (this.feedbackFrame !== frame) return;
       this.feedbackFrame = null;
       const pending = this.pendingFeedbackPointer;
       this.pendingFeedbackPointer = null;
@@ -835,8 +840,18 @@ export class ProcessGraph {
     });
   }
 
+  cancelQueuedPointerFeedback() {
+    this.pendingFeedbackPointer = null;
+    // The scheduled callback may already be queued and requestAnimationFrame
+    // is not consistently cancellable in the test/fallback environments. A
+    // per-frame identity makes it inert without letting an old callback clear
+    // a newer frame.
+    this.feedbackFrame = null;
+  }
+
   beginConnectionFeedback(source) {
     if (!this.feedbackEnabled) return;
+    this.cancelQueuedPointerFeedback();
     this.clearActionFeedback();
     this.connectionSource = { nodeId: source.nodeId, port: source.port };
     this.connectionEvaluation = this.options.connectionFeedbackPreparation?.() || null;
@@ -847,7 +862,7 @@ export class ProcessGraph {
     if (!this.feedbackEnabled) return;
     this.connectionSource = null;
     this.connectionEvaluation = null;
-    this.pendingFeedbackPointer = null;
+    this.cancelQueuedPointerFeedback();
     this.clearActionFeedback();
     this.applyConnectionFeedback();
   }
@@ -1138,6 +1153,7 @@ export class ProcessGraph {
         nodeId: pointer.nodeID, port: pointer.port,
         point: this.clientToGraph(event.clientX, event.clientY),
         targetNodeId: null, targetPort: null, cancelled: true, event,
+        ...(event.cancellation ? { cancellation: event.cancellation } : {}),
       });
     } else if (pointer.mode === 'node') {
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
@@ -1175,6 +1191,20 @@ export class ProcessGraph {
       clientX: this.pointer.lastClientX,
       clientY: this.pointer.lastClientY,
       type: 'blur',
+    });
+    return true;
+  }
+
+  cancelMissingPointerPort() {
+    const pointer = this.pointer;
+    if (!pointer || pointer.mode !== 'port'
+      || this.portElement(pointer.nodeID, pointer.port)) return false;
+    this.onPointerCancel({
+      pointerId: pointer.id,
+      clientX: pointer.lastClientX,
+      clientY: pointer.lastClientY,
+      type: 'source-removed',
+      cancellation: 'source-removed',
     });
     return true;
   }
