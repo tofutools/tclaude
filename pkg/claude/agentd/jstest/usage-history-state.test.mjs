@@ -50,6 +50,31 @@ test('usage spans are stored per series with legacy globals as the default', asy
   assert.equal(state.setSeriesHours('openai:five_hour', 12), false, 'unknown history span rejected');
   assert.equal(state.setSeriesLookaheadHours('openai:five_hour', 12), false, 'unknown lookahead rejected');
   assert.equal(state.setSeriesHours('', 24), false, 'empty series key rejected');
+  assert.equal(state.setSeriesHours('a:b:c', 24), false, 'key breaking the server spans grammar rejected');
+  assert.equal(state.setSeriesHours('a,b:c', 24), false, 'key with comma rejected');
+});
+
+test('usage span store drops entries that would break the request grammar', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createUsageHistoryState } = await harness.importDashboardModule('js/usage-history-state.js');
+  const stored = {
+    'bad:extra:colon': { hours: 24 },
+    'bad,comma:window': { hours: 24 },
+    'openai:five_hour': { hours: 24 },
+  };
+  for (let i = 0; i < 150; i++) stored[`provider${i}:window`] = { hours: 24 };
+  const prefs = fakePrefs([['tclaude.dash.usage.seriesSpans', JSON.stringify(stored)]]);
+  const state = createUsageHistoryState({
+    snapshot: harness.signals.signal({ usage_tab_visible: true }),
+    activeTab: harness.signals.signal('usage'),
+    prefs,
+  });
+  state.initialize();
+  const overrides = state.view.value.spanOverrides;
+  assert.equal(overrides['bad:extra:colon'], undefined, 'grammar-breaking key dropped on load');
+  assert.equal(overrides['bad,comma:window'], undefined, 'comma key dropped on load');
+  assert.equal(overrides['openai:five_hour'], 24, 'valid entry survives');
+  assert.ok(Object.keys(overrides).length <= 100, 'entry count capped below the server override limit');
 });
 
 test('usage span store tolerates corrupt persisted JSON', async (t) => {

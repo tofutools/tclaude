@@ -16,6 +16,13 @@ const DEFAULT_LOOKAHEAD_HOURS = 168;
 
 function errorMessage(error) { return String(error?.message || error); }
 
+// A key must match the server's spans grammar (provider:window, both
+// colon/comma-free) and the entry count stays under the server's override
+// cap — otherwise one poisoned persisted entry would make every
+// /api/usage-history request 400 until the preference is cleared by hand.
+const SERIES_KEY_PATTERN = /^[^:,]+:[^:,]+$/;
+const MAX_SERIES_SPAN_ENTRIES = 100;
+
 function parseStoredSpans(raw) {
   if (!raw) return {};
   try {
@@ -23,6 +30,8 @@ function parseStoredSpans(raw) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out = {};
     for (const [key, value] of Object.entries(parsed)) {
+      if (!SERIES_KEY_PATTERN.test(key)) continue;
+      if (Object.keys(out).length >= MAX_SERIES_SPAN_ENTRIES) break;
       const entry = {};
       if (HISTORY_HOURS.includes(Number(value?.hours))) entry.hours = Number(value.hours);
       if (LOOKAHEAD_HOURS.includes(Number(value?.lookaheadHours))) entry.lookaheadHours = Number(value.lookaheadHours);
@@ -88,13 +97,13 @@ export function createUsageHistoryState({
   }
   function setSeriesHours(key, value) {
     const parsed = Number(value);
-    if (typeof key !== 'string' || !key || !HISTORY_HOURS.includes(parsed)) return false;
+    if (typeof key !== 'string' || !SERIES_KEY_PATTERN.test(key) || !HISTORY_HOURS.includes(parsed)) return false;
     persistSpan(key, { hours: parsed });
     return true;
   }
   function setSeriesLookaheadHours(key, value) {
     const parsed = Number(value);
-    if (typeof key !== 'string' || !key || !LOOKAHEAD_HOURS.includes(parsed)) return false;
+    if (typeof key !== 'string' || !SERIES_KEY_PATTERN.test(key) || !LOOKAHEAD_HOURS.includes(parsed)) return false;
     persistSpan(key, { lookaheadHours: parsed });
     return true;
   }
