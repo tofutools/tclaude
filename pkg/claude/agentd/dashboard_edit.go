@@ -77,6 +77,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/slop/channel", handleDashboardSlopChannelAPI)
 	mux.HandleFunc("/api/slop/nowplaying", handleDashboardSlopNowPlayingAPI)
 	mux.HandleFunc("/api/dashboard/prefs", handleDashboardPrefsAPI)
+	registerDashboardProcessSnippetRoutes(mux)
 	mux.HandleFunc("/api/cleanup/", handleDashboardCleanup)
 	mux.HandleFunc("/api/shutdown", handleShutdown)
 	mux.HandleFunc("/api/power-on", handlePowerOn)

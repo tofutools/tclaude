@@ -10,6 +10,7 @@ import { PROCESS_SCRIBE_PROMPT_MAX } from './process-scribe.js';
 import { NodeDialog } from './process-node-dialog.js';
 import { ParamsDialog } from './process-params-dialog.js';
 import { CHANGE_SUMMARY_MARKERS } from './process-external-change.js';
+import { PROCESS_SNIPPET_NAME_MAX_RUNES } from './process-snippet-library.js';
 
 const html = htm.bind(h);
 
@@ -154,19 +155,42 @@ function ExternalChange({ controller, view }) {
   </div>`;
 }
 
-function Palette({ controller, hidden }) {
-  const card = (payload, label, hint) => html`<div
-    key=${JSON.stringify(payload)} class="process-palette-card" draggable="true"
-    title=${hint || ''} data-palette-item=${JSON.stringify(payload)}
-  ><span class="process-palette-card-label">${label}</span><span class="process-palette-card-hint">${hint || ''}</span></div>`;
+function Palette({ controller, hidden, snippets }) {
+  const card = (payload, label, hint, { custom = false, available = true, pending = false } = {}) => {
+    const canInsert = snippets.canInsert && available && !pending;
+    return html`<div
+      key=${JSON.stringify(payload)} class=${`process-palette-card${custom ? ' is-custom' : ' is-built-in'}${available ? '' : ' is-unavailable'}`}
+      draggable=${canInsert ? 'true' : 'false'} title=${hint || ''} data-palette-item=${JSON.stringify(payload)}
+    ><span class="process-palette-card-copy"><span class="process-palette-card-label">${label}</span><span class="process-palette-card-hint">${hint || ''}</span></span>
+      <span class="process-palette-card-actions">
+        <button type="button" class="process-palette-insert" disabled=${!canInsert} aria-label=${`Insert ${label}`}
+          title=${canInsert ? `Insert ${label} at the canvas center` : available ? 'Snippet insertion is not allowed in this read-only view.' : hint}
+          onClick=${() => controller.insertPaletteItem(payload)}>Insert</button>
+        ${custom && html`<button type="button" class="process-palette-manage" disabled=${pending} aria-label=${`Rename custom snippet ${label}`} title="Rename custom snippet" onClick=${() => controller.renameCustomSnippet(payload.id)}>✎</button>
+        <button type="button" class="process-palette-manage process-palette-delete" disabled=${pending} aria-label=${`Delete custom snippet ${label}`} title="Delete custom snippet" onClick=${() => controller.deleteCustomSnippet(payload.id)}>×</button>`}
+      </span>
+    </div>`;
+  };
   return html`<aside class="process-editor-palette" aria-label="Node palette" hidden=${hidden}
     onDragStart=${(event) => controller.paletteDragStart(event)}
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
     <div class="process-palette-section">Primitives</div>
     ${PALETTE_PRIMITIVES.map((item) => card({ kind: 'primitive', type: item.type }, item.label, item.hint))}
-    <div class="process-palette-section">Snippets</div>
+    <div class="process-palette-section">Built-in snippets</div>
     ${PALETTE_SNIPPETS.map((item) => card({ kind: 'snippet', key: item.key }, item.label, item.hint))}
-    <p class="process-palette-help">Drag onto the canvas to add. Drag a port to another node to connect.</p>
+    <div class="process-palette-section process-palette-custom-heading"><span>Custom snippets</span><button
+      type="button" class="process-palette-save" disabled=${!snippets.canSaveSelection || snippets.creating}
+      title=${snippets.canSaveSelection ? 'Save the selected nodes and their internal edges as a reusable snippet' : 'Select one or more nodes in an editable template first.'}
+      onClick=${() => controller.saveSelectionAsSnippet()}>${snippets.creating ? 'Saving…' : 'Save selection…'}</button></div>
+    ${snippets.loading && html`<p class="process-palette-state" role="status">Loading custom snippets…</p>`}
+    ${!snippets.loading && snippets.error && html`<div class="process-palette-state is-error" role="alert"><span>${snippets.error}</span><button type="button" onClick=${() => controller.loadCustomSnippets()}>Retry</button></div>`}
+    ${!snippets.loading && !snippets.error && !snippets.items.length && html`<p class="process-palette-state">No custom snippets yet. Select nodes, then choose Save selection…</p>`}
+    ${!snippets.loading && snippets.items.map((item) => card(
+      { kind: 'custom-snippet', id: item.id }, item.name,
+      item.available ? 'Your reusable node selection' : item.unavailableReason,
+      { custom: true, available: item.available, pending: snippets.pendingID === item.id },
+    ))}
+    <p class="process-palette-help">Drag or use Insert to add. Drag a port to another node to connect.</p>
   </aside>`;
 }
 
@@ -189,7 +213,7 @@ function Inspector({ controller, view }) {
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;
     const edges = selected.length - nodes;
-    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
+    return html`<div ref=${root} class="process-editor-inspector" inert=${pending}><span class="process-inspector-kind">multiple selection</span><span class="process-inspector-id">${selected.length} items</span><span class="process-inspector-hint">${[nodes ? `${nodes} node${nodes === 1 ? '' : 's'}` : '', edges ? `${edges} edge${edges === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')}</span><button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button><button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete selection</button></div>`;
   }
   if (sel?.type === 'node' && view.selectedNode) {
     const node = view.selectedNode;
@@ -199,6 +223,7 @@ function Inspector({ controller, view }) {
       ${view.selectedNodeIncoming > 1 && html`<select class="process-inspector-select" aria-label="Join semantics" value=${node.join || ''} onChange=${(event) => controller.setJoin(sel.id, event.currentTarget.value || null)}><option value="">join: unset</option><option value="all">join: all</option><option value="any">join: any</option></select>`}
       ${view.model.start !== sel.id && node.type !== 'end' && html`<button class="process-action" type="button" title="Make this node the process entry point" onClick=${() => controller.setStart(sel.id)}>set as start</button>`}
       <button class="process-action" type="button" title="Open the structured node editor: stages, performers, retry, captures" onClick=${() => controller.openNodeSettings(sel.id)}>node settings…</button>
+      <button class="process-action" type="button" disabled=${!view.snippets.canSaveSelection} title="Save this node as a reusable custom snippet" onClick=${() => controller.saveSelectionAsSnippet()}>save as snippet…</button>
       <button class="process-action process-action-danger" type="button" onClick=${() => controller.deleteSelection()}>delete node</button>
     </div>`;
   }
@@ -306,6 +331,33 @@ export function ScribeDialog({ descriptor, complete }) {
   </${Overlay}>`;
 }
 
+export function SnippetNameDialog({ descriptor, complete }) {
+  const [name, setName] = useState(descriptor.initialName || '');
+  const input = useRef(null);
+  const trimmed = name.trim();
+  const submit = () => { if (trimmed) complete(trimmed); };
+  return html`<${Overlay}
+    id="process-snippet-name-modal"
+    dialogClass="modal process-snippet-name-dialog"
+    overlayClass="process-editor-modal"
+    labelledby="process-snippet-name-title"
+    onClose=${() => complete(null)}
+    dirty=${false}
+    confirmDiscard=${async () => false}
+    initialFocusRef=${input}
+  >
+    <h3 id="process-snippet-name-title">${descriptor.title}</h3>
+    <p>Only the selected nodes, their internal edges, and relative layout are saved. Template identity and crossing edges are excluded.</p>
+    <label for="process-snippet-name-input">Snippet name</label>
+    <input ref=${input} id="process-snippet-name-input" type="text" autocomplete="off" spellcheck="true"
+      maxlength=${PROCESS_SNIPPET_NAME_MAX_RUNES} value=${name} data-select-on-focus
+      onInput=${(event) => setName(event.currentTarget.value)}
+      onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } }} />
+    <div class="modal-buttons"><button type="button" class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button><button
+      type="button" class="primary process-editor-modal-btn" disabled=${!trimmed} onClick=${submit}>${descriptor.submitLabel}</button></div>
+  </${Overlay}>`;
+}
+
 function EditorModal({ controller, descriptor }) {
   const registerHandle = useCallback(
     (handle) => controller.registerModalHandle(descriptor?.generation, handle),
@@ -315,6 +367,7 @@ function EditorModal({ controller, descriptor }) {
   const complete = (result) => controller.finishModal(descriptor.generation, result);
   if (descriptor.kind === 'choice') return html`<${ChoiceDialog} descriptor=${descriptor} complete=${complete} />`;
   if (descriptor.kind === 'scribe') return html`<${ScribeDialog} descriptor=${descriptor} complete=${complete} />`;
+  if (descriptor.kind === 'snippet-name') return html`<${SnippetNameDialog} descriptor=${descriptor} complete=${complete} />`;
   if (descriptor.kind === 'node') return html`<${NodeDialog}
     key=${descriptor.generation}
     model=${controller.model} nodeId=${descriptor.nodeId} mode=${descriptor.mode}
@@ -339,7 +392,7 @@ export function ProcessEditorApp({ controller }) {
     <${Header} controller=${controller} view=${view} />
     <${ExternalChange} controller=${controller} view=${view} />
     <div class="process-editor-body" inert=${view.pending.externalDecision || view.pending.externalReload}>
-      <${Palette} controller=${controller} hidden=${view.paletteHidden} />
+      <${Palette} controller=${controller} hidden=${view.paletteHidden} snippets=${view.snippets} />
       <div ref=${stageRef} class="process-editor-stage">
         <div ref=${graphRef} class="process-editor-canvas-host"></div>
         <${InlineEditor} controller=${controller} inline=${view.inline} />
