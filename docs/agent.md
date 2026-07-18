@@ -658,29 +658,80 @@ default spawn profile has filled blank fields. In short:
 The approval-lineage guard separately compares the spawning agent's recorded
 approval policy and auto-review setting with the fully resolved child launch.
 It models automatic acceptance as capability sets rather than pretending every
-mode has a useful linear rank:
+mode has a useful linear rank.
+
+Both sides are first resolved to a normalized capability shape, then compared as
+a subset test. There are no per-direction or per-harness exceptions: Codex
+approval policies and Claude permission modes are projected onto the *same*
+axes, because their labels do not form one comparable authority lattice.
+
+Human approval is baseline throughout. A posture that reaches a human — the
+Claude approval popup, a Codex escalation prompt, the operator's own allow/deny
+rules — grants the agent no automatic capability of its own. What the guard
+gates is what an agent can cause *without* a human:
+
+| Capability | Meaning | Held by |
+|------------|---------|---------|
+| auto-edits | writes files and runs common fs commands in its working dir with no human in the loop | Claude `acceptEdits`, and everything below |
+| auto-commands | runs *arbitrary* commands with no human in the loop, inside its sandbox | Codex `never` / `on-request` / `on-failure`; Claude `auto` |
+| machine reviewer | a model may approve, in a human's place, actions that escalate past the sandbox boundary | Codex Auto-review (except alongside `never`, which emits no requests) |
+| unreviewed | auto-approves everything, with no reviewer of any kind | Claude `bypassPermissions` |
+
+auto-edits and auto-commands are deliberately distinct. `acceptEdits`
+auto-approves edits but still prompts a human before every other command, so it
+must not be able to mint a child that runs `curl`, `git push`, or `rm -rf`
+unattended — even though both postures are "automatic".
 
 | Parent posture | Child postures allowed by the approval guard |
 |----------------|-----------------------------------------------|
-| Claude `inherit` / `plan` / `default` / `dontAsk` / `acceptEdits` / `auto` | none |
-| Codex `untrusted`, auto-review off | Codex `untrusted`, auto-review off |
-| Codex `on-failure` / `on-request` / `never`, without active classifier review | Codex without active classifier review |
-| Codex `untrusted` with active classifier review | Codex `untrusted`, with classifier review on or off |
-| Codex `on-failure` / `on-request` with active classifier review | any Codex posture |
+| Claude `plan` / `default` / `dontAsk` | the same baseline postures, and Codex `untrusted` without auto-review |
+| Claude `acceptEdits` | the above, plus Claude `acceptEdits` |
+| Claude `auto` | the above, plus Claude `auto` and Codex `never` / `on-request` / `on-failure` without auto-review |
+| Claude `inherit` | any posture except `bypassPermissions` |
 | Claude `bypassPermissions` | any posture |
+| Codex `untrusted`, auto-review off | Codex `untrusted` without auto-review; Claude `plan` / `default` / `dontAsk` |
+| Codex `on-failure` / `on-request` / `never`, auto-review off | the above, plus Codex `never` / `on-request` / `on-failure` without auto-review and Claude `acceptEdits` / `auto` |
+| Codex `on-failure` / `on-request` with active classifier review | any Codex posture, and every Claude posture except `bypassPermissions` — including `inherit`, whose capability shape is exactly this one |
 
-`acceptEdits` and classifier approval are intentionally incomparable:
-`acceptEdits` automatically permits filesystem operations a classifier may
-reject, while a classifier may approve non-edit actions `acceptEdits` would
-prompt for. More importantly, only an explicitly `bypassPermissions` Claude
-parent may delegate any child. Claude merges permission rules, hooks, and
-sandbox settings from files in the child's cwd; a parent that can write that
-cwd can change a Claude child's effective posture independently of the
-command-line mode. A Codex child is not an equivalent escape hatch: Codex
-automatically executes commands that remain inside its OS sandbox, while
-non-bypass Claude modes may prompt, deny, or classify those same actions.
-Codex parents may still delegate to Codex children when both the approval and
-separate sandbox-lineage checks pass.
+Claude `auto` is **not** the Codex Auto-review equivalent (see
+[TCL-92](https://linear.app/johan-kjolhede/issue/TCL-92)). The `auto`
+supervisor reviews and tightens operations that remain inside the Claude
+sandbox; it is not a boundary-escalation grant, so a Codex `never` parent — the
+safe unattended posture — may spawn a Claude `auto` child. Conversely, Claude
+`acceptEdits` and `auto` cannot enable Codex Auto-review, because a machine
+reviewer of *boundary escalation* is a capability neither of them holds.
+
+Claude `inherit` is the one posture that cannot be resolved at spawn time: it
+means "whatever the operator's `settings.json` decides, plus the agentd approval
+popup". It is therefore classified as the **broadest non-bypass** posture. Two
+consequences, both deliberate:
+
+- an `inherit` parent can spawn any provable non-bypass child, so a
+  human-launched agent that was given no explicit permission mode is not
+  spawn-crippled;
+- an `inherit` *child* fails closed under any narrower parent. The denial names
+  the way out — pass an explicit mode such as `auto`. A saved spawn profile
+  meant to represent the ordinary detached-agent posture should therefore
+  persist `auto` rather than `inherit`.
+
+### Known limit: the child's project settings
+
+The approval guard compares *requested* postures. It does not prove a Claude
+child's **effective** posture, because Claude Code merges `permissions.allow`
+rules, hooks, and sandbox settings from files in the child's cwd, and
+`claude --settings` merges over those files rather than replacing them. A parent
+that can write the child's cwd — which the dir write-proof confirms it can, by
+design — could therefore write `.claude/settings.local.json` or a `PreToolUse`
+hook that widens the child beyond the mode it was launched with.
+
+This is a real residual gap, not a solved one. It is bounded by the separate
+sandbox-lineage guard (which caps *where* the child may act) and by Claude
+Code's folder-trust prompt (which does not help in an already-trusted repo). An
+earlier version of this guard blunted it by refusing all delegation from
+non-`bypassPermissions` Claude parents, but that also made every Claude agent
+unable to spawn anything, so the restriction was removed rather than kept as a
+partial mitigation with a large usability cost. Closing it properly means
+constraining the child's setting sources at launch, not comparing modes harder.
 
 For Codex, `untrusted` is more restrictive than the other approval policies:
 without auto-review it asks before every command outside Codex's trusted set.

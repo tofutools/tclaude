@@ -252,14 +252,13 @@ particular, auto-review has no effect with `never`, because that policy creates
 no approval requests.
 
 Agent-initiated spawns also enforce approval lineage: a parent cannot choose a
-child posture with broader automatic command acceptance than its recorded
-launch posture. Because Claude Code also consumes parent-writable project
-settings, only an explicitly `bypassPermissions` Claude parent may delegate a
-child. Non-bypass Claude modes also cannot delegate to Codex because Codex
-auto-executes actions inside its OS sandbox that Claude may still prompt for,
-deny, or classify. Codex-to-Codex delegation remains available under both the
-approval and sandbox lineage checks. See [Agent coordination](agent.md#spawn)
-for the capability matrix.
+child posture with broader automatic command acceptance than its recorded launch
+posture. Both sides are resolved to a normalized capability shape before they
+are compared, so the same rules apply in every direction — Claude→Claude,
+Codex→Codex, and cross-harness both ways. Claude `auto` is in-sandbox review,
+not a boundary-escalation grant, so a Codex `never` parent may delegate to it;
+`bypassPermissions` can only be minted by a parent that already holds it, or by
+a human. See [Agent coordination](agent.md#spawn) for the capability matrix.
 
 ## What stays the same across harnesses
 
