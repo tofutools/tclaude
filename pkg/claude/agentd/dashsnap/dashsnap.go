@@ -131,6 +131,14 @@ type State struct {
 	// captures the freshly-loaded page. A thrown error marks the shot failed but
 	// does not abort the run — the sheet records the error under the tile.
 	JS string
+	// InitJS, when non-empty, is installed via Page.addScriptToEvaluateOnNewDocument
+	// before this state's navigation and removed again when the state finishes, so
+	// it runs in the fresh document BEFORE any dashboard module executes. Use it
+	// for deterministic seams the page scripts capture at bootstrap (e.g. wrapping
+	// window.fetch to hold one request open) — the post-load JS above runs too
+	// late for those. Scoped strictly to its own state: the reused page never
+	// carries it into the next navigation.
+	InitJS string
 	// Actions run after JS using Chrome's input domain. Supported kinds: click,
 	// key-down, key-up, key, mouse-down, mouse-down-at, move-by, move-to-at,
 	// mouse-up, eval.
@@ -333,6 +341,17 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 	err = rod.Try(func() {
 		sp := page.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
 		defer sp.CancelTimeout() // release the per-state timeout's timer
+		if strings.TrimSpace(st.InitJS) != "" {
+			res, initErr := proto.PageAddScriptToEvaluateOnNewDocument{Source: st.InitJS}.Call(sp)
+			if initErr != nil {
+				panic(initErr)
+			}
+			// Remove on the untimed page: the init script must not leak into the
+			// next state's navigation even when this state's deadline is spent.
+			defer func() {
+				_ = proto.PageRemoveScriptToEvaluateOnNewDocument{Identifier: res.Identifier}.Call(page)
+			}()
+		}
 		width, height := cfg.Width, cfg.Height
 		if st.Width > 0 {
 			width = st.Width
