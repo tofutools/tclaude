@@ -84,6 +84,10 @@ test('viewer graph renders healthy, failed, and terminal-warning edge classes ho
   envelope.viewerV2.routing.edges.find((edge) => edge.edgeId === 'edge-merge').state = 'failed';
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const widget = new ProcessGraph(host, buildViewerGraph(envelope), { fitOnRender: false });
+  assert.equal(host.querySelectorAll('.process-port').length, 6,
+    'viewer graph input omits editor metadata and retains both default ports on every node');
+  assert.ok(host.querySelector('[data-node-id="merge"] .process-port-out'),
+    'viewer reuse does not inherit the editor-only End/output removal');
   assert.ok(host.querySelector('[data-edge-id="id:edge-left"] .process-edge-badge-info'), 'consumed edge uses non-error info styling');
   assert.ok(host.querySelector('[data-edge-id="id:edge-merge"] .process-edge-badge-error'), 'failed edge uses error styling');
 

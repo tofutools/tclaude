@@ -343,6 +343,52 @@ test('undo-style graph removal cancels a missing pointer source exactly once', a
   adapter.dispose();
 });
 
+test('editor metadata removes semantic ports and cancels stale pointer/keyboard sources on the same live node', async (t) => {
+  const received = [];
+  const feedback = ({ phase, source, candidate = {} }) => {
+    if (phase === 'source') return { state: 'available', enabled: true, message: 'Start a connection.' };
+    if (candidate.nodeId === source.nodeId && candidate.port === source.port) {
+      return { state: 'source', enabled: true, message: 'Start a connection.' };
+    }
+    return { state: 'valid', enabled: true, message: 'Drop to connect.' };
+  };
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    portDragStart: (payload) => received.push(['start', payload]),
+    portDragEnd: (payload) => received.push(['end', payload]),
+  }, { connectionFeedback: feedback });
+  const editorNodes = (startPorts) => [
+    { id: 'start', type: 'start', label: 'Start', portAvailability: startPorts },
+    { id: 'end', type: 'end', label: 'End', portAvailability: { in: true, out: false } },
+  ];
+  adapter.setGraph({ nodes: editorNodes({ in: false, out: true }), edges: [] });
+  assert.equal(host.querySelector('[data-node-id="start"] .process-port-in'), null);
+  assert.ok(host.querySelector('[data-node-id="start"] .process-port-out'));
+  assert.ok(host.querySelector('[data-node-id="end"] .process-port-in'));
+  assert.equal(host.querySelector('[data-node-id="end"] .process-port-out'), null);
+
+  let source = host.querySelector('[data-node-id="start"] .process-port-out');
+  harness.fireEvent(source, 'keydown', { key: 'Enter' });
+  adapter.setGraph({ nodes: editorNodes({ in: false, out: false }), edges: [] });
+  assert.equal(received.filter(([kind]) => kind === 'end').length, 1);
+  assert.equal(received.at(-1)[1].keyboard, true);
+  assert.equal(received.at(-1)[1].cancellation, 'source-removed');
+  assert.equal(adapter.interactionSnapshot().active, false);
+
+  adapter.setGraph({ nodes: editorNodes({ in: false, out: true }), edges: [] });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => {};
+  source = host.querySelector('[data-node-id="start"] .process-port-out');
+  harness.fireEvent(source, 'pointerdown', {
+    button: 0, pointerId: 91, pointerType: 'mouse', clientX: 10, clientY: 20,
+  });
+  adapter.setGraph({ nodes: editorNodes({ in: false, out: false }), edges: [] });
+  assert.equal(received.filter(([kind]) => kind === 'end').length, 2);
+  assert.equal(received.at(-1)[1].cancellation, 'source-removed');
+  assert.equal(adapter.interactionSnapshot().active, false);
+  adapter.dispose();
+});
+
 test('same-source activation toggles keyboard feedback off with pointer lifecycle parity', async (t) => {
   const received = [];
   const feedback = ({ phase, source, candidate = {} }) => {

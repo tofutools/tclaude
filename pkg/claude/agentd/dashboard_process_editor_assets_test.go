@@ -186,6 +186,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 
 	editor := read("js/process-editor.js")
 	connectionFeedback := read("js/process-connection-feedback.js")
+	portAvailability := read("js/process-port-availability.js")
 	mustContain("process-editor.js", editor,
 		"export class ProcessTemplateEditor",
 		"export async function openTemplateEditor(",
@@ -279,11 +280,25 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("process-connection-feedback.js", connectionFeedback,
 		"export function prepareProcessConnectionFeedback(",
 		"export function resolveProcessConnectionFeedback(",
-		"End nodes cannot have outgoing connections.",
+		"processEdgePortAvailability(model.node(from), model.node(to))",
+		"processNodePortAvailable(sourceNode, source.port)",
 		"Self-loop connections are not supported because v1 processes are acyclic.",
 		"Connect this input to an output port or another node body.",
 		"Adding connected nodes is not allowed in this view.",
 	)
+	mustContain("process-port-availability.js", portAvailability,
+		"export function processNodePortAvailable(",
+		"export function processNodePortAvailability(",
+		"export function processPortUnavailableMessage(",
+		"export function processEdgePortAvailability(",
+		"Start nodes cannot have incoming connections.",
+		"End nodes cannot have outgoing connections.",
+	)
+	for _, banned := range []string{"document.", "fetch(", "setTimeout(", "setInterval("} {
+		if strings.Contains(portAvailability, banned) {
+			t.Errorf("process-port-availability.js must stay pure; found %q", banned)
+		}
+	}
 	for _, banned := range []string{"document.", "fetch(", "setTimeout(", "setInterval("} {
 		if strings.Contains(connectionFeedback, banned) {
 			t.Errorf("process-connection-feedback.js must stay pure; found %q", banned)

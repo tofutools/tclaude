@@ -388,25 +388,28 @@ function renderPorts(parent, node, feedbackFor) {
       message: feedback.message,
     };
   };
-  const inputFeedback = portAttributes('in');
-  const input = svgElement('circle', {
-    class: inputFeedback.class, cx: 0, cy: -node.height / 2, r: 6,
-    'data-port': 'in', role: 'button', tabindex: '0', 'aria-pressed': 'false',
-    'aria-label': inputFeedback.label, 'data-base-aria-label': inputFeedback.baseLabel || inputFeedback.label,
-    'data-source-aria-label': inputFeedback.label,
-    'aria-disabled': inputFeedback.enabled === undefined ? undefined : String(!inputFeedback.enabled),
-    'data-source-state': inputFeedback.state, 'data-feedback-message': inputFeedback.message,
-  });
-  const outputFeedback = portAttributes('out');
-  const output = svgElement('circle', {
-    class: outputFeedback.class, cx: 0, cy: node.height / 2, r: 6,
-    'data-port': 'out', role: 'button', tabindex: '0', 'aria-pressed': 'false',
-    'aria-label': outputFeedback.label, 'data-base-aria-label': outputFeedback.baseLabel || outputFeedback.label,
-    'data-source-aria-label': outputFeedback.label,
-    'aria-disabled': outputFeedback.enabled === undefined ? undefined : String(!outputFeedback.enabled),
-    'data-source-state': outputFeedback.state, 'data-feedback-message': outputFeedback.message,
-  });
-  parent.append(input, output);
+  if (node.portAvailability?.in !== false) {
+    const inputFeedback = portAttributes('in');
+    parent.append(svgElement('circle', {
+      class: inputFeedback.class, cx: 0, cy: -node.height / 2, r: 6,
+      'data-port': 'in', role: 'button', tabindex: '0', 'aria-pressed': 'false',
+      'aria-label': inputFeedback.label, 'data-base-aria-label': inputFeedback.baseLabel || inputFeedback.label,
+      'data-source-aria-label': inputFeedback.label,
+      'aria-disabled': inputFeedback.enabled === undefined ? undefined : String(!inputFeedback.enabled),
+      'data-source-state': inputFeedback.state, 'data-feedback-message': inputFeedback.message,
+    }));
+  }
+  if (node.portAvailability?.out !== false) {
+    const outputFeedback = portAttributes('out');
+    parent.append(svgElement('circle', {
+      class: outputFeedback.class, cx: 0, cy: node.height / 2, r: 6,
+      'data-port': 'out', role: 'button', tabindex: '0', 'aria-pressed': 'false',
+      'aria-label': outputFeedback.label, 'data-base-aria-label': outputFeedback.baseLabel || outputFeedback.label,
+      'data-source-aria-label': outputFeedback.label,
+      'aria-disabled': outputFeedback.enabled === undefined ? undefined : String(!outputFeedback.enabled),
+      'data-source-state': outputFeedback.state, 'data-feedback-message': outputFeedback.message,
+    }));
+  }
 }
 
 function renderMarkers(defs, markerID, backMarkerID) {

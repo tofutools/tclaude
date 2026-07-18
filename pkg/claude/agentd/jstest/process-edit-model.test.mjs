@@ -13,6 +13,7 @@ import {
   PALETTE_PRIMITIVES, PALETTE_SNIPPETS, processSelectionRenderedCenter,
   templateIDEditable,
 } from '../dashboard/js/process-edit-model.js';
+import { layoutProcessGraph } from '../dashboard/js/process-layout.js';
 
 function view() {
   return {
@@ -93,8 +94,9 @@ test('connector-drop node and edge are one atomic positioned undo step in either
 
 test('invalid connector-drop origins and locked edges reject before any partial mutation', () => {
   for (const [model, operation, message] of [
-    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('task', { connectFrom: 'ship' }), /end node must not have outgoing edges/],
-    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('end', { connectTo: 'build' }), /end node must not have outgoing edges/],
+    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('task', { connectFrom: 'ship' }), /End nodes cannot have outgoing connections/],
+    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('end', { connectTo: 'build' }), /End nodes cannot have outgoing connections/],
+    [new ProcessEditModel(view()), (candidate) => candidate.addConnectedNode('start', { connectFrom: 'build' }), /Start nodes cannot have incoming connections/],
     [new ProcessEditModel(view(), { edgeEditable: () => false }), (candidate) => candidate.addConnectedNode('task', { connectFrom: 'build' }), /read-only/],
   ]) {
     const nodes = Object.keys(model.template.nodes);
@@ -113,6 +115,91 @@ test('addEdge enforces the unique (from, outcome) invariant', () => {
   assert.throws(() => model.addEdge('begin', 'fail', 'build'), /duplicate edge/);
   assert.throws(() => model.addEdge('begin', '', 'build'), /outcome is required/);
   assert.throws(() => model.addEdge('nope', 'x', 'ship'), /unknown node/);
+});
+
+test('all topology creation paths reject unavailable Start/End sides transactionally', () => {
+  const assertRejected = (model, operation, message) => {
+    const before = model.saveBody();
+    const history = { rev: model.rev, undo: model.undoStack.length, redo: model.redoStack.length };
+    assert.throws(operation, message);
+    assert.deepEqual(model.saveBody(), before);
+    assert.deepEqual({ rev: model.rev, undo: model.undoStack.length, redo: model.redoStack.length }, history);
+  };
+
+  let model = new ProcessEditModel(view());
+  assertRejected(model, () => model.addEdge('build', 'back', 'begin'), /Start nodes cannot have incoming/);
+  assertRejected(model, () => model.addEdge('ship', 'after', 'build'), /End nodes cannot have outgoing/);
+  assertRejected(model, () => model.setEdgeTarget('build', 'pass', 'begin'), /Start nodes cannot have incoming/);
+
+  model = new ProcessEditModel({
+    template: { nodes: { source: { type: 'task' }, middle: { type: 'task' }, start: { type: 'start' } } },
+    edges: [
+      { from: 'source', outcome: 'pass', to: 'middle' },
+      { from: 'middle', outcome: 'pass', to: 'start' },
+    ], layout: { nodes: {} },
+  });
+  assertRejected(model, () => model.deleteNode('middle', { rewire: true }), /Start nodes cannot have incoming/);
+  assertRejected(model, () => model.deleteItems([{ type: 'node', id: 'middle' }], { rewire: true }), /Start nodes cannot have incoming/);
+
+  const invalidSnippet = {
+    nodes: { ordinary: { type: 'task' }, start: { type: 'start' } },
+    edges: [{ from: 'ordinary', outcome: 'pass', to: 'start' }], layout: {},
+  };
+  model = new ProcessEditModel(view());
+  assertRejected(model, () => model.insertSnippet(invalidSnippet), /Start nodes cannot have incoming/);
+  assertRejected(model, () => model.insertClipboardSelection({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 0 } },
+      { id: 'start', node: { type: 'start' }, position: { x: 0, y: 100 } },
+    ],
+    edges: [{ from: 'ordinary', outcome: 'pass', to: 'start' }],
+  }), /Start nodes cannot have incoming/);
+
+  const legacy = new ProcessEditModel({
+    template: { nodes: { end: { type: 'end' }, ordinary: { type: 'task' } } },
+    edges: [{ from: 'end', outcome: 'after', to: 'ordinary' }], layout: { nodes: {} },
+  });
+  assertRejected(legacy, () => legacy.duplicateNodes(['end', 'ordinary']), /End nodes cannot have outgoing/);
+});
+
+test('legacy ordinary illegal-side edges and the Start pseudo-edge load, render, delete, undo, and round-trip unchanged', () => {
+  const loaded = {
+    template: {
+      id: 'legacy', start: 'start', params: {}, nodes: {
+        start: { type: 'start' }, ordinary: { type: 'task' }, end: { type: 'end' },
+      },
+    },
+    edges: [
+      { from: '', outcome: 'start', to: 'start' },
+      { from: 'ordinary', outcome: 'legacy-in', to: 'start' },
+      { from: 'end', outcome: 'legacy-out', to: 'ordinary' },
+    ],
+    layout: { nodes: { start: { x: 10, y: 20 }, ordinary: { x: 20, y: 120 }, end: { x: 30, y: 220 } } },
+  };
+  const model = new ProcessEditModel(loaded);
+  assert.deepEqual(model.saveBody(), { ...structuredClone(loaded), sourceHash: '' });
+  assert.deepEqual(model.graph().edges.map(({ from, outcome, to }) => ({ from, outcome, to })), [
+    { from: 'ordinary', outcome: 'legacy-in', to: 'start' },
+    { from: 'end', outcome: 'legacy-out', to: 'ordinary' },
+  ]);
+  assert.equal(model.graph().edges.some((edge) => edge.from === ''), false, 'Start pseudo-edge is never an ordinary rendered edge');
+  const editorGraph = model.graph();
+  const viewerDefaultGraph = structuredClone(editorGraph);
+  viewerDefaultGraph.nodes.forEach((node) => { delete node.portAvailability; });
+  const editorLayout = layoutProcessGraph(editorGraph);
+  const defaultLayout = layoutProcessGraph(viewerDefaultGraph);
+  assert.deepEqual(
+    editorLayout.edges.map(({ id, path, label }) => ({ id, path, label })),
+    defaultLayout.edges.map(({ id, path, label }) => ({ id, path, label })),
+    'port presence metadata changes neither legal nor legacy edge endpoint/routing geometry',
+  );
+  model.deleteEdge('ordinary', 'legacy-in');
+  model.deleteEdge('end', 'legacy-out');
+  assert.equal(model.edges.length, 1);
+  assert.equal(model.undo(), true);
+  assert.equal(model.undo(), true);
+  assert.deepEqual(model.saveBody(), { ...structuredClone(loaded), sourceHash: '' });
 });
 
 test('setEdgeOutcome renames and blocks collisions', () => {
@@ -182,6 +269,19 @@ test('multi-selection delete rewires across selected nodes atomically', () => {
   assert.equal(model.undoStack.length, 1);
   assert.ok(model.undo());
   assert.equal(model.findEdge('begin', 'pass').to, 'build');
+});
+
+test('multi-selection delete preserves the Template.Start pseudo-edge rewire contract', () => {
+  const model = new ProcessEditModel(view());
+  const before = model.saveBody();
+  model.deleteItems([{ type: 'node', id: 'begin' }], { rewire: true });
+  assert.equal(model.node('begin'), undefined);
+  assert.deepEqual(model.edges.find((edge) => edge.from === '' && edge.outcome === 'start'),
+    { from: '', outcome: 'start', to: 'build' });
+  assert.equal(model.template.start, 'build');
+  assert.equal(model.undoStack.length, 1);
+  assert.equal(model.undo(), true);
+  assert.deepEqual(model.saveBody(), before);
 });
 
 test('setJoin stores typed fan-in semantics, removes legacy metadata, and clears cleanly', () => {
