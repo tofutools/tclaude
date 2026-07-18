@@ -301,6 +301,24 @@ func TestSessionExitIntent_CompareAndClearDoesNotEraseOverlappingOwner(t *testin
 	assert.Equal(t, second.RelatedEventID, rows[0].RelatedEventID)
 }
 
+func TestSessionExitIntent_TargetCompareAndClearDoesNotEraseOverlappingOwner(t *testing.T) {
+	setupTestDB(t)
+	seedExitAuditSession(t, "spwn-overlap-target", "conv-overlap-target")
+	const generation = "88888888888888888888888888888888"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-overlap-target", generation))
+	first, err := SetSessionExitIntentIfTarget("spwn-overlap-target", "tmux-spwn-overlap-target", generation, AgentExitActionStop, "evt_333333333333333333333333", time.Now())
+	require.NoError(t, err)
+	second, err := SetSessionExitIntentIfTarget("spwn-overlap-target", "tmux-spwn-overlap-target", generation, AgentExitActionForceStop, "evt_444444444444444444444444", time.Now())
+	require.NoError(t, err)
+	cleared, err := ClearSessionExitIntentIfTarget(first, "tmux-spwn-overlap-target")
+	require.NoError(t, err)
+	assert.False(t, cleared)
+	rows, err := ListAuditLog(AuditLogFilter{Verb: AuditVerbAgentExit})
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+	assert.NotEqual(t, first.Action, second.Action)
+}
+
 func TestClearSessionExitLaunchBinding_DoesNotClearSuccessor(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-clear-binding", "conv-clear-binding")

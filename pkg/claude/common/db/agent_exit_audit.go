@@ -321,6 +321,12 @@ func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time
 		return SessionExitIntentRef{}, fmt.Errorf("invalid exit lifecycle action %q", action)
 	}
 	if relatedEventID != "" && !validEventID(relatedEventID) {
+		return SessionExitIntentRef{}, fmt.Errorf("invalid related event id %q", relatedEventID)
+	}
+	if at.IsZero() {
+		return SessionExitIntentRef{}, fmt.Errorf("missing exit intent timestamp")
+	}
+	if relatedEventID != "" && !validEventID(relatedEventID) {
 		return SessionExitIntentRef{}, fmt.Errorf("invalid related audit event id")
 	}
 	if at.IsZero() {
@@ -394,8 +400,9 @@ func ClearSessionExitIntentIfTarget(ref SessionExitIntentRef, tmuxSession string
 		return false, err
 	}
 	res, err := d.Exec(`UPDATE sessions SET exit_intent = '', exit_intent_event_id = '', exit_intent_generation = '', exit_intent_at = NULL
-		WHERE id = ? AND tmux_session = ? AND exit_callback_generation = ? AND exit_intent_generation = ?`,
-		ref.SessionID, tmuxSession, ref.Generation, ref.Generation)
+		WHERE id = ? AND tmux_session = ? AND exit_callback_generation = ? AND exit_intent_generation = ?
+		AND exit_intent = ? AND exit_intent_event_id = ?`,
+		ref.SessionID, tmuxSession, ref.Generation, ref.Generation, ref.Action, ref.RelatedEventID)
 	if err != nil {
 		return false, err
 	}
