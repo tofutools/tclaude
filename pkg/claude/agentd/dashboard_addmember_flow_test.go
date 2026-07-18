@@ -34,7 +34,7 @@ func TestDashboardAddMember_FromUngrouped(t *testing.T) {
 
 	const looseConv = "loos-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(looseConv, "loose-worker")
-	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", "/tmp/loose")
+	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", f.TestCwd("loose"))
 	f.HaveEnrolledAgent(looseConv)
 	f.HaveGroup("alpha")
 
@@ -84,7 +84,7 @@ func TestDashboardAddMember_RepeatIsIdempotent(t *testing.T) {
 
 	const conv = "dup-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "dup-worker")
-	f.HaveAliveSession(conv, "spwn-dup", "tmux-dup", "/tmp/dup")
+	f.HaveAliveSession(conv, "spwn-dup", "tmux-dup", f.TestCwd("dup"))
 	f.HaveGroup("alpha")
 
 	mux := agentd.BuildDashboardHandlerForTest()

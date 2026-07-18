@@ -191,12 +191,12 @@ func TestDashboardReplaced_PredecessorsExcludeHeadAndFilter(t *testing.T) {
 		convX0 = "aaaa1111-2222-3333-4444-555555555555"
 		labelX = "spwn-rl-x01"
 		tmuxX  = "tclaude-spwn-rl-x01"
-		cwdX   = "/tmp/rlx"
 		convY0 = "bbbb2222-3333-4444-5555-666666666666"
 		labelY = "spwn-rl-y01"
 		tmuxY  = "tclaude-spwn-rl-y01"
-		cwdY   = "/tmp/rly"
 	)
+	cwdX := f.TestCwd("rlx")
+	cwdY := f.TestCwd("rly")
 
 	// Actor X: convX0 → reincarnate → convX1 (convX0 becomes a replaced gen).
 	f.HaveConvWithTitle(convX0, "worker-x")
@@ -266,8 +266,8 @@ func TestDashboardSnapshot_DropsMovedListsButStillGuardsRoster(t *testing.T) {
 		convP  = "cccc1111-2222-3333-4444-555555555555"
 		labelP = "spwn-rl-p01"
 		tmuxP  = "tclaude-spwn-rl-p01"
-		cwdP   = "/tmp/rlp"
 	)
+	cwdP := f.TestCwd("rlp")
 	f.HaveConvWithTitle(convP, "live-worker")
 	f.HaveAliveSession(convP, labelP, tmuxP, cwdP)
 	f.HaveEnrolledAgent(convP)

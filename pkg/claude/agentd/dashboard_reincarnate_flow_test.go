@@ -67,7 +67,7 @@ func TestDashboardReincarnate_SelfMode_DeliversInstructionWithFocusHint(t *testi
 	const conv = "reia-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reia"
 	f.HaveConvWithTitle(conv, "worker-self")
-	f.HaveAliveSession(conv, "spwn-reia", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reia", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 
@@ -128,7 +128,7 @@ func TestDashboardReincarnate_DefaultModeIsSelf(t *testing.T) {
 	const conv = "reib-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reib"
 	f.HaveConvWithTitle(conv, "worker-default")
-	f.HaveAliveSession(conv, "spwn-reib", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reib", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 
@@ -160,7 +160,7 @@ func TestDashboardReincarnate_SelfMode_NoFocusHintGeneralHandoff(t *testing.T) {
 	const conv = "reic-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reic"
 	f.HaveConvWithTitle(conv, "worker-nohint")
-	f.HaveAliveSession(conv, "spwn-reic", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reic", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 
@@ -216,7 +216,7 @@ func TestDashboardReincarnate_SelfMode_RejectsControlCharFocusHint(t *testing.T)
 	const conv = "reie-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reie"
 	f.HaveConvWithTitle(conv, "worker-badhint")
-	f.HaveAliveSession(conv, "spwn-reie", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reie", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 
@@ -244,7 +244,7 @@ func TestDashboardReincarnate_UnknownMode_BadRequest(t *testing.T) {
 	const conv = "reig-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reig"
 	f.HaveConvWithTitle(conv, "worker-badmode")
-	f.HaveAliveSession(conv, "spwn-reig", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reig", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 
@@ -274,7 +274,7 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 	const oldConv = "reif-aaaa-bbbb-cccc-000000000001"
 	const oldTmux = "tclaude-spwn-reif"
 	f.HaveConvWithTitle(oldConv, "worker-r-3")
-	f.HaveAliveSession(oldConv, "spwn-reif", oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, "spwn-reif", oldTmux, f.TestCwd("work"))
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -349,7 +349,7 @@ func TestDashboardReincarnate_ForceMode_MissingFollowUpRejected(t *testing.T) {
 	const conv = "reih-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reih"
 	f.HaveConvWithTitle(conv, "worker-nofu")
-	f.HaveAliveSession(conv, "spwn-reih", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reih", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 
@@ -382,7 +382,7 @@ func TestDashboardReincarnate_ForceMode_RejectsControlCharFollowUp(t *testing.T)
 	const conv = "reii-aaaa-bbbb-cccc-000000000001"
 	const tmux = "tclaude-spwn-reii"
 	f.HaveConvWithTitle(conv, "worker-badfu")
-	f.HaveAliveSession(conv, "spwn-reii", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-reii", tmux, f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", conv)
 

@@ -36,7 +36,7 @@ func TestGroupOwnerDefaultPerms_OwnerPassesWithoutSlug(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(member, "worker")
-	f.HaveAliveSession(member, memberLabel, "tmux-godm", "/tmp/godm")
+	f.HaveAliveSession(member, memberLabel, "tmux-godm", f.TestCwd("godm"))
 	f.HaveMember("squad", member)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner")
 
@@ -69,7 +69,7 @@ func TestGroupOwnerDefaultPerms_NonOwnerDenied(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveConvWithTitle(other, "worker")
-	f.HaveAliveSession(other, otherLabel, "tmux-gndo", "/tmp/gndo")
+	f.HaveAliveSession(other, otherLabel, "tmux-gndo", f.TestCwd("gndo"))
 	f.HaveMember("squad", other)
 	f.HaveMember("squad", member) // a co-member, but NOT an owner
 
@@ -98,7 +98,7 @@ func TestGroupOwnerDefaultPerms_DenyOverrideBeatsOwner(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(member, "worker")
-	f.HaveAliveSession(member, memberLabel, "tmux-gddm", "/tmp/gddm")
+	f.HaveAliveSession(member, memberLabel, "tmux-gddm", f.TestCwd("gddm"))
 	f.HaveMember("squad", member)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner")
 	// Deny the two lifecycle slugs specifically — owner status must not raise

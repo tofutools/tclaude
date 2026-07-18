@@ -37,7 +37,7 @@ func TestReincarnate_InheritsLiveModelAndEffort(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
 	const oldLabel = "spwn-old-001"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	reportModel(t, oldLabel, "claude-opus-4-8", "high")
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
@@ -59,12 +59,12 @@ func TestReincarnate_CodexInheritsLiveModelAndEffort(t *testing.T) {
 
 	const oldConv = "019ec004-4250-79b1-9ade-ebaea41591aa"
 	const oldLabel = "spwn-codex-old"
-	f.HaveAliveCodexSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveCodexSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	now := time.Now().Format(time.RFC3339)
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      oldConv,
-		ProjectDir:  "/tmp/work",
-		ProjectPath: "/tmp/work",
+		ProjectDir:  f.TestCwd("work"),
+		ProjectPath: f.TestCwd("work"),
 		FirstPrompt: "codex work",
 		Created:     now,
 		Modified:    now,
@@ -93,7 +93,7 @@ func TestReincarnate_1MContextWindow_AppendsSuffix(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"
 	const oldLabel = "spwn-old-1m"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	reportModel(t, oldLabel, "claude-fable-5", "")
 	require.NoError(t, db.UpdateContextSnapshot(oldLabel, 42, 400_000, 8_000, 1_000_000))
 
@@ -114,7 +114,7 @@ func TestReincarnate_NoModelReported_FallsBackToDefault(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3"
 	const oldLabel = "spwn-old-noop"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
@@ -134,7 +134,7 @@ func TestReincarnate_InvalidRecordedModel_FallsBackToDefault(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4"
 	const oldLabel = "spwn-old-junk"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	reportModel(t, oldLabel, "gpt-6-please; rm -rf /", "")
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
@@ -152,7 +152,7 @@ func TestCloneFresh_InheritsLiveModel(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5"
 	const oldLabel = "spwn-old-clne"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	reportModel(t, oldLabel, "claude-sonnet-4-6", "max")
 
 	c := f.AsHuman().CloneFresh(oldConv)
@@ -174,7 +174,7 @@ func TestCloneCopy_InheritsLiveModel(t *testing.T) {
 
 	const oldConv = "11111111-2222-3333-4444-555555555555"
 	const oldLabel = "spwn-old-copy"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	reportModel(t, oldLabel, "claude-opus-4-8", "")
 
 	c := f.AsHuman().CloneWith(oldConv, map[string]any{})

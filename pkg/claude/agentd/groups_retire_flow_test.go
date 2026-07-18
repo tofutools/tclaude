@@ -93,8 +93,8 @@ func TestGroupRetire_HumanRetiresEveryMember(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "worker-a")
 	f.HaveConvWithTitle(convB, "worker-b")
-	f.HaveAliveSession(convA, "spwn-graa", "tmux-graa", "/tmp/graa")
-	f.HaveAliveSession(convB, "spwn-grbb", "tmux-grbb", "/tmp/grbb")
+	f.HaveAliveSession(convA, "spwn-graa", "tmux-graa", f.TestCwd("graa"))
+	f.HaveAliveSession(convB, "spwn-grbb", "tmux-grbb", f.TestCwd("grbb"))
 	f.HaveMember(group, convA) // HaveMember enrolls
 	f.HaveMember(group, convB)
 	require.NoError(t, db.GrantAgentPermission(convA, "self.rename", "human"))
@@ -137,7 +137,7 @@ func TestGroupRetire_AgentWithoutSlugRefused(t *testing.T) {
 	const caller = "nscl-1111-2222-3333-4444"
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "spwn-nswk", "tmux-nswk", "/tmp/nswk")
+	f.HaveAliveSession(worker, "spwn-nswk", "tmux-nswk", f.TestCwd("nswk"))
 	f.HaveMember(group, worker)
 	// caller is an agent, but holds no groups.retire grant.
 	f.HaveConvWithTitle(caller, "ungranted-coordinator")
@@ -171,9 +171,9 @@ func TestGroupRetire_AgentWithSlugSkipsSelf(t *testing.T) {
 	f.HaveConvWithTitle(caller, "coordinator")
 	f.HaveConvWithTitle(workerA, "worker-a")
 	f.HaveConvWithTitle(workerB, "worker-b")
-	f.HaveAliveSession(caller, "spwn-sfcl", "tmux-sfcl", "/tmp/sfcl")
-	f.HaveAliveSession(workerA, "spwn-sfwa", "tmux-sfwa", "/tmp/sfwa")
-	f.HaveAliveSession(workerB, "spwn-sfwb", "tmux-sfwb", "/tmp/sfwb")
+	f.HaveAliveSession(caller, "spwn-sfcl", "tmux-sfcl", f.TestCwd("sfcl"))
+	f.HaveAliveSession(workerA, "spwn-sfwa", "tmux-sfwa", f.TestCwd("sfwa"))
+	f.HaveAliveSession(workerB, "spwn-sfwb", "tmux-sfwb", f.TestCwd("sfwb"))
 	f.HaveMember(group, caller)
 	f.HaveMember(group, workerA)
 	f.HaveMember(group, workerB)
@@ -215,7 +215,7 @@ func TestGroupRetire_NoShutdownKeepsSessionsAlive(t *testing.T) {
 	const conv = "nsdn-1111-2222-3333-4444"
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(conv, "kept-worker")
-	f.HaveAliveSession(conv, "spwn-nsdn", "tmux-nsdn", "/tmp/nsdn")
+	f.HaveAliveSession(conv, "spwn-nsdn", "tmux-nsdn", f.TestCwd("nsdn"))
 	f.HaveMember(group, conv)
 
 	code, resp := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, group, "shutdown=0")
@@ -273,8 +273,8 @@ func TestGroupRetire_StatusFilterIdleOnly(t *testing.T) {
 	f.HaveConvWithTitle(workConv, "busy-worker")
 	f.HaveConvWithTitle(offConv, "offline-worker")
 	// idle + working are online; offline has no live session at all.
-	f.HaveAliveSession(idleConv, "spwn-idle", "tmux-idle", "/tmp/idle")
-	f.HaveAliveSession(workConv, "spwn-work", "tmux-work", "/tmp/work")
+	f.HaveAliveSession(idleConv, "spwn-idle", "tmux-idle", f.TestCwd("idle"))
+	f.HaveAliveSession(workConv, "spwn-work", "tmux-work", f.TestCwd("work"))
 	setConvStatus(t, idleConv, "idle")
 	setConvStatus(t, workConv, "working")
 	f.HaveMember(group, idleConv)
@@ -321,7 +321,7 @@ func TestGroupRetire_StatusFilterOffline(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(onlineConv, "online-worker")
 	f.HaveConvWithTitle(offConv, "offline-worker")
-	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", f.TestCwd("onln"))
 	setConvStatus(t, onlineConv, "idle")
 	f.HaveMember(group, onlineConv)
 	f.HaveMember(group, offConv) // enrolled, but never had a session → offline
@@ -360,8 +360,8 @@ func TestDashboardGroupRetire_StatusFilterIdle(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(idleConv, "idle-worker")
 	f.HaveConvWithTitle(workConv, "busy-worker")
-	f.HaveAliveSession(idleConv, "spwn-didl", "tmux-didl", "/tmp/didl")
-	f.HaveAliveSession(workConv, "spwn-dwrk", "tmux-dwrk", "/tmp/dwrk")
+	f.HaveAliveSession(idleConv, "spwn-didl", "tmux-didl", f.TestCwd("didl"))
+	f.HaveAliveSession(workConv, "spwn-dwrk", "tmux-dwrk", f.TestCwd("dwrk"))
 	setConvStatus(t, idleConv, "idle")
 	setConvStatus(t, workConv, "working")
 	f.HaveMember(group, idleConv)
@@ -406,9 +406,9 @@ func TestDashboardGroupRetire_ExplicitConvsSelection(t *testing.T) {
 	f.HaveConvWithTitle(pickIdle, "picked-idle")
 	f.HaveConvWithTitle(pickWork, "picked-working")
 	f.HaveConvWithTitle(keep, "kept-idle")
-	f.HaveAliveSession(pickIdle, "spwn-epia", "tmux-epia", "/tmp/epia")
-	f.HaveAliveSession(pickWork, "spwn-epwk", "tmux-epwk", "/tmp/epwk")
-	f.HaveAliveSession(keep, "spwn-epkp", "tmux-epkp", "/tmp/epkp")
+	f.HaveAliveSession(pickIdle, "spwn-epia", "tmux-epia", f.TestCwd("epia"))
+	f.HaveAliveSession(pickWork, "spwn-epwk", "tmux-epwk", f.TestCwd("epwk"))
+	f.HaveAliveSession(keep, "spwn-epkp", "tmux-epkp", f.TestCwd("epkp"))
 	setConvStatus(t, pickIdle, "idle")
 	setConvStatus(t, pickWork, "working")
 	setConvStatus(t, keep, "idle")
@@ -462,7 +462,7 @@ func TestDashboardGroupRetire_ExplicitConvsOverrideStatusQuery(t *testing.T) {
 	const conv = "eovr-1111-2222-3333-4444"
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(conv, "working-but-picked")
-	f.HaveAliveSession(conv, "spwn-eovr", "tmux-eovr", "/tmp/eovr")
+	f.HaveAliveSession(conv, "spwn-eovr", "tmux-eovr", f.TestCwd("eovr"))
 	setConvStatus(t, conv, "working") // would be excluded by status=idle
 	f.HaveMember(group, conv)
 
@@ -499,8 +499,8 @@ func TestDashboardGroupRetire_ExplicitConvsIgnoresNonMember(t *testing.T) {
 	f.HaveGroup("other-team")
 	f.HaveConvWithTitle(member, "member")
 	f.HaveConvWithTitle(outsider, "outsider")
-	f.HaveAliveSession(member, "spwn-nmem", "tmux-nmem", "/tmp/nmem")
-	f.HaveAliveSession(outsider, "spwn-nout", "tmux-nout", "/tmp/nout")
+	f.HaveAliveSession(member, "spwn-nmem", "tmux-nmem", f.TestCwd("nmem"))
+	f.HaveAliveSession(outsider, "spwn-nout", "tmux-nout", f.TestCwd("nout"))
 	f.HaveMember(group, member)
 	f.HaveMember("other-team", outsider) // outsider is an agent, but of another group
 
@@ -537,7 +537,7 @@ func TestDashboardGroupRetire_EmptyConvsRejected(t *testing.T) {
 	const conv = "ecnv-1111-2222-3333-4444"
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(conv, "should-survive")
-	f.HaveAliveSession(conv, "spwn-ecnv", "tmux-ecnv", "/tmp/ecnv")
+	f.HaveAliveSession(conv, "spwn-ecnv", "tmux-ecnv", f.TestCwd("ecnv"))
 	f.HaveMember(group, conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -566,7 +566,7 @@ func TestGroupRetire_UnknownStatusRejected(t *testing.T) {
 	const conv = "ukst-1111-2222-3333-4444"
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(conv, "worker")
-	f.HaveAliveSession(conv, "spwn-ukst", "tmux-ukst", "/tmp/ukst")
+	f.HaveAliveSession(conv, "spwn-ukst", "tmux-ukst", f.TestCwd("ukst"))
 	f.HaveMember(group, conv)
 
 	code, _ := postGroupRetire(t, f.Mux, agentd.AsHumanPeer, group, "status=offlien")
@@ -651,7 +651,7 @@ func TestDashboardGroupRetire_AcceptsAgentIDAndConvIDSelectors(t *testing.T) {
 	f.HaveGroup(group)
 	for _, c := range []string{byAgentID, byConvID, keep} {
 		f.HaveConvWithTitle(c, "w-"+c[:4])
-		f.HaveAliveSession(c, "spwn-"+c[:4], "tmux-"+c[:4], "/tmp/"+c[:4])
+		f.HaveAliveSession(c, "spwn-"+c[:4], "tmux-"+c[:4], f.TestCwd(c[:4]))
 		f.HaveMember(group, c)
 	}
 

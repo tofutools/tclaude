@@ -40,7 +40,7 @@ func TestTags_SelfReplaceGetClear(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wtag", "tmux-wtag", "/tmp/wtag")
+	f.HaveAliveSession(worker, "lbl-wtag", "tmux-wtag", f.TestCwd("wtag"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t,
 		db.SetAgentPermissionOverride(worker, agentd.PermSelfTags, db.PermEffectGrant, "test"),
@@ -87,7 +87,7 @@ func TestTags_SelfRejectsInvalidTag(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wtg2", "tmux-wtg2", "/tmp/wtg2")
+	f.HaveAliveSession(worker, "lbl-wtg2", "tmux-wtg2", f.TestCwd("wtg2"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t,
 		db.SetAgentPermissionOverride(worker, agentd.PermSelfTags, db.PermEffectGrant, "test"))
@@ -109,7 +109,7 @@ func TestTags_OwnerSetsWorkerWithoutSlug(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wtg3", "tmux-wtg3", "/tmp/wtg3")
+	f.HaveAliveSession(worker, "lbl-wtg3", "tmux-wtg3", f.TestCwd("wtg3"))
 	f.HaveMember("squad", worker)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 
@@ -133,7 +133,7 @@ func TestTags_CrossAgentDeniedWithoutOwnershipOrSlug(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wtg4", "tmux-wtg4", "/tmp/wtg4")
+	f.HaveAliveSession(worker, "lbl-wtg4", "tmux-wtg4", f.TestCwd("wtg4"))
 	f.HaveMember("squad", worker)
 	f.HaveEnrolledAgent(stranger) // a known agent, but no ownership / slug
 
@@ -151,7 +151,7 @@ func TestTags_SelfDenyOverridesDefaultGrant(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wtg5", "tmux-wtg5", "/tmp/wtg5")
+	f.HaveAliveSession(worker, "lbl-wtg5", "tmux-wtg5", f.TestCwd("wtg5"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t,
 		db.SetAgentPermissionOverride(worker, agentd.PermSelfTags, db.PermEffectDeny, "test"),

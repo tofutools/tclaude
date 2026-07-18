@@ -76,8 +76,8 @@ func TestAgentWindows_Focus_TilesWhenEnabled(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "worker-a")
 	f.HaveConvWithTitle(convB, "worker-b")
-	f.HaveAliveSession(convA, "spwn-wtia", "tmux-wtia", "/tmp/wtia")
-	f.HaveAliveSession(convB, "spwn-wtib", "tmux-wtib", "/tmp/wtib")
+	f.HaveAliveSession(convA, "spwn-wtia", "tmux-wtia", f.TestCwd("wtia"))
+	f.HaveAliveSession(convB, "spwn-wtib", "tmux-wtib", f.TestCwd("wtib"))
 	f.HaveMember(group, convA)
 	f.HaveMember(group, convB)
 
@@ -114,7 +114,7 @@ func TestAgentWindows_Focus_SingleWindowNotTiled(t *testing.T) {
 	const solo = "wtsa-1111-2222-3333-4444"
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(solo, "lonely-worker")
-	f.HaveAliveSession(solo, "spwn-wtsa", "tmux-wtsa", "/tmp/wtsa")
+	f.HaveAliveSession(solo, "spwn-wtsa", "tmux-wtsa", f.TestCwd("wtsa"))
 	f.HaveMember(group, solo)
 
 	code, resp := postAgentWindows(t, mux, map[string]any{
@@ -148,8 +148,8 @@ func TestAgentWindows_Focus_NoTileWhenDisabled(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "worker-a")
 	f.HaveConvWithTitle(convB, "worker-b")
-	f.HaveAliveSession(convA, "spwn-wtda", "tmux-wtda", "/tmp/wtda")
-	f.HaveAliveSession(convB, "spwn-wtdb", "tmux-wtdb", "/tmp/wtdb")
+	f.HaveAliveSession(convA, "spwn-wtda", "tmux-wtda", f.TestCwd("wtda"))
+	f.HaveAliveSession(convB, "spwn-wtdb", "tmux-wtdb", f.TestCwd("wtdb"))
 	f.HaveMember(group, convA)
 	f.HaveMember(group, convB)
 
@@ -182,8 +182,8 @@ func TestAgentWindows_Unfocus_NeverTiles(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "worker-a")
 	f.HaveConvWithTitle(convB, "worker-b")
-	f.HaveAliveSession(convA, "spwn-wtua", "tmux-wtua", "/tmp/wtua")
-	f.HaveAliveSession(convB, "spwn-wtub", "tmux-wtub", "/tmp/wtub")
+	f.HaveAliveSession(convA, "spwn-wtua", "tmux-wtua", f.TestCwd("wtua"))
+	f.HaveAliveSession(convB, "spwn-wtub", "tmux-wtub", f.TestCwd("wtub"))
 	f.HaveMember(group, convA)
 	f.HaveMember(group, convB)
 

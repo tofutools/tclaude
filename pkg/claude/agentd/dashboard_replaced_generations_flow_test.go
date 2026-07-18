@@ -50,8 +50,8 @@ func TestReplacedGenerations_SnapshotAndExactDelete(t *testing.T) {
 		convA = "aaaa1111-2222-3333-4444-555555555555"
 		label = "spwn-rg-001"
 		tmux  = "tclaude-spwn-rg-001"
-		cwd   = "/tmp/rgwork"
 	)
+	cwd := f.TestCwd("rgwork")
 
 	g := f.HaveGroup(group)
 	f.HaveAliveSession(convA, label, tmux, cwd)
@@ -156,12 +156,12 @@ func TestReplacedGenerations_DefaultNewestReplacementFirst(t *testing.T) {
 		convX0 = "aaaa3333-4444-5555-6666-777777777777"
 		labelX = "spwn-rg3-x01"
 		tmuxX  = "tclaude-spwn-rg3-x01"
-		cwdX   = "/tmp/rg3workx"
 		convY0 = "bbbb3333-4444-5555-6666-777777777777"
 		labelY = "spwn-rg3-y01"
 		tmuxY  = "tclaude-spwn-rg3-y01"
-		cwdY   = "/tmp/rg3worky"
 	)
+	cwdX := f.TestCwd("rg3workx")
+	cwdY := f.TestCwd("rg3worky")
 
 	f.HaveGroup(group)
 
@@ -237,8 +237,8 @@ func TestReplacedGenerations_DeleteMiddleBridgesSuccession(t *testing.T) {
 		convA = "aaaa2222-3333-4444-5555-666666666666"
 		label = "spwn-rg2-001"
 		tmux  = "tclaude-spwn-rg2-001"
-		cwd   = "/tmp/rg2work"
 	)
+	cwd := f.TestCwd("rg2work")
 
 	f.HaveGroup(group)
 	f.HaveAliveSession(convA, label, tmux, cwd)

@@ -181,10 +181,10 @@ func TestProcess_AdvanceGating(t *testing.T) {
 	const owner = "proc-owner-bbbb-cccc-dddd"
 	const worker = "proc-workr-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(owner, "owner")
-	f.HaveAliveSession(owner, "lbl-owner", "tmux-owner", "/tmp/owner")
+	f.HaveAliveSession(owner, "lbl-owner", "tmux-owner", f.TestCwd("owner"))
 	f.HaveMemberWithRole("squad", owner, "lead")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-worker", "tmux-worker", "/tmp/worker")
+	f.HaveAliveSession(worker, "lbl-worker", "tmux-worker", f.TestCwd("worker"))
 	f.HaveMemberWithRole("squad", worker, "dev")
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"), "seed owner")
 

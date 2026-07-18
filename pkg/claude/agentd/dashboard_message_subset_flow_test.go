@@ -37,7 +37,7 @@ func TestDashboardMessage_GroupSubset_ReachesOnlySelectedMembers(t *testing.T) {
 	f.HaveMember("team", memberA)
 	f.HaveMember("team", memberB)
 	f.HaveMember("team", memberC)
-	f.HaveAliveSession(memberA, "spwn-dsub-a", "tclaude-spwn-dsub-a", "/tmp/work")
+	f.HaveAliveSession(memberA, "spwn-dsub-a", "tclaude-spwn-dsub-a", f.TestCwd("work"))
 
 	mux := dashMessageMux(t)
 	rec := postDashMessage(t, mux, map[string]any{
@@ -204,7 +204,7 @@ func TestDashboardMessage_GroupSubset_FollowsSuccessionToReincarnatedMember(t *t
 	f.HaveMember("team", sender)
 	f.HaveConvWithTitle(oldX, "worker")
 	f.HaveMember("team", oldX)
-	f.HaveAliveSession(oldX, "spwn-drei-x", "tclaude-spwn-drei-x", "/tmp/work")
+	f.HaveAliveSession(oldX, "spwn-drei-x", "tclaude-spwn-drei-x", f.TestCwd("work"))
 
 	// The worker reincarnates: oldX is superseded, the live head is Y,
 	// and Reincarnate migrates the group membership to Y.
@@ -331,7 +331,7 @@ func TestDashboardMessage_GroupSubset_AgentIDSurvivesReincarnation(t *testing.T)
 	f.HaveMember("team", sender)
 	f.HaveConvWithTitle(oldX, "worker")
 	f.HaveMember("team", oldX)
-	f.HaveAliveSession(oldX, "spwn-dais-x", "tclaude-spwn-dais-x", "/tmp/work")
+	f.HaveAliveSession(oldX, "spwn-dais-x", "tclaude-spwn-dais-x", f.TestCwd("work"))
 
 	// Capture the stable agent_id BEFORE reincarnation; it must stay valid
 	// across the rotation.

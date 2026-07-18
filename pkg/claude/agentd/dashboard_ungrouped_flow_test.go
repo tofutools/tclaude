@@ -251,8 +251,8 @@ func TestDashboardSnapshot_UngroupedSurfacesLooseConvs(t *testing.T) {
 	const joinedConv = "join-1111-2222-3333-4444"
 	f.HaveConvWithTitle(looseConv, "loose-worker")
 	f.HaveConvWithTitle(joinedConv, "joined-worker")
-	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", "/tmp/loose")
-	f.HaveAliveSession(joinedConv, "spwn-join", "tmux-join", "/tmp/join")
+	f.HaveAliveSession(looseConv, "spwn-loose", "tmux-loose", f.TestCwd("loose"))
+	f.HaveAliveSession(joinedConv, "spwn-join", "tmux-join", f.TestCwd("join"))
 	f.HaveEnrolledAgent(looseConv)
 	g := f.HaveGroup("alpha")
 	_ = g
@@ -307,8 +307,8 @@ func TestDashboardSnapshot_UngroupedIncludesOfflineAgents(t *testing.T) {
 	const offlineConv = "offl-1111-2222-3333-4444"
 	f.HaveConvWithTitle(onlineConv, "online")
 	f.HaveConvWithTitle(offlineConv, "offline")
-	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
-	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", f.TestCwd("onln"))
+	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", f.TestCwd("offl"))
 	// Both are enrolled agents; one's tmux has since died.
 	f.HaveEnrolledAgent(onlineConv)
 	f.HaveEnrolledAgent(offlineConv)

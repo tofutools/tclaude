@@ -28,7 +28,7 @@ func TestDashboardSnapshot_ModelSurfaced(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-modl", "/tmp/modl")
+	f.HaveAliveSession(conv, label, "tmux-modl", f.TestCwd("modl"))
 	f.HaveMember("squad", conv)
 
 	// The statusline hook's write path: the model + effort level land on
@@ -60,7 +60,7 @@ func TestDashboardSnapshot_ModelEmptyWhenNotReported(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-modu", "/tmp/modu")
+	f.HaveAliveSession(conv, label, "tmux-modu", f.TestCwd("modu"))
 	f.HaveEnrolledAgent(conv)
 
 	// No UpdateSessionModel call — the statusline hook never fired.
@@ -84,7 +84,7 @@ func TestDashboardSnapshot_CodexModelAndEffortSurfaced(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-model", "/tmp/codx-model")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-model", f.TestCwd("codx-model"))
 	cx.Effort = "high"
 	require.NoError(t, cx.WriteUserInput("start"))
 	f.HaveMember("squad", conv)
@@ -92,7 +92,7 @@ func TestDashboardSnapshot_CodexModelAndEffortSurfaced(t *testing.T) {
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName:  "Stop",
 		ConvID:         conv,
-		Cwd:            "/tmp/codx-model",
+		Cwd:            f.TestCwd("codx-model"),
 		Model:          "gpt-5-codex",
 		TranscriptPath: cx.RolloutPath,
 	}, label))
@@ -125,7 +125,7 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t 
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-switch", "/tmp/codx-switch")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codx-switch", f.TestCwd("codx-switch"))
 	f.HaveMember("squad", conv)
 
 	// Establish the original runtime configuration through a completed turn.
@@ -135,7 +135,7 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t 
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName:  "Stop",
 		ConvID:         conv,
-		Cwd:            "/tmp/codx-switch",
+		Cwd:            f.TestCwd("codx-switch"),
 		Model:          "gpt-5.4",
 		TranscriptPath: cx.RolloutPath,
 	}, label))
@@ -156,7 +156,7 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t 
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName:  "PostCompact",
 		ConvID:         conv,
-		Cwd:            "/tmp/codx-switch",
+		Cwd:            f.TestCwd("codx-switch"),
 		Model:          "gpt-5.5",
 		TranscriptPath: cx.RolloutPath,
 	}, label))
@@ -179,7 +179,7 @@ func TestDashboardSnapshot_CodexRuntimeModelAndEffortChangesConvergeFromHooks(t 
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName:  "Stop",
 		ConvID:         conv,
-		Cwd:            "/tmp/codx-switch",
+		Cwd:            f.TestCwd("codx-switch"),
 		Model:          "gpt-5.5",
 		TranscriptPath: cx.RolloutPath,
 	}, label))

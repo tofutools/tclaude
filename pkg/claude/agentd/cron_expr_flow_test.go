@@ -37,7 +37,7 @@ func TestCronExpr_CreateAndFire(t *testing.T) {
 	f.HaveConvWithTitle(worker, "worker")
 	f.HaveMember("team", po)
 	f.HaveMember("team", worker)
-	f.HaveAliveSession(worker, "spwn-cxp1-worker", "tclaude-spwn-cxp1-worker", "/tmp/work")
+	f.HaveAliveSession(worker, "spwn-cxp1-worker", "tclaude-spwn-cxp1-worker", f.TestCwd("work"))
 
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/cron", map[string]any{

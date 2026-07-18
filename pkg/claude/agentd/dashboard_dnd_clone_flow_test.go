@@ -31,7 +31,7 @@ func TestDashboardDnDClone_PostsCloneThenAddsToTargetGroup(t *testing.T) {
 
 	const oldConv = "clon-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, "spwn-clon", "tmux-clon", "/tmp/clon")
+	f.HaveAliveSession(oldConv, "spwn-clon", "tmux-clon", f.TestCwd("clon"))
 	srcGroup := f.HaveGroup("alpha")
 	tgtGroup := f.HaveGroup("beta")
 	_ = tgtGroup
@@ -117,7 +117,7 @@ func TestDashboardDnDClone_OntoSourceGroupYieldsSibling(t *testing.T) {
 
 	const oldConv = "sib-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, "spwn-sib", "tmux-sib", "/tmp/sib")
+	f.HaveAliveSession(oldConv, "spwn-sib", "tmux-sib", f.TestCwd("sib"))
 	srcGroup := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 

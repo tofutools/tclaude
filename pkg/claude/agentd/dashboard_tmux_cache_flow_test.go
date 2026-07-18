@@ -31,7 +31,7 @@ func TestDashboardPoll_ThreeHandlersShareOneTmuxProbe(t *testing.T) {
 
 	const conv = "tmxc-aaaa-bbbb-cccc-dddddddddddd"
 	f.HaveConvWithTitle(conv, "worker")
-	f.HaveAliveSession(conv, "spwn-tmxc", "tmux-tmxc", "/tmp/tmxc")
+	f.HaveAliveSession(conv, "spwn-tmxc", "tmux-tmxc", f.TestCwd("tmxc"))
 
 	mux := agentd.BuildDashboardHandlerForTest()
 

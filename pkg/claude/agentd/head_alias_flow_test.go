@@ -69,7 +69,7 @@ func TestHeadAlias_DaemonEndpointsHappyPath(t *testing.T) {
 
 	const bobConv = "bobl-aaaa-bbbb-cccc-2222"
 	f.HaveConvWithTitle(bobConv, "bob")
-	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", "/tmp/bob")
+	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", f.TestCwd("bob"))
 
 	// POST as human (no claude ancestor) — gates pass.
 	body := map[string]any{"handle": "PO", "conv": bobConv} // upper-cased; daemon lowers

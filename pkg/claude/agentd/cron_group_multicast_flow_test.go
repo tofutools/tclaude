@@ -74,7 +74,7 @@ func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 	f.HaveMember("team", po)
 	f.HaveMember("team", w1)
 	f.HaveMember("team", w2)
-	f.HaveAliveSession(w1, "spwn-cgm1-w1", "tclaude-spwn-cgm1-w1", "/tmp/work")
+	f.HaveAliveSession(w1, "spwn-cgm1-w1", "tclaude-spwn-cgm1-w1", f.TestCwd("work"))
 
 	// The PO — a member — schedules a recurring multicast into the group.
 	id := createCronJobAsAgent(t, f, po, map[string]any{
@@ -246,7 +246,7 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 	g := f.HaveGroup("team")
 	const w1 = "cgm5-wkr1-aaaa-bbbb-cccc-000000000001"
 	f.HaveMember("team", w1)
-	f.HaveAliveSession(w1, "spwn-cgm5-w1", "tclaude-spwn-cgm5-w1", "/tmp/work")
+	f.HaveAliveSession(w1, "spwn-cgm5-w1", "tclaude-spwn-cgm5-w1", f.TestCwd("work"))
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	rec := testharness.Serve(mux, testharness.JSONRequest(

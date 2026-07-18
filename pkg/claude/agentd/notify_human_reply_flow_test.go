@@ -38,7 +38,7 @@ func TestHumanReply_OnlineAgent_DeliversAndNudges(t *testing.T) {
 	const sender = "hrpl-aaaa-bbbb-cccc-000000000001"
 	f.HaveGroup("tclaude-dev")
 	f.HaveMember("tclaude-dev", sender) // enrolls the conv as an actor (agent_id)
-	f.HaveAliveSession(sender, "hrpl-a", "tclaude-hrpl-a", "/tmp/work")
+	f.HaveAliveSession(sender, "hrpl-a", "tclaude-hrpl-a", f.TestCwd("work"))
 
 	msgID, err := db.InsertHumanMessage(&db.HumanMessage{
 		FromConv: sender, FromTitle: "tclaude-worker", GroupName: "tclaude-dev",
@@ -87,7 +87,7 @@ func TestHumanReply_NoSubject_UsesFallback(t *testing.T) {
 	const sender = "hrpl-nsub-bbbb-cccc-000000000002"
 	f.HaveGroup("tclaude-dev")
 	f.HaveMember("tclaude-dev", sender)
-	f.HaveAliveSession(sender, "hrpl-ns", "tclaude-hrpl-ns", "/tmp/work")
+	f.HaveAliveSession(sender, "hrpl-ns", "tclaude-hrpl-ns", f.TestCwd("work"))
 
 	msgID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "ping, no subject"})
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestHumanReply_OfflineAgent_Rejected(t *testing.T) {
 	const sender = "hrpl-off0-bbbb-cccc-000000000003"
 	f.HaveGroup("tclaude-dev")
 	f.HaveMember("tclaude-dev", sender)
-	f.HaveAliveSession(sender, "hrpl-off", "tclaude-hrpl-off", "/tmp/work")
+	f.HaveAliveSession(sender, "hrpl-off", "tclaude-hrpl-off", f.TestCwd("work"))
 	f.MarkOffline("tclaude-hrpl-off") // the pane went down after the notification
 
 	msgID, err := db.InsertHumanMessage(&db.HumanMessage{
@@ -148,7 +148,7 @@ func TestHumanReply_BusyAgent_QueuedHeld(t *testing.T) {
 	const sender = "hrpl-busy-bbbb-cccc-000000000004"
 	f.HaveGroup("tclaude-dev")
 	f.HaveMember("tclaude-dev", sender)
-	f.HaveAliveSession(sender, "hrpl-busy", "tclaude-hrpl-busy", "/tmp/work")
+	f.HaveAliveSession(sender, "hrpl-busy", "tclaude-hrpl-busy", f.TestCwd("work"))
 	f.SetSessionStatus(sender, session.StatusAwaitingInput)
 
 	msgID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "your question"})
@@ -177,7 +177,7 @@ func TestHumanReply_BackpressureLeavesOriginalUnhandled(t *testing.T) {
 	const sender = "hrpl-full-bbbb-cccc-000000000005"
 	f.HaveGroup("tclaude-dev")
 	f.HaveMember("tclaude-dev", sender)
-	f.HaveAliveSession(sender, "hrpl-full", "tclaude-hrpl-full", "/tmp/work")
+	f.HaveAliveSession(sender, "hrpl-full", "tclaude-hrpl-full", f.TestCwd("work"))
 
 	msgID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "your question"})
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func TestHumanReply_Validation(t *testing.T) {
 	const sender = "hrpl-vald-bbbb-cccc-000000000005"
 	f.HaveGroup("tclaude-dev")
 	f.HaveMember("tclaude-dev", sender)
-	f.HaveAliveSession(sender, "hrpl-v", "tclaude-hrpl-v", "/tmp/work")
+	f.HaveAliveSession(sender, "hrpl-v", "tclaude-hrpl-v", f.TestCwd("work"))
 	msgID, err := db.InsertHumanMessage(&db.HumanMessage{FromConv: sender, Body: "q"})
 	require.NoError(t, err)
 

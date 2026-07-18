@@ -49,8 +49,8 @@ func TestDashboardBranchLinks_SurfacedInSnapshot(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", "/tmp/wt/login", "feature-login")
-	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", "/tmp/wt/crash", "bugfix-crash")
+	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", f.TestCwd("wt/login"), "feature-login")
+	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", f.TestCwd("wt/crash"), "bugfix-crash")
 	f.HaveMember("squad", aliceConv)
 	f.HaveMember("squad", bobConv)
 

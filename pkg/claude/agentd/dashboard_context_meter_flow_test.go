@@ -56,7 +56,7 @@ func TestDashboardSnapshot_ContextMeterUsageSurfaced(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-ctxm", "/tmp/ctxm")
+	f.HaveAliveSession(conv, label, "tmux-ctxm", f.TestCwd("ctxm"))
 	f.HaveMember("squad", conv)
 
 	// The statusline hook's write path: context_pct + abs token counts
@@ -95,7 +95,7 @@ func TestDashboardSnapshot_CodexContextRefreshesFromRolloutOnRead(t *testing.T) 
 	// but whose Stop hook has not persisted that telemetry to SQLite yet.
 	f := newFlow(t)
 	f.HaveGroup("codex-squad")
-	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexctx", "/tmp/codexctx")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexctx", f.TestCwd("codexctx"))
 	cx.ContextWindow = 200000
 	f.HaveMember("codex-squad", conv)
 
@@ -135,7 +135,7 @@ func TestDashboardSnapshot_CodexCompactionKeepsAbsoluteUsageReset(t *testing.T) 
 	agentd.ResetCodexContextRefreshForTest()
 
 	f := newFlow(t)
-	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexcompact", "/tmp/codexcompact")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codexcompact", f.TestCwd("codexcompact"))
 	cx.ContextWindow = 200000
 	f.HaveEnrolledAgent(conv)
 
@@ -148,7 +148,7 @@ func TestDashboardSnapshot_CodexCompactionKeepsAbsoluteUsageReset(t *testing.T) 
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName:  "PostCompact",
 		ConvID:         conv,
-		Cwd:            "/tmp/codexcompact",
+		Cwd:            f.TestCwd("codexcompact"),
 		Model:          cx.Model,
 		TranscriptPath: cx.RolloutPath,
 	}, label))
@@ -176,7 +176,7 @@ func TestDashboardSnapshot_ContextMeterUnknownWhenNoUsage(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-ctxu", "/tmp/ctxu")
+	f.HaveAliveSession(conv, label, "tmux-ctxu", f.TestCwd("ctxu"))
 	f.HaveEnrolledAgent(conv)
 
 	// No UpdateContextSnapshot call — the statusline hook never fired.
@@ -212,7 +212,7 @@ func TestDashboardSnapshot_ContextMeterSurvivesEmptyStatuslineRender(t *testing.
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-ctxc", "/tmp/ctxc")
+	f.HaveAliveSession(conv, label, "tmux-ctxc", f.TestCwd("ctxc"))
 	f.HaveEnrolledAgent(conv)
 
 	// A populated statusline render writes a good snapshot.
@@ -264,7 +264,7 @@ func TestDashboardSnapshot_ContextMeterSurvivesStateHookWrite(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-ctxs", "/tmp/ctxs")
+	f.HaveAliveSession(conv, label, "tmux-ctxs", f.TestCwd("ctxs"))
 	f.HaveEnrolledAgent(conv)
 
 	// The statusline hook writes a good context snapshot.
@@ -279,7 +279,7 @@ func TestDashboardSnapshot_ContextMeterSurvivesStateHookWrite(t *testing.T) {
 		ID:          label,
 		TmuxSession: "tmux-ctxs",
 		ConvID:      conv,
-		Cwd:         "/tmp/ctxs",
+		Cwd:         f.TestCwd("ctxs"),
 		Status:      "idle",
 	}), "state-update SaveSession")
 

@@ -29,7 +29,7 @@ func TestPeers_RefreshesNeverIndexedMemberFromSource(t *testing.T) {
 	f.HaveMember("alpha", bobConv)
 	// HaveAliveSession materialises Bob's .jsonl + session row but does
 	// NOT index him into conv_index.
-	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", "/tmp/bob")
+	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", f.TestCwd("bob"))
 
 	cc := f.World.CCs.GetByConvID(bobConv)
 	require.NotNil(t, cc, "CCSim for bob")
@@ -60,7 +60,7 @@ func TestPeers_RefreshesStaleTitleFromSource(t *testing.T) {
 
 	f.HaveGroup("beta")
 	f.HaveMember("beta", bobConv)
-	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", "/tmp/bob")
+	f.HaveAliveSession(bobConv, "spwn-bob", "tmux-bob", f.TestCwd("bob"))
 
 	cc := f.World.CCs.GetByConvID(bobConv)
 	require.NotNil(t, cc, "CCSim for bob")

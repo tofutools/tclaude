@@ -29,7 +29,7 @@ func TestDashboardSnapshot_CostSurfaced(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-cost", "/tmp/cost")
+	f.HaveAliveSession(conv, label, "tmux-cost", f.TestCwd("cost"))
 	f.HaveMember("squad", conv)
 
 	// The statusline hook's write path: cost lands on the sessions row
@@ -59,7 +59,7 @@ func TestDashboardSnapshot_CostZeroWhenNotReported(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-cosu", "/tmp/cosu")
+	f.HaveAliveSession(conv, label, "tmux-cosu", f.TestCwd("cosu"))
 	f.HaveEnrolledAgent(conv)
 
 	// No UpdateSessionCost call — subscription plan, or no tick yet.
@@ -83,7 +83,7 @@ func TestDashboardSnapshot_CostSurvivesStateHookWrite(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
-	f.HaveAliveSession(conv, label, "tmux-coss", "/tmp/coss")
+	f.HaveAliveSession(conv, label, "tmux-coss", f.TestCwd("coss"))
 	f.HaveEnrolledAgent(conv)
 
 	require.NoError(t, db.UpdateSessionCost(label, 0.42), "UpdateSessionCost")
@@ -93,7 +93,7 @@ func TestDashboardSnapshot_CostSurvivesStateHookWrite(t *testing.T) {
 		ID:          label,
 		TmuxSession: "tmux-coss",
 		ConvID:      conv,
-		Cwd:         "/tmp/coss",
+		Cwd:         f.TestCwd("coss"),
 		Status:      "idle",
 	}), "state-update SaveSession")
 
@@ -118,7 +118,7 @@ func TestDashboardSnapshot_VirtualCostSurfaced(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-virt", "/tmp/virt")
+	f.HaveAliveSession(conv, label, "tmux-virt", f.TestCwd("virt"))
 	f.HaveMember("squad", conv)
 
 	require.NoError(t, db.UpdateSessionVirtualCost(label, 2.50), "UpdateSessionVirtualCost")
@@ -161,7 +161,7 @@ func TestDashboardSnapshot_CostTabVisibilityRule(t *testing.T) {
 	// 3. Real pay-per-token spend → visible, real mode — even with the opt-in
 	//    still on, real spend wins (there's real money to show).
 	const label = "spwn-vis"
-	f.HaveAliveSession("visi-1111-2222-3333-4444", label, "tmux-vis", "/tmp/vis")
+	f.HaveAliveSession("visi-1111-2222-3333-4444", label, "tmux-vis", f.TestCwd("vis"))
 	require.NoError(t, db.UpdateSessionCost(label, 1.00), "UpdateSessionCost")
 	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	assert.True(t, snap.CostTabVisible, "real spend shows the Costs tab")

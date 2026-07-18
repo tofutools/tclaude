@@ -94,7 +94,7 @@ func TestDashboardGroupImport_UploadRecreatesGroup(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 	const aConv = "a1a1a1a1-1111-2222-3333-444444444444"
 	const bConv = "b2b2b2b2-1111-2222-3333-444444444444"
-	const srcCwd = "/tmp/dash-import-src"
+	srcCwd := f.TestCwd("dash-import-src")
 
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveConvWithTitle(bConv, "bob")
@@ -116,7 +116,7 @@ func TestDashboardGroupImport_UploadRecreatesGroup(t *testing.T) {
 	// Preview first (what the dashboard does the moment the .zip is
 	// picked): the machine is clean, so the dry run must report no
 	// collisions and a free, valid target name.
-	const dstCwd = "/tmp/dash-import-dst"
+	dstCwd := f.TestCwd("dash-import-dst")
 	insRec := testharness.Serve(dash, dashboardImportUpload(t,
 		"/api/groups/import/inspect", archive, "", ""))
 	require.Equal(t, http.StatusOK, insRec.Code, "inspect: body=%s", insRec.Body.String())
@@ -168,7 +168,7 @@ func TestDashboardGroupImport_InspectReportsCollisionsWithoutWriting(t *testing.
 	dash := agentd.BuildDashboardHandlerForTest()
 	const aConv = "c3c3c3c3-1111-2222-3333-444444444444"
 	const bConv = "d4d4d4d4-1111-2222-3333-444444444444"
-	const srcCwd = "/tmp/dash-import-live"
+	srcCwd := f.TestCwd("dash-import-live")
 
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveConvWithTitle(bConv, "bob")
@@ -246,7 +246,7 @@ func TestDashboardGroupImport_InspectReportsCollisionsWithoutWriting(t *testing.
 // confirm rather than letting the human walk into a failing import.
 func TestDashboardGroupImport_RejectsMalformedUpload(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
-	newFlow(t) // stands up the test DB + mocks; no Flow surface needed here
+	f := newFlow(t) // stands up the test DB + mocks
 	dash := agentd.BuildDashboardHandlerForTest()
 	junk := []byte("this is definitely not a zip archive")
 
@@ -260,7 +260,7 @@ func TestDashboardGroupImport_RejectsMalformedUpload(t *testing.T) {
 	// The commit endpoint rejects it too (into supplied so the failure
 	// is the archive, not a missing field).
 	rec = testharness.Serve(dash, dashboardImportUpload(t,
-		"/api/groups/import", junk, "/tmp/dash-import-junk", ""))
+		"/api/groups/import", junk, f.TestCwd("dash-import-junk"), ""))
 	assert.Equal(t, http.StatusBadRequest, rec.Code,
 		"a malformed archive must be rejected by the import: body=%s", rec.Body.String())
 
@@ -268,7 +268,7 @@ func TestDashboardGroupImport_RejectsMalformedUpload(t *testing.T) {
 	// panic — the daemon must tolerate a malformed multipart form.
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	require.NoError(t, mw.WriteField("into", "/tmp/dash-import-junk"))
+	require.NoError(t, mw.WriteField("into", f.TestCwd("dash-import-junk")))
 	require.NoError(t, mw.Close())
 	noFile := httptest.NewRequest(http.MethodPost, "/api/groups/import", &buf)
 	noFile.Header.Set("Content-Type", mw.FormDataContentType())

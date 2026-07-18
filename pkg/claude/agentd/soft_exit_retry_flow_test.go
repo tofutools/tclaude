@@ -52,7 +52,7 @@ func TestSoftExit_RetryRecoversJunkScrambledExit(t *testing.T) {
 	const tmuxSes = "tmux-sxja"
 	const target = tmuxSes + ":0.0"
 	f.HaveConvWithTitle(conv, "junk-buffer-worker")
-	f.HaveAliveSession(conv, "spwn-sxja", tmuxSes, "/tmp/sxja")
+	f.HaveAliveSession(conv, "spwn-sxja", tmuxSes, f.TestCwd("sxja"))
 
 	// Pre-existing junk in the pane's input buffer — a half-typed line left
 	// unsent. NO trailing Enter, so it sits in the buffer; the daemon's
@@ -87,7 +87,7 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 	const tmuxSes = "tmux-sxjb"
 	const target = tmuxSes + ":0.0"
 	f.HaveConvWithTitle(conv, "clean-worker")
-	f.HaveAliveSession(conv, "spwn-sxjb", tmuxSes, "/tmp/sxjb")
+	f.HaveAliveSession(conv, "spwn-sxjb", tmuxSes, f.TestCwd("sxjb"))
 
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
@@ -110,7 +110,7 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	const tmuxSes = "tmux-sxjc"
 	const target = tmuxSes + ":0.0"
 	f.HaveConvWithTitle(conv, "hung-worker")
-	f.HaveAliveSession(conv, "spwn-sxjc", tmuxSes, "/tmp/sxjc")
+	f.HaveAliveSession(conv, "spwn-sxjc", tmuxSes, f.TestCwd("sxjc"))
 
 	// A pane that consumes /exit without ever flipping dead (CC wedged).
 	cc := f.World.CCs.GetByConvID(conv)
@@ -150,7 +150,7 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	const conv = "sxjd-1111-2222-3333-4444"
 	const tmuxSes = "tmux-sxjd"
 	const target = tmuxSes + ":0.0"
-	const cwd = "/tmp/sxjd"
+	cwd := f.TestCwd("sxjd")
 	f.HaveConvWithTitle(conv, "resumed-worker")
 	f.HaveAliveSession(conv, "spwn-sxjd", tmuxSes, cwd)
 

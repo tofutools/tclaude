@@ -32,7 +32,7 @@ func TestPresentPR_SelfPresentsAndDashboardRenders(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprs", "tmux-pprs", "/tmp/pprs")
+	f.HaveAliveSession(worker, "lbl-pprs", "tmux-pprs", f.TestCwd("pprs"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
@@ -70,7 +70,7 @@ func TestPresentPR_DedupesByURLAndCanMarkHandled(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprd", "tmux-pprd", "/tmp/pprd")
+	f.HaveAliveSession(worker, "lbl-pprd", "tmux-pprd", f.TestCwd("pprd"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
@@ -108,7 +108,7 @@ func TestPresentPR_DashboardRefreshesAndExpiresTerminalState(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprx", "tmux-pprx", "/tmp/pprx")
+	f.HaveAliveSession(worker, "lbl-pprx", "tmux-pprx", f.TestCwd("pprx"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
 
@@ -150,7 +150,7 @@ func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-pprw", "tmux-pprw", "/tmp/pprw")
+	f.HaveAliveSession(worker, "lbl-pprw", "tmux-pprw", f.TestCwd("pprw"))
 	f.HaveMember("squad", worker)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 

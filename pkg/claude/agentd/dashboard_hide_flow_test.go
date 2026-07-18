@@ -59,7 +59,7 @@ func TestHideAgent_DetachesAttachedAgent(t *testing.T) {
 	const conv = "hida-1111-2222-3333-444444444444"
 	const tmuxSes = "tmux-hida"
 	f.HaveConvWithTitle(conv, "windowed-worker")
-	f.HaveAliveSession(conv, "spwn-hida", tmuxSes, "/tmp/hida")
+	f.HaveAliveSession(conv, "spwn-hida", tmuxSes, f.TestCwd("hida"))
 	f.HaveEnrolledAgent(conv)
 
 	var mu sync.Mutex
@@ -98,7 +98,7 @@ func TestHideAgent_IdempotentNoOpForAlreadyDetached(t *testing.T) {
 	const conv = "hidi-1111-2222-3333-444444444444"
 	const tmuxSes = "tmux-hidi"
 	f.HaveConvWithTitle(conv, "detach-me-twice")
-	f.HaveAliveSession(conv, "spwn-hidi", tmuxSes, "/tmp/hidi")
+	f.HaveAliveSession(conv, "spwn-hidi", tmuxSes, f.TestCwd("hidi"))
 	f.HaveEnrolledAgent(conv)
 
 	// Model session.DetachSessionClients: the first detach dismisses
@@ -163,7 +163,7 @@ func TestHideAgent_RejectsNonPost(t *testing.T) {
 
 	const conv = "hidm-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "method-worker")
-	f.HaveAliveSession(conv, "spwn-hidm", "tmux-hidm", "/tmp/hidm")
+	f.HaveAliveSession(conv, "spwn-hidm", "tmux-hidm", f.TestCwd("hidm"))
 
 	var dispatched bool
 	t.Cleanup(agentd.SetDetachAgentWindowsForTest(func(*db.SessionRow) (int, error) {

@@ -66,7 +66,7 @@ func TestRetire_DeleteWorktreeRemovesWorktreeAndBranch(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwwt-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-linked"
+	cwd := f.TestCwd("rw-linked")
 	f.HaveConvWithTitle(conv, "wt-worker")
 	f.HaveAliveSession(conv, "spwn-rwwt", "tmux-rwwt", cwd)
 	f.HaveEnrolledAgent(conv)
@@ -100,7 +100,7 @@ func TestRetire_DeleteWorktreeWithoutShutdownKeepsWorktree(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwns-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-keep"
+	cwd := f.TestCwd("rw-keep")
 	f.HaveConvWithTitle(conv, "kept-wt-worker")
 	f.HaveAliveSession(conv, "spwn-rwns", "tmux-rwns", cwd)
 	f.HaveEnrolledAgent(conv)
@@ -127,7 +127,7 @@ func TestRetire_DeleteWorktreeKeepsSharedWorktree(t *testing.T) {
 
 	const leaving = "rwsh-1111-2222-3333-4444"
 	const staying = "rwst-1111-2222-3333-4444"
-	const shared = "/tmp/rw-shared"
+	shared := f.TestCwd("rw-shared")
 	f.HaveConvWithTitle(leaving, "leaving")
 	f.HaveConvWithTitle(staying, "staying")
 	f.HaveAliveSession(leaving, "spwn-rwsh", "tmux-rwsh", shared)
@@ -228,7 +228,7 @@ func TestRetireWorktreePreview_IgnoresOfflineRetiredPriorAgent(t *testing.T) {
 
 	const prior = "rwpr-1111-2222-3333-4444"
 	const current = "rwcu-1111-2222-3333-4444"
-	const reused = "/tmp/rw-reused-name"
+	reused := f.TestCwd("rw-reused-name")
 	const reusedTmux = "rw-reused-name"
 	f.HaveConvWithTitle(prior, "banana")
 	f.HaveAliveSession(prior, "spwn-rwpr", reusedTmux, reused)
@@ -272,7 +272,7 @@ func TestRetireWorktreePreview_KeepsWorktreeClaimedByLiveRetiredPane(t *testing.
 
 	const prior = "rwlr-1111-2222-3333-4444"
 	const current = "rwlc-1111-2222-3333-4444"
-	const reused = "/tmp/rw-live-retired"
+	reused := f.TestCwd("rw-live-retired")
 	f.HaveConvWithTitle(prior, "banana")
 	f.HaveAliveSession(prior, "spwn-rwlr", "tmux-rwlr", reused)
 	f.HaveEnrolledAgent(prior)
@@ -304,7 +304,7 @@ func TestRetire_DeleteWorktreeKeepsMainWorktree(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwmn-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-main"
+	cwd := f.TestCwd("rw-main")
 	f.HaveConvWithTitle(conv, "main-repo-worker")
 	f.HaveAliveSession(conv, "spwn-rwmn", "tmux-rwmn", cwd)
 	f.HaveEnrolledAgent(conv)
@@ -328,7 +328,7 @@ func TestRetire_NoDeleteWorktreeLeavesWorktreeUntouched(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwno-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-untouched"
+	cwd := f.TestCwd("rw-untouched")
 	f.HaveConvWithTitle(conv, "untouched-worker")
 	f.HaveAliveSession(conv, "spwn-rwno", "tmux-rwno", cwd)
 	f.HaveEnrolledAgent(conv)
@@ -353,7 +353,7 @@ func TestRetire_DeleteWorktreeDeferredUntilAgentExits(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwdf-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-deferred"
+	cwd := f.TestCwd("rw-deferred")
 	f.HaveConvWithTitle(conv, "slow-exit-worker")
 	f.HaveAliveSession(conv, "spwn-rwdf", "tmux-rwdf", cwd)
 	f.HaveEnrolledAgent(conv)
@@ -403,7 +403,7 @@ func TestRetire_DeleteWorktreeDeferredFailurePostsNotice(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwfa-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-fail"
+	cwd := f.TestCwd("rw-fail")
 	f.HaveConvWithTitle(conv, "fail-worker")
 	f.HaveAliveSession(conv, "spwn-rwfa", "tmux-rwfa", cwd)
 	f.HaveEnrolledAgent(conv)
@@ -443,7 +443,7 @@ func TestRetire_DeleteWorktreeAgentWontExitPostsKeptNotice(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwhe-1111-2222-3333-4444"
-	const cwd = "/tmp/rw-hung"
+	cwd := f.TestCwd("rw-hung")
 	f.HaveConvWithTitle(conv, "hung-worker")
 	f.HaveAliveSession(conv, "spwn-rwhe", "tmux-rwhe", cwd)
 	f.HaveEnrolledAgent(conv)

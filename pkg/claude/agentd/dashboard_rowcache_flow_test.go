@@ -29,8 +29,8 @@ func TestDashboardSnapshot_BatchRowBundleConsistent(t *testing.T) {
 	const leadConv = "aaaaaaaa-1111-2222-3333-444444444444" // member + owner, on a branch
 	const workerConv = "bbbbbbbb-1111-2222-3333-444444444444"
 
-	f.HaveAliveSessionOnBranch(leadConv, "spwn-lead", "tmux-lead", "/tmp/wt/lead", "feature-lead")
-	f.HaveAliveSession(workerConv, "spwn-work", "tmux-work", "/tmp/wt/work")
+	f.HaveAliveSessionOnBranch(leadConv, "spwn-lead", "tmux-lead", f.TestCwd("wt/lead"), "feature-lead")
+	f.HaveAliveSession(workerConv, "spwn-work", "tmux-work", f.TestCwd("wt/work"))
 	// Stand in for the watch model: scan the branch into conv_index so the
 	// cache-only resolver reads it off the cached row (TCL-367), the same way
 	// the branch-links flow test seeds it.
@@ -188,8 +188,8 @@ func TestDashboardSnapshot_CorruptSandboxRowDoesNotBlankSiblings(t *testing.T) {
 
 	f.HaveConvWithTitle(goodConv, "good-agent")
 	f.HaveConvWithTitle(badConv, "bad-agent")
-	f.HaveAliveSession(goodConv, "spwn-good", "tmux-good", "/tmp/good")
-	f.HaveAliveSession(badConv, "spwn-bad", "tmux-bad", "/tmp/bad")
+	f.HaveAliveSession(goodConv, "spwn-good", "tmux-good", f.TestCwd("good"))
+	f.HaveAliveSession(badConv, "spwn-bad", "tmux-bad", f.TestCwd("bad"))
 	f.HaveGroup("crew")
 	f.HaveMember("crew", goodConv)
 	f.HaveMember("crew", badConv)

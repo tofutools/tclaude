@@ -58,8 +58,8 @@ func TestGroupsClone_DefaultsSuffix(t *testing.T) {
 	const bConv = "bbb-aaaa-bbbb-cccc-2222"
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveConvWithTitle(bConv, "bob")
-	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
-	f.HaveAliveSession(bConv, "spwn-b", "tclaude-spwn-b", "/tmp/work")
+	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", f.TestCwd("work"))
+	f.HaveAliveSession(bConv, "spwn-b", "tclaude-spwn-b", f.TestCwd("work"))
 	src := f.HaveGroup("team")
 	f.HaveMember("team", aConv)
 	f.HaveMember("team", bConv)
@@ -178,7 +178,7 @@ func TestGroupsClone_ExplicitName(t *testing.T) {
 
 	const aConv = "aaa-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(aConv, "alice")
-	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
+	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", aConv)
 
@@ -196,7 +196,7 @@ func TestGroupsClone_NameCollisionIsConflict(t *testing.T) {
 
 	const aConv = "aaa-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(aConv, "alice")
-	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
+	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveGroup("team-experiment")
 	f.HaveMember("team", aConv)
@@ -218,7 +218,7 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 	const memberConv = "mem-aaaa-bbbb-cccc-1111"
 	const ownerConv = "own-aaaa-bbbb-cccc-2222"
 	f.HaveConvWithTitle(memberConv, "worker")
-	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", "/tmp/work")
+	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", f.TestCwd("work"))
 	src := f.HaveGroup("team")
 	f.HaveMember("team", memberConv)
 	require.NoError(t, db.AddAgentGroupOwner(src.ID, ownerConv, "test"), "AddAgentGroupOwner")
@@ -279,7 +279,7 @@ func TestGroupsClone_NoAgents_OmittedCopyOwnersKeepsOwners(t *testing.T) {
 	const memberConv = "mem-aaaa-bbbb-cccc-1111"
 	const ownerConv = "own-aaaa-bbbb-cccc-2222"
 	f.HaveConvWithTitle(memberConv, "worker")
-	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", "/tmp/work")
+	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", f.TestCwd("work"))
 	src := f.HaveGroup("team")
 	f.HaveMember("team", memberConv)
 	require.NoError(t, db.AddAgentGroupOwner(src.ID, ownerConv, "test"), "AddAgentGroupOwner")
@@ -312,7 +312,7 @@ func TestGroupsClone_NoAgents_CopyOwnersFalseSkipsOwners(t *testing.T) {
 	const memberConv = "mem-aaaa-bbbb-cccc-1111"
 	const ownerConv = "own-aaaa-bbbb-cccc-2222"
 	f.HaveConvWithTitle(memberConv, "worker")
-	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", "/tmp/work")
+	f.HaveAliveSession(memberConv, "spwn-mem", "tclaude-spwn-mem", f.TestCwd("work"))
 	src := f.HaveGroup("team")
 	f.HaveMember("team", memberConv)
 	require.NoError(t, db.AddAgentGroupOwner(src.ID, ownerConv, "test"), "AddAgentGroupOwner")
@@ -348,7 +348,7 @@ func TestGroupsClone_OfClone_StripsSuffix(t *testing.T) {
 
 	const aConv = "aaa-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(aConv, "alice")
-	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
+	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", f.TestCwd("work"))
 	f.HaveGroup("team-c-1") // pretend this is already a clone
 	f.HaveMember("team-c-1", aConv)
 
@@ -367,7 +367,7 @@ func TestGroupsClone_ArchivedSourceRejected(t *testing.T) {
 
 	const aConv = "aaa-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(aConv, "alice")
-	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", "/tmp/work")
+	f.HaveAliveSession(aConv, "spwn-a", "tclaude-spwn-a", f.TestCwd("work"))
 	f.HaveGroup("team")
 	f.HaveMember("team", aConv)
 	require.NoError(t, db.ArchiveAgentGroup("team"), "archive")
@@ -390,7 +390,7 @@ func TestGroupsClone_OfflineMemberSkipped(t *testing.T) {
 	const deadConv = "ded-aaaa-bbbb-cccc-2222"
 	f.HaveConvWithTitle(liveConv, "alice")
 	f.HaveConvWithTitle(deadConv, "ghost")
-	f.HaveAliveSession(liveConv, "spwn-liv", "tclaude-spwn-liv", "/tmp/work")
+	f.HaveAliveSession(liveConv, "spwn-liv", "tclaude-spwn-liv", f.TestCwd("work"))
 	// deadConv intentionally has NO live session.
 	f.HaveGroup("team")
 	f.HaveMember("team", liveConv)

@@ -33,9 +33,9 @@ func TestDashboardSnapshot_RemoteControlSurfaces(t *testing.T) {
 	const deadConv = "0190dd01-1111-2222-3333-444444444444"
 	const deadLabel = "spwn-dead1"
 
-	f.HaveAliveSession(armedConv, armedLabel, "tmux-arm1", "/tmp/arm")
-	f.HaveAliveSession(offConv, offLabel, "tmux-off1", "/tmp/off")
-	f.HaveAliveSession(deadConv, deadLabel, "tmux-dead1", "/tmp/dead")
+	f.HaveAliveSession(armedConv, armedLabel, "tmux-arm1", f.TestCwd("arm"))
+	f.HaveAliveSession(offConv, offLabel, "tmux-off1", f.TestCwd("off"))
+	f.HaveAliveSession(deadConv, deadLabel, "tmux-dead1", f.TestCwd("dead"))
 	f.HaveMember("crew", armedConv)
 	f.HaveMember("crew", offConv)
 	f.HaveMember("crew", deadConv)
@@ -88,7 +88,7 @@ func TestDashboardRemoteControl_ToggleViaDashboardRoute(t *testing.T) {
 	f.HaveGroup("crew")
 	const conv = "0190tg01-1111-2222-3333-444444444444"
 	const tmux = "tmux-tg1"
-	f.HaveAliveSession(conv, "spwn-tg1", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-tg1", tmux, f.TestCwd("work"))
 	f.HaveMember("crew", conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -130,7 +130,7 @@ func TestDashboardRemoteControl_CodexRefused(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	const conv = "0190cx01-1111-2222-3333-444444444444"
-	f.HaveAliveCodexSession(conv, "spwn-cx1", "tmux-cx1", "/tmp/work")
+	f.HaveAliveCodexSession(conv, "spwn-cx1", "tmux-cx1", f.TestCwd("work"))
 	f.HaveMember("crew", conv)
 
 	mux := agentd.BuildDashboardHandlerForTest()

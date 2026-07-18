@@ -123,7 +123,7 @@ func TestNotificationFilters_GroupAndAgentBells(t *testing.T) {
 
 	const conv = "noti-aaaa-bbbb-cccc-dddd"
 	f.HaveConvWithTitle(conv, "worker")
-	f.HaveAliveSession(conv, "spwn-noti", "tmux-noti", "/tmp/x")
+	f.HaveAliveSession(conv, "spwn-noti", "tmux-noti", f.TestCwd("x"))
 	f.HaveEnrolledAgent(conv)
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", conv)

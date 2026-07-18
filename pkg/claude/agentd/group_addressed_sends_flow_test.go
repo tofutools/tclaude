@@ -72,7 +72,7 @@ func TestMulticast_ByName_FansOutToAllMembers(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", memberA)
 	f.HaveMember("team", memberB)
-	f.HaveAliveSession(memberA, "spwn-mc01-a", "tclaude-spwn-mc01-a", "/tmp/work")
+	f.HaveAliveSession(memberA, "spwn-mc01-a", "tclaude-spwn-mc01-a", f.TestCwd("work"))
 
 	rec := postMessage(t, f, sender, map[string]any{"to": "group:team", "body": "ship it"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())

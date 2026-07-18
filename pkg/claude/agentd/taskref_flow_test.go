@@ -83,7 +83,7 @@ func TestTaskRef_SelfSetGetClear(t *testing.T) {
 
 	f.HaveGroup("alpha")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wtsk", "tmux-wtsk", "/tmp/wtsk")
+	f.HaveAliveSession(worker, "lbl-wtsk", "tmux-wtsk", f.TestCwd("wtsk"))
 	f.HaveMember("alpha", worker)
 	require.NoError(t,
 		db.SetAgentPermissionOverride(worker, agentd.PermSelfTask, db.PermEffectGrant, "test"),
@@ -136,7 +136,7 @@ func TestTaskRef_OwnerSetsWorkerWithoutSlug(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wts2", "tmux-wts2", "/tmp/wts2")
+	f.HaveAliveSession(worker, "lbl-wts2", "tmux-wts2", f.TestCwd("wts2"))
 	f.HaveMember("squad", worker)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 
@@ -165,7 +165,7 @@ func TestTaskRef_CrossAgentDeniedWithoutOwnershipOrSlug(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, "lbl-wts3", "tmux-wts3", "/tmp/wts3")
+	f.HaveAliveSession(worker, "lbl-wts3", "tmux-wts3", f.TestCwd("wts3"))
 	f.HaveMember("squad", worker)
 	f.HaveEnrolledAgent(stranger) // a known agent, but no ownership / slug
 

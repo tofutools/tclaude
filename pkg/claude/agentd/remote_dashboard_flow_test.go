@@ -30,7 +30,7 @@ func TestRemoteDashboard_RealRoutesServed(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, "spwn-rd", "tmux-rd", "/tmp/rd")
+	f.HaveAliveSession(conv, "spwn-rd", "tmux-rd", f.TestCwd("rd"))
 	f.HaveMember("squad", conv)
 
 	// Material lands in the flow's temp HOME (testharness.New set $HOME).

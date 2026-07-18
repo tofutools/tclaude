@@ -67,7 +67,7 @@ func TestContextInfo_OwnerReadsWorkerTarget(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, label, "tmux-ctxw", "/tmp/ctxw")
+	f.HaveAliveSession(worker, label, "tmux-ctxw", f.TestCwd("ctxw"))
 	f.HaveMember("squad", worker)
 	// Lead is an owner of the group — the bypass that lets it read member
 	// context without the slug.
@@ -117,7 +117,7 @@ func TestContextInfo_DenyOverrideBeatsOwnerBypass(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, label, "tmux-ctxe", "/tmp/ctxe")
+	f.HaveAliveSession(worker, label, "tmux-ctxe", f.TestCwd("ctxe"))
 	f.HaveMember("squad", worker)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 	// An explicit deny override locks the owner out — deny always wins.
@@ -155,7 +155,7 @@ func TestContextInfo_TargetDeniedWithoutSlugOrOwnership(t *testing.T) {
 
 	f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, label, "tmux-ctxv", "/tmp/ctxv")
+	f.HaveAliveSession(worker, label, "tmux-ctxv", f.TestCwd("ctxv"))
 	f.HaveMember("squad", worker)
 	f.HaveMember("squad", peer) // co-member, but not an owner
 	require.NoError(t,
@@ -186,7 +186,7 @@ func TestContextInfo_TargetAllowedWithSlug(t *testing.T) {
 	const label = "lbl-ctxt"
 
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, label, "tmux-ctxt", "/tmp/ctxt")
+	f.HaveAliveSession(worker, label, "tmux-ctxt", f.TestCwd("ctxt"))
 	f.HaveEnrolledAgent(worker)
 	require.NoError(t,
 		db.UpdateContextSnapshot(label, 88.0, 170000, 6000, 200000),
@@ -231,10 +231,10 @@ func TestGroupContext_OwnerSeesEveryMember(t *testing.T) {
 
 	g := f.HaveGroup("team")
 	f.HaveConvWithTitle(hot, "hot-worker")
-	f.HaveAliveSession(hot, hotLabel, "tmux-gch0", "/tmp/gch0")
+	f.HaveAliveSession(hot, hotLabel, "tmux-gch0", f.TestCwd("gch0"))
 	f.HaveMember("team", hot)
 	f.HaveConvWithTitle(fresh, "fresh-worker")
-	f.HaveAliveSession(fresh, freshLabel, "tmux-gcf0", "/tmp/gcf0")
+	f.HaveAliveSession(fresh, freshLabel, "tmux-gcf0", f.TestCwd("gcf0"))
 	f.HaveMember("team", fresh)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
 
@@ -282,7 +282,7 @@ func TestGroupContext_DeniedForNonOwnerNonSlug(t *testing.T) {
 
 	f.HaveGroup("team")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, label, "tmux-gcw1", "/tmp/gcw1")
+	f.HaveAliveSession(worker, label, "tmux-gcw1", f.TestCwd("gcw1"))
 	f.HaveMember("team", worker)
 	f.HaveMember("team", member)
 	require.NoError(t,
@@ -326,7 +326,7 @@ func TestContextInfo_CallerAgentIDCompanion(t *testing.T) {
 
 	g := f.HaveGroup("squad")
 	f.HaveConvWithTitle(worker, "worker")
-	f.HaveAliveSession(worker, label, "tmux-caid", "/tmp/caid")
+	f.HaveAliveSession(worker, label, "tmux-caid", f.TestCwd("caid"))
 	f.HaveMember("squad", worker)
 	// Owning the group is the read bypass — and the act of owning enrols
 	// the lead as an agent, minting the stable actor the companion resolves.

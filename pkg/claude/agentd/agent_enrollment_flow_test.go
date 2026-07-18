@@ -251,7 +251,7 @@ func TestEnrollment_CleanupRetireSkipsOnline(t *testing.T) {
 
 	const conv = "live-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "live-worker")
-	f.HaveAliveSession(conv, "spwn-live", "tmux-live", "/tmp/live")
+	f.HaveAliveSession(conv, "spwn-live", "tmux-live", f.TestCwd("live"))
 	f.HaveEnrolledAgent(conv)
 
 	resp := postCleanup(t, mux, "/api/cleanup/agents",
@@ -272,7 +272,7 @@ func TestEnrollment_ReincarnatePreservesAgentStatus(t *testing.T) {
 
 	const conv = "rcrn-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "worker")
-	f.HaveAliveSession(conv, "spwn-rcrn", "tmux-rcrn", "/tmp/rcrn")
+	f.HaveAliveSession(conv, "spwn-rcrn", "tmux-rcrn", f.TestCwd("rcrn"))
 	f.HaveEnrolledAgent(conv)
 
 	r := f.Reincarnate(conv, "carry on")
@@ -314,7 +314,7 @@ func TestEnrollment_ReincarnatePredecessorNotOnRetiredRoster(t *testing.T) {
 
 	const conv = "rcrp-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "worker")
-	f.HaveAliveSession(conv, "spwn-rcrp", "tmux-rcrp", "/tmp/rcrp")
+	f.HaveAliveSession(conv, "spwn-rcrp", "tmux-rcrp", f.TestCwd("rcrp"))
 	f.HaveEnrolledAgent(conv)
 
 	r := f.Reincarnate(conv, "carry on")
@@ -346,7 +346,7 @@ func TestEnrollment_ClonePreservesAgentStatus(t *testing.T) {
 
 	const conv = "clon-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "worker")
-	f.HaveAliveSession(conv, "spwn-clon", "tmux-clon", "/tmp/clon")
+	f.HaveAliveSession(conv, "spwn-clon", "tmux-clon", f.TestCwd("clon"))
 	f.HaveEnrolledAgent(conv)
 
 	c := f.CloneFresh(conv)
@@ -511,7 +511,7 @@ func TestEnrollment_LiveTerminalConvBecomesUngroupedAgent(t *testing.T) {
 
 	const conv = "trml-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "terminal-launched")
-	f.HaveAliveSession(conv, "spwn-trml", "tmux-trml", "/tmp/trml")
+	f.HaveAliveSession(conv, "spwn-trml", "tmux-trml", f.TestCwd("trml"))
 
 	// Pre: a live but un-enrolled conv is a promotion candidate, not an
 	// agent, and not in the Ungrouped group.
@@ -552,7 +552,7 @@ func TestEnrollment_ReaperDoesNotResurrectRetiredLiveAgent(t *testing.T) {
 
 	const conv = "retd-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "retired-but-alive")
-	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", "/tmp/retd")
+	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", f.TestCwd("retd"))
 	f.HaveRetiredAgent(conv) // enrolled, then retired by the human
 
 	preState, err := db.AgentState(conv)

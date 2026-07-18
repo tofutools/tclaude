@@ -39,7 +39,7 @@ func TestReincarnate_PreservesAskTimeout(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaa971"
 	const oldLabel = "spwn-at-rinc"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	stageAskTimeout(t, oldLabel, "5m")
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
@@ -59,7 +59,7 @@ func TestReincarnate_PreservesInheritAskTimeout(t *testing.T) {
 
 	const oldConv = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbb971"
 	const oldLabel = "spwn-at-rinc-inh"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	stageAskTimeout(t, oldLabel, "inherit")
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
@@ -77,7 +77,7 @@ func TestReincarnate_NoAskTimeoutThreadsEmpty(t *testing.T) {
 
 	const oldConv = "cccccccc-cccc-4ccc-8ccc-ccccccccc971"
 	const oldLabel = "spwn-at-rinc-none"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
@@ -93,7 +93,7 @@ func TestCloneFresh_PreservesAskTimeout(t *testing.T) {
 
 	const oldConv = "dddddddd-dddd-4ddd-8ddd-ddddddddd971"
 	const oldLabel = "spwn-at-clnf"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	stageAskTimeout(t, oldLabel, "10m")
 
 	c := f.AsHuman().CloneFresh(oldConv)
@@ -111,7 +111,7 @@ func TestCloneCopy_PreservesAskTimeout(t *testing.T) {
 
 	const oldConv = "eeeeeeee-eeee-4eee-8eee-eeeeeeeee971"
 	const oldLabel = "spwn-at-clnc"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	stageAskTimeout(t, oldLabel, "never")
 
 	c := f.AsHuman().CloneWith(oldConv, map[string]any{})

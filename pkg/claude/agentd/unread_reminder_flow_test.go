@@ -39,7 +39,7 @@ func haveUnreadMessage(t *testing.T, body string) (*testharness.Flow, int64) {
 	f.HaveConvWithTitle(urSender, "po-coordinator")
 	f.HaveMember("team", urSender)
 	f.HaveMember("team", urRecipient)
-	f.HaveAliveSession(urRecipient, urLabel, urTmux, "/tmp/work")
+	f.HaveAliveSession(urRecipient, urLabel, urTmux, f.TestCwd("work"))
 
 	// Force pointer delivery. Short messages are consumed atomically when they
 	// are successfully inlined and therefore (correctly) need no later unread
@@ -120,7 +120,7 @@ func TestUnreadReminder_FollowsAgentAcrossReincarnation(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", gen1)
 	const tmux1 = "tclaude-urr-g1"
-	f.HaveAliveSession(gen1, "spwn-urr-g1", tmux1, "/tmp/work")
+	f.HaveAliveSession(gen1, "spwn-urr-g1", tmux1, f.TestCwd("work"))
 
 	// Deliver a message to gen1 (now delivered-unread).
 	rec := postMessage(t, f, sender, map[string]any{
@@ -135,7 +135,7 @@ func TestUnreadReminder_FollowsAgentAcrossReincarnation(t *testing.T) {
 	require.NoError(t, err, "RotateAgentConv")
 	f.MarkOffline(tmux1)
 	const tmux2 = "tclaude-urr-g2"
-	f.HaveAliveSession(gen2, "spwn-urr-g2", tmux2, "/tmp/work")
+	f.HaveAliveSession(gen2, "spwn-urr-g2", tmux2, f.TestCwd("work"))
 
 	// After the interval the reminder must fire at the NEW generation's pane.
 	st := agentd.NewUnreadReminderStateForTest()

@@ -42,7 +42,7 @@ func TestDashboardUngrouped_DragIntoGroupAddsAndLeavesUngrouped(t *testing.T) {
 
 	const conv = "ungr-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "loose-worker")
-	f.HaveAliveSession(conv, "spwn-ungr", "tmux-ungr", "/tmp/ungr")
+	f.HaveAliveSession(conv, "spwn-ungr", "tmux-ungr", f.TestCwd("ungr"))
 	f.HaveEnrolledAgent(conv) // an enrolled, ungrouped, online agent
 	f.HaveGroup("alpha")
 
@@ -88,7 +88,7 @@ func TestDashboardUngrouped_DragOutOfGroupReturnsToUngrouped(t *testing.T) {
 
 	const conv = "drop-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "grouped-worker")
-	f.HaveAliveSession(conv, "spwn-drop", "tmux-drop", "/tmp/drop")
+	f.HaveAliveSession(conv, "spwn-drop", "tmux-drop", f.TestCwd("drop"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", conv)
 
@@ -133,7 +133,7 @@ func TestDashboardUngrouped_DeletedGroupMembersSurfaceInUngrouped(t *testing.T) 
 
 	const conv = "orph-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "orphan-to-be")
-	f.HaveAliveSession(conv, "spwn-orph", "tmux-orph", "/tmp/orph")
+	f.HaveAliveSession(conv, "spwn-orph", "tmux-orph", f.TestCwd("orph"))
 	f.HaveGroup("doomed")
 	f.HaveMember("doomed", conv)
 
@@ -176,8 +176,8 @@ func TestDashboardSnapshot_UngroupedIncludesGrantHolders(t *testing.T) {
 	const onlineConv = "gonl-1111-2222-3333-4444"
 	f.HaveConvWithTitle(offlineConv, "offline-grant-holder")
 	f.HaveConvWithTitle(onlineConv, "online-grant-holder")
-	f.HaveAliveSession(offlineConv, "spwn-goff", "tmux-goff", "/tmp/goff")
-	f.HaveAliveSession(onlineConv, "spwn-gonl", "tmux-gonl", "/tmp/gonl")
+	f.HaveAliveSession(offlineConv, "spwn-goff", "tmux-goff", f.TestCwd("goff"))
+	f.HaveAliveSession(onlineConv, "spwn-gonl", "tmux-gonl", f.TestCwd("gonl"))
 	f.MarkOffline("tmux-goff")
 
 	// Both hold a permission grant but belong to no group — so the

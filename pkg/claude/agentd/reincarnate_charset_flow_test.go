@@ -48,7 +48,7 @@ func TestReincarnate_RejectsControlCharTitleAtSendKeysSink(t *testing.T) {
 	const hostileTitle = "evil\nrm -rf ~"
 
 	f.HaveConvWithTitle(oldConv, hostileTitle)
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 

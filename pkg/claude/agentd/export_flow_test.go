@@ -86,7 +86,7 @@ func TestExportFlow_HappyPath(t *testing.T) {
 
 	f.HaveGroup("g")
 	f.HaveConvWithTitle("exp00000-0000-4000-8000-000000000001", "research-agent")
-	f.HaveAliveSession("exp00000-0000-4000-8000-000000000001", "expagent", "tmux-exp-1", "/tmp/exp")
+	f.HaveAliveSession("exp00000-0000-4000-8000-000000000001", "expagent", "tmux-exp-1", f.TestCwd("exp"))
 	f.HaveMember("g", "exp00000-0000-4000-8000-000000000001")
 
 	// 1. Human clicks "📋 summary…": the daemon creates a cloning job.
@@ -243,7 +243,7 @@ func TestExportFlow_OfflineOriginalStillExports(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	f.HaveGroup("g")
-	f.HaveAliveSession("off00000-0000-4000-8000-000000000002", "offagent", "tmux-off-1", "/tmp/off")
+	f.HaveAliveSession("off00000-0000-4000-8000-000000000002", "offagent", "tmux-off-1", f.TestCwd("off"))
 	f.HaveMember("g", "off00000-0000-4000-8000-000000000002")
 	// Take the original offline — its .jsonl + recorded cwd still exist, so the
 	// conversation is cloneable.
@@ -290,7 +290,7 @@ func TestExportFlow_StandaloneCloneIsIsolated(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	f.HaveGroup("g")
-	f.HaveAliveSession("iso00000-0000-4000-8000-000000000003", "isoagent", "tmux-iso-1", "/tmp/iso")
+	f.HaveAliveSession("iso00000-0000-4000-8000-000000000003", "isoagent", "tmux-iso-1", f.TestCwd("iso"))
 	f.HaveMember("g", "iso00000-0000-4000-8000-000000000003")
 
 	jobID := requestExport(t, dash, "iso00000-0000-4000-8000-000000000003", map[string]any{"preset": "summary"})
@@ -312,7 +312,7 @@ func TestExportFlow_SameGroupCloneJoinsGroup(t *testing.T) {
 
 	const orig = "sg000000-0000-4000-8000-000000000004"
 	g := f.HaveGroup("g")
-	f.HaveAliveSession(orig, "sgagent", "tmux-sg-1", "/tmp/sg")
+	f.HaveAliveSession(orig, "sgagent", "tmux-sg-1", f.TestCwd("sg"))
 	f.HaveMember("g", orig)
 	// Make the ORIGINAL a group owner, so we can prove the clone inherits
 	// membership but NOT ownership (a throwaway summary writer must never get
@@ -356,7 +356,7 @@ func TestExportFlow_History(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	f.HaveGroup("g")
-	f.HaveAliveSession("h0000000-0000-4000-8000-000000000005", "hagent", "tmux-h-1", "/tmp/h")
+	f.HaveAliveSession("h0000000-0000-4000-8000-000000000005", "hagent", "tmux-h-1", f.TestCwd("h"))
 	f.HaveMember("g", "h0000000-0000-4000-8000-000000000005")
 
 	mkExport := func(name string) int64 {
@@ -424,7 +424,7 @@ func TestExportFlow_CrossAgentSubmitDenied(t *testing.T) {
 	dash := agentd.BuildDashboardHandlerForTest()
 
 	f.HaveGroup("g")
-	f.HaveAliveSession("own00000-0000-4000-8000-000000000006", "owner", "tmux-own-1", "/tmp/own")
+	f.HaveAliveSession("own00000-0000-4000-8000-000000000006", "owner", "tmux-own-1", f.TestCwd("own"))
 	f.HaveMember("g", "own00000-0000-4000-8000-000000000006")
 
 	jobID := requestExport(t, dash, "own00000-0000-4000-8000-000000000006", map[string]any{"preset": "summary"})

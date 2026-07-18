@@ -52,7 +52,7 @@ func TestDashboardMessage_GroupTarget_FansOutToEveryMember(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", memberA)
 	f.HaveMember("team", memberB)
-	f.HaveAliveSession(memberA, "spwn-dmsg-a", "tclaude-spwn-dmsg-a", "/tmp/work")
+	f.HaveAliveSession(memberA, "spwn-dmsg-a", "tclaude-spwn-dmsg-a", f.TestCwd("work"))
 
 	mux := dashMessageMux(t)
 	rec := postDashMessage(t, mux, map[string]any{

@@ -38,7 +38,7 @@ func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
 	const tmux = "tclaude-nq01-r"
-	f.HaveAliveSession(recipient, "spwn-nq01-r", tmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nq01-r", tmux, f.TestCwd("work"))
 	f.SetSessionStatus(recipient, "awaiting_input")
 
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
@@ -87,7 +87,7 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 	f.HaveEnrolledAgent(recipient)
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
-	f.HaveAliveSession(recipient, "spwn-nq05-r", tmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nq05-r", tmux, f.TestCwd("work"))
 
 	// A local tmux command should finish in milliseconds. Sleeping much longer
 	// than the delivery deadline models the anomalous client that parked the
@@ -134,7 +134,7 @@ func TestRegularNudge_IndeterminateLivenessProbeRemainsRetryable(t *testing.T) {
 	const tmux = "tclaude-nq-regular-timeout"
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
-	f.HaveAliveSession(recipient, "spwn-nq-regular-timeout", tmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nq-regular-timeout", tmux, f.TestCwd("work"))
 
 	f.World.Tmux.HangNextCommand("has-session", 30*time.Second)
 	id, _, err := db.InsertAgentMessageBounded(&db.AgentMessage{
@@ -189,7 +189,7 @@ func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	f.HaveEnrolledAgent(recipient)
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
-	f.HaveAliveSession(recipient, "spwn-nq06-r", tmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nq06-r", tmux, f.TestCwd("work"))
 
 	f.World.Tmux.HangNextCommand("send-keys", 30*time.Second)
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
@@ -238,7 +238,7 @@ func TestNudgeQueue_StaleUndeliveredWarnNamesTargetAndMessage(t *testing.T) {
 	f.HaveEnrolledAgent(recipient)
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
-	f.HaveAliveSession(recipient, "spwn-nq07-r", "tclaude-nq07-r", "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nq07-r", "tclaude-nq07-r", f.TestCwd("work"))
 	f.SetSessionStatus(recipient, "awaiting_permission")
 
 	r := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "held"})
@@ -292,7 +292,7 @@ func TestNudgeQueue_InternalSurvivesReincarnation(t *testing.T) {
 
 	// The fresh generation comes online under a new pane.
 	const tmux2 = "tclaude-nq02-g2"
-	f.HaveAliveSession(gen2, "spwn-nq02-g2", tmux2, "/tmp/work")
+	f.HaveAliveSession(gen2, "spwn-nq02-g2", tmux2, f.TestCwd("work"))
 
 	// A drive of the recipient's NEW conv delivers the message queued against
 	// the OLD one — it followed the agent.
@@ -326,8 +326,8 @@ func TestNudgeQueue_PrevGenTargeting(t *testing.T) {
 	require.NoError(t, err, "RotateAgentConv")
 	const tmux1 = "tclaude-nq03-g1"
 	const tmux2 = "tclaude-nq03-g2"
-	f.HaveAliveSession(gen1, "spwn-nq03-g1", tmux1, "/tmp/work")
-	f.HaveAliveSession(gen2, "spwn-nq03-g2", tmux2, "/tmp/work")
+	f.HaveAliveSession(gen1, "spwn-nq03-g1", tmux1, f.TestCwd("work"))
+	f.HaveAliveSession(gen2, "spwn-nq03-g2", tmux2, f.TestCwd("work"))
 
 	// Ordinary send → follows the agent to its head (gen2).
 	rHead := mustSend(t, f, sender, map[string]any{"to": gen2, "body": "to the head"})
@@ -439,7 +439,7 @@ func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
 	assert.Empty(t, m.NudgeCancelReason)
 
 	const tmux = "tclaude-nq08-r"
-	f.HaveAliveSession(recipient, "spwn-nq08-r", tmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nq08-r", tmux, f.TestCwd("work"))
 	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(recipient), "revived message delivers")
 	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 2*time.Second)
 }

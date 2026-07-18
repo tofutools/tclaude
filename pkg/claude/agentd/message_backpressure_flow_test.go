@@ -259,7 +259,7 @@ func TestMessageBackpressureOfflineSuppressesNudgesWithoutReplayOrCapacityLoss(t
 	require.Equal(t, http.StatusTooManyRequests, overflow.Code, "body=%s", overflow.Body.String())
 	decodeQueueFull(t, overflow.Body.Bytes())
 
-	f.HaveAliveSession(target, "spwn-bp-offline", tmux, "/tmp/work")
+	f.HaveAliveSession(target, "spwn-bp-offline", tmux, f.TestCwd("work"))
 	before := len(f.World.Tmux.Sent())
 	assert.Zero(t, agentd.FlushUndeliveredForTest(target), "suppressed regular nudges never re-enter first delivery")
 	for _, sent := range f.World.Tmux.Sent()[before:] {

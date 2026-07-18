@@ -122,12 +122,12 @@ func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
 	// A live Codex agent. HaveAliveCodexSession tags the row harness=codex;
 	// overwrite it (same row id → UPSERT, tmux unchanged so it stays alive)
 	// to also stamp the launch sandbox the daemon spawn would have recorded.
-	f.HaveAliveCodexSession(codexConv, codexLabel, "tmux-cdx1", "/tmp/cdx1")
+	f.HaveAliveCodexSession(codexConv, codexLabel, "tmux-cdx1", f.TestCwd("cdx1"))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID:          codexLabel,
 		TmuxSession: "tmux-cdx1",
 		ConvID:      codexConv,
-		Cwd:         "/tmp/cdx1",
+		Cwd:         f.TestCwd("cdx1"),
 		Status:      "running",
 		Harness:     "codex",
 		SandboxMode: "workspace-write",
@@ -135,7 +135,7 @@ func TestDashboardSnapshot_PerAgentHarnessAndSandbox(t *testing.T) {
 	f.HaveMember("mixed", codexConv)
 
 	// A live Claude Code agent in the same group (mixed-harness group).
-	f.HaveAliveSession(ccConv, ccLabel, "tmux-ccx1", "/tmp/ccx1")
+	f.HaveAliveSession(ccConv, ccLabel, "tmux-ccx1", f.TestCwd("ccx1"))
 	f.HaveMember("mixed", ccConv)
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
