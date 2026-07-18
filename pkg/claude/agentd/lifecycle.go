@@ -347,8 +347,10 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		return true
 	}
 	if !lifecycleProbeMatchesTarget(probe, target) {
-		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
-		return false
+		// The command was already delivered; a post-send identity change means
+		// the predecessor transitioned, so preserve intent for callback/reaper
+		// attribution and never retry against a successor.
+		return true
 	}
 	scheduleSoftExitRetryTarget(target, exitCmd, reason, intentRef)
 	return true
