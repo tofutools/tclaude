@@ -72,10 +72,10 @@ func TestResolveApprovalPolicy(t *testing.T) {
 	if _, err := ResolveApprovalPolicy(codex, "nope"); err == nil {
 		t.Fatalf("ResolveApprovalPolicy(codex, nope) must error")
 	}
-	// Claude: unset → the inherit default, carried as the first-class "inherit"
-	// (it emits no --permission-mode; its permission posture is settings.json-driven).
-	if got, err := ResolveApprovalPolicy(claude, ""); err != nil || got != "inherit" {
-		t.Fatalf("ResolveApprovalPolicy(claude, \"\") = %q,%v; want \"inherit\",nil", got, err)
+	// Claude: unset → the `auto` default (a known, in-sandbox-bounded posture a
+	// detached pane cannot deadlock on). `inherit` is now an explicit opt-in.
+	if got, err := ResolveApprovalPolicy(claude, ""); err != nil || got != "auto" {
+		t.Fatalf("ResolveApprovalPolicy(claude, \"\") = %q,%v; want \"auto\",nil", got, err)
 	}
 	if _, err := ResolveApprovalPolicy(claude, ApprovalNever); err == nil {
 		t.Fatalf("ResolveApprovalPolicy(claude, never) must error — claude has no --ask-for-approval")

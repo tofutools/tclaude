@@ -295,11 +295,15 @@ func TestSpawnApprovalLineage_ProfileDerivedBypassRejected(t *testing.T) {
 	assert.Contains(t, string(resp.Raw), "approval_restricted")
 }
 
+// A scribe leaves --harness and --approval unset, so it launches on the Claude
+// default posture (`auto` = approvalAutoInSandbox). A parent that cannot itself
+// run arbitrary commands unattended must therefore not be able to summon one:
+// Claude acceptEdits holds approvalAutoEdits only, so the summon is refused.
 func TestSpawnApprovalLineage_AgentScribeSummonRejected(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const parent = "approval-scribe-parent-aaaa-bbbb-cccccccccccc"
-	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalNever, false)
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName, "acceptEdits", false)
 	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
 
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
@@ -308,6 +312,25 @@ func TestSpawnApprovalLineage_AgentScribeSummonRejected(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusForbidden, rec.Code, "scribe summon body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "approval_restricted")
+}
+
+// The payoff of defaulting Claude to `auto`: a parent that DOES hold unattended
+// in-sandbox execution can summon a default scribe. Under the old `inherit`
+// default the child's posture was unknowable, so lineage charged it the broadest
+// non-bypass capability and refused this summon — a false positive that made
+// every default-spawned agent unable to delegate.
+func TestSpawnApprovalLineage_AgentScribeSummonAllowedFromInSandboxParent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-scribe-ok-parent-aaaa-bbbb-cccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalNever, false)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "lineage-scribe", "slugs": []string{agentd.PermTemplatesManage},
+		"brief": "Author the requested template without exceeding the caller's authority.",
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "scribe summon body=%s", rec.Body.String())
 }
 
 func haveSpawnCapableApprovalParent(t *testing.T, f *testharness.Flow, group, convID, h, approval string, autoReview bool) {

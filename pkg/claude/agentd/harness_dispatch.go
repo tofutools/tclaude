@@ -110,11 +110,11 @@ func sandboxForHarness(name string) string {
 func approvalForHarness(name string) string {
 	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsApproval() {
 		// Validate the harness default before threading it. Claude Code's default
-		// is the first-class `inherit` sentinel — carried verbatim now (the
-		// tri-state fix), it emits no `--permission-mode` at spawn (see
-		// claudeApprovalValue) so an un-overridden Claude agent keeps its
-		// settings.json posture across clone/reincarnate. Codex's `never` default
-		// validates to itself.
+		// is `auto`, so a legacy row with no recorded posture relaunches under the
+		// supervisor-classifier mode rather than the old unknown `inherit` — a
+		// deliberate broadening, bounded to in-sandbox execution, that keeps a
+		// reconstructed agent from deadlocking or failing the lineage guard.
+		// Codex's `never` default validates to itself.
 		if pol, verr := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); verr == nil {
 			return pol
 		}

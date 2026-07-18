@@ -105,7 +105,7 @@ func TestSpawnProfile_FromAgentSeed(t *testing.T) {
 	assert.Empty(t, seed.Name, "a seed is unnamed — the editor makes the human name it")
 	assert.Equal(t, nonDefaultModel, seed.Model,
 		"the seed captures the agent's exact (non-preset) model id, not a blank")
-	assert.Equal(t, "inherit", seed.Approval, "the seed preserves the recorded approval posture")
+	assert.Equal(t, "auto", seed.Approval, "the seed preserves the recorded approval posture")
 	require.NotNil(t, seed.AutoReview, "the seed preserves an explicit resolved auto-review setting")
 	assert.False(t, *seed.AutoReview)
 	assert.Equal(t, "grant", seed.PermissionOverrides["human.notify"],

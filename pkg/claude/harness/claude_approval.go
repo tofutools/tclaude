@@ -14,9 +14,10 @@ import (
 // `--permission-mode`.
 //
 //   - inherit           : add no override — Claude uses your settings.json
-//     permission rules (allow/deny/ask) as-is. The default;
-//     NORMALIZES to "" (omit). Preserves today's behaviour
-//     (an un-chosen Claude spawn passes no --permission-mode).
+//     permission rules (allow/deny/ask) as-is. NORMALIZES to
+//     "" (omit), so a spawn that chooses it passes no
+//     --permission-mode. No longer the default — see
+//     claudeApproval below.
 //   - default           : standard interactive permissions — prompts before
 //     every non-read-only action.
 //   - plan              : read-only planning — explores/reads but doesn't edit.
@@ -42,21 +43,36 @@ const (
 // duplicating a harness-owned policy token.
 const ClaudePermissionInherit = claudePermInherit
 
-// claudeApproval is Claude Code's ApprovalCatalog. The default is `inherit`:
-// like the sandbox default, a tclaude-spawned Claude agent keeps whatever
-// permission posture the operator configured in settings.json (the agentd
-// approval popup + the operator's allow/deny rules), never silently overridden.
-// `inherit` normalizes to "" so an un-chosen spawn passes no `--permission-mode`
-// — exactly today's behaviour. The explicit modes are the per-session override.
+// claudeApproval is Claude Code's ApprovalCatalog. The default is `auto`: a
+// supervisor model approves safe actions and blocks unsafe ones, so a
+// tclaude-spawned (detached, unattended) Claude agent can work without waiting
+// on a prompt no human is at the pane to answer.
 //
-// Note the contract tension: ApprovalCatalog.DefaultPolicy is documented as a
-// *non-escalating* default (Codex returns `never`). For Claude the operator's
-// settings.json IS that posture — the agentd approval flow already handles
-// prompts out-of-band — so `inherit` (= don't touch it) is the right
-// non-escalating choice here, not a forced mode.
+// The default used to be `inherit` (= emit no `--permission-mode` and keep the
+// operator's settings.json posture). That satisfied the letter of the
+// *non-escalating* contract but was a poor default in practice, for two
+// reasons:
+//
+//   - settings.json is usually an interactive posture, so an un-chosen spawn
+//     inherited prompts and the detached pane blocked — the JOH-167 deadlock
+//     the contract exists to prevent, reintroduced through the default.
+//   - `inherit` is unknowable at spawn time, so approval lineage
+//     (classifyApprovalLineage) can only credit an inherit PARENT with
+//     approvalAutoBaseline while charging an inherit CHILD the broadest
+//     non-bypass capability. A default-spawned agent therefore could not mint
+//     capable children — every delegation hit the spawn approval guard.
+//
+// `auto` is still non-escalating in the sense the contract cares about: per
+// TCL-92 its classifier tightens what runs INSIDE the sandbox and is not a
+// boundary-escalation grant (it holds approvalAutoInSandbox, not
+// approvalAutoReviewer or approvalAutoUnreviewed). It is a known, bounded
+// posture rather than an unknown one, which is what makes lineage tractable.
+//
+// `inherit` remains selectable as an explicit per-session override for an
+// operator who really does want their settings.json posture verbatim.
 type claudeApproval struct{}
 
-func (claudeApproval) DefaultPolicy() string { return claudePermInherit }
+func (claudeApproval) DefaultPolicy() string { return claudePermAuto }
 
 // ValidatePolicy normalizes and validates a requested permission mode,
 // preserving the tri-state the overlay sites depend on (mirrors
@@ -105,9 +121,12 @@ func claudeApprovalValue(policy string) string {
 	}
 }
 
-// Modes lists the selectable permission modes for spawn UIs: inherit (the
-// recommended default) first, then the six real modes roughly by ascending
-// autonomy. A fresh slice each call so a caller can't mutate the set.
+// Modes lists the selectable permission modes for spawn UIs: the `inherit`
+// escape hatch first, then the six real modes roughly by ascending autonomy.
+// Order is presentation only — the spawn dialog and profile editor preselect
+// and tag "(recommended)" by matching DefaultPolicy() (now `auto`) against the
+// option VALUE, not by position. A fresh slice each call so a caller can't
+// mutate the set.
 func (claudeApproval) Modes() []string {
 	return []string{
 		claudePermInherit, claudePermPlan, claudePermDefault,
@@ -122,7 +141,7 @@ func (claudeApproval) Modes() []string {
 // renders in its warn colour. Keyed by mode value. (Source: Claude Code
 // permission-modes docs, v2.1.195.)
 var claudePermissionModeHelp = map[string]string{
-	claudePermInherit: "Use your settings.json permission rules and the agentd approval popup as-is.",
+	claudePermInherit: "Use your settings.json permission rules and the agentd approval popup as-is. ⚠ Whatever posture that is — usually an interactive one — a detached agent can block on a prompt no one answers, and it delegates poorly (an unknown posture can't mint capable child agents).",
 	claudePermPlan:    "Read-only planning — Claude explores and proposes a plan without editing files. ⚠ Still prompts on a write, so a detached agent can block if it tries one.",
 	claudePermDefault: "Standard interactive permissions — prompts before every non-read-only action. ⚠ A detached agent (no human at the pane) can block on a prompt no one answers.",
 	claudePermAccept:  "Auto-approve file edits + common filesystem commands (mkdir/touch/mv/cp/rm) in the working dir; other actions prompt. ⚠ Can still block a detached agent on a non-edit prompt.",

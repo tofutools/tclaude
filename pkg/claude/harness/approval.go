@@ -54,10 +54,12 @@ type ApprovalCatalog interface {
 //     this branch only guards a future harness that leaves Approval nil.
 //   - Codex: an empty request resolves to the secure DefaultPolicy (never); any
 //     explicit policy is validated.
-//   - Claude Code: an empty request resolves to its DefaultPolicy (inherit),
-//     which ValidatePolicy normalizes back to "" — so an un-chosen Claude spawn
-//     passes no `--permission-mode` and keeps the operator's settings.json
-//     posture (+ the agentd approval popup).
+//   - Claude Code: an empty request resolves to its DefaultPolicy (auto), so an
+//     un-chosen Claude spawn launches with `--permission-mode auto` — a known,
+//     in-sandbox-bounded posture the detached pane cannot deadlock on. An
+//     operator who wants their settings.json posture verbatim selects `inherit`
+//     explicitly, which ValidatePolicy carries as a first-class sentinel and
+//     the spawner collapses to "omit the flag".
 //
 // requested is trimmed first, so surrounding whitespace never leaks into the
 // flag.

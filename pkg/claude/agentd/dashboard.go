@@ -1078,7 +1078,7 @@ type dashboardHarness struct {
 	// The ApprovalCatalog parallels SandboxModes.
 	ApprovalModes []string `json:"approval_modes"`
 	// DefaultApproval is the recommended approval mode the dialog pre-selects
-	// (Claude Code: inherit). "" when ApprovalModes is empty.
+	// (Claude Code: auto). "" when ApprovalModes is empty.
 	DefaultApproval string `json:"default_approval"`
 	// ApprovalModeHelp maps each approval mode to a one-line hint (notably
 	// whether it is safe for a detached agent). {} (not null) when the harness
