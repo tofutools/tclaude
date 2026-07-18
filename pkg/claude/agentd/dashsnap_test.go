@@ -27,11 +27,13 @@ package agentd_test
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,7 +63,26 @@ func TestDashSnap(t *testing.T) {
 	// the session cookie on every request (so a browser is authed without a login
 	// flow), and popupBaseURL is left empty so the loopback Origin pin is off —
 	// the browser's same-origin fetches carry a Referer and pass auth.
-	srv := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+	//
+	// One guard wraps it: the retire-busy state relies on an InitJS fetch hold
+	// to keep its retire POST inside the browser, and that seam must fail
+	// CLOSED. If the production dialog ever stops routing through the held
+	// window.fetch (different primitive, changed URL), the escaped request is
+	// recorded and rejected here — 503, nothing mutated — instead of retiring
+	// the live fixture agent and poisoning the later wizard-skin pass. The
+	// count is asserted to be zero after the matrix.
+	var busyRetireEscapes atomic.Int64
+	dash := agentd.BuildDashboardHandlerForTest()
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/agents/"+retireBusyConv+"/retire" {
+			busyRetireEscapes.Add(1)
+			http.Error(w, "dashsnap: the retire-busy POST must be held open in the browser, never reach the daemon",
+				http.StatusServiceUnavailable)
+			return
+		}
+		dash.ServeHTTP(w, r)
+	})
+	srv := httptest.NewServer(guarded)
 	defer srv.Close()
 
 	states := dashSnapStates()
@@ -136,6 +157,10 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 	t.Logf("dashsnap: %d states, %d failed, captured in %s", len(shots), len(failed), elapsed.Round(time.Second))
 	t.Logf("contact sheet: file://%s", sheet)
 
+	if n := busyRetireEscapes.Load(); n != 0 {
+		t.Errorf("retire-busy: %d retire request(s) escaped the browser fetch hold and reached the daemon — "+
+			"the InitJS seam no longer matches the production request path (rejected without mutating)", n)
+	}
 	if len(failed) > 0 {
 		t.Fatalf("dashsnap: %d/%d states failed to capture: %s (sheet: %s)",
 			len(failed), len(shots), strings.Join(failed, ", "), sheet)
@@ -3662,8 +3687,10 @@ func retireDialogIdleJS() string {
   var wizardTitle = document.querySelector('#retire-title .retire-title-wizard');
   if (wizard) {
     if (getComputedStyle(wizardTitle).display === 'none' || getComputedStyle(regularTitle).display !== 'none') throw new Error('retire-idle: wizard title copy missing');
-  } else if (getComputedStyle(regularTitle).display === 'none' || getComputedStyle(wizardTitle).display !== 'none') {
-    throw new Error('retire-idle: regular title copy missing');
+    if (wizardTitle.textContent.trim() !== 'Banish this familiar?') throw new Error('retire-idle: wizard title copy changed: ' + wizardTitle.textContent);
+  } else {
+    if (getComputedStyle(regularTitle).display === 'none' || getComputedStyle(wizardTitle).display !== 'none') throw new Error('retire-idle: regular title copy missing');
+    if (regularTitle.textContent.trim() !== 'Retire this agent?') throw new Error('retire-idle: regular title copy changed: ' + regularTitle.textContent);
   }
 })();`, retireWorktreeDir, "tcl-491-idle-probe")
 }

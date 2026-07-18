@@ -294,8 +294,24 @@ func Capture(cfg Config) ([]Shot, error) {
 	for _, st := range cfg.States {
 		shot := Shot{State: st}
 		start := time.Now()
-		png, capErr := captureState(page, cfg, st)
+		png, tainted, capErr := captureState(page, cfg, st)
 		shot.Elapsed = time.Since(start)
+		if tainted {
+			// The state's InitJS script could not be confirmed removed, so this
+			// page would carry it into every later navigation. Isolation is the
+			// seam's contract: replace the page rather than continue on hidden
+			// state. A failed replacement aborts the run — there is no clean page
+			// to continue on.
+			if renewErr := rod.Try(func() {
+				_ = page.Close()
+				page = browser.MustPage("")
+				page.MustSetViewport(cfg.Width, cfg.Height, 1, false)
+			}); renewErr != nil {
+				shot.Err = errors.Join(capErr, renewErr).Error()
+				shots = append(shots, shot)
+				return shots, fmt.Errorf("replace page after unconfirmed InitJS removal: %w", renewErr)
+			}
+		}
 		if capErr != nil {
 			shot.Err = capErr.Error()
 			var evalErr *rod.EvalError
@@ -333,11 +349,17 @@ func configureScrollbarVisibility(l *launcher.Launcher, show bool) {
 // becomes a returned error, not a panic) and under a per-state deadline (so one
 // stuck state can't consume the whole matrix's budget).
 //
+// tainted reports that the state's InitJS script was installed but its removal
+// could not be CONFIRMED — the page may still carry the script, so the caller
+// must not reuse it for later states. A confirmed removal failure also joins
+// the returned error, so a leak can never pass silently.
+//
 // It deliberately does NOT WaitDOMStable: the dashboard repaints on a 2s poll
 // (+ wizard FX), so the DOM is never "stable" and the wait would block for
 // seconds every state. Waiting for the ready selector + a fixed settle yields a
 // coherent frame far faster.
-func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) {
+func captureState(page *rod.Page, cfg Config, st State) (png []byte, tainted bool, err error) {
+	var cleanupErr error
 	err = rod.Try(func() {
 		sp := page.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
 		defer sp.CancelTimeout() // release the per-state timeout's timer
@@ -346,10 +368,20 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 			if initErr != nil {
 				panic(initErr)
 			}
-			// Remove on the untimed page: the init script must not leak into the
-			// next state's navigation even when this state's deadline is spent.
+			tainted = true
+			// Remove under a FRESH bounded context: the state's own deadline may
+			// already be spent when this defer runs, and the removal must neither
+			// inherit that dead deadline nor hang the matrix on a stalled CDP.
+			// Only a confirmed removal clears tainted; a failure is surfaced (via
+			// cleanupErr below) and makes the caller retire the page.
 			defer func() {
-				_ = proto.PageRemoveScriptToEvaluateOnNewDocument{Identifier: res.Identifier}.Call(page)
+				cp := page.Timeout(10 * time.Second)
+				defer cp.CancelTimeout()
+				if rmErr := (proto.PageRemoveScriptToEvaluateOnNewDocument{Identifier: res.Identifier}).Call(cp); rmErr != nil {
+					cleanupErr = fmt.Errorf("remove InitJS script (would leak into later states): %w", rmErr)
+					return
+				}
+				tainted = false
 			}()
 		}
 		width, height := cfg.Width, cfg.Height
@@ -481,7 +513,10 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 
 		png = sp.MustScreenshot()
 	})
-	return png, err
+	if cleanupErr != nil {
+		err = errors.Join(err, cleanupErr)
+	}
+	return png, tainted, err
 }
 
 func browserKey(name string) input.Key {
