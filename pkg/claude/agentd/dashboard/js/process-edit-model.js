@@ -82,14 +82,12 @@ export function blankEditView(id) {
       start: 'start',
       nodes: {
         start: { type: 'start' },
-        end: { type: 'end', result: 'success' },
       },
     },
     edges: [
       { from: '', outcome: START_OUTCOME, to: 'start' },
-      { from: 'start', outcome: 'pass', to: 'end' },
     ],
-    layout: { nodes: { start: { x: 120, y: 90 }, end: { x: 120, y: 320 } } },
+    layout: { nodes: { start: { x: 120, y: 90 } } },
     sourceHash: '',
     semanticHash: '',
     currentRef: '',

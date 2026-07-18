@@ -41,11 +41,25 @@ async function openBlank(t) {
   return { harness, host, editor };
 }
 
+async function seedConnectedEnd(harness, editor) {
+  editor.model.template.nodes.end = { type: 'end', result: 'success' };
+  editor.model.edges.push({ from: 'start', outcome: 'pass', to: 'end' });
+  editor.model.layout.nodes.end = { x: 120, y: 320 };
+  await harness.act(() => editor.refresh({ fit: true }));
+}
+
 test('Preact editor shell keeps one graph host across chrome, selection, and model snapshots', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   const graphHost = host.querySelector('.process-editor-canvas-host');
   const graphRoot = host.querySelector('.process-graph');
   assert.ok(graphHost && graphRoot);
+  assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId), ['start']);
+  assert.equal(host.querySelector('.process-node[data-node-id="end"]'), null,
+    'the production blank controller/Preact path does not recreate an End node');
+  assert.equal(host.querySelectorAll('.process-edge').length, 0);
+  assert.equal(editor.selection, null);
+  assert.equal(editor.model.dirty, false);
+  assert.equal(editor.model.canUndo, false);
   assert.equal(host.querySelector('.process-editor-title')?.textContent, undefined,
     'a blank template owns an editable id field');
 
@@ -65,6 +79,63 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   editor.destroy();
   editor.destroy();
   assert.equal(host.childNodes.length, 0);
+});
+
+test('loaded templates retain their existing End node and exact editor payload', async (t) => {
+  const harness = await createPreactHarness(t);
+  const previous = { fetch: globalThis.fetch, raf: globalThis.requestAnimationFrame, css: globalThis.CSS };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.CSS = { escape: (value) => String(value) };
+  const loaded = {
+    template: {
+      apiVersion: 'tclaude.dev/v1alpha1', kind: 'ProcessTemplate', id: 'loaded-end',
+      name: 'Loaded unchanged', start: 'begin', params: {},
+      nodes: {
+        begin: { type: 'start' },
+        done: { type: 'end', result: 'success', name: 'Done' },
+      },
+    },
+    edges: [
+      { from: '', outcome: 'start', to: 'begin' },
+      { from: 'begin', outcome: 'pass', to: 'done' },
+    ],
+    layout: { nodes: { begin: { x: 120, y: 90 }, done: { x: 120, y: 320 } } },
+    sourceHash: 'loaded-source', semanticHash: 'loaded-semantic',
+    currentRef: 'loaded-end@sha256:loaded-source',
+  };
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith('/v1/process/templates/loaded-end?')) {
+      return { ok: true, status: 200, statusText: 'OK', json: async () => structuredClone(loaded) };
+    }
+    if (url === '/api/process/snippets') {
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ generation: 0, snippets: [] }) };
+    }
+    throw new Error(`unexpected loaded-template request ${url}`);
+  };
+  t.after(() => {
+    if (previous.fetch === undefined) delete globalThis.fetch; else globalThis.fetch = previous.fetch;
+    if (previous.raf === undefined) delete globalThis.requestAnimationFrame; else globalThis.requestAnimationFrame = previous.raf;
+    if (previous.css === undefined) delete globalThis.CSS; else globalThis.CSS = previous.css;
+  });
+  const { openTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  let editor;
+  await harness.act(async () => {
+    editor = await openTemplateEditor(host, {
+      id: 'loaded-end',
+      config: { validation: { delayMs: 60_000, fetchFn: async () => ({ ok: true, json: async () => ({ diagnostics: [] }) }) } },
+    });
+  });
+  t.after(() => editor?.destroy());
+  assert.deepEqual(editor.model.saveBody(), {
+    template: loaded.template, edges: loaded.edges, layout: loaded.layout, sourceHash: loaded.sourceHash,
+  });
+  assert.deepEqual([...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId).sort(), ['begin', 'done']);
+  assert.ok(host.querySelector('.process-node[data-node-id="done"]'));
+  assert.equal(editor.model.node('done').type, 'end');
+  assert.equal(editor.model.dirty, false);
+  assert.equal(editor.model.canUndo, false);
+  editor.destroy();
 });
 
 test('Preact editor layering is transient across focus, read-only selection, and rerender', async (t) => {
@@ -438,6 +509,7 @@ test('Preact editor projects every canonical node kind through the inside-label 
 
 test('Preact editor reveals only diagnostic-bearing node overlays without moving ports or changing selection semantics', async (t) => {
   const { harness, host, editor } = await openBlank(t);
+  await seedConnectedEnd(harness, editor);
   const beforeSave = editor.model.saveBody();
   const layoutGeometry = () => {
     const layout = editor.graph.layoutSnapshot();
@@ -903,6 +975,7 @@ test('stacked scribe preview alone owns Tab and Escape, then returns focus to th
 
 test('real graph adapter centers node and edge diagnostics without exposing widget state', async (t) => {
   const { harness, host, editor } = await openBlank(t);
+  await seedConnectedEnd(harness, editor);
   const svg = host.querySelector('.process-graph-svg');
   svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 });
   await harness.act(() => editor.validation.applyDiagnostics([
@@ -948,6 +1021,7 @@ test('production node and params dialogs stay inside the editor island root', as
 
 test('production node dialog generations isolate forced same-turn descriptor replacement', async (t) => {
   const { harness, host, editor } = await openBlank(t);
+  await seedConnectedEnd(harness, editor);
   const nodeA = editor.model.template.start;
   const nodeB = Object.keys(editor.model.template.nodes).find((id) => id !== nodeA);
   const originalA = structuredClone(editor.model.node(nodeA));

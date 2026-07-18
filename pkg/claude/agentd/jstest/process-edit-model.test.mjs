@@ -610,16 +610,26 @@ test('editability config guards mutations for the future run-editing surface', (
   assert.equal(model.template.nodes.build.name, 'Rebuild');
 });
 
-test('blankEditView scaffolds a minimal valid editor document', () => {
+test('blankEditView scaffolds only the start node and preserves blank-editor state', () => {
   const blank = blankEditView('fresh');
   const model = new ProcessEditModel(blank, {});
   assert.equal(model.template.id, 'fresh');
-  assert.ok(model.template.nodes.start);
-  assert.ok(model.edges.some(edge => edge.from === '' && edge.outcome === 'start'));
+  assert.deepEqual(model.template.nodes, { start: { type: 'start' } });
+  assert.deepEqual(model.edges, [{ from: '', outcome: 'start', to: 'start' }]);
+  assert.deepEqual(model.layout, { nodes: { start: { x: 120, y: 90 } } });
   assert.equal(model.sourceHash, '', 'first save must CAS against an empty head');
+  assert.equal(model.dirty, false);
+  assert.equal(model.canUndo, false);
+  assert.equal(model.canRedo, false);
   const graph = model.graph();
-  assert.equal(graph.nodes.length, 2);
-  assert.equal(graph.edges.length, 1);
+  assert.deepEqual(graph.nodes.map(({ id, type }) => ({ id, type })), [{ id: 'start', type: 'start' }]);
+  assert.deepEqual(graph.edges, []);
+  assert.deepEqual(model.saveBody(), {
+    template: blank.template,
+    edges: blank.edges,
+    layout: blank.layout,
+    sourceHash: '',
+  });
 });
 
 test('setStart repoints the start pseudo edge exactly once', () => {

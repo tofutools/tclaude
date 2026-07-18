@@ -59,6 +59,27 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.template.id = id",
 		"setParams(params)",
 	)
+	blankStart := strings.Index(editModel, "export function blankEditView(")
+	if blankStart < 0 {
+		t.Fatal("process-edit-model.js blankEditView body missing")
+	}
+	blankEnd := strings.Index(editModel[blankStart:], "\n}\n\n// A blank shell")
+	if blankEnd < 0 {
+		t.Fatal("process-edit-model.js blankEditView body missing")
+	}
+	blankFactory := editModel[blankStart : blankStart+blankEnd]
+	mustContain("process-edit-model.js blankEditView", blankFactory,
+		"start: 'start'",
+		"start: { type: 'start' }",
+		"{ from: '', outcome: START_OUTCOME, to: 'start' }",
+		"layout: { nodes: { start: { x: 120, y: 90 } } }",
+		"sourceHash: ''",
+	)
+	for _, forbidden := range []string{"end: {", "to: 'end'", "result: 'success'"} {
+		if strings.Contains(blankFactory, forbidden) {
+			t.Errorf("process-edit-model.js blankEditView still prepopulates End via %q", forbidden)
+		}
+	}
 	externalChange := read("js/process-external-change.js")
 	mustContain("process-external-change.js", externalChange,
 		"export function reconcileExternalChange(",
