@@ -650,8 +650,10 @@ func runNew(params *NewParams) error {
 	}
 
 	// Build claude command with all environment variables forwarded
+	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
 	additionalEnv := map[string]string{
-		"TCLAUDE_SESSION_ID": sessionID,
+		"TCLAUDE_SESSION_ID":      sessionID,
+		"TCLAUDE_EXIT_GENERATION": exitGeneration,
 	}
 	if effectiveSandbox != nil {
 		for _, entry := range effectiveSandbox.Effective.Environment {
@@ -739,6 +741,29 @@ func runNew(params *NewParams) error {
 		rowConvID = params.SessionID
 	}
 
+	launchCreated := time.Now()
+	state := &SessionState{
+		ID:                     sessionID,
+		TmuxSession:            tmuxSession,
+		Cwd:                    cwd,
+		ConvID:                 rowConvID,
+		Status:                 StatusIdle,
+		Harness:                h.Name,
+		SandboxMode:            sandboxDescr(sandboxMode, params.PermissionProfile),
+		EffectiveSandbox:       effectiveSandbox,
+		ApprovalPolicy:         recordedApprovalPolicy,
+		ApprovalAutoReview:     autoReview,
+		AskUserQuestionTimeout: askTimeout,
+		Created:                launchCreated,
+		Updated:                launchCreated,
+	}
+	// Establish the fresh launch identity before any private barrier/token
+	// filesystem setup. Row reuse therefore cannot retain predecessor callback
+	// or lifecycle-intent authority when that optional setup degrades.
+	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
+		return fmt.Errorf("prepare managed pane exit identity: %w", err)
+	}
+
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		EnvExports:             envExports,
 		ShellEnvironment:       sandboxSnapshotEnvironment(effectiveSandbox),
@@ -766,6 +791,22 @@ func runNew(params *NewParams) error {
 		// overwriting another launch's proof-scoped authority.
 		harnessCmd = commandWithFileCleanup(harnessCmd, launchProfilePath)
 	}
+	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
+	if err != nil {
+		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
+			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
+		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
+	} else if err := db.MarkSessionExitLaunchPending(sessionID, exitGeneration); err != nil {
+		slog.Warn("exit audit: launch gate state unavailable; continuing without callback",
+			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
+		exitGuard.abort()
+		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
+	}
+	defer exitGuard.abort()
+	// The existing cwd proof remains the outer bootstrap below so it can report
+	// readiness to the parent; the actual harness stays behind this private,
+	// bounded gate until its pane-local exit hook and durable binding are ready.
+	harnessCmd = exitGuard.wrap(harnessCmd)
 	proofReadyPath := ""
 	proofToken := params.CwdWriteProof
 	if proofToken == "" {
@@ -789,6 +830,8 @@ func runNew(params *NewParams) error {
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
 		return err
 	}
+	exitGuard.armPaneHook()
+	exitGuard.bind()
 	if proofReadyPath != "" {
 		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
 			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
@@ -829,38 +872,8 @@ func runNew(params *NewParams) error {
 	// Get the PID of claude in the tmux session
 	pid := ParsePIDFromTmux(tmuxSession)
 
-	// Create session state (starts as idle, waiting for user input).
-	// Tag it with the harness it was spawned under so the tag is set on
-	// the row's first write rather than relying on the DB default —
-	// today always "claude"; the same line carries "codex" once
-	// --harness selects a different harness.
-	state := &SessionState{
-		ID:          sessionID,
-		TmuxSession: tmuxSession,
-		PID:         pid,
-		Cwd:         cwd,
-		ConvID:      rowConvID,
-		Status:      StatusIdle,
-		Harness:     h.Name,
-		// Record the resolved launch sandbox descriptor so the dashboard can
-		// badge it (JOH-162): the --sandbox mode, or — when the agent runs
-		// under a managed permission profile (codex -p <name>, the JOH-207
-		// path) — the profile name. "" for a harness with no launch sandbox
-		// flag (Claude Code). Stored verbatim, never coalesced; this is the
-		// only write of the column, so it can't be re-derived later.
-		SandboxMode:        sandboxDescr(sandboxMode, params.PermissionProfile),
-		EffectiveSandbox:   effectiveSandbox,
-		ResumeProvenance:   resumeProvenance,
-		ApprovalPolicy:     recordedApprovalPolicy,
-		ApprovalAutoReview: autoReview,
-		// Record the resolved AskUserQuestion idle-timeout so a relaunch (resume /
-		// clone / reincarnate) can PRESERVE it — inherit/5m/never carried across
-		// the handoff instead of reverting to global settings.json (schema v97).
-		// "" for an un-chosen ask-timeout or a non-Claude harness. Stored verbatim.
-		AskUserQuestionTimeout: askTimeout,
-		Created:                time.Now(),
-		Updated:                time.Now(),
-	}
+	state.PID = pid
+	state.ResumeProvenance = resumeProvenance
 
 	if err := SaveSessionState(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
@@ -885,6 +898,10 @@ func runNew(params *NewParams) error {
 		if err := db.UpdateSessionEffort(sessionID, effort); err != nil {
 			slog.Warn("failed to seed Codex session effort", "session_id", sessionID, "error", err)
 		}
+	}
+	if err := exitGuard.release(); err != nil {
+		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)

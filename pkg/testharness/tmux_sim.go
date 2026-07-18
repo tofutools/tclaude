@@ -100,7 +100,8 @@ type TmuxSim struct {
 	// pin "snapshot collapses to ONE list-sessions and ZERO
 	// has-session calls". An accessor rather than a getter on the
 	// whole map so the lock stays internal.
-	commandCounts map[string]int
+	commandCounts   map[string]int
+	mutationTargets map[string][]string
 	// commandFaults are one-shot subprocess faults, keyed by tmux verb. They
 	// are consumed before the verb's ordinary simulated behavior: fail makes
 	// Run exit 1; hang makes it run `sleep` for the requested duration. These
@@ -121,18 +122,26 @@ type tmuxCommandFault struct {
 }
 
 type tmuxSession struct {
-	name    string
-	cwd     string
-	pane    PaneSim
-	panePID int
+	name           string
+	paneID         string
+	cwd            string
+	pane           PaneSim
+	panePID        int
+	remainOnExit   bool
+	paneDiedHook   string
+	paneDead       bool
+	exitStatus     string
+	exitSignal     string
+	exitGeneration string
 }
 
 func newTmuxSim() *TmuxSim {
 	return &TmuxSim{
-		sessions:      map[string]*tmuxSession{},
-		buffers:       map[string]string{},
-		commandCounts: map[string]int{},
-		commandFaults: map[string][]tmuxCommandFault{},
+		sessions:        map[string]*tmuxSession{},
+		buffers:         map[string]string{},
+		commandCounts:   map[string]int{},
+		mutationTargets: map[string][]string{},
+		commandFaults:   map[string][]tmuxCommandFault{},
 	}
 }
 
@@ -155,7 +164,7 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	}
 	switch {
 	case len(args) >= 3 && args[0] == "has-session" && args[1] == "-t":
-		if name := t.resolveTarget(args[2], false); name != "" && t.IsAlive(name) {
+		if name := t.resolveTarget(args[2], false); name != "" && t.hasSession(name) {
 			return exec.Command(trueBin)
 		}
 		return exec.Command(falseBin)
@@ -188,11 +197,63 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	case len(args) >= 3 && args[0] == "paste-buffer":
 		t.pasteBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
+		t.recordMutationTarget("kill-session", args[2])
 		t.killSession(args[2])
+	case len(args) >= 3 && args[0] == "kill-pane" && args[1] == "-t":
+		t.recordMutationTarget("kill-pane", args[2])
+		t.killSession(args[2])
+	case len(args) >= 1 && args[0] == "show-hooks":
+		return exec.Command(echoBin, "pane-died")
 	case len(args) >= 2 && args[0] == "display-message" && args[1] == "-p":
 		return t.displayMessage(args)
 	case len(args) >= 1 && args[0] == "capture-pane":
 		return t.capturePane(args)
+	case len(args) >= 6 && args[0] == "set-option" && args[1] == "-p" && args[2] == "-u" && args[3] == "-t":
+		name := t.resolveTarget(args[4], true)
+		if name == "" {
+			return exec.Command(falseBin)
+		}
+		t.mu.Lock()
+		if s := t.sessions[name]; s != nil && args[5] == "@tclaude_exit_generation" {
+			s.exitGeneration = ""
+		}
+		t.mu.Unlock()
+		return exec.Command(trueBin)
+	case len(args) >= 6 && args[0] == "set-option" && args[1] == "-p" && args[2] == "-t":
+		name := t.resolveTarget(args[3], true)
+		if name == "" {
+			return exec.Command(falseBin)
+		}
+		t.mu.Lock()
+		if s := t.sessions[name]; s != nil && args[4] == "remain-on-exit" {
+			s.remainOnExit = args[5] == "on"
+		} else if s != nil && args[4] == "@tclaude_exit_generation" {
+			s.exitGeneration = args[5]
+		}
+		t.mu.Unlock()
+		return exec.Command(trueBin)
+	case len(args) >= 6 && args[0] == "set-hook" && args[1] == "-p" && args[2] == "-t":
+		name := t.resolveTarget(args[3], true)
+		if name == "" || args[4] != "pane-died" {
+			return exec.Command(falseBin)
+		}
+		t.mu.Lock()
+		if s := t.sessions[name]; s != nil {
+			s.paneDiedHook = args[5]
+		}
+		t.mu.Unlock()
+		return exec.Command(trueBin)
+	case len(args) >= 6 && args[0] == "set-hook" && args[1] == "-p" && args[2] == "-u" && args[3] == "-t":
+		name := t.resolveTarget(args[4], true)
+		if name == "" || args[5] != "pane-died" {
+			return exec.Command(falseBin)
+		}
+		t.mu.Lock()
+		if s := t.sessions[name]; s != nil {
+			s.paneDiedHook = ""
+		}
+		t.mu.Unlock()
+		return exec.Command(trueBin)
 	case len(args) >= 3 && args[0] == "set-option" && args[1] == "-t":
 		// Pane-typed like the real command, so the production set-option
 		// sites' ExactTarget(name)+":" form is exercised through the same
@@ -208,6 +269,18 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+func (t *TmuxSim) recordMutationTarget(verb, target string) {
+	t.mu.Lock()
+	t.mutationTargets[verb] = append(t.mutationTargets[verb], target)
+	t.mu.Unlock()
+}
+
+func (t *TmuxSim) MutationTargets(verb string) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.mutationTargets[verb]...)
 }
 
 // FailNextCommand makes the next invocation of verb return exit status 1
@@ -312,14 +385,63 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	name := t.resolveTarget(target, true)
 	t.mu.Lock()
 	s, ok := t.sessions[name]
-	t.mu.Unlock()
-	if !ok || (s.pane != nil && !s.pane.IsAlive()) {
+	if !ok {
+		t.mu.Unlock()
 		return exec.Command(falseBin)
 	}
-	if len(args) > 0 && args[len(args)-1] == "#{pane_current_path}" {
-		return exec.Command(echoBin, s.cwd)
+	dead := !t.sessionPaneAlive(s)
+	remainOnExit, cwd, paneID, panePID := s.remainOnExit, s.cwd, s.paneID, s.panePID
+	exitStatus, exitSignal, exitGeneration := s.exitStatus, s.exitSignal, s.exitGeneration
+	t.mu.Unlock()
+	if dead && !remainOnExit {
+		return exec.Command(falseBin)
 	}
-	return exec.Command(echoBin, strconv.Itoa(s.panePID))
+	format := args[len(args)-1]
+	if format == "#{pane_current_path}" {
+		return exec.Command(echoBin, cwd)
+	}
+	if format == "#{pane_dead}" {
+		if dead {
+			return exec.Command(echoBin, "1")
+		}
+		return exec.Command(echoBin, "0")
+	}
+	if format == "#{pane_id}" {
+		return exec.Command(echoBin, paneID)
+	}
+	if format == "#{pane_dead}|#{pane_pid}" {
+		deadValue := "0"
+		if dead {
+			deadValue = "1"
+		}
+		return exec.Command(echoBin, deadValue+"|"+strconv.Itoa(panePID))
+	}
+	if format == "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
+		deadValue := "0"
+		if dead {
+			deadValue = "1"
+		}
+		return exec.Command(echoBin, name+"|"+paneID+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+	}
+	if format == "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
+		deadValue := "0"
+		if dead {
+			deadValue = "1"
+		}
+		return exec.Command(echoBin, name+"|"+paneID+"|"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+	}
+	return exec.Command(echoBin, strconv.Itoa(panePID))
+}
+
+func (t *TmuxSim) sessionPaneAlive(s *tmuxSession) bool {
+	return s != nil && !s.paneDead && (s.pane == nil || s.pane.IsAlive())
+}
+
+func (t *TmuxSim) hasSession(name string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[name]
+	return s != nil && (t.sessionPaneAlive(s) || s.remainOnExit)
 }
 
 // setBuffer models `tmux set-buffer -b <name> <data>` — it stores the
@@ -396,6 +518,21 @@ func (t *TmuxSim) pasteBuffer(args []string) {
 // Returns the resolved session-table key, or "" when nothing matches (an
 // ambiguous prefix errors in real tmux; the sim treats it as no match).
 func (t *TmuxSim) resolveTarget(target string, paneTyped bool) string {
+	if strings.HasPrefix(strings.TrimPrefix(target, "="), "%") {
+		paneID := strings.TrimPrefix(strings.TrimPrefix(target, "="), "%")
+		pid, err := strconv.Atoi(paneID)
+		if err != nil {
+			return ""
+		}
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		for name, session := range t.sessions {
+			if strings.TrimPrefix(session.paneID, "%") == strconv.Itoa(pid) {
+				return name
+			}
+		}
+		return ""
+	}
 	name, _, hadColon := strings.Cut(target, ":")
 	if paneTyped && !hadColon && strings.HasPrefix(name, "=") {
 		return ""
@@ -470,7 +607,7 @@ func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.nextPID++
-	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, panePID: t.nextPID}
+	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
 }
 
 // MarkAlive registers a session without an attached pane sim. Used for
@@ -482,7 +619,17 @@ func (t *TmuxSim) MarkAlive(name string) {
 	defer t.mu.Unlock()
 	if _, ok := t.sessions[name]; !ok {
 		t.nextPID++
-		t.sessions[name] = &tmuxSession{name: name, panePID: t.nextPID}
+		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
+	}
+}
+
+// SetPaneIdentityForTest gives a simulated pane independently controlled tmux
+// pane and operating-system process identities.
+func (t *TmuxSim) SetPaneIdentityForTest(name, paneID string, panePID int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[name]; s != nil {
+		s.paneID, s.panePID = paneID, panePID
 	}
 }
 
@@ -494,6 +641,33 @@ func (t *TmuxSim) MarkOffline(name string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.sessions, name)
+}
+
+// MarkPaneDead retains a pane-shaped corpse with exact tmux status/signal
+// evidence, matching pane-local remain-on-exit behavior.
+func (t *TmuxSim) MarkPaneDead(name string, exitCode *int, signal string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[name]
+	if s == nil {
+		return
+	}
+	s.remainOnExit = true
+	s.paneDead = true
+	s.exitStatus = ""
+	if exitCode != nil {
+		s.exitStatus = strconv.Itoa(*exitCode)
+	}
+	s.exitSignal = signal
+}
+
+// SetPaneExitGeneration binds retained-pane evidence to one simulated launch.
+func (t *TmuxSim) SetPaneExitGeneration(name, generation string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[name]; s != nil {
+		s.exitGeneration = generation
+	}
 }
 
 // ListSessions satisfies clcommon.Tmux for snapshot-shaped callers.
@@ -533,15 +707,8 @@ func (t *TmuxSim) CommandCount(verb string) int {
 // sim is attached) the sim is still processing input.
 func (t *TmuxSim) IsAlive(name string) bool {
 	t.mu.Lock()
-	s, ok := t.sessions[name]
-	t.mu.Unlock()
-	if !ok {
-		return false
-	}
-	if s.pane == nil {
-		return true
-	}
-	return s.pane.IsAlive()
+	defer t.mu.Unlock()
+	return t.sessionPaneAlive(t.sessions[name])
 }
 
 // Sessions returns a snapshot of registered session names.
@@ -572,13 +739,13 @@ func (t *TmuxSim) WaitForSendKeys(target, contains string, timeout time.Duration
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		t.mu.Lock()
-		for _, sk := range t.sentLog {
-			if sk.Target == target && strings.Contains(sk.Text, contains) {
-				t.mu.Unlock()
+		entries := append([]SentKey(nil), t.sentLog...)
+		t.mu.Unlock()
+		for _, sk := range entries {
+			if strings.Contains(sk.Text, contains) && (sk.Target == target || t.resolveTarget(sk.Target, true) == t.resolveTarget(target, true)) {
 				return true
 			}
 		}
-		t.mu.Unlock()
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false

@@ -189,6 +189,40 @@ func TestStopOneConv_OfflineConvSkips(t *testing.T) {
 	assert.Equal(t, "nonexistent-conv-id", res.ConvID, "ConvID should round-trip input")
 }
 
+func TestStopOneConvWithIntent_FailedKillClearsAttribution(t *testing.T) {
+	w := testharness.New(t)
+	prevTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+	const (
+		convID    = "failed-stop-conv-12345678"
+		sessionID = "failed-stop-session"
+		tmuxName  = "failed-stop-tmux"
+		eventID   = "evt_1234567890abcdef12345678"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: tmuxName,
+		Status: "working", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID,
+		"11111111111111111111111111111111"))
+	w.Tmux.MarkAlive(tmuxName)
+	w.Tmux.FailNextCommand("kill-pane")
+
+	res := stopOneConvWithIntent(convID, true, db.AgentExitActionForceStop, eventID)
+	assert.Equal(t, "error", res.Action)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	var action, related, generation string
+	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id,
+		exit_intent_generation FROM sessions WHERE id = ?`, sessionID).
+		Scan(&action, &related, &generation))
+	assert.Empty(t, action)
+	assert.Empty(t, related)
+	assert.Empty(t, generation)
+}
+
 // resumeOneConv must report `skipped:no_conv_id` when called with an
 // empty conv-id. This mirrors the bulk groups.resume placeholder
 // handling — without a conv-id we have no .jsonl to resume from.

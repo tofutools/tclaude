@@ -11,7 +11,7 @@ CREATE TABLE sessions (
 			auto_registered INTEGER NOT NULL DEFAULT 0,
 			created_at      TEXT NOT NULL,
 			updated_at      TEXT NOT NULL
-		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook TEXT NOT NULL DEFAULT '', tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', approval_policy TEXT NOT NULL DEFAULT '', approval_auto_review INTEGER NOT NULL DEFAULT 0, resume_provenance TEXT NOT NULL DEFAULT '');
+		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook TEXT NOT NULL DEFAULT '', tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', approval_policy TEXT NOT NULL DEFAULT '', approval_auto_review INTEGER NOT NULL DEFAULT 0, resume_provenance TEXT NOT NULL DEFAULT '', exit_intent TEXT NOT NULL DEFAULT '', exit_intent_event_id TEXT NOT NULL DEFAULT '', exit_intent_generation TEXT NOT NULL DEFAULT '', exit_intent_at TEXT, exit_callback_generation TEXT NOT NULL DEFAULT '', exit_callback_token_hash TEXT NOT NULL DEFAULT '', exit_callback_pane_id TEXT NOT NULL DEFAULT '', exit_callback_used_at TEXT, exit_launch_gate_state TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_sessions_conv_id ON sessions(conv_id);
 
@@ -506,10 +506,16 @@ CREATE TABLE audit_log (
 			path         TEXT NOT NULL DEFAULT '',
 			status       INTEGER NOT NULL DEFAULT 0,
 			source       TEXT NOT NULL DEFAULT ''
-		, actor_agent TEXT NOT NULL DEFAULT '', target_agent TEXT NOT NULL DEFAULT '');
+		, actor_agent TEXT NOT NULL DEFAULT '', target_agent TEXT NOT NULL DEFAULT '', event_id TEXT NOT NULL DEFAULT '', related_event_id TEXT NOT NULL DEFAULT '', session_id TEXT NOT NULL DEFAULT '', tmux_session TEXT NOT NULL DEFAULT '', pane_id TEXT NOT NULL DEFAULT '', observer TEXT NOT NULL DEFAULT '', cause_kind TEXT NOT NULL DEFAULT '', observed_process TEXT NOT NULL DEFAULT '', launch_phase TEXT NOT NULL DEFAULT '', exit_code INTEGER, signal TEXT NOT NULL DEFAULT '', lifecycle_action TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL DEFAULT '', observed_state TEXT NOT NULL DEFAULT '', dedup_key TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_audit_log_at
 			ON audit_log(at);
+
+CREATE UNIQUE INDEX idx_audit_log_exit_dedup
+			ON audit_log(dedup_key) WHERE dedup_key <> '';
+
+CREATE INDEX idx_audit_log_event_id
+			ON audit_log(event_id) WHERE event_id <> '';
 
 CREATE TABLE agents (
 			agent_id        TEXT PRIMARY KEY,

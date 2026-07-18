@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,6 +148,30 @@ func TestRunHookCallback_SessionEndMarksExited(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, StatusExited, got.Status,
 		"SessionEnd(logout) must mark the session exited")
+}
+
+func TestRunHookCallback_DelayedPredecessorSessionEndCannotExitRelaunch(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	const predecessor = "11111111111111111111111111111111"
+	const successor = "22222222222222222222222222222222"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "relaunch-sess", ConvID: "conv-relaunch", Status: StatusWorking,
+		Created: time.Now(),
+	}, successor, db.SessionExitGateUngated))
+	t.Setenv("TCLAUDE_EXIT_GENERATION", predecessor)
+
+	feedHook(t, "relaunch-sess", map[string]any{
+		"session_id": "conv-relaunch", "hook_event_name": "SessionEnd",
+		"reason": "logout", "cwd": dir,
+	})
+	got, err := LoadSessionState("relaunch-sess")
+	require.NoError(t, err)
+	assert.Equal(t, StatusWorking, got.Status)
+	n, err := db.CountAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	assert.Zero(t, n)
 }
 
 // A SessionEnd hook fired by /clear must NOT mark the session exited —
@@ -536,6 +561,12 @@ func TestRunHookCallback_SessionEndRecordsExitReason(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "logout", reason,
 		"a graceful SessionEnd records its reason")
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	assert.Equal(t, db.AgentExitObserverHook, audit[0].Observer)
+	assert.Equal(t, db.AgentExitCauseNormal, audit[0].CauseKind)
+	assert.Equal(t, "logout", audit[0].Reason)
 }
 
 // SessionStart clears any stale exit_reason: a resumed session is alive

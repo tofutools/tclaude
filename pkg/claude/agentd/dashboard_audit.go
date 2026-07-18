@@ -28,22 +28,36 @@ const (
 // mirrors db.AuditLogEntry but renders At as an RFC3339 string and omits
 // empty optional fields.
 type auditEntryView struct {
-	ID          int64  `json:"id"`
-	At          string `json:"at"`
-	ActorKind   string `json:"actor_kind"`
-	ActorConv   string `json:"actor_conv,omitempty"`
-	ActorAgent  string `json:"actor_agent,omitempty"`
-	ActorLabel  string `json:"actor_label"`
-	Verb        string `json:"verb"`
-	TargetConv  string `json:"target_conv,omitempty"`
-	TargetAgent string `json:"target_agent,omitempty"`
-	TargetLabel string `json:"target_label,omitempty"`
-	GroupName   string `json:"group_name,omitempty"`
-	Detail      string `json:"detail,omitempty"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	Status      int    `json:"status"`
-	Source      string `json:"source"`
+	ID              int64  `json:"id"`
+	At              string `json:"at"`
+	ActorKind       string `json:"actor_kind"`
+	ActorConv       string `json:"actor_conv,omitempty"`
+	ActorAgent      string `json:"actor_agent,omitempty"`
+	ActorLabel      string `json:"actor_label"`
+	Verb            string `json:"verb"`
+	TargetConv      string `json:"target_conv,omitempty"`
+	TargetAgent     string `json:"target_agent,omitempty"`
+	TargetLabel     string `json:"target_label,omitempty"`
+	GroupName       string `json:"group_name,omitempty"`
+	Detail          string `json:"detail,omitempty"`
+	Method          string `json:"method"`
+	Path            string `json:"path"`
+	Status          int    `json:"status"`
+	Source          string `json:"source"`
+	EventID         string `json:"event_id,omitempty"`
+	RelatedEventID  string `json:"related_event_id,omitempty"`
+	SessionID       string `json:"session_id,omitempty"`
+	TmuxSession     string `json:"tmux_session,omitempty"`
+	PaneID          string `json:"pane_id,omitempty"`
+	Observer        string `json:"observer,omitempty"`
+	CauseKind       string `json:"cause_kind,omitempty"`
+	ObservedProcess string `json:"observed_process,omitempty"`
+	LaunchPhase     string `json:"launch_phase,omitempty"`
+	ExitCode        *int   `json:"exit_code,omitempty"`
+	Signal          string `json:"signal,omitempty"`
+	LifecycleAction string `json:"lifecycle_action,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	ObservedState   string `json:"observed_state,omitempty"`
 }
 
 // auditResponse is the Audit tab payload: one page of rows, the pager
@@ -130,22 +144,36 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 	entries := make([]auditEntryView, 0, len(rows))
 	for _, e := range rows {
 		entries = append(entries, auditEntryView{
-			ID:          e.ID,
-			At:          e.At.Format(time.RFC3339),
-			ActorKind:   e.ActorKind,
-			ActorConv:   e.ActorConv,
-			ActorAgent:  e.ActorAgent,
-			ActorLabel:  e.ActorLabel,
-			Verb:        e.Verb,
-			TargetConv:  e.TargetConv,
-			TargetAgent: e.TargetAgent,
-			TargetLabel: e.TargetLabel,
-			GroupName:   e.GroupName,
-			Detail:      e.Detail,
-			Method:      e.Method,
-			Path:        e.Path,
-			Status:      e.Status,
-			Source:      e.Source,
+			ID:              e.ID,
+			At:              e.At.Format(time.RFC3339),
+			ActorKind:       e.ActorKind,
+			ActorConv:       e.ActorConv,
+			ActorAgent:      e.ActorAgent,
+			ActorLabel:      e.ActorLabel,
+			Verb:            e.Verb,
+			TargetConv:      e.TargetConv,
+			TargetAgent:     e.TargetAgent,
+			TargetLabel:     e.TargetLabel,
+			GroupName:       e.GroupName,
+			Detail:          e.Detail,
+			Method:          e.Method,
+			Path:            e.Path,
+			Status:          e.Status,
+			Source:          e.Source,
+			EventID:         e.EventID,
+			RelatedEventID:  e.RelatedEventID,
+			SessionID:       e.SessionID,
+			TmuxSession:     e.TmuxSession,
+			PaneID:          e.PaneID,
+			Observer:        e.Observer,
+			CauseKind:       e.CauseKind,
+			ObservedProcess: e.ObservedProcess,
+			LaunchPhase:     e.LaunchPhase,
+			ExitCode:        e.ExitCode,
+			Signal:          e.Signal,
+			LifecycleAction: e.LifecycleAction,
+			Reason:          e.Reason,
+			ObservedState:   e.ObservedState,
 		})
 	}
 

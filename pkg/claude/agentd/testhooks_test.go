@@ -249,6 +249,15 @@ func SetSoftExitRetryDelayForTest(d time.Duration) func() {
 	return func() { softExitRetryDelay = prev }
 }
 
+// SetUnknownIntentCleanupDelayForTest shrinks the observer window retained
+// after a delivered soft-exit whose outcome cannot yet be observed. Production
+// leaves enough time for the reaper; flow tests use a short, explicit window.
+func SetUnknownIntentCleanupDelayForTest(d time.Duration) func() {
+	prev := unknownIntentCleanupDelay
+	unknownIntentCleanupDelay = d
+	return func() { unknownIntentCleanupDelay = prev }
+}
+
 // SetRemoteControlConfirmDelayForTest shrinks the remote-control disable
 // timing for the duration of a test — BOTH the pause before CC's confirm menu
 // renders and the gap between the menu keystrokes (Up/Up/Enter) — the same
@@ -620,6 +629,36 @@ func SetBeforeExecuteSpawnForTest(fn func()) func() {
 	prev := beforeExecuteSpawnForTest
 	beforeExecuteSpawnForTest = fn
 	return func() { beforeExecuteSpawnForTest = prev }
+}
+
+// SetBeforeSoftExitTargetRevalidateForTest installs a one-shot lifecycle
+// pause used to prove predecessor/successor pane-swap safety.
+func SetBeforeSoftExitTargetRevalidateForTest(fn func()) func() {
+	prev := beforeSoftExitTargetRevalidateForTest
+	beforeSoftExitTargetRevalidateForTest = fn
+	return func() { beforeSoftExitTargetRevalidateForTest = prev }
+}
+
+func StopOneConvWithIntentForTest(convID, action string, relatedEventID ...string) string {
+	eventID := ""
+	if len(relatedEventID) > 0 {
+		eventID = relatedEventID[0]
+	}
+	return stopOneConvWithIntent(convID, false, action, eventID).Action
+}
+
+// SetAfterSoftExitTargetSendForTest installs a probe seam after exact-pane
+// delivery and before the post-send liveness probe.
+func SetAfterSoftExitTargetSendForTest(fn func()) func() {
+	prev := afterSoftExitTargetSendForTest
+	afterSoftExitTargetSendForTest = fn
+	return func() { afterSoftExitTargetSendForTest = prev }
+}
+
+func SetBeforeSoftExitTargetRetryProbeForTest(fn func(int)) func() {
+	prev := beforeSoftExitTargetRetryProbeForTest
+	beforeSoftExitTargetRetryProbeForTest = fn
+	return func() { beforeSoftExitTargetRetryProbeForTest = prev }
 }
 
 // RunPendingSpawnSweepForTest runs one pending-spawn sweep synchronously,

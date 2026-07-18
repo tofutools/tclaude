@@ -64,6 +64,10 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// dead wait that every stop/retire/reincarnate flow — and the
 	// WaitForBackgroundForTest drain — would otherwise pay.
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(time.Millisecond))
+	// Delivered-but-not-yet-observed exits retain their lifecycle intent for a
+	// production-scale reaper window. Keep that policy testable without making
+	// background drains wait for the production duration.
+	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(5 * time.Millisecond))
 	// Neutralize the post-focus auto-tiling pass by default: a bulk focus
 	// now runs a tiling gate, and no flow test should read the developer's
 	// real config.json or move a real OS window as a side effect of one.

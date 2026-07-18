@@ -818,6 +818,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			if err := db.ClearSessionExitReasonByConv(state.ConvID); err != nil {
 				slog.Warn("failed to clear exit reason", "error", err, "module", "hooks")
 			}
+			if err := db.ClearSessionExitIntentByConv(state.ConvID); err != nil {
+				slog.Warn("exit audit: clear stale lifecycle intent failed",
+					"session", state.ID, "error", err, "module", "hooks")
+			}
 		}
 
 	case "SessionEnd":
@@ -852,14 +856,33 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		state.Subagents = nil
 		state.Status = StatusExited
 		state.StatusDetail = ""
-		// Record the graceful-exit reason (logout / prompt_input_exit /
-		// bypass_permissions_disabled / other — clear and resume never
-		// reach here, see sessionEndIsExit) so the dashboard can tell
-		// this clean exit from an unexpected death — for harnesses where
-		// a missing SessionEnd is itself an abnormal-death signal.
-		if err := db.SetSessionExitReason(state.ID, input.Reason); err != nil {
-			slog.Warn("failed to record exit reason", "error", err, "module", "hooks")
+		accepted, _, err := db.RecordSessionEndExitObservation(db.AgentExitObservation{
+			At:                 time.Now(),
+			SessionID:          state.ID,
+			TmuxSession:        state.TmuxSession,
+			Observer:           db.AgentExitObserverHook,
+			CauseKind:          db.AgentExitCauseNormal,
+			Reason:             boundedSessionEndReason(input.Reason),
+			ObservedState:      StatusExited,
+			ExpectedGeneration: os.Getenv("TCLAUDE_EXIT_GENERATION"),
+		})
+		if err != nil {
+			slog.Warn("exit audit: persist SessionEnd observation failed",
+				"session", state.ID, "observer", db.AgentExitObserverHook,
+				"error", err, "module", "hooks")
+			return nil
 		}
+		if !accepted {
+			slog.Info("ignoring stale SessionEnd from predecessor launch",
+				"session", state.ID, "module", "hooks")
+			return nil
+		}
+		if !inTaskRunnerHook() {
+			convTitle := getConvTitle(state.ConvID, state.Cwd)
+			notifyOnStateTransition(state.ID, state.ConvID, prevStatus, state.Status,
+				state.Cwd, convTitle, state.Harness)
+		}
+		return nil
 
 	case "PermissionRequest":
 		state.Status = StatusAwaitingPermission
@@ -1152,6 +1175,17 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	return nil
+}
+
+func boundedSessionEndReason(reason string) string {
+	switch reason {
+	case "logout", "prompt_input_exit", "bypass_permissions_disabled", "other":
+		return reason
+	case "":
+		return ""
+	default:
+		return "other"
+	}
 }
 
 // agentMessagePrompt recognizes the server-authored metadata inside a submitted

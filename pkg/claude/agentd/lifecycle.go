@@ -79,6 +79,11 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
+	action := db.AgentExitActionStop
+	if force {
+		action = db.AgentExitActionForceStop
+	}
+	requestEventID := auditRequestEventID(r)
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -86,7 +91,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	}
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	for _, m := range members {
-		res := stopOneConv(m.ConvID, force)
+		res := stopOneConvWithIntent(m.ConvID, force, action, requestEventID)
 		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
@@ -103,6 +108,14 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 // initiated. Idempotent: convs already offline come back as
 // `skipped:already_offline`.
 func stopOneConv(convID string, force bool) memberOpResult {
+	return stopOneConvWithIntent(convID, force, "", "")
+}
+
+// stopOneConvWithIntent adds audit-only lifecycle attribution to a stop. The
+// intent is armed immediately before the tmux mutation and cleared whenever
+// that mutation fails. Persistence is deliberately best-effort: an audit I/O
+// failure is logged but never changes the established stop result.
+func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
 	res := memberOpResult{ConvID: convID}
 	sess := pickAliveSession(convID)
 	if sess == nil {
@@ -110,6 +123,12 @@ func stopOneConv(convID string, force bool) memberOpResult {
 		return res
 	}
 	res.TmuxSes = sess.TmuxSession
+	target, targetErr := captureLifecycleTarget(sess)
+	if targetErr != nil {
+		res.Action = "error"
+		res.Detail = "capture selected pane: " + targetErr.Error()
+		return res
+	}
 	if err := refreshStoppedSessionResumeProvenance(sess); err != nil {
 		// Administrative stop must remain available even when the target cwd is
 		// unhealthy. The helper clears stale provenance before returning whenever
@@ -119,7 +138,13 @@ func stopOneConv(convID string, force bool) memberOpResult {
 			"session", sess.ID, "conv", convID, "error", err)
 	}
 	if force {
-		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+		if lifecycleAction != "" && intentSet == nil {
+			res.Action, res.Detail = "error", "selected launch intent became stale"
+			return res
+		}
+		if err := killLifecycleTarget(target); err != nil {
+			clearFailedExitIntent(intentSet)
 			res.Action = "error"
 			res.Detail = "kill-session: " + err.Error()
 		} else {
@@ -135,7 +160,12 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
-		if injectSoftExit(convID, exitCmd, "soft-exit") {
+		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+		if lifecycleAction != "" && intentSet == nil {
+			res.Action, res.Detail = "error", "selected launch intent became stale"
+			return res
+		}
+		if injectSoftExitTarget(target, exitCmd, "soft-exit", intentSet) {
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
 				// separately from an unclassified user pane close.
@@ -146,6 +176,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 			}
 			res.Action = "soft_stopped"
 		} else {
+			clearFailedExitIntent(intentSet)
 			res.Action = "error"
 			res.Detail = "send-keys " + exitCmd + " failed"
 		}
@@ -153,13 +184,250 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	}
 	// No soft-exit command for this harness → hard kill so the pane never
 	// lingers because we couldn't type a graceful exit.
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+	intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+	if lifecycleAction != "" && intentSet == nil {
+		res.Action, res.Detail = "error", "selected launch intent became stale"
+		return res
+	}
+	if err := killLifecycleTarget(target); err != nil {
+		clearFailedExitIntent(intentSet)
 		res.Action = "error"
 		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
 	} else {
 		res.Action = "killed_no_soft_exit"
 	}
 	return res
+}
+
+type lifecycleTarget struct {
+	sessionID           string
+	tmuxSession         string
+	generation          string
+	paneID              string
+	panePID             int
+	paneGenerationBound bool
+}
+
+type paneProbeState int
+
+const (
+	paneProbeLive paneProbeState = iota
+	paneProbeDead
+	paneProbeUnknown
+)
+
+type lifecyclePaneProbe struct {
+	state      paneProbeState
+	paneID     string
+	panePID    int
+	generation string
+}
+
+func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
+	identity, err := db.GetSessionExitLaunchIdentity(sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	p, err := probeLifecyclePane(sess.TmuxSession)
+	if err != nil {
+		return nil, err
+	}
+	if p.state != paneProbeLive {
+		return nil, fmt.Errorf("pane is not live")
+	}
+	if identity.Generation != "" && p.generation != "" && p.generation != identity.Generation {
+		return nil, fmt.Errorf("pane generation mismatch")
+	}
+	return &lifecycleTarget{sessionID: sess.ID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != ""}, nil
+}
+
+func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
+	format := "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format).Output()
+	if err != nil {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, err
+	}
+	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(parts) != 7 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
+	}
+	pid, pidErr := strconv.Atoi(parts[2])
+	if pidErr != nil || pid <= 0 {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane pid")
+	}
+	if parts[3] == "1" {
+		return lifecyclePaneProbe{state: paneProbeDead, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
+	}
+	return lifecyclePaneProbe{state: paneProbeLive, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
+}
+
+func validLifecyclePaneID(v string) bool { return strings.HasPrefix(v, "%") && len(v) > 1 }
+
+func (t *lifecycleTarget) revalidate() (lifecyclePaneProbe, error) {
+	p, err := probeLifecyclePane(t.tmuxSession)
+	if err != nil {
+		return p, err
+	}
+	if p.state != paneProbeLive || !lifecycleProbeMatchesTarget(p, t) {
+		return p, fmt.Errorf("selected pane identity changed")
+	}
+	return p, nil
+}
+
+func killLifecycleTarget(t *lifecycleTarget) error {
+	if beforeSoftExitTargetRevalidateForTest != nil {
+		beforeSoftExitTargetRevalidateForTest()
+	}
+	if _, err := t.revalidate(); err != nil {
+		return err
+	}
+	return clcommon.TmuxCommand("kill-pane", "-t", t.paneID).Run()
+}
+
+func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string) *db.SessionExitIntentRef {
+	if sess == nil || action == "" {
+		return nil
+	}
+	ref, err := db.SetSessionExitIntent(sess.ID, action, relatedEventID, time.Now())
+	if err != nil {
+		slog.Warn("exit audit: record lifecycle intent failed",
+			"session", sess.ID, "action", action, "error", err)
+		return nil
+	}
+	return &ref
+}
+
+func setExitIntentTargetBestEffort(target *lifecycleTarget, action, relatedEventID string) *db.SessionExitIntentRef {
+	if target == nil || action == "" {
+		return nil
+	}
+	ref, err := db.SetSessionExitIntentIfTarget(target.sessionID, target.tmuxSession, target.generation, action, relatedEventID, time.Now())
+	if err != nil {
+		slog.Warn("exit audit: selected lifecycle intent CAS failed", "session", target.sessionID, "error", err)
+		return nil
+	}
+	return &ref
+}
+
+func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
+	if intentRef == nil {
+		return
+	}
+	if _, err := db.ClearSessionExitIntentIfCurrent(*intentRef); err != nil {
+		slog.Warn("exit audit: clear failed lifecycle intent failed",
+			"session", intentRef.SessionID, "error", err)
+	}
+}
+
+func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) bool {
+	if target == nil {
+		return false
+	}
+	if beforeSoftExitTargetRevalidateForTest != nil {
+		beforeSoftExitTargetRevalidateForTest()
+	}
+	if _, err := target.revalidate(); err != nil {
+		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+		return false
+	}
+	if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+		return false
+	}
+	if afterSoftExitTargetSendForTest != nil {
+		afterSoftExitTargetSendForTest()
+	}
+	probe, _ := probeLifecyclePane(target.tmuxSession)
+	if probe.state == paneProbeUnknown {
+		if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+			return true // confirmed session disappearance; reaper owns attribution
+		}
+		scheduleUnknownIntentCleanup(target, intentRef)
+		return true // preserve intent; bounded cleanup is owned by retry watchdog
+	}
+	if probe.state == paneProbeDead {
+		return true
+	}
+	if !lifecycleProbeMatchesTarget(probe, target) {
+		// The command was already delivered; a post-send identity change means
+		// the predecessor transitioned, so preserve intent for callback/reaper
+		// attribution and never retry against a successor.
+		return true
+	}
+	scheduleSoftExitRetryTarget(target, exitCmd, reason, intentRef)
+	return true
+}
+
+func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarget) bool {
+	generationMatches := probe.generation == ""
+	if target.paneGenerationBound {
+		generationMatches = target.generation != "" && probe.generation == target.generation
+	}
+	return probe.paneID == target.paneID &&
+		(target.panePID <= 0 || probe.panePID == target.panePID) && generationMatches
+}
+
+func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
+	out, err := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return false, false
+	}
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name == tmuxSession {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.SessionExitIntentRef) {
+	goBackground(func() {
+		time.Sleep(unknownIntentCleanupDelay)
+		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+	})
+}
+
+var beforeSoftExitTargetRevalidateForTest func()
+var beforeSoftExitTargetRetryProbeForTest func(int)
+var afterSoftExitTargetSendForTest func()
+
+func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession string) {
+	if ref == nil {
+		return
+	}
+	if _, err := db.ClearSessionExitIntentIfTarget(*ref, tmuxSession); err != nil {
+		slog.Warn("exit audit: clear selected lifecycle intent failed", "session", ref.SessionID, "error", err)
+	}
+}
+
+func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
+	goBackground(func() {
+		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
+			time.Sleep(softExitRetryDelay)
+			if beforeSoftExitTargetRetryProbeForTest != nil {
+				beforeSoftExitTargetRetryProbeForTest(attempt)
+			}
+			probe, err := probeLifecyclePane(target.tmuxSession)
+			if err != nil || probe.state == paneProbeUnknown {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				return
+			}
+			if probe.state == paneProbeDead {
+				return
+			}
+			if !lifecycleProbeMatchesTarget(probe, target) {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				return
+			}
+			if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				return
+			}
+			if attempt == softExitMaxAttempts {
+				// Delivery succeeded; retain attribution through the observer window.
+				scheduleUnknownIntentCleanup(target, intentRef)
+			}
+		}
+	})
 }
 
 func refreshStoppedSessionResumeProvenance(sess *db.SessionRow) error {
@@ -205,11 +473,15 @@ func refreshStoppedSessionResumeProvenance(sess *db.SessionRow) error {
 // buffer, though, so a second /exit a few seconds later lands on a clean
 // input box and takes. scheduleSoftExitRetry re-injects while the SAME
 // pane process is still alive.
-func injectSoftExit(convID, exitCmd, reason string) bool {
+func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitIntentRef) bool {
 	sess := aliveSessionForConv(convID)
 	if sess == nil {
 		return false
 	}
+	// Capture before injection: a responsive pane can exit synchronously after
+	// Enter, but that successful exit still owns the lifecycle intent and must
+	// remain correlatable by callback/reaper.
+	panePID := livePanePID(sess.TmuxSession)
 	if !injectSlashCommand(convID, exitCmd, "", reason) {
 		return false
 	}
@@ -217,8 +489,10 @@ func injectSoftExit(convID, exitCmd, reason string) bool {
 	// from a later one that reused the same tmux name (a resume re-derives the
 	// name from the conv-id — see scheduleSoftExitRetry). 0 = couldn't read
 	// it; skip the retry rather than risk re-injecting blind.
-	if pid := livePanePID(sess.TmuxSession); pid > 0 {
-		scheduleSoftExitRetry(convID, sess.TmuxSession, pid, exitCmd, reason)
+	if panePID > 0 {
+		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, reason, intentRef)
+	} else {
+		clearFailedExitIntent(intentRef)
 	}
 	return true
 }
@@ -229,6 +503,10 @@ func injectSoftExit(convID, exitCmd, reason string) bool {
 // few seconds so a pane that's honouring /exit has time to close before
 // we bother re-injecting.
 var softExitRetryDelay = 4 * time.Second
+
+// Unknown cleanup must remain available for the reaper to observe exits when
+// hooks and immediate probes are unavailable.
+var unknownIntentCleanupDelay = 65 * time.Second
 
 // softExitMaxAttempts bounds the TOTAL number of soft-exit injections per
 // stop (the initial one + retries). The first retry recovers an /exit
@@ -255,7 +533,7 @@ const softExitMaxAttempts = 3
 //
 // Runs through goBackground so it outlives the HTTP handler that asked for
 // the stop and flow tests can drain it with WaitForBackgroundForTest.
-func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string) {
+func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
 	target := tmuxSession + ":0.0"
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
@@ -273,8 +551,12 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 			if err := injectTextAndSubmit(target, exitCmd); err != nil {
 				slog.Warn("soft-exit retry inject failed",
 					"error", err, "tmux_session", tmuxSession, "reason", reason)
+				clearFailedExitIntent(intentRef)
 				return
 			}
+		}
+		if livePanePID(tmuxSession) == panePID {
+			clearFailedExitIntent(intentRef)
 		}
 	})
 }
@@ -287,11 +569,15 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 // signal the soft-exit retry needs to avoid re-injecting into a resumed
 // pane that reused the tmux name.
 func livePanePID(tmuxSession string) int {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_pid}").Output()
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_dead}|#{pane_pid}").Output()
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(parts) != 2 || parts[0] == "1" {
+		return 0
+	}
+	pid, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return 0
 	}
@@ -925,7 +1211,8 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), retireShouldDeleteWorktree(r), filter, nil)
+		retireShouldShutdown(r), retireShouldDeleteWorktree(r), filter, nil,
+		auditRequestEventID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -1003,7 +1290,7 @@ const bulkRetireGroupConcurrency = 8
 // every worker has settled — checked once at the end so a bulk retire
 // that demotes a member-owner warns about the now-ownerless group,
 // matching the single-agent cleanup path.
-func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree bool, filter retireStatusFilter, selected map[string]struct{}) (groupRetireResp, error) {
+func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree bool, filter retireStatusFilter, selected map[string]struct{}, relatedEventID string) (groupRetireResp, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return groupRetireResp{}, err
@@ -1089,7 +1376,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 					}
 				}
 				res, ownerGroupsPer[i] = retireGroupMember(
-					m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res)
+					m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res, relatedEventID)
 			}
 			results[i] = &res
 			return nil
@@ -1130,7 +1417,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 // kept when no shutdown was asked for. The per-member plan rides back on
 // res.Worktree, and its one-line note is folded into Detail so the CLI/table
 // row says what happened.
-func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, wt agentWorktreeView, res memberOpResult) (memberOpResult, []int64) {
+func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, wt agentWorktreeView, res memberOpResult, relatedEventID string) (memberOpResult, []int64) {
 	// Gate on the LIVE generation (current conv of an active actor), not just
 	// "active": retire acts on the actor, so a superseded predecessor handle
 	// would demote the live agent. Members always come through as the current
@@ -1157,7 +1444,7 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 	res.Detail = summarizeRetireOutcome(outcome)
 
 	if shutdown {
-		sd := stopOneConv(convID, false /* soft exit */)
+		sd := stopOneConvWithIntent(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID)
 		res.TmuxSes = sd.TmuxSes
 		if sd.Action == "soft_stopped" {
 			res.Detail = joinDetail(res.Detail, "/exit sent")
@@ -1315,7 +1602,11 @@ func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) 
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
-	res := stopOneConv(targetConv, force)
+	action := db.AgentExitActionStop
+	if force {
+		action = db.AgentExitActionForceStop
+	}
+	res := stopOneConvWithIntent(targetConv, force, action, auditRequestEventID(r))
 	resp := map[string]any{
 		"conv_id":      res.ConvID,
 		"action":       res.Action,

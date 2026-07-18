@@ -76,6 +76,12 @@ type SessionRow struct {
 	// without setting this can't clobber it back to false — the same
 	// discipline the context-window columns use (schema v65, JOH-256).
 	RemoteControl bool
+	// ExitLaunchGeneration and ExitLaunchGateState are write-only launch
+	// boundary inputs. Generic hook/state UPSERTs leave them empty and preserve
+	// the existing durable launch binding; the explicit launch save sets both
+	// so row reuse atomically invalidates predecessor callback/intent authority.
+	ExitLaunchGeneration string
+	ExitLaunchGateState  string
 }
 
 // SaveSession inserts or updates a session, setting updated_at to now.
@@ -128,8 +134,11 @@ func SaveSession(s *SessionRow) error {
 	// boundaries update it through SetSessionResumeProvenance; allowing generic
 	// hook UPSERTs to update it could resurrect a value invalidated during stop.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`)
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
+		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
+		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
+		 ?, '', '', NULL, '', '', '', NULL, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
 			pid = excluded.pid,
@@ -149,10 +158,20 @@ func SaveSession(s *SessionRow) error {
 			effective_sandbox_config = CASE WHEN excluded.effective_sandbox_config <> '' THEN excluded.effective_sandbox_config ELSE sessions.effective_sandbox_config END,
 			approval_policy = CASE WHEN excluded.approval_policy <> '' THEN excluded.approval_policy ELSE sessions.approval_policy END,
 			approval_auto_review = CASE WHEN excluded.approval_policy <> '' THEN excluded.approval_auto_review ELSE sessions.approval_auto_review END,
-			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END`,
+			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id ELSE sessions.agent_id END,
+			exit_callback_generation = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_callback_generation ELSE sessions.exit_callback_generation END,
+			exit_callback_token_hash = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_callback_token_hash END,
+			exit_callback_pane_id = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_callback_pane_id END,
+			exit_callback_used_at = CASE WHEN excluded.exit_callback_generation <> '' THEN NULL ELSE sessions.exit_callback_used_at END,
+			exit_intent = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_intent END,
+			exit_intent_event_id = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_intent_event_id END,
+			exit_intent_generation = CASE WHEN excluded.exit_callback_generation <> '' THEN '' ELSE sessions.exit_intent_generation END,
+			exit_intent_at = CASE WHEN excluded.exit_callback_generation <> '' THEN NULL ELSE sessions.exit_intent_at END,
+			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, boolToInt(s.AutoRegistered),
-		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID)
+		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
+		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	return err
 }
 

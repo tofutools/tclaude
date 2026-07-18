@@ -48,6 +48,34 @@ func TestAudit_SpawnRecordsHumanActor(t *testing.T) {
 	assert.Equal(t, http.MethodPost, row.Method)
 }
 
+func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	worker := f.AsHuman().Spawn("crew", "worker")
+	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
+
+	stopped := testharness.Serve(f.Mux, agentd.AsHumanPeer(
+		testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+worker.ConvID+"/stop?force=1", nil)))
+	require.Equal(t, http.StatusOK, stopped.Code, "force stop; body=%s", stopped.Body.String())
+	command := auditRowByVerb(t, "stop")
+	require.NotEmpty(t, command.EventID)
+	assert.Equal(t, db.AuditActorHuman, command.ActorKind)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE sessions SET created_at = ? WHERE conv_id = ?`,
+		time.Now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), worker.ConvID)
+	require.NoError(t, err)
+	require.Equal(t, 1, agentd.RunReaperTickForTest(time.Now()))
+
+	exit := auditRowByVerb(t, db.AuditVerbAgentExit)
+	assert.Equal(t, db.AuditActorSystem, exit.ActorKind)
+	assert.Equal(t, db.AgentExitObserverReconcile, exit.Observer)
+	assert.Equal(t, db.AgentExitActionForceStop, exit.LifecycleAction)
+	assert.Equal(t, command.EventID, exit.RelatedEventID)
+}
+
 // Scenario: an agent sends an intra-group message. The trail records
 // "<sender> | message | <recipient> | <preview>", with the agent as the
 // actor.

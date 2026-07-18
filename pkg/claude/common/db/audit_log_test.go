@@ -224,3 +224,22 @@ func TestAuditLog_AtDefaultsToNow(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.True(t, rows[0].At.After(before), "zero At should be stamped to now at insert")
 }
+
+func TestAuditLog_LegacyRowWithNullExitCodeStillReads(t *testing.T) {
+	setupTestDB(t)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO audit_log
+		(at, actor_kind, actor_label, verb, method, path, status, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().UTC().Format(time.RFC3339Nano), AuditActorHuman, "human",
+		"legacy.command", "POST", "/v1/legacy", 200, AuditSourceCLI)
+	require.NoError(t, err)
+
+	rows, err := ListAuditLog(AuditLogFilter{Verb: "legacy.command"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Nil(t, rows[0].ExitCode)
+	assert.Empty(t, rows[0].EventID)
+	assert.Empty(t, rows[0].Observer)
+}
