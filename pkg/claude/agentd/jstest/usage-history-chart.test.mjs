@@ -78,10 +78,22 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
     'a sample wins an exact-distance tie with the now line');
   await harness.act(() => harness.fireEvent(hoverSurface, 'mousemove', {
     clientX: Number(point.getAttribute('cx')),
+    clientY: Number(point.getAttribute('cy')) - 3,
+  }));
+  assert.match(view.container.querySelector('.usage-chart-tooltip.observed').textContent, /Sample.*12\.5%/s,
+    'a sample gets a small priority margin when a dashed line is slightly closer');
+  await harness.act(() => harness.fireEvent(hoverSurface, 'mousemove', {
+    clientX: Number(point.getAttribute('cx')),
     clientY: Number(point.getAttribute('cy')) - 5,
   }));
   assert.match(view.container.querySelector('.usage-chart-tooltip.now').textContent, /Now/,
     'the now line wins when it is closer than a sample regardless of render order');
+  await harness.act(() => harness.fireEvent(hoverSurface, 'mousemove', {
+    clientX: Number(point.getAttribute('cx')) + 6,
+    clientY: Number(point.getAttribute('cy')) - Math.sqrt(45),
+  }));
+  assert.match(view.container.querySelector('.usage-chart-tooltip').getAttribute('class'), /\b(now|forecast)\b/,
+    'an out-of-range preferred sample cannot suppress an in-range dashed line');
   await harness.act(() => harness.fireEvent(hoverSurface, 'mouseleave'));
 
   const keyboardPoints = [...view.container.querySelectorAll('.usage-point-hit-target')];
@@ -138,6 +150,13 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   }));
   assert.match(view.container.querySelector('.usage-chart-tooltip.now').textContent,
     /Now.*Quota resets in 7d/s);
+  const firstNowPosition = view.container.querySelector('.usage-chart-tooltip.now').getAttribute('transform');
+  await harness.act(() => harness.fireEvent(hoverSurface, 'mousemove', {
+    clientX: Number(nowTarget.getAttribute('x1')), clientY: 100,
+  }));
+  const secondNowPosition = view.container.querySelector('.usage-chart-tooltip.now').getAttribute('transform');
+  assert.notEqual(secondNowPosition, firstNowPosition,
+    'a vertical marker tooltip follows the cursor along the dashed line');
   await harness.act(() => harness.fireEvent(hoverSurface, 'mouseleave'));
 
   const forecastTarget = view.container.querySelector('.usage-forecast-hit-target');

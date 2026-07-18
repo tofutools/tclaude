@@ -16,6 +16,7 @@ const TOOLTIP_WIDTH = 270;
 const TOOLTIP_LINE_HEIGHT = 13;
 const HOVER_DISTANCE = 8;
 const HOVER_TIE_EPSILON = 1e-6;
+const POINT_PRIORITY_DISTANCE = 3;
 
 function finiteDate(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -63,7 +64,14 @@ function distanceToSegment(pointer, start, end) {
 }
 
 function nearestCandidate(best, candidate) {
-  if (!best || candidate.distance < best.distance - HOVER_TIE_EPSILON) return candidate;
+  if (!best) return candidate;
+  if (best.kind === 'point' && candidate.kind !== 'point'
+      && best.distance <= HOVER_DISTANCE ** 2
+      && Math.sqrt(best.distance) <= Math.sqrt(candidate.distance) + POINT_PRIORITY_DISTANCE) return best;
+  if (candidate.kind === 'point' && best.kind !== 'point'
+      && candidate.distance <= HOVER_DISTANCE ** 2
+      && Math.sqrt(candidate.distance) <= Math.sqrt(best.distance) + POINT_PRIORITY_DISTANCE) return candidate;
+  if (candidate.distance < best.distance - HOVER_TIE_EPSILON) return candidate;
   if (Math.abs(candidate.distance - best.distance) <= HOVER_TIE_EPSILON
       && candidate.priority < best.priority) return candidate;
   return best;
@@ -160,18 +168,18 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       pointResetLabel,
     ], point.time);
   };
-  const showResetTooltip = (reset, index) => {
+  const showResetTooltip = (reset, index, anchorY = y(reset.pct)) => {
     const title = index === resetMarkers.length - 1 ? 'Last reset' : 'Previous reset';
-    showTooltip(x(reset.time), y(reset.pct), 'reset', title, [
+    showTooltip(x(reset.time), anchorY, 'reset', title, [
       scope, new Date(reset.time).toLocaleString(),
       `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now)}`,
     ]);
   };
-  const showScheduledResetTooltip = () => showTooltip(
-    x(resetAt), PAD.top + 18, 'reset', 'Next reset',
+  const showScheduledResetTooltip = (anchorY = PAD.top + 18) => showTooltip(
+    x(resetAt), anchorY, 'reset', 'Next reset',
     [scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now)],
   );
-  const showNowTooltip = () => showTooltip(x(now), PAD.top + 18, 'now', 'Now', [
+  const showNowTooltip = (anchorY = PAD.top + 18) => showTooltip(x(now), anchorY, 'now', 'Now', [
     scope, new Date(now).toLocaleString(), resetTimingLabel(resetAt, now),
   ]);
   const updateChartHover = (event) => {
@@ -215,11 +223,11 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     } else if (nearest.kind === 'forecast') {
       showForecastTooltip(nearest.ratio);
     } else if (nearest.kind === 'reset') {
-      showResetTooltip(nearest.reset, nearest.index);
+      showResetTooltip(nearest.reset, nearest.index, pointer.y);
     } else if (nearest.kind === 'scheduled-reset') {
-      showScheduledResetTooltip();
+      showScheduledResetTooltip(pointer.y);
     } else if (nearest.kind === 'now') {
-      showNowTooltip();
+      showNowTooltip(pointer.y);
     }
   };
   const focusChartItemByKey = (event, index, selector, length) => {
@@ -274,7 +282,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line class="usage-marker-hit-target" x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom}
         tabIndex="0" role="img"
         aria-label=${`Next reset; ${scope}; ${new Date(resetAt).toLocaleString()}; ${relativeMarkerTime(resetAt, now)}`}
-        onfocus=${showScheduledResetTooltip} onblur=${hideTooltip} />
+        onfocus=${() => showScheduledResetTooltip()} onblur=${hideTooltip} />
     </g>`}
     ${hasForecastLine && html`<${Fragment}>
       <line class="usage-forecast-line" x1=${x(latest.time)} y1=${y(latest.pct)}
@@ -288,7 +296,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <line class="usage-marker-hit-target" x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom}
         tabIndex="0" role="img" aria-label=${`Now; ${scope}; ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now)}`}
-        onfocus=${showNowTooltip} onblur=${hideTooltip} />
+        onfocus=${() => showNowTooltip()} onblur=${hideTooltip} />
     </g>`}
     ${pointMarkers.map((point, index) => {
       const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
