@@ -23,16 +23,15 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"codex never to claude accept edits", CodexName, ApprovalNever, false, DefaultName, claudePermAccept, false, true},
 		{"codex baseline to claude default", CodexName, ApprovalOnRequest, false, DefaultName, claudePermDefault, false, true},
 		{"claude auto to codex never", DefaultName, claudePermAuto, false, CodexName, ApprovalNever, false, true},
-		{"claude inherit to codex never", DefaultName, claudePermInherit, false, CodexName, ApprovalNever, false, true},
-		// inherit is classified as the broadest non-bypass posture, which is
-		// exactly Codex on-request + Auto-review. Pin both directions of that
-		// equality so the collision is a decision, not an accident.
-		{"claude inherit to codex guardian", DefaultName, claudePermInherit, false, CodexName, ApprovalOnRequest, true, true},
+		{"claude inherit cannot mint codex never", DefaultName, claudePermInherit, false, CodexName, ApprovalNever, false, false},
+		// Parent inherit is an unknown live posture and receives only its proven
+		// lower bound. Child inherit is charged its non-bypass upper bound.
+		{"claude inherit cannot mint codex guardian", DefaultName, claudePermInherit, false, CodexName, ApprovalOnRequest, true, false},
 		{"codex guardian to claude inherit", CodexName, ApprovalOnRequest, true, DefaultName, claudePermInherit, false, true},
 
-		// --- TCL-576 required allows: an inherit parent is not spawn-crippled ---
-		{"claude inherit to claude inherit", DefaultName, claudePermInherit, false, DefaultName, claudePermInherit, false, true},
-		{"claude inherit to claude auto", DefaultName, claudePermInherit, false, DefaultName, claudePermAuto, false, true},
+		// --- An inherit parent may delegate only proven baseline postures ---
+		{"claude inherit continues claude inherit", DefaultName, claudePermInherit, false, DefaultName, claudePermInherit, false, true},
+		{"claude inherit cannot mint claude auto", DefaultName, claudePermInherit, false, DefaultName, claudePermAuto, false, false},
 		{"claude inherit to claude plan", DefaultName, claudePermInherit, false, DefaultName, claudePermPlan, false, true},
 		{"claude accept edits to identical shape", DefaultName, claudePermAccept, false, DefaultName, claudePermAccept, false, true},
 		{"claude auto to identical shape", DefaultName, claudePermAuto, false, DefaultName, claudePermAuto, false, true},
@@ -97,7 +96,7 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 
 // An empty harness name is the historic spelling of "Claude", on both sides.
 func TestApprovalLineageBlankHarnessIsClaude(t *testing.T) {
-	if !ApprovalLineageAllowed("", claudePermInherit, false, "", claudePermAuto, false) {
+	if !ApprovalLineageAllowed("", claudePermInherit, false, "", claudePermPlan, false) {
 		t.Fatal("blank harness names must classify as Claude on both sides")
 	}
 	// The blank spelling must not become an escape hatch: it is still gated.

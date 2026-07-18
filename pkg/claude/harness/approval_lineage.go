@@ -21,8 +21,21 @@ import (
 // happen WITHOUT a human: automatic in-sandbox execution, approval by a machine
 // reviewer instead of a person, and unreviewed blanket approval.
 func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string, childAutoReview bool) bool {
-	parent := classifyApprovalLineage(parentHarness, parentPolicy, parentAutoReview)
-	child := classifyApprovalLineage(childHarness, childPolicy, childAutoReview)
+	// Preserve the operator's live Claude posture across an exact inherit →
+	// inherit continuation. This is intentionally the sole uncertainty
+	// exception: it keeps the ordinary recursive Claude workflow usable without
+	// crediting an inherit parent with any explicit automatic capability it has
+	// not proved. Any different child posture still goes through the dual-bound
+	// comparison below (or must be launched by the human trust root).
+	if normalizeLineageHarness(parentHarness) == DefaultName &&
+		normalizeLineageHarness(childHarness) == DefaultName &&
+		strings.TrimSpace(parentPolicy) == claudePermInherit &&
+		strings.TrimSpace(childPolicy) == claudePermInherit &&
+		!parentAutoReview && !childAutoReview {
+		return true
+	}
+	parent := classifyParentApprovalLineage(parentHarness, parentPolicy, parentAutoReview)
+	child := classifyChildApprovalLineage(childHarness, childPolicy, childAutoReview)
 	if !parent.valid || !child.valid {
 		return false
 	}
@@ -120,7 +133,22 @@ type approvalLineagePosture struct {
 	valid      bool
 }
 
-func classifyApprovalLineage(harnessName, policy string, autoReview bool) approvalLineagePosture {
+// classifyParentApprovalLineage returns the capability floor that the caller is
+// PROVEN to hold. classifyChildApprovalLineage returns the capability ceiling
+// the requested child could receive. The distinction is load-bearing for
+// Claude's `inherit`: the operator's live settings are unknown, so treating the
+// same unknown as broad on both sides lets an inherit parent mint authority it
+// may not have. A lower-bound parent and upper-bound child make uncertainty
+// fail closed without inventing a false total order between the harnesses.
+func classifyParentApprovalLineage(harnessName, policy string, autoReview bool) approvalLineagePosture {
+	return classifyApprovalLineage(harnessName, policy, autoReview, false)
+}
+
+func classifyChildApprovalLineage(harnessName, policy string, autoReview bool) approvalLineagePosture {
+	return classifyApprovalLineage(harnessName, policy, autoReview, true)
+}
+
+func classifyApprovalLineage(harnessName, policy string, autoReview bool, child bool) approvalLineagePosture {
 	policy = strings.TrimSpace(policy)
 	switch normalizeLineageHarness(harnessName) {
 	case DefaultName:
@@ -145,14 +173,17 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool) approv
 			return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
 		case claudePermInherit:
 			// `inherit` means "whatever the operator's settings.json decides,
-			// plus the agentd approval popup". That is unknowable at spawn time
-			// and can reach the human trust root, so it is classified as the
-			// BROADEST NON-BYPASS posture. Consequences, both intended:
-			//   - an inherit parent may spawn any provable non-bypass child
-			//     (inherit, auto, acceptEdits, Codex never, ...);
-			//   - an inherit CHILD fails closed under any narrower parent, which
-			//     is what ApprovalLineageDenialHint explains.
-			return approvalLineagePosture{capability: approvalAutoInSandbox | approvalAutoReviewer, valid: true}
+			// plus the agentd approval popup". That is unknowable at spawn time.
+			// A parent is therefore credited only with the baseline capability it
+			// certainly has, while a child is charged the broadest non-bypass
+			// capability it could receive. This dual bound prevents an unknown
+			// parent from becoming a delegation grant and makes an unknown child
+			// require a real human trust-root decision.
+			capability := approvalAutoBaseline
+			if child {
+				capability = approvalAutoInSandbox | approvalAutoReviewer
+			}
+			return approvalLineagePosture{capability: capability, valid: true}
 		case claudePermBypass:
 			return approvalLineagePosture{capability: approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed, valid: true}
 		default:
