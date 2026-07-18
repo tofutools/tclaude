@@ -241,23 +241,23 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 }
 
 func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
-	format := "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
+	format := "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
 	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format).Output()
 	if err != nil {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, err
 	}
 	parts := strings.Split(strings.TrimSpace(string(out)), "|")
-	if len(parts) != 6 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
+	if len(parts) != 7 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
 	}
-	if parts[2] == "1" {
-		return lifecyclePaneProbe{state: paneProbeDead, paneID: parts[1], generation: parts[5]}, nil
+	pid, pidErr := strconv.Atoi(parts[2])
+	if pidErr != nil || pid <= 0 {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane pid")
 	}
-	pid, err := strconv.Atoi(strings.TrimPrefix(parts[1], "%"))
-	if err != nil {
-		return lifecyclePaneProbe{state: paneProbeUnknown}, err
+	if parts[3] == "1" {
+		return lifecyclePaneProbe{state: paneProbeDead, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
 	}
-	return lifecyclePaneProbe{state: paneProbeLive, paneID: parts[1], panePID: pid, generation: parts[5]}, nil
+	return lifecyclePaneProbe{state: paneProbeLive, paneID: parts[1], panePID: pid, generation: parts[6]}, nil
 }
 
 func validLifecyclePaneID(v string) bool { return strings.HasPrefix(v, "%") && len(v) > 1 }
@@ -337,7 +337,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 	}
 	probe, _ := probeLifecyclePane(target.tmuxSession)
 	if probe.state == paneProbeUnknown {
-		if !session.IsTmuxSessionAlive(target.tmuxSession) {
+		if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
 			return true // confirmed session disappearance; reaper owns attribution
 		}
 		scheduleUnknownIntentCleanup(target, intentRef)
@@ -346,12 +346,28 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 	if probe.state == paneProbeDead {
 		return true
 	}
-	if probe.paneID != target.paneID || (target.panePID > 0 && probe.panePID != target.panePID) {
+	if !lifecycleProbeMatchesTarget(probe, target) {
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
 	scheduleSoftExitRetryTarget(target, exitCmd, reason, intentRef)
 	return true
+}
+
+func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarget) bool {
+	return probe.paneID == target.paneID && (target.panePID <= 0 || probe.panePID == target.panePID) && (target.generation == "" || probe.generation == target.generation)
+}
+
+func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
+	err := clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+	if err == nil {
+		return true, true
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, true
+	}
+	return false, false
 }
 
 func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.SessionExitIntentRef) {
@@ -389,7 +405,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 			if probe.state == paneProbeDead {
 				return
 			}
-			if probe.paneID != target.paneID || (target.panePID > 0 && probe.panePID != target.panePID) {
+			if !lifecycleProbeMatchesTarget(probe, target) {
 				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 				return
 			}

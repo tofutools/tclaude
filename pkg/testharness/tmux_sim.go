@@ -123,6 +123,7 @@ type tmuxCommandFault struct {
 
 type tmuxSession struct {
 	name           string
+	paneID         string
 	cwd            string
 	pane           PaneSim
 	panePID        int
@@ -389,7 +390,7 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		return exec.Command(falseBin)
 	}
 	dead := !t.sessionPaneAlive(s)
-	remainOnExit, cwd, panePID := s.remainOnExit, s.cwd, s.panePID
+	remainOnExit, cwd, paneID, panePID := s.remainOnExit, s.cwd, s.paneID, s.panePID
 	exitStatus, exitSignal, exitGeneration := s.exitStatus, s.exitSignal, s.exitGeneration
 	t.mu.Unlock()
 	if dead && !remainOnExit {
@@ -406,7 +407,7 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		return exec.Command(echoBin, "0")
 	}
 	if format == "#{pane_id}" {
-		return exec.Command(echoBin, "%"+strconv.Itoa(panePID))
+		return exec.Command(echoBin, paneID)
 	}
 	if format == "#{pane_dead}|#{pane_pid}" {
 		deadValue := "0"
@@ -415,12 +416,12 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		}
 		return exec.Command(echoBin, deadValue+"|"+strconv.Itoa(panePID))
 	}
-	if format == "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
+	if format == "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, name+"|%"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+		return exec.Command(echoBin, name+"|"+s.paneID+"|"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
 	}
 	return exec.Command(echoBin, strconv.Itoa(panePID))
 }
@@ -519,7 +520,7 @@ func (t *TmuxSim) resolveTarget(target string, paneTyped bool) string {
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		for name, session := range t.sessions {
-			if session.panePID == pid {
+			if strings.TrimPrefix(session.paneID, "%") == strconv.Itoa(pid) || session.panePID == pid {
 				return name
 			}
 		}
@@ -599,7 +600,7 @@ func (t *TmuxSim) Register(name, cwd string, pane PaneSim) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.nextPID++
-	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, panePID: t.nextPID}
+	t.sessions[name] = &tmuxSession{name: name, cwd: cwd, pane: pane, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
 }
 
 // MarkAlive registers a session without an attached pane sim. Used for
@@ -611,7 +612,17 @@ func (t *TmuxSim) MarkAlive(name string) {
 	defer t.mu.Unlock()
 	if _, ok := t.sessions[name]; !ok {
 		t.nextPID++
-		t.sessions[name] = &tmuxSession{name: name, panePID: t.nextPID}
+		t.sessions[name] = &tmuxSession{name: name, paneID: "%" + strconv.Itoa(t.nextPID), panePID: t.nextPID}
+	}
+}
+
+// SetPaneIdentityForTest gives a simulated pane independently controlled tmux
+// pane and operating-system process identities.
+func (t *TmuxSim) SetPaneIdentityForTest(name, paneID string, panePID int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[name]; s != nil {
+		s.paneID, s.panePID = paneID, panePID
 	}
 }
 

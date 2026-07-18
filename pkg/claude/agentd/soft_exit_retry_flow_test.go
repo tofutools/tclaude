@@ -92,6 +92,7 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 	const target = tmuxSes + ":0.0"
 	f.HaveConvWithTitle(conv, "clean-worker")
 	f.HaveAliveSession(conv, "spwn-sxjb", tmuxSes, f.TestCwd("sxjb"))
+	f.World.Tmux.SetPaneIdentityForTest(tmuxSes, "%77", 4242)
 
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
@@ -108,7 +109,7 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 			break
 		}
 	}
-	assert.Equal(t, "%1", exitTarget,
+	assert.Equal(t, "%77", exitTarget,
 		"successful lifecycle send must target the exact pane id, not session name")
 }
 
