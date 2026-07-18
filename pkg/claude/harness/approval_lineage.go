@@ -34,19 +34,40 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 // guard can tell a caller HOW to succeed rather than only that it failed —
 // notably for the unresolvable `inherit` child, whose effective posture cannot
 // be proven and therefore fails closed.
-func ApprovalLineageDenialHint(childHarness, childPolicy string) string {
+//
+// The suggestion is computed against the PARENT's own capability, so it can
+// only ever name a mode that would actually be allowed. Suggesting a mode that
+// earns a second 403 is worse than saying nothing.
+func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string) string {
 	if normalizeLineageHarness(childHarness) != DefaultName {
 		return ""
 	}
 	switch strings.TrimSpace(childPolicy) {
 	case claudePermInherit:
-		return fmt.Sprintf("the child requested %q, whose effective posture is decided by the operator's settings and cannot be proven at spawn time, so it is treated as the broadest non-bypass posture; pass an explicit permission mode such as %q to spawn a child with a provable posture",
-			claudePermInherit, claudePermAuto)
+		hint := fmt.Sprintf("the child requested %q, whose effective posture is decided by the operator's settings and cannot be proven at spawn time, so it is treated as the broadest non-bypass posture", claudePermInherit)
+		if alt := widestAllowedClaudeChildMode(parentHarness, parentPolicy, parentAutoReview); alt != "" {
+			return hint + fmt.Sprintf("; pass an explicit permission mode such as %q to spawn a child with a provable posture", alt)
+		}
+		// Nothing this parent could pass instead; do not invent advice.
+		return hint + "; this parent cannot delegate any provable Claude posture, so a human must spawn this child"
 	case claudePermBypass:
 		return fmt.Sprintf("%q removes every approval guardrail and can only be minted by a parent that already holds it, or by a human", claudePermBypass)
 	default:
 		return ""
 	}
+}
+
+// widestAllowedClaudeChildMode returns the most autonomous explicit Claude
+// permission mode this parent may actually delegate, or "" if it may delegate
+// none. Ordered most- to least-autonomous so the caller is pointed at the mode
+// that will serve a detached agent best.
+func widestAllowedClaudeChildMode(parentHarness, parentPolicy string, parentAutoReview bool) string {
+	for _, mode := range []string{claudePermAuto, claudePermAccept, claudePermDefault, claudePermPlan} {
+		if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview, DefaultName, mode, false) {
+			return mode
+		}
+	}
+	return ""
 }
 
 // The capability axes an approval posture is projected onto. They are bits, not
@@ -62,24 +83,36 @@ const (
 	// human, but the agent itself accepts nothing automatically.
 	approvalAutoBaseline approvalAutoCapability = 0
 
-	// approvalAutoSandbox is "may execute non-read-only actions automatically,
-	// with no human in the loop, while those actions stay inside the agent's
-	// sandbox". Codex never/on-request/on-failure hold it; so do Claude
-	// acceptEdits and auto. It is an autonomy capability, NOT an authority one:
-	// it never widens WHERE the agent may act (that is the sandbox lineage
-	// guard's axis), only whether a person must say yes first.
-	approvalAutoSandbox approvalAutoCapability = 1 << 0
+	// approvalAutoEdits is "may write files and run common filesystem commands
+	// in its working directory automatically, with no human in the loop". Claude
+	// acceptEdits holds exactly this and no more: every non-edit action still
+	// prompts.
+	approvalAutoEdits approvalAutoCapability = 1 << 0
+
+	// approvalAutoCommands is "may run ARBITRARY commands automatically, with no
+	// human in the loop, while they stay inside the agent's sandbox". Codex
+	// never/on-request/on-failure hold it, as does Claude auto (its supervisor
+	// approves safe commands, not only edits).
+	//
+	// This is deliberately distinct from approvalAutoEdits. Collapsing the two
+	// would let an acceptEdits parent — which must ask a human before every
+	// non-edit command — mint a child that runs `curl`, `git push`, or `rm -rf`
+	// unattended. Anything holding it also holds approvalAutoEdits.
+	approvalAutoCommands approvalAutoCapability = 1 << 1
 
 	// approvalAutoReviewer is "a machine reviewer may approve, in a human's
 	// place, actions that would otherwise escalate past the sandbox boundary".
 	// Codex Auto-review holds it. Claude's `auto` classifier does NOT: per
 	// TCL-92 it reviews and tightens in-sandbox operations and is not a
 	// boundary-escalation grant.
-	approvalAutoReviewer approvalAutoCapability = 1 << 1
+	approvalAutoReviewer approvalAutoCapability = 1 << 2
 
 	// approvalAutoUnreviewed is "auto-approve everything, with no reviewer of
 	// any kind". Only Claude bypassPermissions holds it.
-	approvalAutoUnreviewed approvalAutoCapability = 1 << 2
+	approvalAutoUnreviewed approvalAutoCapability = 1 << 3
+
+	// approvalAutoInSandbox is the full unattended in-sandbox execution shape.
+	approvalAutoInSandbox = approvalAutoEdits | approvalAutoCommands
 )
 
 type approvalLineagePosture struct {
@@ -102,11 +135,14 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool) approv
 			// plan is read-only; default prompts for everything; dontAsk
 			// auto-DENIES anything not pre-approved. None accepts automatically.
 			return approvalLineagePosture{capability: approvalAutoBaseline, valid: true}
-		case claudePermAccept, claudePermAuto:
-			// acceptEdits auto-approves edits and common fs commands in the cwd;
-			// auto lets a supervisor model approve safe actions. Both act without
-			// a human inside the sandbox, and neither can escalate past it.
-			return approvalLineagePosture{capability: approvalAutoSandbox, valid: true}
+		case claudePermAccept:
+			// Edits and common fs commands in the cwd only — every other action
+			// still prompts a human.
+			return approvalLineagePosture{capability: approvalAutoEdits, valid: true}
+		case claudePermAuto:
+			// A supervisor model approves safe actions, including commands. It
+			// tightens what runs inside the sandbox and cannot escalate past it.
+			return approvalLineagePosture{capability: approvalAutoInSandbox, valid: true}
 		case claudePermInherit:
 			// `inherit` means "whatever the operator's settings.json decides,
 			// plus the agentd approval popup". That is unknowable at spawn time
@@ -116,9 +152,9 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool) approv
 			//     (inherit, auto, acceptEdits, Codex never, ...);
 			//   - an inherit CHILD fails closed under any narrower parent, which
 			//     is what ApprovalLineageDenialHint explains.
-			return approvalLineagePosture{capability: approvalAutoSandbox | approvalAutoReviewer, valid: true}
+			return approvalLineagePosture{capability: approvalAutoInSandbox | approvalAutoReviewer, valid: true}
 		case claudePermBypass:
-			return approvalLineagePosture{capability: approvalAutoSandbox | approvalAutoReviewer | approvalAutoUnreviewed, valid: true}
+			return approvalLineagePosture{capability: approvalAutoInSandbox | approvalAutoReviewer | approvalAutoUnreviewed, valid: true}
 		default:
 			// Blank is an old/direct-session sentinel. It might represent any
 			// historic explicit mode, so do not treat it as known inherit.
@@ -132,7 +168,7 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool) approv
 			// The other policies may run commands automatically while they stay
 			// inside the OS sandbox.
 			if policy != ApprovalUntrusted {
-				capability |= approvalAutoSandbox
+				capability |= approvalAutoInSandbox
 			}
 			// `never` produces no approval requests, so enabling the reviewer
 			// alongside it grants no reviewer capability.

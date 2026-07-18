@@ -54,7 +54,8 @@ func spawnApprovalLineageFailure(parentConvID, childHarness, childPolicy string,
 		// Name the way out when there is one. The common case is an unresolvable
 		// `inherit` child, where "pass --ask-for-approval auto" is the whole fix
 		// and the bare denial reads as a dead end.
-		if hint := harness.ApprovalLineageDenialHint(childHarness, childPolicy); hint != "" {
+		if hint := harness.ApprovalLineageDenialHint(parentHarness, parentPolicy, parentAutoReview,
+			childHarness, childPolicy); hint != "" {
 			msg += ": " + hint
 		}
 		return &spawnFailure{http.StatusForbidden, "approval_restricted", msg}

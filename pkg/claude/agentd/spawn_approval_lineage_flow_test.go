@@ -42,6 +42,11 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 		{"claude auto cannot mint unresolvable claude inherit", harness.DefaultName, "auto", false, harness.DefaultName, harness.ClaudePermissionInherit, false, http.StatusForbidden},
 
 		// Genuinely broader capability is still denied, in both directions.
+		// acceptEdits auto-approves EDITS only; a child that runs arbitrary
+		// commands unattended is a real escalation even though both are
+		// "automatic".
+		{"accept edits cannot mint codex never", harness.DefaultName, "acceptEdits", false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
+		{"accept edits cannot mint claude auto", harness.DefaultName, "acceptEdits", false, harness.DefaultName, "auto", false, http.StatusForbidden},
 		{"accept edits cannot mint codex guardian", harness.DefaultName, "acceptEdits", false, harness.CodexName, harness.ApprovalOnRequest, true, http.StatusForbidden},
 		{"claude auto cannot delegate codex guardian review", harness.DefaultName, "auto", false, harness.CodexName, harness.ApprovalOnRequest, true, http.StatusForbidden},
 		{"claude default cannot delegate codex in-sandbox execution", harness.DefaultName, "default", false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
