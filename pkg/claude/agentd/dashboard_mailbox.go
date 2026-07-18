@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -653,21 +654,26 @@ func newMailboxDecorator() *mailboxDecorator {
 }
 
 // withOperatorMessages prefills the operator-authored set for one page of
-// rows, so toMessage can flag each without a per-row query. A lookup
-// failure leaves the set empty rather than failing the page: the folder
-// still lists correctly, only the human-operator attribution is lost.
+// rows, so toMessage can flag each without a per-row query. Every id on the
+// page is looked up, not just the sender-less ones: "operator mail always
+// has an empty from_conv" holds for today's four writers but nothing in db
+// enforces it, and the query is batched either way, so filtering would only
+// buy a silent mis-attribution the day that changes. A lookup failure leaves
+// the set empty rather than failing the page — the folder still lists
+// correctly, only the human-operator attribution is lost — but it is logged,
+// since a persistently failing lookup is otherwise invisible.
 func (d *mailboxDecorator) withOperatorMessages(rows []*db.AgentMessage) *mailboxDecorator {
 	ids := make([]int64, 0, len(rows))
 	for _, m := range rows {
-		// Only sender-less rows can be operator mail; agent-sent rows have a
-		// real from_conv and never carry the marker.
-		if m.FromConv == "" {
-			ids = append(ids, m.ID)
-		}
+		ids = append(ids, m.ID)
 	}
-	if set, err := db.OperatorAuthoredMessages(ids); err == nil {
-		d.operatorMsgs = set
+	set, err := db.OperatorAuthoredMessagesBatch(ids)
+	if err != nil {
+		slog.Warn("mailbox: operator-authored lookup failed; rows lose human-operator attribution",
+			"rows", len(ids), "error", err)
+		return d
 	}
+	d.operatorMsgs = set
 	return d
 }
 
@@ -735,9 +741,8 @@ func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMess
 		Subject:      m.Subject,
 		Body:         m.Body,
 		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
-		Read:         !m.ReadAt.IsZero(),
-		ParentID:     m.ParentID,
-
+		Read:             !m.ReadAt.IsZero(),
+		ParentID:         m.ParentID,
 		OperatorAuthored: d.operatorMsgs[m.ID],
 	}
 	if !m.DeliveredAt.IsZero() {

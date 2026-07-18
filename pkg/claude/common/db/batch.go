@@ -90,6 +90,49 @@ func ListAgentGroupMembersBatch(groupIDs []int64) (map[int64][]*AgentGroupMember
 	return out, nil
 }
 
+// OperatorAuthoredMessagesBatch reports which of the given agent_messages
+// ids are operator-authored (human → agent), as a set — an absent id is
+// simply not operator-authored, mirroring the zero-value shape the singular
+// IsOperatorAgentMessage returns. The mailbox read path decorates a whole
+// page at once at the same 2s cadence as the snapshot loaders above, so
+// this replaces one point query per row. Empty input returns without
+// opening SQLite.
+func OperatorAuthoredMessagesBatch(messageIDs []int64) (map[int64]bool, error) {
+	out := make(map[int64]bool, len(messageIDs))
+	if len(messageIDs) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunkInt64s(messageIDs, batchChunkSize) {
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		rows, err := d.Query(`SELECT message_id FROM operator_agent_messages
+			WHERE message_id IN (`+sqlPlaceholders(len(chunk))+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			out[id] = true
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // ListAgentGroupOwnersBatch is the owner-side companion to the membership
 // batch loader. Empty input likewise performs no DB open or query.
 func ListAgentGroupOwnersBatch(groupIDs []int64) (map[int64][]*AgentGroupOwner, error) {

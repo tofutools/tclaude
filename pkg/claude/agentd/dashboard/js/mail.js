@@ -771,8 +771,9 @@ const HUMAN_SENDER = 'human operator';
 // originating conv and no operator marker is an internal system handoff, not
 // an agent: it returns '' so the caller drops the party rather than showing
 // a misleading "(unknown)". A genuinely unresolvable but real conv still
-// falls back to its short conv-id. Shared by the aggregate + per-agent rows
-// and the reader's "From" header so all three agree.
+// falls back to its short conv-id. Shared by the aggregate rows, the
+// per-agent rows (via counterparty) and the reader's "From" header, so all
+// three name the same message the same way.
 function senderLabel(m) {
   if (m.operator_authored) return wz(HUMAN_SENDER, 'the Archmage');
   return m.from_title || shortAgentId(m.from_agent, m.from_conv);
@@ -785,11 +786,6 @@ function counterparty(m) {
   if (m.direction === 'out') {
     return m.to_title || shortAgentId(m.to_agent, m.to_conv) || '(unknown)';
   }
-  return senderLabel(m);
-}
-
-// allSenderLabel names a row's sender in the aggregate "all" view.
-function allSenderLabel(m) {
   return senderLabel(m);
 }
 
@@ -1497,7 +1493,7 @@ export const mailController = Object.freeze({
   mailboxView, mailboxLabel, mailboxTitleAttr, selectMailbox,
   toggleGroupExpand, toggleAgentsExpand, toggleBoxSelection, clearBoxSelection,
   wipeSelectedMailboxes,
-  messageView, messageCountText, counterparty, allSenderLabel, allRecipientLabel,
+  messageView, messageCountText, counterparty, senderLabel, allRecipientLabel,
   msgPreview, msgKind, selectMessage, toggleMessageSelection, togglePageSelection,
   deleteOneMessage, deleteSelectedMessages, setMessagesRead, markAllAgentRead,
   goToPage, setPageSize, decideAccess, accessWho, accessSubject,

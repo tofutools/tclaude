@@ -123,7 +123,7 @@ function AccessRow({ request, current, controller }) {
 
 function MessageHead({ message, aggregate, controller }) {
   if (aggregate) {
-    const sender = controller.allSenderLabel(message);
+    const sender = controller.senderLabel(message);
     return html`<${Fragment}>
       ${sender && html`<span class="mail-row-party" title=${message.from_conv ? idTooltip(message.from_agent, message.from_conv) : undefined}>${sender}</span>`}
       <span class="mail-row-arrow">→</span>
@@ -379,7 +379,7 @@ function MessageReader({ current, controller, model }) {
     <div class="mail-reader-head"><div class="mail-subject">${message.subject || '(no subject)'} <span class="mail-id">#${message.id}</span></div>
       <div class="mail-headers">
         ${message.operator_authored
-          ? html`<${HeaderRow} label="From">${controller.allSenderLabel(message)}</${HeaderRow}>`
+          ? html`<${HeaderRow} label="From">${controller.senderLabel(message)}</${HeaderRow}>`
           : message.from_conv && html`<${HeaderRow} label="From">${message.from_title ? `${message.from_title} ` : ''}<span class="mail-cid"
             title=${idTooltip(message.from_agent, message.from_conv)}>${shortAgentId(message.from_agent, message.from_conv)}</span></${HeaderRow}>`}
         <${HeaderRow} label="To">${to}</${HeaderRow}>
