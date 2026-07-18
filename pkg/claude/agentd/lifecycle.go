@@ -418,7 +418,8 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 				return
 			}
 			if attempt == softExitMaxAttempts {
-				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				// Delivery succeeded; retain attribution through the observer window.
+				scheduleUnknownIntentCleanup(target, intentRef)
 			}
 		}
 	})
