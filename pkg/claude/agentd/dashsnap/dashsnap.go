@@ -500,9 +500,13 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 			case "popup-close":
 				// Closes the pop-out page whose URL contains Selector,
 				// accepting a beforeunload confirmation if the page raises one
-				// (the terminal pop-out arms one while a pane is open).
+				// (the terminal pop-out arms one while a pane is open). The
+				// close runs under the state timeout so a mishandled dialog
+				// fails this state instead of hanging the whole capture.
 				popup := findPopupPage(sp, action.Selector, cfg)
-				closePopupPage(popup)
+				pp := popup.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+				closePopupPage(pp)
+				pp.CancelTimeout()
 			default:
 				panic(fmt.Sprintf("unknown browser action %q", action.Kind))
 			}
