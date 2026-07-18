@@ -10,7 +10,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ProcessEditModel, blankEditView, graphEdgeID, MAX_UNDO,
-  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable,
+  PALETTE_PRIMITIVES, PALETTE_SNIPPETS, processSelectionRenderedCenter,
+  templateIDEditable,
 } from '../dashboard/js/process-edit-model.js';
 
 function view() {
@@ -511,11 +512,17 @@ test('clipboard insertion remaps ids and references atomically around the reques
     edges: [{ from: 'build', outcome: 'pass', to: 'review' }],
   };
   const before = model.saveBody();
+  assert.deepEqual(processSelectionRenderedCenter(payload), { x: 185, y: 310 },
+    'source bounds use the task and decision rectangles, not only their origins');
   const idMap = model.insertClipboardSelection(payload, { center: { x: 500, y: 600 } });
   assert.deepEqual([...idMap], [['build', 'build-2'], ['review', 'review']]);
   assert.deepEqual(model.node('build-2'), payload.nodes[0].node, 'the complete node definition survives import');
-  assert.deepEqual(model.layout.nodes['build-2'], { x: 400, y: 500 });
-  assert.deepEqual(model.layout.nodes.review, { x: 600, y: 700 });
+  assert.deepEqual(model.layout.nodes['build-2'], { x: 415, y: 490 });
+  assert.deepEqual(model.layout.nodes.review, { x: 615, y: 690 });
+  assert.equal((415 - 168 / 2 + 615 + 108 / 2) / 2, 500,
+    'combined rendered-node horizontal bounds center at the requested target');
+  assert.equal((490 - 68 / 2 + 690 + 108 / 2) / 2, 600,
+    'combined rendered-node vertical bounds center at the requested target');
   assert.ok(model.edges.some((edge) => edge.from === 'build-2' && edge.outcome === 'pass' && edge.to === 'review'));
   assert.equal(model.undoStack.length, 1);
   assert.equal(model.undo(), true);

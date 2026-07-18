@@ -618,6 +618,39 @@ test('graph adapter translates semantic events and keeps transient pointer frame
   assert.deepEqual(received.map(([kind]) => kind), ['start', 'commit', 'cancel', 'port-start', 'port-end']);
 });
 
+test('graph adapter observes in-canvas pointer coordinates passively and invalidates them on lifecycle exits', async (t) => {
+  const observed = [];
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    canvasPointerMove: (payload) => observed.push(['move', payload.clientX, payload.clientY]),
+    canvasPointerLeave: (payload) => observed.push(['leave', payload.reason]),
+  });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.getBoundingClientRect = () => ({
+    left: 100.125, top: 50.25, width: 800.5, height: 600.75,
+    right: 900.625, bottom: 651,
+  });
+  const beforeFocus = harness.document.activeElement;
+  const move = harness.fireEvent(svg, 'pointermove', {
+    pointerId: 81, pointerType: 'mouse', clientX: 450.25, clientY: 280.5,
+  });
+  assert.equal(move.defaultPrevented, false);
+  assert.equal(adapter.hasActiveInteraction(), false, 'observation never starts pointer ownership');
+  assert.equal(harness.document.activeElement, beforeFocus, 'observation never moves focus');
+  assert.deepEqual(observed, [['move', 450.25, 280.5]]);
+  assert.equal(adapter.containsClientPoint(450.25, 280.5), true);
+  assert.equal(adapter.containsClientPoint(901, 280.5), false);
+
+  harness.fireEvent(svg, 'pointermove', {
+    pointerId: 81, pointerType: 'mouse', clientX: 901, clientY: 280.5,
+  });
+  assert.deepEqual(observed.at(-1), ['leave', 'bounds']);
+  harness.window.dispatchEvent(new harness.window.Event('blur'));
+  assert.deepEqual(observed.at(-1), ['leave', 'blur']);
+  adapter.dispose();
+  assert.deepEqual(observed.at(-1), ['leave', 'dispose']);
+  assert.equal(adapter.containsClientPoint(450.25, 280.5), false);
+});
+
 test('graph adapter snapshots layout, preserves viewport on graph input, and disposes idempotently', async (t) => {
   let clicks = 0;
   const { harness, adapter, host } = await mountedAdapter(t, { canvasClick: () => { clicks += 1; } });
@@ -646,6 +679,7 @@ test('graph adapter snapshots layout, preserves viewport on graph input, and dis
   assert.equal(adapter.hasActiveInteraction(), false);
   assert.deepEqual(adapter.interactionSnapshot(), { generation: 0, active: false });
   assert.deepEqual(adapter.clientToGraph(1, 2), { x: 0, y: 0 });
+  assert.equal(adapter.containsClientPoint(1, 2), false);
   assert.deepEqual(adapter.canvasCenter(), { x: 0, y: 0 });
   assert.deepEqual(adapter.graphPointToHost({ x: 1, y: 2 }), { left: 0, top: 0 });
   assert.deepEqual(adapter.clientPointToHost({ clientX: 1, clientY: 2 }), { left: 0, top: 0 });

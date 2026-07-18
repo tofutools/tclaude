@@ -719,12 +719,14 @@ export class ProcessGraph {
     const signal = this.abort.signal;
     this.fitButton.addEventListener('click', () => this.fitToView(), { signal });
     this.svg.addEventListener('wheel', (event) => this.onWheel(event), { passive: false, signal });
+    this.svg.addEventListener('pointerenter', (event) => this.observeCanvasPointer(event), { signal });
     this.svg.addEventListener('pointerdown', (event) => this.onPointerDown(event), { signal });
     this.svg.addEventListener('pointermove', (event) => this.onPointerMove(event), { signal });
     this.svg.addEventListener('pointerup', (event) => this.onPointerUp(event), { signal });
     this.svg.addEventListener('pointercancel', (event) => this.onPointerCancel(event), { signal });
     this.svg.addEventListener('lostpointercapture', (event) => this.onLostPointerCapture(event), { signal });
     this.svg.addEventListener('pointerleave', () => {
+      hook(this.options, 'onCanvasPointerLeave')({ reason: 'leave' });
       this.updatePortHover(null);
       this.cancelQueuedPointerFeedback();
       this.clearActionFeedback();
@@ -750,6 +752,7 @@ export class ProcessGraph {
     document.addEventListener('keydown', (event) => this.onSpaceKey(event), { signal });
     document.addEventListener('keyup', (event) => this.onSpaceKey(event), { signal });
     window.addEventListener('blur', () => {
+      hook(this.options, 'onCanvasPointerLeave')({ reason: 'blur' });
       this.setSpaceHeld(false);
       this.keyboardFocusOwned = false;
       this.cancelActivePointer();
@@ -1023,6 +1026,7 @@ export class ProcessGraph {
   }
 
   onPointerDown(event) {
+    this.observeCanvasPointer?.(event);
     if (this.pointer) return;
     const middle = event.button === 1;
     if (event.button !== 0 && !middle) return;
@@ -1116,6 +1120,7 @@ export class ProcessGraph {
   }
 
   onPointerMove(event) {
+    this.observeCanvasPointer?.(event);
     if (!this.pointer) {
       this.updatePortHover(event);
       this.queuePointerFeedback?.(event);
@@ -1540,6 +1545,28 @@ export class ProcessGraph {
       x: (clientX - rect.left - this.view.x) / this.view.k,
       y: (clientY - rect.top - this.view.y) / this.view.k,
     };
+  }
+
+  containsClientPoint(clientX, clientY) {
+    if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return false;
+    const rect = this.svg.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0
+      && clientX >= rect.left && clientX <= rect.left + rect.width
+      && clientY >= rect.top && clientY <= rect.top + rect.height;
+  }
+
+  // Passive observation only: this hook never claims input, captures a
+  // pointer, moves focus, or participates in pan/drag ownership.
+  observeCanvasPointer(event) {
+    const clientX = Number(event?.clientX);
+    const clientY = Number(event?.clientY);
+    if (!this.containsClientPoint(clientX, clientY)) {
+      hook(this.options, 'onCanvasPointerLeave')({ reason: 'bounds', event });
+      return;
+    }
+    hook(this.options, 'onCanvasPointerMove')({
+      clientX, clientY, pointerType: event.pointerType || '', event,
+    });
   }
 
   applyView() {

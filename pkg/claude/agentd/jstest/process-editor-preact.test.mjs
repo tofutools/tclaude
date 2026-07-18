@@ -324,6 +324,8 @@ test('Preact editor routes native copy/paste through the graph boundary and rest
   }); });
   assert.match(text, /^tclaude-process-selection:v1\n/);
   assert.equal(copy.defaultPrevented, true);
+  const beforePaste = editor.model.saveBody();
+  const beforeUndo = editor.model.undoStack.length;
 
   let ordinary;
   await harness.act(() => { ordinary = harness.fireEvent(editorRoot, 'Paste', {
@@ -331,6 +333,26 @@ test('Preact editor routes native copy/paste through the graph boundary and rest
   }); });
   assert.equal(ordinary.defaultPrevented, false);
   assert.equal(editor.model.node('start-2'), undefined);
+  assert.deepEqual(editor.model.saveBody(), beforePaste);
+  assert.equal(editor.model.undoStack.length, beforeUndo,
+    'copy and unrelated paste do not mutate history before a valid paste');
+
+  const svg = host.querySelector('.process-graph-svg');
+  svg.getBoundingClientRect = () => ({
+    left: 100.125, top: 50.25, width: 800.5, height: 600.75,
+    right: 900.625, bottom: 651,
+  });
+  editor.graph.zoomBy(1.75);
+  editor.graph.centerOn(160, 140);
+  const client = { x: 450.25, y: 280.5 };
+  const view = editor.graph.viewSnapshot();
+  const cursorPoint = {
+    x: (client.x - 100.125 - view.x) / view.k,
+    y: (client.y - 50.25 - view.y) / view.k,
+  };
+  await harness.act(() => harness.fireEvent(svg, 'pointermove', {
+    pointerId: 71, pointerType: 'mouse', clientX: client.x, clientY: client.y,
+  }));
 
   let paste;
   await harness.act(() => { paste = harness.fireEvent(editorRoot, 'Paste', {
@@ -339,9 +361,29 @@ test('Preact editor routes native copy/paste through the graph boundary and rest
   await Promise.resolve();
   assert.equal(paste.defaultPrevented, true);
   assert.ok(editor.model.node('start-2'));
+  assert.ok(Math.abs(editor.model.layout.nodes['start-2'].x - cursorPoint.x) < 1e-9
+    && Math.abs(editor.model.layout.nodes['start-2'].y - cursorPoint.y) < 1e-9,
+    'current pan/zoom converts the trusted client cursor into the paste center');
   assert.deepEqual(editor.selection, { type: 'node', id: 'start-2' });
   assert.equal(focusedID, 'start-2');
   assert.match(host.querySelector('.process-editor-status').textContent, /Pasted 1 node/);
+
+  await harness.act(() => harness.fireEvent(svg, 'pointerleave', {
+    pointerId: 71, pointerType: 'mouse', clientX: client.x, clientY: client.y,
+  }));
+  await harness.act(() => harness.fireEvent(editorRoot, 'Paste', {
+    clipboardData: { getData: () => text },
+  }));
+  await Promise.resolve();
+  assert.ok(Math.abs(editor.model.layout.nodes['start-3'].x - 160) < 1e-9
+    && Math.abs(editor.model.layout.nodes['start-3'].y - 140) < 1e-9,
+    'leaving the canvas invalidates the cursor and resets the cascade at the visible center');
+  assert.equal(editor.model.undoStack.length, beforeUndo + 2);
+  assert.equal(focusedID, 'start-3');
+  editor.canvasPointer = { clientX: client.x, clientY: client.y };
+  await harness.act(() => editor.attachGraphHost(null));
+  assert.equal(editor.canvasPointer, null, 'graph-host teardown cannot retain a stale client point');
+  assert.equal(editor.graph, null);
   editor.destroy();
 });
 
