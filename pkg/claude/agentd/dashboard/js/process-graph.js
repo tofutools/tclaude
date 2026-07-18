@@ -927,7 +927,8 @@ export class ProcessGraph {
     // SVG layer child. The detached original still carries the stable ids we
     // need to classify this gesture.
     const target = this.eventTarget(event);
-    if (target.port && target.node && this.feedbackEnabled) {
+    const connectionIntent = event.button === 0 && !this.spaceHeld;
+    if (connectionIntent && target.port && target.node && this.feedbackEnabled) {
       const source = { nodeId: target.node.dataset.nodeId, port: target.port.dataset.port };
       const feedback = this.connectionFeedback({ phase: 'source', source });
       if (feedback.enabled === false) {

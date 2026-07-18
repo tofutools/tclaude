@@ -357,6 +357,64 @@ test('disabled pointer feedback rebinds after a synchronous focus rerender', asy
   adapter.dispose();
 });
 
+test('disabled connectors preserve middle-button and Space-primary pan priority', async (t) => {
+  let portStarts = 0;
+  const feedback = ({ phase, source }) => source.nodeId === 'end' && source.port === 'out'
+    ? { state: 'disabled', enabled: false, message: 'End nodes cannot have outgoing connections.' }
+    : { state: phase === 'source' ? 'available' : 'valid', enabled: true, message: 'Connect.' };
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    portDragStart: () => { portStarts += 1; },
+  }, { connectionFeedback: feedback });
+  const root = host.querySelector('.process-graph');
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => {};
+  const port = host.querySelector('[data-node-id="end"] .process-port-out');
+  const tooltip = host.querySelector('.process-action-tooltip');
+  assert.equal(port.getAttribute('r'), '6');
+
+  const beforeMiddle = adapter.viewSnapshot();
+  harness.fireEvent(port, 'pointerdown', {
+    button: 1, pointerId: 65, pointerType: 'mouse', clientX: 10, clientY: 20,
+  });
+  assert.equal(adapter.interactionSnapshot().active, true);
+  assert.equal(host.querySelector('.process-editor-band'), null);
+  harness.fireEvent(svg, 'pointermove', {
+    button: 1, pointerId: 65, pointerType: 'mouse', clientX: 30, clientY: 50,
+  });
+  harness.fireEvent(svg, 'pointerup', {
+    button: 1, pointerId: 65, pointerType: 'mouse', clientX: 30, clientY: 50,
+  });
+  const afterMiddle = adapter.viewSnapshot();
+  assert.equal(afterMiddle.x, beforeMiddle.x + 20);
+  assert.equal(afterMiddle.y, beforeMiddle.y + 30);
+
+  harness.fireEvent(root, 'keydown', { key: ' ', code: 'Space' });
+  assert.ok(root.classList.contains('is-space-pan'));
+  const beforeSpace = adapter.viewSnapshot();
+  harness.fireEvent(port, 'pointerdown', {
+    button: 0, pointerId: 66, pointerType: 'mouse', clientX: 40, clientY: 60,
+  });
+  assert.equal(adapter.interactionSnapshot().active, true);
+  assert.equal(host.querySelector('.process-editor-band'), null);
+  harness.fireEvent(svg, 'pointermove', {
+    button: 0, pointerId: 66, pointerType: 'mouse', clientX: 55, clientY: 85,
+  });
+  harness.fireEvent(svg, 'pointerup', {
+    button: 0, pointerId: 66, pointerType: 'mouse', clientX: 55, clientY: 85,
+  });
+  harness.fireEvent(root, 'keyup', { key: ' ', code: 'Space' });
+  const afterSpace = adapter.viewSnapshot();
+  assert.equal(afterSpace.x, beforeSpace.x + 15);
+  assert.equal(afterSpace.y, beforeSpace.y + 25);
+  assert.equal(root.classList.contains('is-space-pan'), false);
+  assert.equal(portStarts, 0, 'navigation modifiers never start a connector gesture');
+  assert.equal(tooltip.textContent, '');
+  assert.equal(port.hasAttribute('aria-describedby'), false);
+  assert.equal(port.getAttribute('r'), '6');
+  adapter.dispose();
+});
+
 test('pointerleave invalidates queued feedback before its animation frame', async (t) => {
   const feedback = ({ phase }) => ({
     state: phase === 'source' ? 'available' : 'valid', enabled: true, message: 'Connect from this port.',
