@@ -97,7 +97,11 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 	}
 	states = shard.Pick(states)
 	if len(states) == 0 {
-		t.Fatalf("TCLAUDE_DASHSNAP_SHARD %d/%d selects no states (only %d after filtering)",
+		// A filter can shrink the matrix below the shard count; every remaining
+		// state then lands in a lower-numbered shard. That makes an empty shard
+		// a clean no-op — not a failure — so a fixed shard loop (the canonical
+		// 1/4..4/4 commands) stays combinable with any TCLAUDE_DASHSNAP_FILTER.
+		t.Skipf("TCLAUDE_DASHSNAP_SHARD %d/%d selects no states (%d after filtering) — all covered by lower shards",
 			shard.Index, shard.Total, matrixSize)
 	}
 	if shard.Enabled() {

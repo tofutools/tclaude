@@ -1100,8 +1100,10 @@ TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ \
 
 Set `TCLAUDE_DASHSNAP_FILTER=groups-chip-keyboard` (or another state-key
 substring) before the command to capture a subset; sharding applies after the
-filter. Set `TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in a
-usual platform install location.
+filter, and a shard left empty by a narrow filter skips cleanly (its states all
+belong to lower-numbered shards), so the fixed four-shard loop combines with
+any filter. Set `TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in
+a usual platform install location.
 
 On Linux, the harness launches Chrome with `--no-sandbox` so it can run inside a
 restricted coding-agent environment. On macOS, it also points
