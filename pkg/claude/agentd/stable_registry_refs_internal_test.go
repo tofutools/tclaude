@@ -24,6 +24,6 @@ func TestRoleProfileResolutionUsesIDLoadedBeforeRename(t *testing.T) {
 	require.Equal(t, profileID, loadedBeforeRename.SpawnProfileID)
 
 	require.NoError(t, db.UpdateSpawnProfile(&db.SpawnProfile{ID: profileID, Name: "after"}))
-	_, fail := resolveTemplateAgentLaunch(db.GroupTemplateAgent{}, loadedBeforeRename, home)
+	_, fail := resolveTemplateAgentLaunch(db.GroupTemplateAgent{}, loadedBeforeRename, home, "")
 	require.Nil(t, fail, "the pre-rename role object must resolve its profile through the stable id")
 }

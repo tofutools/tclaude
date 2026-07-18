@@ -909,7 +909,10 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // then resolves independently: inline agent values are explicit and fail
 // loudly, while profile-like tiers validate against the chosen harness and a
 // foreign invalid value is skipped with a disclosure note. role is the
-// resolved role the agent references (nil = none).
+// resolved role the agent references (nil = none). caller is the spawning
+// agent's conv-id (empty for a human): it lets a genuinely defaulted approval
+// posture be narrowed without losing that provenance during template
+// resolution.
 //
 // cwd is the resolved instantiation cwd; it drives the Codex sandbox cwd-safety
 // guard so a template can't spawn a workspace-write Codex agent at/above $HOME.
@@ -918,7 +921,7 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 // to the rest of the roster) if a referenced profile vanished or a resolved
 // value is invalid for the harness. The returned Harness is the resolved
 // canonical name (e.g. "claude"); SpawnProfile is left empty (already consumed).
-func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd string) (templateAgentLaunch, *spawnFailure) {
+func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, caller string) (templateAgentLaunch, *spawnFailure) {
 	var refProfile *db.SpawnProfile
 	if ref := strings.TrimSpace(a.SpawnProfile); ref != "" || a.SpawnProfileID > 0 {
 		var prof *db.SpawnProfile
@@ -1035,7 +1038,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	if note != "" {
 		notes = append(notes, note)
 	}
-	approval, _, note, fail := resolveStringLaunchField("approval", a.Approval, h.Name, tiers,
+	approval, approvalSource, note, fail := resolveStringLaunchField("approval", a.Approval, h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.Approval }, func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
 	if fail != nil {
 		return templateAgentLaunch{}, fail
@@ -1057,6 +1060,19 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd stri
 	}
 	if approval, err = harness.ResolveApprovalPolicy(h, approval); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
+	}
+	// Preserve the semantic difference between an omitted approval and a posture
+	// chosen by the template/profile chain. Before TCL-585 this resolver applied
+	// the harness default early, so executeSpawn saw a non-empty value and could
+	// no longer narrow bare template/wave children to an agent caller's posture.
+	// Explicit/profile choices remain untouched and still fail loudly if they
+	// exceed the caller's lineage authority.
+	if approvalSource == agent.ProvHarnessDefault {
+		defaultApproval := approval
+		approval = narrowDefaultApprovalToCaller(caller, h.Name, approval)
+		if approval != defaultApproval {
+			notes = append(notes, callerNarrowedApprovalNote(approval, defaultApproval))
+		}
 	}
 	// Resolve the two *bool launch toggles against the chosen harness — the
 	// same gate handleGroupSpawn/applyDefaultProfile apply. nil (no profile

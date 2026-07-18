@@ -29,6 +29,18 @@ import (
 // for tests; the bytes flowing through are still the same JSON the
 // real client would have sent.
 func bridgeAgentClientToMux(t *testing.T, h http.Handler) {
+	bridgeAgentClientToMuxWithPeer(t, h, agentd.AsHumanPeer)
+}
+
+// bridgeAgentClientToMuxAsAgent is the agent-authenticated counterpart used by
+// CLI flow tests whose server-side result depends on caller lineage.
+func bridgeAgentClientToMuxAsAgent(t *testing.T, h http.Handler, convID string) {
+	bridgeAgentClientToMuxWithPeer(t, h, func(r *http.Request) *http.Request {
+		return agentd.AsAgentPeer(r, convID)
+	})
+}
+
+func bridgeAgentClientToMuxWithPeer(t *testing.T, h http.Handler, wrap func(*http.Request) *http.Request) {
 	t.Helper()
 
 	prevAvail := agent.DaemonAvailableImpl
@@ -48,7 +60,7 @@ func bridgeAgentClientToMux(t *testing.T, h http.Handler) {
 		if in != nil {
 			r.Header.Set("Content-Type", "application/json")
 		}
-		r = agentd.AsHumanPeer(r)
+		r = wrap(r)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		if rr.Code >= 400 {

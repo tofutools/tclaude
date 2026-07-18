@@ -167,7 +167,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 				role = rl
 			}
 		}
-		launch, lfail := resolveTemplateAgentLaunch(a, role, agentCwd)
+		launch, lfail := resolveTemplateAgentLaunch(a, role, agentCwd, caller)
 		if lfail != nil {
 			res.Error = lfail.Msg
 			wr.Failed++

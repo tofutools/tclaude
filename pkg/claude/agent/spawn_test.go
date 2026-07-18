@@ -91,6 +91,14 @@ func TestSpawnHelp_DefaultResolutionDocumented(t *testing.T) {
 	require.NotNil(t, harnessFlag)
 	assert.Contains(t, harnessFlag.Usage, "never infer or pin")
 	assert.Contains(t, harnessFlag.Usage, "--profile")
+
+	approvalFlag := cmd.Flags().Lookup("ask-for-approval")
+	require.NotNil(t, approvalFlag)
+	assert.Contains(t, approvalFlag.Usage, "Claude: auto")
+	assert.Contains(t, approvalFlag.Usage, "caller")
+	assert.NotContains(t, approvalFlag.Usage, "Claude: inherit")
+	assert.Contains(t, long, "narrowed from the harness default")
+	assert.Contains(t, long, "never silently narrowed")
 }
 
 // formatResolvedField renders "value (source)" for a pinned field and a bare

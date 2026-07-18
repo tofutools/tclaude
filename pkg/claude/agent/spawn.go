@@ -482,9 +482,11 @@ type SpawnParams struct {
 	// agent. Codex takes an --ask-for-approval policy; Claude Code's approval
 	// posture is its --permission-mode, carried through this same field (the
 	// spawner emits the harness-appropriate flag). Declared last (no explicit
-	// short) for the same reason as the fields above. Unset resolves to each
-	// harness's safe default (Codex: never; Claude: inherit — no override).
-	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = the harness's safe default (Codex: never, so it can't block on a prompt; Claude: inherit)"`
+	// short) for the same reason as the fields above. Unset resolves through the
+	// profile chain and then to each harness's safe default (Codex: never;
+	// Claude: auto). For an agent caller, a bare harness default is narrowed to
+	// the caller's own same-harness posture when the caller cannot grant it.
+	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
 
 	// AutoReview is a bool flag declared last (no explicit short) for the same
 	// reason as the fields above — boa's short-flag enricher must not steal a
@@ -528,6 +530,10 @@ func spawnCmd() *cobra.Command {
 			"  3. the group's default spawn profile\n" +
 			"  4. the global (dashboard) default spawn profile\n" +
 			"  5. the harness's own default\n" +
+			"For an agent caller, a posture left unset through the profile chain may be " +
+			"narrowed from the harness default to the caller's own same-harness posture; " +
+			"the resolved launch notes disclose that adjustment. Explicit and profile-set " +
+			"postures are never silently narrowed. " +
 			"The harness is resolved through that full chain FIRST; model and other " +
 			"launch fields are then validated against it. An incompatible explicit " +
 			"flag is a loud error with matching --harness/--model guidance. An " +

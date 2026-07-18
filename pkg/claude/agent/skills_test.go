@@ -53,9 +53,9 @@ func TestBundledSkillFrontmatterIsValidYAML(t *testing.T) {
 	}
 }
 
-// The bundled skills must document the spawn default-resolution chain and the
-// policy-bound-spawn warning (TCL-304), so an agent that reads them before
-// delegating knows an unset --harness can inherit a default profile's vendor.
+// The bundled skills must document the spawn default-resolution chain, the
+// policy-bound-spawn warning (TCL-304), and caller-dependent approval narrowing
+// (TCL-585), so an agent can predict the launch it is delegating.
 func TestBundledSkillsDocumentSpawnResolution(t *testing.T) {
 	coord, err := skillsFS.ReadFile("skills/agent-coord/SKILL.md")
 	require.NoError(t, err)
@@ -68,6 +68,8 @@ func TestBundledSkillsDocumentSpawnResolution(t *testing.T) {
 	assert.Contains(t, body, "echo discloses the skip")
 	assert.Contains(t, body, "tclaude agent profiles default show")
 	assert.Contains(t, body, "tclaude agent groups ls")
+	assert.Contains(t, body, "narrowed to caller posture")
+	assert.Contains(t, body, "never silently reduced")
 
 	circles, err := skillsFS.ReadFile("skills/agent-circles/SKILL.md")
 	require.NoError(t, err)
