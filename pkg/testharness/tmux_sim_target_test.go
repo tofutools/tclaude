@@ -84,6 +84,17 @@ func TestTmuxSim_SendKeysLiteralMode(t *testing.T) {
 	assert.Equal(t, "Enter", sent[0].Text)
 }
 
+func TestTmuxSim_SendKeysRejectsSessionExactMarkerOnPaneID(t *testing.T) {
+	sim := newTmuxSim()
+	sim.MarkAlive("worker")
+	sim.SetPaneIdentityForTest("worker", "%77", 4242)
+
+	assert.Error(t, sim.Command("send-keys", "-l", "-t", "=%77", "/exit").Run(),
+		"real tmux rejects a session-name exact marker prefixed to a pane ID")
+	assert.NoError(t, sim.Command("send-keys", "-l", "-t", "%77", "/exit").Run(),
+		"a bare pane ID is already an exact target")
+}
+
 // Pane-typed commands (send-keys, display-message, capture-pane) parse a
 // COLON-LESS target into the pane slot, where real tmux never strips the
 // '=' — "=name" hunts a pane literally named "=name" and matches nothing.

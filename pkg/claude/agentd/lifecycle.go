@@ -125,6 +125,7 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	res.TmuxSes = sess.TmuxSession
 	target, targetErr := captureLifecycleTarget(sess)
 	if targetErr != nil {
+		logLifecycleStopFailure("capture", sess.TmuxSession, sess.ID, targetErr)
 		res.Action = "error"
 		res.Detail = "capture selected pane: " + targetErr.Error()
 		return res
@@ -279,9 +280,22 @@ func killLifecycleTarget(t *lifecycleTarget) error {
 		beforeSoftExitTargetRevalidateForTest()
 	}
 	if _, err := t.revalidate(); err != nil {
+		logLifecycleStopFailure("revalidate", t.paneID, t.sessionID, err)
 		return err
 	}
-	return clcommon.TmuxCommand("kill-pane", "-t", t.paneID).Run()
+	if err := clcommon.TmuxCommand("kill-pane", "-t", t.paneID).Run(); err != nil {
+		logLifecycleStopFailure("kill", t.paneID, t.sessionID, err)
+		return err
+	}
+	return nil
+}
+
+func logLifecycleStopFailure(action, target, session string, err error) {
+	slog.Warn("stop: managed lifecycle action failed",
+		"target", auditClip(target, 120),
+		"session", auditClip(session, 120),
+		"action", auditClip(action, 32),
+		"error", auditClip(err.Error(), 240))
 }
 
 func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string) *db.SessionExitIntentRef {
@@ -327,10 +341,12 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		beforeSoftExitTargetRevalidateForTest()
 	}
 	if _, err := target.revalidate(); err != nil {
+		logLifecycleStopFailure("revalidate", target.paneID, target.sessionID, err)
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
 	if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
 	if afterSoftExitTargetSendForTest != nil {
@@ -408,6 +424,10 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 			}
 			probe, err := probeLifecyclePane(target.tmuxSession)
 			if err != nil || probe.state == paneProbeUnknown {
+				if err == nil {
+					err = errors.New("pane revalidation unavailable")
+				}
+				logLifecycleStopFailure("revalidate", target.paneID, target.sessionID, err)
 				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 				return
 			}
@@ -415,10 +435,13 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 				return
 			}
 			if !lifecycleProbeMatchesTarget(probe, target) {
+				logLifecycleStopFailure("revalidate", target.paneID, target.sessionID,
+					errors.New("selected pane identity changed"))
 				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 				return
 			}
 			if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 				return
 			}
@@ -1619,7 +1642,12 @@ func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) 
 		resp["caller_conv"] = caller
 		stampCallerAgentID(resp, caller)
 	}
-	writeJSON(w, http.StatusOK, resp)
+	status := http.StatusOK
+	if res.Action == "error" {
+		status = http.StatusInternalServerError
+		setAuditDetail(r, res.Detail)
+	}
+	writeJSON(w, status, resp)
 }
 
 // handleAgentDelete permanently removes an agent: every row in every

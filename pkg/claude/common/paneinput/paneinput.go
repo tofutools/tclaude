@@ -78,7 +78,7 @@ func (o Options) resolved() Options {
 // the same pane. fn receives the exact-match tmux pane target.
 func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget string) error) error {
 	opts = opts.resolved()
-	exactTarget := clcommon.ExactTarget(strings.TrimPrefix(tmuxTarget, "="))
+	exactTarget := exactInputTarget(tmuxTarget)
 	lockPath, err := paneLockPath(exactTarget)
 	if err != nil {
 		return err
@@ -98,6 +98,18 @@ func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget s
 	}
 	defer func() { _ = fileLock.Unlock() }()
 	return fn(opts.Run, exactTarget)
+}
+
+// exactInputTarget preserves tmux pane IDs, which are already exact targets.
+// Prefixing a pane ID with the session-name exact marker produces the invalid
+// target "=%N" in real tmux. Session-shaped targets still need the marker to
+// avoid tmux's unique-prefix fallback onto a namesake session.
+func exactInputTarget(tmuxTarget string) string {
+	target := strings.TrimPrefix(tmuxTarget, "=")
+	if strings.HasPrefix(target, "%") {
+		return target
+	}
+	return clcommon.ExactTarget(target)
 }
 
 // InjectTextAndSubmit delivers one complete prompt turn. Multiline/tabbed

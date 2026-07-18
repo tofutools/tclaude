@@ -76,6 +76,26 @@ func TestAudit_ForceStopCorrelatesSystemExitObservation(t *testing.T) {
 	assert.Equal(t, command.EventID, exit.RelatedEventID)
 }
 
+func TestAudit_FailedStopRecordsFailureAndBoundedDiagnostic(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv = "failed-stop-1111-2222-3333-444444444444"
+		tmux = "failed-stop-tmux"
+	)
+	f.HaveConvWithTitle(conv, "failed-stop-worker")
+	f.HaveAliveSession(conv, "spwn-failed-stop", tmux, f.TestCwd("failed-stop"))
+	f.World.Tmux.FailNextCommand("send-keys")
+
+	stopped := testharness.Serve(f.Mux, agentd.AsHumanPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+conv+"/stop", nil)))
+	require.Equal(t, http.StatusInternalServerError, stopped.Code, "body=%s", stopped.Body.String())
+
+	row := auditRowByVerb(t, "stop")
+	assert.Equal(t, http.StatusInternalServerError, row.Status)
+	assert.Equal(t, "send-keys /exit failed", row.Detail)
+	assert.LessOrEqual(t, len(row.Detail), 240)
+}
+
 // Scenario: an agent sends an intra-group message. The trail records
 // "<sender> | message | <recipient> | <preview>", with the agent as the
 // actor.
