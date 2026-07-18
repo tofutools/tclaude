@@ -1604,7 +1604,7 @@ function failingFetch(name) {
   return () => { throw new Error(`${name} must not start network work after destroy`); };
 }
 
-test('synchronous commands are inert and cannot mutate state after repeated destroy', () => {
+test('synchronous commands are inert and cannot mutate state after repeated destroy', async () => {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = failingFetch('sync command');
   try {
@@ -1655,6 +1655,18 @@ test('synchronous commands are inert and cannot mutate state after repeated dest
     assert.equal(editor.selection, selectionBefore);
     editor.attachGraphHost({});
     assert.equal(editor.graph, null, 'a destroyed editor cannot mint a new graph adapter');
+    // Stale graph-gesture callbacks a disposed adapter (or held closure) may
+    // still fire must not dereference the nulled adapter or arm gesture state.
+    editor.commitNodeDrag({ starts: [{ id: 'b', x: 0, y: 80 }], delta: { x: 10, y: 10 }, moved: true });
+    editor.onPortDragStart({ nodeId: 'b', port: 'out', point: { x: 0, y: 0 } });
+    assert.equal(editor.band, null, 'a port drag cannot arm a rubber band after destroy');
+    editor.onPortDragEnd({ nodeId: 'b', port: 'out', point: { x: 0, y: 0 } });
+    assert.equal(editor.openConnectedNodeChooser({ nodeId: 'b', port: 'out' }, { x: 0, y: 0 }), false);
+    assert.equal(editor.nodeChooserDispose, null);
+    assert.equal(editor.addConnectedNodeType('task', { nodeId: 'a', port: 'out' }, { x: 5, y: 5 }), false);
+    // Flush microtasks so any stray queued graph focus would surface as an
+    // uncaught TypeError and fail the run.
+    await new Promise((resolve) => setImmediate(resolve));
     editor.publish();
     assert.equal(editor.snapshotSignal.value, 'initial', 'destroyed editor publishes no snapshots');
     editor.refresh();
@@ -1737,7 +1749,10 @@ test('every palette command built from a destroyed editor is disabled and inert 
     editor.destroy();
     const before = editor.model.saveBody();
 
-    const commands = buildProcessEditorCommands({ editor, wizard: false });
+    const navigations = [];
+    const commands = buildProcessEditorCommands({
+      editor, actions: { activateSubtab: (name) => navigations.push(name) }, wizard: false,
+    });
     assert.ok(commands.length > 0);
     const byID = Object.fromEntries(commands.map((command) => [command.id, command]));
     for (const id of ['process.create.task', 'process.edit-selection', 'process.duplicate-selection',
@@ -1749,9 +1764,48 @@ test('every palette command built from a destroyed editor is disabled and inert 
     // Even the always-enabled commands (zoom, whole-template scribe) and any
     // stale run handler a client may still hold must be harmless.
     for (const command of commands) await command.run();
+    // The templates/runs commands only navigate AWAY from the dead editor
+    // surface through actions and never touch the editor — the one deliberate
+    // exemption from run inertness. Everything editor-bound stayed inert.
+    assert.deepEqual(navigations, ['templates', 'runs']);
     assert.deepEqual(editor.model.saveBody(), before);
     assert.equal(editor.modalState, null);
     assert.equal(editor.graph, null);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('destroy during an in-flight save reports failure and blocks the instantiate handoff', async () => {
+  const previousFetch = globalThis.fetch;
+  const started = deferred();
+  const response = deferred();
+  let fetches = 0;
+  globalThis.fetch = () => { fetches += 1; started.resolve(); return response.promise; };
+  try {
+    const editor = destroyableEditor();
+    let instantiations = 0;
+    editor.options.onInstantiate = () => { instantiations += 1; };
+    editor.choiceModal = async () => 'save';
+    editor.model.setTemplateMeta({ name: 'Local draft' });
+    assert.equal(editor.model.dirty, true);
+
+    const pending = editor.requestInstantiate();
+    await started.promise;
+    // Teardown lands while the save POST is in flight — e.g. the onSaved /
+    // navigation path unmounting the editor. The discarded completion must
+    // read as a failed save and never reach onInstantiate.
+    editor.destroy();
+    response.resolve({
+      ok: true, status: 201, statusText: 'Created',
+      json: async () => ({ sourceHash: 'source-late', semanticHash: 'semantic-late', diagnostics: [] }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(instantiations, 0, 'a destroyed editor identity is never handed to the instantiate flow');
+    assert.equal(fetches, 1);
+    assert.equal(editor.model.sourceHash, 'source-old', 'the delayed completion cannot adopt a CAS head after destroy');
+    assert.equal(editor.savePending, false);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;

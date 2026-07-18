@@ -947,12 +947,14 @@ export class ProcessTemplateEditor {
       // Edits made while the save was in flight deliberately leave the model
       // dirty; requiring another click is what makes unsaved instantiation
       // impossible by construction.
-      if (!saved || this.dirty || !this.model.currentRef) {
+      if (!saved || this.destroyed || this.dirty || !this.model.currentRef) {
         if (saved && this.dirty) this.status('The editor changed while saving. Save the latest changes before instantiating.', true);
         return false;
       }
     }
-    if (typeof this.options.onInstantiate !== 'function') return false;
+    // The save's onSaved hook may navigate away and destroy this editor;
+    // never hand a destroyed editor's identity to the instantiate flow.
+    if (this.destroyed || typeof this.options.onInstantiate !== 'function') return false;
     this.options.onInstantiate({
       id: this.model.template.id,
       ref: this.model.currentRef,
@@ -1002,6 +1004,7 @@ export class ProcessTemplateEditor {
   }
 
   commitNodeDrag({ starts, delta, moved = true }) {
+    if (this.destroyed || !this.graph) return;
     if (!moved || !starts?.length || !delta) return;
     // The core's own click-vs-drag threshold is 3 CLIENT px; the delta is in
     // graph units, so scale by the zoom before comparing — at high zoom a
@@ -1021,12 +1024,14 @@ export class ProcessTemplateEditor {
   }
 
   onPortDragStart({ nodeId, port, point }) {
+    if (this.destroyed) return;
     this.nodeChooserDispose?.();
     this.nodeChooserDispose = null;
     this.band = { source: { nodeId, port } };
   }
 
   onPortDragEnd({ nodeId, port, point, targetNodeId, targetPort, emptyCanvas, cancelled, event }) {
+    if (this.destroyed) return;
     const source = this.band?.source || { nodeId, port };
     this.removeBand();
     if (cancelled) return;
@@ -1058,6 +1063,7 @@ export class ProcessTemplateEditor {
   }
 
   openConnectedNodeChooser(source, point, event) {
+    if (this.destroyed || !this.graph) return false;
     const feedback = resolveProcessConnectionFeedback(this.model, {
       phase: 'target', source, candidate: { emptyCanvas: true },
     });
@@ -1095,13 +1101,14 @@ export class ProcessTemplateEditor {
   }
 
   addConnectedNodeType(type, source, point) {
+    if (this.destroyed) return false;
     const connection = source.port === 'in'
       ? { connectTo: source.nodeId } : { connectFrom: source.nodeId };
     const created = this.mutate(() => this.model.addConnectedNode(type, {
       x: point.x, y: point.y, ...connection,
     }));
     if (!created) {
-      queueMicrotask(() => this.graph.focus());
+      queueMicrotask(() => this.graph?.focus());
       return false;
     }
     this.setSelection({ type: 'node', id: created.id });
@@ -1110,7 +1117,7 @@ export class ProcessTemplateEditor {
     if (nodeType?.requiresConfiguration) {
       void this.openNodeSettings(created.id);
     } else {
-      queueMicrotask(() => this.graph.focusNode(created.id));
+      queueMicrotask(() => this.graph?.focusNode(created.id));
     }
     return created.id;
   }
@@ -1563,7 +1570,10 @@ export class ProcessTemplateEditor {
     this.updateChrome();
     try {
       await this.saveRequest(requestSeq);
-      return true;
+      // destroy() (or a newer lifecycle generation) invalidates the sequence
+      // mid-flight; a discarded completion must not report success to callers
+      // like requestInstantiate that act on it.
+      return requestSeq === this.saveSeq;
     } catch (error) {
       if (requestSeq === this.saveSeq) this.status(`Save failed: ${error.message}`, true);
       return false;
