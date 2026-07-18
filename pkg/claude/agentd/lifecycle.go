@@ -234,7 +234,7 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 	if p.state != paneProbeLive {
 		return nil, fmt.Errorf("pane is not live")
 	}
-	if identity.Generation != "" && p.generation != identity.Generation {
+	if identity.Generation != "" && p.generation != "" && p.generation != identity.Generation {
 		return nil, fmt.Errorf("pane generation mismatch")
 	}
 	return &lifecycleTarget{sessionID: sess.ID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID}, nil
@@ -355,7 +355,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 }
 
 func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarget) bool {
-	return probe.paneID == target.paneID && (target.panePID <= 0 || probe.panePID == target.panePID) && (target.generation == "" || probe.generation == target.generation)
+	return probe.paneID == target.paneID && (target.panePID <= 0 || probe.panePID == target.panePID) && (target.generation == "" || probe.generation == "" || probe.generation == target.generation)
 }
 
 func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
