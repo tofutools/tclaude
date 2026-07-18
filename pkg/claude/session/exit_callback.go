@@ -568,7 +568,10 @@ func CleanupDeadTmuxPane(evidence PaneExitEvidence) error {
 		if !samePaneExitEvidence(current, evidence) {
 			return fmt.Errorf("refuse cleanup after pane exit identity changed")
 		}
-		lastErr = clcommon.TmuxCommand("kill-pane", "-t", clcommon.ExactTarget(evidence.PaneID)).Run()
+		// Pane IDs are already exact tmux targets. The leading '=' marker is
+		// only parsed from session/window target parts; "=%N" is invalid in
+		// real tmux and leaves the retained pane behind.
+		lastErr = clcommon.TmuxCommand("kill-pane", "-t", evidence.PaneID).Run()
 		if lastErr == nil {
 			return nil
 		}

@@ -875,7 +875,9 @@ type StopResp struct {
 
 // Stop drives POST /v1/agent/{conv}/stop. force=true passes ?force=1 for
 // a hard kill-session; force=false is the soft stop (inject the harness's
-// SoftExitCommand — CC's /exit, Codex's /quit). Fatals on a non-200.
+// SoftExitCommand — CC's /exit, Codex's /quit). A truthful HTTP 500 with an
+// action:error body is returned to error-path scenarios; other non-200
+// responses remain fatal setup/authorization failures.
 func (f *Flow) Stop(convID string, force bool) StopResp {
 	f.T.Helper()
 	path := "/v1/agent/" + convID + "/stop"
@@ -886,11 +888,11 @@ func (f *Flow) Stop(convID string, force bool) StopResp {
 	var resp StopResp
 	resp.Code = rec.Code
 	resp.Raw = rec.Body.Bytes()
-	if rec.Code != http.StatusOK {
-		f.T.Fatalf("Stop(%q,force=%v): status=%d body=%s", convID, force, rec.Code, rec.Body.String())
-	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		f.T.Fatalf("Stop decode: %v body=%s", err, rec.Body.String())
+	}
+	if rec.Code != http.StatusOK && !(rec.Code == http.StatusInternalServerError && resp.Action == "error") {
+		f.T.Fatalf("Stop(%q,force=%v): status=%d body=%s", convID, force, rec.Code, rec.Body.String())
 	}
 	return resp
 }
