@@ -104,6 +104,28 @@ test('drop commit reuses connection feedback preflight for direction and invalid
   assert.deepEqual(statuses.at(-1), ['End nodes cannot have outgoing connections.', true]);
 });
 
+test('missing keyboard source cancellation clears editor gesture state without commit or status mutation', () => {
+  const model = new ProcessEditModel({
+    template: { nodes: { build: { type: 'task' } } }, edges: [], layout: { nodes: {} },
+  });
+  const before = model.saveBody();
+  let removed = 0;
+  const fake = {
+    model, band: { source: { nodeId: 'build', port: 'out' } },
+    removeBand() { removed += 1; this.band = null; },
+    mutate() { assert.fail('cancelled removal must not enter a model mutation'); },
+    status() { assert.fail('cancelled removal must not publish a status'); },
+  };
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'build', port: 'out', point: { x: 1, y: 2 },
+    targetNodeId: null, targetPort: null, keyboard: true, cancelled: true,
+    cancellation: 'source-removed',
+  });
+  assert.equal(removed, 1);
+  assert.equal(fake.band, null);
+  assert.deepEqual(model.saveBody(), before);
+});
+
 test('connected-node selection preserves direction and opens required configuration', async () => {
   const calls = [];
   const fake = {

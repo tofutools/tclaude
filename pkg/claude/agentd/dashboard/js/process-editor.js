@@ -36,7 +36,9 @@ import {
 } from './process-selection.js';
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
-import { resolveProcessConnectionFeedback } from './process-connection-feedback.js';
+import {
+  prepareProcessConnectionFeedback, resolveProcessConnectionFeedback,
+} from './process-connection-feedback.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import {
   processScribeContextPreview, processScribeEditorContext,
@@ -150,7 +152,8 @@ export class ProcessTemplateEditor {
     this.graph = createProcessGraphAdapter(host, {
       graph: this.model.graph(),
       ariaLabel: `Process template editor: ${this.model.template.id}`,
-      connectionFeedback: (request) => resolveProcessConnectionFeedback(this.model, request),
+      connectionFeedback: (request, prepared) => resolveProcessConnectionFeedback(this.model, request, prepared),
+      connectionFeedbackPreparation: () => prepareProcessConnectionFeedback(this.model),
       events: {
         nodeClick: (event) => this.onNodeClick(event),
         nodeDoubleClick: (event) => this.onNodeDblClick(event),

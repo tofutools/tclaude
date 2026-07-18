@@ -48,7 +48,7 @@ test('editor connection feedback covers pointer, keyboard, timing, and cleanup w
   const { harness, adapter, host } = await mountedAdapter(t, {
     portDragStart: (payload) => received.push(['start', payload]),
     portDragEnd: (payload) => received.push(['end', payload]),
-  }, { connectionFeedback: feedback, actionFeedbackDelay: 5, keyboardFeedbackDelay: 5 });
+  }, { connectionFeedback: feedback, actionFeedbackDelay: 50, keyboardFeedbackDelay: 50 });
   const svg = host.querySelector('.process-graph-svg');
   svg.setPointerCapture = () => {};
   svg.releasePointerCapture = () => {};
@@ -61,6 +61,8 @@ test('editor connection feedback covers pointer, keyboard, timing, and cleanup w
   assert.equal(endOut.getAttribute('aria-disabled'), 'true');
   assert.ok(endOut.classList.contains('is-action-disabled'));
 
+  harness.fireEvent(endOut, 'focusin');
+  assert.equal(tooltip.classList.contains('is-visible'), false, 'focus disclosure observes its keyboard delay');
   harness.fireEvent(endOut, 'pointerdown', { button: 0, pointerId: 20, pointerType: 'mouse' });
   await new Promise((resolve) => setTimeout(resolve, 2));
   assert.equal(received.length, 0, 'a disabled source never starts a semantic drag');
@@ -93,7 +95,7 @@ test('editor connection feedback covers pointer, keyboard, timing, and cleanup w
   assert.equal(hitTests, 0);
   frames.shift()();
   assert.equal(hitTests, 1, 'one frame performs one elementFromPoint lookup');
-  await new Promise((resolve) => setTimeout(resolve, 8));
+  await new Promise((resolve) => setTimeout(resolve, 55));
   assert.match(tooltip.textContent, /output port/);
   assert.ok(tooltip.classList.contains('is-visible'));
   assert.equal(endIn.getAttribute('aria-describedby'), tooltip.id);
@@ -106,7 +108,7 @@ test('editor connection feedback covers pointer, keyboard, timing, and cleanup w
   assert.equal(tooltip.textContent, '', 'rerender removes the detached target disclosure immediately');
   assert.equal(frames.length, 1, 'active pointer feedback schedules one recovery frame');
   frames.shift()();
-  await new Promise((resolve) => setTimeout(resolve, 8));
+  await new Promise((resolve) => setTimeout(resolve, 2));
   assert.match(tooltip.textContent, /output port/);
   assert.ok(tooltip.classList.contains('is-visible'), 'rerender preserves the elapsed disclosure delay');
   assert.equal(hitTarget.getAttribute('aria-describedby'), tooltip.id);
@@ -140,6 +142,59 @@ test('editor connection feedback covers pointer, keyboard, timing, and cleanup w
 
   adapter.dispose();
   assert.equal(host.childNodes.length, 0);
+});
+
+test('undo-style graph removal cancels a missing keyboard source exactly once', async (t) => {
+  const received = [];
+  const feedback = ({ phase, source, candidate = {} }) => {
+    if (phase === 'source') return { state: 'available', enabled: true, message: 'Start a connection.' };
+    if (candidate.nodeId === source.nodeId && candidate.port === source.port) {
+      return { state: 'source', enabled: true, message: 'Start a connection.' };
+    }
+    return { state: 'valid', enabled: true, message: 'Drop to connect.' };
+  };
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    portDragStart: (payload) => received.push(['start', payload]),
+    portDragEnd: (payload) => received.push(['end', payload]),
+  }, { connectionFeedback: feedback });
+  const graph = host.querySelector('.process-graph');
+  const graphFocus = graph.focus.bind(graph);
+  let graphFocusRestorations = 0;
+  Object.defineProperty(graph, 'focus', {
+    configurable: true,
+    value(options) { graphFocusRestorations += 1; return graphFocus(options); },
+  });
+  const source = host.querySelector('[data-node-id="start"] .process-port-out');
+  source.focus();
+  harness.fireEvent(source, 'keydown', { key: 'Enter' });
+  const active = adapter.interactionSnapshot();
+  assert.equal(active.active, true);
+  assert.ok(host.querySelector('.process-editor-band'), 'keyboard gesture owns a rubber band');
+  assert.ok(host.querySelector('.process-graph').classList.contains('is-connecting'));
+
+  adapter.setGraph({ nodes: [{ id: 'end', type: 'end', label: 'End' }], edges: [] });
+  const cancelled = received.filter(([kind]) => kind === 'end');
+  assert.equal(cancelled.length, 1, 'source removal emits one canonical semantic end');
+  const { point, ...cancelPayload } = cancelled[0][1];
+  assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y));
+  assert.deepEqual(cancelPayload, {
+    nodeId: 'start', port: 'out',
+    targetNodeId: null, targetPort: null, keyboard: true, cancelled: true,
+    cancellation: 'source-removed',
+  });
+  assert.equal(host.querySelector('.process-editor-band'), null, 'cancellation removes the rubber band');
+  assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
+  assert.deepEqual(adapter.interactionSnapshot(), {
+    generation: active.generation + 1, active: false,
+  }, 'reload freshness sees the completed interaction generation and no active gesture');
+  assert.equal(graphFocusRestorations, 1,
+    'focus falls back to the graph when the focused source disappears');
+
+  adapter.setGraph({ nodes: [{ id: 'end', type: 'end', label: 'End' }], edges: [] });
+  harness.fireEvent(host.querySelector('.process-graph-svg'), 'keydown', { key: 'Escape' });
+  assert.equal(received.filter(([kind]) => kind === 'end').length, 1,
+    'rerender and Escape cannot double-cancel an already completed gesture');
+  adapter.dispose();
 });
 
 test('graph adapter translates semantic events and keeps transient pointer frames private', async (t) => {

@@ -128,8 +128,9 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'Delete + rewire through'",
 		// The pure semantic resolver is shared by presentation and commit
 		// preflight, so feedback cannot drift from accepted editor gestures.
-		"import { resolveProcessConnectionFeedback } from './process-connection-feedback.js';",
-		"connectionFeedback: (request) => resolveProcessConnectionFeedback(this.model, request)",
+		"prepareProcessConnectionFeedback, resolveProcessConnectionFeedback,",
+		"connectionFeedback: (request, prepared) => resolveProcessConnectionFeedback(this.model, request, prepared)",
+		"connectionFeedbackPreparation: () => prepareProcessConnectionFeedback(this.model)",
 		"const feedback = resolveProcessConnectionFeedback(this.model, {",
 		// Editor semantics cross the one explicit adapter. Pointer-frame state
 		// never becomes controller or Signals state.
@@ -147,6 +148,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.validation?.focusIssue(delta)",
 	)
 	mustContain("process-connection-feedback.js", connectionFeedback,
+		"export function prepareProcessConnectionFeedback(",
 		"export function resolveProcessConnectionFeedback(",
 		"End nodes cannot have outgoing connections.",
 		"Self-loop connections are not supported because v1 processes are acyclic.",

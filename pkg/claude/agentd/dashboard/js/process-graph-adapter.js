@@ -15,6 +15,7 @@ function cloneLayout(layout) {
 export class ProcessGraphAdapter {
   constructor(host, {
     graph = { nodes: [], edges: [] }, ariaLabel = '', events = {}, connectionFeedback,
+    connectionFeedbackPreparation,
     actionFeedbackDelay, keyboardFeedbackDelay,
   } = {}) {
     this.host = host;
@@ -29,6 +30,7 @@ export class ProcessGraphAdapter {
       ariaLabel,
       colorScheme: 'dark',
       connectionFeedback,
+      connectionFeedbackPreparation,
       actionFeedbackDelay,
       keyboardFeedbackDelay,
       onInteractionStart: () => { this.interactionGeneration += 1; },

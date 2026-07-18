@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
-import { resolveProcessConnectionFeedback } from '../dashboard/js/process-connection-feedback.js';
+import {
+  prepareProcessConnectionFeedback, resolveProcessConnectionFeedback,
+} from '../dashboard/js/process-connection-feedback.js';
 
 function model(config = {}) {
   return new ProcessEditModel({
@@ -63,4 +65,47 @@ test('connection feedback includes insertion and edge editability gates', () => 
   assert.deepEqual(resolveProcessConnectionFeedback(model({ edgeEditable: () => false }), source({ nodeId: 'review' })), {
     state: 'invalid', enabled: false, message: 'This connection is read-only in this view.',
   });
+});
+
+test('prepared target feedback bounds supported-scale edge work to one O(E + N) pass', () => {
+  const nodes = {};
+  const edges = [];
+  for (let index = 0; index < 2048; index += 1) {
+    const id = `node-${index}`;
+    nodes[id] = { type: 'task', name: id };
+    edges.push({ from: id, outcome: 'pass', to: `node-${(index + 1) % 2048}` });
+    edges.push({ from: id, outcome: 'pass-2', to: `node-${(index + 2) % 2048}` });
+  }
+  const current = new ProcessEditModel({ template: { nodes }, edges, layout: { nodes: {} } });
+  let edgeVisits = 0;
+  const storedEdges = current.edges;
+  current.edges = new Proxy(storedEdges, {
+    get(target, property, receiver) {
+      if (property !== Symbol.iterator) return Reflect.get(target, property, receiver);
+      return function* countedEdges() {
+        for (const edge of target) {
+          edgeVisits += 1;
+          yield edge;
+        }
+      };
+    },
+  });
+  let fallbackScans = 0;
+  const originalFreeOutcome = current.freeOutcome.bind(current);
+  current.freeOutcome = (...args) => { fallbackScans += 1; return originalFreeOutcome(...args); };
+
+  const prepared = prepareProcessConnectionFeedback(current);
+  assert.equal(edgeVisits, 4096, 'preparation visits each supported-bound edge exactly once');
+  assert.equal(prepared.freeOutcome('node-1'), 'pass-3', 'prepared outcome matches the model rule');
+  for (let index = 1; index < 2048; index += 1) {
+    const feedback = resolveProcessConnectionFeedback(current, {
+      phase: 'target', source: { nodeId: 'node-0', port: 'in' },
+      candidate: { nodeId: `node-${index}` },
+    }, prepared);
+    assert.equal(feedback.state, 'valid');
+  }
+  assert.equal(edgeVisits, 4096, 'all node/body/port resolutions reuse the one edge index');
+  assert.equal(fallbackScans, 0, 'prepared presentation never falls back to per-target edge scans');
+  assert.equal(current.freeOutcome('node-1'), prepared.freeOutcome('node-1'),
+    'prepared and commit-time outcome selection stay equivalent');
 });

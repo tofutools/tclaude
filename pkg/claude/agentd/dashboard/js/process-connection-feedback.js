@@ -26,7 +26,31 @@ function valid(message, connection) {
   return { state: 'valid', enabled: true, message, ...(connection || {}) };
 }
 
-export function resolveProcessConnectionFeedback(model, request = {}) {
+// Build the free-outcome lookup once for a rendered connection gesture. The
+// edit model's freeOutcome method intentionally scans outgoing edges; doing
+// that independently for every node/body/port target would turn the supported
+// 2,048-node / 4,096-edge authoring bound into quadratic UI work. This is the
+// same first-free-pass rule, indexed in one O(E + N) pass and kept detached
+// from both the model and the resolver request.
+export function prepareProcessConnectionFeedback(model) {
+  const takenByFrom = new Map();
+  for (const edge of model?.edges || []) {
+    if (!takenByFrom.has(edge.from)) takenByFrom.set(edge.from, new Set());
+    takenByFrom.get(edge.from).add(edge.outcome);
+  }
+  const freeOutcomeByFrom = new Map();
+  for (const from of Object.keys(model?.template?.nodes || {})) {
+    const taken = takenByFrom.get(from) || new Set();
+    let outcome = 'pass';
+    for (let n = 2; taken.has(outcome); n += 1) outcome = `pass-${n}`;
+    freeOutcomeByFrom.set(from, outcome);
+  }
+  return Object.freeze({
+    freeOutcome(from) { return freeOutcomeByFrom.get(from); },
+  });
+}
+
+export function resolveProcessConnectionFeedback(model, request = {}, prepared = null) {
   const source = request.source || {};
   const sourceNode = model?.node?.(source.nodeId);
   if (!sourceNode || (source.port !== 'in' && source.port !== 'out')) {
@@ -69,7 +93,8 @@ export function resolveProcessConnectionFeedback(model, request = {}) {
   if (model.node(from)?.type === 'end') {
     return invalid('End nodes cannot have outgoing connections.');
   }
-  const prospective = { from, outcome: model.freeOutcome?.(from, 'pass') || 'pass', to };
+  const outcome = prepared?.freeOutcome?.(from) || model.freeOutcome?.(from, 'pass') || 'pass';
+  const prospective = { from, outcome, to };
   if (model?.config?.edgeEditable && !model.config.edgeEditable(prospective)) {
     return invalid('This connection is read-only in this view.');
   }

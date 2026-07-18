@@ -445,6 +445,9 @@ export class ProcessGraph {
     this.feedbackFrame = null;
     this.pendingFeedbackPointer = null;
     this.feedbackEnabled = typeof options.connectionFeedback === 'function';
+    this.connectionEvaluation = null;
+    this.keyboardCancellationFocus = null;
+    this.keyboardFocusOwned = false;
     this.destroyed = false;
     this.abort = new AbortController();
 
@@ -525,6 +528,8 @@ export class ProcessGraph {
     }
     this.applyView();
     this.applySelection();
+    this.connectionEvaluation = this.connectionSource
+      ? this.options.connectionFeedbackPreparation?.() || null : null;
     this.applyKeyboardPort();
     this.applyConnectionFeedback();
     this.restoreFocus(focused);
@@ -642,12 +647,18 @@ export class ProcessGraph {
     this.svg.addEventListener('keydown', (event) => this.onKeyDown(event), { signal });
     if (this.feedbackEnabled) {
       this.svg.addEventListener('focusin', (event) => this.onFeedbackFocus(event), { signal });
-      this.svg.addEventListener('focusout', () => this.clearActionFeedback(), { signal });
+      this.svg.addEventListener('focusout', (event) => {
+        this.clearActionFeedback();
+        if (this.keyboardPort && event.relatedTarget && !this.root.contains(event.relatedTarget)) {
+          this.keyboardFocusOwned = false;
+        }
+      }, { signal });
     }
     document.addEventListener('keydown', (event) => this.onSpaceKey(event), { signal });
     document.addEventListener('keyup', (event) => this.onSpaceKey(event), { signal });
     window.addEventListener('blur', () => {
       this.setSpaceHeld(false);
+      this.keyboardFocusOwned = false;
       this.cancelActivePointer();
     }, { signal });
     this.root.addEventListener('dragover', (event) => event.preventDefault(), { signal });
@@ -671,7 +682,7 @@ export class ProcessGraph {
 
   connectionFeedback(request) {
     if (!this.feedbackEnabled) return null;
-    const feedback = this.options.connectionFeedback(request) || {};
+    const feedback = this.options.connectionFeedback(request, this.connectionEvaluation) || {};
     return {
       state: feedback.state || 'neutral', enabled: feedback.enabled !== false,
       message: String(feedback.message || ''), ...feedback,
@@ -746,7 +757,12 @@ export class ProcessGraph {
       if (target !== this.root) target.setAttribute('aria-describedby', this.actionTooltip.id);
     }
     this.positionActionTooltip(target);
-    if (unchanged && (this.actionTooltip.classList.contains('is-visible') || this.feedbackTimer)) return;
+    if (unchanged && this.actionTooltip.classList.contains('is-visible')) return;
+    if (unchanged && this.feedbackTimer && !immediate) return;
+    if (this.feedbackTimer) {
+      clearTimeout(this.feedbackTimer);
+      this.feedbackTimer = null;
+    }
     const delay = immediate || resume?.visible ? 0 : resume
       ? resume.remaining : keyboard
         ? Number(this.options.keyboardFeedbackDelay ?? 220)
@@ -817,12 +833,14 @@ export class ProcessGraph {
     if (!this.feedbackEnabled) return;
     this.clearActionFeedback();
     this.connectionSource = { nodeId: source.nodeId, port: source.port };
+    this.connectionEvaluation = this.options.connectionFeedbackPreparation?.() || null;
     this.applyConnectionFeedback();
   }
 
   endConnectionFeedback() {
     if (!this.feedbackEnabled) return;
     this.connectionSource = null;
+    this.connectionEvaluation = null;
     this.pendingFeedbackPointer = null;
     this.clearActionFeedback();
     this.applyConnectionFeedback();
@@ -1251,6 +1269,7 @@ export class ProcessGraph {
           return;
         }
         this.keyboardPort = { nodeId, port, point };
+        this.keyboardFocusOwned = true;
         this.beginConnectionFeedback(this.keyboardPort);
         this.applyKeyboardPort();
         hook(this.options, 'onPortDragStart')({ nodeId, port, point, keyboard: true, event });
@@ -1421,8 +1440,7 @@ export class ProcessGraph {
       `[data-node-id="${CSS.escape(this.keyboardPort.nodeId)}"] [data-port="${this.keyboardPort.port}"]`,
     );
     if (!source) {
-      this.keyboardPort = null;
-      this.endConnectionFeedback();
+      this.cancelMissingKeyboardPort();
       return;
     }
     source.classList.add('is-keyboard-source');
@@ -1431,8 +1449,31 @@ export class ProcessGraph {
 
   clearKeyboardPort() {
     this.keyboardPort = null;
+    this.keyboardFocusOwned = false;
     this.endConnectionFeedback();
     this.applyKeyboardPort();
+  }
+
+  cancelMissingKeyboardPort() {
+    if (!this.keyboardPort) return false;
+    const source = this.keyboardPort;
+    this.keyboardPort = null;
+    this.keyboardCancellationFocus = {
+      nodeId: source.nodeId, port: source.port, restore: this.keyboardFocusOwned,
+    };
+    this.keyboardFocusOwned = false;
+    this.endConnectionFeedback();
+    // A graph replacement can remove a keyboard gesture's source (for
+    // example, undoing a just-created node). Finish through the same semantic
+    // event the adapter uses for Escape so its rubber band and interaction
+    // generation cannot remain live. The editor's cancelled branch performs
+    // no commit or status mutation.
+    hook(this.options, 'onPortDragEnd')({
+      nodeId: source.nodeId, port: source.port, point: source.point,
+      targetNodeId: null, targetPort: null, keyboard: true, cancelled: true,
+      cancellation: 'source-removed',
+    });
+    return true;
   }
 
   captureFocus() {
@@ -1448,7 +1489,12 @@ export class ProcessGraph {
   }
 
   restoreFocus(focused) {
-    if (!focused) return;
+    const cancelled = this.keyboardCancellationFocus;
+    this.keyboardCancellationFocus = null;
+    if (!focused) {
+      if (cancelled?.restore) this.root.focus({ preventScroll: true });
+      return;
+    }
     let target;
     if (focused.type === 'port') {
       target = this.portLayer.querySelector(
@@ -1459,7 +1505,11 @@ export class ProcessGraph {
     } else {
       target = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(focused.edgeId)}"]`);
     }
-    target?.focus({ preventScroll: true });
+    if (target) target.focus({ preventScroll: true });
+    else if (cancelled?.restore && focused.type === 'port'
+      && focused.nodeId === cancelled.nodeId && focused.port === cancelled.port) {
+      this.root.focus({ preventScroll: true });
+    }
   }
 
   destroy() {

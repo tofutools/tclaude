@@ -12016,7 +12016,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   opacity: 1; fill: var(--pg-accent); stroke: var(--pg-focus); stroke-width: 4; stroke-dasharray: none;
 }
 .process-graph.is-connecting .is-connection-hover.process-node .process-node-shape,
-.process-graph.is-connecting .process-port.is-connection-hover { filter: drop-shadow(0 0 5px currentColor); }
+.process-graph.is-connecting .process-port.is-connection-hover { filter: drop-shadow(0 0 5px currentcolor); }
 .process-graph.is-connection-canvas-valid::after,
 .process-graph.is-connection-canvas-invalid::after {
   content: ""; position: absolute; inset: 5px; border: 2px solid var(--pg-valid);
@@ -12119,6 +12119,7 @@ body.wizard .process-graph {
   --pg-warn: #e3a341;
   --pg-valid: #56d364;
   --pg-invalid: #ff7b72;
+
   border-color: #4a3d6b;
   background-image: radial-gradient(circle at 50% 10%, rgba(98, 69, 145, 0.16), transparent 55%);
 }
