@@ -134,15 +134,21 @@ func (g *exitLaunchGuard) wrap(cmd string) string {
 		return cmd
 	}
 	path := clcommon.ShellQuoteArg(g.barrierPath)
-	return "tclaude_exit_gate=" + path + "; tclaude_exit_i=0; " +
+	ackPath := clcommon.ShellQuoteArg(g.barrierAckPath())
+	return "tclaude_exit_gate=" + path + "; tclaude_exit_ack=" + ackPath + "; tclaude_exit_i=0; " +
 		"while [ \"$(cat \"$tclaude_exit_gate\" 2>/dev/null)\" = pending ] && " +
 		"[ \"$tclaude_exit_i\" -lt " + strconv.Itoa(exitLaunchBarrierPolls) + " ]; do " +
 		"tclaude_exit_i=$((tclaude_exit_i + 1)); sleep 0.01; done; " +
 		"tclaude_exit_gate_state=$(cat \"$tclaude_exit_gate\" 2>/dev/null); " +
-		"rm -f -- \"$tclaude_exit_gate\"; " +
-		"if [ \"$tclaude_exit_gate_state\" != go ]; then " +
-		"printf '%s\\n' 'tclaude: managed pane exit-audit launch gate timed out or was cancelled' >&2; exit 125; fi; " + cmd
+		"if [ \"$tclaude_exit_gate_state\" = go ] && " +
+		"mv -- \"$tclaude_exit_gate\" \"$tclaude_exit_ack\" 2>/dev/null; then " + cmd +
+		"; tclaude_exit_status=$?; exit \"$tclaude_exit_status\"; fi; " +
+		"rm -f -- \"$tclaude_exit_gate\" \"$tclaude_exit_ack\"; " +
+		"printf '%s\\n' 'tclaude: managed pane exit-audit launch gate timed out or was cancelled' >&2; exit 125"
 }
+
+func (g *exitLaunchGuard) barrierAckPath() string   { return g.barrierPath + ".ack" }
+func (g *exitLaunchGuard) barrierAbortPath() string { return g.barrierPath + ".abort" }
 
 // armPaneHook installs only a pane-local hook. Failure is a supported
 // degradation (older tmux): the launch proceeds and the daemon reaper records
@@ -170,22 +176,22 @@ func (g *exitLaunchGuard) armPaneHook() {
 		return
 	}
 	target := clcommon.ExactTarget(g.tmuxSession) + ":0.0"
-	if err := clcommon.TmuxCommand("set-option", "-p", "-t", target, "remain-on-exit", "on").Run(); err != nil {
-		slog.Warn("tmux exit audit unavailable; remain-on-exit unsupported",
-			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
-		return
-	}
 	if err := clcommon.TmuxCommand("set-option", "-p", "-t", target,
 		paneExitGenerationOption, g.generation).Run(); err != nil {
-		_ = clcommon.TmuxCommand("set-option", "-p", "-t", target, "remain-on-exit", "off").Run()
 		slog.Warn("tmux exit audit unavailable; pane launch identity unsupported",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
 		return
 	}
 	if err := clcommon.TmuxCommand("set-hook", "-p", "-t", target, "pane-died", hook).Run(); err != nil {
 		_ = clcommon.TmuxCommand("set-option", "-p", "-u", "-t", target, paneExitGenerationOption).Run()
-		_ = clcommon.TmuxCommand("set-option", "-p", "-t", target, "remain-on-exit", "off").Run()
 		slog.Warn("tmux exit audit unavailable; pane-local hook unsupported",
+			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
+		return
+	}
+	if err := clcommon.TmuxCommand("set-option", "-p", "-t", target, "remain-on-exit", "on").Run(); err != nil {
+		_ = clcommon.TmuxCommand("set-hook", "-p", "-u", "-t", target, "pane-died").Run()
+		_ = clcommon.TmuxCommand("set-option", "-p", "-u", "-t", target, paneExitGenerationOption).Run()
+		slog.Warn("tmux exit audit unavailable; remain-on-exit unsupported",
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "pane_id", paneID, "error", err)
 		return
 	}
@@ -268,9 +274,7 @@ func (g *exitLaunchGuard) release() error {
 	if g == nil || !g.enabled {
 		return nil
 	}
-	releaseStateDurable := true
 	if err := db.MarkSessionExitLaunchReleased(g.sessionID, g.generation); err != nil {
-		releaseStateDurable = false
 		if fallbackErr := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); fallbackErr != nil {
 			slog.Warn("exit audit: launch release state unavailable; continuing launch",
 				"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
@@ -279,31 +283,76 @@ func (g *exitLaunchGuard) release() error {
 	// Make the durable phase visible before the pane can pass the file gate.
 	// Otherwise a very short-lived runtime could callback while the row still
 	// says pending and be misclassified as a pre-harness launch failure.
-	if err := os.WriteFile(g.barrierPath, []byte("go"), 0o600); err != nil {
-		if releaseStateDurable {
-			if stateErr := db.MarkSessionExitLaunchPending(g.sessionID, g.generation); stateErr != nil {
-				slog.Warn("exit audit: could not restore pre-harness state after gate release failure",
-					"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", stateErr)
-			}
-		}
+	if err := writeExistingExitLaunchGate(g.barrierPath, "go"); err != nil {
+		g.restorePreHarnessState()
 		return fmt.Errorf("release exit-launch barrier: %w", err)
 	}
+	if err := g.waitForPaneGateAck(); err != nil {
+		g.restorePreHarnessState()
+		return fmt.Errorf("confirm exit-launch barrier release: %w", err)
+	}
 	g.released = true
-	time.AfterFunc(exitLaunchBarrierWindow+time.Second, func() {
-		if err := os.Remove(g.barrierPath); err == nil {
-			slog.Warn("exit audit: removed unconsumed launch barrier after bounded window",
-				"session_id", g.sessionID, "tmux_session", g.tmuxSession)
-		}
-	})
 	return nil
+}
+
+func writeExistingExitLaunchGate(path, state string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(state); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func (g *exitLaunchGuard) waitForPaneGateAck() error {
+	ackPath := g.barrierAckPath()
+	for i := 0; i < exitLaunchBarrierPolls; i++ {
+		if _, err := os.Stat(ackPath); err == nil {
+			_ = os.Remove(ackPath)
+			return nil
+		}
+		if _, err := os.Stat(g.barrierPath); errors.Is(err, os.ErrNotExist) {
+			// Rename is atomic, but the second observation also makes the
+			// gate→ack decision explicit to non-POSIX test filesystems.
+			if _, ackErr := os.Stat(ackPath); ackErr == nil {
+				_ = os.Remove(ackPath)
+				return nil
+			}
+			return fmt.Errorf("pane rejected or timed out before acknowledging release")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The pane's gate→ack rename and this gate→abort rename compete for
+	// the same source name. Exactly one can win, closing the final-read race.
+	abortPath := g.barrierAbortPath()
+	if err := os.Rename(g.barrierPath, abortPath); err == nil {
+		_ = os.Remove(abortPath)
+		return fmt.Errorf("pane did not acknowledge release within bounded window")
+	}
+	if _, err := os.Stat(ackPath); err == nil {
+		_ = os.Remove(ackPath)
+		return nil
+	}
+	return fmt.Errorf("pane release acknowledgement unavailable")
+}
+
+func (g *exitLaunchGuard) restorePreHarnessState() {
+	if err := db.MarkSessionExitLaunchPending(g.sessionID, g.generation); err != nil {
+		slog.Warn("exit audit: could not restore pre-harness state after gate release failure",
+			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
+	}
 }
 
 func (g *exitLaunchGuard) abort() {
 	if g == nil || !g.enabled || g.released {
 		return
 	}
-	_ = os.WriteFile(g.barrierPath, []byte("abort"), 0o600)
 	_ = os.Remove(g.barrierPath)
+	_ = os.Remove(g.barrierAckPath())
+	_ = os.Remove(g.barrierAbortPath())
 	g.disarmPaneHook()
 	g.token = ""
 	g.released = true

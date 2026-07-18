@@ -147,7 +147,7 @@ func TestStandDown_RetiresSweepsAndKeepsGroup(t *testing.T) {
 	_ = agentd.RunReaperTickForTest(time.Now())
 	exits, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
 	require.NoError(t, err)
-	require.NotEmpty(t, exits, "stand-down's resulting managed pane exit is audited")
+	require.Len(t, exits, 1, "stand-down's resulting managed pane exit is audited exactly once")
 	assert.Equal(t, commands[0].EventID, exits[0].RelatedEventID)
 	assert.Equal(t, db.AgentExitActionRetire, exits[0].LifecycleAction)
 }

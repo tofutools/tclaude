@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ type exitCallbackTmux struct {
 	paneID               string
 	deadOutput           string
 	failSetHook          bool
+	failRemainOnExit     bool
 	noNativePaneDied     bool
 	failKillPaneCount    int
 	failKillSessionCount int
@@ -30,6 +32,10 @@ type exitCallbackTmux struct {
 
 func (f *exitCallbackTmux) Command(args ...string) *exec.Cmd {
 	f.calls = append(f.calls, slices.Clone(args))
+	if len(args) > 0 && args[0] == "set-option" && f.failRemainOnExit &&
+		slices.Contains(args, "remain-on-exit") && slices.Contains(args, "on") {
+		return exec.Command("false")
+	}
 	if len(args) > 0 && args[0] == "set-hook" {
 		if f.failSetHook {
 			return exec.Command("false")
@@ -74,6 +80,31 @@ func setupExitCallbackTest(t *testing.T, fake *exitCallbackTmux) {
 	t.Cleanup(func() { clcommon.Default = prev })
 }
 
+func startWrappedExitGate(t *testing.T, guard *exitLaunchGuard, command string) <-chan error {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", guard.wrap(command))
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	})
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	return done
+}
+
+func requireExitGateResult(t *testing.T, done <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(3 * time.Second):
+		require.Fail(t, "timed out waiting for wrapped exit launch gate")
+		return nil
+	}
+}
+
 func TestExitLaunchGuard_PaneLocalHookThenDurableBindingBeforeRelease(t *testing.T) {
 	fake := &exitCallbackTmux{paneID: "%7"}
 	setupExitCallbackTest(t, fake)
@@ -96,10 +127,13 @@ func TestExitLaunchGuard_PaneLocalHookThenDurableBindingBeforeRelease(t *testing
 	require.True(t, guard.callbackEnabled)
 	assert.Empty(t, guard.token, "parent drops its plaintext token once the local hook owns the callback command")
 	guard.bind()
+	paneDone := startWrappedExitGate(t, guard, "true")
 	require.NoError(t, guard.release())
-	raw, err := os.ReadFile(guard.barrierPath)
-	require.NoError(t, err)
-	assert.Equal(t, "go", string(raw), "release follows hook installation + DB binding")
+	require.NoError(t, requireExitGateResult(t, paneDone))
+	_, err = os.Stat(guard.barrierPath)
+	require.ErrorIs(t, err, os.ErrNotExist, "the pane atomically consumes the released gate")
+	_, err = os.Stat(guard.barrierAckPath())
+	require.ErrorIs(t, err, os.ErrNotExist, "the parent consumes the pane acknowledgement")
 
 	var hook []string
 	for _, call := range fake.calls {
@@ -151,6 +185,92 @@ func TestExitLaunchGuard_FileReleaseFailureRestoresPreHarnessState(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, db.SessionExitGatePending, identity.GateState,
 		"a pane that never crossed the file gate remains a pre-harness launch")
+}
+
+func TestExitLaunchGuard_LateReleaseAfterExecutedTimeoutDoesNotResurrectGate(t *testing.T) {
+	fake := &exitCallbackTmux{paneID: "%22"}
+	setupExitCallbackTest(t, fake)
+	const generation = "22222222222222222222222222222222"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-late-release", TmuxSession: "tmux-late-release", ConvID: "conv-late-release",
+		Status: StatusIdle, Created: time.Now(),
+	}, generation, db.SessionExitGatePending))
+	guard, err := newExitLaunchGuard("spwn-late-release", "tmux-late-release", generation)
+	require.NoError(t, err)
+	defer guard.abort()
+	marker := filepath.Join(t.TempDir(), "harness-started")
+	wrapped := strings.Replace(guard.wrap("printf started > "+clcommon.ShellQuoteArg(marker)),
+		"-lt "+strconv.Itoa(exitLaunchBarrierPolls), "-lt 1", 1)
+	err = exec.Command("sh", "-c", wrapped).Run()
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 125, exitErr.ExitCode())
+	require.NoFileExists(t, marker)
+	require.NoFileExists(t, guard.barrierPath)
+
+	require.Error(t, guard.release(), "a delayed parent cannot recreate a gate removed by timeout")
+	require.NoFileExists(t, guard.barrierPath)
+	require.NoFileExists(t, guard.barrierAckPath())
+	identity, err := db.GetSessionExitLaunchIdentity("spwn-late-release")
+	require.NoError(t, err)
+	assert.Equal(t, db.SessionExitGatePending, identity.GateState)
+}
+
+func TestExitLaunchGuard_FinalPendingReadRaceCannotReportFalseSuccess(t *testing.T) {
+	fake := &exitCallbackTmux{paneID: "%23"}
+	setupExitCallbackTest(t, fake)
+	const generation = "23232323232323232323232323232323"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-final-read", TmuxSession: "tmux-final-read", ConvID: "conv-final-read",
+		Status: StatusIdle, Created: time.Now(),
+	}, generation, db.SessionExitGatePending))
+	guard, err := newExitLaunchGuard("spwn-final-read", "tmux-final-read", generation)
+	require.NoError(t, err)
+	defer guard.abort()
+
+	realRM, err := exec.LookPath("rm")
+	require.NoError(t, err)
+	binDir := t.TempDir()
+	rmReady := filepath.Join(t.TempDir(), "rm-ready")
+	rmContinue := filepath.Join(t.TempDir(), "rm-continue")
+	fakeRM := "#!/bin/sh\nprintf ready > \"$TCL573_RM_READY\"\n" +
+		"while [ ! -f \"$TCL573_RM_CONTINUE\" ]; do sleep 0.01; done\n" +
+		"exec " + clcommon.ShellQuoteArg(realRM) + " \"$@\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "rm"), []byte(fakeRM), 0o700))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TCL573_RM_READY", rmReady)
+	t.Setenv("TCL573_RM_CONTINUE", rmContinue)
+	harnessMarker := filepath.Join(t.TempDir(), "harness-started")
+	wrapped := strings.Replace(guard.wrap("printf started > "+clcommon.ShellQuoteArg(harnessMarker)),
+		"-lt "+strconv.Itoa(exitLaunchBarrierPolls), "-lt 0", 1)
+	pane := exec.Command("sh", "-c", wrapped)
+	require.NoError(t, pane.Start())
+	paneDone := make(chan error, 1)
+	go func() { paneDone <- pane.Wait() }()
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(rmReady)
+		return statErr == nil
+	}, 3*time.Second, 10*time.Millisecond, "pane reached timeout removal after its final pending read")
+
+	releaseDone := make(chan error, 1)
+	go func() { releaseDone <- guard.release() }()
+	require.Eventually(t, func() bool {
+		raw, readErr := os.ReadFile(guard.barrierPath)
+		return readErr == nil && string(raw) == "go"
+	}, 3*time.Second, 10*time.Millisecond, "parent published go after pane's final pending read")
+	require.NoError(t, os.WriteFile(rmContinue, []byte("continue"), 0o600))
+
+	var paneExit *exec.ExitError
+	require.ErrorAs(t, requireExitGateResult(t, paneDone), &paneExit)
+	assert.Equal(t, 125, paneExit.ExitCode())
+	require.Error(t, requireExitGateResult(t, releaseDone),
+		"parent cannot report success without the pane's atomic acknowledgement")
+	require.NoFileExists(t, harnessMarker)
+	require.NoFileExists(t, guard.barrierPath)
+	require.NoFileExists(t, guard.barrierAckPath())
+	identity, err := db.GetSessionExitLaunchIdentity("spwn-final-read")
+	require.NoError(t, err)
+	assert.Equal(t, db.SessionExitGatePending, identity.GateState)
 }
 
 func TestRunExitCallback_VerifiesDeadPaneAndRejectsReplay(t *testing.T) {
@@ -315,10 +435,9 @@ func TestExitLaunchGuard_UnsupportedTmuxFallsBackWithoutBlockingLaunch(t *testin
 			"empty native show-hooks output must degrade before arbitrary custom-hook acceptance")
 	}
 	guard.bind()
+	paneDone := startWrappedExitGate(t, guard, "true")
 	require.NoError(t, guard.release(), "unsupported hook degrades to reaper, not launch failure")
-	raw, err := os.ReadFile(guard.barrierPath)
-	require.NoError(t, err)
-	assert.Equal(t, "go", string(raw))
+	require.NoError(t, requireExitGateResult(t, paneDone))
 
 	recorded, err := db.RecordAgentExitObservation(db.AgentExitObservation{
 		SessionID: "spwn-old-tmux", Observer: db.AgentExitObserverReconcile,
@@ -333,7 +452,7 @@ func TestExitLaunchGuard_UnsupportedTmuxFallsBackWithoutBlockingLaunch(t *testin
 	assert.True(t, strings.Contains(rows[0].Detail, "exit_code=unavailable"))
 }
 
-func TestExitLaunchGuard_NativeHookInstallFailureDisarmsRetainedPane(t *testing.T) {
+func TestExitLaunchGuard_NativeHookInstallFailureRollsBackStagedGeneration(t *testing.T) {
 	fake := &exitCallbackTmux{paneID: "%20", failSetHook: true}
 	setupExitCallbackTest(t, fake)
 	const generation = "99999999999999999999999999999999"
@@ -346,13 +465,51 @@ func TestExitLaunchGuard_NativeHookInstallFailureDisarmsRetainedPane(t *testing.
 	defer guard.abort()
 	guard.armPaneHook()
 	assert.False(t, guard.callbackEnabled)
-	var remainOff bool
+	var generationUnset, remainEnabled bool
 	for _, call := range fake.calls {
-		if slices.Contains(call, "remain-on-exit") && slices.Contains(call, "off") {
-			remainOff = true
+		if slices.Contains(call, paneExitGenerationOption) && slices.Contains(call, "-u") {
+			generationUnset = true
+		}
+		if slices.Contains(call, "remain-on-exit") && slices.Contains(call, "on") {
+			remainEnabled = true
 		}
 	}
-	assert.True(t, remainOff, "partial arm failure must not retain an unauditable dead pane")
+	assert.True(t, generationUnset, "hook failure rolls back the staged launch identity")
+	assert.False(t, remainEnabled, "retention is never enabled before the cleanup hook exists")
+}
+
+func TestExitLaunchGuard_RemainOnExitIsFinalArmAndFailureRollsBackStaging(t *testing.T) {
+	fake := &exitCallbackTmux{paneID: "%21", failRemainOnExit: true}
+	setupExitCallbackTest(t, fake)
+	const generation = "21212121212121212121212121212121"
+	guard, err := newExitLaunchGuard("spwn-remain-fail", "tmux-remain-fail", generation)
+	require.NoError(t, err)
+	defer guard.abort()
+	guard.armPaneHook()
+	assert.False(t, guard.callbackEnabled)
+
+	var generationSet, hookSet, remainOn, hookUnset, generationUnset = -1, -1, -1, -1, -1
+	for i, call := range fake.calls {
+		switch {
+		case slices.Contains(call, paneExitGenerationOption) && !slices.Contains(call, "-u"):
+			generationSet = i
+		case len(call) > 0 && call[0] == "set-hook" && !slices.Contains(call, "-u"):
+			hookSet = i
+		case slices.Contains(call, "remain-on-exit") && slices.Contains(call, "on"):
+			remainOn = i
+		case len(call) > 0 && call[0] == "set-hook" && slices.Contains(call, "-u"):
+			hookUnset = i
+		case slices.Contains(call, paneExitGenerationOption) && slices.Contains(call, "-u"):
+			generationUnset = i
+		}
+	}
+	require.NotEqual(t, -1, generationSet)
+	require.NotEqual(t, -1, hookSet)
+	require.NotEqual(t, -1, remainOn)
+	assert.Less(t, generationSet, hookSet)
+	assert.Less(t, hookSet, remainOn, "remain-on-exit is the final arm operation")
+	assert.Greater(t, hookUnset, remainOn, "failed final arm unsets the staged hook")
+	assert.Greater(t, generationUnset, remainOn, "failed final arm unsets the staged generation")
 }
 
 func TestExitLaunchGuard_AbortAndStartupRemoveBarrierArtifacts(t *testing.T) {
@@ -362,21 +519,29 @@ func TestExitLaunchGuard_AbortAndStartupRemoveBarrierArtifacts(t *testing.T) {
 	aborted, err := newExitLaunchGuard("spwn-abort", "tmux-abort", "33333333333333333333333333333333")
 	require.NoError(t, err)
 	abortPath := aborted.barrierPath
+	require.NoError(t, os.WriteFile(aborted.barrierAckPath(), []byte("go"), 0o600))
+	require.NoError(t, os.WriteFile(aborted.barrierAbortPath(), []byte("abort"), 0o600))
 	aborted.abort()
 	_, err = os.Stat(abortPath)
 	require.ErrorIs(t, err, os.ErrNotExist, "cancelled launch must not leave a credential barrier")
+	require.NoFileExists(t, aborted.barrierAckPath())
+	require.NoFileExists(t, aborted.barrierAbortPath())
 
 	dir := filepath.Dir(abortPath)
 	stalePath := filepath.Join(dir, exitLaunchArtifactPrefix+"stale")
-	require.NoError(t, os.WriteFile(stalePath, []byte("pending"), 0o600))
+	stalePaths := []string{stalePath, stalePath + ".ack", stalePath + ".abort"}
 	old := time.Now().Add(-exitLaunchStaleAfter - time.Second)
-	require.NoError(t, os.Chtimes(stalePath, old, old))
+	for _, path := range stalePaths {
+		require.NoError(t, os.WriteFile(path, []byte("stale"), 0o600))
+		require.NoError(t, os.Chtimes(path, old, old))
+	}
 
 	next, err := newExitLaunchGuard("spwn-next", "tmux-next", "44444444444444444444444444444444")
 	require.NoError(t, err)
 	t.Cleanup(next.abort)
-	_, err = os.Stat(stalePath)
-	require.ErrorIs(t, err, os.ErrNotExist, "a later launch cleans artifacts left by a crashed parent")
+	for _, path := range stalePaths {
+		require.NoFileExists(t, path, "a later launch cleans artifacts left by a crashed parent")
+	}
 }
 
 func TestExitLaunchGeneration_RNGDegradationStillResetsPredecessorAuthority(t *testing.T) {

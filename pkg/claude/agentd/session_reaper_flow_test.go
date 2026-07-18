@@ -166,6 +166,128 @@ func TestSessionReaper_RestartReconcilesRetainedPaneEvidenceThenCleansIt(t *test
 	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName, "record-first cleanup removes retained corpse")
 }
 
+func TestSessionReaper_SessionEndRaceEnrichesBeforeRetainedPaneCleanup(t *testing.T) {
+	f := newFlow(t)
+	const conv = "hook-race-1111-2222-3333-444444444444"
+	const sessionID = "spwn-hook-race"
+	const tmuxName = "tmux-hook-race"
+	const generation = "abababababababababababababababab"
+	f.HaveConvWithTitle(conv, "hook-race-worker")
+	f.HaveAliveSession(conv, sessionID, tmuxName, "/tmp/hook-race")
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	f.World.Tmux.SetPaneExitGeneration(tmuxName, generation)
+	accepted, _, err := db.RecordSessionEndExitObservation(db.AgentExitObservation{
+		SessionID: sessionID, TmuxSession: tmuxName,
+		Observer: db.AgentExitObserverHook, CauseKind: db.AgentExitCauseNormal,
+		Reason: "logout", ObservedState: session.StatusExited, ExpectedGeneration: generation,
+	})
+	require.NoError(t, err)
+	require.True(t, accepted)
+	code := 9
+	f.World.Tmux.MarkPaneDead(tmuxName, &code, "")
+
+	reaper := agentd.NewSessionReaperForTest(90*time.Second, func(string, string) {})
+	assert.Equal(t, 0, reaper.Tick(), "SessionEnd already committed the lifecycle transition")
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "hook and retained-pane observations converge on one launch event")
+	assert.Equal(t, db.AgentExitObserverHook, rows[0].Observer)
+	require.NotNil(t, rows[0].ExitCode)
+	assert.Equal(t, code, *rows[0].ExitCode, "exact pane evidence enriches the hook event before cleanup")
+	assert.Equal(t, "logout", rows[0].Reason)
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName, "enriched retained evidence is then cleaned")
+}
+
+func TestSessionReaper_SessionEndRaceBoundsEnrichmentPersistenceFailure(t *testing.T) {
+	f := newFlow(t)
+	const conv = "hook-fail-1111-2222-3333-444444444444"
+	const sessionID = "spwn-hook-fail"
+	const tmuxName = "tmux-hook-fail"
+	const generation = "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc"
+	f.HaveConvWithTitle(conv, "hook-fail-worker")
+	f.HaveAliveSession(conv, sessionID, tmuxName, "/tmp/hook-fail")
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	f.World.Tmux.SetPaneExitGeneration(tmuxName, generation)
+	accepted, _, err := db.RecordSessionEndExitObservation(db.AgentExitObservation{
+		SessionID: sessionID, TmuxSession: tmuxName,
+		Observer: db.AgentExitObserverHook, CauseKind: db.AgentExitCauseNormal,
+		Reason: "logout", ObservedState: session.StatusExited, ExpectedGeneration: generation,
+	})
+	require.NoError(t, err)
+	require.True(t, accepted)
+	code := 23
+	f.World.Tmux.MarkPaneDead(tmuxName, &code, "")
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`CREATE TRIGGER fail_exit_audit_enrichment
+		BEFORE UPDATE ON audit_log BEGIN
+			SELECT RAISE(FAIL, 'forced exit audit enrichment failure');
+		END`)
+	require.NoError(t, err)
+
+	reaper := agentd.NewSessionReaperForTest(90*time.Second, func(string, string) {})
+	assert.Equal(t, 0, reaper.Tick())
+	assert.Equal(t, 0, reaper.Tick())
+	assert.Contains(t, f.World.Tmux.Sessions(), tmuxName,
+		"exact evidence survives the bounded audit enrichment retry window")
+	assert.Equal(t, 0, reaper.Tick())
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName,
+		"the credential-bearing retained pane is removed after the bounded failure policy")
+}
+
+func TestSessionReaper_FreshRetainedDeadPaneBypassesSpawnGrace(t *testing.T) {
+	f := newFlow(t)
+	const conv = "fresh-dead-1111-2222-3333-444444444444"
+	const sessionID = "spwn-fresh-dead"
+	const tmuxName = "tmux-fresh-dead"
+	const generation = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+	f.HaveConvWithTitle(conv, "fresh-dead-worker")
+	f.HaveAliveSession(conv, sessionID, tmuxName, "/tmp/fresh-dead")
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	f.World.Tmux.SetPaneExitGeneration(tmuxName, generation)
+	code := 17
+	f.World.Tmux.MarkPaneDead(tmuxName, &code, "")
+
+	reaper := agentd.NewSessionReaperForTest(90*time.Second, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "exact dead-pane evidence is not an ambiguous mid-spawn absence")
+	assert.Equal(t, session.StatusExited, statusOf(t, sessionID))
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].ExitCode)
+	assert.Equal(t, code, *rows[0].ExitCode)
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName, "exact evidence is recorded before cleanup")
+}
+
+func TestSessionReaper_DoesNotInferSignalsFromConventionalExitCodes(t *testing.T) {
+	tests := []struct {
+		name, conv, sessionID, tmuxName string
+		code                            int
+	}{
+		{name: "exit-137", conv: "code-137-1111-2222-3333-444444444444", sessionID: "spwn-code-137", tmuxName: "tmux-code-137", code: 137},
+		{name: "exit-143", conv: "code-143-1111-2222-3333-444444444444", sessionID: "spwn-code-143", tmuxName: "tmux-code-143", code: 143},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveConvWithTitle(tc.conv, tc.name)
+			f.HaveAliveSession(tc.conv, tc.sessionID, tc.tmuxName, "/tmp/"+tc.name)
+			f.World.Tmux.MarkPaneDead(tc.tmuxName, &tc.code, "")
+
+			reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+			require.Equal(t, 1, reaper.Tick())
+			rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			require.NotNil(t, rows[0].ExitCode)
+			assert.Equal(t, tc.code, *rows[0].ExitCode)
+			assert.Equal(t, db.AgentExitCauseNormal, rows[0].CauseKind)
+			assert.Empty(t, rows[0].Signal)
+			assert.Contains(t, rows[0].Detail, "signal=unavailable")
+		})
+	}
+}
+
 func TestSessionReaper_PredecessorRetainedPaneCannotExitSuccessorGeneration(t *testing.T) {
 	f := newFlow(t)
 	const conv = "stale-pane-1111-2222-3333-444444444444"

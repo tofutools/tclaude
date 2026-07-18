@@ -50,6 +50,9 @@ func withIsolatedRealTmux(t *testing.T) isolatedRealTmux {
 	}
 	socket := filepath.Join(os.TempDir(), fmt.Sprintf("tcl573-%d-%d.sock", os.Getpid(), time.Now().UnixNano()))
 	tmux := isolatedRealTmux{socket: socket}
+	if err := tmux.Command("new-session", "-d", "-s", "tcl573-keepalive", "sleep", "300").Run(); err != nil {
+		t.Fatalf("start isolated tmux keepalive: %v", err)
+	}
 	previous := clcommon.Default
 	clcommon.Default = tmux
 	t.Cleanup(func() {
@@ -74,6 +77,9 @@ func waitForFile(t *testing.T, path string) {
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
 			return
+		}
+		if raw, err := os.ReadFile(path + ".error"); err == nil {
+			t.Fatalf("pane-died callback failed: %s", raw)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -102,8 +108,6 @@ func waitForChildPID(t *testing.T, parent int) int {
 
 func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T) {
 	tmux := withIsolatedRealTmux(t)
-	require.NoError(t, tmux.Command("new-session", "-d", "-s", "tcl573-keepalive",
-		"sleep", "30").Run())
 	tests := []struct {
 		name       string
 		command    string
@@ -160,10 +164,10 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 }
 
 func TestRealTmuxAuthenticatedPaneDiedCallbackRecordsExactlyOnce(t *testing.T) {
-	tmux := withIsolatedRealTmux(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	tmux := withIsolatedRealTmux(t)
 	db.ResetForTest()
 	const sessionID = "spwn-real-callback"
 	const tmuxName = "tcl573-real-callback"
@@ -198,6 +202,7 @@ func TestRealTmuxAuthenticatedPaneDiedCallbackRecordsExactlyOnce(t *testing.T) {
 		clcommon.ShellQuoteArg("TCL573_CALLBACK_HELPER=1"),
 		clcommon.ShellQuoteArg("TCL573_SOCKET=" + tmux.socket),
 		clcommon.ShellQuoteArg("TCL573_MARKER=" + marker),
+		clcommon.ShellQuoteArg("TCL573_ERROR=" + marker + ".error"),
 		clcommon.ShellQuoteArg("TCL573_SESSION_ID=" + sessionID),
 		clcommon.ShellQuoteArg("TCL573_TMUX_SESSION=" + tmuxName),
 		clcommon.ShellQuoteArg("TCL573_PANE_ID=" + paneID),
@@ -230,7 +235,7 @@ func TestRealTmuxAuthenticatedCallbackHelper(t *testing.T) {
 	}
 	db.ResetForTest()
 	clcommon.Default = isolatedRealTmux{socket: os.Getenv("TCL573_SOCKET")}
-	require.NoError(t, runExitCallback(exitCallbackParams{
+	err := runExitCallback(exitCallbackParams{
 		SessionID:   os.Getenv("TCL573_SESSION_ID"),
 		TmuxSession: os.Getenv("TCL573_TMUX_SESSION"),
 		PaneID:      os.Getenv("TCL573_PANE_ID"),
@@ -238,7 +243,11 @@ func TestRealTmuxAuthenticatedCallbackHelper(t *testing.T) {
 		Token:       os.Getenv("TCL573_TOKEN"),
 		ExitCode:    os.Getenv("TCL573_EXIT_CODE"),
 		Signal:      os.Getenv("TCL573_SIGNAL"),
-	}))
+	})
+	if err != nil {
+		_ = os.WriteFile(os.Getenv("TCL573_ERROR"), []byte(err.Error()), 0o600)
+	}
+	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(os.Getenv("TCL573_MARKER"), []byte("ok"), 0o600))
 }
 
