@@ -301,7 +301,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     ${pointMarkers.map((point, index) => {
       const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
       return html`<g class=${`usage-point-mark${tooltip?.pointAt === point.time ? ' active' : ''}`} key=${point.at}>
-        <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.5" />
+        <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.25" />
         <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
           tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
           aria-label=${`Sample; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? '; use left and right arrow keys to explore samples' : ''}`}
