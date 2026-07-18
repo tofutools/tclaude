@@ -1063,7 +1063,10 @@ export class ProcessTemplateEditor {
   }
 
   openConnectedNodeChooser(source, point, event) {
-    if (this.destroyed || !this.graph) return false;
+    // Only the destroyed guard here: the semantic feedback rejection below is
+    // valid without a live graph; the adapter is needed only past that point,
+    // to anchor the chooser.
+    if (this.destroyed) return false;
     const feedback = resolveProcessConnectionFeedback(this.model, {
       phase: 'target', source, candidate: { emptyCanvas: true },
     });
