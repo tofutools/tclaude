@@ -6,12 +6,14 @@ function errorMessage(error) { return String(error?.message || error); }
 
 export function createUsageHistoryState({ snapshot = dashboardState.snapshot, activeTab = dashboardState.activeTab } = {}) {
   const hours = signal(168);
+  const lookaheadHours = signal(168);
   const payload = signal(null);
   const request = signal({ phase: 'idle', requestId: 0, hasLoaded: false, error: null });
   const view = computed(() => {
     const snap = snapshot.value;
     return {
       hours: hours.value,
+      lookaheadHours: lookaheadHours.value,
       payload: payload.value,
       series: [...(payload.value?.series || [])].sort(usageSeriesSort),
       request: request.value,
@@ -25,6 +27,12 @@ export function createUsageHistoryState({ snapshot = dashboardState.snapshot, ac
     const parsed = Number(value);
     if (![24, 168, 720, 2160].includes(parsed)) return false;
     hours.value = parsed;
+    return true;
+  }
+  function setLookaheadHours(value) {
+    const parsed = Number(value);
+    if (![5, 24, 168, 720].includes(parsed)) return false;
+    lookaheadHours.value = parsed;
     return true;
   }
   function beginRequest(requestId) { request.value = { ...request.value, phase: 'loading', requestId, error: null }; }
@@ -42,7 +50,10 @@ export function createUsageHistoryState({ snapshot = dashboardState.snapshot, ac
     request.value = { phase: 'error', requestId, hasLoaded: false, error: errorMessage(error) };
     return true;
   }
-  return Object.freeze({ hours, payload, request, view, setHours, beginRequest, commitRequest, failRequest });
+  return Object.freeze({
+    hours, lookaheadHours, payload, request, view,
+    setHours, setLookaheadHours, beginRequest, commitRequest, failRequest,
+  });
 }
 
 export const usageHistoryState = createUsageHistoryState();

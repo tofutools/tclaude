@@ -5,6 +5,13 @@ export const USAGE_HISTORY_SPANS = [
   { hours: 2160, label: '90d' },
 ];
 
+export const USAGE_LOOKAHEAD_SPANS = [
+  { hours: 5, label: '5h' },
+  { hours: 24, label: '24h' },
+  { hours: 168, label: '7d' },
+  { hours: 720, label: '30d' },
+];
+
 export function usageProviderLabel(provider) {
   if (provider === 'anthropic') return 'Claude';
   if (provider === 'openai') return 'Codex';

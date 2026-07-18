@@ -22,6 +22,21 @@ export function usageAxisTicks(start, end, count = 5) {
   });
 }
 
+export function usageForecastPoint(startTime, startPct, ratePctPerHour, endTime, ratio) {
+  const first = Number(startTime);
+  const last = Number(endTime);
+  const pct = Number(startPct);
+  const rate = Number(ratePctPerHour);
+  if (![first, last, pct, rate].every(Number.isFinite) || last <= first) return null;
+  const position = Math.max(0, Math.min(1, Number(ratio) || 0));
+  const time = first + (last - first) * position;
+  return {
+    time,
+    pct: Math.min(100, pct + rate * Math.max(0, time - first) / HOUR),
+    ratio: position,
+  };
+}
+
 export function formatUsageAxisTick(time, start, end, locale) {
   const date = new Date(time);
   if (!Number.isFinite(date.getTime())) return '';

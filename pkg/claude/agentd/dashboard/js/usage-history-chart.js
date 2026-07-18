@@ -1,7 +1,10 @@
-import { h } from 'preact';
+import { Fragment, h } from 'preact';
+import { useState } from 'preact/hooks';
 import htm from 'htm';
-import { formatUsageAxisTick, usageAxisStart, usageAxisTicks } from './usage-history-axis.js';
-import { usageProviderLabel, usageWindowLabel } from './usage-history-model.js';
+import {
+  formatUsageAxisTick, usageAxisStart, usageAxisTicks, usageForecastPoint,
+} from './usage-history-axis.js';
+import { formatUsageTime, usageProviderLabel, usageWindowLabel } from './usage-history-model.js';
 
 const html = htm.bind(h);
 const W = 720;
@@ -21,7 +24,14 @@ function sampledPoints(points, maxPoints) {
   return sampled.length <= maxPoints ? sampled : [...sampled.slice(0, maxPoints - 1), points[points.length - 1]];
 }
 
-export function UsageHistoryChart({ series, from, generatedAt }) {
+function beforeResetLabel(resetAt, time) {
+  if (resetAt === null) return 'reset time unknown';
+  if (resetAt - time <= 60_000) return 'at reset';
+  return `${formatUsageTime(new Date(resetAt).toISOString(), time).replace(/^in /, '')} before reset`;
+}
+
+export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168 }) {
+  const [forecastHoverRatio, setForecastHoverRatio] = useState(null);
   const points = (series.points || []).map((point) => ({ ...point, time: finiteDate(point.at) })).filter((point) => point.time !== null);
   if (!points.length) return html`<div class="usage-chart-empty">No samples in this range.</div>`;
   const now = finiteDate(generatedAt) ?? points[points.length - 1].time;
@@ -31,10 +41,8 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
   const hitAt = finiteDate(forecast.hits_limit_at);
   const resetAt = finiteDate(forecast.reset_at);
   const projecting = rate > 0 && ['before_reset', 'after_reset', 'projected'].includes(forecast.status);
-  const eventAt = forecast.status === 'after_reset'
-    ? resetAt
-    : ['before_reset', 'projected'].includes(forecast.status) ? (hitAt ?? resetAt) : null;
-  const horizon = projecting && eventAt && eventAt > now ? eventAt : now;
+  const lookahead = [5, 24, 168, 720].includes(Number(lookaheadHours)) ? Number(lookaheadHours) : 168;
+  const horizon = now + lookahead * 3600000;
   const x = (time) => PAD.left + Math.max(0, Math.min(1, (time - start) / (horizon - start))) * (W - PAD.left - PAD.right);
   const y = (pct) => PAD.top + (1 - Math.max(0, Math.min(100, pct)) / 100) * (H - PAD.top - PAD.bottom);
   const resetTimes = new Set((series.resets || []).map((reset) => finiteDate(reset.at)));
@@ -51,10 +59,28 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
   const latest = points[points.length - 1];
   const forecastAt = Math.min(horizon, hitAt ?? horizon, resetAt ?? horizon);
   const forecastPct = Math.min(100, latest.pct + rate * Math.max(0, forecastAt - latest.time) / 3600000);
+  const hasForecastLine = projecting && forecastAt > latest.time;
+  const scheduledResetVisible = resetAt !== null && resetAt > now && resetAt <= horizon;
   const pointMarkers = sampledPoints(points, 240);
   const xTicks = usageAxisTicks(start, horizon);
   const scope = `${usageProviderLabel(series.provider)} · ${usageWindowLabel(series.window_name, series.duration_seconds)} window`;
-  return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="img"
+  const hoverPoint = hasForecastLine && forecastHoverRatio !== null
+    ? usageForecastPoint(latest.time, latest.pct, rate, forecastAt, forecastHoverRatio)
+    : null;
+  const updateForecastHover = (event) => {
+    const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
+    const rect = svg?.getBoundingClientRect();
+    if (!rect?.width) return;
+    const svgX = (event.clientX - rect.left) * W / rect.width;
+    const firstX = x(latest.time);
+    const lastX = x(forecastAt);
+    setForecastHoverRatio((svgX - firstX) / Math.max(1, lastX - firstX));
+  };
+  const hoverX = hoverPoint ? x(hoverPoint.time) : 0;
+  const hoverY = hoverPoint ? y(hoverPoint.pct) : 0;
+  const tooltipX = hoverX > W / 2 ? hoverX - 254 : hoverX + 10;
+  const tooltipY = hoverY < 64 ? hoverY + 10 : hoverY - 54;
+  return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="group"
     aria-label=${`${series.provider} ${series.window_name} subscription usage history`}>
     ${[0, 50, 100].map((tick) => html`<g class="usage-grid" key=${tick}>
       <line x1=${PAD.left} x2=${W - PAD.right} y1=${y(tick)} y2=${y(tick)} />
@@ -77,16 +103,32 @@ export function UsageHistoryChart({ series, from, generatedAt }) {
         <circle cx=${x(at)} cy=${y(reset.pct)} r="3"><title>${`${scope} · reset detected · ${reset.pct.toFixed(1)}% · ${new Date(at).toLocaleString()}`}</title></circle>
       </g>`;
     })}
-    ${rate > 0 && forecastAt > latest.time && html`<line class="usage-forecast-line"
-      x1=${x(latest.time)} y1=${y(latest.pct)} x2=${x(forecastAt)} y2=${y(forecastPct)}>
-      <title>${`${scope} · forecast ${forecastPct.toFixed(1)}% · ${new Date(forecastAt).toLocaleString()}`}</title>
-    </line>`}
+    ${scheduledResetVisible && html`<g class="usage-scheduled-reset">
+      <line x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom} />
+      <title>${`${scope} · scheduled reset · ${new Date(resetAt).toLocaleString()}`}</title>
+    </g>`}
+    ${hasForecastLine && html`<${Fragment}>
+      <line class="usage-forecast-line" x1=${x(latest.time)} y1=${y(latest.pct)}
+        x2=${x(forecastAt)} y2=${y(forecastPct)} />
+      <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
+        x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
+        aria-label=${`${scope} forecast; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt)}`}
+        onmousemove=${updateForecastHover} onmouseleave=${() => setForecastHoverRatio(null)}
+        onfocus=${() => setForecastHoverRatio(1)} onblur=${() => setForecastHoverRatio(null)} />
+    </${Fragment}>`}
     ${pointMarkers.map((point) => html`<circle class="usage-point" key=${point.at} cx=${x(point.time)} cy=${y(point.pct)} r="2.5">
-      <title>${`${scope} · ${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}${point.source ? ` · source: ${point.source}` : ''}`}</title>
+      <title>${`${scope} · ${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`}</title>
     </circle>`)}
     ${projecting && now > start && now < horizon && html`<g class="usage-now-mark">
       <line x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <text x=${x(now)} y=${PAD.top + 10} text-anchor="middle">now</text>
+    </g>`}
+    ${hoverPoint && html`<g class="usage-forecast-tooltip" transform=${`translate(${tooltipX} ${tooltipY})`}>
+      <rect width="244" height="46" rx="4" />
+      <text x="7" y="12"><tspan>${scope}</tspan>
+        <tspan x="7" dy="13">${`${hoverPoint.pct.toFixed(1)}% · ${new Date(hoverPoint.time).toLocaleString()}`}</tspan>
+        <tspan x="7" dy="13">${beforeResetLabel(resetAt, hoverPoint.time)}</tspan>
+      </text>
     </g>`}
   </svg>`;
 }

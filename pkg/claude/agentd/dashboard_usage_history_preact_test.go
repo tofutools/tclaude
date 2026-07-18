@@ -22,7 +22,10 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		}
 	}
 	chart := read("js/usage-history-chart.js")
-	for _, needle := range []string{"<polyline", "usage-observed-line", "usage-forecast-line", "usage-reset-mark", "usageAxisTicks(start, horizon)"} {
+	for _, needle := range []string{
+		"<polyline", "usage-observed-line", "usage-forecast-line", "usage-reset-mark",
+		"usageAxisTicks(start, horizon)", "usage-forecast-hit-target", "usage-scheduled-reset",
+	} {
 		if !strings.Contains(chart, needle) {
 			t.Errorf("Usage line chart missing %q", needle)
 		}
@@ -38,10 +41,17 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"sampledPoints(points, 240)",
 		"headline: 'Forecast paused'",
 		"Usage chart legend",
-		"source: ${point.source}",
+		"USAGE_LOOKAHEAD_SPANS",
+		"Look ahead",
+		`role="group" aria-label="History range"`,
+		`role="group" aria-label="Forecast lookahead"`,
+		"aria-pressed=",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)
 		}
+	}
+	if strings.Contains(chart, "point.source") {
+		t.Error("Usage point tooltip exposes internal sample source")
 	}
 }
