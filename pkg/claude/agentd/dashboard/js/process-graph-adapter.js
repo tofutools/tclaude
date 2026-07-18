@@ -82,6 +82,8 @@ export class ProcessGraphAdapter {
         emit('portDragEnd')(payload);
       },
       onCanvasDrop: emit('canvasDrop'),
+      onCanvasPointerMove: emit('canvasPointerMove'),
+      onCanvasPointerLeave: emit('canvasPointerLeave'),
       marqueeSelect: true,
       wheelPan: true,
     });
@@ -125,6 +127,10 @@ export class ProcessGraphAdapter {
 
   clientToGraph(clientX, clientY) {
     return this.disposed ? { x: 0, y: 0 } : this.widget.clientToGraph(clientX, clientY);
+  }
+
+  containsClientPoint(clientX, clientY) {
+    return !this.disposed && this.widget.containsClientPoint(clientX, clientY);
   }
 
   canvasCenter() {
@@ -174,6 +180,7 @@ export class ProcessGraphAdapter {
 
   dispose() {
     if (this.disposed) return;
+    this.events.canvasPointerLeave?.({ reason: 'dispose' });
     this.disposed = true;
     this.endConnectionBand();
     this.events = {};

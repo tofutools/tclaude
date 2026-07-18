@@ -711,8 +711,10 @@ owns the keystroke.
 
 `Ctrl-C` / `Cmd-C` copies the nodes in the current graph selection, including
 their complete node settings, relative layout, and edges whose two endpoints
-are both selected. `Ctrl-V` / `Cmd-V` pastes that subgraph at the visible canvas
-center; repeating paste creates fresh ids and offsets each copy. Each paste is
+are both selected. `Ctrl-V` / `Cmd-V` centers that subgraph at the current
+in-canvas pointer; when no trustworthy canvas pointer is available it uses the
+visible canvas center. Repeating paste at the same target creates fresh ids and
+offsets each copy; moving the pointer starts a new cascade. Each paste is
 one undoable editor operation; copying does not modify the draft. Neither path
 imports template identity, params, save hashes, run state, or edges crossing
 out of the selection. The format is versioned, bounded to 256 KiB, and carried

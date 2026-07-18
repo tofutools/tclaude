@@ -58,6 +58,23 @@ import {
 // every other document-level DnD feature out of a palette drag.
 const PALETTE_MIME = 'application/x-tclaude-process-palette';
 const EXTERNAL_REVIEW_TIMEOUT_MS = 15_000;
+// 1/1024 graph unit is at most 0.0035 CSS px at the supported maximum zoom.
+// Treating targets inside this epsilon as equal absorbs harmless subpixel
+// SVGRect/view arithmetic without creating a perceptible cursor snap.
+export const PROCESS_PASTE_TARGET_EPSILON = 1 / 1024;
+
+export function resolveProcessPastePlacement(fingerprint, target, previous = {}) {
+  const anchor = previous.anchor;
+  const sameTarget = Number.isFinite(target?.x) && Number.isFinite(target?.y)
+    && Number.isFinite(anchor?.x) && Number.isFinite(anchor?.y)
+    && Math.abs(target.x - anchor.x) <= PROCESS_PASTE_TARGET_EPSILON
+    && Math.abs(target.y - anchor.y) <= PROCESS_PASTE_TARGET_EPSILON;
+  const repeated = fingerprint === previous.fingerprint && sameTarget;
+  return {
+    center: repeated ? { x: anchor.x, y: anchor.y } : { x: target.x, y: target.y },
+    repeat: repeated ? (Number(previous.repeat) || 0) + 1 : 0,
+  };
+}
 
 export function isProcessEditorFormControl(target) {
   const element = target?.nodeType === 1 ? target : target?.parentElement || target;
@@ -155,6 +172,9 @@ export class ProcessTemplateEditor {
     this.pasteFingerprint = '';
     this.pasteRepeat = 0;
     this.pasteAnchor = null;
+    // Ephemeral observation only: never published, persisted, or included in
+    // model/clipboard state. The live graph bounds revalidate it at paste.
+    this.canvasPointer = null;
     this.abort = new AbortController();
     this.graph = null;
     if (!options.ui?.createPublisher || !options.ui?.mount) {
@@ -176,11 +196,13 @@ export class ProcessTemplateEditor {
 
   attachGraphHost(host) {
     if (!host) {
+      this.canvasPointer = null;
       this.graph?.dispose?.();
       this.graph = null;
       return;
     }
     if (this.graph?.host === host) return;
+    this.canvasPointer = null;
     this.graph?.dispose?.();
     this.graph = createProcessGraphAdapter(host, {
       graph: this.model.graph(),
@@ -200,6 +222,8 @@ export class ProcessTemplateEditor {
         portDragStart: (event) => this.onPortDragStart(event),
         portDragEnd: (event) => this.onPortDragEnd(event),
         canvasDrop: (event) => this.onCanvasDrop(event),
+        canvasPointerMove: (event) => this.onCanvasPointerMove(event),
+        canvasPointerLeave: () => this.onCanvasPointerLeave(),
       },
     });
   }
@@ -318,6 +342,7 @@ export class ProcessTemplateEditor {
     this.validation = null;
     this.graph?.dispose?.();
     this.graph = null;
+    this.canvasPointer = null;
     // Parent teardown follows an already-approved navigation/unmount. It is
     // the one forced-close path; user-driven modal replacement goes through
     // requestClose below so a dirty node draft cannot disappear silently.
@@ -1079,6 +1104,33 @@ export class ProcessTemplateEditor {
     return this.graph.canvasCenter();
   }
 
+  onCanvasPointerMove({ clientX, clientY, pointerType = '', event } = {}) {
+    if (event?.isTrusted === false) return false;
+    if ((pointerType && pointerType !== 'mouse' && pointerType !== 'pen')
+        || !this.graph?.containsClientPoint?.(clientX, clientY)) {
+      this.canvasPointer = null;
+      return false;
+    }
+    this.canvasPointer = { clientX, clientY };
+    return true;
+  }
+
+  onCanvasPointerLeave() {
+    this.canvasPointer = null;
+  }
+
+  pasteTargetPoint() {
+    const pointer = this.canvasPointer;
+    if (pointer) {
+      if (this.graph?.containsClientPoint?.(pointer.clientX, pointer.clientY)) {
+        const point = this.graph.clientToGraph(pointer.clientX, pointer.clientY);
+        if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) return point;
+      }
+      this.canvasPointer = null;
+    }
+    return this.canvasCenterPoint();
+  }
+
   addNodeType(type, point = this.canvasCenterPoint()) {
     const id = this.mutate(() => this.model.addNode(type, { x: point.x, y: point.y }));
     if (!id) return false;
@@ -1374,14 +1426,17 @@ export class ProcessTemplateEditor {
     }
 
     const fingerprint = processSelectionFingerprint(text);
-    const repeated = fingerprint === this.pasteFingerprint && this.pasteAnchor;
-    const repeat = repeated ? this.pasteRepeat + 1 : 0;
-    const center = repeated ? this.pasteAnchor : this.canvasCenterPoint();
+    let placement;
     let idMap;
     try {
+      placement = resolveProcessPastePlacement(fingerprint, this.pasteTargetPoint(), {
+        fingerprint: this.pasteFingerprint,
+        repeat: this.pasteRepeat,
+        anchor: this.pasteAnchor,
+      });
       idMap = this.model.insertClipboardSelection(payload, {
-        center,
-        offset: { x: repeat * 36, y: repeat * 36 },
+        center: placement.center,
+        offset: { x: placement.repeat * 36, y: placement.repeat * 36 },
       });
     } catch (error) {
       this.status(error instanceof ProcessClipboardError
@@ -1390,8 +1445,8 @@ export class ProcessTemplateEditor {
     }
 
     this.pasteFingerprint = fingerprint;
-    this.pasteRepeat = repeat;
-    this.pasteAnchor = center;
+    this.pasteRepeat = placement.repeat;
+    this.pasteAnchor = placement.center;
     this.status('');
     this.refresh();
     const ids = [...idMap.values()];

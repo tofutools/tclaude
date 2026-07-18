@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ProcessTemplateEditor, hasNonCollapsedDOMSelection, isProcessEditorFormControl,
+  PROCESS_PASTE_TARGET_EPSILON, ProcessTemplateEditor, hasNonCollapsedDOMSelection,
+  isProcessEditorFormControl, resolveProcessPastePlacement,
 } from '../dashboard/js/process-editor.js';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
 import { parseProcessSelection, serializeProcessSelection } from '../dashboard/js/process-editor-clipboard.js';
@@ -42,6 +43,42 @@ function clipboardText(id = 'copied') {
     edges: [],
   });
 }
+
+test('paste placement absorbs subpixel transform noise but resets for a moved cursor', () => {
+  const first = resolveProcessPastePlacement('same', { x: 100.125, y: -20.375 });
+  assert.deepEqual(first, { center: { x: 100.125, y: -20.375 }, repeat: 0 });
+  const subpixel = resolveProcessPastePlacement('same', {
+    x: 100.125 + PROCESS_PASTE_TARGET_EPSILON / 2,
+    y: -20.375 - PROCESS_PASTE_TARGET_EPSILON / 2,
+  }, { fingerprint: 'same', anchor: first.center, repeat: first.repeat });
+  assert.deepEqual(subpixel, { center: first.center, repeat: 1 },
+    'subpixel SVGRect/view noise retains the exact first anchor');
+  const moved = resolveProcessPastePlacement('same', { x: 102.5, y: -20.375 }, {
+    fingerprint: 'same', anchor: first.center, repeat: subpixel.repeat,
+  });
+  assert.deepEqual(moved, { center: { x: 102.5, y: -20.375 }, repeat: 0 });
+});
+
+test('cursor paste target converts the live client point through current pan/zoom and falls back outside', () => {
+  const fake = {
+    canvasPointer: { clientX: 450.25, clientY: 280.5 },
+    graph: {
+      containsClientPoint: (x, y) => x >= 100.125 && x <= 900.125 && y >= 50.25 && y <= 650.25,
+      clientToGraph: (x, y) => ({
+        x: (x - 100.125 - 37.75) / 1.75,
+        y: (y - 50.25 + 22.5) / 1.75,
+      }),
+    },
+    canvasCenterPoint: () => ({ x: 999, y: 888 }),
+  };
+  assert.deepEqual(ProcessTemplateEditor.prototype.pasteTargetPoint.call(fake), {
+    x: (450.25 - 100.125 - 37.75) / 1.75,
+    y: (280.5 - 50.25 + 22.5) / 1.75,
+  });
+  fake.canvasPointer = { clientX: 901, clientY: 280.5 };
+  assert.deepEqual(ProcessTemplateEditor.prototype.pasteTargetPoint.call(fake), { x: 999, y: 888 });
+  assert.equal(fake.canvasPointer, null, 'live bounds rejection invalidates the stale client point');
+});
 
 test('copy claims native clipboard only after a selected node serializes successfully', () => {
   const model = new ProcessEditModel({
@@ -118,6 +155,7 @@ test('unrelated paste stays native and sentinel-invalid paste fails atomically w
   const selection = { type: 'node', id: 'kept' };
   const fake = {
     model, selection, modalDispose: null,
+    pasteFingerprint: 'prior', pasteRepeat: 3, pasteAnchor: { x: 7, y: 8 },
     status: (...args) => { status = args; },
   };
   assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
@@ -139,6 +177,8 @@ test('unrelated paste stays native and sentinel-invalid paste fails atomically w
   assert.deepEqual(model.saveBody(), before);
   assert.equal(model.canUndo, false);
   assert.equal(fake.selection, selection);
+  assert.deepEqual([fake.pasteFingerprint, fake.pasteRepeat, fake.pasteAnchor],
+    ['prior', 3, { x: 7, y: 8 }]);
 
   const malformed = `tclaude-process-selection:v1\n${JSON.stringify({
     kind: 'tclaude/process-selection', version: 1,
@@ -153,6 +193,8 @@ test('unrelated paste stays native and sentinel-invalid paste fails atomically w
   assert.deepEqual(model.saveBody(), before);
   assert.equal(model.canUndo, false);
   assert.equal(fake.selection, selection);
+  assert.deepEqual([fake.pasteFingerprint, fake.pasteRepeat, fake.pasteAnchor],
+    ['prior', 3, { x: 7, y: 8 }]);
 });
 
 test('valid repeated paste uses fresh ids, one history step each, cascading placement, and focus', async () => {
@@ -166,7 +208,7 @@ test('valid repeated paste uses fresh ids, one history step each, cascading plac
     model, selection: null, modalDispose: null, pasteFingerprint: '', pasteRepeat: 0, pasteAnchor: null,
     externalDecisionPending: false, externalReloadPending: false,
     graph: { focusNode: (id) => focused.push(id) },
-    canvasCenterPoint: () => ({ x: 100, y: 200 }),
+    pasteTargetPoint: () => ({ x: 100, y: 200 }),
     refresh: () => { refreshes += 1; },
     setSelection(value) { this.selection = value; },
     status() {},
@@ -195,7 +237,11 @@ test('read-only editor claims a valid sentinel paste but never mutates history o
   const selection = { type: 'node', id: 'kept' };
   let prevented = 0;
   let status = null;
-  const fake = { model, selection, modalDispose: null, status: (...args) => { status = args; } };
+  const fake = {
+    model, selection, modalDispose: null,
+    pasteFingerprint: 'prior', pasteRepeat: 2, pasteAnchor: { x: 4, y: 5 },
+    status: (...args) => { status = args; },
+  };
   assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
     target: { tagName: 'DIV' }, clipboardData: { getData: () => clipboardText() },
     preventDefault() { prevented += 1; },
@@ -205,6 +251,48 @@ test('read-only editor claims a valid sentinel paste but never mutates history o
   assert.equal(model.canUndo, false);
   assert.equal(fake.selection, selection);
   assert.equal(model.node('copied'), undefined);
+  assert.deepEqual([fake.pasteFingerprint, fake.pasteRepeat, fake.pasteAnchor],
+    ['prior', 2, { x: 4, y: 5 }]);
+});
+
+test('external, capacity, and coordinate failures never advance paste cascade state', () => {
+  const text = clipboardText();
+  const makeFake = () => {
+    const model = new ProcessEditModel({ template: { nodes: {} }, edges: [], layout: { nodes: {} } });
+    return {
+      model, selection: null, modalDispose: null,
+      pasteFingerprint: 'prior', pasteRepeat: 2, pasteAnchor: { x: 4, y: 5 },
+      externalDecisionPending: false, externalReloadPending: false,
+      pasteTargetPoint: () => ({ x: 10, y: 20 }),
+      status() {},
+    };
+  };
+  const paste = (fake) => ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { getData: () => text }, preventDefault() {},
+  });
+  const unchanged = (fake) => assert.deepEqual(
+    [fake.pasteFingerprint, fake.pasteRepeat, fake.pasteAnchor],
+    ['prior', 2, { x: 4, y: 5 }],
+  );
+
+  const pending = makeFake();
+  pending.externalReloadPending = true;
+  pending.pasteTargetPoint = () => assert.fail('pending reload rejects before coordinate resolution');
+  assert.equal(paste(pending), true);
+  unchanged(pending);
+  assert.equal(pending.model.canUndo, false);
+
+  const capacity = makeFake();
+  capacity.model.insertClipboardSelection = () => { throw new Error('destination capacity'); };
+  assert.equal(paste(capacity), true);
+  unchanged(capacity);
+  assert.equal(capacity.model.canUndo, false);
+
+  const coordinate = makeFake();
+  coordinate.pasteTargetPoint = () => { throw new Error('coordinate resolution'); };
+  assert.equal(paste(coordinate), true);
+  unchanged(coordinate);
+  assert.equal(coordinate.model.canUndo, false);
 });
 
 test('palette drop and contextual create command share addNodeType', () => {

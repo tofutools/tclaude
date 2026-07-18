@@ -20,6 +20,7 @@
 // assume template-only editing beyond the defaults.
 
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import { layoutProcessGraph } from './process-layout.js';
 import {
   PROCESS_CLIPBOARD_MAX_COORDINATE, PROCESS_CLIPBOARD_MAX_EDGES,
   PROCESS_CLIPBOARD_MAX_ID, PROCESS_CLIPBOARD_MAX_NODES, ProcessClipboardError,
@@ -39,6 +40,27 @@ const NODE_TYPES = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'en
 
 function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
+}
+
+// processSelectionRenderedCenter resolves the center of the exact node
+// rectangles rendered by ProcessGraph. Pins are the clipboard coordinates;
+// edges and ports deliberately stay out of these bounds. Sharing the layout
+// boundary keeps task/decision/wait/start/end dimensions in one authority.
+export function processSelectionRenderedCenter(selection) {
+  const layout = layoutProcessGraph({
+    nodes: selection.nodes.map((entry) => ({
+      id: entry.id,
+      type: entry.node.type,
+      label: entry.node.name || entry.id,
+      pinned: entry.position,
+    })),
+    edges: [],
+  });
+  const left = Math.min(...layout.nodes.map((node) => node.x - node.width / 2));
+  const right = Math.max(...layout.nodes.map((node) => node.x + node.width / 2));
+  const top = Math.min(...layout.nodes.map((node) => node.y - node.height / 2));
+  const bottom = Math.max(...layout.nodes.map((node) => node.y + node.height / 2));
+  return { x: (left + right) / 2, y: (top + bottom) / 2 };
 }
 
 // graphEdgeID is the stable identity handed to the graph core (and used by
@@ -353,11 +375,7 @@ export class ProcessEditModel {
       throw new ProcessClipboardError('position', 'The paste target has an invalid position.');
     }
 
-    const left = Math.min(...selection.nodes.map((entry) => entry.position.x));
-    const right = Math.max(...selection.nodes.map((entry) => entry.position.x));
-    const top = Math.min(...selection.nodes.map((entry) => entry.position.y));
-    const bottom = Math.max(...selection.nodes.map((entry) => entry.position.y));
-    const sourceCenter = { x: (left + right) / 2, y: (top + bottom) / 2 };
+    const sourceCenter = processSelectionRenderedCenter(selection);
     const taken = new Set(Object.keys(this.template.nodes));
     const idMap = new Map();
     for (const entry of selection.nodes) {
