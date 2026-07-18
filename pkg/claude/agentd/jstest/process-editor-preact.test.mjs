@@ -67,6 +67,47 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(host.childNodes.length, 0);
 });
 
+test('Preact editor projects every canonical node kind through the inside-label contract without model drift', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const cases = [
+    ['task-node', 'task'],
+    ['decision-node', 'decision'],
+    ['parallel-node', 'parallel'],
+    ['wait-node', 'wait'],
+    ['start-node', 'start'],
+    ['end-node', 'end'],
+  ];
+  editor.model.template.nodes = Object.fromEntries(cases.map(([id, type], index) => [id, {
+    type,
+    name: `${type} ${'W'.repeat(index + 12)} 設計レビュー🙂 ${'long'.repeat(index + 5)}`,
+  }]));
+  editor.model.template.start = 'start-node';
+  editor.model.edges = [{ from: '', outcome: 'start', to: 'start-node' }];
+  editor.model.layout.nodes = Object.fromEntries(cases.map(([id], index) => [id, {
+    x: 120 + index % 3 * 230,
+    y: 120 + Math.floor(index / 3) * 220,
+  }]));
+  const before = editor.model.saveBody();
+  await harness.act(() => editor.refresh());
+
+  for (const [id, type] of cases) {
+    const node = host.querySelector(`.process-node[data-node-id="${id}"]`);
+    const label = node?.querySelector('.process-node-label-inside');
+    const ports = host.querySelector(`.process-node-ports[data-node-id="${id}"]`);
+    assert.ok(node && label && ports, `${type} renders through the real graph adapter`);
+    assert.equal(node.querySelector('.process-node-label-peripheral'), null);
+    assert.ok(node.getAttribute('aria-label').startsWith(`${before.template.nodes[id].name}, ${type}`));
+    assert.equal(ports.closest('.process-node'), null, `${type} connector controls remain outside the node button`);
+    assert.equal(ports.querySelector('.process-port-in').getAttribute('aria-label'),
+      `Input port for ${before.template.nodes[id].name}`);
+    assert.equal(ports.querySelector('.process-port-out').getAttribute('aria-label'),
+      `Output port for ${before.template.nodes[id].name}`);
+  }
+  assert.deepEqual(editor.model.saveBody(), before,
+    'rendering and refreshing labels does not change names, layout, edges, or the save payload');
+  editor.destroy();
+});
+
 test('Preact join select renders and publishes canonical node.join values', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   Object.assign(editor.model.template.nodes, {

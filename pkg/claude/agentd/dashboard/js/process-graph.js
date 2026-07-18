@@ -118,52 +118,141 @@ function renderIssueTooltip(parent, issues) {
   parent.append(tooltip);
 }
 
-function wrapLabel(label, maxChars) {
-  const words = String(label || '').trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return [''];
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    if (!line) line = word;
-    else if (`${line} ${word}`.length <= maxChars) line += ` ${word}`;
-    else {
-      lines.push(line);
-      line = word;
-    }
+function labelUnits(value) {
+  const text = String(value || '');
+  if (typeof Intl?.Segmenter === 'function') {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text), ({ segment }) => segment);
   }
-  lines.push(line);
-  return lines.slice(0, 3);
+  return Array.from(text);
 }
 
-function renderText(parent, node) {
-  const maxChars = node.compound?.collapsed ? 22 : node.type === 'decision' ? 14 : 20;
-  const lines = wrapLabel(node.label || node.id, maxChars);
-  const text = svgElement('text', { class: 'process-node-label', 'text-anchor': 'middle', 'aria-hidden': 'true' });
-  const lineHeight = 16;
-  const startY = -(lines.length - 1) * lineHeight / 2;
+function labelUnitWidth(unit) {
+  // Conservative em-relative buckets keep wrapping deterministic before the
+  // disconnected SVG text can be measured. Wide Latin glyphs are not allowed
+  // to consume the ordinary half-em budget; CJK, emoji, combining clusters,
+  // and the ellipsis receive a full-em allowance. The clip rectangle remains
+  // the final hard geometry boundary, while Chrome dashsnap verifies that each
+  // emitted line fits without relying on that clip.
+  if (Array.from(unit).some((character) => character.codePointAt(0) > 0xff)) return 1.1;
+  if (/^[WM@#%&QOGmw]$/u.test(unit)) return 1.15;
+  if (/^[A-Z]$/u.test(unit)) return 0.8;
+  if (/^[ilI1.,'`:;|!]$/u.test(unit)) return 0.4;
+  if (/^\s$/u.test(unit)) return 0.35;
+  return 0.65;
+}
+
+function labelWidth(units) {
+  return units.reduce((total, unit) => total + labelUnitWidth(unit), 0);
+}
+
+function takeLabelPrefix(units, budget) {
+  let width = 0;
+  let count = 0;
+  while (count < units.length) {
+    const next = labelUnitWidth(units[count]);
+    if (count > 0 && width + next > budget) break;
+    width += next;
+    count += 1;
+  }
+  return units.splice(0, count || 1);
+}
+
+function wrapLabel(label, maxUnits, maxLines) {
+  const words = String(label || '').trim().split(/\s+/u).filter(Boolean).map(labelUnits);
+  if (!words.length) return [''];
+  const lines = [];
+  let line = [];
+  let truncated = false;
+  while (words.length) {
+    if (lines.length >= maxLines) {
+      truncated = true;
+      break;
+    }
+    const word = words[0];
+    if (!line.length) {
+      if (labelWidth(word) <= maxUnits) {
+        line = word.splice(0);
+        words.shift();
+      } else {
+        line = takeLabelPrefix(word, maxUnits);
+        if (!word.length) words.shift();
+        lines.push(line.join(''));
+        line = [];
+      }
+      continue;
+    }
+    if (labelWidth(line) + 1 + labelWidth(word) <= maxUnits) {
+      line.push(' ', ...word);
+      words.shift();
+    } else {
+      lines.push(line.join(''));
+      line = [];
+    }
+  }
+  if (line.length && lines.length < maxLines) {
+    lines.push(line.join(''));
+    line = [];
+  }
+  if (words.length || line.length) truncated = true;
+  if (truncated && lines.length) {
+    const last = labelUnits(lines.at(-1));
+    const ellipsisWidth = labelUnitWidth('…');
+    while (last.length && labelWidth(last) + ellipsisWidth > maxUnits) last.pop();
+    lines[lines.length - 1] = `${last.join('').trimEnd()}…`;
+  }
+  return lines.slice(0, maxLines);
+}
+
+function insideLabelLayout(node) {
+  if (node.compound?.collapsed) {
+    return { x: -78, y: -31, width: 156, height: 42, centerY: -10, maxUnits: 12, maxLines: 2, lineHeight: 15, className: 'process-node-label-compound' };
+  }
+  switch (node.type) {
+    case 'decision':
+      return { x: -32, y: -18, width: 64, height: 36, centerY: 0, maxUnits: 5.7, maxLines: 2, lineHeight: 14, className: 'process-node-label-compact' };
+    case 'parallel':
+      return { x: -29, y: 5, width: 58, height: 24, centerY: 17, maxUnits: 5.2, maxLines: 1, lineHeight: 12, className: 'process-node-label-compact' };
+    case 'wait':
+      return { x: -28, y: 5, width: 56, height: 25, centerY: 17, maxUnits: 5, maxLines: 1, lineHeight: 12, className: 'process-node-label-compact' };
+    case 'start':
+      return { x: -20, y: -15, width: 40, height: 30, centerY: 0, maxUnits: 4, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+    case 'end':
+      return { x: -21, y: -15, width: 42, height: 30, centerY: 0, maxUnits: 4.2, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+    default:
+      return { x: -70, y: -25, width: 140, height: 50, centerY: 0, maxUnits: 10.2, maxLines: 3, lineHeight: 16, className: '' };
+  }
+}
+
+function renderText(parent, node, clipID) {
+  const layout = insideLabelLayout(node);
+  const lines = wrapLabel(node.label || node.id, layout.maxUnits, layout.maxLines);
+  const clip = svgElement('clipPath', {
+    id: clipID, class: 'process-node-label-clip', clipPathUnits: 'userSpaceOnUse', 'aria-hidden': 'true',
+  });
+  clip.append(svgElement('rect', {
+    x: layout.x, y: layout.y, width: layout.width, height: layout.height,
+  }));
+  const text = svgElement('text', {
+    class: `process-node-label process-node-label-inside${layout.className ? ` ${layout.className}` : ''}`,
+    'text-anchor': 'middle', 'aria-hidden': 'true', 'clip-path': `url(#${clipID})`,
+    'data-label-max-lines': layout.maxLines,
+  });
+  const startY = layout.centerY + 4 - (lines.length - 1) * layout.lineHeight / 2;
   lines.forEach((line, index) => {
-    const tspan = svgElement('tspan', { x: 0, y: startY + index * lineHeight });
+    const tspan = svgElement('tspan', { x: 0, y: startY + index * layout.lineHeight });
     tspan.textContent = line;
     text.append(tspan);
   });
-  parent.append(text);
+  parent.append(clip, text);
 }
 
-function renderPeripheralLabel(parent, node) {
-  if (!node.label) return;
-  const text = svgElement('text', {
-    class: 'process-node-label process-node-label-peripheral',
-    x: 0, y: node.height / 2 + 20, 'text-anchor': 'middle', 'aria-hidden': 'true',
-  });
-  text.textContent = String(node.label);
-  parent.append(text);
-}
-
-function renderClock(parent) {
-  parent.append(
+function renderClock(parent, y = 0) {
+  const clock = svgElement('g', { class: 'process-clock', transform: `translate(0 ${y})`, 'aria-hidden': 'true' });
+  clock.append(
     svgElement('circle', { class: 'process-clock-face', cx: 0, cy: 0, r: 12 }),
     svgElement('path', { class: 'process-clock-hand', d: 'M 0 -7 L 0 0 L 7 4' }),
   );
+  parent.append(clock);
 }
 
 function renderCompoundAffordance(parent, node) {
@@ -204,12 +293,12 @@ function renderShape(parent, node) {
         points: `0,${-node.height / 2} ${node.width / 2},0 0,${node.height / 2} ${-node.width / 2},0`,
       }));
       parent.append(
-        svgElement('path', { class: 'process-parallel-mark', d: 'M -16 0 H 16 M 0 -16 V 16' }),
+        svgElement('path', { class: 'process-parallel-mark', d: 'M -10 -13 H 10 M 0 -23 V -3' }),
       );
       break;
     case 'wait':
       parent.append(svgElement('circle', { class: 'process-node-shape process-shape-wait', cx: 0, cy: 0, r: node.width / 2 }));
-      renderClock(parent);
+      renderClock(parent, -13);
       break;
     case 'start':
       parent.append(svgElement('circle', { class: 'process-node-shape process-shape-start', cx: 0, cy: 0, r: node.width / 2 }));
@@ -454,8 +543,8 @@ export class ProcessGraph {
       'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlayText(overlay) ? `, ${overlayText(overlay)}` : ''}`,
     });
     renderShape(group, node);
-    if (node.type !== 'wait' && node.type !== 'start' && node.type !== 'end') renderText(group, node);
-    else renderPeripheralLabel(group, node);
+    const labelSerial = this.labelSerial = (this.labelSerial || 0) + 1;
+    renderText(group, node, `process-node-label-clip-${this.instanceID}-${labelSerial}`);
     renderOverlay(group, node);
     return group;
   }

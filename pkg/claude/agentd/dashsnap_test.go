@@ -1101,6 +1101,73 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-inside-labels",
+			Title:   "Process editor — bounded labels inside every node",
+			Caption: "TCL-566: all six editor node kinds keep long and Unicode names inside fixed semantic shapes, with readable overflow and both connector-port bands unobscured in regular and wizard skins.",
+			JS: processEditorStateJS(`var specs = [
+	    {id:'start-label',type:'start',name:'Start WWWWWWW 起点',x:130,y:120},
+	    {id:'task-label',type:'task',name:'WWWWWWWWWWWWWWWWW Implement-国際化🙂withoutspaces-and-extra-detail-bounded-overflow',x:380,y:120},
+	    {id:'decision-label',type:'decision',name:'WWWWWWWWWWWW レビュー結果を確認しますか',x:690,y:135},
+	    {id:'parallel-label',type:'parallel',name:'並列分岐🙂long-name',x:150,y:390},
+	    {id:'wait-label',type:'wait',name:'Wait for signal 待機',x:420,y:390},
+	    {id:'end-label',type:'end',name:'Done 完了',x:690,y:390}
+  ];
+  ed.model.template.nodes = Object.fromEntries(specs.map(function(spec){ return [spec.id,{type:spec.type,name:spec.name}]; }));
+  ed.model.template.start = 'start-label';
+  ed.model.layout.nodes = Object.fromEntries(specs.map(function(spec){ return [spec.id,{x:spec.x,y:spec.y}]; }));
+  ed.model.edges = [
+    {from:'',outcome:'start',to:'start-label'},
+    {from:'start-label',outcome:'next',to:'task-label'},
+    {from:'task-label',outcome:'review',to:'decision-label'},
+    {from:'decision-label',outcome:'split',to:'parallel-label'},
+    {from:'parallel-label',outcome:'wait',to:'wait-label'},
+    {from:'wait-label',outcome:'done',to:'end-label'}
+  ];
+  ed.refresh({fit:true});
+  await editorPaint(); await editorPaint();
+  var rgb = function(value) {
+    var parts = String(value).match(/[\d.]+/g);
+    if (!parts || parts.length < 3) throw new Error('unparseable graph colour: '+value);
+    return parts.slice(0,3).map(Number);
+  };
+  var luminance = function(value) {
+    return rgb(value).map(function(channel){ channel/=255; return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4); })
+      .reduce(function(total,channel,index){ return total+channel*[.2126,.7152,.0722][index]; },0);
+  };
+  var contrast = function(a,b) { var x=luminance(a),y=luminance(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); };
+	  specs.forEach(function(spec) {
+    var node = document.querySelector('.process-node[data-node-id="'+spec.id+'"]');
+    var ports = document.querySelector('.process-node-ports[data-node-id="'+spec.id+'"]');
+    var shape = node && node.querySelector('.process-node-shape');
+    var label = node && node.querySelector('.process-node-label-inside');
+    var clip = node && node.querySelector('.process-node-label-clip rect');
+    var input = ports && ports.querySelector('.process-port-in');
+    var output = ports && ports.querySelector('.process-port-out');
+    if (!node||!ports||!shape||!label||!clip||!input||!output) throw new Error(spec.type+' inside-label fixture incomplete');
+    if (node.querySelector('.process-node-label-peripheral')) throw new Error(spec.type+' restored a peripheral label');
+    if (!node.getAttribute('aria-label').startsWith(spec.name+', '+spec.type)) throw new Error(spec.type+' lost its full accessible name');
+    if (input.getAttribute('aria-label')!=='Input port for '+spec.name||output.getAttribute('aria-label')!=='Output port for '+spec.name) throw new Error(spec.type+' port accessible name changed');
+    var shapeBox=shape.getBBox(),x=Number(clip.getAttribute('x')),y=Number(clip.getAttribute('y')),
+      width=Number(clip.getAttribute('width')),height=Number(clip.getAttribute('height'));
+    if (x<shapeBox.x-.1||x+width>shapeBox.x+shapeBox.width+.1||y<shapeBox.y-.1||y+height>shapeBox.y+shapeBox.height+.1) throw new Error(spec.type+' label frame escaped the fixed shape bbox');
+	    var inBottom=Number(input.getAttribute('cy'))+Number(input.getAttribute('r'));
+	    var outTop=Number(output.getAttribute('cy'))-Number(output.getAttribute('r'));
+	    if (y<=inBottom||y+height>=outTop) throw new Error(spec.type+' label frame overlaps an input/output port band');
+	    if (label.getAttribute('clip-path')!=='url(#'+clip.parentElement.id+')') throw new Error(spec.type+' label is not hard-clipped to its verified interior frame');
+	    Array.from(label.querySelectorAll('tspan')).forEach(function(line) {
+	      if (line.getComputedTextLength()>width+.5) throw new Error(spec.type+' line relies on incidental clip overflow: '+line.textContent);
+	    });
+	    var ratio=contrast(getComputedStyle(label).fill,getComputedStyle(shape).fill);
+    if (ratio<4.5) throw new Error(spec.type+' label contrast is '+ratio.toFixed(2)+':1');
+  });
+  ['start-label','end-label'].forEach(function(id) {
+    var node=document.querySelector('.process-node[data-node-id="'+id+'"]'),clip=node.querySelector('.process-node-label-clip rect'),ports=document.querySelector('.process-node-ports[data-node-id="'+id+'"]');
+    if (Number(clip.getAttribute('y'))<=Number(ports.querySelector('.process-port-in').getAttribute('cy'))+6) throw new Error(id+' smallest-shape input band is not clear');
+    if (Number(clip.getAttribute('y'))+Number(clip.getAttribute('height'))>=Number(ports.querySelector('.process-port-out').getAttribute('cy'))-6) throw new Error(id+' smallest-shape output band is not clear');
+  });`),
+			SettleMS: 1100,
+		},
+		{
 			Key:     "process-editor-commands",
 			Title:   "Process editor — contextual commands",
 			Caption: "TCL-435: the shared dashboard command palette contributes selection-aware graph operations, searchable plain copy, disabled reasons, and the documented editor launcher.",

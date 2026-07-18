@@ -3,6 +3,58 @@ import assert from 'node:assert/strict';
 import { ProcessGraph, isGraphTypingTarget, normalizeWheelDelta } from '../dashboard/js/process-graph.js';
 import { parseHTML } from './vendor/linkedom.mjs';
 
+test('every node kind keeps its bounded label inside the shape and clear of connector ports', () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
+  try {
+    const cases = [
+      { type: 'task', width: 168, height: 68 },
+      { type: 'decision', width: 108, height: 108 },
+      { type: 'parallel', width: 108, height: 108 },
+      { type: 'wait', width: 78, height: 78 },
+      { type: 'start', width: 58, height: 58 },
+      { type: 'end', width: 62, height: 62 },
+      { type: 'task', width: 190, height: 88, compound: { collapsed: true, stages: ['one', 'two'] } },
+    ];
+    const fullLabel = `${'W'.repeat(24)} 設計レビュー🙂超長識別子withoutspaces-and-more`;
+    for (const [index, entry] of cases.entries()) {
+      const node = { id: `node-${index}`, label: fullLabel, x: 100, y: 200, ...entry };
+      const fake = { instanceID: 41, labelSerial: index };
+      const rendered = ProcessGraph.prototype.renderNode.call(fake, node);
+      const label = rendered.querySelector('.process-node-label-inside');
+      const clip = rendered.querySelector('.process-node-label-clip rect');
+      assert.ok(label && clip, `${entry.type} renders the shared inside-label frame`);
+      assert.equal(rendered.querySelector('.process-node-label-peripheral'), null);
+      assert.equal(rendered.getAttribute('aria-label'), `${fullLabel}, ${entry.compound ? 'collapsed compound' : entry.type}`,
+        `${entry.type} retains the untruncated accessible name`);
+      assert.ok(label.querySelectorAll('tspan').length <= Number(label.dataset.labelMaxLines));
+      assert.match(label.textContent, /…$/, `${entry.type} gives bounded overflow an explicit ellipsis`);
+
+      const top = Number(clip.getAttribute('y'));
+      const bottom = top + Number(clip.getAttribute('height'));
+      const inputPortBottom = -entry.height / 2 + 6;
+      const outputPortTop = entry.height / 2 - 6;
+      assert.ok(top > inputPortBottom, `${entry.type} label clears the full input-port disc`);
+      assert.ok(bottom < outputPortTop, `${entry.type} label clears the full output-port disc`);
+
+      const ports = ProcessGraph.prototype.renderPortNode.call(fake, node);
+      assert.equal(ports.parentNode, null, 'ports remain a sibling-layer group, not node descendants');
+      assert.equal(ports.querySelector('.process-port-in').getAttribute('cy'), String(-entry.height / 2));
+      assert.equal(ports.querySelector('.process-port-out').getAttribute('cy'), String(entry.height / 2));
+      assert.equal(ports.querySelector('.process-port-in').getAttribute('aria-label'), `Input port for ${fullLabel}`);
+      assert.equal(ports.querySelector('.process-port-out').getAttribute('aria-label'), `Output port for ${fullLabel}`);
+    }
+    const short = ProcessGraph.prototype.renderNode.call({ instanceID: 42, labelSerial: 0 }, {
+      id: 'short', label: 'Start', type: 'start', x: 0, y: 0, width: 58, height: 58,
+    });
+    assert.equal(short.querySelector('.process-node-label-inside').textContent, 'Start',
+      'a label that fits is not presented as truncated');
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
 test('edge renderer gives the exact routed path to the auto-oriented SVG marker', () => {
   const previousDocument = globalThis.document;
   globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
