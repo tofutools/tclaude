@@ -2422,6 +2422,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if aid != "" {
 		resp["agent_id"] = aid
 	}
+	// Echo the requested task-reference link with its verified binding
+	// state (TCL-568): "bound" only when the link is readable back off the
+	// enrolled actor, "pending" when the spawn went pending (the persisted
+	// pending row carries the link; the sweeper binds it at enrollment) or
+	// the binding couldn't be confirmed. Never claim linkage that wasn't
+	// verifiably written.
+	if p.TaskURL != "" {
+		resp["task_ref_url"] = p.TaskURL
+		resp["task_ref_state"] = taskRefBindState(outcome.ConvID)
+	}
 	// FocusMode is only ever non-empty when the caller asked for
 	// auto-focus. "browser" means openTerminal couldn't pop a native
 	// window — the dashboard's spawn modal points at focus_ws instead of
@@ -3557,6 +3567,8 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		IsOwner:             p.IsOwner,
 		PermissionOverrides: p.PermissionOverrides,
 		ProcessCommandID:    p.ProcessCommandID,
+		TaskURL:             p.TaskURL,
+		TaskLabel:           p.TaskLabel,
 		EffectiveSandbox:    p.EffectiveSandbox,
 	}
 }
@@ -3651,6 +3663,10 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 		requeuePendingSpawn(label, ps)
 		return
 	} else if m != nil {
+		// Same repair the sweeper's already-enrolled path performs: a prior
+		// attempt may have committed the membership but lost the task-ref
+		// write, and the claimed row is about to be dropped.
+		ensurePendingTaskRefBound(convID, ps)
 		return
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
@@ -3835,14 +3851,19 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	}
 
 	// Record the per-agent task-reference link (dashboard Task column),
-	// when the spawn requested one. Best-effort like the spawn-config
-	// write above: the URL was already scheme-validated at the spawn
-	// boundary, so this only ever stores a good value or logs. Lets a
-	// lead point each spawned worker at its Linear issue up front.
+	// when the spawn requested one. The URL was already scheme-validated
+	// at the spawn boundary, so this only ever stores a good value. Lets a
+	// lead point each spawned worker at its Linear issue up front. Fatal
+	// like the sandbox/process-command writes above, NOT best-effort like
+	// the audit snapshot: the caller was told the spawn carries this link,
+	// so a lost write must fail the enrollment — the launch-enrollment
+	// path then fails the request before the fork, and the sweeper /
+	// inline back-fill requeue and retry (TCL-568: spawn must not report
+	// task linkage it silently dropped).
 	if agentID != "" && p.TaskURL != "" {
 		if _, err := db.SetAgentTaskRef(agentID, p.TaskURL, p.TaskLabel); err != nil {
-			slog.Warn("spawn: failed to record task-reference link",
-				"agent", agentID, "error", err)
+			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to record task-reference link: " + err.Error()}
 		}
 	}
 

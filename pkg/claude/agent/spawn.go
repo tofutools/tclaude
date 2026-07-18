@@ -41,6 +41,14 @@ type SpawnResponse struct {
 	// Additive on the wire: an older client that ignores it keeps working. nil
 	// only for a response from a daemon that predates this field.
 	Resolved *ResolvedLaunch `json:"resolved,omitempty"`
+
+	// TaskRefURL / TaskRefState echo a --task spawn's requested link and its
+	// verified binding state: "bound" once the daemon read the link back off
+	// the enrolled actor, "pending" while a delayed (pending) spawn still owes
+	// the binding to its back-fill enrollment (TCL-568). Both empty when the
+	// spawn carried no task link, or on a response from an older daemon.
+	TaskRefURL   string `json:"task_ref_url,omitempty"`
+	TaskRefState string `json:"task_ref_state,omitempty"`
 }
 
 // ResolvedLaunch is the resolved launch shape echoed in a spawn response — the
@@ -1075,6 +1083,16 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	}
 	if resp.AttachCmd != "" {
 		fmt.Fprintf(stdout, "  Attach:  %s\n", resp.AttachCmd)
+	}
+	// Report the task link honestly (TCL-568): only a daemon-verified binding
+	// prints as a plain fact; a pending spawn's link is announced as deferred
+	// so the caller never reads success into a write that hasn't happened yet.
+	if resp.TaskRefURL != "" {
+		if resp.TaskRefState == "bound" {
+			fmt.Fprintf(stdout, "  Task:    %s\n", resp.TaskRefURL)
+		} else {
+			fmt.Fprintf(stdout, "  Task:    %s (pending — binds when the agent finishes registering)\n", resp.TaskRefURL)
+		}
 	}
 	// Echo the resolved launch shape + provenance so a spawn that inherited a
 	// default profile's harness/model (the TCL-304 incident) is visible at a

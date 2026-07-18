@@ -69,6 +69,14 @@ type PendingSpawn struct {
 	IsOwner             bool
 	PermissionOverrides map[string]string
 	ProcessCommandID    string
+	// TaskURL / TaskLabel are the per-agent task-reference link the spawn
+	// requested (`agent spawn --task`, dashboard Task field). Persisted so a
+	// spawn whose enrollment is back-filled by the pending-spawn sweeper —
+	// delayed conv-id materialization, possibly across a daemon restart —
+	// still binds the link the spawn reported it would (TCL-568). Validated
+	// http(s) at the spawn boundary before the row is written; "" = no link.
+	TaskURL   string
+	TaskLabel string
 	// EffectiveSandbox is the exact value snapshot authorized for the launch.
 	// A nil value is reserved for legacy rows created before snapshot support;
 	// recovery paths must not re-resolve mutable registry assignments for it.
@@ -101,12 +109,12 @@ func InsertPendingSpawn(p *PendingSpawn) error {
 			(label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
 			 reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			 worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			 effective_sandbox_config, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?)`,
+			 task_url, task_label, effective_sandbox_config, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`, `+agentForConvExpr+`, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Label, p.AgentID, boolToInt(p.Launching), p.GroupID, p.Role, p.Descr, p.Name, p.InitialMessage, p.GroupContext,
 		p.ReplyToConv, p.SpawnedByConv, p.ReplyToConv, p.SpawnedByConv,
 		p.WorktreePath, p.WorktreeBranch, boolToInt(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides), p.ProcessCommandID,
-		effectiveSandbox,
+		p.TaskURL, p.TaskLabel, effectiveSandbox,
 		time.Now().Format(time.RFC3339Nano))
 	return err
 }
@@ -157,7 +165,7 @@ func GetPendingSpawn(label string) (*PendingSpawn, error) {
 		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			effective_sandbox_config, created_at
+			task_url, task_label, effective_sandbox_config, created_at
 		FROM pending_spawns WHERE label = ?`, label)
 	p, err := scanPendingSpawn(row)
 	if err == sql.ErrNoRows {
@@ -177,7 +185,7 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context,
 			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
 			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
-			effective_sandbox_config, created_at
+			task_url, task_label, effective_sandbox_config, created_at
 		FROM pending_spawns ORDER BY created_at ASC`)
 	if err != nil {
 		return nil, err
@@ -343,7 +351,7 @@ func scanPendingSpawn(s rowScanner) (*PendingSpawn, error) {
 		&p.InitialMessage, &p.GroupContext, &p.ReplyToConv, &p.SpawnedByConv,
 		&p.ReplyToAgent, &p.SpawnedByAgent,
 		&p.WorktreePath, &p.WorktreeBranch, &isOwner, &permOverrides, &p.ProcessCommandID,
-		&effectiveSandbox, &p.CreatedAt); err != nil {
+		&p.TaskURL, &p.TaskLabel, &effectiveSandbox, &p.CreatedAt); err != nil {
 		return nil, err
 	}
 	p.Launching = launching != 0
