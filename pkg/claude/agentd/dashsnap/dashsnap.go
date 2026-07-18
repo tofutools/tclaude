@@ -46,16 +46,24 @@
 // # How to run
 //
 // The harness is a Go test gated behind an env var so `go test ./...` (CI) never
-// launches a browser. Run it explicitly:
+// launches a browser. The full matrix (every state × both skins) takes on the
+// order of ten minutes, so the canonical invocation shards it — each shard is a
+// deterministic round-robin subset that completes in a few minutes:
 //
-//	TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s
+//	TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_SHARD=1/4 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 600s
 //
-// Output lands under dashsnap-out/<timestamp>/ (gitignored): one PNG per state
-// plus an index.html contact sheet. Open the index.html to eyeball everything.
+// Run shards 1/4 through 4/4 to cover everything, or drop the shard variable
+// and raise the timeout (e.g. -timeout 1800s) for a single full run. See
+// docs/dashboard.md ("Visual smoke testing") for details.
+//
+// Output lands under dashsnap-out/<timestamp><shard-suffix>/ (gitignored): one
+// PNG per state plus an index.html contact sheet. Open the index.html to
+// eyeball everything.
 //
 // The state matrix the driver captures is defined in dashsnap_test.go —
-// {default, wizard} skins × {groups tab, palette dock open, dock collapsed,
-// summon dialog normal/reinforce/copy}.
+// {default, wizard} skins × one state per dashboard surface/interaction under
+// test. TCLAUDE_DASHSNAP_FILTER selects a substring-matched subset;
+// TCLAUDE_DASHSNAP_SHARD picks a deterministic i-of-n slice of what remains.
 //
 // # Known trap: headless hover
 //
@@ -170,6 +178,9 @@ type Shot struct {
 	// Err is a non-empty message if this state failed to capture; the run
 	// continues so one bad state never sinks the whole sheet.
 	Err string
+	// Elapsed is the wall-clock cost of this state (navigate → settle → JS →
+	// screenshot), recorded so budget drift is visible on every sheet.
+	Elapsed time.Duration
 }
 
 const (
@@ -274,7 +285,9 @@ func Capture(cfg Config) ([]Shot, error) {
 	shots := make([]Shot, 0, len(cfg.States))
 	for _, st := range cfg.States {
 		shot := Shot{State: st}
+		start := time.Now()
 		png, capErr := captureState(page, cfg, st)
+		shot.Elapsed = time.Since(start)
 		if capErr != nil {
 			shot.Err = capErr.Error()
 			var evalErr *rod.EvalError
@@ -514,12 +527,14 @@ func withDefaults(cfg Config) Config {
 func writeContactSheet(cfg Config, shots []Shot) error {
 	var b strings.Builder
 	ok, failed := 0, 0
+	var total time.Duration
 	for _, s := range shots {
 		if s.Err == "" {
 			ok++
 		} else {
 			failed++
 		}
+		total += s.Elapsed
 	}
 
 	b.WriteString(`<!doctype html><html lang="en"><head><meta charset="utf-8">`)
@@ -533,6 +548,7 @@ func writeContactSheet(cfg Config, shots []Shot) error {
 	if failed > 0 {
 		fmt.Fprintf(&b, ` · <span class="fail">%d failed</span>`, failed)
 	}
+	fmt.Fprintf(&b, ` · captured in %s`, html.EscapeString(total.Round(time.Second).String()))
 	fmt.Fprintf(&b, ` · generated %s</p></header>`,
 		html.EscapeString(time.Now().Format("2006-01-02 15:04:05 MST")))
 	b.WriteString(`<main class="grid">`)
@@ -552,8 +568,8 @@ func writeContactSheet(cfg Config, shots []Shot) error {
 			b.WriteString(`<div class="noimg">no image</div>`)
 		}
 		b.WriteString(`<figcaption>`)
-		fmt.Fprintf(&b, `<div class="row"><span class="key">%s</span><span class="badge %s">%s</span></div>`,
-			html.EscapeString(s.State.Title), skinClass, skin)
+		fmt.Fprintf(&b, `<div class="row"><span class="key">%s</span><span class="dur">%.1fs</span><span class="badge %s">%s</span></div>`,
+			html.EscapeString(s.State.Title), s.Elapsed.Seconds(), skinClass, skin)
 		if s.State.Caption != "" {
 			fmt.Fprintf(&b, `<p class="cap">%s</p>`, html.EscapeString(s.State.Caption))
 		}
@@ -581,7 +597,8 @@ h1{margin:0 0 4px;font-size:18px}
 .noimg{padding:60px 0;text-align:center;color:#6e7681;background:#010409;border-bottom:1px solid #21262d}
 figcaption{padding:12px 14px}
 .row{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.key{font-weight:600;color:#e6edf3}
+.key{font-weight:600;color:#e6edf3;flex:1}
+.dur{color:#6e7681;font-size:11px;white-space:nowrap}
 .cap{margin:6px 0 0;color:#8b949e;font-size:12.5px}
 .err{margin:6px 0 0;color:#f85149;font-size:12.5px;font-family:ui-monospace,monospace}
 .badge{font-size:11px;padding:2px 8px;border-radius:999px;white-space:nowrap}
