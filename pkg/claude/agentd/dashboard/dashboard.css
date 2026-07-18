@@ -1605,6 +1605,13 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage.multiline .urem   { display: inline-block; min-width: 8ch; }            /* up to "(23h59m)" */
 
 /* -- Usage history tab -------------------------------------------------- */
+/* Cap the whole island, not just the cards: the note, legend and controls
+   share the cards' right edge, so capping one and not the others desyncs
+   them. .usage-line-chart is a fixed 720x210 viewBox at width:100%, i.e. it
+   scales uniformly — so this width cap is also the height cap (1100px wide
+   => ~321px tall) and everything inside (labels, stroke widths, tooltip)
+   stops growing with it. Left-aligned, matching #tab-config's cap. */
+.usage-history-island { max-width: 1100px; }
 .usage-history-controls { flex-wrap: wrap; }
 .usage-control-group { display: inline-flex; align-items: center; gap: 8px; }
 .usage-control-label { color: #8b949e; font-size: 11px; font-weight: 600; }
