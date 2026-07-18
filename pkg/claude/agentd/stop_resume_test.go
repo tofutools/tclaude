@@ -207,7 +207,7 @@ func TestStopOneConvWithIntent_FailedKillClearsAttribution(t *testing.T) {
 	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID,
 		"11111111111111111111111111111111"))
 	w.Tmux.MarkAlive(tmuxName)
-	w.Tmux.FailNextCommand("kill-session")
+	w.Tmux.FailNextCommand("kill-pane")
 
 	res := stopOneConvWithIntent(convID, true, db.AgentExitActionForceStop, eventID)
 	assert.Equal(t, "error", res.Action)

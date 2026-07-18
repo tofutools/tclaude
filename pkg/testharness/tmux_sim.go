@@ -416,6 +416,13 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		}
 		return exec.Command(echoBin, deadValue+"|"+strconv.Itoa(panePID))
 	}
+	if format == "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
+		deadValue := "0"
+		if dead {
+			deadValue = "1"
+		}
+		return exec.Command(echoBin, name+"|"+paneID+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+	}
 	if format == "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
 		deadValue := "0"
 		if dead {
