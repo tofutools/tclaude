@@ -710,9 +710,10 @@ harnesses), it can only ever narrow, and the guard still checks the narrowed
 value. Spawns with no agent caller (you, or the dashboard) always get the plain
 harness default. An explicitly requested escalation — by flag or by spawn
 profile — is never silently narrowed; it fails with `approval_restricted`.
-When narrowing changes a successful launch, the resolved-shape echo calls it
-out explicitly, for example `approval inherit (harness default auto, narrowed
-to caller posture)`. The common case stays quiet.
+When narrowing changes a direct spawn, its resolved-shape echo calls it out
+explicitly, for example `approval inherit (harness default auto, narrowed to
+caller posture)`. Returned template-instantiation results use the same note for
+each adjusted agent. The common case stays quiet.
 
 Claude `auto` is **not** the Codex Auto-review equivalent (see
 [TCL-92](https://linear.app/johan-kjolhede/issue/TCL-92)). The `auto`
