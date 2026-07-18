@@ -30,7 +30,7 @@ func TestReincarnate_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -70,7 +70,7 @@ func TestReincarnate_SoloHandoffRidesInbox(t *testing.T) {
 	const oldTmux = "tclaude-spwn-solo-001"
 
 	f.HaveConvWithTitle(oldConv, "loner")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	// No HaveGroup / HaveMember: this agent is solo.
 
 	followUp := "Handoff brief - picking up where I left off.\n\n" +
@@ -105,7 +105,7 @@ func TestReincarnate_RejectsFollowUpOverInboxCap(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -131,7 +131,7 @@ func TestClone_GroupedHandoffAcceptsLargeMultiLineBrief(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -171,7 +171,7 @@ func TestClone_SoloHandoffRidesInbox(t *testing.T) {
 	const oldTmux = "tclaude-spwn-solo-001"
 
 	f.HaveConvWithTitle(oldConv, "loner")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	// No HaveGroup / HaveMember: this agent is solo.
 
 	followUp := "Clone handoff - take the parallel spike.\n\n" +

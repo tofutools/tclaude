@@ -39,7 +39,7 @@ func TestDelete_PurgesAllReferencingRows(t *testing.T) {
 	const tmuxSess = "tclaude-spwn-del-001"
 
 	f.HaveConvWithTitle(target, "doomed")
-	f.HaveAliveSession(target, label, tmuxSess, "/tmp/work")
+	f.HaveAliveSession(target, label, tmuxSess, f.TestCwd("work"))
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", target)
 	require.NoError(t, db.GrantAgentPermission(target, "self.compact", "test"), "grant")

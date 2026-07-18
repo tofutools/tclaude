@@ -90,7 +90,7 @@ func TestDashboardRename_SetsTitle(t *testing.T) {
 
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
 	const tmux = "tclaude-spwn-rena"
-	f.HaveAliveSession(conv, "spwn-rena", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-rena", tmux, f.TestCwd("work"))
 	// Give the agent a starting name so this is a genuine rename, not
 	// a first-naming — the .jsonl scan resolves it the way production
 	// resolves an agent's title.
@@ -125,17 +125,17 @@ func TestDashboardRename_CodexUpdatesCachedTitle(t *testing.T) {
 
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000004"
 	const tmux = "tclaude-spwn-rencdx"
-	cx := f.HaveAliveCodexSession(conv, "spwn-rencdx", tmux, "/tmp/work")
+	cx := f.HaveAliveCodexSession(conv, "spwn-rencdx", tmux, f.TestCwd("work"))
 	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
 		Title:            "codex-old",
 		FirstUserMessage: "hello from codex",
-		Cwd:              "/tmp/work",
+		Cwd:              f.TestCwd("work"),
 	}))
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      conv,
 		CustomTitle: "codex-old",
 		FirstPrompt: "hello from codex",
-		ProjectPath: "/tmp/work",
+		ProjectPath: f.TestCwd("work"),
 		Harness:     "codex",
 	}), "seed stale dashboard title cache")
 	mux := renameDashMux(t)
@@ -165,7 +165,7 @@ func TestDashboardRename_AutoNudge(t *testing.T) {
 
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000002"
 	const tmux = "tclaude-spwn-renc"
-	f.HaveAliveSession(conv, "spwn-renc", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-renc", tmux, f.TestCwd("work"))
 	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-keepme"))
 	g := f.HaveGroup("team")
 	f.HaveMember("team", conv)
@@ -196,7 +196,7 @@ func TestDashboardRename_InvalidTitleRejected(t *testing.T) {
 
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-000000000003"
 	const tmux = "tclaude-spwn-rend"
-	f.HaveAliveSession(conv, "spwn-rend", tmux, "/tmp/work")
+	f.HaveAliveSession(conv, "spwn-rend", tmux, f.TestCwd("work"))
 	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-safe"))
 	g := f.HaveGroup("team")
 	f.HaveMember("team", conv)

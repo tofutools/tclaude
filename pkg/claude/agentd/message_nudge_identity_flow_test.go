@@ -23,7 +23,7 @@ func TestNudge_NamesSenderByStableIdentity(t *testing.T) {
 	f.HaveConvWithTitle(sender, "po-coordinator")
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
-	f.HaveAliveSession(recipient, "spwn-nid1-r", "tclaude-spwn-nid1-r", "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-nid1-r", "tclaude-spwn-nid1-r", f.TestCwd("work"))
 
 	rec := postMessage(t, f, sender, map[string]any{"to": recipient, "body": "ship it"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())

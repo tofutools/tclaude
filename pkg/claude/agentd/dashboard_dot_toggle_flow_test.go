@@ -64,7 +64,7 @@ func TestDotToggle_OnlineDotSoftStopsAgent(t *testing.T) {
 	const conv = "dton-1111-2222-3333-444444444444"
 	const tmuxSes = "tmux-dton"
 	f.HaveConvWithTitle(conv, "busy-worker")
-	f.HaveAliveSession(conv, "spwn-dton", tmuxSes, "/tmp/dton")
+	f.HaveAliveSession(conv, "spwn-dton", tmuxSes, f.TestCwd("dton"))
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
@@ -96,7 +96,7 @@ func TestDotToggle_OnlineDotCanForceKill(t *testing.T) {
 	const conv = "dtfk-1111-2222-3333-444444444444"
 	const tmuxSes = "tmux-dtfk"
 	f.HaveConvWithTitle(conv, "stuck-worker")
-	f.HaveAliveSession(conv, "spwn-dtfk", tmuxSes, "/tmp/dtfk")
+	f.HaveAliveSession(conv, "spwn-dtfk", tmuxSes, f.TestCwd("dtfk"))
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
@@ -192,7 +192,7 @@ func TestDotToggle_IdempotentBothDirections(t *testing.T) {
 	const conv = "dtid-1111-2222-3333-444444444444"
 	const tmuxSes = "tmux-dtid"
 	f.HaveConvWithTitle(conv, "toggle-worker")
-	f.HaveAliveSession(conv, "spwn-dtid", tmuxSes, "/tmp/dtid")
+	f.HaveAliveSession(conv, "spwn-dtid", tmuxSes, f.TestCwd("dtid"))
 	f.HaveEnrolledAgent(conv)
 
 	// Online agent: a redundant /resume (stale grey-dot click) no-ops.

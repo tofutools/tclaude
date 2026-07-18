@@ -72,7 +72,7 @@ func TestDashboardOperatorMessagePreservesMultilineInline(t *testing.T) {
 	const tmux = "operator-multiline"
 	f.HaveGroup("team")
 	f.HaveMember("team", target)
-	f.HaveAliveSession(target, "op-multiline", tmux, "/tmp/work")
+	f.HaveAliveSession(target, "op-multiline", tmux, f.TestCwd("work"))
 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	dashHandler := agentd.BuildDashboardHandlerForTest()

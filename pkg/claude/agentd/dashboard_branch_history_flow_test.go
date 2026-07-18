@@ -36,7 +36,6 @@ func TestConvBranchHistory_ScanThenPRStamp(t *testing.T) {
 	t.Cleanup(agentd.SetBranchHistoryPREnrichmentForTest(true))
 
 	const conv = "aaaaaaaa-bbbb-cccc-dddd-00000000beef"
-	const cwd = "/tmp/wt/payments"
 	const branch = "feature-payments"
 
 	t.Cleanup(agentd.SetGitInfoResolverForTest(
@@ -49,6 +48,7 @@ func TestConvBranchHistory_ScanThenPRStamp(t *testing.T) {
 		}))
 
 	f := newFlow(t)
+	cwd := f.TestCwd("wt/payments")
 	f.HaveGroup("pay-team")
 	f.HaveAliveSessionOnBranch(conv, "spwn-pay", "tmux-pay", cwd, branch)
 	f.HaveMember("pay-team", conv)

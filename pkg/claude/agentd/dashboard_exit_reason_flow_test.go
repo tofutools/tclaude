@@ -34,10 +34,10 @@ func TestDashboardSnapshot_ExitReasonSurfacesCrashedVsClean(t *testing.T) {
 	f.HaveConvWithTitle(crashConv, "crashed-worker")
 	f.HaveConvWithTitle(legacyConv, "legacy-worker")
 	f.HaveConvWithTitle(liveConv, "live-worker")
-	f.HaveAliveSession(cleanConv, "spwn-cln", "tmux-cln", "/tmp/cln")
-	f.HaveAliveSession(crashConv, "spwn-crsh", "tmux-crsh", "/tmp/crsh")
-	f.HaveAliveSession(legacyConv, "spwn-lgcy", "tmux-lgcy", "/tmp/lgcy")
-	f.HaveAliveSession(liveConv, "spwn-live", "tmux-live", "/tmp/live")
+	f.HaveAliveSession(cleanConv, "spwn-cln", "tmux-cln", f.TestCwd("cln"))
+	f.HaveAliveSession(crashConv, "spwn-crsh", "tmux-crsh", f.TestCwd("crsh"))
+	f.HaveAliveSession(legacyConv, "spwn-lgcy", "tmux-lgcy", f.TestCwd("lgcy"))
+	f.HaveAliveSession(liveConv, "spwn-live", "tmux-live", f.TestCwd("live"))
 
 	f.HaveGroup("crew")
 	f.HaveMember("crew", cleanConv)
@@ -113,7 +113,7 @@ func TestDashboardSnapshot_ReapedAgentSurfacesAsCrashed(t *testing.T) {
 	f := newFlow(t)
 	const conv = "reap-aaaa-bbbb-cccc-dddddddddddd"
 	f.HaveConvWithTitle(conv, "reaped-worker")
-	f.HaveAliveSession(conv, "spwn-reap", "tmux-reap", "/tmp/reap")
+	f.HaveAliveSession(conv, "spwn-reap", "tmux-reap", f.TestCwd("reap"))
 	f.HaveGroup("crew")
 	f.HaveMember("crew", conv)
 

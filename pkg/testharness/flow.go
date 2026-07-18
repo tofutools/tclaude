@@ -602,6 +602,18 @@ func (f *Flow) HaveConvWithPrompt(convID, firstPrompt string) {
 	}
 }
 
+// TestCwd returns the sandbox-portable stand-in for a literal "/tmp/<name>"
+// working directory: an absolute path under the World's per-test HOME with the
+// readable leaf preserved (".../cwd/clon"), so pane labels and dashboards stay
+// legible while the path itself is creatable by a sandboxed test user whose
+// /tmp is read-only. The same name always yields the same path within a World,
+// so sessions meant to share a cwd keep sharing it. The directory is NOT
+// created here — HaveAliveSession materializes it for live panes, and tests
+// that model a missing directory can keep it absent.
+func (f *Flow) TestCwd(name string) string {
+	return filepath.Join(f.World.HomeDir, "cwd", name)
+}
+
 // HaveAliveSession sets up a live agent at convID: builds a real
 // CCSim (so its .jsonl exists and accepts /exit / /rename), writes
 // the SessionRow so isConvOnline / pickAliveSession find it, and
@@ -621,10 +633,9 @@ func (f *Flow) HaveAliveSession(convID, label, tmuxSession, cwd string) {
 // `agent groups members`, and the dashboard.
 func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch string) {
 	f.T.Helper()
-	// A live pane necessarily has an existing cwd. Most flow tests use a
-	// synthetic /tmp path, so materialize it when the test user can; paths such
-	// as /work may be intentionally outside the test sandbox and remain a
-	// best-effort simulation.
+	// A live pane necessarily has an existing cwd. Most flow tests pass a
+	// TestCwd path, so materialize it when the test user can; a deliberately
+	// unwritable absolute path stays a best-effort simulation.
 	f.materializeTestCwd(cwd)
 	cc := NewCCSimWithID(f.T, f.World.HomeDir, convID, cwd)
 	cc.GitBranch = branch

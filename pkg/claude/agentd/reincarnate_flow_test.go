@@ -30,7 +30,7 @@ func TestReincarnate_SuccessorKeepsBaseName_PredecessorArchived(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old0-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -78,7 +78,7 @@ func TestReincarnate_RepeatRetirement_AddsArchiveCounter(t *testing.T) {
 	// A previous generation already retired as "worker-x".
 	f.HaveConvWithTitle(priorRetired, "worker-x")
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -101,7 +101,7 @@ func TestReincarnate_LegacyLivingNameShedsSuffix(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old3-001"
 
 	f.HaveConvWithTitle(oldConv, "worker-r-3")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	g := f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 

@@ -85,7 +85,7 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	home := f.World.HomeDir
 	const aConv = "aaaaaaaa-1111-2222-3333-444444444444"
 	const bConv = "bbbbbbbb-1111-2222-3333-444444444444"
-	const srcCwd = "/tmp/work"
+	srcCwd := f.TestCwd("work")
 
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveConvWithTitle(bConv, "bob")
@@ -128,7 +128,7 @@ func TestGroupExportImport_RoundTripPreservesEverything(t *testing.T) {
 	wipeForFreshImport(t, "team", []string{aConv, bConv}, srcCwd, home)
 
 	// Import into a fresh directory.
-	const dstCwd = "/tmp/restored"
+	dstCwd := f.TestCwd("restored")
 	res := importArchiveOK(t, f, archive, dstCwd, "")
 	assert.Equal(t, "team", res.Group)
 	assert.Equal(t, 2, res.AgentCount)
@@ -225,7 +225,7 @@ func TestGroupImport_TildeIntoExpandsToHome(t *testing.T) {
 	f := newFlow(t)
 	home := f.World.HomeDir // the testharness World points HOME at its tmp home
 	const aConv = "eeeeeeee-1111-2222-3333-444444444444"
-	const srcCwd = "/tmp/tilde-src"
+	srcCwd := f.TestCwd("tilde-src")
 
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveAliveSession(aConv, "lbl-a", "tmux-tilde-a", srcCwd)
@@ -266,7 +266,7 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 	home := f.World.HomeDir
 	const aConv = "cccccccc-1111-2222-3333-444444444444"
 	const bConv = "dddddddd-1111-2222-3333-444444444444"
-	const srcCwd = "/tmp/live"
+	srcCwd := f.TestCwd("live")
 
 	f.HaveConvWithTitle(aConv, "alice")
 	f.HaveConvWithTitle(bConv, "bob")
@@ -286,7 +286,7 @@ func TestGroupExportImport_SameMachineReimportRemaps(t *testing.T) {
 
 	// The group name is taken, so --as is required; every conv-id is also
 	// taken, so every one must be remapped.
-	res := importArchiveOK(t, f, archive, "/tmp/copy", "team-copy")
+	res := importArchiveOK(t, f, archive, f.TestCwd("copy"), "team-copy")
 	assert.Equal(t, "team-copy", res.Group)
 	require.Len(t, res.ConvRemaps, 2, "both conv-ids collided and were remapped")
 	require.Len(t, res.Retitled, 2)
@@ -341,13 +341,13 @@ func TestGroupImport_GroupNameCollisionRefused(t *testing.T) {
 	f := newFlow(t)
 	const aConv = "eeeeeeee-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(aConv, "alice")
-	f.HaveAliveSession(aConv, "lbl-a", "tmux-a", "/tmp/x")
+	f.HaveAliveSession(aConv, "lbl-a", "tmux-a", f.TestCwd("x"))
 	f.HaveGroup("team")
 	f.HaveMember("team", aConv)
 
 	archive := exportGroup(t, f, "team")
 
-	rec := importArchive(f, archive, "/tmp/dst", "")
+	rec := importArchive(f, archive, f.TestCwd("dst"), "")
 	assert.Equal(t, http.StatusConflict, rec.Code,
 		"import under an existing group name must be refused: body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "--as", "the error tells the human how to resolve it")
@@ -369,7 +369,7 @@ func TestGroupImport_GroupNameCollisionRefused(t *testing.T) {
 func TestGroupImport_RejectsMalformedArchive(t *testing.T) {
 	f := newFlow(t)
 
-	rec := importArchive(f, []byte("this is not a zip archive at all"), "/tmp/dst", "")
+	rec := importArchive(f, []byte("this is not a zip archive at all"), f.TestCwd("dst"), "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "garbage upload: body=%s", rec.Body.String())
 
 	// A structurally valid zip with no manifest is equally rejected.
@@ -379,7 +379,7 @@ func TestGroupImport_RejectsMalformedArchive(t *testing.T) {
 	require.NoError(t, err)
 	_, _ = w.Write([]byte("{}"))
 	require.NoError(t, zw.Close())
-	rec = importArchive(f, buf.Bytes(), "/tmp/dst", "")
+	rec = importArchive(f, buf.Bytes(), f.TestCwd("dst"), "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "no-manifest zip: body=%s", rec.Body.String())
 }
 
@@ -396,7 +396,7 @@ func TestGroupImport_RejectsUnsupportedVersion(t *testing.T) {
 	_, _ = w.Write([]byte(`{"format_version":9999,"source_group":"team"}`))
 	require.NoError(t, zw.Close())
 
-	rec := importArchive(f, buf.Bytes(), "/tmp/dst", "")
+	rec := importArchive(f, buf.Bytes(), f.TestCwd("dst"), "")
 	assert.Equal(t, http.StatusBadRequest, rec.Code,
 		"a too-new format version must be refused: body=%s", rec.Body.String())
 }
@@ -432,7 +432,7 @@ func TestGroupImport_CrossHomePathRewrite(t *testing.T) {
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
 
-	const dstCwd = "/tmp/landing/app"
+	dstCwd := f.TestCwd("landing/app")
 	res := importArchiveOK(t, f, archive, dstCwd, "")
 	assert.Equal(t, "ported", res.Group)
 	assert.Empty(t, res.ConvRemaps, "a foreign conv-id does not collide locally")
@@ -452,7 +452,7 @@ func TestGroupImport_CrossHomePathRewrite(t *testing.T) {
 func TestGroupImport_MissingConversationLateFileCollisionRollsBack(t *testing.T) {
 	f := newFlow(t)
 	const convID = "88888888-dead-beef-cafe-000000000000"
-	const targetCwd = "/tmp/missing-race"
+	targetCwd := f.TestCwd("missing-race")
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "missing-race",
@@ -481,8 +481,8 @@ func TestGroupImport_MissingConversationLateFileCollisionRollsBack(t *testing.T)
 func TestGroupImport_LatePlainConversationIndexCollisionRollsBackAuthority(t *testing.T) {
 	f := newFlow(t)
 	const convID = "77777777-dead-beef-cafe-000000000000"
-	const targetCwd = "/tmp/index-race"
-	const foreignPath = "/tmp/other-project/77777777-dead-beef-cafe-000000000000.jsonl"
+	targetCwd := f.TestCwd("index-race")
+	foreignPath := f.TestCwd("other-project/77777777-dead-beef-cafe-000000000000.jsonl")
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
 		SourceGroup:   "index-race",
@@ -509,7 +509,7 @@ func TestGroupImport_LatePlainConversationIndexCollisionRollsBackAuthority(t *te
 	// this SQLite identity and abort before replaying any archived authority.
 	restore := agentd.SetGroupImportAfterCollisionCheckForTest(func() {
 		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-			ConvID: convID, ProjectDir: "/tmp/other-project", FullPath: foreignPath,
+			ConvID: convID, ProjectDir: f.TestCwd("other-project"), FullPath: foreignPath,
 		}))
 	})
 	t.Cleanup(restore)
@@ -549,7 +549,7 @@ func TestGroupImport_LatePlainConversationIndexCollisionRollsBackAuthority(t *te
 func TestGroupImport_PresentConversationSucceedsWithLiveIndexMonitor(t *testing.T) {
 	f := newFlow(t)
 	const convID = "66666666-dead-beef-cafe-000000000000"
-	const targetCwd = "/tmp/monitor-present"
+	targetCwd := f.TestCwd("monitor-present")
 	dst := convJSONLPath(f.World.HomeDir, targetCwd, convID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
 	monitor := agentd.StartConvMonitorForTest(t, 5*time.Millisecond)
@@ -579,7 +579,7 @@ func TestGroupImport_PresentConversationSucceedsWithLiveIndexMonitor(t *testing.
 func TestGroupImport_MissingConversationSucceedsWithLiveIndexMonitor(t *testing.T) {
 	f := newFlow(t)
 	const convID = "55555555-dead-beef-cafe-000000000000"
-	const targetCwd = "/tmp/monitor-missing"
+	targetCwd := f.TestCwd("monitor-missing")
 	dst := convJSONLPath(f.World.HomeDir, targetCwd, convID)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dst), 0o755))
 	monitor := agentd.StartConvMonitorForTest(t, 5*time.Millisecond)
@@ -612,7 +612,7 @@ func TestGroupImport_RejectsMalformedMissingConversationIDBeforeFilesystem(t *te
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
-	rec := importArchive(f, archive, "/tmp/bad-conv-id", "")
+	rec := importArchive(f, archive, f.TestCwd("bad-conv-id"), "")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "not a canonical UUID")
 	group, err := db.GetAgentGroupByName("bad-conv-id")
@@ -624,9 +624,9 @@ func TestGroupImport_RemapsOmittedSuccessionEndpointWithoutRedirectingLocalConv(
 	f := newFlow(t)
 	const localConv = "33333333-dead-beef-cafe-000000000000"
 	const importedConv = "22222222-dead-beef-cafe-000000000000"
-	const localPath = "/tmp/local-succession/33333333-dead-beef-cafe-000000000000.jsonl"
+	localPath := f.TestCwd("local-succession/33333333-dead-beef-cafe-000000000000.jsonl")
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID: localConv, ProjectDir: "/tmp/local-succession", FullPath: localPath,
+		ConvID: localConv, ProjectDir: f.TestCwd("local-succession"), FullPath: localPath,
 	}))
 	exp := &groupexport.Export{
 		FormatVersion: groupexport.FormatVersion,
@@ -639,7 +639,7 @@ func TestGroupImport_RemapsOmittedSuccessionEndpointWithoutRedirectingLocalConv(
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
-	res := importArchiveOK(t, f, archive, "/tmp/succession-remap", "")
+	res := importArchiveOK(t, f, archive, f.TestCwd("succession-remap"), "")
 	remappedOld := res.ConvRemaps[localConv]
 	require.NotEmpty(t, remappedOld, "omitted historical endpoint is collision-remapped")
 	assert.NotEqual(t, localConv, remappedOld)
@@ -684,13 +684,13 @@ func TestGroupImport_LateOmittedSuccessionCollisionRollsBackAllSideEffects(t *te
 	require.NoError(t, err)
 	restore := agentd.SetGroupImportAfterCollisionCheckForTest(func() {
 		require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-			ConvID: lateConv, ProjectDir: "/tmp/late-succession",
-			FullPath: "/tmp/late-succession/11111111-dead-beef-cafe-000000000000.jsonl",
+			ConvID: lateConv, ProjectDir: f.TestCwd("late-succession"),
+			FullPath: f.TestCwd("late-succession/11111111-dead-beef-cafe-000000000000.jsonl"),
 		}))
 	})
 	t.Cleanup(restore)
 
-	rec := importArchive(f, archive, "/tmp/succession-race", "")
+	rec := importArchive(f, archive, f.TestCwd("succession-race"), "")
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
 	group, err := db.GetAgentGroupByName("succession-race")
 	require.NoError(t, err)
@@ -727,7 +727,7 @@ func TestGroupImport_RejectsMalformedOmittedSuccessionEndpoint(t *testing.T) {
 	}
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
-	rec := importArchive(f, archive, "/tmp/bad-succession-id", "")
+	rec := importArchive(f, archive, f.TestCwd("bad-succession-id"), "")
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "not a canonical UUID")
 	group, err := db.GetAgentGroupByName("bad-succession-id")
@@ -760,7 +760,7 @@ func TestGroupImport_FailedImportLeavesNothing(t *testing.T) {
 	archive, err := groupexport.Marshal(exp)
 	require.NoError(t, err)
 
-	rec := importArchive(f, archive, "/tmp/doomed", "")
+	rec := importArchive(f, archive, f.TestCwd("doomed"), "")
 	require.GreaterOrEqual(t, rec.Code, 400, "the import must fail: body=%s", rec.Body.String())
 
 	// No group.

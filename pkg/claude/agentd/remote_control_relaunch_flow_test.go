@@ -40,7 +40,7 @@ func TestReincarnate_ArmedCarriesRemoteControl(t *testing.T) {
 
 	const oldConv = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaa261"
 	const oldLabel = "spwn-rc-rinc"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	armSource(t, oldLabel)
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
@@ -61,7 +61,7 @@ func TestReincarnate_UnarmedCarriesNothing(t *testing.T) {
 
 	const oldConv = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbb261"
 	const oldLabel = "spwn-rc-rinc-un"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
@@ -82,7 +82,7 @@ func TestCloneFresh_ArmedCarriesRemoteControl(t *testing.T) {
 
 	const oldConv = "cccccccc-cccc-4ccc-8ccc-ccccccccc261"
 	const oldLabel = "spwn-rc-clnf"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	armSource(t, oldLabel)
 
 	c := f.AsHuman().CloneFresh(oldConv)
@@ -104,7 +104,7 @@ func TestCloneCopy_ArmedCarriesRemoteControl(t *testing.T) {
 
 	const oldConv = "dddddddd-dddd-4ddd-8ddd-ddddddddd261"
 	const oldLabel = "spwn-rc-clnc"
-	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	armSource(t, oldLabel)
 
 	c := f.AsHuman().CloneWith(oldConv, map[string]any{})
@@ -185,15 +185,15 @@ func TestReincarnate_CodexNeverCarriesRemoteControl(t *testing.T) {
 
 	const oldConv = "019ec004-4250-79b1-9ade-ebaea4150261"
 	const oldLabel = "spwn-rc-cdx"
-	f.HaveAliveCodexSession(oldConv, oldLabel, "tclaude-"+oldLabel, "/tmp/work")
+	f.HaveAliveCodexSession(oldConv, oldLabel, "tclaude-"+oldLabel, f.TestCwd("work"))
 	// A Codex conv lives in its own threads store, not the CC .jsonl scan, so it
 	// needs a conv_index row tagged harness=codex for the reincarnate selector to
 	// resolve it (mirrors TestReincarnate_CodexInheritsLiveModelAndEffort).
 	now := time.Now().Format(time.RFC3339)
 	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
 		ConvID:      oldConv,
-		ProjectDir:  "/tmp/work",
-		ProjectPath: "/tmp/work",
+		ProjectDir:  f.TestCwd("work"),
+		ProjectPath: f.TestCwd("work"),
 		FirstPrompt: "codex work",
 		Created:     now,
 		Modified:    now,

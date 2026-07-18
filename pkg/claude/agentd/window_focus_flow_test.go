@@ -142,8 +142,8 @@ func TestAgentWindows_GroupScope_FocusesEveryAliveMember(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "worker-a")
 	f.HaveConvWithTitle(convB, "worker-b")
-	f.HaveAliveSession(convA, "spwn-wfga", "tmux-wfga", "/tmp/wfga")
-	f.HaveAliveSession(convB, "spwn-wfgb", "tmux-wfgb", "/tmp/wfgb")
+	f.HaveAliveSession(convA, "spwn-wfga", "tmux-wfga", f.TestCwd("wfga"))
+	f.HaveAliveSession(convB, "spwn-wfgb", "tmux-wfgb", f.TestCwd("wfgb"))
 	f.HaveMember(group, convA)
 	f.HaveMember(group, convB)
 
@@ -178,8 +178,8 @@ func TestAgentWindows_AllScope_UnfocusHitsGroupedAndUngrouped(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(groupedConv, "grouped-worker")
 	f.HaveConvWithTitle(looseConv, "ungrouped-worker")
-	f.HaveAliveSession(groupedConv, "spwn-wfag", "tmux-wfag", "/tmp/wfag")
-	f.HaveAliveSession(looseConv, "spwn-wfal", "tmux-wfal", "/tmp/wfal")
+	f.HaveAliveSession(groupedConv, "spwn-wfag", "tmux-wfag", f.TestCwd("wfag"))
+	f.HaveAliveSession(looseConv, "spwn-wfal", "tmux-wfal", f.TestCwd("wfal"))
 	f.HaveMember(group, groupedConv)
 	f.HaveEnrolledAgent(looseConv) // ungrouped — on the roster, in no group
 
@@ -217,8 +217,8 @@ func TestUnfocusAllAgentWindows_TrayPath_DetachesEveryActiveAgent(t *testing.T) 
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(groupedConv, "grouped-worker")
 	f.HaveConvWithTitle(looseConv, "ungrouped-worker")
-	f.HaveAliveSession(groupedConv, "spwn-wfta", "tmux-wfta", "/tmp/wfta")
-	f.HaveAliveSession(looseConv, "spwn-wftl", "tmux-wftl", "/tmp/wftl")
+	f.HaveAliveSession(groupedConv, "spwn-wfta", "tmux-wfta", f.TestCwd("wfta"))
+	f.HaveAliveSession(looseConv, "spwn-wftl", "tmux-wftl", f.TestCwd("wftl"))
 	f.HaveMember(group, groupedConv)
 	f.HaveEnrolledAgent(looseConv) // ungrouped — on the roster, in no group
 
@@ -257,7 +257,7 @@ func TestAgentWindows_NarrowedSelectionIntersectsScope(t *testing.T) {
 	f.HaveGroup(group)
 	for _, c := range []string{convA, convB, convC, outsider} {
 		f.HaveConvWithTitle(c, "w-"+c[:4])
-		f.HaveAliveSession(c, "spwn-"+c[:8], "tmux-"+c[:8], "/tmp/"+c[:8])
+		f.HaveAliveSession(c, "spwn-"+c[:8], "tmux-"+c[:8], f.TestCwd(c[:8]))
 	}
 	f.HaveMember(group, convA)
 	f.HaveMember(group, convB)
@@ -294,7 +294,7 @@ func TestAgentWindows_SkipsOfflineAgents(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(aliveConv, "running-worker")
 	f.HaveConvWithTitle(offlineConv, "offline-worker")
-	f.HaveAliveSession(aliveConv, "spwn-wfoa", "tmux-wfoa", "/tmp/wfoa")
+	f.HaveAliveSession(aliveConv, "spwn-wfoa", "tmux-wfoa", f.TestCwd("wfoa"))
 	f.HaveMember(group, aliveConv)
 	f.HaveMember(group, offlineConv) // member, but never had a live session
 
@@ -324,8 +324,8 @@ func TestAgentWindows_UnfocusNoWindowIsNoOp(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(windowed, "windowed-worker")
 	f.HaveConvWithTitle(noWindow, "headless-worker")
-	f.HaveAliveSession(windowed, "spwn-wfww", "tmux-wfww", "/tmp/wfww")
-	f.HaveAliveSession(noWindow, "spwn-wfwn", "tmux-wfwn", "/tmp/wfwn")
+	f.HaveAliveSession(windowed, "spwn-wfww", "tmux-wfww", f.TestCwd("wfww"))
+	f.HaveAliveSession(noWindow, "spwn-wfwn", "tmux-wfwn", f.TestCwd("wfwn"))
 	f.HaveMember(group, windowed)
 	f.HaveMember(group, noWindow)
 	// The headless agent reports 0 attached clients.
@@ -389,7 +389,7 @@ func TestAgentWindows_NarrowedSelectionAcceptsAgentIDs(t *testing.T) {
 	f.HaveGroup(group)
 	for _, c := range []string{convA, convB, convC, outsider} {
 		f.HaveConvWithTitle(c, "w-"+c[:4])
-		f.HaveAliveSession(c, "spwn-"+c[:4], "tmux-"+c[:4], "/tmp/"+c[:4])
+		f.HaveAliveSession(c, "spwn-"+c[:4], "tmux-"+c[:4], f.TestCwd(c[:4]))
 	}
 	f.HaveMember(group, convA)
 	f.HaveMember(group, convB)

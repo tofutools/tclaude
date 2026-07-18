@@ -71,7 +71,7 @@ func TestRetire_WithShutdownStopsRunningSession(t *testing.T) {
 	const conv = "rwsh-1111-2222-3333-4444"
 	const tmuxSes = "tmux-rwsh"
 	f.HaveConvWithTitle(conv, "doomed-worker")
-	f.HaveAliveSession(conv, "spwn-rwsh", tmuxSes, "/tmp/rwsh")
+	f.HaveAliveSession(conv, "spwn-rwsh", tmuxSes, f.TestCwd("rwsh"))
 	f.HaveEnrolledAgent(conv)
 	require.True(t, f.World.Tmux.IsAlive(tmuxSes), "pre: the agent's session is alive")
 
@@ -100,7 +100,7 @@ func TestRetire_WithoutShutdownKeepsSessionAlive(t *testing.T) {
 	const conv = "rnsh-1111-2222-3333-4444"
 	const tmuxSes = "tmux-rnsh"
 	f.HaveConvWithTitle(conv, "kept-worker")
-	f.HaveAliveSession(conv, "spwn-rnsh", tmuxSes, "/tmp/rnsh")
+	f.HaveAliveSession(conv, "spwn-rnsh", tmuxSes, f.TestCwd("rnsh"))
 	f.HaveEnrolledAgent(conv)
 
 	code, resp := postRetire(t, mux, conv, "shutdown=0")
@@ -311,7 +311,7 @@ func TestRetire_AbsentShutdownParamDefaultsToOn(t *testing.T) {
 	const conv = "rdef-1111-2222-3333-4444"
 	const tmuxSes = "tmux-rdef"
 	f.HaveConvWithTitle(conv, "default-worker")
-	f.HaveAliveSession(conv, "spwn-rdef", tmuxSes, "/tmp/rdef")
+	f.HaveAliveSession(conv, "spwn-rdef", tmuxSes, f.TestCwd("rdef"))
 	f.HaveEnrolledAgent(conv)
 
 	code, resp := postRetire(t, mux, conv, "" /* no shutdown param */)
@@ -334,8 +334,8 @@ func TestRetire_CleanupTierShutdownToggle(t *testing.T) {
 	const keepConv = "rclk-1111-2222-3333-4444"
 	f.HaveConvWithTitle(stopConv, "stop-me")
 	f.HaveConvWithTitle(keepConv, "keep-me")
-	f.HaveAliveSession(stopConv, "spwn-rcls", "tmux-rcls", "/tmp/rcls")
-	f.HaveAliveSession(keepConv, "spwn-rclk", "tmux-rclk", "/tmp/rclk")
+	f.HaveAliveSession(stopConv, "spwn-rcls", "tmux-rcls", f.TestCwd("rcls"))
+	f.HaveAliveSession(keepConv, "spwn-rclk", "tmux-rclk", f.TestCwd("rclk"))
 	f.HaveEnrolledAgent(stopConv)
 	f.HaveEnrolledAgent(keepConv)
 

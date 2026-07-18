@@ -27,8 +27,8 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpc-1111-2222-3333-4444"
-		const pathA = "/tmp/retire-precondition-a"
-		const pathB = "/tmp/retire-precondition-b"
+		pathA := f.TestCwd("retire-precondition-a")
+		pathB := f.TestCwd("retire-precondition-b")
 		f.HaveConvWithTitle(conv, "moving-worker")
 		f.HaveAliveSession(conv, "spwn-rwpc", "tmux-rwpc", pathA)
 		f.MarkOffline("tmux-rwpc")
@@ -72,7 +72,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpm-1111-2222-3333-4444"
-		const cwd = "/tmp/retire precondition & exact?#"
+		cwd := f.TestCwd("retire precondition & exact?#")
 		f.HaveConvWithTitle(conv, "steady-worker")
 		f.HaveAliveSession(conv, "spwn-rwpm", "tmux-rwpm", cwd)
 		f.MarkOffline("tmux-rwpm")
@@ -108,7 +108,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpb-1111-2222-3333-4444"
-		const cwd = "/tmp/retire-branch-switch"
+		cwd := f.TestCwd("retire-branch-switch")
 		f.HaveConvWithTitle(conv, "branch-switching-worker")
 		f.HaveAliveSession(conv, "spwn-rwpb", "tmux-rwpb", cwd)
 		f.MarkOffline("tmux-rwpb")
@@ -154,7 +154,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpd-1111-2222-3333-4444"
-		const cwd = "/tmp/retire-detached-head"
+		cwd := f.TestCwd("retire-detached-head")
 		f.HaveConvWithTitle(conv, "detached-worker")
 		f.HaveAliveSession(conv, "spwn-rwpd", "tmux-rwpd", cwd)
 		f.MarkOffline("tmux-rwpd")
@@ -187,7 +187,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpg-1111-2222-3333-4444"
-		const cwd = "/tmp/retire-detached-gained"
+		cwd := f.TestCwd("retire-detached-gained")
 		f.HaveConvWithTitle(conv, "detached-gained-worker")
 		f.HaveAliveSession(conv, "spwn-rwpg", "tmux-rwpg", cwd)
 		f.MarkOffline("tmux-rwpg")
@@ -223,7 +223,9 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		}{
 			{"path without branch", url.Values{
 				"shutdown": {"1"}, "delete_worktree": {"1"},
-				"expected_worktree": {"/tmp/retire-half-pair"},
+				// expected_worktree is stamped with the live cwd below, once
+				// the per-subtest Flow (and its temp root) exists.
+				"expected_worktree": {""},
 			}},
 			{"branch without path", url.Values{
 				"shutdown": {"1"}, "delete_worktree": {"1"},
@@ -235,7 +237,10 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 				f := newFlow(t)
 
 				const conv = "rwph-1111-2222-3333-4444"
-				const cwd = "/tmp/retire-half-pair"
+				cwd := f.TestCwd("retire-half-pair")
+				if row.query.Has("expected_worktree") {
+					row.query.Set("expected_worktree", cwd)
+				}
 				f.HaveConvWithTitle(conv, "half-pair-worker")
 				f.HaveAliveSession(conv, "spwn-rwph", "tmux-rwph", cwd)
 				f.MarkOffline("tmux-rwph")
@@ -264,7 +269,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpu-1111-2222-3333-4444"
-		const cwd = "/tmp/retire-unexpected-precondition"
+		cwd := f.TestCwd("retire-unexpected-precondition")
 		f.HaveConvWithTitle(conv, "guarded-worker")
 		f.HaveAliveSession(conv, "spwn-rwpu", "tmux-rwpu", cwd)
 		f.MarkOffline("tmux-rwpu")
@@ -295,7 +300,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpe-1111-2222-3333-4444"
-		const cwd = "/tmp/retire-empty-precondition"
+		cwd := f.TestCwd("retire-empty-precondition")
 		f.HaveConvWithTitle(conv, "empty-precondition-worker")
 		f.HaveAliveSession(conv, "spwn-rwpe", "tmux-rwpe", cwd)
 		f.MarkOffline("tmux-rwpe")
@@ -330,7 +335,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			f := newFlow(t)
 
 			const conv = "rwpk-1111-2222-3333-4444"
-			const cwd = "/tmp/retire-keep-worktree"
+			cwd := f.TestCwd("retire-keep-worktree")
 			f.HaveConvWithTitle(conv, "keeper-worker")
 			f.HaveAliveSession(conv, "spwn-rwpk", "tmux-rwpk", cwd)
 			f.MarkOffline("tmux-rwpk")
@@ -355,7 +360,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			f := newFlow(t)
 
 			const conv = "rwpl-1111-2222-3333-4444"
-			const cwd = "/tmp/retire-legacy-optin"
+			cwd := f.TestCwd("retire-legacy-optin")
 			f.HaveConvWithTitle(conv, "legacy-worker")
 			f.HaveAliveSession(conv, "spwn-rwpl", "tmux-rwpl", cwd)
 			f.MarkOffline("tmux-rwpl")
@@ -384,7 +389,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			f := newFlow(t)
 
 			const conv = "rwpx-1111-2222-3333-4444"
-			const cwd = "/tmp/retire-deferred-drift"
+			cwd := f.TestCwd("retire-deferred-drift")
 			f.HaveConvWithTitle(conv, "drifting-worker")
 			f.HaveAliveSession(conv, "spwn-rwpx", "tmux-rwpx", cwd)
 			f.HaveEnrolledAgent(conv)
@@ -435,7 +440,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 
 			const conv = "rwps-1111-2222-3333-4444"
 			const other = "rwpo-1111-2222-3333-4444"
-			const cwd = "/tmp/retire-deferred-sharer"
+			cwd := f.TestCwd("retire-deferred-sharer")
 			f.HaveConvWithTitle(conv, "retiring-worker")
 			f.HaveAliveSession(conv, "spwn-rwps", "tmux-rwps", cwd)
 			f.HaveEnrolledAgent(conv)
@@ -482,7 +487,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 			f := newFlow(t)
 
 			const conv = "rwpi-1111-2222-3333-4444"
-			const cwd = "/tmp/retire-inline-drift"
+			cwd := f.TestCwd("retire-inline-drift")
 			f.HaveConvWithTitle(conv, "inline-drift-worker")
 			f.HaveAliveSession(conv, "spwn-rwpi", "tmux-rwpi", cwd)
 			f.MarkOffline("tmux-rwpi")
@@ -545,7 +550,7 @@ func TestRetireAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "rwpn-1111-2222-3333-4444"
-		const cwd = "/tmp/retire-main-repo"
+		cwd := f.TestCwd("retire-main-repo")
 		f.HaveConvWithTitle(conv, "main-repo-worker")
 		f.HaveAliveSession(conv, "spwn-rwpn", "tmux-rwpn", cwd)
 		f.MarkOffline("tmux-rwpn")

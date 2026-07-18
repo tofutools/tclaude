@@ -32,7 +32,7 @@ func TestPendingDelete_KillsPaneAndDropsRows(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	const label = "spwn-del1"
-	havePendingSpawn(t, f, label, "tmux-del1", "/tmp/del1", g.ID, "worker", "delete-me")
+	havePendingSpawn(t, f, label, "tmux-del1", f.TestCwd("del1"), g.ID, "worker", "delete-me")
 	require.True(t, f.World.Tmux.IsAlive("tmux-del1"), "precondition: pane is alive")
 
 	rec := testharness.Serve(mux,
@@ -79,7 +79,7 @@ func TestPendingDelete_CleansUpDeadPane(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	const label = "spwn-del-dead"
-	havePendingSpawn(t, f, label, "tmux-del-dead", "/tmp/deldead", g.ID, "worker", "dead-pane")
+	havePendingSpawn(t, f, label, "tmux-del-dead", f.TestCwd("deldead"), g.ID, "worker", "dead-pane")
 	f.MarkOffline("tmux-del-dead") // the pane died after the spawn was recorded
 
 	rec := testharness.Serve(mux,
@@ -100,7 +100,7 @@ func TestPendingDelete_RejectsNonPost(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	const label = "spwn-del-meth"
-	havePendingSpawn(t, f, label, "tmux-del-meth", "/tmp/delmeth", g.ID, "worker", "method")
+	havePendingSpawn(t, f, label, "tmux-del-meth", f.TestCwd("delmeth"), g.ID, "worker", "method")
 
 	rec := testharness.Serve(mux,
 		testharness.JSONRequest(t, http.MethodGet, "/api/pending/delete/"+label, nil))

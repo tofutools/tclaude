@@ -34,7 +34,7 @@ func TestClone_DerivesTitleFromOriginal(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-001"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -83,7 +83,7 @@ func TestClone_FollowUpNudgeDoesNotCorruptTitle(t *testing.T) {
 	const oldTmux = "tclaude-spwn-old-002"
 
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, oldLabel, oldTmux, "/tmp/work")
+	f.HaveAliveSession(oldConv, oldLabel, oldTmux, f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 

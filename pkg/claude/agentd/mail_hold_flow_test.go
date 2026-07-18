@@ -65,7 +65,7 @@ func TestMail_HeldWhileRecipientAwaitingHumanInput(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
 	const recvTmux = "tclaude-mh01-r"
-	f.HaveAliveSession(recipient, "spwn-mh01-r", recvTmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-mh01-r", recvTmux, f.TestCwd("work"))
 	recvPane := recvTmux + ":0.0"
 
 	// The worker is mid-question: CC is showing an elicitation dialog and is
@@ -123,7 +123,7 @@ func TestMail_ReaperBackstopDeliversHeldMailAfterResume(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
 	const recvTmux = "tclaude-mh03-r"
-	f.HaveAliveSession(recipient, "spwn-mh03-r", recvTmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-mh03-r", recvTmux, f.TestCwd("work"))
 	recvPane := recvTmux + ":0.0"
 
 	// The worker is showing a permission prompt — keystrokes injected now
@@ -166,7 +166,7 @@ func TestMail_DeliversImmediatelyWhenRecipientWorking(t *testing.T) {
 	f.HaveMember("team", sender)
 	f.HaveMember("team", recipient)
 	const recvTmux = "tclaude-mh02-r"
-	f.HaveAliveSession(recipient, "spwn-mh02-r", recvTmux, "/tmp/work")
+	f.HaveAliveSession(recipient, "spwn-mh02-r", recvTmux, f.TestCwd("work"))
 	f.SetSessionStatus(recipient, session.StatusWorking)
 
 	rec := postMessage(t, f, sender, map[string]any{"to": recipient, "body": "ship it"})

@@ -66,7 +66,7 @@ func TestDashboardSnapshot_SurfacesPendingSpawns(t *testing.T) {
 	f := newFlow(t)
 	g := f.HaveGroup("alpha")
 
-	havePendingSpawn(t, f, "spwn-pend1", "tmux-pend1", "/tmp/pend1", g.ID, "reviewer", "pending-reviewer")
+	havePendingSpawn(t, f, "spwn-pend1", "tmux-pend1", f.TestCwd("pend1"), g.ID, "reviewer", "pending-reviewer")
 
 	// A second pending row whose pane is GONE: a pending_spawns row with no
 	// session at all — the stale state the sweeper has not yet cleaned up.
@@ -82,7 +82,7 @@ func TestDashboardSnapshot_SurfacesPendingSpawns(t *testing.T) {
 	assert.Equal(t, "alpha", alive.Group, "group resolved from group_id")
 	assert.Equal(t, "reviewer", alive.Role)
 	assert.Equal(t, "pending-reviewer", alive.Name)
-	assert.Equal(t, "/tmp/pend1", alive.Cwd, "gate location from the session row")
+	assert.Equal(t, f.TestCwd("pend1"), alive.Cwd, "gate location from the session row")
 	assert.Equal(t, "codex", alive.Harness)
 	assert.True(t, alive.Online, "the pane is live, so the focus button stays enabled")
 
@@ -107,7 +107,7 @@ func TestPendingFocus_OpensAttachTerminalKeyedOnLabel(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	const label = "spwn-foc1"
-	havePendingSpawn(t, f, label, "tmux-foc1", "/tmp/foc1", g.ID, "reviewer", "focus-me")
+	havePendingSpawn(t, f, label, "tmux-foc1", f.TestCwd("foc1"), g.ID, "reviewer", "focus-me")
 
 	var mu sync.Mutex
 	var opened []string
@@ -162,7 +162,7 @@ func TestPendingFocus_404ForDeadPane(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	const label = "spwn-dead2"
-	havePendingSpawn(t, f, label, "tmux-dead2", "/tmp/dead2", g.ID, "worker", "dead-pane")
+	havePendingSpawn(t, f, label, "tmux-dead2", f.TestCwd("dead2"), g.ID, "worker", "dead-pane")
 	f.MarkOffline("tmux-dead2") // the pane died after the spawn was recorded
 
 	var dispatched bool
@@ -186,7 +186,7 @@ func TestPendingFocus_RejectsNonPost(t *testing.T) {
 	g := f.HaveGroup("alpha")
 
 	const label = "spwn-meth"
-	havePendingSpawn(t, f, label, "tmux-meth", "/tmp/meth", g.ID, "worker", "method")
+	havePendingSpawn(t, f, label, "tmux-meth", f.TestCwd("meth"), g.ID, "worker", "method")
 
 	var dispatched bool
 	t.Cleanup(agentd.SetOpenTerminalForTest(func(string) error {

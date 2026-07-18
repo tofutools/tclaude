@@ -23,7 +23,7 @@ func TestClone_CwdOverrideSpawnsThere(t *testing.T) {
 
 	const oldConv = "old-clonecwd-aaaa-bbbb-cccc"
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, "spwn-clonecwd-1", "tclaude-spwn-clonecwd-1", "/tmp/work")
+	f.HaveAliveSession(oldConv, "spwn-clonecwd-1", "tclaude-spwn-clonecwd-1", f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 
@@ -50,7 +50,7 @@ func TestClone_InvalidCwdOverrideReportsError(t *testing.T) {
 
 	const oldConv = "old-badclonecwd-aaaa-bbbb"
 	f.HaveConvWithTitle(oldConv, "worker")
-	f.HaveAliveSession(oldConv, "spwn-badclonecwd-1", "tclaude-spwn-badclonecwd-1", "/tmp/work")
+	f.HaveAliveSession(oldConv, "spwn-badclonecwd-1", "tclaude-spwn-badclonecwd-1", f.TestCwd("work"))
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", oldConv)
 

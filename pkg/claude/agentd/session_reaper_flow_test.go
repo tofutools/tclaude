@@ -27,7 +27,7 @@ func TestSessionReaper_MarksDeadSessionExited(t *testing.T) {
 
 	const conv = "reap-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "reaped-worker")
-	f.HaveAliveSession(conv, "spwn-reap", "tmux-reap", "/tmp/reap")
+	f.HaveAliveSession(conv, "spwn-reap", "tmux-reap", f.TestCwd("reap"))
 	f.MarkOffline("tmux-reap")
 
 	var notified []string
@@ -51,7 +51,7 @@ func TestSessionReaper_StampsUnexpectedExitReason(t *testing.T) {
 
 	const conv = "uxrs-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "crashed-worker")
-	f.HaveAliveSession(conv, "spwn-uxrs", "tmux-uxrs", "/tmp/uxrs")
+	f.HaveAliveSession(conv, "spwn-uxrs", "tmux-uxrs", f.TestCwd("uxrs"))
 	f.MarkOffline("tmux-uxrs")
 
 	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
@@ -74,7 +74,7 @@ func TestSessionReaper_CodexCloseWithoutReasonStaysPlainOffline(t *testing.T) {
 
 	const conv = "codx-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "codex-worker")
-	f.HaveAliveCodexSession(conv, "spwn-codx", "tmux-codx", "/tmp/codx")
+	f.HaveAliveCodexSession(conv, "spwn-codx", "tmux-codx", f.TestCwd("codx"))
 	f.MarkOffline("tmux-codx")
 
 	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
@@ -94,7 +94,7 @@ func TestSessionReaper_NotifiesOnWitnessedTransition(t *testing.T) {
 
 	const conv = "trns-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "transition-worker")
-	f.HaveAliveSession(conv, "spwn-trns", "tmux-trns", "/tmp/trns")
+	f.HaveAliveSession(conv, "spwn-trns", "tmux-trns", f.TestCwd("trns"))
 
 	var notified []string
 	reaper := agentd.NewSessionReaperForTest(0, func(convID, prevStatus string) {
@@ -123,7 +123,7 @@ func TestSessionReaper_NoNotifyForPreexistingCorpse(t *testing.T) {
 
 	const conv = "corp-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "corpse-worker")
-	f.HaveAliveSession(conv, "spwn-corp", "tmux-corp", "/tmp/corp")
+	f.HaveAliveSession(conv, "spwn-corp", "tmux-corp", f.TestCwd("corp"))
 	f.MarkOffline("tmux-corp") // dead before the reaper's first sweep
 
 	var notified []string
@@ -145,14 +145,14 @@ func TestSessionReaper_GracePeriodSkipsFreshRow(t *testing.T) {
 
 	const conv = "grce-1111-2222-3333-444444444444"
 	f.HaveConvWithTitle(conv, "fresh-worker")
-	f.HaveAliveSession(conv, "spwn-grce", "tmux-grce", "/tmp/grce")
+	f.HaveAliveSession(conv, "spwn-grce", "tmux-grce", f.TestCwd("grce"))
 	// Stamp the row as just-created and take its tmux session down, as
 	// if the sweep landed in the gap before the pane came up.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID:          "spwn-grce",
 		TmuxSession: "tmux-grce",
 		ConvID:      conv,
-		Cwd:         "/tmp/grce",
+		Cwd:         f.TestCwd("grce"),
 		Status:      "running",
 		CreatedAt:   time.Now(),
 	}))

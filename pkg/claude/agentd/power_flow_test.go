@@ -150,8 +150,8 @@ func TestShutdown_GroupScope_ForceKillsOnlyTheHungAgent(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(goodConv, "graceful-worker")
 	f.HaveConvWithTitle(hungConv, "hung-worker")
-	f.HaveAliveSession(goodConv, "spwn-esgd", "tmux-esgd", "/tmp/esgd")
-	f.HaveAliveSession(hungConv, "spwn-eshu", "tmux-eshu", "/tmp/eshu")
+	f.HaveAliveSession(goodConv, "spwn-esgd", "tmux-esgd", f.TestCwd("esgd"))
+	f.HaveAliveSession(hungConv, "spwn-eshu", "tmux-eshu", f.TestCwd("eshu"))
 	f.HaveMember(group, goodConv)
 	f.HaveMember(group, hungConv)
 	hangOnExit(t, f, hungConv)
@@ -200,8 +200,8 @@ func TestShutdown_AllScope_HitsGroupedAndUngrouped(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(groupedConv, "grouped-worker")
 	f.HaveConvWithTitle(looseConv, "ungrouped-worker")
-	f.HaveAliveSession(groupedConv, "spwn-esag", "tmux-esag", "/tmp/esag")
-	f.HaveAliveSession(looseConv, "spwn-esal", "tmux-esal", "/tmp/esal")
+	f.HaveAliveSession(groupedConv, "spwn-esag", "tmux-esag", f.TestCwd("esag"))
+	f.HaveAliveSession(looseConv, "spwn-esal", "tmux-esal", f.TestCwd("esal"))
 	f.HaveMember(group, groupedConv)
 	f.HaveEnrolledAgent(looseConv) // an ungrouped agent — on the roster, in no group
 	hangOnExit(t, f, looseConv)
@@ -238,7 +238,7 @@ func TestShutdown_SkipsOfflineAgents(t *testing.T) {
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(aliveConv, "running-worker")
 	f.HaveConvWithTitle(offlineConv, "offline-worker")
-	f.HaveAliveSession(aliveConv, "spwn-esoa", "tmux-esoa", "/tmp/esoa")
+	f.HaveAliveSession(aliveConv, "spwn-esoa", "tmux-esoa", f.TestCwd("esoa"))
 	f.HaveMember(group, aliveConv)
 	f.HaveMember(group, offlineConv) // member, but never had a live session
 
@@ -298,7 +298,7 @@ func TestPowerOn_GroupScope_ResumesOfflineSkipsOnline(t *testing.T) {
 	f.HaveConvWithTitle(offlineConv, "sleeping-worker")
 	f.HaveConvWithTitle(onlineConv, "running-worker")
 	f.HaveAliveSession(offlineConv, "spwn-pogo", "tmux-pogo", f.World.HomeDir)
-	f.HaveAliveSession(onlineConv, "spwn-pogn", "tmux-pogn", "/tmp/pogn")
+	f.HaveAliveSession(onlineConv, "spwn-pogn", "tmux-pogn", f.TestCwd("pogn"))
 	f.HaveMember(group, offlineConv)
 	f.HaveMember(group, onlineConv)
 	// Take one member offline so power-on has something to resume.
@@ -351,7 +351,7 @@ func TestPowerOn_AllScope_HitsGroupedAndUngrouped(t *testing.T) {
 	f.HaveConvWithTitle(onlineConv, "grouped-runner")
 	f.HaveAliveSession(groupedConv, "spwn-poag", "tmux-poag", f.World.HomeDir)
 	f.HaveAliveSession(looseConv, "spwn-poal", "tmux-poal", f.World.HomeDir)
-	f.HaveAliveSession(onlineConv, "spwn-poan", "tmux-poan", "/tmp/poan")
+	f.HaveAliveSession(onlineConv, "spwn-poan", "tmux-poan", f.TestCwd("poan"))
 	f.HaveMember(group, groupedConv)
 	f.HaveMember(group, onlineConv)
 	f.HaveEnrolledAgent(looseConv) // an ungrouped agent — on the roster, in no group

@@ -78,7 +78,7 @@ func TestCronSoloSuccession_StaleRef_DeliversToLiveHead(t *testing.T) {
 	f.HaveConvWithTitle(oldX, "worker")
 	f.HaveMember("team", po)
 	f.HaveMember("team", oldX)
-	f.HaveAliveSession(oldX, "spwn-css1-oldx", "tclaude-spwn-css1-oldx", "/tmp/work")
+	f.HaveAliveSession(oldX, "spwn-css1-oldx", "tclaude-spwn-css1-oldx", f.TestCwd("work"))
 
 	// Human schedules a recurring nudge for the worker, attributed to
 	// the PO. owner(po) != target(oldX) and they share "team", so the
@@ -135,7 +135,7 @@ func TestCronSoloSuccession_DirectInbox_FollowsChain(t *testing.T) {
 
 	// oldX is superseded by the live head newY; only newY has a pane.
 	require.NoError(t, db.RecordConvSuccession(oldX, newY, "reincarnate"))
-	f.HaveAliveSession(newY, "spwn-css2-newy", "tclaude-spwn-css2-newy", "/tmp/work")
+	f.HaveAliveSession(newY, "spwn-css2-newy", "tclaude-spwn-css2-newy", f.TestCwd("work"))
 
 	require.Equal(t, "ok", fireCronNow(t, f, id),
 		"solo fire resolves the chain and finds the live pane")
@@ -189,7 +189,7 @@ func TestCronSoloSuccession_EndToEnd_ReincarnateBetweenCreateAndFire(t *testing.
 	f.HaveConvWithTitle(oldX, "worker")
 	f.HaveMember("team", po)
 	f.HaveMember("team", oldX)
-	f.HaveAliveSession(oldX, "spwn-css3-oldx", "tclaude-spwn-css3-oldx", "/tmp/work")
+	f.HaveAliveSession(oldX, "spwn-css3-oldx", "tclaude-spwn-css3-oldx", f.TestCwd("work"))
 
 	id := createCronJobAsHuman(t, f, map[string]any{
 		"target":   oldX,

@@ -46,8 +46,8 @@ func TestDelete_MultiGenerationActorSweepsAllGenerations(t *testing.T) {
 		convA = "aaaa1111-2222-3333-4444-555555555555" // genesis generation
 		label = "spwn-mg-001"
 		tmux  = "tclaude-spwn-mg-001"
-		cwd   = "/tmp/mgwork"
 	)
+	cwd := f.TestCwd("mgwork")
 
 	g := f.HaveGroup(group)
 	f.HaveAliveSession(convA, label, tmux, cwd)

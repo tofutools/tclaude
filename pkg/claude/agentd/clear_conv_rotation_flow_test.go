@@ -240,8 +240,8 @@ func TestClearRotation_PlainConversationNotPromotedToAgent(t *testing.T) {
 		plainConv  = "91a10000-1111-2222-3333-666666666666"
 		plainLabel = "spwn-plain-001"
 		plainTmux  = "tclaude-spwn-plain-001"
-		plainCwd   = "/tmp/plainwork"
 	)
+	plainCwd := f.TestCwd("plainwork")
 	f.HaveAliveSession(plainConv, plainLabel, plainTmux, plainCwd)
 	require.Equal(t, db.AgentStateNone, mustAgentState(t, plainConv),
 		"precondition: the conv is a plain conversation, not an agent")

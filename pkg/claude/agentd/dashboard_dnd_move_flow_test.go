@@ -30,7 +30,7 @@ func TestDashboardDnDMove_AddThenRemoveLeavesConvInTargetOnly(t *testing.T) {
 
 	const conv = "drag-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "movee")
-	f.HaveAliveSession(conv, "spwn-drag", "tmux-drag", "/tmp/drag")
+	f.HaveAliveSession(conv, "spwn-drag", "tmux-drag", f.TestCwd("drag"))
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
 	f.HaveMember("alpha", conv)
@@ -88,7 +88,7 @@ func TestDashboardDnDMove_PartialFailureLeavesConvInBoth(t *testing.T) {
 
 	const conv = "part-aaaa-bbbb-cccc-1111"
 	f.HaveConvWithTitle(conv, "partmove")
-	f.HaveAliveSession(conv, "spwn-part", "tmux-part", "/tmp/part")
+	f.HaveAliveSession(conv, "spwn-part", "tmux-part", f.TestCwd("part"))
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
 	f.HaveMember("alpha", conv)

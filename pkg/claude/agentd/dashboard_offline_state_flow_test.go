@@ -28,8 +28,8 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 	const offlineConv = "offl-aaaa-bbbb-cccc-dddddddddddd"
 	f.HaveConvWithTitle(onlineConv, "online-worker")
 	f.HaveConvWithTitle(offlineConv, "offline-worker")
-	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
-	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", f.TestCwd("onln"))
+	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", f.TestCwd("offl"))
 
 	// Both join a group so they surface in the snapshot (an offline
 	// ungrouped conv with no grants is intentionally absent everywhere).
@@ -44,7 +44,7 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 		ID:          "spwn-offl",
 		TmuxSession: "tmux-offl",
 		ConvID:      offlineConv,
-		Cwd:         "/tmp/offl",
+		Cwd:         f.TestCwd("offl"),
 		Status:      "idle",
 		LastHook:    time.Now(),
 	}), "freeze offline session status at idle")

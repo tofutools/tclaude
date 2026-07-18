@@ -29,6 +29,7 @@ import (
 // (HOME-relative) inside resumeLaunchCmd sees a deterministic override.
 func withResumeConfig(t *testing.T) {
 	t.Helper()
+	clearAmbientResumeOverride(t)
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir) // os.UserHomeDir reads this on Windows
@@ -36,6 +37,16 @@ func withResumeConfig(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.ClaudeResume = &config.ClaudeResumeConfig{ThresholdMinutes: new(config.ResumeThresholdMinutesSuppress)}
 	require.NoError(t, config.Save(cfg))
+}
+
+// clearAmbientResumeOverride blanks the resume-threshold variable the test
+// process may have inherited: Claude Code exports it in its own environment,
+// and resumeLaunchCmd snapshots the inherited environment into the command it
+// builds. The Contains/NotContains assertions below must observe only what
+// tclaude itself injects, not what the test runner happened to leak in.
+func clearAmbientResumeOverride(t *testing.T) {
+	t.Helper()
+	t.Setenv("CLAUDE_CODE_RESUME_THRESHOLD_MINUTES", "")
 }
 
 func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T) {
@@ -225,6 +236,7 @@ func TestResumeLaunchCmd_NoResumeOverrideForCodex(t *testing.T) {
 // With no claude_resume block configured, a Claude resume stays on Claude
 // Code's own defaults — tclaude injects nothing.
 func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
+	clearAmbientResumeOverride(t)
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir)

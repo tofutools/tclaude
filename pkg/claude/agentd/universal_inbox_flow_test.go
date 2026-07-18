@@ -49,7 +49,7 @@ func TestMessage_SoloToSolo_WithMessageDirect_Delivered(t *testing.T) {
 	f.HaveConvWithTitle(recip, "receiver")
 	f.HaveEnrolledAgent(sender)
 	f.HaveEnrolledAgent(recip)
-	f.HaveAliveSession(recip, "spwn-recp-001", "tclaude-spwn-recp-001", "/tmp/work")
+	f.HaveAliveSession(recip, "spwn-recp-001", "tclaude-spwn-recp-001", f.TestCwd("work"))
 	require.NoError(t, db.GrantAgentPermission(sender, agentd.PermMessageDirect, "test"))
 
 	rec := postMessage(t, f, sender, map[string]any{"to": recip, "body": "ping, solo to solo"})

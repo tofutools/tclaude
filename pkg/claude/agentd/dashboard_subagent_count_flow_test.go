@@ -37,7 +37,7 @@ func TestDashboardSnapshot_SubagentCountSurvivesMainAgentStop(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-suba", "/tmp/suba")
+	f.HaveAliveSession(conv, label, "tmux-suba", f.TestCwd("suba"))
 	f.HaveMember("squad", conv)
 
 	// agentID mirrors the real payloads: the Subagent* events carry the
@@ -50,7 +50,7 @@ func TestDashboardSnapshot_SubagentCountSurvivesMainAgentStop(t *testing.T) {
 		in := session.HookCallbackInput{
 			HookEventName: event,
 			ConvID:        conv,
-			Cwd:           "/tmp/suba",
+			Cwd:           f.TestCwd("suba"),
 			AgentID:       agentID,
 		}
 		if agentID != "" {
@@ -96,13 +96,13 @@ func TestDashboardSnapshot_SubagentPhantomClearedOnSessionStart(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-subb", "/tmp/subb")
+	f.HaveAliveSession(conv, label, "tmux-subb", f.TestCwd("subb"))
 	f.HaveMember("squad", conv)
 
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName: "SubagentStart",
 		ConvID:        conv,
-		Cwd:           "/tmp/subb",
+		Cwd:           f.TestCwd("subb"),
 		AgentType:     "Explore",
 		AgentID:       "ag-doomed",
 	}, label), "ApplyHook(SubagentStart)")
@@ -116,7 +116,7 @@ func TestDashboardSnapshot_SubagentPhantomClearedOnSessionStart(t *testing.T) {
 		HookEventName: "SessionStart",
 		Source:        "startup",
 		ConvID:        conv,
-		Cwd:           "/tmp/subb",
+		Cwd:           f.TestCwd("subb"),
 	}, label), "ApplyHook(SessionStart)")
 	member = findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member, "agent %s missing after SessionStart", conv)
@@ -136,13 +136,13 @@ func TestDashboardSnapshot_OfflineAgentReportsZeroSubagents(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-subc", "/tmp/subc")
+	f.HaveAliveSession(conv, label, "tmux-subc", f.TestCwd("subc"))
 	f.HaveMember("squad", conv)
 
 	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
 		HookEventName: "SubagentStart",
 		ConvID:        conv,
-		Cwd:           "/tmp/subc",
+		Cwd:           f.TestCwd("subc"),
 		AgentType:     "Explore",
 		AgentID:       "ag-orphan",
 	}, label), "ApplyHook(SubagentStart)")
@@ -171,7 +171,7 @@ func TestDashboardSnapshot_ExpiredLedgerSettlesStatusToIdle(t *testing.T) {
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
-	f.HaveAliveSession(conv, label, "tmux-subd", "/tmp/subd")
+	f.HaveAliveSession(conv, label, "tmux-subd", f.TestCwd("subd"))
 	f.HaveMember("squad", conv)
 
 	// Stage the wedged row directly: main_agent_idle with a ledger whose
@@ -210,7 +210,7 @@ func TestDashboardSnapshot_CodexInterruptedSubagentOverridesFreshHookLedger(t *t
 
 	f := newFlow(t)
 	f.HaveGroup("codex-squad")
-	cx := f.HaveAliveCodexSession(conv, label, "tmux-codex-subagent", "/tmp/codex-subagent")
+	cx := f.HaveAliveCodexSession(conv, label, "tmux-codex-subagent", f.TestCwd("codex-subagent"))
 	f.HaveMember("codex-squad", conv)
 	require.NoError(t, cx.WriteSubagentActivity("child-review", "/root/reviewer", "started"))
 	require.NoError(t, cx.WriteSubagentActivity("child-review", "/root/reviewer", "interrupted"))

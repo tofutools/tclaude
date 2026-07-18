@@ -77,8 +77,8 @@ func TestCleanup_Group_RemovesOfflineKeepsOnline(t *testing.T) {
 	const onlineConv = "onln-1111-2222-3333-4444"
 	f.HaveConvWithTitle(offlineConv, "stale-worker")
 	f.HaveConvWithTitle(onlineConv, "live-worker")
-	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
-	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
+	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", f.TestCwd("offl"))
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", f.TestCwd("onln"))
 	f.HaveGroup("squad")
 	f.HaveMember("squad", offlineConv)
 	f.HaveMember("squad", onlineConv)
@@ -105,7 +105,7 @@ func TestCleanup_Group_OwnerExcludedUnlessOptedIn(t *testing.T) {
 
 	const ownerConv = "ownr-1111-2222-3333-4444"
 	f.HaveConvWithTitle(ownerConv, "boss")
-	f.HaveAliveSession(ownerConv, "spwn-ownr", "tmux-ownr", "/tmp/ownr")
+	f.HaveAliveSession(ownerConv, "spwn-ownr", "tmux-ownr", f.TestCwd("ownr"))
 	g := f.HaveGroup("squad")
 	f.HaveMember("squad", ownerConv)
 	require.NoError(t, db.AddAgentGroupOwner(g.ID, ownerConv, "test"), "seed owner")
@@ -142,8 +142,8 @@ func TestCleanup_Agents_DeleteOfflineSkipsOnline(t *testing.T) {
 	const onlineConv = "onln-1111-2222-3333-4444"
 	f.HaveConvWithTitle(offlineConv, "stale-worker")
 	f.HaveConvWithTitle(onlineConv, "live-worker")
-	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", "/tmp/offl")
-	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", "/tmp/onln")
+	f.HaveAliveSession(offlineConv, "spwn-offl", "tmux-offl", f.TestCwd("offl"))
+	f.HaveAliveSession(onlineConv, "spwn-onln", "tmux-onln", f.TestCwd("onln"))
 	f.HaveGroup("squad")
 	f.HaveMember("squad", offlineConv)
 	f.HaveMember("squad", onlineConv)
@@ -170,7 +170,7 @@ func TestCleanup_Agents_RemoveFromAllGroupsKeepsConv(t *testing.T) {
 
 	const conv = "many-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "rover")
-	f.HaveAliveSession(conv, "spwn-many", "tmux-many", "/tmp/many")
+	f.HaveAliveSession(conv, "spwn-many", "tmux-many", f.TestCwd("many"))
 	f.HaveGroup("alpha")
 	f.HaveGroup("beta")
 	f.HaveMember("alpha", conv)
@@ -315,7 +315,7 @@ func TestCleanup_Agents_DeleteRemovesLinkedWorktree(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "wtre-1111-2222-3333-4444"
-	const cwd = "/tmp/wt-linked"
+	cwd := f.TestCwd("wt-linked")
 	f.HaveConvWithTitle(conv, "worktree-worker")
 	f.HaveAliveSession(conv, "spwn-wtre", "tmux-wtre", cwd)
 	f.MarkOffline("tmux-wtre")
@@ -342,7 +342,7 @@ func TestCleanup_Agents_KeepsSharedWorktree(t *testing.T) {
 
 	const leaving = "wdel-1111-2222-3333-4444"
 	const staying = "wsur-1111-2222-3333-4444"
-	const shared = "/tmp/wt-shared"
+	shared := f.TestCwd("wt-shared")
 	f.HaveConvWithTitle(leaving, "leaving")
 	f.HaveConvWithTitle(staying, "staying")
 	f.HaveAliveSession(leaving, "spwn-wdel", "tmux-wdel", shared)
@@ -413,7 +413,7 @@ func TestCleanup_Agents_KeepsMainWorktree(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "wmai-1111-2222-3333-4444"
-	const cwd = "/tmp/wt-main"
+	cwd := f.TestCwd("wt-main")
 	f.HaveConvWithTitle(conv, "main-repo-worker")
 	f.HaveAliveSession(conv, "spwn-wmai", "tmux-wmai", cwd)
 	f.MarkOffline("tmux-wmai")
@@ -437,7 +437,7 @@ func TestCleanup_Agents_DeleteWorktreesOptIn(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "wopt-1111-2222-3333-4444"
-	const cwd = "/tmp/wt-opt"
+	cwd := f.TestCwd("wt-opt")
 	f.HaveConvWithTitle(conv, "opt-worker")
 	f.HaveAliveSession(conv, "spwn-wopt", "tmux-wopt", cwd)
 	f.MarkOffline("tmux-wopt")
@@ -463,7 +463,7 @@ func TestCleanup_Agents_RetireRemovesLinkedWorktree(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwtr-1111-2222-3333-4444"
-	const cwd = "/tmp/wt-retire"
+	cwd := f.TestCwd("wt-retire")
 	f.HaveConvWithTitle(conv, "loose-worker")
 	f.HaveEnrolledAgent(conv) // retire acts only on an active agent
 	f.HaveAliveSession(conv, "spwn-rwtr", "tmux-rwtr", cwd)
@@ -499,7 +499,7 @@ func TestCleanup_Agents_RetireBatchKeepsCoSharedWorktree(t *testing.T) {
 
 	const convA = "rwba-1111-2222-3333-4444"
 	const convB = "rwbb-1111-2222-3333-4444"
-	const shared = "/tmp/wt-retire-batch-shared"
+	shared := f.TestCwd("wt-retire-batch-shared")
 	for _, c := range []struct {
 		conv, label, tmux string
 	}{
@@ -535,7 +535,7 @@ func TestCleanup_Agents_RetireKeepsWorktreeWithoutFlag(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "rwtk-1111-2222-3333-4444"
-	const cwd = "/tmp/wt-retire-keep"
+	cwd := f.TestCwd("wt-retire-keep")
 	f.HaveConvWithTitle(conv, "loose-worker")
 	f.HaveEnrolledAgent(conv)
 	f.HaveAliveSession(conv, "spwn-rwtk", "tmux-rwtk", cwd)
@@ -561,7 +561,7 @@ func TestDeleteAgent_WithWorktree(t *testing.T) {
 	f := newFlow(t)
 
 	const conv = "wsng-1111-2222-3333-4444"
-	const cwd = "/tmp/wt-single"
+	cwd := f.TestCwd("wt-single")
 	f.HaveConvWithTitle(conv, "solo")
 	f.HaveAliveSession(conv, "spwn-wsng", "tmux-wsng", cwd)
 	f.MarkOffline("tmux-wsng")
@@ -607,8 +607,8 @@ func TestDeleteAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "wtpc-1111-2222-3333-4444"
-		const pathA = "/tmp/wt-precondition-a"
-		const pathB = "/tmp/wt-precondition-b"
+		pathA := f.TestCwd("wt-precondition-a")
+		pathB := f.TestCwd("wt-precondition-b")
 		f.HaveConvWithTitle(conv, "moving-worker")
 		f.HaveAliveSession(conv, "spwn-wtpc", "tmux-wtpc", pathA)
 		f.MarkOffline("tmux-wtpc")
@@ -650,7 +650,7 @@ func TestDeleteAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "wtpd-1111-2222-3333-4444"
-		const cwd = "/tmp/wt precondition & exact?#"
+		cwd := f.TestCwd("wt precondition & exact?#")
 		f.HaveConvWithTitle(conv, "steady-worker")
 		f.HaveAliveSession(conv, "spwn-wtpd", "tmux-wtpd", cwd)
 		f.MarkOffline("tmux-wtpd")
@@ -676,7 +676,7 @@ func TestDeleteAgent_WorktreePrecondition(t *testing.T) {
 		f := newFlow(t)
 
 		const conv = "wtpu-1111-2222-3333-4444"
-		const cwd = "/tmp/wt-unexpected-precondition"
+		cwd := f.TestCwd("wt-unexpected-precondition")
 		f.HaveConvWithTitle(conv, "guarded-worker")
 		f.HaveAliveSession(conv, "spwn-wtpu", "tmux-wtpu", cwd)
 		f.MarkOffline("tmux-wtpu")
@@ -776,7 +776,7 @@ func TestCleanup_Agents_DeleteRetiredAgent(t *testing.T) {
 	const conv = "retd-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "demoted-worker")
 	f.HaveRetiredAgent(conv)
-	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", "/tmp/retd")
+	f.HaveAliveSession(conv, "spwn-retd", "tmux-retd", f.TestCwd("retd"))
 	f.MarkOffline("tmux-retd")
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -798,7 +798,7 @@ func TestCleanup_Agents_DeletePlainConversation(t *testing.T) {
 
 	const conv = "plan-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "just-a-chat")
-	f.HaveAliveSession(conv, "spwn-plan", "tmux-plan", "/tmp/plan")
+	f.HaveAliveSession(conv, "spwn-plan", "tmux-plan", f.TestCwd("plan"))
 	f.MarkOffline("tmux-plan")
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -881,7 +881,7 @@ func TestCleanup_Agents_IncludeOnlineDeletesRunning(t *testing.T) {
 
 	const conv = "live-1111-2222-3333-4444"
 	f.HaveConvWithTitle(conv, "running-chat")
-	f.HaveAliveSession(conv, "spwn-live", "tmux-live", "/tmp/live")
+	f.HaveAliveSession(conv, "spwn-live", "tmux-live", f.TestCwd("live"))
 
 	mux := agentd.BuildDashboardHandlerForTest()
 
@@ -912,9 +912,9 @@ func TestCleanup_Agents_MixedCategoriesDelete(t *testing.T) {
 	f.HaveConvWithTitle(plain, "plain-one")
 	f.HaveEnrolledAgent(active)
 	f.HaveRetiredAgent(retired)
-	f.HaveAliveSession(active, "spwn-amix", "tmux-amix", "/tmp/amix")
-	f.HaveAliveSession(retired, "spwn-rmix", "tmux-rmix", "/tmp/rmix")
-	f.HaveAliveSession(plain, "spwn-pmix", "tmux-pmix", "/tmp/pmix")
+	f.HaveAliveSession(active, "spwn-amix", "tmux-amix", f.TestCwd("amix"))
+	f.HaveAliveSession(retired, "spwn-rmix", "tmux-rmix", f.TestCwd("rmix"))
+	f.HaveAliveSession(plain, "spwn-pmix", "tmux-pmix", f.TestCwd("pmix"))
 	f.MarkOffline("tmux-amix")
 	f.MarkOffline("tmux-rmix")
 	f.MarkOffline("tmux-pmix")

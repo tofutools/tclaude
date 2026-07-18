@@ -40,8 +40,8 @@ func TestAgentBranch_SurfacedAcrossListings(t *testing.T) {
 	}
 
 	f.HaveGroup("squad")
-	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", "/tmp/wt/login", wantBranch[aliceConv])
-	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", "/tmp/wt/crash", wantBranch[bobConv])
+	f.HaveAliveSessionOnBranch(aliceConv, "spwn-alice", "tmux-alice", f.TestCwd("wt/login"), wantBranch[aliceConv])
+	f.HaveAliveSessionOnBranch(bobConv, "spwn-bob", "tmux-bob", f.TestCwd("wt/crash"), wantBranch[bobConv])
 	f.HaveMember("squad", aliceConv)
 	f.HaveMember("squad", bobConv)
 
@@ -119,7 +119,7 @@ func TestAgentBranch_LastWinsAfterMidSessionSwitch(t *testing.T) {
 	const conv = "cccccccc-1111-2222-3333-444444444444"
 
 	f.HaveGroup("squad")
-	f.HaveAliveSessionOnBranch(conv, "spwn-x", "tmux-x", "/tmp/wt/x", "main")
+	f.HaveAliveSessionOnBranch(conv, "spwn-x", "tmux-x", f.TestCwd("wt/x"), "main")
 	f.HaveMember("squad", conv)
 
 	// First scan: the agent is still on the branch it started on, so

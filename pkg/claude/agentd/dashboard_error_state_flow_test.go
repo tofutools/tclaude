@@ -36,9 +36,9 @@ func TestDashboardSnapshot_ErroredAgentSurfacesErrorState(t *testing.T) {
 	f.HaveConvWithTitle(erroredConv, "errored-worker")
 	f.HaveConvWithTitle(healthyConv, "healthy-worker")
 	f.HaveConvWithTitle(deadConv, "crashed-worker")
-	f.HaveAliveSession(erroredConv, "spwn-errd", "tmux-errd", "/tmp/errd")
-	f.HaveAliveSession(healthyConv, "spwn-okok", "tmux-okok", "/tmp/okok")
-	f.HaveAliveSession(deadConv, "spwn-dead", "tmux-dead", "/tmp/dead")
+	f.HaveAliveSession(erroredConv, "spwn-errd", "tmux-errd", f.TestCwd("errd"))
+	f.HaveAliveSession(healthyConv, "spwn-okok", "tmux-okok", f.TestCwd("okok"))
+	f.HaveAliveSession(deadConv, "spwn-dead", "tmux-dead", f.TestCwd("dead"))
 
 	// All three join a group so they surface in the snapshot.
 	f.HaveGroup("crew")
@@ -50,18 +50,18 @@ func TestDashboardSnapshot_ErroredAgentSurfacesErrorState(t *testing.T) {
 	// behind — Status="error", error_type in status_detail.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-errd", TmuxSession: "tmux-errd", ConvID: erroredConv,
-		Cwd: "/tmp/errd", Status: "error", StatusDetail: "rate_limit",
+		Cwd: f.TestCwd("errd"), Status: "error", StatusDetail: "rate_limit",
 		LastHook: time.Now(),
 	}), "freeze errored session row")
 	// The control: a normal working agent.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-okok", TmuxSession: "tmux-okok", ConvID: healthyConv,
-		Cwd: "/tmp/okok", Status: "working", LastHook: time.Now(),
+		Cwd: f.TestCwd("okok"), Status: "working", LastHook: time.Now(),
 	}), "freeze healthy session row")
 	// The crashed agent: errored, then its tmux session died.
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-dead", TmuxSession: "tmux-dead", ConvID: deadConv,
-		Cwd: "/tmp/dead", Status: "error", StatusDetail: "server_error",
+		Cwd: f.TestCwd("dead"), Status: "error", StatusDetail: "server_error",
 		LastHook: time.Now(),
 	}), "freeze crashed session row")
 	f.MarkOffline("tmux-dead")

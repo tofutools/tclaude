@@ -77,8 +77,8 @@ func TestDashboardGroupRetire_DeleteWorktreeRemovesEach(t *testing.T) {
 	const group = "wt-batch"
 	const convA = "bwaa-1111-2222-3333-4444"
 	const convB = "bwbb-1111-2222-3333-4444"
-	const cwdA = "/tmp/bw-a"
-	const cwdB = "/tmp/bw-b"
+	cwdA := f.TestCwd("bw-a")
+	cwdB := f.TestCwd("bw-b")
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "wt-worker-a")
 	f.HaveConvWithTitle(convB, "wt-worker-b")
@@ -120,7 +120,7 @@ func TestDashboardGroupRetire_NoDeleteWorktreeLeavesUntouched(t *testing.T) {
 
 	const group = "wt-none"
 	const conv = "bwnn-1111-2222-3333-4444"
-	const cwd = "/tmp/bw-none"
+	cwd := f.TestCwd("bw-none")
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(conv, "kept-wt")
 	f.HaveAliveSession(conv, "spwn-bwnn", "tmux-bwnn", cwd)
@@ -156,9 +156,9 @@ func TestDashboardGroupRetire_DeleteWorktreeKeepsMainAndShared(t *testing.T) {
 	const onMain = "bwsm-1111-2222-3333-4444"  // cwd is the main repo → kept
 	const sharer = "bwsh-1111-2222-3333-4444"  // shares with a survivor → kept
 	const survive = "bwsv-1111-2222-3333-4444" // NOT selected; keeps sharer's worktree alive
-	const cwdLinked = "/tmp/bw-linked"
-	const cwdMain = "/tmp/bw-main"
-	const cwdShared = "/tmp/bw-shared"
+	cwdLinked := f.TestCwd("bw-linked")
+	cwdMain := f.TestCwd("bw-main")
+	cwdShared := f.TestCwd("bw-shared")
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(linked, "linked-worker")
 	f.HaveConvWithTitle(onMain, "main-worker")
@@ -221,7 +221,7 @@ func TestDashboardGroupRetire_DeleteWorktreeBothShareKept(t *testing.T) {
 	const group = "wt-coshare"
 	const convA = "bwca-1111-2222-3333-4444"
 	const convB = "bwcb-1111-2222-3333-4444"
-	const shared = "/tmp/bw-coshare"
+	shared := f.TestCwd("bw-coshare")
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(convA, "co-a")
 	f.HaveConvWithTitle(convB, "co-b")
@@ -262,11 +262,11 @@ func TestGroupRetire_V1DeleteWorktreeQuery(t *testing.T) {
 	const group = "wt-v1"
 	const caller = "bwvc-1111-2222-3333-4444"
 	const worker = "bwvw-1111-2222-3333-4444"
-	const cwd = "/tmp/bw-v1"
+	cwd := f.TestCwd("bw-v1")
 	f.HaveGroup(group)
 	f.HaveConvWithTitle(caller, "coordinator")
 	f.HaveConvWithTitle(worker, "v1-worker")
-	f.HaveAliveSession(caller, "spwn-bwvc", "tmux-bwvc", "/tmp/bwvc")
+	f.HaveAliveSession(caller, "spwn-bwvc", "tmux-bwvc", f.TestCwd("bwvc"))
 	f.HaveAliveSession(worker, "spwn-bwvw", "tmux-bwvw", cwd)
 	f.HaveMember(group, caller)
 	f.HaveMember(group, worker)
@@ -292,5 +292,5 @@ func TestGroupRetire_V1DeleteWorktreeQuery(t *testing.T) {
 	// The caller never retires (or sweeps) itself.
 	_, _, _, callerHasWt := resp.member(caller)
 	assert.False(t, callerHasWt, "the caller is skipped:self — no worktree action")
-	assert.False(t, fw.wasRemoved("/tmp/bwvc"), "the caller's own dir must never be swept")
+	assert.False(t, fw.wasRemoved(f.TestCwd("bwvc")), "the caller's own dir must never be swept")
 }

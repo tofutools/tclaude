@@ -76,7 +76,7 @@ func TestDashboardSnapshot_DisplayFactorScalesCost(t *testing.T) {
 	f := newFlow(t)
 	const conv = "fsnp-1111-2222-3333-4444"
 	const label = "spwn-fsnp"
-	f.HaveAliveSession(conv, label, "tmux-fsnp", "/tmp/fsnp")
+	f.HaveAliveSession(conv, label, "tmux-fsnp", f.TestCwd("fsnp"))
 	f.HaveEnrolledAgent(conv)
 	seedAgentCostSession(t, label, conv, 1.37)
 
