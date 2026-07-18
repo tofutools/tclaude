@@ -274,15 +274,16 @@ func (g *exitLaunchGuard) release() error {
 	if g == nil || !g.enabled {
 		return nil
 	}
-	if err := db.MarkSessionExitLaunchReleased(g.sessionID, g.generation); err != nil {
+	releasingDurable := true
+	if err := db.MarkSessionExitLaunchReleasing(g.sessionID, g.generation); err != nil {
+		releasingDurable = false
 		if fallbackErr := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); fallbackErr != nil {
-			slog.Warn("exit audit: launch release state unavailable; continuing launch",
+			slog.Warn("exit audit: launch releasing state unavailable; continuing launch",
 				"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 		}
 	}
-	// Make the durable phase visible before the pane can pass the file gate.
-	// Otherwise a very short-lived runtime could callback while the row still
-	// says pending and be misclassified as a pre-harness launch failure.
+	// Publish only after the durable state is conservatively non-runtime. A
+	// hard parent death before acknowledgement therefore remains unverified.
 	if err := writeExistingExitLaunchGate(g.barrierPath, "go"); err != nil {
 		g.restorePreHarnessState()
 		return fmt.Errorf("release exit-launch barrier: %w", err)
@@ -290,6 +291,17 @@ func (g *exitLaunchGuard) release() error {
 	if err := g.waitForPaneGateAck(); err != nil {
 		g.restorePreHarnessState()
 		return fmt.Errorf("confirm exit-launch barrier release: %w", err)
+	}
+	if releasingDurable {
+		if err := db.MarkSessionExitLaunchReleased(g.sessionID, g.generation); err != nil {
+			if fallbackErr := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); fallbackErr != nil {
+				slog.Warn("exit audit: acknowledged launch release state unavailable; continuing launch",
+					"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
+			}
+		}
+	} else if err := db.MarkSessionExitLaunchUngated(g.sessionID, g.generation); err != nil {
+		slog.Warn("exit audit: acknowledged ungated launch state unavailable",
+			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 	}
 	g.released = true
 	return nil

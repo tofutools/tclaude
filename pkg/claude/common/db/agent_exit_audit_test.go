@@ -29,6 +29,7 @@ func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 	require.NoError(t, SetSessionExitLaunchGeneration("spwn-exit", generation))
 	require.NoError(t, SetSessionExitLaunchBinding(
 		"spwn-exit", generation, strings.Repeat("b", 64), "%7"))
+	require.NoError(t, MarkSessionExitLaunchReleasing("spwn-exit", generation))
 	require.NoError(t, MarkSessionExitLaunchReleased("spwn-exit", generation))
 
 	first, err := RecordAgentExitObservation(AgentExitObservation{
@@ -160,6 +161,7 @@ func TestAgentExitAudit_CallbackCanEnrichHookRace(t *testing.T) {
 	require.NoError(t, SetSessionExitLaunchGeneration("spwn-race", generation))
 	require.NoError(t, SetSessionExitLaunchBinding(
 		"spwn-race", generation, strings.Repeat("d", 64), "%21"))
+	require.NoError(t, MarkSessionExitLaunchReleasing("spwn-race", generation))
 	require.NoError(t, MarkSessionExitLaunchReleased("spwn-race", generation))
 
 	code := 143

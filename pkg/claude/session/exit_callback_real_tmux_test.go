@@ -145,7 +145,10 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 				require.NoError(t, err)
 				pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
 				require.NoError(t, err)
-				require.NoError(t, syscall.Kill(pid, tc.signalPane))
+				pgid, err := syscall.Getpgid(pid)
+				require.NoError(t, err)
+				require.NotEqual(t, syscall.Getpgrp(), pgid, "pane process group must be isolated from the test runner")
+				require.NoError(t, syscall.Kill(-pgid, tc.signalPane))
 			}
 			waitForFile(t, marker)
 			evidence, err := InspectDeadTmuxSessionPane(name)
@@ -194,6 +197,7 @@ func TestRealTmuxAuthenticatedPaneDiedCallbackRecordsExactlyOnce(t *testing.T) {
 	hash := sha256.Sum256([]byte(token))
 	require.NoError(t, db.SetSessionExitLaunchBinding(
 		sessionID, generation, hex.EncodeToString(hash[:]), paneID))
+	require.NoError(t, db.MarkSessionExitLaunchReleasing(sessionID, generation))
 	require.NoError(t, db.MarkSessionExitLaunchReleased(sessionID, generation))
 
 	marker := filepath.Join(t.TempDir(), "authenticated-callback")
@@ -260,7 +264,7 @@ func TestRealTmuxLaunchWrapperChildSignalsAreExitCodesNotPaneSignals(t *testing.
 		name := fmt.Sprintf("tcl573-child-%d", tc.code)
 		script := filepath.Join(t.TempDir(), "launch-wrapper.sh")
 		require.NoError(t, os.WriteFile(script,
-			[]byte("#!/bin/sh\nsleep 30\nstatus=$?\nexit $status\n"), 0o700))
+			[]byte("#!/bin/sh\nsleep 30 &\nchild=$!\nwait \"$child\"\nstatus=$?\nexit $status\n"), 0o700))
 		paneCommand := "exec /bin/sh " + clcommon.ShellQuoteArg(script)
 		require.NoError(t, tmux.Command("new-session", "-d", "-s", name, paneCommand).Run())
 		requireNativePaneDied(t, tmux)

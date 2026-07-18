@@ -31,6 +31,7 @@ const (
 	AgentExitLaunchPhasePreHarness        = "pre-harness"
 	AgentExitLaunchPhaseUnverified        = "unverified"
 	SessionExitGatePending                = "pending"
+	SessionExitGateReleasing              = "releasing"
 	SessionExitGateReleased               = "released"
 	SessionExitGateUngated                = "ungated"
 )
@@ -214,6 +215,30 @@ func ClearSessionExitLaunchBinding(sessionID, generation string) error {
 	return err
 }
 
+func MarkSessionExitLaunchReleasing(sessionID, generation string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE sessions SET exit_launch_gate_state = ?
+		WHERE id = ? AND exit_callback_generation = ? AND exit_launch_gate_state = ?`,
+		SessionExitGateReleasing, sessionID, generation, SessionExitGatePending)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("mark exit launch releasing: stale generation or state")
+	}
+	return nil
+}
+
+// MarkSessionExitLaunchReleased may only follow the pane's atomic gate
+// acknowledgement. Keeping this transition releasing-only prevents any
+// production caller from claiming runtime before the pane crossed the gate.
 func MarkSessionExitLaunchReleased(sessionID, generation string) error {
 	d, err := Open()
 	if err != nil {
@@ -221,7 +246,7 @@ func MarkSessionExitLaunchReleased(sessionID, generation string) error {
 	}
 	res, err := d.Exec(`UPDATE sessions SET exit_launch_gate_state = ?
 		WHERE id = ? AND exit_callback_generation = ? AND exit_launch_gate_state = ?`,
-		SessionExitGateReleased, sessionID, generation, SessionExitGatePending)
+		SessionExitGateReleased, sessionID, generation, SessionExitGateReleasing)
 	if err != nil {
 		return err
 	}
@@ -471,6 +496,12 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 	case SessionExitGatePending:
 		o.LaunchPhase = AgentExitLaunchPhasePreHarness
 		o.CauseKind = AgentExitCauseLaunch
+	case SessionExitGateReleasing:
+		// The parent has begun release but has not durably observed the
+		// pane's gate acknowledgement. A hard parent death may mean either
+		// side of the crossing, so neither runtime nor launch failure is safe.
+		o.LaunchPhase = AgentExitLaunchPhaseUnverified
+		o.CauseKind = AgentExitCauseUnknown
 	default:
 		o.LaunchPhase = AgentExitLaunchPhaseUnverified
 	}

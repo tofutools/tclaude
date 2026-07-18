@@ -158,7 +158,7 @@ func TestExitLaunchGuard_PaneLocalHookThenDurableBindingBeforeRelease(t *testing
 	assert.Equal(t, guard.tokenHash, durableHash)
 	assert.NotEqual(t, plainToken, durableHash, "durable state contains only the token hash")
 	assert.Equal(t, db.SessionExitGateReleased, gateState,
-		"runtime release state is durable before the pane crosses the file gate")
+		"runtime release state is durable only after the pane acknowledges the file gate")
 }
 
 func TestExitLaunchGuard_FileReleaseFailureRestoresPreHarnessState(t *testing.T) {
@@ -273,6 +273,71 @@ func TestExitLaunchGuard_FinalPendingReadRaceCannotReportFalseSuccess(t *testing
 	assert.Equal(t, db.SessionExitGatePending, identity.GateState)
 }
 
+func TestExitLaunchGuard_HardParentDeathBeforePublicationNeverAuditsRuntime(t *testing.T) {
+	fake := &exitCallbackTmux{paneID: "%24"}
+	setupExitCallbackTest(t, fake)
+	const generation = "24242424242424242424242424242424"
+	const sessionID = "spwn-parent-death"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: sessionID, TmuxSession: "tmux-parent-death", ConvID: "conv-parent-death",
+		Status: StatusIdle, Created: time.Now(),
+	}, generation, db.SessionExitGatePending))
+	guard, err := newExitLaunchGuard(sessionID, "tmux-parent-death", generation)
+	require.NoError(t, err)
+	defer guard.abort()
+	require.Error(t, db.MarkSessionExitLaunchReleased(sessionID, generation),
+		"released cannot bypass pane acknowledgement from pending")
+	require.NoError(t, db.MarkSessionExitLaunchReleasing(sessionID, generation))
+
+	marker := filepath.Join(t.TempDir(), "harness-started")
+	wrapped := strings.Replace(guard.wrap("printf started > "+clcommon.ShellQuoteArg(marker)),
+		"-lt "+strconv.Itoa(exitLaunchBarrierPolls), "-lt 1", 1)
+	err = exec.Command("sh", "-c", wrapped).Run()
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 125, exitErr.ExitCode())
+	require.NoFileExists(t, marker)
+
+	code := 125
+	_, err = db.RecordAgentExitObservation(db.AgentExitObservation{
+		SessionID: sessionID, TmuxSession: "tmux-parent-death",
+		Observer: db.AgentExitObserverReconcile, CauseKind: db.AgentExitCauseNormal,
+		ExitCode: &code, ObservedState: StatusExited, ExpectedGeneration: generation,
+	})
+	require.NoError(t, err)
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, db.AgentExitLaunchPhaseUnverified, rows[0].LaunchPhase)
+	assert.Equal(t, db.AgentExitCauseUnknown, rows[0].CauseKind)
+	assert.NotEqual(t, db.AgentExitLaunchPhaseRuntime, rows[0].LaunchPhase)
+	assert.NotEqual(t, db.AgentExitCauseNormal, rows[0].CauseKind)
+}
+
+func TestExitLaunchGuard_UltraShortObservationBeforeReleasedIsUnverified(t *testing.T) {
+	fake := &exitCallbackTmux{paneID: "%25"}
+	setupExitCallbackTest(t, fake)
+	const generation = "25252525252525252525252525252525"
+	const sessionID = "spwn-ultra-short"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: sessionID, TmuxSession: "tmux-ultra-short", ConvID: "conv-ultra-short",
+		Status: StatusIdle, Created: time.Now(),
+	}, generation, db.SessionExitGatePending))
+	require.NoError(t, db.MarkSessionExitLaunchReleasing(sessionID, generation))
+	zero := 0
+	_, err := db.RecordAgentExitObservation(db.AgentExitObservation{
+		SessionID: sessionID, TmuxSession: "tmux-ultra-short",
+		Observer: db.AgentExitObserverReconcile, CauseKind: db.AgentExitCauseNormal,
+		ExitCode: &zero, ObservedState: StatusExited, ExpectedGeneration: generation,
+	})
+	require.NoError(t, err)
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, db.AgentExitLaunchPhaseUnverified, rows[0].LaunchPhase)
+	assert.Equal(t, db.AgentExitCauseUnknown, rows[0].CauseKind)
+}
+
 func TestRunExitCallback_VerifiesDeadPaneAndRejectsReplay(t *testing.T) {
 	fake := &exitCallbackTmux{
 		paneID: "%9", deadOutput: "tmux-callback|%9|1||TERM|11111111111111111111111111111111",
@@ -288,6 +353,7 @@ func TestRunExitCallback_VerifiesDeadPaneAndRejectsReplay(t *testing.T) {
 	require.NoError(t, db.SetSessionExitLaunchGeneration("spwn-callback", generation))
 	require.NoError(t, db.SetSessionExitLaunchBinding(
 		"spwn-callback", generation, hex.EncodeToString(hash[:]), "%9"))
+	require.NoError(t, db.MarkSessionExitLaunchReleasing("spwn-callback", generation))
 	require.NoError(t, db.MarkSessionExitLaunchReleased("spwn-callback", generation))
 	p := exitCallbackParams{
 		SessionID: "spwn-callback", TmuxSession: "tmux-callback", PaneID: "%9",
@@ -358,6 +424,7 @@ func TestRunExitCallback_CleanupFailureKeepsRecordedEvidence(t *testing.T) {
 	require.NoError(t, db.SetSessionExitLaunchGeneration("spwn-cleanup-fail", generation))
 	require.NoError(t, db.SetSessionExitLaunchBinding(
 		"spwn-cleanup-fail", generation, hex.EncodeToString(hash[:]), "%18"))
+	require.NoError(t, db.MarkSessionExitLaunchReleasing("spwn-cleanup-fail", generation))
 	require.NoError(t, db.MarkSessionExitLaunchReleased("spwn-cleanup-fail", generation))
 
 	err := runExitCallback(exitCallbackParams{
@@ -397,6 +464,7 @@ func TestRunExitCallback_AuditFailureLeavesPaneForBoundedRecovery(t *testing.T) 
 	require.NoError(t, db.SetSessionExitLaunchGeneration("spwn-audit-fail", generation))
 	require.NoError(t, db.SetSessionExitLaunchBinding(
 		"spwn-audit-fail", generation, hex.EncodeToString(hash[:]), "%19"))
+	require.NoError(t, db.MarkSessionExitLaunchReleasing("spwn-audit-fail", generation))
 	require.NoError(t, db.MarkSessionExitLaunchReleased("spwn-audit-fail", generation))
 	d, err := db.Open()
 	require.NoError(t, err)
