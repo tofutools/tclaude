@@ -486,7 +486,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-instantiate-dialog",
 		"body.wizard .process-param-dialog",
 		"body.wizard .process-instantiate-dialog",
-		".process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus)",
+		`.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus):not([aria-invalid="true"])`,
 		`.process-editor-modal .process-editor-field input[aria-invalid="true"]`,
 		".process-editor-modal .process-editor-field input:disabled",
 		".process-editor-modal .process-editor-field input:-webkit-autofill",

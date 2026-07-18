@@ -12247,8 +12247,8 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
      the interaction states that process dialogs need without repainting
      unrelated dashboard fields. */
   --process-control-bg: #0d1117;
-  --process-control-border: #30363d;
-  --process-control-border-hover: #484f58;
+  --process-control-border: #6e7681;
+  --process-control-border-hover: #8b949e;
   --process-control-text: #e6edf3;
   --process-control-muted: #8b949e;
   --process-control-focus: #58a6ff;
@@ -12268,7 +12268,7 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-editor-modal .process-editor-field input::placeholder {
   color: var(--process-control-muted); opacity: 1;
 }
-.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus) {
+.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus):not([aria-invalid="true"]) {
   border-color: var(--process-control-border-hover);
 }
 .process-editor-modal .process-editor-field input:focus { border-color: var(--process-control-focus); outline: none; }
@@ -12673,8 +12673,8 @@ body.wizard .process-editor-modal .modal {
 }
 body.wizard .process-editor-modal {
   --process-control-bg: #181226;
-  --process-control-border: #6d5695;
-  --process-control-border-hover: #8b73b5;
+  --process-control-border: #8b73b5;
+  --process-control-border-hover: #a28bd4;
   --process-control-text: #f3e6c0;
   --process-control-muted: #b39ddb;
   --process-control-focus: #d4af37;

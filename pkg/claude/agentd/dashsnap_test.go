@@ -1478,20 +1478,30 @@ func baseStates() []dashsnap.State {
   var rgb=function(value){var parts=(value.match(/[\d.]+/g)||[]).slice(0,3).map(Number);if(parts.length!==3) throw new Error('unparseable color '+value);return parts;};
   var luminance=function(value){return rgb(value).map(function(channel){channel/=255;return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4);}).reduce(function(total,channel,index){return total+channel*[.2126,.7152,.0722][index];},0);};
   window.__snippetContrast=function(a,b){var x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
-  var style=getComputedStyle(input),placeholder=getComputedStyle(input,'::placeholder');
-  if(style.backgroundColor==='rgb(255, 255, 255)'||style.backgroundColor==='rgba(0, 0, 0, 0)') throw new Error('snippet field fell back to UA background');
-  if(window.__snippetContrast(style.color,style.backgroundColor)<4.5) throw new Error('snippet field text contrast below 4.5:1');
-  if(window.__snippetContrast(placeholder.color,style.backgroundColor)<4.5) throw new Error('snippet placeholder contrast below 4.5:1');
-  window.__snippetNormalBorder=style.borderColor;`},
+	var style=getComputedStyle(input),placeholder=getComputedStyle(input,'::placeholder');
+	if(style.backgroundColor==='rgb(255, 255, 255)'||style.backgroundColor==='rgba(0, 0, 0, 0)') throw new Error('snippet field fell back to UA background');
+	if(window.__snippetContrast(style.color,style.backgroundColor)<4.5) throw new Error('snippet field text contrast below 4.5:1');
+	if(window.__snippetContrast(placeholder.color,style.backgroundColor)<4.5) throw new Error('snippet placeholder contrast below 4.5:1');
+	if(window.__snippetContrast(style.borderColor,style.backgroundColor)<3||window.__snippetContrast(style.borderColor,getComputedStyle(modal).backgroundColor)<3) throw new Error('snippet normal boundary contrast below 3:1');
+	window.__snippetModalBackground=getComputedStyle(modal).backgroundColor;
+	window.__snippetNormalBorder=style.borderColor;`},
 				{Kind: "move-to-at", JS: `var r=document.querySelector('#process-snippet-name-input').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`, Steps: 3},
 				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input');
-  if(getComputedStyle(input).borderColor===window.__snippetNormalBorder) throw new Error('snippet field hover affordance missing');`},
+	var style=getComputedStyle(input);
+	if(style.borderColor===window.__snippetNormalBorder) throw new Error('snippet field hover affordance missing');
+	if(window.__snippetContrast(style.borderColor,style.backgroundColor)<3||window.__snippetContrast(style.borderColor,window.__snippetModalBackground)<3) throw new Error('snippet hover boundary contrast below 3:1');`},
 				{Kind: "click", Selector: "#process-snippet-name-input"},
 				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input'),style=getComputedStyle(input),modal=getComputedStyle(document.querySelector('#process-snippet-name-modal .modal'));
   if(document.activeElement!==input||style.outlineStyle==='none'||parseFloat(style.outlineWidth)<2) throw new Error('snippet focus-visible ring missing');
   if(window.__snippetContrast(style.outlineColor,modal.backgroundColor)<3) throw new Error('snippet focus ring contrast below 3:1');`},
 				{Kind: "input", Selector: "#process-snippet-name-input", Text: "Release review Release review Release review Release review Release review Release review Release review"},
 				{Kind: "click", Selector: "#process-snippet-name-modal .primary"},
+				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input'),error=document.querySelector('#process-snippet-name-error');
+	if(document.activeElement===input||input.getAttribute('aria-invalid')!=='true'||!error.textContent.includes('80 characters')) throw new Error('blurred snippet invalid state missing');
+	window.__snippetInvalidBorder=getComputedStyle(input).borderColor;`},
+				{Kind: "move-to-at", JS: `var r=document.querySelector('#process-snippet-name-input').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`, Steps: 3},
+				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input');
+	if(getComputedStyle(input).borderColor!==window.__snippetInvalidBorder) throw new Error('hover overrode the blurred snippet invalid border');`},
 				{Kind: "click", Selector: "#process-snippet-name-input"},
 				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input'),error=document.querySelector('#process-snippet-name-error'),style=getComputedStyle(input),errorStyle=getComputedStyle(error),modal=getComputedStyle(document.querySelector('#process-snippet-name-modal .modal'));
 	if(input.getAttribute('aria-invalid')!=='true'||!error.textContent.includes('80 characters')) throw new Error('snippet invalid/inline-error state missing');
