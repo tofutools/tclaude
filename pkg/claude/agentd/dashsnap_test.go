@@ -12,13 +12,17 @@ package agentd_test
 // launches a browser. That env gate (rather than a build tag) is deliberate: it
 // keeps rod a normal, tidy-stable test dependency reached only through the
 // dashsnap package, while `go list -deps ./` (the tclaude binary) stays free of
-// rod. Run it explicitly:
+// rod. The full matrix takes on the order of ten minutes, so the canonical
+// invocation shards it (each shard is a deterministic round-robin subset; run
+// 1/4 through 4/4 to cover everything, or drop the shard variable with
+// -timeout 1800s for one full run):
 //
-//	TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s
+//	TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_SHARD=1/4 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 600s
 //
-// Output: dashsnap-out/<timestamp>/ (gitignored) with one PNG per state + an
-// index.html contact sheet. See pkg/claude/agentd/dashsnap/dashsnap.go for the
-// runtime prerequisites (system Chrome, --no-sandbox, the harmless stderr noise).
+// Output: dashsnap-out/<timestamp><shard-suffix>/ (gitignored) with one PNG per
+// state + an index.html contact sheet. See pkg/claude/agentd/dashsnap/dashsnap.go
+// for the runtime prerequisites (system Chrome, --no-sandbox, the harmless
+// stderr noise).
 
 import (
 	"errors"
@@ -59,8 +63,6 @@ func TestDashSnap(t *testing.T) {
 	srv := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
 	defer srv.Close()
 
-	// Millisecond granularity so two runs in the same second don't overwrite.
-	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000"))
 	states := dashSnapStates()
 	// Every visual state also proves that the production shell island claimed
 	// and rendered its hosts through the embedded Preact + Signals graph.
@@ -84,6 +86,27 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 		}
 		states = filtered
 	}
+	// TCLAUDE_DASHSNAP_SHARD=i/n bounds one invocation to a deterministic
+	// round-robin slice of the (filtered) matrix, so each documented command
+	// finishes within a predictable budget while the shards together cover
+	// every state.
+	matrixSize := len(states)
+	shard, err := dashsnap.ParseShard(os.Getenv("TCLAUDE_DASHSNAP_SHARD"))
+	if err != nil {
+		t.Fatalf("TCLAUDE_DASHSNAP_SHARD: %v", err)
+	}
+	states = shard.Pick(states)
+	if len(states) == 0 {
+		t.Fatalf("TCLAUDE_DASHSNAP_SHARD %d/%d selects no states (only %d after filtering)",
+			shard.Index, shard.Total, matrixSize)
+	}
+	if shard.Enabled() {
+		t.Logf("dashsnap: shard %d/%d — capturing %d of %d states", shard.Index, shard.Total, len(states), matrixSize)
+	}
+
+	// Millisecond granularity so two runs in the same second don't overwrite;
+	// the shard suffix keeps concurrent shard outputs apart even then.
+	outDir := filepath.Join(dashSnapOutRoot(t), time.Now().Format("20060102-150405.000")+shard.Suffix())
 	shots, err := dashsnap.Capture(dashsnap.Config{
 		BaseURL: srv.URL,
 		OutDir:  outDir,
@@ -95,15 +118,17 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 
 	sheet := filepath.Join(outDir, "index.html")
 	var failed []string
+	var elapsed time.Duration
 	for _, s := range shots {
 		status := "ok"
 		if s.Err != "" {
 			status = "FAIL: " + s.Err
 			failed = append(failed, s.State.Key)
 		}
-		t.Logf("  [%-18s] %s", s.State.Key, status)
+		elapsed += s.Elapsed
+		t.Logf("  [%-18s] %5.1fs %s", s.State.Key, s.Elapsed.Seconds(), status)
 	}
-	t.Logf("dashsnap: %d states, %d failed", len(shots), len(failed))
+	t.Logf("dashsnap: %d states, %d failed, captured in %s", len(shots), len(failed), elapsed.Round(time.Second))
 	t.Logf("contact sheet: file://%s", sheet)
 
 	if len(failed) > 0 {
