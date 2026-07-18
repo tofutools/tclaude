@@ -293,26 +293,22 @@ profile tier you didn't intend, re-spawn with the explicit flag.
 
 Agent callers are also bound by **approval lineage** after the whole profile
 stack resolves: a child may not automatically accept a broader class of
-commands than its parent. The capability matrix is:
+commands than its parent. Claude `plan`/`default`/`dontAsk` and Codex
+`untrusted` are baseline postures. Claude `acceptEdits` adds automatic edits;
+Claude `auto` and Codex `never`/`on-request`/`on-failure` add unattended
+in-sandbox commands; Codex auto-review is a separate boundary-review
+capability; Claude `bypassPermissions` is the only unreviewed posture.
 
-- non-bypass Claude modes (`inherit`, `plan`, `default`, `dontAsk`,
-  `acceptEdits`, and `auto`) may not delegate a child;
-- Codex `untrusted` without auto-review may spawn only the same posture;
-- Codex `on-failure`, `on-request`, or `never` without active classifier review
-  may spawn Codex without active classifier review;
-- Codex `untrusted` with active classifier review may spawn `untrusted` Codex
-  with the classifier on or off;
-- Codex `on-failure` or `on-request` with active classifier review may spawn
-  any Codex posture;
-- Claude `bypassPermissions` may spawn any posture.
+Claude `inherit` is unknown, so the guard uses dual bounds: as a parent it gets
+only the proven baseline; as a child it is charged the broadest non-bypass
+shape. The one compatibility exception is exact Claude `inherit` → `inherit`,
+which preserves the same operator-owned live posture. Thus an `inherit` parent
+cannot mint explicit Claude `auto` or Codex unattended execution, while a Codex
+`never` parent can still spawn Claude `auto` because both hold the same
+in-sandbox execution capability.
 
-`acceptEdits` and classifier review are intentionally incomparable: each can
-automatically approve actions the other may reject. Only an explicitly
-`bypassPermissions` Claude parent may delegate any child, because Claude also
-loads permission rules, hooks, and sandbox settings from files the parent may
-write in the child cwd. Codex is not treated as a baseline workaround: it
-automatically executes actions inside its OS sandbox that non-bypass Claude
-modes may still prompt for, deny, or classify. A refusal is
+`acceptEdits` and classifier review remain intentionally incomparable: each can
+automatically approve actions the other may reject. A refusal is
 `403 approval_restricted`. Do not work around it by selecting another harness;
 choose a contained posture, or ask the human to spawn the child when broader
 authority is genuinely intended. A human spawn remains the trust-root bypass.

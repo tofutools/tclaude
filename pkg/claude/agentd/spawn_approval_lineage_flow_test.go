@@ -30,8 +30,9 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 		{"codex guardian can mint claude auto", harness.CodexName, harness.ApprovalOnRequest, true, harness.DefaultName, "auto", false, http.StatusOK},
 		{"codex guardian can mint accept edits", harness.CodexName, harness.ApprovalOnRequest, true, harness.DefaultName, "acceptEdits", false, http.StatusOK},
 		{"claude inherit can mint identical inherit", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, harness.ClaudePermissionInherit, false, http.StatusOK},
-		{"claude inherit can mint claude auto", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, "auto", false, http.StatusOK},
-		{"claude inherit can mint codex never", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.CodexName, harness.ApprovalNever, false, http.StatusOK},
+		{"claude inherit can mint proven baseline plan", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, "plan", false, http.StatusOK},
+		{"claude inherit cannot mint explicit claude auto", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, "auto", false, http.StatusForbidden},
+		{"claude inherit cannot mint codex never", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
 		{"claude auto can mint codex never", harness.DefaultName, "auto", false, harness.CodexName, harness.ApprovalNever, false, http.StatusOK},
 
 		// Bypass and unresolvable-inherit children stay gated.

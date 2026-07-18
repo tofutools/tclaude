@@ -687,7 +687,7 @@ unattended — even though both postures are "automatic".
 | Claude `plan` / `default` / `dontAsk` | the same baseline postures, and Codex `untrusted` without auto-review |
 | Claude `acceptEdits` | the above, plus Claude `acceptEdits` |
 | Claude `auto` | the above, plus Claude `auto` and Codex `never` / `on-request` / `on-failure` without auto-review |
-| Claude `inherit` | any posture except `bypassPermissions` |
+| Claude `inherit` | the baseline postures above, plus an exact Claude `inherit` continuation |
 | Claude `bypassPermissions` | any posture |
 | Codex `untrusted`, auto-review off | Codex `untrusted` without auto-review; Claude `plan` / `default` / `dontAsk` |
 | Codex `on-failure` / `on-request` / `never`, auto-review off | the above, plus Codex `never` / `on-request` / `on-failure` without auto-review and Claude `acceptEdits` / `auto` |
@@ -702,17 +702,19 @@ safe unattended posture — may spawn a Claude `auto` child. Conversely, Claude
 reviewer of *boundary escalation* is a capability neither of them holds.
 
 Claude `inherit` is the one posture that cannot be resolved at spawn time: it
-means "whatever the operator's `settings.json` decides, plus the agentd approval
-popup". It is therefore classified as the **broadest non-bypass** posture. Two
-consequences, both deliberate:
+means "whatever the operator's live settings decide, plus the agentd approval
+popup". The guard therefore uses **dual bounds**: an `inherit` parent receives
+only the automatic capability it is proven to hold, while an `inherit` child is
+charged the broadest non-bypass capability it could receive. This prevents an
+unknown parent from minting an explicit `auto`, Codex unattended-execution, or
+guardian posture.
 
-- an `inherit` parent can spawn any provable non-bypass child, so a
-  human-launched agent that was given no explicit permission mode is not
-  spawn-crippled;
-- an `inherit` *child* fails closed under any narrower parent. The denial names
-  the way out — pass an explicit mode such as `auto`. A saved spawn profile
-  meant to represent the ordinary detached-agent posture should therefore
-  persist `auto` rather than `inherit`.
+One narrow compatibility exception keeps recursive Claude work practical: an
+exact `inherit` parent may spawn an exact `inherit` child. That continuation
+preserves the same operator-owned live posture instead of asserting a new
+explicit capability. An `inherit` child under any different/narrower parent
+still fails closed; the denial names an explicit mode that parent can actually
+delegate, when one exists.
 
 ### Known limit: the child's project settings
 
@@ -730,8 +732,10 @@ Code's folder-trust prompt (which does not help in an already-trusted repo). An
 earlier version of this guard blunted it by refusing all delegation from
 non-`bypassPermissions` Claude parents, but that also made every Claude agent
 unable to spawn anything, so the restriction was removed rather than kept as a
-partial mitigation with a large usability cost. Closing it properly means
-constraining the child's setting sources at launch, not comparing modes harder.
+partial mitigation with a large usability cost. Closing it properly requires
+an immutable inherited configuration contract — including trusted MCPs and
+instructions — rather than comparing modes harder or silently dropping the
+operator's configured tools.
 
 For Codex, `untrusted` is more restrictive than the other approval policies:
 without auto-review it asks before every command outside Codex's trusted set.
