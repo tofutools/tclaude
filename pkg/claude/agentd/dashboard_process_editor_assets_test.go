@@ -74,6 +74,23 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	if strings.Contains(editModel, "document.") || strings.Contains(editModel, "fetch(") {
 		t.Error("process-edit-model.js must stay pure (no DOM, no fetch) so Node tests cover the shipped file")
 	}
+	clipboard := read("js/process-editor-clipboard.js")
+	mustContain("process-editor-clipboard.js", clipboard,
+		"export const PROCESS_CLIPBOARD_PREFIX",
+		"export const PROCESS_CLIPBOARD_MAX_BYTES = 256 * 1024",
+		"export function validateProcessSelectionPayload(",
+		"export function createProcessSelectionPayload(",
+		"export function serializeProcessSelection(",
+		"export function parseProcessSelection(",
+		"Clipboard selection contains duplicate edge outcomes.",
+		"Clipboard selection contains an edge with a missing endpoint.",
+		"delete node.next",
+	)
+	for _, banned := range []string{"document.", "fetch(", "navigator.clipboard", "localStorage"} {
+		if strings.Contains(clipboard, banned) {
+			t.Errorf("process-editor-clipboard.js must stay pure and event-agnostic; found %q", banned)
+		}
+	}
 
 	editor := read("js/process-editor.js")
 	connectionFeedback := read("js/process-connection-feedback.js")
@@ -145,8 +162,17 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"addNodeType(payload.type, point)",
 		"duplicateSelection()",
 		"this.model.duplicateNodes(",
+		"onEditorCopy(event)",
+		"onEditorPaste(event)",
+		"event?.isTrusted === false",
+		"event.clipboardData.setData('text/plain', text)",
+		"event.clipboardData.getData('text/plain')",
+		"this.model.insertClipboardSelection(payload",
 		"this.validation?.focusIssue(delta)",
 	)
+	if strings.Contains(editor, "navigator.clipboard") {
+		t.Error("process editor clipboard must use trusted ClipboardEvent data without a permission API flow")
+	}
 	mustContain("process-connection-feedback.js", connectionFeedback,
 		"export function prepareProcessConnectionFeedback(",
 		"export function resolveProcessConnectionFeedback(",
@@ -177,6 +203,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"key=${descriptor.generation}",
 		`class="process-editor-inspector" inert=${pending}`,
 		"discardBufferedChange.current",
+		"onCopy=${(event) => controller.onEditorCopy(event)}",
+		"onPaste=${(event) => controller.onEditorPaste(event)}",
 	)
 	adapter := read("js/process-graph-adapter.js")
 	mustContain("process-graph-adapter.js", adapter,

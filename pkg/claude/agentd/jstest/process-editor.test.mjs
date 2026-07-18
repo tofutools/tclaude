@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProcessTemplateEditor, isProcessEditorFormControl } from '../dashboard/js/process-editor.js';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
+import { parseProcessSelection, serializeProcessSelection } from '../dashboard/js/process-editor-clipboard.js';
 import { diagnosticIdentity, LiveValidation } from '../dashboard/js/process-validation.js';
 
 test('Delete dispatches against the current visible editor selection', () => {
@@ -30,6 +31,157 @@ test('Delete remains native while editing form fields', () => {
     preventDefault() { throw new Error('input delete must not be prevented'); },
   });
   assert.equal(deleted, false);
+});
+
+function clipboardText(id = 'copied') {
+  return serializeProcessSelection({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id, node: { type: 'task', performer: { kind: 'agent', profile: 'implementer' } }, position: { x: 10, y: 20 } }],
+    edges: [],
+  });
+}
+
+test('copy claims native clipboard only after a selected node serializes successfully', () => {
+  const model = new ProcessEditModel({
+    template: { nodes: { build: { type: 'task', name: 'Build' } } },
+    edges: [], layout: { nodes: { build: { x: 10, y: 20 } } },
+  });
+  let copied = '';
+  let prevented = 0;
+  const statuses = [];
+  const fake = {
+    model, selection: { type: 'node', id: 'build' }, modalDispose: null,
+    graph: { layoutSnapshot: () => ({ nodes: [{ id: 'build', x: 12, y: 34 }] }) },
+    pasteFingerprint: 'old', pasteRepeat: 4, pasteAnchor: { x: 1, y: 2 },
+    status: (...args) => statuses.push(args),
+  };
+  const accepted = ProcessTemplateEditor.prototype.onEditorCopy.call(fake, {
+    target: { tagName: 'DIV' },
+    clipboardData: { setData(type, value) { assert.equal(type, 'text/plain'); copied = value; } },
+    preventDefault() { prevented += 1; },
+  });
+  assert.equal(accepted, true);
+  assert.equal(prevented, 1);
+  const copiedPayload = parseProcessSelection(copied);
+  assert.equal(copiedPayload.nodes[0].id, 'build');
+  assert.deepEqual(copiedPayload.nodes[0].node, { type: 'task', name: 'Build' });
+  assert.deepEqual(copiedPayload.nodes[0].position, { x: 12, y: 34 });
+  assert.deepEqual(statuses.at(-1), ['Copied 1 node.']);
+  assert.equal(fake.pasteFingerprint, '');
+  assert.equal(fake.pasteRepeat, 0);
+  assert.equal(fake.pasteAnchor, null);
+
+  fake.selection = { type: 'edge', from: 'build', outcome: 'pass' };
+  assert.equal(ProcessTemplateEditor.prototype.onEditorCopy.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { setData() { assert.fail('no node means no write'); } },
+    preventDefault() { assert.fail('native copy must remain unclaimed'); },
+  }), false);
+});
+
+test('copy and paste remain native in text editors, embedded editors, and open modals', () => {
+  assert.equal(isProcessEditorFormControl({ tagName: 'DIV', isContentEditable: true }), true);
+  assert.equal(isProcessEditorFormControl({
+    tagName: 'SPAN', closest: (selector) => selector.includes('.monaco-editor') ? {} : null,
+  }), true);
+  for (const target of [{ tagName: 'INPUT' }, { tagName: 'DIV', isContentEditable: true }]) {
+    assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call({ modalDispose: null }, {
+      target, clipboardData: { getData() { assert.fail('owned text controls are never inspected'); } },
+      preventDefault() { assert.fail('owned text controls stay native'); },
+    }), false);
+  }
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call({ modalDispose: () => {} }, {
+    target: { tagName: 'DIV' }, clipboardData: { getData() { assert.fail('open modal owns paste'); } },
+    preventDefault() { assert.fail('open modal paste stays native'); },
+  }), false);
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call({ modalDispose: null }, {
+    isTrusted: false, target: { tagName: 'DIV' },
+    clipboardData: { getData() { assert.fail('synthetic events never expose clipboard bytes'); } },
+    preventDefault() { assert.fail('synthetic events remain unclaimed'); },
+  }), false);
+});
+
+test('unrelated paste stays native and sentinel-invalid paste fails atomically with bounded status', () => {
+  let prevented = 0;
+  let status = null;
+  const model = new ProcessEditModel({
+    template: { nodes: { kept: { type: 'task' } } }, edges: [], layout: { nodes: {} },
+  });
+  const selection = { type: 'node', id: 'kept' };
+  const fake = {
+    model, selection, modalDispose: null,
+    status: (...args) => { status = args; },
+  };
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { getData: () => 'ordinary prose' },
+    preventDefault() { prevented += 1; },
+  }), false);
+  assert.equal(prevented, 0);
+  assert.equal(status, null);
+
+  const before = model.saveBody();
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' },
+    clipboardData: { getData: () => 'tclaude-process-selection:v1\n{"kind":"tclaude/process-selection","version":1,"nodes":[' },
+    preventDefault() { prevented += 1; },
+  }), true);
+  assert.equal(prevented, 1);
+  assert.match(status[0], /not valid JSON/);
+  assert.equal(status[0].includes('{"kind"'), false, 'raw clipboard bytes are never surfaced');
+  assert.deepEqual(model.saveBody(), before);
+  assert.equal(model.canUndo, false);
+  assert.equal(fake.selection, selection);
+});
+
+test('valid repeated paste uses fresh ids, one history step each, cascading placement, and focus', async () => {
+  const model = new ProcessEditModel({
+    template: { nodes: { copied: { type: 'task', name: 'Existing' } } }, edges: [],
+    layout: { nodes: { copied: { x: 0, y: 0 } } },
+  });
+  const focused = [];
+  let refreshes = 0;
+  const fake = {
+    model, selection: null, modalDispose: null, pasteFingerprint: '', pasteRepeat: 0, pasteAnchor: null,
+    externalDecisionPending: false, externalReloadPending: false,
+    graph: { focusNode: (id) => focused.push(id) },
+    canvasCenterPoint: () => ({ x: 100, y: 200 }),
+    refresh: () => { refreshes += 1; },
+    setSelection(value) { this.selection = value; },
+    status() {},
+  };
+  const text = clipboardText();
+  const paste = () => ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { getData: () => text }, preventDefault() {},
+  });
+  assert.equal(paste(), true);
+  assert.equal(paste(), true);
+  await Promise.resolve();
+  assert.ok(model.node('copied-2'));
+  assert.ok(model.node('copied-3'));
+  assert.deepEqual(model.layout.nodes['copied-2'], { x: 100, y: 200 });
+  assert.deepEqual(model.layout.nodes['copied-3'], { x: 136, y: 236 });
+  assert.deepEqual(fake.selection, { type: 'node', id: 'copied-3' });
+  assert.deepEqual(focused, ['copied-2', 'copied-3']);
+  assert.equal(model.undoStack.length, 2);
+  assert.equal(refreshes, 2);
+});
+
+test('read-only editor claims a valid sentinel paste but never mutates history or selection', () => {
+  const model = new ProcessEditModel({
+    template: { nodes: { kept: { type: 'task' } } }, edges: [], layout: { nodes: {} },
+  }, { canInsert: false });
+  const selection = { type: 'node', id: 'kept' };
+  let prevented = 0;
+  let status = null;
+  const fake = { model, selection, modalDispose: null, status: (...args) => { status = args; } };
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { getData: () => clipboardText() },
+    preventDefault() { prevented += 1; },
+  }), true);
+  assert.equal(prevented, 1);
+  assert.match(status[0], /read-only/);
+  assert.equal(model.canUndo, false);
+  assert.equal(fake.selection, selection);
+  assert.equal(model.node('copied'), undefined);
 });
 
 test('palette drop and contextual create command share addNodeType', () => {

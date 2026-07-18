@@ -500,6 +500,72 @@ test('duplicateNodes copies semantics, internal edges, placement, and one undo s
   assert.equal(model.edges.some((edge) => edge.from === 'begin-2'), false);
 });
 
+test('clipboard insertion remaps ids and references atomically around the requested center', () => {
+  const model = new ProcessEditModel(view());
+  const payload = {
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'build', node: { type: 'task', name: 'Imported build', performer: { kind: 'agent', profile: 'implementer' } }, position: { x: 100, y: 200 } },
+      { id: 'review', node: { type: 'decision', performer: { kind: 'human', ask: 'Accept?' } }, position: { x: 300, y: 400 } },
+    ],
+    edges: [{ from: 'build', outcome: 'pass', to: 'review' }],
+  };
+  const before = model.saveBody();
+  const idMap = model.insertClipboardSelection(payload, { center: { x: 500, y: 600 } });
+  assert.deepEqual([...idMap], [['build', 'build-2'], ['review', 'review']]);
+  assert.deepEqual(model.node('build-2'), payload.nodes[0].node, 'the complete node definition survives import');
+  assert.deepEqual(model.layout.nodes['build-2'], { x: 400, y: 500 });
+  assert.deepEqual(model.layout.nodes.review, { x: 600, y: 700 });
+  assert.ok(model.edges.some((edge) => edge.from === 'build-2' && edge.outcome === 'pass' && edge.to === 'review'));
+  assert.equal(model.undoStack.length, 1);
+  assert.equal(model.undo(), true);
+  assert.deepEqual(model.saveBody(), before, 'one undo removes the whole pasted subgraph');
+});
+
+test('repeated clipboard insertion deterministically advances ids and placement', () => {
+  const model = new ProcessEditModel(view());
+  const payload = {
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id: 'build', node: { type: 'task', name: 'Imported' }, position: { x: 10, y: 20 } }],
+    edges: [],
+  };
+  const first = model.insertClipboardSelection(payload, { center: { x: 50, y: 60 } });
+  const second = model.insertClipboardSelection(payload, { center: { x: 50, y: 60 }, offset: { x: 36, y: 36 } });
+  assert.equal(first.get('build'), 'build-2');
+  assert.equal(second.get('build'), 'build-3');
+  assert.deepEqual(model.layout.nodes['build-2'], { x: 50, y: 60 });
+  assert.deepEqual(model.layout.nodes['build-3'], { x: 86, y: 96 });
+
+  const longID = 'n'.repeat(128);
+  model.template.nodes[longID] = { type: 'task' };
+  const longMap = model.insertClipboardSelection({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id: longID, node: { type: 'task' }, position: { x: 0, y: 0 } }], edges: [],
+  });
+  assert.equal(longMap.get(longID).length, 128, 'collision suffix stays within the clipboard id bound');
+  assert.match(longMap.get(longID), /-2$/);
+});
+
+test('clipboard insertion revalidates hostile payloads before history or state changes', () => {
+  const model = new ProcessEditModel(view());
+  const payload = {
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id: 'copy', node: { type: 'task' }, position: { x: 0, y: 0 } }],
+    edges: [{ from: 'copy', outcome: 'pass', to: 'missing' }],
+  };
+  const before = model.saveBody();
+  assert.throws(() => model.insertClipboardSelection(payload), /missing endpoint/);
+  assert.deepEqual(model.saveBody(), before);
+  assert.equal(model.canUndo, false);
+
+  payload.edges = [];
+  assert.throws(() => model.insertClipboardSelection(payload, {
+    center: { x: Number.MAX_VALUE, y: 0 },
+  }), /coordinate limits/);
+  assert.deepEqual(model.saveBody(), before);
+  assert.equal(model.canUndo, false);
+});
+
 test('palette data is well-formed: known primitive types, internally consistent snippets', () => {
   const types = new Set(['task', 'decision', 'parallel', 'wait', 'start', 'end']);
   for (const primitive of PALETTE_PRIMITIVES) assert.ok(types.has(primitive.type), primitive.type);

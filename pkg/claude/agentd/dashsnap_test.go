@@ -1368,6 +1368,47 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "process-editor-browser-copy-paste",
+			Title:   "Process editor — trusted selection copy/paste",
+			Caption: "TCL-564 real Chrome input in regular and wizard skins: Ctrl-C writes the selected subgraph through ClipboardEvent data, Ctrl-V imports it twice with remapped internal edges, cascading positions, atomic history, fresh selection, and graph focus.",
+			JS: processEditorStateJS(`window.__browserEd=ed;
+  ed.setSelection({type:'multi',items:[{type:'node',id:'begin'},{type:'node',id:'ship'}]});
+  await editorPaint();
+  var begin=document.querySelector('.process-node[data-node-id="begin"]');
+  if(!begin) throw new Error('clipboard fixture node missing');
+  begin.focus({preventScroll:true});
+  if(document.activeElement!==begin) throw new Error('clipboard fixture did not take graph focus');
+  window.__clipboardBefore={nodes:Object.keys(ed.model.template.nodes).length,edges:ed.model.edges.length,undo:ed.model.undoStack.length};`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "key-down", Key: "Control"},
+				{Kind: "key", Key: "c"},
+				{Kind: "key-up", Key: "Control"},
+				{Kind: "eval", JS: `var status=document.querySelector('.process-editor-status')?.textContent||'';
+  if(!status.includes('Copied 2 nodes')) throw new Error('trusted Ctrl-C did not copy the selected nodes: '+status);`},
+				{Kind: "key-down", Key: "Control"},
+				{Kind: "key", Key: "v"},
+				{Kind: "key-up", Key: "Control"},
+				{Kind: "key-down", Key: "Control"},
+				{Kind: "key", Key: "v"},
+				{Kind: "key-up", Key: "Control"},
+				{Kind: "eval", JS: `var ed=window.__browserEd,before=window.__clipboardBefore;
+  for(var id of ['begin-2','ship-2','begin-3','ship-3']) if(!ed.model.node(id)) throw new Error('repeated paste missing '+id);
+  if(Object.keys(ed.model.template.nodes).length!==before.nodes+4) throw new Error('repeated paste node count drifted');
+  if(ed.model.edges.length!==before.edges+2) throw new Error('only internal copied edges should be pasted');
+  if(!ed.model.findEdge('begin-2','pass')||ed.model.findEdge('begin-2','pass').to!=='ship-2') throw new Error('first paste did not remap its internal edge');
+  if(!ed.model.findEdge('begin-3','pass')||ed.model.findEdge('begin-3','pass').to!=='ship-3') throw new Error('second paste did not remap its internal edge');
+  var first=ed.model.layout.nodes['begin-2'],second=ed.model.layout.nodes['begin-3'];
+  if(Math.abs(second.x-first.x-36)>.01||Math.abs(second.y-first.y-36)>.01) throw new Error('repeated paste did not cascade by 36px');
+  if(ed.model.undoStack.length!==before.undo+2) throw new Error('each paste was not one history transaction');
+  var selected=ed.snapshot().selection?.items||[];
+  if(selected.length!==2||!selected.some(function(item){return item.id==='begin-3';})||!selected.some(function(item){return item.id==='ship-3';})) throw new Error('second paste did not select its new nodes');
+  if(document.activeElement?.dataset?.nodeId!=='begin-3') throw new Error('second paste did not restore graph focus');
+  var status=document.querySelector('.process-editor-status')?.textContent||'';
+  if(!status.includes('Pasted 2 nodes')) throw new Error('trusted Ctrl-V status missing');`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-browser-edge-click",
 			Title:   "Process editor — trusted edge click + Delete",
 			Caption: "Real Chrome input: pointer capture still resolves the clicked connector, opens its edge inspector, and confirmed Delete removes exactly that edge.",

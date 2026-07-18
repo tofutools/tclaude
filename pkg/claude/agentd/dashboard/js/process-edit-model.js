@@ -20,6 +20,11 @@
 // assume template-only editing beyond the defaults.
 
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import {
+  PROCESS_CLIPBOARD_MAX_COORDINATE, PROCESS_CLIPBOARD_MAX_EDGES,
+  PROCESS_CLIPBOARD_MAX_ID, PROCESS_CLIPBOARD_MAX_NODES, ProcessClipboardError,
+  validateProcessSelectionPayload,
+} from './process-editor-clipboard.js';
 
 export const MAX_UNDO = 50;
 
@@ -329,6 +334,63 @@ export class ProcessEditModel {
       const to = idMap.get(edge.to);
       if (from && to) this.edges.push({ from, outcome: edge.outcome, to });
     }
+    return idMap;
+  }
+
+  // insertClipboardSelection imports one already-bounded clipboard subgraph as
+  // a single undoable transaction. Validation, capacity, deterministic ids,
+  // remapped edges, and every destination coordinate are planned before
+  // begin(), so a stale or hostile payload can never partially mutate state.
+  insertClipboardSelection(payload, { center = { x: 0, y: 0 }, offset = { x: 0, y: 0 } } = {}) {
+    const selection = validateProcessSelectionPayload(payload);
+    this.assertCanInsert();
+    if (Object.keys(this.template.nodes).length + selection.nodes.length > PROCESS_CLIPBOARD_MAX_NODES
+        || this.edges.length + selection.edges.length > PROCESS_CLIPBOARD_MAX_EDGES) {
+      throw new ProcessClipboardError('destination_limit', 'Pasting this selection would exceed the process graph limits.');
+    }
+    if (!Number.isFinite(center?.x) || !Number.isFinite(center?.y)
+        || !Number.isFinite(offset?.x) || !Number.isFinite(offset?.y)) {
+      throw new ProcessClipboardError('position', 'The paste target has an invalid position.');
+    }
+
+    const left = Math.min(...selection.nodes.map((entry) => entry.position.x));
+    const right = Math.max(...selection.nodes.map((entry) => entry.position.x));
+    const top = Math.min(...selection.nodes.map((entry) => entry.position.y));
+    const bottom = Math.max(...selection.nodes.map((entry) => entry.position.y));
+    const sourceCenter = { x: (left + right) / 2, y: (top + bottom) / 2 };
+    const taken = new Set(Object.keys(this.template.nodes));
+    const idMap = new Map();
+    for (const entry of selection.nodes) {
+      let candidate = entry.id;
+      for (let suffix = 2; taken.has(candidate); suffix += 1) {
+        const ending = `-${suffix}`;
+        candidate = `${entry.id.slice(0, PROCESS_CLIPBOARD_MAX_ID - ending.length)}${ending}`;
+      }
+      taken.add(candidate);
+      idMap.set(entry.id, candidate);
+    }
+    const nodes = selection.nodes.map((entry) => {
+      const position = {
+        x: center.x + offset.x + entry.position.x - sourceCenter.x,
+        y: center.y + offset.y + entry.position.y - sourceCenter.y,
+      };
+      if (!Number.isFinite(position.x) || !Number.isFinite(position.y)
+          || Math.abs(position.x) > PROCESS_CLIPBOARD_MAX_COORDINATE
+          || Math.abs(position.y) > PROCESS_CLIPBOARD_MAX_COORDINATE) {
+        throw new ProcessClipboardError('position', 'Pasted node positions exceed the editor coordinate limits.');
+      }
+      return { id: idMap.get(entry.id), node: clone(entry.node), position };
+    });
+    const edges = selection.edges.map((edge) => ({
+      from: idMap.get(edge.from), outcome: edge.outcome, to: idMap.get(edge.to),
+    }));
+
+    this.begin();
+    for (const entry of nodes) {
+      this.template.nodes[entry.id] = entry.node;
+      this.layout.nodes[entry.id] = entry.position;
+    }
+    this.edges.push(...edges);
     return idMap;
   }
 
