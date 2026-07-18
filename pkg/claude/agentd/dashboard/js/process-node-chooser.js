@@ -50,7 +50,7 @@ export function openProcessNodeTypeChooser({
     placeholder: wizard ? 'Search runes…' : 'Search node types…',
   });
   const list = h(documentRef, 'div', {
-    class: 'process-node-chooser-list', id: listID, role: 'listbox',
+    class: 'process-node-chooser-list process-scroll-surface', id: listID, role: 'listbox',
     'aria-label': wizard ? 'Available runes' : 'Available node types',
   });
   const empty = h(documentRef, 'p', {

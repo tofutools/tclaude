@@ -2,9 +2,11 @@ package agentd
 
 import (
 	"io/fs"
+	"math"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -504,4 +506,145 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestDashboardProcessEditorScrollbarsScoped pins TCL-571's ownership and
+// theme contract. Actual editor scroll owners opt into one marker; the command
+// palette and instantiate dialog are shared portals, so they may join only
+// under the existing active-editor marker. Viewer/worklist and unrelated
+// dashboard scroll regions must never be captured by this block.
+func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		body, err := fs.ReadFile(dashboardAssetsFS, name)
+		if err != nil {
+			t.Fatalf("embedded %s missing: %v", name, err)
+		}
+		return string(body)
+	}
+	css := read("dashboard.css")
+	start := strings.Index(css, "/* Actual editor-owned overflow containers carry this marker.")
+	end := strings.Index(css, ".process-editor-header {")
+	if start < 0 || end <= start {
+		t.Fatal("dashboard.css process scrollbar contract is missing or misplaced")
+	}
+	block := css[start:end]
+	for _, needle := range []string{
+		".process-scroll-surface,",
+		"body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,",
+		"body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {",
+		"body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,",
+		"--process-scrollbar-track: #0d1117;",
+		"--process-scrollbar-thumb: #6e7681;",
+		"--process-scrollbar-thumb-hover: #8b949e;",
+		"--process-scrollbar-thumb-active: #b1bac4;",
+		"--process-scrollbar-corner: #161b22;",
+		"--process-scrollbar-track: #181226;",
+		"--process-scrollbar-thumb: #755da0;",
+		"--process-scrollbar-thumb-hover: #957ac0;",
+		"--process-scrollbar-thumb-active: #d4af37;",
+		"--process-scrollbar-corner: #211832;",
+		"scrollbar-width: thin;",
+		"scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);",
+		".process-scroll-surface::-webkit-scrollbar-thumb:hover,",
+		".process-scroll-surface::-webkit-scrollbar-thumb:active,",
+		".process-scroll-surface::-webkit-scrollbar-corner,",
+		"@media (forced-colors: active)",
+		"scrollbar-width: auto;",
+		"scrollbar-color: auto;",
+		"background: ButtonText;",
+		"background: Highlight;",
+	} {
+		if !strings.Contains(block, needle) {
+			t.Errorf("dashboard.css process scrollbar block missing %q", needle)
+		}
+	}
+	for _, banned := range []string{
+		".process-viewer",
+		".process-worklist",
+		"body.wizard #command-palette-modal .palette-list",
+		"body.wizard .process-instantiate-dialog",
+	} {
+		if strings.Contains(block, banned) {
+			t.Errorf("dashboard.css process scrollbar block widened into %q", banned)
+		}
+	}
+
+	for name, needle := range map[string]string{
+		"js/processes-island.js":      "process-canvas-view${spec.kind === 'editor' ? ' process-scroll-surface' : ''}",
+		"js/process-editor-island.js": "process-editor-palette process-scroll-surface",
+		"js/process-node-chooser.js":  "process-node-chooser-list process-scroll-surface",
+		"js/process-node-dialog.js":   "process-node-dialog-body process-scroll-surface",
+		"js/process-params-dialog.js": "process-param-list process-scroll-surface",
+	} {
+		if !strings.Contains(read(name), needle) {
+			t.Errorf("%s missing editor scroll ownership marker %q", name, needle)
+		}
+	}
+
+	for _, theme := range []struct {
+		name, anchor string
+	}{
+		{name: "default", anchor: ".process-scroll-surface,"},
+		{name: "wizard", anchor: "body.wizard .process-scroll-surface,"},
+	} {
+		ruleStart := strings.Index(block, theme.anchor)
+		if ruleStart < 0 {
+			t.Fatalf("%s scrollbar theme rule is missing", theme.name)
+		}
+		ruleOpen := strings.Index(block[ruleStart:], "{")
+		if ruleOpen < 0 {
+			t.Fatalf("%s scrollbar theme rule is malformed", theme.name)
+		}
+		ruleBodyStart := ruleStart + ruleOpen
+		ruleClose := strings.Index(block[ruleBodyStart:], "}")
+		if ruleClose < 0 {
+			t.Fatalf("%s scrollbar theme rule is malformed", theme.name)
+		}
+		rule := block[ruleBodyStart : ruleBodyStart+ruleClose]
+		tokens := map[string]string{}
+		for _, match := range regexp.MustCompile(`--process-scrollbar-(track|thumb|thumb-hover|thumb-active): (#[0-9a-f]{6});`).FindAllStringSubmatch(rule, -1) {
+			tokens[match[1]] = match[2]
+		}
+		if len(tokens) != 4 {
+			t.Fatalf("%s scrollbar theme has %d contrast tokens, want 4", theme.name, len(tokens))
+		}
+		normal := cssContrastRatio(t, tokens["thumb"], tokens["track"])
+		hover := cssContrastRatio(t, tokens["thumb-hover"], tokens["track"])
+		active := cssContrastRatio(t, tokens["thumb-active"], tokens["track"])
+		for state, ratio := range map[string]float64{"normal": normal, "hover": hover, "active": active} {
+			if ratio < 3 {
+				t.Errorf("%s %s thumb contrast is %.2f:1, want at least 3:1", theme.name, state, ratio)
+			}
+		}
+		if !(normal < hover && hover < active) {
+			t.Errorf("%s thumb contrast must increase normal < hover < active; got %.2f < %.2f < %.2f", theme.name, normal, hover, active)
+		}
+	}
+}
+
+func cssContrastRatio(t *testing.T, foreground, background string) float64 {
+	t.Helper()
+	luminance := func(value string) float64 {
+		value = strings.TrimPrefix(value, "#")
+		if len(value) != 6 {
+			t.Fatalf("invalid CSS hex color %q", value)
+		}
+		channels := make([]float64, 3)
+		for i := range channels {
+			parsed, err := strconv.ParseUint(value[i*2:i*2+2], 16, 8)
+			if err != nil {
+				t.Fatalf("invalid CSS hex color %q: %v", value, err)
+			}
+			channel := float64(parsed) / 255
+			if channel <= 0.04045 {
+				channels[i] = channel / 12.92
+			} else {
+				channels[i] = math.Pow((channel+0.055)/1.055, 2.4)
+			}
+		}
+		return 0.2126*channels[0] + 0.7152*channels[1] + 0.0722*channels[2]
+	}
+	a, b := luminance(foreground), luminance(background)
+	return (math.Max(a, b) + 0.05) / (math.Min(a, b) + 0.05)
 }

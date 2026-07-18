@@ -45,7 +45,7 @@ function NodeField({
   const Tag = multiline ? 'textarea' : 'input';
   return html`<label class="field process-node-field" title=${hint || undefined}>
     <span class="process-node-field-label">${label}</span>
-    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea' : 'process-node-input'}
+    <${Tag} ref=${input} class=${multiline ? 'process-node-textarea process-scroll-surface' : 'process-node-input'}
       type=${multiline ? undefined : 'text'} rows=${multiline ? 3 : undefined}
       spellcheck="false" placeholder=${placeholder} disabled=${readOnly}
       value=${raw} aria-invalid=${invalid ? 'true' : undefined}
@@ -245,14 +245,14 @@ export function NodeDialog({ model, nodeId, mode = 'edit', onMutated, complete, 
     };
   }, [registerHandle, requestClose]);
   return html`<${Overlay}
-    id="process-node-modal" dialogClass="modal process-node-dialog" overlayClass="process-node-modal"
+    id="process-node-modal" dialogClass="modal process-node-dialog process-scroll-surface" overlayClass="process-node-modal"
     ariaLabel=${`Node ${nodeId}`}
     onClose=${complete} beforeClose=${prepareClose} dirty=${() => dirty.current} blocked=${false}
     confirmDiscard=${confirmDiscard} onCloseError=${(error) => setStatus(`Discard confirmation failed: ${error?.message || String(error)}`)}
     registerClose=${registerClose}
     resizeKey=${NODE_DIALOG_SIZE_PREF} fitContent=${false} onSubmitHotkey=${save}
   >
-    <div class="process-node-dialog-body">
+    <div class="process-node-dialog-body process-scroll-surface">
       <${NodeDetail} model=${model} nodeId=${nodeId} node=${draftRef.current} mode=${mode}
         commit=${mode === 'edit' ? commit : null} invalid=${invalid.current} onClose=${requestClose} />
       <p class=${`process-node-status${status ? ' is-error' : ''}`} role="status">${status}</p>

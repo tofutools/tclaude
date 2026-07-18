@@ -129,7 +129,7 @@ export function ParamsDialog({ model, onMutated, complete, confirmDiscard, regis
     <h3 id="process-param-title">Template parameters</h3>
     <p class="muted">Declare values referenced as {{ params.name }}. Renamed or deleted references are reported by live validation.</p>
     <datalist id="process-param-types"><option value="string"></option><option value="number"></option><option value="boolean"></option></datalist>
-    <div ref=${list} class="process-param-list">
+    <div ref=${list} class="process-param-list process-scroll-surface">
       ${!rowsRef.current.length && html`<div class="process-param-empty">No parameters declared.</div>`}
       ${rowsRef.current.map((row, index) => html`<div key=${row.key} class="process-param-row" data-process-param=${row.name}>
         <label><span>Name</span><input class="process-param-name" type="text" spellcheck="false" aria-label=${`Parameter ${index + 1} name`} value=${row.rawName} onInput=${(event) => update(index, { rawName: event.currentTarget.value, name: event.currentTarget.value.trim() })} /></label>

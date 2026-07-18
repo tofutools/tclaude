@@ -12170,6 +12170,102 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   overflow: hidden;
 }
 .process-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* Actual editor-owned overflow containers carry this marker. The two shared
+   portal surfaces are included only while the existing active-editor marker is
+   present, so viewer/worklist and unrelated dashboard scrollbars keep their
+   native/component behavior. */
+.process-scroll-surface,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {
+  --process-scrollbar-track: #0d1117;
+  --process-scrollbar-thumb: #6e7681;
+  --process-scrollbar-thumb-hover: #8b949e;
+  --process-scrollbar-thumb-active: #b1bac4;
+  --process-scrollbar-corner: #161b22;
+  scrollbar-width: thin;
+  scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);
+}
+body.wizard .process-scroll-surface,
+body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,
+body.wizard:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {
+  --process-scrollbar-track: #181226;
+  --process-scrollbar-thumb: #755da0;
+  --process-scrollbar-thumb-hover: #957ac0;
+  --process-scrollbar-thumb-active: #d4af37;
+  --process-scrollbar-corner: #211832;
+}
+.process-scroll-surface::-webkit-scrollbar,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.process-scroll-surface::-webkit-scrollbar-track,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-track {
+  background: var(--process-scrollbar-track);
+}
+.process-scroll-surface::-webkit-scrollbar-thumb,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  background: var(--process-scrollbar-thumb);
+  border-radius: 6px;
+}
+.process-scroll-surface::-webkit-scrollbar-thumb:hover,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:hover {
+  background: var(--process-scrollbar-thumb-hover);
+}
+.process-scroll-surface::-webkit-scrollbar-thumb:active,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:active {
+  background: var(--process-scrollbar-thumb-active);
+}
+.process-scroll-surface::-webkit-scrollbar-corner,
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner,
+body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-corner {
+  background: var(--process-scrollbar-corner);
+}
+/* High contrast returns to native geometry/Firefox colors. System keywords
+   provide a safe fallback where Chromium still exposes the pseudo-elements. */
+@media (forced-colors: active) {
+  .process-scroll-surface,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+    forced-color-adjust: auto;
+  }
+  .process-scroll-surface::-webkit-scrollbar,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar {
+    width: auto;
+    height: auto;
+  }
+  .process-scroll-surface::-webkit-scrollbar-track,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-track,
+  .process-scroll-surface::-webkit-scrollbar-corner,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-corner {
+    background: Canvas;
+  }
+  .process-scroll-surface::-webkit-scrollbar-thumb,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb {
+    background: ButtonText;
+    border: 1px solid Canvas;
+  }
+  .process-scroll-surface::-webkit-scrollbar-thumb:hover,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:hover,
+  .process-scroll-surface::-webkit-scrollbar-thumb:active,
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active,
+  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:active {
+    background: Highlight;
+  }
+}
 .process-editor-header {
   display: flex;
   align-items: center;
