@@ -405,6 +405,22 @@ func RegisterDashboardRoutesForTest(mux *http.ServeMux) {
 	registerDashboardRoutes(mux)
 }
 
+// TermWSHook is the terminal-WebSocket PTY seam (see termWSHook in
+// dashboard_term.go): the env-gated real-browser terminal smoke swaps the
+// tmux/attach command runPTYOverWS would spawn for a deterministic PTY
+// program, and observes PTY starts, applied resizes, and per-connection
+// teardowns from outside the browser.
+type TermWSHook = termWSHook
+
+// SetTermWSHookForTest installs the terminal-WebSocket PTY hook. Returns a
+// restore function for t.Cleanup. Install it BEFORE serving the dashboard
+// handler — runPTYOverWS reads the hook once per connection.
+func SetTermWSHookForTest(hook *TermWSHook) func() {
+	prev := termWSTestHook
+	termWSTestHook = hook
+	return func() { termWSTestHook = prev }
+}
+
 // SetOpenTerminalForTest swaps the terminal-spawning seam so flow
 // tests can assert the `dir` endpoints' open path without popping a
 // real window (and without failing on CI hosts that have no terminal

@@ -1105,6 +1105,24 @@ belong to lower-numbered shards), so the fixed four-shard loop combines with
 any filter. Set `TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in
 a usual platform install location.
 
+Behind the same env gate, two functional real-browser smokes cover the
+terminal shells: `TestDashboardTerminalRevealFocusChrome` (tab-reveal keyboard
+focus) and `TestDashboardTerminalShellLiveChrome`, which drives a live
+end-to-end terminal session — browser xterm ↔ WebSocket ↔ a deterministic
+server PTY — across reveal/refocus, typing, copy, kill → reconnect, the
+modal's detach/close confirmation, pop-out to `/terminals?solo=1`, fit/resize,
+and exact-once teardown:
+
+```bash
+TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ \
+  -run TestDashboardTerminalShellLiveChrome -v -count=1 -timeout 300s
+```
+
+All of these smokes SKIP (rather than fail) when no usable local
+Chrome/Chromium can be found or launched, so an environment gap is never
+mistaken for a dashboard regression; once a browser is up, any failed state is
+a real product failure.
+
 On Linux, the harness launches Chrome with `--no-sandbox` so it can run inside a
 restricted coding-agent environment. On macOS, it also points
 `MAC_CHROMIUM_TMPDIR` at a disposable, writable directory unless that variable

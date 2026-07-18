@@ -138,6 +138,9 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 		OutDir:  outDir,
 		States:  states,
 	})
+	if errors.Is(err, dashsnap.ErrBrowserUnavailable) {
+		t.Skipf("environment: %v", err)
+	}
 	if err != nil {
 		t.Fatalf("dashsnap.Capture: %v", err)
 	}
