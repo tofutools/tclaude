@@ -76,6 +76,96 @@ func TestResolveSelector_ByTitle(t *testing.T) {
 	assert.True(t, strings.HasPrefix(r.ConvID, "11111111"), "convID = %q", r.ConvID)
 }
 
+// TestResolveSelector_ByPendingName pins TCL-282's exact Codex gap: the
+// conv_index row exists but custom_title is still empty, while the spawn-time
+// --name is already recorded on the actor and shown by group/dashboard lists.
+// The visible pending name must be the selector, and the hidden first-prompt
+// fallback must not remain a second alias.
+func TestResolveSelector_ByPendingName(t *testing.T) {
+	setupTestDB(t)
+	const convID = "11111111-2222-3333-4444-555555555555"
+	upsertConvIndex(t, convID, "", "", "[system: spawned Codex welcome]")
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(agentID, "codex-worker"))
+
+	assert.Equal(t, "codex-worker", CachedTitle(convID), "listing title precondition")
+	assert.Equal(t, "codex-worker", TitleFor(convID), "receipt title uses the same fallback")
+
+	r, _, err := tryResolve("codex-worker")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, convID, r.ConvID)
+
+	_, _, err = tryResolve("[system: spawned Codex welcome]")
+	require.Error(t, err, "the invisible first prompt must not remain a selector alias")
+}
+
+// TestResolveSelector_ByPendingNameWithoutConvIndex covers the earlier slice
+// of the same spawn window: actor/group rows already make the name visible,
+// but no conversation index row exists yet.
+func TestResolveSelector_ByPendingNameWithoutConvIndex(t *testing.T) {
+	setupTestDB(t)
+	const convID = "22222222-2222-3333-4444-555555555555"
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(agentID, "pending-only-worker"))
+
+	r, _, err := tryResolve("pending-only-worker")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, convID, r.ConvID)
+	assert.Nil(t, r.Row)
+}
+
+// TestResolveSelector_CustomTitleSupersedesPendingName prevents the actor's
+// spawn-time fallback becoming an unstable permanent alias after a real/native
+// title has landed.
+func TestResolveSelector_CustomTitleSupersedesPendingName(t *testing.T) {
+	setupTestDB(t)
+	const convID = "33333333-2222-3333-4444-555555555555"
+	upsertConvIndex(t, convID, "renamed-worker", "", "")
+	agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPendingName(agentID, "original-worker"))
+
+	r, _, err := tryResolve("renamed-worker")
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, convID, r.ConvID)
+
+	_, _, err = tryResolve("original-worker")
+	require.Error(t, err, "superseded pending name must not remain a hidden alias")
+}
+
+// TestResolveSelector_AmbiguousByPendingName proves two different visible
+// agents with the same pending name stay an explicit ambiguity, and the
+// diagnostic names both candidates instead of rendering them blank.
+func TestResolveSelector_AmbiguousByPendingName(t *testing.T) {
+	setupTestDB(t)
+	for _, convID := range []string{
+		"44444444-2222-3333-4444-555555555555",
+		"55555555-2222-3333-4444-555555555555",
+	} {
+		agentID, _, err := db.EnsureAgentForConv(convID, "spawn")
+		require.NoError(t, err)
+		require.NoError(t, db.SetAgentPendingName(agentID, "shared-pending"))
+	}
+
+	_, matches, err := tryResolve("shared-pending")
+	require.True(t, errors.Is(err, errAmbiguous), "expected errAmbiguous, got %v", err)
+	require.Len(t, matches, 2)
+	assert.Equal(t, "44444444-2222-3333-4444-555555555555", matches[0].ConvID,
+		"pending-only ambiguity order is deterministic")
+
+	var out bytes.Buffer
+	printAmbiguous(&out, "shared-pending", matches)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 4)
+	assert.Contains(t, lines[1], "shared-pending", "first candidate renders the pending name it matched")
+	assert.Contains(t, lines[2], "shared-pending", "second candidate renders the pending name it matched")
+}
+
 func TestResolveSelector_AmbiguousByTitle(t *testing.T) {
 	setupTestDB(t)
 	// Two convs whose first-prompt happens to match exactly.

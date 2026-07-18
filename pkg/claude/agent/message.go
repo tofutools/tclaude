@@ -287,15 +287,14 @@ func readBody(p *messageParams, allowBodyFlag bool, stdin io.Reader, stderr io.W
 	return p.Text, rcOK
 }
 
-// titleFor returns convID's display title from the conv_index cache,
-// or "" when the conv isn't indexed. Cheap (no .jsonl rescan) — used
-// to decorate message nudges and inbox headers with a friendly name.
+// titleFor returns convID's cached display title using the same precedence as
+// agent rosters: custom > pending name > summary > first prompt. It stays cheap
+// (no conversation-store rescan) and returns "" when no name is known. The
+// pending fallback is what lets receipts, nudges, and inbox audience headers
+// name a freshly spawned Codex agent before its native title-store write lands.
 func titleFor(convID string) string {
 	row, _ := db.GetConvIndex(convID)
-	if row != nil {
-		return displayTitle(row)
-	}
-	return ""
+	return displayTitleFromParts(row, pendingName(convID))
 }
 
 func short(convID string) string {
