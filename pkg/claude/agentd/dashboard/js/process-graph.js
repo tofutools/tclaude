@@ -932,6 +932,7 @@ export class ProcessGraph {
       const source = { nodeId: target.node.dataset.nodeId, port: target.port.dataset.port };
       const feedback = this.connectionFeedback({ phase: 'source', source });
       if (feedback.enabled === false) {
+        this.cancelQueuedPointerFeedback();
         event.preventDefault();
         event.stopPropagation();
         const identity = { nodeId: source.nodeId, port: source.port };

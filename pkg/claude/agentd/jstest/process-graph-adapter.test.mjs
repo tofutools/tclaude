@@ -340,6 +340,14 @@ test('disabled pointer feedback rebinds after a synchronous focus rerender', asy
       return staleFocus(options);
     },
   });
+  const frames = [];
+  const stubRAF = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+  t.after(() => { globalThis.requestAnimationFrame = stubRAF; });
+  harness.fireEvent(stalePort, 'pointermove', {
+    pointerType: 'mouse', clientX: 1, clientY: 2,
+  });
+  assert.equal(frames.length, 1, 'pre-click pointer feedback has one queued frame');
 
   harness.fireEvent(stalePort, 'pointerdown', {
     button: 0, pointerId: 62, pointerType: 'mouse', clientX: 1, clientY: 2,
@@ -353,6 +361,10 @@ test('disabled pointer feedback rebinds after a synchronous focus rerender', asy
   assert.equal(stalePort.hasAttribute('aria-describedby'), false,
     'detached event target never owns the live tooltip relationship');
   assert.ok(tooltip.classList.contains('is-visible'));
+  assert.match(tooltip.textContent, /End nodes cannot/);
+  frames.shift()();
+  assert.equal(freshPort.getAttribute('aria-describedby'), tooltip.id,
+    'the invalidated pre-rerender frame cannot clear fresh feedback ownership');
   assert.match(tooltip.textContent, /End nodes cannot/);
   adapter.dispose();
 });
