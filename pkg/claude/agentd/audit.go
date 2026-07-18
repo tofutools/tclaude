@@ -62,6 +62,7 @@ type auditCtx struct {
 // be secrets and must remain unbuffered by the audit layer.
 type auditResult struct {
 	targetLabel string
+	eventID     string
 }
 
 type auditResultContextKey struct{}
@@ -70,6 +71,17 @@ func setAuditTargetLabel(r *http.Request, label string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.targetLabel = auditClip(label, 120)
 	}
+}
+
+// auditRequestEventID is available to an authorized lifecycle handler before
+// it attempts termination. The middleware writes the same id on the command
+// audit row after the handler returns, letting the later exit observation link
+// back to the actual requester without pretending the system observer was it.
+func auditRequestEventID(r *http.Request) string {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		return result.eventID
+	}
+	return ""
 }
 
 // describer refines auditFields from the request body. nil means the
@@ -226,6 +238,11 @@ func auditRequests(h http.Handler) http.Handler {
 		if ok {
 			source = auditRequestSource(r, source)
 			result = &auditResult{}
+			if eventID, err := db.NewAuditEventID(); err == nil {
+				result.eventID = eventID
+			} else {
+				slog.Warn("audit: correlation id generation failed", "err", err)
+			}
 			r = r.WithContext(context.WithValue(r.Context(), auditResultContextKey{}, result))
 		}
 		var body []byte
@@ -426,6 +443,7 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 		Path:        r.URL.Path,
 		Status:      status,
 		Source:      source,
+		EventID:     result.eventID,
 	}); err != nil {
 		slog.Warn("audit: failed to record command", "verb", fields.Verb, "err", err)
 	}

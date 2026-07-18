@@ -26,18 +26,26 @@ type auditResp struct {
 	PruningOn       bool             `json:"pruning_on"`
 }
 type auditEntryResp struct {
-	ID          int64  `json:"id"`
-	At          string `json:"at"`
-	ActorKind   string `json:"actor_kind"`
-	ActorAgent  string `json:"actor_agent"`
-	ActorLabel  string `json:"actor_label"`
-	Verb        string `json:"verb"`
-	TargetAgent string `json:"target_agent"`
-	TargetLabel string `json:"target_label"`
-	GroupName   string `json:"group_name"`
-	Detail      string `json:"detail"`
-	Status      int    `json:"status"`
-	Source      string `json:"source"`
+	ID              int64  `json:"id"`
+	At              string `json:"at"`
+	ActorKind       string `json:"actor_kind"`
+	ActorAgent      string `json:"actor_agent"`
+	ActorLabel      string `json:"actor_label"`
+	Verb            string `json:"verb"`
+	TargetAgent     string `json:"target_agent"`
+	TargetLabel     string `json:"target_label"`
+	GroupName       string `json:"group_name"`
+	Detail          string `json:"detail"`
+	Status          int    `json:"status"`
+	Source          string `json:"source"`
+	EventID         string `json:"event_id"`
+	RelatedEventID  string `json:"related_event_id"`
+	SessionID       string `json:"session_id"`
+	Observer        string `json:"observer"`
+	CauseKind       string `json:"cause_kind"`
+	ExitCode        *int   `json:"exit_code"`
+	Signal          string `json:"signal"`
+	LifecycleAction string `json:"lifecycle_action"`
 }
 
 func fetchAudit(t *testing.T, mux http.Handler, query string) auditResp {
@@ -125,6 +133,31 @@ func TestAuditEndpoint_SurfacesAgentID(t *testing.T) {
 	require.Len(t, got.Entries, 1)
 	assert.Equal(t, actorAgent, got.Entries[0].ActorAgent, "actor agent_id on the wire")
 	assert.Equal(t, targetAgent, got.Entries[0].TargetAgent, "target agent_id on the wire")
+}
+
+func TestAuditEndpoint_SurfacesTypedExitFieldsAdditively(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	code := 0
+	_, err := db.InsertAuditLog(db.AuditLogEntry{
+		ActorKind: db.AuditActorSystem, ActorLabel: "tclaude",
+		Verb: db.AuditVerbAgentExit, Status: 200, Source: db.AuditSourceTmux,
+		EventID: "evt_1234567890abcdef12345678", SessionID: "session-exit",
+		Observer: db.AgentExitObserverTmux, CauseKind: db.AgentExitCauseNormal,
+		ExitCode: &code, LifecycleAction: db.AgentExitActionStop,
+	})
+	require.NoError(t, err)
+
+	got := fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "?verb="+db.AuditVerbAgentExit)
+	require.Len(t, got.Entries, 1)
+	entry := got.Entries[0]
+	assert.Equal(t, "evt_1234567890abcdef12345678", entry.EventID)
+	assert.Equal(t, "session-exit", entry.SessionID)
+	assert.Equal(t, db.AgentExitObserverTmux, entry.Observer)
+	assert.Equal(t, db.AgentExitCauseNormal, entry.CauseKind)
+	require.NotNil(t, entry.ExitCode)
+	assert.Zero(t, *entry.ExitCode)
+	assert.Equal(t, db.AgentExitActionStop, entry.LifecycleAction)
 }
 
 // The endpoint pages and sorts server-side: a page_size of 1 returns one

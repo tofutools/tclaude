@@ -536,6 +536,12 @@ func TestRunHookCallback_SessionEndRecordsExitReason(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "logout", reason,
 		"a graceful SessionEnd records its reason")
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	assert.Equal(t, db.AgentExitObserverHook, audit[0].Observer)
+	assert.Equal(t, db.AgentExitCauseNormal, audit[0].CauseKind)
+	assert.Equal(t, "logout", audit[0].Reason)
 }
 
 // SessionStart clears any stale exit_reason: a resumed session is alive

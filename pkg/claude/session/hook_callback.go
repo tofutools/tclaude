@@ -818,6 +818,10 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			if err := db.ClearSessionExitReasonByConv(state.ConvID); err != nil {
 				slog.Warn("failed to clear exit reason", "error", err, "module", "hooks")
 			}
+			if err := db.ClearSessionExitIntentByConv(state.ConvID); err != nil {
+				slog.Warn("exit audit: clear stale lifecycle intent failed",
+					"session", state.ID, "error", err, "module", "hooks")
+			}
 		}
 
 	case "SessionEnd":
@@ -859,6 +863,19 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// a missing SessionEnd is itself an abnormal-death signal.
 		if err := db.SetSessionExitReason(state.ID, input.Reason); err != nil {
 			slog.Warn("failed to record exit reason", "error", err, "module", "hooks")
+		}
+		if _, err := db.RecordAgentExitObservation(db.AgentExitObservation{
+			At:            time.Now(),
+			SessionID:     state.ID,
+			TmuxSession:   state.TmuxSession,
+			Observer:      db.AgentExitObserverHook,
+			CauseKind:     db.AgentExitCauseNormal,
+			Reason:        boundedSessionEndReason(input.Reason),
+			ObservedState: StatusExited,
+		}); err != nil {
+			slog.Warn("exit audit: persist SessionEnd observation failed",
+				"session", state.ID, "observer", db.AgentExitObserverHook,
+				"error", err, "module", "hooks")
 		}
 
 	case "PermissionRequest":
@@ -1152,6 +1169,17 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 	}
 
 	return nil
+}
+
+func boundedSessionEndReason(reason string) string {
+	switch reason {
+	case "logout", "prompt_input_exit", "bypass_permissions_disabled", "other":
+		return reason
+	case "":
+		return ""
+	default:
+		return "other"
+	}
 }
 
 // agentMessagePrompt recognizes the server-authored metadata inside a submitted

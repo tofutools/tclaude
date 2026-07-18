@@ -58,7 +58,8 @@ func handleGroupStandDown(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 	// the caller-skip (never self-retire), ownerless warnings, and optional
 	// worktree cleanup all behave exactly as a `groups retire` would.
 	out, err := bulkRetireGroupMembers(g, caller,
-		standDownReason(r), retireShouldShutdown(r), retireShouldDeleteWorktree(r), nil, nil)
+		standDownReason(r), retireShouldShutdown(r), retireShouldDeleteWorktree(r), nil, nil,
+		auditRequestEventID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return

@@ -11,6 +11,7 @@ import (
 const (
 	AuditActorHuman   = "human"   // the operator — dashboard, or a CLI caller with a valid operator token
 	AuditActorAgent   = "agent"   // a confirmed harness caller with a resolved conv-id
+	AuditActorSystem  = "system"  // an internal observer such as a hook or reconciliation sweep
 	AuditActorUnknown = "unknown" // identity could not be resolved (fail-closed callers still get logged)
 )
 
@@ -23,6 +24,10 @@ const (
 	AuditSourceCLI       = "cli"       // /v1/* over the unix socket (the `tclaude agent` CLI)
 	AuditSourceDashboard = "dashboard" // /api/* on the loopback dashboard server
 	AuditSourcePopup     = "popup"     // /approve/* on the loopback popup server (human approval decisions)
+	AuditSourceTmux      = "tmux"      // pane-local pane-exited callback
+	AuditSourceHook      = "hook"      // harness lifecycle hook
+	AuditSourceReaper    = "reaper"    // steady-state liveness reconciliation
+	AuditSourceReconcile = "reconcile" // daemon-start reconciliation of a pre-existing corpse
 )
 
 // AuditLogEntry is one row of audit_log — the persistent trail of
@@ -51,6 +56,22 @@ type AuditLogEntry struct {
 	Path        string // raw HTTP path
 	Status      int    // HTTP status; >= 400 means the command was denied or errored
 	Source      string // AuditSource*
+
+	// Exit-observation fields. They are empty on ordinary command audit rows,
+	// keeping the established API/storage shape backwards compatible.
+	EventID         string
+	RelatedEventID  string
+	SessionID       string
+	TmuxSession     string
+	PaneID          string
+	Observer        string
+	CauseKind       string
+	ExitCode        *int
+	Signal          string
+	LifecycleAction string
+	Reason          string
+	ObservedState   string
+	DedupKey        string
 }
 
 // auditExecer is satisfied by both *sql.DB and *sql.Tx so a row can be
@@ -73,14 +94,21 @@ func insertAuditLog(x auditExecer, e AuditLogEntry) (int64, error) {
 			(at, actor_kind, actor_conv, actor_label, verb,
 			 target_conv, target_label, group_name, detail,
 			 method, path, status, source,
-			 actor_agent, target_agent)
+			 actor_agent, target_agent,
+			 event_id, related_event_id, session_id, tmux_session, pane_id,
+			 observer, cause_kind, exit_code, signal, lifecycle_action,
+			 reason, observed_state, dedup_key)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`),
-			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`))`,
+			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`),
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		at.UTC().Format(time.RFC3339Nano), e.ActorKind, e.ActorConv, e.ActorLabel, e.Verb,
 		e.TargetConv, e.TargetLabel, e.GroupName, e.Detail,
 		e.Method, e.Path, e.Status, e.Source,
-		e.ActorAgent, e.ActorConv, e.TargetAgent, e.TargetConv)
+		e.ActorAgent, e.ActorConv, e.TargetAgent, e.TargetConv,
+		e.EventID, e.RelatedEventID, e.SessionID, e.TmuxSession, e.PaneID,
+		e.Observer, e.CauseKind, e.ExitCode, e.Signal, e.LifecycleAction,
+		e.Reason, e.ObservedState, e.DedupKey)
 	if err != nil {
 		return 0, fmt.Errorf("insert audit log: %w", err)
 	}
@@ -156,7 +184,8 @@ func auditWhere(f AuditLogFilter) (string, []any) {
 		// % / _ in the term are escaped so they match literally.
 		like := "%" + escapeLike(s) + "%"
 		cols := []string{"actor_label", "verb", "target_label", "group_name",
-			"detail", "actor_conv", "target_conv", "actor_agent", "target_agent"}
+			"detail", "actor_conv", "target_conv", "actor_agent", "target_agent",
+			"event_id", "related_event_id", "session_id", "tmux_session"}
 		var ors []string
 		for _, c := range cols {
 			ors = append(ors, c+" LIKE ? ESCAPE '\\'")
@@ -202,7 +231,10 @@ func auditOrderBy(sortBy string, asc bool) string {
 const auditSelectCols = `
 	SELECT id, at, actor_kind, actor_conv, actor_agent, actor_label, verb,
 	       target_conv, target_agent, target_label, group_name, detail,
-	       method, path, status, source
+	       method, path, status, source,
+	       event_id, related_event_id, session_id, tmux_session, pane_id,
+	       observer, cause_kind, exit_code, signal, lifecycle_action,
+	       reason, observed_state, dedup_key
 	FROM audit_log`
 
 // ListAuditLog returns audit rows matching the filter, ordered + paged.
@@ -241,7 +273,10 @@ func ListAuditLog(f AuditLogFilter) ([]AuditLogEntry, error) {
 		var at string
 		if err := rows.Scan(&e.ID, &at, &e.ActorKind, &e.ActorConv, &e.ActorAgent, &e.ActorLabel, &e.Verb,
 			&e.TargetConv, &e.TargetAgent, &e.TargetLabel, &e.GroupName, &e.Detail,
-			&e.Method, &e.Path, &e.Status, &e.Source); err != nil {
+			&e.Method, &e.Path, &e.Status, &e.Source,
+			&e.EventID, &e.RelatedEventID, &e.SessionID, &e.TmuxSession, &e.PaneID,
+			&e.Observer, &e.CauseKind, &e.ExitCode, &e.Signal, &e.LifecycleAction,
+			&e.Reason, &e.ObservedState, &e.DedupKey); err != nil {
 			return nil, err
 		}
 		if t, perr := time.Parse(time.RFC3339Nano, at); perr == nil {

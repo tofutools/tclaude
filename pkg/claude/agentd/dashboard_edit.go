@@ -1038,7 +1038,7 @@ func dashboardGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGro
 		}
 	}
 
-	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, deleteWorktree, filter, selected)
+	out, err := bulkRetireGroupMembers(g, "", reason, shutdown, deleteWorktree, filter, selected, auditRequestEventID(r))
 	if err != nil {
 		http.Error(w, "retire: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1103,7 +1103,11 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 	if r.ContentLength > 0 {
 		_ = json.NewDecoder(r.Body).Decode(&body) // optional; default false
 	}
-	out := stopOneConv(res.ConvID, body.Force)
+	action := db.AgentExitActionStop
+	if body.Force {
+		action = db.AgentExitActionForceStop
+	}
+	out := stopOneConvWithIntent(res.ConvID, body.Force, action, auditRequestEventID(r))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
 }

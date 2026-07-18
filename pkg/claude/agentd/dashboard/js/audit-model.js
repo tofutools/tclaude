@@ -33,9 +33,10 @@ export function fmtAuditTime(iso) {
 export function actorTitle(entry, shortID = '') {
   if (entry.actor_kind === 'human') return 'the human operator';
   if (entry.actor_kind === 'agent') return `${entry.actor_label || '(agent)'}${shortID ? ` ${shortID}` : ''}`;
+  if (entry.actor_kind === 'system') return 'tclaude system observer';
   return entry.actor_label || 'unknown';
 }
-export function targetTitle(entry) { return [entry.group_name, entry.target_label].filter(Boolean).join(' ') || '—'; }
+export function targetTitle(entry) { return [entry.group_name, entry.target_label, entry.target_agent || entry.target_conv].filter(Boolean).join(' ') || '—'; }
 export function auditPageCount(total, size) { return Math.max(1, Math.ceil((Number(total) || 0) / (Number(size) || 100))); }
 
 export function auditParams(view) {

@@ -221,7 +221,7 @@ func handleWhoamiReincarnate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, caller, caller, "", body)
+	runReincarnationOrchestration(w, caller, caller, "", body, auditRequestEventID(r))
 }
 
 // handleAgentReincarnate handles POST /v1/agent/{conv}/reincarnate
@@ -240,7 +240,7 @@ func handleAgentReincarnate(w http.ResponseWriter, r *http.Request, targetConv s
 	if !ok {
 		return
 	}
-	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, body)
+	runReincarnationOrchestration(w, targetConv, caller, PermAgentReincarnate, body, auditRequestEventID(r))
 }
 
 type reincarnateBody struct {
@@ -308,7 +308,7 @@ func decodeReincarnateBody(w http.ResponseWriter, r *http.Request) (reincarnateB
 //     which are unconditionally available to active agents.
 //
 // Writes the JSON response (or error) directly to w.
-func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody) {
+func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm string, body reincarnateBody, relatedEventID string) {
 	launchLock := resumeLaunchLock(target)
 	launchLock.Lock()
 	defer launchLock.Unlock()
@@ -617,7 +617,10 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
 	// left for a hard kill rather than typed a command it can't parse.
 	if h := harnessForConv(target); h.SupportsSoftExit() {
-		_ = injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit")
+		intentSet := setExitIntentBestEffort(oldSess, db.AgentExitActionReincarnate, relatedEventID)
+		if !injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit") {
+			clearFailedExitIntent(oldSess, intentSet)
+		}
 	}
 	if relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
 		scheduleReincarnationDirectoryCleanup(target, newConv, *relaunchPolicy.Previous)

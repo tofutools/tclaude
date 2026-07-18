@@ -200,12 +200,26 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			continue
 		}
 		reaped++
-		slog.Info("reaper: session exited",
-			"session", st.ID, "conv", st.ConvID, "prev_status", prevStatus)
+		witnessedLive := r.seeded && r.aliveLastTick[st.ID]
+		observer := db.AgentExitObserverReconcile
+		if witnessedLive {
+			observer = db.AgentExitObserverReaper
+		}
+		if _, err := db.RecordAgentExitObservation(db.AgentExitObservation{
+			At:            now,
+			SessionID:     st.ID,
+			TmuxSession:   st.TmuxSession,
+			Observer:      observer,
+			CauseKind:     db.AgentExitCauseDisappeared,
+			ObservedState: session.StatusExited,
+		}); err != nil {
+			slog.Warn("exit audit: persist disappearance observation failed",
+				"session", st.ID, "observer", observer, "error", err)
+		}
 		// Notify only for a transition we witnessed: the session must
 		// have been alive on the previous tick, and there must have
 		// been a previous tick (seeded).
-		if r.seeded && r.aliveLastTick[st.ID] {
+		if witnessedLive {
 			r.notify(st, prevStatus)
 		}
 	}

@@ -246,7 +246,8 @@ func handleAgentRetire(w http.ResponseWriter, r *http.Request, convID string) {
 	// conversation by the time it processes /exit. Soft only — a
 	// retired agent's pane should close gracefully, not be killed.
 	if shutdown {
-		resp["shutdown"] = stopOneConv(convID, false /* soft exit */)
+		resp["shutdown"] = stopOneConvWithIntent(convID, false, /* soft exit */
+			db.AgentExitActionRetire, auditRequestEventID(r))
 	}
 	cleanupAgentDirectoriesAfterRetire(convID, shutdown)
 

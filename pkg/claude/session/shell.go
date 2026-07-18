@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -83,10 +84,19 @@ func runNewShell(params *NewParams) error {
 	// not the shell the user is actually typing into. `exec` replaces the
 	// wrapper's own process image with shellBin — same PID, one process.
 	shellCmd := envExports + "exec " + clcommon.ShellQuoteArg(shellBin)
+	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession)
+	if err != nil {
+		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
+			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
+		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession)
+	}
+	defer exitGuard.abort()
+	shellCmd = exitGuard.wrap(shellCmd)
 
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, shellCmd); err != nil {
 		return err
 	}
+	exitGuard.armPaneHook()
 
 	applyTmuxWindowTitle(tmuxSession, sessionID)
 
@@ -111,6 +121,10 @@ func runNewShell(params *NewParams) error {
 	}
 	if err := SaveSessionState(state); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
+	}
+	if err := exitGuard.bindAndRelease(); err != nil {
+		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 
 	return announceAndAttach(fmt.Sprintf("Created shell session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)

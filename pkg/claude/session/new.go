@@ -766,6 +766,17 @@ func runNew(params *NewParams) error {
 		// overwriting another launch's proof-scoped authority.
 		harnessCmd = commandWithFileCleanup(harnessCmd, launchProfilePath)
 	}
+	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession)
+	if err != nil {
+		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
+			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
+		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession)
+	}
+	defer exitGuard.abort()
+	// The existing cwd proof remains the outer bootstrap below so it can report
+	// readiness to the parent; the actual harness stays behind this private,
+	// bounded gate until its pane-local exit hook and durable binding are ready.
+	harnessCmd = exitGuard.wrap(harnessCmd)
 	proofReadyPath := ""
 	proofToken := params.CwdWriteProof
 	if proofToken == "" {
@@ -789,6 +800,7 @@ func runNew(params *NewParams) error {
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
 		return err
 	}
+	exitGuard.armPaneHook()
 	if proofReadyPath != "" {
 		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
 			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
@@ -885,6 +897,10 @@ func runNew(params *NewParams) error {
 		if err := db.UpdateSessionEffort(sessionID, effort); err != nil {
 			slog.Warn("failed to seed Codex session effort", "session_id", sessionID, "error", err)
 		}
+	}
+	if err := exitGuard.bindAndRelease(); err != nil {
+		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)

@@ -76,6 +76,10 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	require.Equal(t, 0, r.tick(time.Now()))
 	require.Empty(t, fired, "a live session is not reaped")
 	require.True(t, r.aliveLastTick[sessionID], "the live Codex session was witnessed alive")
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID,
+		"11111111111111111111111111111111"))
+	require.NoError(t, db.SetSessionExitIntent(sessionID, db.AgentExitActionStop,
+		"evt_1234567890abcdef12345678", time.Now()))
 
 	// The process goes away (PID cleared). Status is still 'working' in
 	// the DB — the reaper, not a hook, is what will flip it.
@@ -103,4 +107,31 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	assert.Equal(t, sessionID, fired[0].id)
 	assert.Equal(t, session.StatusWorking, fired[0].prev, "transition is working→exited")
 	assert.Equal(t, "codex", fired[0].harness, "harness carried into the notification for correct attribution")
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	assert.Equal(t, db.AgentExitObserverReaper, audit[0].Observer)
+	assert.Equal(t, db.AgentExitCauseDisappeared, audit[0].CauseKind)
+	assert.Equal(t, db.AgentExitActionStop, audit[0].LifecycleAction)
+	assert.Equal(t, "evt_1234567890abcdef12345678", audit[0].RelatedEventID)
+}
+
+func TestSessionReaper_FirstTickRecordsReconciliation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+	t.Cleanup(bgWG.Wait)
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: "dead-before-start", ConvID: "dead-conv-12345678",
+		Status: session.StatusWorking, PID: 0,
+	}))
+	r := &sessionReaper{aliveLastTick: map[string]bool{}, grace: 0, notify: func(*session.SessionState, string) {}}
+	require.Equal(t, 1, r.tick(time.Now()))
+
+	audit, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, audit, 1)
+	assert.Equal(t, db.AgentExitObserverReconcile, audit[0].Observer)
+	assert.Equal(t, db.AgentExitCauseDisappeared, audit[0].CauseKind)
 }

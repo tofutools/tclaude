@@ -79,6 +79,11 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
+	action := db.AgentExitActionStop
+	if force {
+		action = db.AgentExitActionForceStop
+	}
+	requestEventID := auditRequestEventID(r)
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -86,7 +91,7 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	}
 	out := groupOpResp{Group: g.Name, Action: "stop", Members: []memberOpResult{}}
 	for _, m := range members {
-		res := stopOneConv(m.ConvID, force)
+		res := stopOneConvWithIntent(m.ConvID, force, action, requestEventID)
 		res.AgentID = peerAgentID(m.ConvID)
 		res.Title = agent.FreshTitle(m.ConvID)
 		out.Members = append(out.Members, res)
@@ -103,6 +108,14 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 // initiated. Idempotent: convs already offline come back as
 // `skipped:already_offline`.
 func stopOneConv(convID string, force bool) memberOpResult {
+	return stopOneConvWithIntent(convID, force, "", "")
+}
+
+// stopOneConvWithIntent adds audit-only lifecycle attribution to a stop. The
+// intent is armed immediately before the tmux mutation and cleared whenever
+// that mutation fails. Persistence is deliberately best-effort: an audit I/O
+// failure is logged but never changes the established stop result.
+func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
 	res := memberOpResult{ConvID: convID}
 	sess := pickAliveSession(convID)
 	if sess == nil {
@@ -119,7 +132,9 @@ func stopOneConv(convID string, force bool) memberOpResult {
 			"session", sess.ID, "conv", convID, "error", err)
 	}
 	if force {
+		intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
 		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+			clearFailedExitIntent(sess, intentSet)
 			res.Action = "error"
 			res.Detail = "kill-session: " + err.Error()
 		} else {
@@ -135,6 +150,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
+		intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
 		if injectSoftExit(convID, exitCmd, "soft-exit") {
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
@@ -146,6 +162,7 @@ func stopOneConv(convID string, force bool) memberOpResult {
 			}
 			res.Action = "soft_stopped"
 		} else {
+			clearFailedExitIntent(sess, intentSet)
 			res.Action = "error"
 			res.Detail = "send-keys " + exitCmd + " failed"
 		}
@@ -153,13 +170,37 @@ func stopOneConv(convID string, force bool) memberOpResult {
 	}
 	// No soft-exit command for this harness → hard kill so the pane never
 	// lingers because we couldn't type a graceful exit.
+	intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
 	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+		clearFailedExitIntent(sess, intentSet)
 		res.Action = "error"
 		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
 	} else {
 		res.Action = "killed_no_soft_exit"
 	}
 	return res
+}
+
+func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string) bool {
+	if sess == nil || action == "" {
+		return false
+	}
+	if err := db.SetSessionExitIntent(sess.ID, action, relatedEventID, time.Now()); err != nil {
+		slog.Warn("exit audit: record lifecycle intent failed",
+			"session", sess.ID, "action", action, "error", err)
+		return false
+	}
+	return true
+}
+
+func clearFailedExitIntent(sess *db.SessionRow, intentSet bool) {
+	if sess == nil || !intentSet {
+		return
+	}
+	if err := db.ClearSessionExitIntent(sess.ID); err != nil {
+		slog.Warn("exit audit: clear failed lifecycle intent failed",
+			"session", sess.ID, "error", err)
+	}
 }
 
 func refreshStoppedSessionResumeProvenance(sess *db.SessionRow) error {
@@ -925,7 +966,8 @@ func handleGroupRetire(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	out, err := bulkRetireGroupMembers(g, caller,
 		strings.TrimSpace(r.URL.Query().Get("reason")),
-		retireShouldShutdown(r), retireShouldDeleteWorktree(r), filter, nil)
+		retireShouldShutdown(r), retireShouldDeleteWorktree(r), filter, nil,
+		auditRequestEventID(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -1003,7 +1045,7 @@ const bulkRetireGroupConcurrency = 8
 // every worker has settled — checked once at the end so a bulk retire
 // that demotes a member-owner warns about the now-ownerless group,
 // matching the single-agent cleanup path.
-func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree bool, filter retireStatusFilter, selected map[string]struct{}) (groupRetireResp, error) {
+func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, deleteWorktree bool, filter retireStatusFilter, selected map[string]struct{}, relatedEventID string) (groupRetireResp, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
 		return groupRetireResp{}, err
@@ -1089,7 +1131,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 					}
 				}
 				res, ownerGroupsPer[i] = retireGroupMember(
-					m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res)
+					m.ConvID, by, reason, shutdown, deleteWorktree, retireWorktrees[m.ConvID], res, relatedEventID)
 			}
 			results[i] = &res
 			return nil
@@ -1130,7 +1172,7 @@ func bulkRetireGroupMembers(g *db.AgentGroup, caller, reason string, shutdown, d
 // kept when no shutdown was asked for. The per-member plan rides back on
 // res.Worktree, and its one-line note is folded into Detail so the CLI/table
 // row says what happened.
-func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, wt agentWorktreeView, res memberOpResult) (memberOpResult, []int64) {
+func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool, wt agentWorktreeView, res memberOpResult, relatedEventID string) (memberOpResult, []int64) {
 	// Gate on the LIVE generation (current conv of an active actor), not just
 	// "active": retire acts on the actor, so a superseded predecessor handle
 	// would demote the live agent. Members always come through as the current
@@ -1157,7 +1199,7 @@ func retireGroupMember(convID, by, reason string, shutdown, deleteWorktree bool,
 	res.Detail = summarizeRetireOutcome(outcome)
 
 	if shutdown {
-		sd := stopOneConv(convID, false /* soft exit */)
+		sd := stopOneConvWithIntent(convID, false /* soft exit */, db.AgentExitActionRetire, relatedEventID)
 		res.TmuxSes = sd.TmuxSes
 		if sd.Action == "soft_stopped" {
 			res.Detail = joinDetail(res.Detail, "/exit sent")
@@ -1315,7 +1357,11 @@ func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) 
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
-	res := stopOneConv(targetConv, force)
+	action := db.AgentExitActionStop
+	if force {
+		action = db.AgentExitActionForceStop
+	}
+	res := stopOneConvWithIntent(targetConv, force, action, auditRequestEventID(r))
 	resp := map[string]any{
 		"conv_id":      res.ConvID,
 		"action":       res.Action,
