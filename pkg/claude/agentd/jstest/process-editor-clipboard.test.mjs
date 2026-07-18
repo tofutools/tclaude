@@ -178,3 +178,19 @@ test('validator rejects stale topology/version, hostile geometry, depth, and pub
   assert.ok(tooLarge.length < PROCESS_CLIPBOARD_MAX_BYTES);
   assert.throws(() => parseProcessSelection(oversized), /256 KiB/);
 });
+
+test('multi-megabyte sentinel is rejected before UTF-8 encoding or JSON parsing', () => {
+  const oversized = `${PROCESS_CLIPBOARD_PREFIX}${'x'.repeat(2 * 1024 * 1024)}`;
+  const NativeTextEncoder = globalThis.TextEncoder;
+  const nativeParse = JSON.parse;
+  globalThis.TextEncoder = class {
+    encode() { assert.fail('oversized sentinel must not reach TextEncoder'); }
+  };
+  JSON.parse = () => assert.fail('oversized sentinel must not reach JSON.parse');
+  try {
+    assert.throws(() => parseProcessSelection(oversized), /256 KiB/);
+  } finally {
+    globalThis.TextEncoder = NativeTextEncoder;
+    JSON.parse = nativeParse;
+  }
+});

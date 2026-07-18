@@ -374,6 +374,12 @@ export function isProcessSelectionClipboardText(text) {
 
 export function parseProcessSelection(text) {
   if (!isProcessSelectionClipboardText(text)) return null;
+  // UTF-8 bytes are never fewer than JavaScript UTF-16 code units. Refuse an
+  // obviously oversized native clipboard string before TextEncoder can create
+  // a second attacker-sized buffer; the exact byte check then runs bounded.
+  if (text.length > PROCESS_CLIPBOARD_MAX_BYTES) {
+    reject('limit', 'Clipboard selection exceeds the 256 KiB editor limit.');
+  }
   if (utf8Bytes(text) > PROCESS_CLIPBOARD_MAX_BYTES) {
     reject('limit', 'Clipboard selection exceeds the 256 KiB editor limit.');
   }
