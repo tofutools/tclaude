@@ -94,8 +94,12 @@ For manual dashboard visual smoke, first check that Linux-side Chrome/Chromium
 exists, then run:
 
 ```bash
-TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 300s
+TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_SHARD=1/4 go test ./pkg/claude/agentd/ -run TestDashSnap -v -count=1 -timeout 600s
 ```
+
+Run shards `1/4` through `4/4` to cover the full matrix (each takes a few
+minutes; an unsharded full run needs `-timeout 1800s`). See "Visual smoke
+testing" in `docs/dashboard.md`.
 
 The visual smoke harness is optional and environment-dependent; it is not wired
 into CI.

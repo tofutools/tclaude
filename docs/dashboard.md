@@ -1070,17 +1070,38 @@ dialog markup, or a blanket filename exception.
 
 The manually-run DashSnap harness drives a real headless Chrome through the
 dashboard's state matrix and writes screenshots plus an HTML contact sheet under
-`dashsnap-out/`. It is opt-in and is not part of CI:
+`dashsnap-out/`. It is opt-in and is not part of CI.
+
+The matrix has grown large (every state × both skins — a couple of hundred
+screenshots), and its per-state settle waits alone add up to several minutes, so
+a full run takes on the order of ten minutes. The canonical invocation therefore
+shards the matrix: `TCLAUDE_DASHSNAP_SHARD=i/n` deterministically assigns every
+n-th state (round-robin over the filtered matrix, so the shards stay balanced
+and together cover everything) to shard `i`. Four shards keep each command to a
+few minutes:
+
+```bash
+for s in 1 2 3 4; do
+  TCLAUDE_DASHSNAP=1 TCLAUDE_DASHSNAP_SHARD=$s/4 go test ./pkg/claude/agentd/ \
+    -run TestDashSnap -v -count=1 -timeout 600s
+done
+```
+
+Each shard writes its own `dashsnap-out/<timestamp>-shard<i>of<n>/` directory
+with per-state pass/fail, per-state capture timings (also shown on the contact
+sheet, so budget drift stays visible), and its own `index.html`. To capture
+everything in a single command instead, drop the shard variable and raise the
+timeout to cover the whole matrix:
 
 ```bash
 TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ \
-  -run TestDashSnap -v -count=1 -timeout 300s
+  -run TestDashSnap -v -count=1 -timeout 1800s
 ```
 
 Set `TCLAUDE_DASHSNAP_FILTER=groups-chip-keyboard` (or another state-key
-substring) before the command to capture a subset. Set
-`TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in a usual platform
-install location.
+substring) before the command to capture a subset; sharding applies after the
+filter. Set `TCLAUDE_DASHSNAP_CHROME=/path/to/chrome` when Chrome is not in a
+usual platform install location.
 
 On Linux, the harness launches Chrome with `--no-sandbox` so it can run inside a
 restricted coding-agent environment. On macOS, it also points
