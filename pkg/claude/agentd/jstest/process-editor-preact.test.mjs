@@ -108,6 +108,59 @@ test('Preact editor projects every canonical node kind through the inside-label 
   editor.destroy();
 });
 
+test('Preact editor reveals only diagnostic-bearing node overlays without moving ports or changing selection semantics', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const beforeSave = editor.model.saveBody();
+  const layoutGeometry = () => {
+    const layout = editor.graph.layoutSnapshot();
+    return {
+      bounds: layout.bounds,
+      nodes: layout.nodes.map(({ id, x, y, width, height, layer, pinned }) => ({ id, x, y, width, height, layer, pinned })),
+      edges: layout.edges.map(({ id, from, to, path, label }) => ({ id, from, to, path, label })),
+    };
+  };
+  const beforeGeometry = layoutGeometry();
+  const portGeometry = (id) => {
+    const ports = host.querySelector(`.process-node-ports[data-node-id="${id}"]`);
+    return [...ports.querySelectorAll('.process-port')].map((port) => ({
+      kind: port.dataset.port,
+      cx: port.getAttribute('cx'), cy: port.getAttribute('cy'), r: port.getAttribute('r'),
+      role: port.getAttribute('role'), tabindex: port.getAttribute('tabindex'),
+      label: port.getAttribute('aria-label'),
+    }));
+  };
+  const beforePorts = Object.fromEntries(['start', 'end'].map((id) => [id, portGeometry(id)]));
+  assert.equal(host.querySelectorAll('.process-overlay-anchor').length, 0,
+    'a clean production editor does not render empty overlay placeholders');
+
+  await harness.act(() => editor.validation.applyDiagnostics([{
+    severity: 'error', code: 'E_START', scope: 'node', targetId: 'start', message: 'Start needs attention',
+  }]));
+
+  const start = host.querySelector('.process-node[data-node-id="start"]');
+  const end = host.querySelector('.process-node[data-node-id="end"]');
+  const marker = start.querySelector('.process-overlay-anchor');
+  assert.ok(marker, 'mapped validation information renders its shared anchor');
+  assert.equal(end.querySelector('.process-overlay-anchor'), null, 'the clean sibling stays undecorated');
+  assert.match(start.getAttribute('aria-label'), /E_START: Start needs attention/);
+  assert.match(marker.querySelector('.process-overlay-tooltip').textContent, /Start needs attention/);
+  assert.deepEqual(layoutGeometry(), beforeGeometry, 'overlay disclosure does not change graph geometry');
+  assert.deepEqual(Object.fromEntries(['start', 'end'].map((id) => [id, portGeometry(id)])), beforePorts,
+    'overlay disclosure does not move or re-role connector ports');
+
+  await harness.act(() => harness.fireEvent(marker, 'click'));
+  assert.deepEqual(editor.selection, { type: 'node', id: 'start' },
+    'clicking populated disclosure retains ordinary node selection semantics');
+  assert.equal(start.classList.contains('is-selected'), true);
+
+  editor.validation.applyDiagnostics([]);
+  assert.equal(host.querySelectorAll('.process-overlay-anchor').length, 0, 'clearing the diagnostic removes the anchor');
+  assert.deepEqual(editor.selection, { type: 'node', id: 'start' }, 'diagnostic repaint preserves semantic selection');
+  assert.deepEqual(editor.model.saveBody(), beforeSave,
+    'overlay appearance, interaction, and removal do not change the round-trip payload');
+  editor.destroy();
+});
+
 test('Preact join select renders and publishes canonical node.join values', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   Object.assign(editor.model.template.nodes, {

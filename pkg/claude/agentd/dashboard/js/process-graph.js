@@ -59,7 +59,7 @@ function edgeLabel(edge) {
   return bits.join(' · ');
 }
 
-function overlayText(overlay) {
+function overlayText(overlay, issues = []) {
   if (!overlay) return '';
   const bits = [];
   if (overlay.glyph) bits.push(String(overlay.glyph));
@@ -72,7 +72,7 @@ function overlayText(overlay) {
   if (overlay.retry != null || overlay.retries != null) bits.push(`retry ${overlay.retry ?? overlay.retries}`);
   if (overlay.badge) bits.push(String(overlay.badge));
   if (overlay.severity) bits.push(`has ${overlay.severity}`);
-  if (Array.isArray(overlay.issues) && overlay.issues.length) bits.push(overlay.issues.join('; '));
+  if (issues.length) bits.push(issues.join('; '));
   return bits.join(', ');
 }
 
@@ -96,6 +96,15 @@ function tooltipLines(issues, maxChars = 48) {
 
 function issueTexts(issues) {
   return Array.isArray(issues) ? issues.filter(Boolean).map(String) : [];
+}
+
+function overlayPresentation(overlay) {
+  const issues = issueTexts(overlay?.issues);
+  const description = overlayText(overlay, issues);
+  if (!description) return null;
+  // One presentation object gates the marker and supplies both disclosure
+  // channels, so tooltip content and the node's accessible name stay aligned.
+  return { overlay, description, issues };
 }
 
 function renderIssueTooltip(parent, issues) {
@@ -317,42 +326,42 @@ function renderShape(parent, node) {
   }
 }
 
-function renderOverlay(parent, node) {
-  const overlay = node.overlay || node.stateOverlay;
+function renderOverlay(parent, node, presentation) {
+  if (!presentation) return;
+  const { overlay, issues } = presentation;
   const x = node.width / 2 - 9;
   const y = -node.height / 2 + 9;
   const group = svgElement('g', {
-    class: `process-overlay-anchor${overlay ? ' has-overlay' : ''}${overlay?.severity ? ` overlay-${overlay.severity}` : ''}`,
+    class: `process-overlay-anchor has-overlay${overlay.severity ? ` overlay-${overlay.severity}` : ''}`,
     transform: `translate(${x} ${y})`,
     'aria-hidden': 'true',
   });
-  const issues = issueTexts(overlay?.issues);
   renderIssueTooltip(group, issues);
   group.append(svgElement('circle', { class: 'process-overlay-ring', cx: 0, cy: 0, r: 11 }));
-  if (overlay?.glyph) {
+  if (overlay.glyph) {
     const glyph = svgElement('text', { class: 'process-overlay-glyph', x: 0, y: 4, 'text-anchor': 'middle' });
     glyph.textContent = String(overlay.glyph);
     group.append(glyph);
   }
-  const status = overlay?.label || overlay?.status;
+  const status = overlay.label || overlay.status;
   if (status) {
     const statusLabel = svgElement('text', { class: 'process-overlay-status', x: -16, y: 4, 'text-anchor': 'end' });
     statusLabel.textContent = String(status);
     group.append(statusLabel);
   }
-  const progress = overlay?.progress;
+  const progress = overlay.progress;
   const progressText = typeof progress === 'string'
     ? progress
     : progress ? `${progress.current ?? 0}/${progress.total ?? 0}` : '';
-  const attempt = overlay?.attempt ?? overlay?.attempts;
-  const retry = overlay?.retry ?? overlay?.retries;
+  const attempt = overlay.attempt ?? overlay.attempts;
+  const retry = overlay.retry ?? overlay.retries;
   const detail = [progressText, attempt != null ? `#${attempt}` : '', retry != null ? `↻${retry}` : ''].filter(Boolean).join(' ');
   if (detail) {
     const text = svgElement('text', { class: 'process-overlay-detail', x: -16, y: node.height - 20, 'text-anchor': 'end' });
     text.textContent = detail;
     group.append(text);
   }
-  if (overlay?.badge) {
+  if (overlay.badge) {
     const badge = svgElement('text', { class: 'process-overlay-badge', x: -16, y: status ? 17 : 4, 'text-anchor': 'end' });
     badge.textContent = String(overlay.badge);
     group.append(badge);
@@ -531,7 +540,7 @@ export class ProcessGraph {
   }
 
   renderNode(node) {
-    const overlay = node.overlay || node.stateOverlay;
+    const overlay = overlayPresentation(node.overlay || node.stateOverlay);
     const group = svgElement('g', {
       class: `process-node process-node-${node.compound?.collapsed ? 'compound' : node.type || 'task'}${node.pinned ? ' is-pinned' : ''}`,
       transform: `translate(${node.x} ${node.y})`,
@@ -540,12 +549,12 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlayText(overlay) ? `, ${overlayText(overlay)}` : ''}`,
+      'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlay ? `, ${overlay.description}` : ''}`,
     });
     renderShape(group, node);
     const labelSerial = this.labelSerial = (this.labelSerial || 0) + 1;
     renderText(group, node, `process-node-label-clip-${this.instanceID}-${labelSerial}`);
-    renderOverlay(group, node);
+    renderOverlay(group, node, overlay);
     return group;
   }
 
