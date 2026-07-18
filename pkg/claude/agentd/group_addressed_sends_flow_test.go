@@ -30,6 +30,7 @@ import (
 type mcastRecipientView struct {
 	ConvID    string `json:"conv_id"`
 	AgentID   string `json:"agent_id"`
+	Title     string `json:"title"`
 	MessageID int64  `json:"message_id"`
 	Delivered bool   `json:"delivered"`
 }
@@ -342,4 +343,38 @@ func TestMulticast_UnknownGroup_NotFound(t *testing.T) {
 
 	byID := postMessage(t, f, sender, map[string]any{"to": "group:99999", "body": "x"})
 	require.Equal(t, http.StatusNotFound, byID.Code, "body=%s", byID.Body.String())
+}
+
+// TCL-282: group/dashboard listings already show a freshly spawned Codex
+// agent's agents.pending_name while conv_index.custom_title is empty. A group
+// send receipt must use that same visible name instead of calling the
+// recipient "(unnamed)".
+func TestMulticast_ReceiptUsesPendingCodexName(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const sender = "mc13-send-bbbb-cccc-000000000001"
+	const recipient = "mc13-codx-bbbb-cccc-000000000002"
+	f.HaveMember("team", sender)
+	f.HaveMember("team", recipient)
+
+	agentID, err := db.AgentIDForConv(recipient)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+	require.NoError(t, db.SetAgentPendingName(agentID, "codex-worker"))
+	// SetConvIndexCustomTitle materialises the exact cache state from the live
+	// reproduction: a Codex-tagged row exists, but its native/custom title has
+	// not landed yet.
+	require.NoError(t, db.SetConvIndexCustomTitle(recipient, "", "codex"))
+
+	rec := postMessage(t, f, sender, map[string]any{
+		"to": "group:team", "body": "name every recipient",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeMcast(t, rec)
+	require.Len(t, resp.Recipients, 1)
+	assert.Equal(t, recipient, resp.Recipients[0].ConvID)
+	assert.Equal(t, "codex-worker", resp.Recipients[0].Title,
+		"receipt title matches the name rendered by group/dashboard lists")
 }

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -217,17 +218,41 @@ func tryResolve(selector string) (*resolved, []*resolved, error) {
 		return &resolved{ConvID: row.ConvID, Row: row}, nil, nil
 	}
 
-	// 3) match by current display title (custom > summary > first prompt)
+	// 3) match by the current display title shown on agent listing surfaces:
+	//    custom > pending name > summary > first prompt. The pending-name
+	//    fallback is load-bearing for a freshly spawned Codex agent: its
+	//    --name is visible in group members / the dashboard before the native
+	//    title-store write has populated conv_index.custom_title, so that same
+	//    visible name must already be a usable selector.
 	rows, err := db.ListAllConvIndex()
 	if err != nil {
 		return nil, nil, err
 	}
+	pendingByConv, err := db.PendingNamesByConv()
+	if err != nil {
+		return nil, nil, err
+	}
 	var matches []*resolved
+	indexed := make(map[string]bool, len(rows))
 	for _, r := range rows {
-		if displayTitle(r) == selector {
+		indexed[r.ConvID] = true
+		if displayTitleFromParts(r, pendingByConv[r.ConvID]) == selector {
 			matches = append(matches, &resolved{ConvID: r.ConvID, Row: r})
 		}
 	}
+	// A just-spawned agent can be visible from its actor/group rows before it
+	// has any conv_index row at all. Include those pending-only current heads;
+	// once an index row exists the loop above owns the precedence decision, so
+	// an authoritative custom title never leaves the old pending name as a
+	// hidden alias.
+	for convID, pending := range pendingByConv {
+		if !indexed[convID] && pending == selector {
+			matches = append(matches, &resolved{ConvID: convID})
+		}
+	}
+	// Map iteration above is deliberately unordered. Sort every title match so
+	// ambiguity diagnostics and API candidate arrays remain stable.
+	sort.Slice(matches, func(i, j int) bool { return matches[i].ConvID < matches[j].ConvID })
 	if len(matches) == 1 {
 		return matches[0], nil, nil
 	}
@@ -475,6 +500,19 @@ func CachedTitle(convID string) string {
 // for a conv with no cached index / non-agent — the result degrades to
 // UnknownTitle exactly as CachedTitle would.
 func CachedTitleFromParts(row *db.ConvIndexRow, pendingName string) string {
+	if title := displayTitleFromParts(row, pendingName); title != "" {
+		return title
+	}
+	return UnknownTitle
+}
+
+// displayTitleFromParts applies the shared agent-name precedence without an
+// unknown placeholder: a native/custom title is authoritative; the actor's
+// spawn-time pending name fills the pre-rename gap; conversation-derived
+// summary / first prompt are the final fallback. Selector matching and terse
+// decorations use the empty result to mean "no name", while CachedTitle adds
+// UnknownTitle for listing surfaces.
+func displayTitleFromParts(row *db.ConvIndexRow, pendingName string) string {
 	if row != nil && row.CustomTitle != "" {
 		return row.CustomTitle
 	}
@@ -482,11 +520,9 @@ func CachedTitleFromParts(row *db.ConvIndexRow, pendingName string) string {
 		return pendingName
 	}
 	if row != nil {
-		if t := displayTitle(row); t != "" {
-			return t
-		}
+		return displayTitle(row)
 	}
-	return UnknownTitle
+	return ""
 }
 
 // CachedCreated returns convID's conversation creation timestamp
@@ -587,12 +623,11 @@ func ShortID(convID string) string {
 	return short(convID)
 }
 
-// TitleFor returns convID's display title (custom title, else summary,
-// else first prompt) from the conv_index cache, or "" when the conv
-// isn't indexed yet. Cheap — no .jsonl rescan — so it suits decorating
-// message nudges and inbox headers with a friendly name. For the
-// refreshed, rescan-backed lookup used by listing surfaces, use
-// FreshTitle instead.
+// TitleFor returns convID's cache-only display title (custom title, else the
+// actor's pending name, else summary / first prompt), or "" when no name is
+// known. Cheap — no conversation-store rescan — so it suits decorating
+// receipts, message nudges, and inbox headers. For the refreshed,
+// rescan-backed lookup used by listing surfaces, use FreshTitle instead.
 func TitleFor(convID string) string {
 	return titleFor(convID)
 }
@@ -704,10 +739,7 @@ func readCCSessionID() string {
 func printAmbiguous(out io.Writer, selector string, matches []*resolved) {
 	fmt.Fprintf(out, "Error: selector %q matches %d conversations:\n", selector, len(matches))
 	for _, m := range matches {
-		title := ""
-		if m.Row != nil {
-			title = displayTitle(m.Row)
-		}
+		title := titleFor(m.ConvID)
 		fmt.Fprintf(out, "  %s  %s\n", m.ConvID[:8], title)
 	}
 	fmt.Fprintf(out, "Disambiguate by ID prefix.\n")

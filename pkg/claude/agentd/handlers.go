@@ -270,17 +270,17 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
 	out := make([]*peerEntry, 0, len(rs))
 	for _, r := range rs {
-		title := ""
-		if r.Row != nil {
-			title = agent.DisplayTitle(r.Row)
-		}
 		out = append(out, &peerEntry{
 			// agent.ResolveSelector already stamped the stable agent_id on
 			// every candidate, so read it off the resolved handle instead of
 			// a second db.AgentIDForConv lookup.
-			AgentID:           r.AgentID,
-			ConvID:            r.ConvID,
-			Title:             title,
+			AgentID: r.AgentID,
+			ConvID:  r.ConvID,
+			// Use the same cache-only custom > pending > summary > prompt
+			// precedence that selected the candidate. In particular, an
+			// ambiguity response for pending-only Codex agents must not render
+			// the very name they matched as blank.
+			Title:             agent.TitleFor(r.ConvID),
 			agentLocationView: locationView(r.ConvID),
 		})
 	}
