@@ -8,6 +8,7 @@ import (
 )
 
 func TestMigrateV135toV136AddsPendingSpawnTaskRefColumns(t *testing.T) {
+	require.Equal(t, 136, currentVersion, "tripwire: bump this with the next migration")
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)

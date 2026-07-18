@@ -2430,7 +2430,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// verifiably written.
 	if p.TaskURL != "" {
 		resp["task_ref_url"] = p.TaskURL
-		resp["task_ref_state"] = taskRefBindState(outcome.ConvID)
+		resp["task_ref_state"] = taskRefBindState(outcome.ConvID, p.TaskURL)
 	}
 	// FocusMode is only ever non-empty when the caller asked for
 	// auto-focus. "browser" means openTerminal couldn't pop a native
@@ -3493,6 +3493,24 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			}
 		}
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
+			if reservedPending {
+				// The agent process is already running and its identity bound;
+				// a hard failure here would tell the caller the spawn failed —
+				// the CLI would even remove a just-created worktree under the
+				// live agent — and the claimed reservation would be gone, so
+				// nothing would ever retry. Requeue the durable intent instead
+				// (the sweeper re-runs the enrollment tail exactly as after a
+				// daemon restart) and report the spawn with its real conv-id;
+				// the response's task_ref_state read-back stays honest about
+				// anything not yet bound.
+				ps := pendingSpawnFromParams(g, p, label)
+				ps.Launching = false
+				requeuePendingSpawn(label, ps)
+				slog.Warn("spawn: inline enrollment failed; requeued for sweeper back-fill",
+					"label", label, "conv", convID, "error", fail.Msg)
+				return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
+					Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+			}
 			return nil, fail
 		}
 		return &spawnOutcome{AgentID: p.AgentID, ConvID: convID, Label: label, TmuxSession: tmuxSession, FocusMode: focusMode,
@@ -3665,8 +3683,11 @@ func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID
 	} else if m != nil {
 		// Same repair the sweeper's already-enrolled path performs: a prior
 		// attempt may have committed the membership but lost the task-ref
-		// write, and the claimed row is about to be dropped.
-		ensurePendingTaskRefBound(convID, ps)
+		// write, and the claimed row is the only durable copy of the intent —
+		// requeue it on a failed repair so the sweeper retries.
+		if !ensurePendingTaskRefBound(convID, ps) {
+			requeuePendingSpawn(label, ps)
+		}
 		return
 	}
 	if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
@@ -3801,6 +3822,25 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
 	}
 
+	// Record the per-agent task-reference link (dashboard Task column) when
+	// the spawn requested one. The URL was already scheme-validated at the
+	// spawn boundary, so this only ever stores a good value. Fatal, NOT
+	// best-effort like the audit snapshot below: the caller was told the
+	// spawn carries this link, so a lost write must fail the enrollment
+	// rather than silently dropping it (TCL-568). Deliberately placed BEFORE
+	// the membership write: a failure here leaves nothing committed, so the
+	// sweeper / back-fill retry re-runs the FULL enrollment (briefing
+	// included) instead of hitting the already-enrolled skip. The write is a
+	// keyed upsert, so the retry re-applying it is idempotent.
+	taskRefBound := false
+	if agentID != "" && p.TaskURL != "" {
+		if _, err := db.SetAgentTaskRef(agentID, p.TaskURL, p.TaskLabel); err != nil {
+			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to record task-reference link: " + err.Error()}
+		}
+		taskRefBound = true
+	}
+
 	// Membership is optional for process-owned v1 agents. Ordinary spawn
 	// callers still pass a group and retain the existing fatal membership
 	// contract.
@@ -3850,17 +3890,13 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		}
 	}
 
-	// Record the per-agent task-reference link (dashboard Task column),
-	// when the spawn requested one. The URL was already scheme-validated
-	// at the spawn boundary, so this only ever stores a good value. Lets a
-	// lead point each spawned worker at its Linear issue up front. Fatal
-	// like the sandbox/process-command writes above, NOT best-effort like
-	// the audit snapshot: the caller was told the spawn carries this link,
-	// so a lost write must fail the enrollment — the launch-enrollment
-	// path then fails the request before the fork, and the sweeper /
-	// inline back-fill requeue and retry (TCL-568: spawn must not report
-	// task linkage it silently dropped).
-	if agentID != "" && p.TaskURL != "" {
+	// Task-ref fallback for the rare path where the up-front identity ensure
+	// failed transiently and the actor was only minted by the group-add above
+	// (agentID was "" at the pre-membership write). Same fatal contract; the
+	// membership is already committed here, so a failure lands in the
+	// already-enrolled retry branch, whose repair re-applies the link off the
+	// requeued pending row.
+	if !taskRefBound && agentID != "" && p.TaskURL != "" {
 		if _, err := db.SetAgentTaskRef(agentID, p.TaskURL, p.TaskLabel); err != nil {
 			return 0, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to record task-reference link: " + err.Error()}

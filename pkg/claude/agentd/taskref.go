@@ -113,14 +113,15 @@ func deriveTaskLabel(rawURL string) string {
 	return host
 }
 
-// taskRefBindState reports whether a just-spawned agent's requested
-// task-reference link is verifiably stored ("bound") or still to come
-// ("pending"). It reads the link back off the enrolled actor rather than
-// trusting that the enrollment path ran: a spawn response must not claim a
-// linkage that was skipped or lost (TCL-568). An empty convID is the
+// taskRefBindState reports whether a just-spawned agent's REQUESTED
+// task-reference link is verifiably stored ("bound") or not (yet)
+// ("pending"). It reads the link back off the enrolled actor and compares
+// it to the requested URL rather than trusting that the enrollment path
+// ran — a spawn response must not claim a linkage that was skipped, lost,
+// or superseded by a concurrent edit (TCL-568). An empty convID is the
 // pending-spawn case — the link rides the pending_spawns row and is bound
 // by the sweeper once the conv-id materialises.
-func taskRefBindState(convID string) string {
+func taskRefBindState(convID, wantURL string) string {
 	if convID == "" {
 		return "pending"
 	}
@@ -129,7 +130,7 @@ func taskRefBindState(convID string) string {
 		return "pending"
 	}
 	ref, err := db.GetAgentTaskRef(agentID)
-	if err != nil || strings.TrimSpace(ref.URL) == "" {
+	if err != nil || strings.TrimSpace(ref.URL) != strings.TrimSpace(wantURL) {
 		return "pending"
 	}
 	return "bound"
