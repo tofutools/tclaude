@@ -52,6 +52,12 @@ export function UsageHistoryApp({ state, actions }) {
     <${AsyncLoadState} label="Usage" request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
       <p class="usage-history-note">Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.</p>
+      <div class="usage-chart-legend" aria-label="Usage chart legend">
+        <span><i class="usage-legend-swatch observed"></i>Observed</span>
+        <span><i class="usage-legend-swatch forecast"></i>Forecast</span>
+        <span><i class="usage-legend-swatch reset"></i>Reset</span>
+        <span><i class="usage-legend-swatch now"></i>Now</span>
+      </div>
       ${current.series.length
         ? html`<div class="usage-series-grid">${current.series.map((series) => html`<${UsageSeriesCard}
             key=${`${series.provider}:${series.window_name}`} series=${series} payload=${current.payload} />`)}</div>`

@@ -1613,6 +1613,16 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   color: #8b949e; background: #161b22; border: 1px solid #2a3340;
   border-radius: 5px; font-size: 12px;
 }
+.usage-chart-legend {
+  display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
+  margin: -4px 2px 12px; color: #8b949e; font-size: 11px;
+}
+.usage-chart-legend span { display: inline-flex; gap: 6px; align-items: center; }
+.usage-legend-swatch { display: inline-block; width: 18px; height: 0; border-top: 2px solid; }
+.usage-legend-swatch.observed { border-color: #58a6ff; }
+.usage-legend-swatch.forecast { border-color: #d29922; border-top-style: dashed; }
+.usage-legend-swatch.reset { border-color: #a371f7; border-top-style: dashed; }
+.usage-legend-swatch.now { border-color: #6e7681; border-top-style: dotted; }
 .usage-series-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
   gap: 14px;
@@ -1632,8 +1642,10 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-current span { color: #7d8590; font-size: 11px; margin-top: 4px; }
 .usage-line-chart { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
 .usage-grid line { stroke: #1c2430; stroke-width: 1; }
-.usage-grid text, .usage-x-label { fill: #6e7681; font-size: 10px; }
-.usage-x-label.forecast { fill: #484f58; }
+.usage-grid text, .usage-x-tick text, .usage-now-mark text { fill: #6e7681; font-size: 10px; }
+.usage-x-tick line { stroke: #151b24; stroke-width: 1; }
+.usage-now-mark line { stroke: #30363d; stroke-width: 1; stroke-dasharray: 2 4; }
+.usage-now-mark text { fill: #8b949e; }
 .usage-observed-line {
   fill: none; stroke: #58a6ff; stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round;
 }
