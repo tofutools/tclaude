@@ -1654,16 +1654,30 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   fill: none; stroke: #58a6ff; stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round;
 }
 .usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; }
-.usage-point:hover { r: 4px; fill: #cae8ff; }
+.usage-point:hover, .usage-point:focus { r: 4px; fill: #cae8ff; outline: none; }
 .usage-forecast-line { stroke: #d29922; stroke-width: 2; stroke-dasharray: 6 5; }
 .usage-forecast-hit-target {
   stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: crosshair;
 }
 .usage-forecast-hit-target:focus { stroke: rgb(210 153 34 / 18%); outline: none; }
 .usage-scheduled-reset line { stroke: #a371f7; stroke-width: 1.5; stroke-dasharray: 5 4; }
-.usage-forecast-tooltip { pointer-events: none; }
-.usage-forecast-tooltip rect { fill: #161b22; stroke: #d29922; stroke-width: 1; opacity: .97; }
-.usage-forecast-tooltip text { fill: #c9d1d9; font-size: 9px; }
+.usage-scheduled-reset line.usage-marker-hit-target,
+.usage-reset-mark line.usage-marker-hit-target,
+.usage-now-mark line.usage-marker-hit-target {
+  stroke: transparent; stroke-width: 14; stroke-dasharray: none;
+  fill: none; pointer-events: stroke; cursor: crosshair;
+}
+.usage-scheduled-reset line.usage-marker-hit-target:focus,
+.usage-reset-mark line.usage-marker-hit-target:focus,
+.usage-now-mark line.usage-marker-hit-target:focus {
+  stroke: rgb(163 113 247 / 18%); outline: none;
+}
+.usage-chart-tooltip { pointer-events: none; }
+.usage-chart-tooltip rect { fill: #161b22; stroke: #d29922; stroke-width: 1; opacity: .97; }
+.usage-chart-tooltip.observed rect { stroke: #58a6ff; }
+.usage-chart-tooltip.reset rect { stroke: #a371f7; }
+.usage-chart-tooltip.now rect { stroke: #6e7681; }
+.usage-chart-tooltip text { fill: #c9d1d9; font-size: 9px; }
 .usage-reset-mark line { stroke: #a371f7; stroke-width: 1; stroke-dasharray: 3 4; opacity: .8; }
 .usage-reset-mark circle { fill: #a371f7; }
 .usage-chart-empty { height: 180px; display: grid; place-items: center; color: #6e7681; }
@@ -1674,10 +1688,12 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .usage-card-footer.usage-forecast strong { color: #d4d4d4; }
 .usage-card-footer.usage-forecast span { color: #7d8590; }
+.usage-card-footer.usage-forecast > strong,
+.usage-card-footer.usage-forecast > .usage-forecast-line-copy { flex-basis: 100%; }
 .usage-card-footer.usage-forecast.good strong { color: #3fb950; }
 .usage-card-footer.usage-forecast.warn strong { color: #d29922; }
 .usage-card-footer.usage-forecast.danger strong { color: #f85149; }
-.usage-reset-count { margin-left: auto; }
+.usage-reset-count { flex-basis: 100%; text-align: right; }
 .usage-history-error { margin-bottom: 12px; color: #f85149; }
 @media (max-width: 600px) {
   .usage-series-grid { grid-template-columns: minmax(0, 1fr); }

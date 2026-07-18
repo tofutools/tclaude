@@ -620,13 +620,19 @@ Subscription accounts get an account-wide **Usage** tab once Claude or Codex
 has supplied a quota reading. It plots the retained 15-minute samples as one
 line chart per provider and quota window, with 24-hour, 7-day, 30-day, and
 90-day history views. A separate 5-hour, 24-hour, 7-day, or 30-day lookahead
-controls the future portion of every chart without refetching its history.
+controls the future portion of every chart without refetching its history. The
+selected history and lookahead ranges are dashboard preferences and persist
+across daemon restarts.
 
 The dashed line estimates the current post-reset consumption rate and compares
 the projected 100% time with the provider's reported reset time. Hovering the
 forecast reports its interpolated percentage and time plus the remaining time
-before reset. Upcoming reported resets inside the selected lookahead are drawn
-as vertical reset lines. A declared
+before reset. Samples, the current-time marker, and detected or scheduled reset
+markers use the same immediate tooltip, including exact timestamps and relative
+reset timing. Upcoming reported resets inside the selected lookahead are drawn
+as vertical reset lines. The summary below each chart states when the limit is
+predicted to be hit, any resulting time without quota access, and the average
+usage rate in percentage points per hour. A declared
 reset boundary or a downward step of at least two percentage points begins a
 new segment; the observed post-reset percentage is used as its baseline, so an
 out-of-cycle reset does not need to be sampled at exactly 0%. Forecasts wait

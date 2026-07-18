@@ -39,33 +39,52 @@ export function formatUsageTime(value, now = Date.now()) {
   return delta >= 0 ? `in ${amount}` : `${amount} ago`;
 }
 
+export function formatUsageDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds)) return 'unknown';
+  let mins = Math.max(0, Math.ceil(Math.abs(milliseconds) / 60000));
+  if (mins === 0) return '<1m';
+  const days = Math.floor(mins / 1440);
+  mins -= days * 1440;
+  const hours = Math.floor(mins / 60);
+  mins -= hours * 60;
+  return [days && `${days}d`, hours && `${hours}h`, mins && `${mins}m`].filter(Boolean).join(' ');
+}
+
 export function usageForecastView(forecast, now = Date.now(), latestAt = '') {
-  if (!forecast) return { tone: 'muted', headline: 'No forecast', detail: '' };
-  const rate = forecast.rate_pct_per_hour ? `${forecast.rate_pct_per_hour.toFixed(1)}%/h` : '';
+  if (!forecast) return { tone: 'muted', headline: 'Prediction unavailable', lines: [] };
+  const rate = forecast.rate_pct_per_hour
+    ? `Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`
+    : '';
+  const hitAt = new Date(forecast.hits_limit_at).getTime();
+  const resetAt = new Date(forecast.reset_at).getTime();
+  const beforeReset = Number.isFinite(hitAt) && Number.isFinite(resetAt) && resetAt > hitAt
+    ? formatUsageDuration(resetAt - hitAt)
+    : '';
   if (forecast.status === 'stale') {
     const resetPassed = forecast.reset_at && new Date(forecast.reset_at).getTime() <= now;
     return {
-      tone: 'muted', headline: 'Forecast paused',
-      detail: resetPassed ? `reported reset ${formatUsageTime(forecast.reset_at, now)}` : `last sample ${formatUsageTime(latestAt, now)}`,
+      tone: 'muted', headline: 'Prediction paused',
+      lines: [resetPassed ? `Reported reset ${formatUsageTime(forecast.reset_at, now)}` : `Last sample ${formatUsageTime(latestAt, now)}`],
     };
   }
-  if (forecast.status === 'limit') return { tone: 'danger', headline: 'Limit reached', detail: '' };
+  if (forecast.status === 'limit') return { tone: 'danger', headline: 'Prediction: limit reached', lines: [] };
   if (forecast.status === 'before_reset') return {
-    tone: 'danger', headline: `Limit ${formatUsageTime(forecast.hits_limit_at, now)}`,
-    detail: `before reset ${formatUsageTime(forecast.reset_at, now)} · ${rate}`,
+    tone: 'danger',
+    headline: `Prediction: limit hit ${formatUsageTime(forecast.hits_limit_at, now)}${beforeReset ? ` (${beforeReset} before reset)` : ''}`,
+    lines: [beforeReset && `Predicted time without quota access: ${beforeReset}`, rate].filter(Boolean),
   };
   if (forecast.status === 'after_reset') return {
-    tone: 'good', headline: `Reset first ${formatUsageTime(forecast.reset_at, now)}`,
-    detail: `straight-line limit ${formatUsageTime(forecast.hits_limit_at, now)} · ${rate}`,
+    tone: 'good', headline: `Prediction: reset ${formatUsageTime(forecast.reset_at, now)} (before limit)`,
+    lines: [`At this rate, limit would be hit ${formatUsageTime(forecast.hits_limit_at, now)}`, rate].filter(Boolean),
   };
   if (forecast.status === 'projected') return {
-    tone: 'warn', headline: `Limit ${formatUsageTime(forecast.hits_limit_at, now)}`,
-    detail: `${rate} · reset time unavailable`,
+    tone: 'warn', headline: `Prediction: limit hit ${formatUsageTime(forecast.hits_limit_at, now)}`,
+    lines: ['Reset time unavailable', rate].filter(Boolean),
   };
-  if (forecast.status === 'flat') return { tone: 'good', headline: 'Usage is flat', detail: 'No limit crossing projected' };
+  if (forecast.status === 'flat') return { tone: 'good', headline: 'Prediction: no limit crossing', lines: ['Usage is flat'] };
   return {
-    tone: 'muted', headline: 'Forecast warming up',
-    detail: `${forecast.sample_count || 0} post-reset sample${forecast.sample_count === 1 ? '' : 's'} · needs 3 over 30m`,
+    tone: 'muted', headline: 'Prediction warming up',
+    lines: [`${forecast.sample_count || 0} post-reset sample${forecast.sample_count === 1 ? '' : 's'} · needs 3 over 30m`],
   };
 }
 
