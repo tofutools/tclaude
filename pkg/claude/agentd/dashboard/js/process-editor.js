@@ -185,6 +185,7 @@ export class ProcessTemplateEditor {
     this.graph = createProcessGraphAdapter(host, {
       graph: this.model.graph(),
       ariaLabel: `Process template editor: ${this.model.template.id}`,
+      interactionLayering: true,
       connectionFeedback: (request, prepared) => resolveProcessConnectionFeedback(this.model, request, prepared),
       connectionFeedbackPreparation: () => prepareProcessConnectionFeedback(this.model),
       events: {
@@ -784,6 +785,7 @@ export class ProcessTemplateEditor {
       if (this.modalDispose === decision.modal) this.modalDispose = null;
       if (decision.inline) this.closeInline?.(false);
       this.model = new ProcessEditModel(view, this.model.config);
+      this.graph?.resetInteractionLayering?.();
       this.loadedView = structuredClone(view);
       this.blank = false;
       this.retainLiveSelection();
@@ -1508,6 +1510,7 @@ export class ProcessTemplateEditor {
             }
           }
           this.model = new ProcessEditModel(view, this.model.config);
+          this.graph?.resetInteractionLayering?.();
           this.loadedView = structuredClone(view);
           this.blank = originalBlank && !view.sourceHash;
           this.selection = null;
@@ -1657,6 +1660,7 @@ export class ProcessTemplateEditor {
         const view = await fetchEditView(this.model.template.id);
         if (requestSeq !== this.saveSeq) return;
         this.model = new ProcessEditModel(view, this.model.config);
+        this.graph?.resetInteractionLayering?.();
         this.loadedView = structuredClone(view);
         this.blank = false;
         this.selection = null;

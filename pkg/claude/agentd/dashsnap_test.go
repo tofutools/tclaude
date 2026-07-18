@@ -1105,6 +1105,7 @@ func baseStates() []dashsnap.State {
 			JS:       processEditorStateJS(``),
 			SettleMS: 1100,
 		},
+		processEditorLayeringState("process-editor-layering", "Process editor — interaction layering"),
 		processConnectionFeedbackState(
 			"process-editor-connection-valid",
 			"Process editor — valid connection target",
@@ -2641,6 +2642,86 @@ func processEditorStateJS(extraJS string) string {
   };
   %s
 })();`, extraJS)
+}
+
+func processEditorLayeringState(key, title string) dashsnap.State {
+	setup := processEditorStateJS(`window.__browserEd=ed;
+  ed.model.layout.nodes.begin={x:330,y:230};
+  ed.model.layout.nodes.ship={x:358,y:230};
+  ed.model.config.nodeEditable=function(){return false;};
+  ed.model.config.edgeEditable=function(){return false;};
+  ed.model.config.canInsert=false;
+  ed.refresh({fit:true});
+  ed.validation.applyDiagnostics([{severity:'error',code:'E_LAYER',scope:'node',targetId:'begin',message:'Raised node keeps its local diagnostic'}]);
+  await editorPaint(); await editorPaint();
+  var root=document.querySelector('.process-graph'),svg=root.querySelector('.process-graph-svg');
+  var nodeLayer=root.querySelector('.process-node-layer'),portLayer=root.querySelector('.process-port-layer');
+  var begin=nodeLayer.querySelector('[data-node-id="begin"]'),ship=nodeLayer.querySelector('[data-node-id="ship"]');
+  var beginBox=begin.getBoundingClientRect(),shipBox=ship.getBoundingClientRect();
+  var overlap={x:(Math.max(beginBox.left,shipBox.left)+Math.min(beginBox.right,shipBox.right))/2,
+    y:(Math.max(beginBox.top,shipBox.top)+Math.min(beginBox.bottom,shipBox.bottom))/2};
+  if(!(Math.min(beginBox.right,shipBox.right)>Math.max(beginBox.left,shipBox.left))) throw new Error('layering fixture nodes do not overlap');
+  var hit=document.elementFromPoint(overlap.x,overlap.y)?.closest('[data-node-id]');
+  if(!hit||hit.dataset.nodeId!=='ship') throw new Error('canonical baseline painter order is not deterministic');
+  var traversal=function(){return Array.from(nodeLayer.querySelectorAll('[tabindex="0"]')).concat(Array.from(portLayer.querySelectorAll('[tabindex="0"]'))).map(function(element){return element.closest('[data-node-id]').dataset.nodeId+':'+(element.dataset.port||'node');});};
+  var geometry=function(){return {
+    nodes:Array.from(nodeLayer.children).map(function(node){return [node.dataset.nodeId,node.getAttribute('transform')];}),
+    ports:Array.from(portLayer.children).map(function(group){return [group.dataset.nodeId,group.getAttribute('transform'),Array.from(group.querySelectorAll('.process-port')).map(function(port){return [port.dataset.port,port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')];})];}),
+    edge:root.querySelector('.process-edge-path')?.getAttribute('d')||''
+  };};
+  window.__layering={ed:ed,root:root,svg:svg,nodeLayer:nodeLayer,portLayer:portLayer,
+    overlap:overlap,exposed:{x:beginBox.left+3,y:beginBox.top+beginBox.height/2},
+    traversal:JSON.stringify(traversal()),geometry:JSON.stringify(geometry()),save:JSON.stringify(ed.model.saveBody()),
+    rev:ed.model.rev,undo:ed.model.undoStack.length,pointerID:null};
+  svg.addEventListener('pointerdown',function(event){window.__layering.pointerID=event.pointerId;},{capture:true});`)
+	assertRaised := `var state=window.__layering,ed=state.ed,root=state.root;
+  var frontNode=root.querySelector('.process-front-node-layer > [data-node-id="begin"]');
+  var frontPorts=root.querySelector('.process-front-port-layer > [data-node-id="begin"]');
+  if(!frontNode||!frontPorts) throw new Error('pointerdown did not paint the interacted node and owned ports at the front');
+  if(root.querySelector('.process-front-node-layer').getAttribute('aria-hidden')!=='true'||root.querySelector('.process-front-port-layer').getAttribute('aria-hidden')!=='true') throw new Error('front paint layers entered the accessibility tree');
+  if(frontNode.matches('[role],[tabindex],[aria-label]')||frontNode.querySelector('[role],[tabindex],[aria-label]')||frontPorts.querySelector('[role],[tabindex],[aria-label]')) throw new Error('front copies duplicated accessible node/port ownership');
+  if(!frontNode.querySelector('.process-overlay-anchor')) throw new Error('node-local overlay did not travel with its raised node');
+  if(root.querySelector('.process-action-tooltip').closest('svg')||document.querySelector('.process-issues-panel').closest('svg')) throw new Error('global overlays moved into the node paint layer');
+  if(JSON.stringify(Array.from(root.querySelector('.process-graph-viewport').children).map(function(layer){return layer.dataset.key||layer.classList.contains('process-editor-band')&&'band';}).slice(0,5))!==JSON.stringify(['edges','nodes','front-node','ports','front-ports'])) throw new Error('fixed semantic layer order changed');
+  if(JSON.stringify(Array.from(state.nodeLayer.querySelectorAll('[tabindex="0"]')).concat(Array.from(state.portLayer.querySelectorAll('[tabindex="0"]'))).map(function(element){return element.closest('[data-node-id]').dataset.nodeId+':'+(element.dataset.port||'node');}))!==state.traversal) throw new Error('click history changed canonical keyboard traversal');
+  var hit=document.elementFromPoint(state.overlap.x,state.overlap.y)?.closest('[data-node-id]');
+  if(!hit||hit.dataset.nodeId!=='begin'||!hit.closest('.process-front-node-layer')) throw new Error('raised node does not own overlap hit-testing');
+  if(JSON.stringify({nodes:Array.from(state.nodeLayer.children).map(function(node){return [node.dataset.nodeId,node.getAttribute('transform')];}),ports:Array.from(state.portLayer.children).map(function(group){return [group.dataset.nodeId,group.getAttribute('transform'),Array.from(group.querySelectorAll('.process-port')).map(function(port){return [port.dataset.port,port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')];})];}),edge:root.querySelector('.process-edge-path')?.getAttribute('d')||''})!==state.geometry) throw new Error('raising changed canonical node/port/edge geometry');
+  if(JSON.stringify(ed.model.saveBody())!==state.save||ed.model.rev!==state.rev||ed.model.undoStack.length!==state.undo) throw new Error('presentation layering mutated save/history state');
+  if(!ed.graph.interactionSnapshot().active||state.pointerID==null||!state.svg.hasPointerCapture(state.pointerID)) throw new Error('front painting broke live SVG pointer capture');`
+	return dashsnap.State{
+		Key: key, Title: title,
+		Caption: "TCL-492 real Chrome: partially overlapping nodes raise by last node/port interaction while edges, connector geometry, fixed overlays, model/history, canonical Tab order, focus, pointer capture, and accessible ownership remain stable.",
+		JS:      setup,
+		Actions: []dashsnap.BrowserAction{
+			{Kind: "mouse-down-at", JS: `return window.__layering.exposed;`},
+			{Kind: "eval", JS: assertRaised},
+			{Kind: "mouse-up"},
+			{Kind: "eval", JS: `var state=window.__layering;if(state.ed.graph.interactionSnapshot().active) throw new Error('pointer interaction survived release');
+  var begin=state.nodeLayer.querySelector('[data-node-id="begin"]');state.blurs=0;begin.addEventListener('blur',function(){state.blurs+=1;});begin.focus({preventScroll:true});
+  if(document.activeElement!==begin||state.blurs!==0) throw new Error('focus-driven raise detached or blurred the canonical node');`},
+			{Kind: "key", Key: "Tab"},
+			{Kind: "eval", JS: `var state=window.__layering,active=document.activeElement;
+  if(!active||active.dataset.nodeId!=='ship'||active.closest('.process-node-layer')!==state.nodeLayer) throw new Error('Tab after raised begin did not follow canonical node order');
+  if(state.root.querySelector('.process-front-node-layer > [data-node-id]')?.dataset.nodeId!=='ship') throw new Error('keyboard-focused node was not raised');`},
+			{Kind: "key", Key: "Tab"},
+			{Kind: "eval", JS: `var state=window.__layering,active=document.activeElement;
+  if(!active||active.dataset.port!=='in'||active.closest('[data-node-id]')?.dataset.nodeId!=='begin'||active.closest('.process-port-layer')!==state.portLayer) throw new Error('Tab did not continue from canonical nodes to canonical ports');
+  if(active.getAttribute('role')!=='button'||active.getAttribute('tabindex')!=='0'||!active.getAttribute('aria-label')) throw new Error('canonical port accessibility ownership changed');
+  if(state.root.querySelector('.process-front-port-layer > [data-node-id]')?.dataset.nodeId!=='begin') throw new Error('keyboard-focused port did not raise its owning node');`},
+			{Kind: "key", Key: "Tab"},
+			{Kind: "eval", JS: `return new Promise(function(resolve,reject){var state=window.__layering,active=document.activeElement;
+  try{if(!active||active.dataset.port!=='out'||active.closest('[data-node-id]')?.dataset.nodeId!=='begin') throw new Error('canonical port traversal changed after click history');
+  state.ed.refresh();requestAnimationFrame(function(){requestAnimationFrame(function(){try{
+    var restored=document.activeElement;if(!restored||restored.dataset.port!=='out'||restored.closest('[data-node-id]')?.dataset.nodeId!=='begin'||restored.closest('.process-port-layer')!==state.portLayer) throw new Error('rerender did not restore canonical port focus');
+    if(JSON.stringify(Array.from(state.nodeLayer.querySelectorAll('[tabindex="0"]')).concat(Array.from(state.portLayer.querySelectorAll('[tabindex="0"]'))).map(function(element){return element.closest('[data-node-id]').dataset.nodeId+':'+(element.dataset.port||'node');}))!==state.traversal) throw new Error('rerender changed canonical traversal');
+    var fit=state.root.querySelector('.process-fit-button');fit.focus();state.ed.graph.setGraph(state.ed.validation.decorate(state.ed.model.graph()),{resetInteractionLayering:true});
+    if(state.root.querySelector('.process-front-node-layer').childElementCount||state.root.querySelector('.process-front-port-layer').childElementCount) throw new Error('explicit whole-model reset retained reused node IDs');
+    state.ed.setSelection({type:'node',id:'begin'});resolve(true);
+  }catch(error){reject(error);}});});}catch(error){reject(error);}});`},
+		},
+		SettleMS: 500,
+	}
 }
 
 func processTabJS(subtab, readySelector string) string {
