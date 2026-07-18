@@ -25,7 +25,8 @@ function UsageSeriesCard({ series, payload, lookaheadHours }) {
     <${UsageHistoryChart} series=${series} from=${payload.from} generatedAt=${payload.generated_at}
       lookaheadHours=${lookaheadHours} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
-      <strong>${forecast.headline}</strong><span>${forecast.detail}</span>
+      <strong>${forecast.headline}</strong>
+      ${(forecast.lines || []).map((line) => html`<span class="usage-forecast-line-copy" key=${line}>${line}</span>`)}
       ${resetCount ? html`<span class="usage-reset-count">${resetCount} reset${resetCount === 1 ? '' : 's'} detected in view</span>` : null}
     </div>
   </article>`;
@@ -84,6 +85,7 @@ export function UsageHistoryApp({ state, actions }) {
 }
 
 export function mountUsageHistoryIsland({ host, state, actions, registerCleanup }) {
+  state.initialize();
   render(html`<${UsageHistoryApp} state=${state} actions=${actions} />`, host);
   registerCleanup(() => render(null, host));
 }
