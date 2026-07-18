@@ -376,7 +376,7 @@ func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
 
 func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
-		time.Sleep(softExitRetryDelay)
+		time.Sleep(unknownIntentCleanupDelay)
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 	})
 }
@@ -497,6 +497,10 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 // few seconds so a pane that's honouring /exit has time to close before
 // we bother re-injecting.
 var softExitRetryDelay = 4 * time.Second
+
+// Unknown cleanup must remain available for the reaper to observe exits when
+// hooks and immediate probes are unavailable.
+var unknownIntentCleanupDelay = 65 * time.Second
 
 // softExitMaxAttempts bounds the TOTAL number of soft-exit injections per
 // stop (the initial one + retries). The first retry recovers an /exit
