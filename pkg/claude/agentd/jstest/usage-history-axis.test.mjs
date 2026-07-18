@@ -4,6 +4,7 @@ import {
   formatUsageAxisTick,
   usageAxisStart,
   usageAxisTicks,
+  usageForecastPoint,
 } from '../dashboard/js/usage-history-axis.js';
 
 const hour = 60 * 60_000;
@@ -38,4 +39,12 @@ test('usage history tick formatting includes time only for short domains', () =>
   assert.match(shortLabel, /\d{2}:\d{2}/);
   assert.doesNotMatch(longLabel, /\d{2}:\d{2}/);
   assert.match(longLabel, /18 Jul/);
+});
+
+test('forecast hover interpolation clamps to the projected line', () => {
+  const point = usageForecastPoint(now, 20, 4, now + 10 * hour, 0.5);
+  assert.deepEqual(point, { time: now + 5 * hour, pct: 40, ratio: 0.5 });
+  assert.deepEqual(usageForecastPoint(now, 20, 4, now + 10 * hour, 2), {
+    time: now + 10 * hour, pct: 60, ratio: 1,
+  });
 });

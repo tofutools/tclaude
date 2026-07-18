@@ -15,7 +15,7 @@ test('usage chart renders even time ticks and self-contained hover titles', asyn
     resets: [],
     forecast: {
       status: 'before_reset',
-      rate_pct_per_hour: 1,
+      rate_pct_per_hour: 87.5 / 24,
       hits_limit_at: new Date(now + day).toISOString(),
       reset_at: new Date(now + 7 * day).toISOString(),
     },
@@ -25,6 +25,7 @@ test('usage chart renders even time ticks and self-contained hover titles', asyn
     series,
     from: new Date(now - 7 * day).toISOString(),
     generatedAt: new Date(now).toISOString(),
+    lookaheadHours: 168,
   }));
 
   const ticks = [...view.container.querySelectorAll('.usage-x-tick line')];
@@ -33,9 +34,30 @@ test('usage chart renders even time ticks and self-contained hover titles', asyn
 
   const pointTitle = view.container.querySelector('.usage-point title').textContent;
   assert.match(pointTitle, /Codex · 7 day window · 12\.5%/);
-  assert.match(pointTitle, /source: codex-cli/);
-  const forecastTitle = view.container.querySelector('.usage-forecast-line title').textContent;
-  assert.match(forecastTitle, /Codex · 7 day window · forecast/);
+  assert.doesNotMatch(pointTitle, /source|codex-cli/i);
+
+  const reset = view.container.querySelector('.usage-scheduled-reset');
+  assert.ok(reset, 'upcoming reset inside lookahead is rendered');
+  assert.match(reset.querySelector('title').textContent, /Codex · 7 day window · scheduled reset/);
+
+  const forecastTarget = view.container.querySelector('.usage-forecast-hit-target');
+  assert.match(forecastTarget.getAttribute('aria-label'), /100\.0%.*6d before reset/);
+  const svg = view.container.querySelector('svg');
+  svg.getBoundingClientRect = () => ({ left: 0, width: 720 });
+  await harness.act(() => harness.fireEvent(forecastTarget, 'mousemove', { clientX: 702 }));
+  assert.match(view.container.querySelector('.usage-forecast-tooltip').textContent, /100\.0%.*6d before reset/s);
+  await harness.act(() => harness.fireEvent(forecastTarget, 'mouseleave'));
+  assert.equal(view.container.querySelector('.usage-forecast-tooltip'), null);
+
+  await view.rerender(harness.preact.h(UsageHistoryChart, {
+    series,
+    from: new Date(now - 7 * day).toISOString(),
+    generatedAt: new Date(now).toISOString(),
+    lookaheadHours: 5,
+  }));
+  assert.equal(view.container.querySelector('.usage-scheduled-reset'), null,
+    'a reset beyond the chosen lookahead is not clamped onto the chart edge');
+  assert.match(view.container.querySelector('.usage-forecast-hit-target').getAttribute('aria-label'), /30\.7%/);
 
   await view.unmount();
 });

@@ -1608,6 +1608,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-history-controls button.tool.active {
   border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
 }
+.usage-control-label { color: #8b949e; font-size: 11px; font-weight: 600; }
+.usage-control-divider { width: 1px; height: 20px; margin: 0 3px; background: #30363d; }
 .usage-history-note {
   margin: 0 0 14px; padding: 8px 10px;
   color: #8b949e; background: #161b22; border: 1px solid #2a3340;
@@ -1652,6 +1654,14 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; }
 .usage-point:hover { r: 4px; fill: #cae8ff; }
 .usage-forecast-line { stroke: #d29922; stroke-width: 2; stroke-dasharray: 6 5; }
+.usage-forecast-hit-target {
+  stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: crosshair;
+}
+.usage-forecast-hit-target:focus { stroke: rgb(210 153 34 / 18%); outline: none; }
+.usage-scheduled-reset line { stroke: #a371f7; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.usage-forecast-tooltip { pointer-events: none; }
+.usage-forecast-tooltip rect { fill: #161b22; stroke: #d29922; stroke-width: 1; opacity: .97; }
+.usage-forecast-tooltip text { fill: #c9d1d9; font-size: 9px; }
 .usage-reset-mark line { stroke: #a371f7; stroke-width: 1; stroke-dasharray: 3 4; opacity: .8; }
 .usage-reset-mark circle { fill: #a371f7; }
 .usage-chart-empty { height: 180px; display: grid; place-items: center; color: #6e7681; }
@@ -1671,6 +1681,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   .usage-series-grid { grid-template-columns: minmax(0, 1fr); }
   .usage-series-card { padding: 10px; }
   .usage-history-controls .muted { display: none; }
+  .usage-control-divider { flex-basis: 100%; width: 0; height: 0; margin: 0; }
 }
 
 /* -- Costs tab ------------------------------------------------------
