@@ -268,7 +268,7 @@ func (t *lifecycleTarget) revalidate() (lifecyclePaneProbe, error) {
 	if err != nil {
 		return p, err
 	}
-	if p.state != paneProbeLive || p.paneID != t.paneID || (t.panePID > 0 && p.panePID != t.panePID) || (t.generation != "" && p.generation != t.generation) {
+	if p.state != paneProbeLive || !lifecycleProbeMatchesTarget(p, t) {
 		return p, fmt.Errorf("selected pane identity changed")
 	}
 	return p, nil
@@ -358,7 +358,12 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 }
 
 func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarget) bool {
-	return probe.paneID == target.paneID && (target.panePID <= 0 || probe.panePID == target.panePID) && (!target.paneGenerationBound || probe.generation == target.generation)
+	generationMatches := probe.generation == ""
+	if target.paneGenerationBound {
+		generationMatches = target.generation != "" && probe.generation == target.generation
+	}
+	return probe.paneID == target.paneID &&
+		(target.panePID <= 0 || probe.panePID == target.panePID) && generationMatches
 }
 
 func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {

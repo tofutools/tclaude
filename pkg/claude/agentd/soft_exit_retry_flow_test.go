@@ -342,9 +342,11 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 		wantKill                                bool
 	}{
 		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3},
+		{name: "degraded generation appears after delivery", slug: "degraded-appears", afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation disappears after delivery", slug: "bound-missing", bound: true, afterGeneration: "missing", wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation mismatches after delivery", slug: "bound-mismatch", bound: true, afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
 		{name: "degraded force control", slug: "degraded-force", force: true, wantAction: "killed", wantKill: true},
+		{name: "bound generation disappears before force", slug: "bound-force-missing", force: true, bound: true, afterGeneration: "missing", wantAction: "error"},
 		{name: "bound generation mismatches before force", slug: "bound-force-mismatch", force: true, bound: true, afterGeneration: otherGeneration, wantAction: "error"},
 	}
 	for _, tc := range tests {
@@ -355,13 +357,13 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 			tmuxSession := "tmux-generation-" + tc.slug
 			f.HaveConvWithTitle(conv, tc.name)
 			f.HaveAliveSession(conv, sessionID, tmuxSession, f.TestCwd(tc.slug))
+			require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, boundGeneration))
 			if !tc.force {
 				cc := f.World.CCs.GetByConvID(conv)
 				require.NotNil(t, cc)
 				cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
 			}
 			if tc.bound {
-				require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, boundGeneration))
 				f.World.Tmux.SetPaneExitGeneration(tmuxSession, boundGeneration)
 			}
 			if tc.afterGeneration != "" {
