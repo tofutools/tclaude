@@ -107,15 +107,15 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     const hoverPoint = usageForecastPoint(latest.time, latest.pct, rate, forecastAt,
       (svgX - firstX) / Math.max(1, lastX - firstX));
     setTooltip({
-      x: x(hoverPoint.time), y: y(hoverPoint.pct), tone: 'forecast',
+      x: x(hoverPoint.time), y: y(hoverPoint.pct), tone: 'forecast', title: 'Prediction',
       lines: [
         scope,
-        `Forecast · ${hoverPoint.pct.toFixed(1)}% · ${new Date(hoverPoint.time).toLocaleString()}`,
+        `${hoverPoint.pct.toFixed(1)}% · ${new Date(hoverPoint.time).toLocaleString()}`,
         beforeResetLabel(resetAt, hoverPoint.time),
       ],
     });
   };
-  const showTooltip = (anchorX, anchorY, tone, lines) => setTooltip({ x: anchorX, y: anchorY, tone, lines });
+  const showTooltip = (anchorX, anchorY, tone, title, lines) => setTooltip({ x: anchorX, y: anchorY, tone, title, lines });
   const hideTooltip = () => setTooltip(null);
   const focusChartItemByKey = (event, index, selector, length) => {
     let target = index;
@@ -128,7 +128,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
     svg?.querySelectorAll(selector)[target]?.focus();
   };
-  const tooltipHeight = tooltip ? 8 + tooltip.lines.length * TOOLTIP_LINE_HEIGHT : 0;
+  const tooltipHeight = tooltip ? 8 + (tooltip.lines.length + 1) * TOOLTIP_LINE_HEIGHT : 0;
   const tooltipX = tooltip?.x > W / 2 ? tooltip.x - TOOLTIP_WIDTH - 10 : (tooltip?.x || 0) + 10;
   const tooltipY = tooltip
     ? Math.max(4, Math.min(H - tooltipHeight - 4, tooltip.y < tooltipHeight + 8 ? tooltip.y + 10 : tooltip.y - tooltipHeight - 8))
@@ -150,20 +150,21 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       points=${segment.map((point) => `${x(point.time)},${y(point.pct)}`).join(' ')} />`)}
     ${resetMarkers.map((reset, index) => {
       const at = reset.time;
+      const title = index === resetMarkers.length - 1 ? 'Last reset' : 'Previous reset';
       return html`<g class="usage-reset-mark" key=${reset.at}>
         <line x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom} />
         <circle cx=${x(at)} cy=${y(reset.pct)} r="3" />
         <line class="usage-marker-hit-target" x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom}
           tabIndex=${index === keyboardResetIndex ? '0' : '-1'} role="img"
-          aria-label=${`${scope}; quota reset detected at ${new Date(at).toLocaleString()}; new post-reset baseline ${reset.pct.toFixed(1)}%; ${relativeMarkerTime(at, now)}${index === keyboardResetIndex ? '; use left and right arrow keys to explore detected resets' : ''}`}
-          onmouseenter=${() => showTooltip(x(at), y(reset.pct), 'reset', [
-            scope, `Quota reset detected · ${new Date(at).toLocaleString()}`,
+          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; new post-reset baseline ${reset.pct.toFixed(1)}%; ${relativeMarkerTime(at, now)}${index === keyboardResetIndex ? '; use left and right arrow keys to explore detected resets' : ''}`}
+          onmouseenter=${() => showTooltip(x(at), y(reset.pct), 'reset', title, [
+            scope, new Date(at).toLocaleString(),
             `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(at, now)}`,
           ])} onmouseleave=${hideTooltip}
           onfocus=${() => {
             setKeyboardResetAt(index);
-            showTooltip(x(at), y(reset.pct), 'reset', [
-              scope, `Quota reset detected · ${new Date(at).toLocaleString()}`,
+            showTooltip(x(at), y(reset.pct), 'reset', title, [
+              scope, new Date(at).toLocaleString(),
               `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(at, now)}`,
             ]);
           }} onblur=${hideTooltip}
@@ -174,12 +175,12 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <line class="usage-marker-hit-target" x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom}
         tabIndex="0" role="img"
-        aria-label=${`${scope}; scheduled quota reset at ${new Date(resetAt).toLocaleString()}; ${relativeMarkerTime(resetAt, now)}`}
-        onmouseenter=${() => showTooltip(x(resetAt), PAD.top + 18, 'reset', [
-          scope, `Scheduled quota reset · ${new Date(resetAt).toLocaleString()}`, relativeMarkerTime(resetAt, now),
+        aria-label=${`Next reset; ${scope}; ${new Date(resetAt).toLocaleString()}; ${relativeMarkerTime(resetAt, now)}`}
+        onmouseenter=${() => showTooltip(x(resetAt), PAD.top + 18, 'reset', 'Next reset', [
+          scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now),
         ])} onmouseleave=${hideTooltip}
-        onfocus=${() => showTooltip(x(resetAt), PAD.top + 18, 'reset', [
-          scope, `Scheduled quota reset · ${new Date(resetAt).toLocaleString()}`, relativeMarkerTime(resetAt, now),
+        onfocus=${() => showTooltip(x(resetAt), PAD.top + 18, 'reset', 'Next reset', [
+          scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now),
         ])} onblur=${hideTooltip} />
     </g>`}
     ${hasForecastLine && html`<${Fragment}>
@@ -187,49 +188,51 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         x2=${x(forecastAt)} y2=${y(forecastPct)} />
       <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
         x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
-        aria-label=${`${scope} forecast; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt)}`}
+        aria-label=${`Prediction; ${scope}; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt)}`}
         onmousemove=${updateForecastHover} onmouseleave=${hideTooltip}
-        onfocus=${() => showTooltip(x(forecastAt), y(forecastPct), 'forecast', [
-          scope, `Forecast · ${forecastPct.toFixed(1)}% · ${new Date(forecastAt).toLocaleString()}`,
+        onfocus=${() => showTooltip(x(forecastAt), y(forecastPct), 'forecast', 'Prediction', [
+          scope, `${forecastPct.toFixed(1)}% · ${new Date(forecastAt).toLocaleString()}`,
           beforeResetLabel(resetAt, forecastAt),
         ])} onblur=${hideTooltip} />
     </${Fragment}>`}
-    ${pointMarkers.map((point, index) => {
-      const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
-      return html`<circle class="usage-point" key=${point.at}
-        cx=${x(point.time)} cy=${y(point.pct)} r="2.5"
-        tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
-        aria-label=${`${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? '; use left and right arrow keys to explore samples' : ''}`}
-        onmouseenter=${() => showTooltip(x(point.time), y(point.pct), 'observed', [
-          scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
-          pointResetLabel,
-        ])} onmouseleave=${hideTooltip}
-        onfocus=${() => {
-          setKeyboardPointAt(index);
-          showTooltip(x(point.time), y(point.pct), 'observed', [
-            scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
-            pointResetLabel,
-          ]);
-        }} onblur=${hideTooltip}
-        onkeydown=${(event) => focusChartItemByKey(event, index, '.usage-point', pointMarkers.length)} />`;
-    })}
     ${now > start && now < horizon && html`<g class="usage-now-mark">
       <line x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom} />
-      <text x=${x(now)} y=${PAD.top + 10} text-anchor="middle">now</text>
       <line class="usage-marker-hit-target" x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom}
-        tabIndex="0" role="img" aria-label=${`${scope}; now is ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now)}`}
-        onmouseenter=${() => showTooltip(x(now), PAD.top + 18, 'now', [
-          scope, `Now · ${new Date(now).toLocaleString()}`,
+        tabIndex="0" role="img" aria-label=${`Now; ${scope}; ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now)}`}
+        onmouseenter=${() => showTooltip(x(now), PAD.top + 18, 'now', 'Now', [
+          scope, new Date(now).toLocaleString(),
           resetTimingLabel(resetAt, now),
         ])} onmouseleave=${hideTooltip}
-        onfocus=${() => showTooltip(x(now), PAD.top + 18, 'now', [
-          scope, `Now · ${new Date(now).toLocaleString()}`,
+        onfocus=${() => showTooltip(x(now), PAD.top + 18, 'now', 'Now', [
+          scope, new Date(now).toLocaleString(),
           resetTimingLabel(resetAt, now),
         ])} onblur=${hideTooltip} />
     </g>`}
+    ${pointMarkers.map((point, index) => {
+      const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
+      return html`<g class="usage-point-mark" key=${point.at}>
+        <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.5" />
+        <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
+          tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
+          aria-label=${`Sample; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? '; use left and right arrow keys to explore samples' : ''}`}
+          onmouseenter=${() => showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
+            scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
+            pointResetLabel,
+          ])} onmouseleave=${hideTooltip}
+          onfocus=${() => {
+            setKeyboardPointAt(index);
+            showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
+              scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
+              pointResetLabel,
+            ]);
+          }} onblur=${hideTooltip}
+          onkeydown=${(event) => focusChartItemByKey(event, index, '.usage-point-hit-target', pointMarkers.length)} />
+      </g>`;
+    })}
     ${tooltip && html`<g class=${`usage-chart-tooltip ${tooltip.tone}`} transform=${`translate(${tooltipX} ${tooltipY})`}>
       <rect width=${TOOLTIP_WIDTH} height=${tooltipHeight} rx="4" />
-      <text x="7" y="12">${tooltip.lines.map((line, index) => html`<tspan x="7" dy=${index ? TOOLTIP_LINE_HEIGHT : 0}>${line}</tspan>`)}
+      <text x="7" y="12"><tspan class="usage-tooltip-title" x="7">${tooltip.title}</tspan>
+        ${tooltip.lines.map((line) => html`<tspan x="7" dy=${TOOLTIP_LINE_HEIGHT}>${line}</tspan>`)}
       </text>
     </g>`}
   </svg>`;

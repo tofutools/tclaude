@@ -41,13 +41,23 @@ export function formatUsageTime(value, now = Date.now()) {
 
 export function formatUsageDuration(milliseconds) {
   if (!Number.isFinite(milliseconds)) return 'unknown';
-  let mins = Math.max(0, Math.ceil(Math.abs(milliseconds) / 60000));
+  let mins = Math.max(0, Math.round(Math.abs(milliseconds) / 60000));
   if (mins === 0) return '<1m';
   const days = Math.floor(mins / 1440);
   mins -= days * 1440;
   const hours = Math.floor(mins / 60);
   mins -= hours * 60;
   return [days && `${days}d`, hours && `${hours}h`, mins && `${mins}m`].filter(Boolean).join(' ');
+}
+
+export function formatUsageResetCountdown(value, now = Date.now()) {
+  const at = new Date(value).getTime();
+  if (!Number.isFinite(at)) return 'reset unknown';
+  const delta = at - now;
+  if (Math.abs(delta) <= 60_000) return 'resets now';
+  return delta > 0
+    ? `resets in ${formatUsageDuration(delta)}`
+    : `reset ${formatUsageDuration(delta)} ago`;
 }
 
 export function usageForecastView(forecast, now = Date.now(), latestAt = '') {
