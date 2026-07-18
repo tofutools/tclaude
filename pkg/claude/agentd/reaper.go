@@ -33,6 +33,14 @@ type reaperNotify func(st *session.SessionState, prevStatus string)
 
 const unexpectedExitReason = "unexpected"
 
+const retainedPaneRecordFailureLimit = 3
+
+type retainedPaneRecordFailure struct {
+	generation string
+	paneID     string
+	attempts   int
+}
+
 // sessionReaper marks sessions whose tmux session and process are both
 // gone as "exited" in the DB, and fires an offline notification on the
 // alive→dead transition.
@@ -45,17 +53,19 @@ const unexpectedExitReason = "unexpected"
 // this, a daemon restart would fire a notification storm for the whole
 // backlog of stale rows.
 type sessionReaper struct {
-	aliveLastTick map[string]bool
-	seeded        bool
-	grace         time.Duration
-	notify        reaperNotify
+	aliveLastTick         map[string]bool
+	deadPaneRecordFailure map[string]retainedPaneRecordFailure
+	seeded                bool
+	grace                 time.Duration
+	notify                reaperNotify
 }
 
 func newSessionReaper() *sessionReaper {
 	return &sessionReaper{
-		aliveLastTick: map[string]bool{},
-		grace:         sessionReaperGracePeriod,
-		notify:        defaultReaperNotify,
+		aliveLastTick:         map[string]bool{},
+		deadPaneRecordFailure: map[string]retainedPaneRecordFailure{},
+		grace:                 sessionReaperGracePeriod,
+		notify:                defaultReaperNotify,
 	}
 }
 
@@ -158,12 +168,51 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	aliveNow := make(map[string]bool, len(states))
 	for _, st := range states {
 		if st.Status == session.StatusExited {
-			continue // already exited — nothing to reap
+			// Record-first callback/reaper cleanup can fail after lifecycle state
+			// and audit have committed. Keep sweeping that exact retained corpse;
+			// otherwise status=exited would strand its pane-local hook credential.
+			if st.TmuxSession != "" {
+				if evidence, inspectErr := session.InspectDeadTmuxSessionPane(st.TmuxSession); inspectErr == nil {
+					if cleanupErr := session.CleanupDeadTmuxPane(evidence); cleanupErr != nil {
+						slog.Warn("reaper: exited retained dead pane cleanup retry failed",
+							"session", st.ID, "tmux_session", st.TmuxSession,
+							"pane_id", evidence.PaneID, "error", cleanupErr)
+					}
+				}
+			}
+			continue
+		}
+		launchIdentity, err := db.GetSessionExitLaunchIdentity(st.ID)
+		if err != nil {
+			slog.Warn("reaper: load launch identity failed", "session", st.ID, "error", err)
+			continue
 		}
 		prevStatus := st.Status
 		prevUpdated := st.Updated
-		session.RefreshSessionStatus(st) // tmux→PID; sets exited iff both gone
+		var paneEvidence *session.PaneExitEvidence
+		if st.TmuxSession != "" {
+			if observed, inspectErr := session.InspectDeadTmuxSessionPane(st.TmuxSession); inspectErr == nil {
+				if observed.Generation != "" && observed.Generation != launchIdentity.Generation {
+					slog.Warn("reaper: ignoring retained pane from predecessor launch",
+						"session", st.ID, "tmux_session", st.TmuxSession,
+						"pane_id", observed.PaneID)
+					if cleanupErr := session.CleanupDeadTmuxPane(observed); cleanupErr != nil {
+						slog.Warn("reaper: predecessor retained pane cleanup failed",
+							"session", st.ID, "tmux_session", st.TmuxSession,
+							"pane_id", observed.PaneID, "error", cleanupErr)
+					}
+					continue
+				}
+				paneEvidence = &observed
+				session.MarkStateExited(st)
+			} else {
+				session.RefreshSessionStatus(st)
+			}
+		} else {
+			session.RefreshSessionStatus(st)
+		}
 		if st.Status != session.StatusExited {
+			delete(r.deadPaneRecordFailure, st.ID)
 			aliveNow[st.ID] = true
 			// A live session is a running agent — enroll it so every
 			// terminal-launched conversation surfaces on the dashboard
@@ -189,32 +238,81 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		if !st.Created.IsZero() && now.Sub(st.Created) < r.grace {
 			continue
 		}
-		ok, err := db.MarkSessionExitedIfUnchanged(st.ID, prevStatus, prevUpdated, reaperFallbackExitReason(st.Harness))
-		if err != nil {
-			slog.Warn("reaper: mark exited failed", "session", st.ID, "error", err)
-			continue
+		cause := db.AgentExitCauseDisappeared
+		var exitCode *int
+		signal := ""
+		paneID := ""
+		if paneEvidence != nil {
+			paneID = paneEvidence.PaneID
+			exitCode = paneEvidence.ExitCode
+			signal = paneEvidence.Signal
+			switch {
+			case signal != "":
+				cause = db.AgentExitCauseSignal
+			case exitCode != nil:
+				cause = db.AgentExitCauseNormal
+			default:
+				cause = db.AgentExitCauseUnknown
+			}
 		}
-		if !ok {
-			// The row changed under us — almost always a resume that
-			// flipped status back. Leave it; re-evaluated next sweep.
-			continue
-		}
-		reaped++
 		witnessedLive := r.seeded && r.aliveLastTick[st.ID]
 		observer := db.AgentExitObserverReconcile
 		if witnessedLive {
 			observer = db.AgentExitObserverReaper
 		}
-		if _, err := db.RecordAgentExitObservation(db.AgentExitObservation{
-			At:            now,
-			SessionID:     st.ID,
-			TmuxSession:   st.TmuxSession,
-			Observer:      observer,
-			CauseKind:     db.AgentExitCauseDisappeared,
-			ObservedState: session.StatusExited,
-		}); err != nil {
-			slog.Warn("exit audit: persist disappearance observation failed",
+		ok, _, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
+			st.ID, prevStatus, prevUpdated, reaperFallbackExitReason(st.Harness),
+			db.AgentExitObservation{
+				At: now, SessionID: st.ID, TmuxSession: st.TmuxSession, PaneID: paneID,
+				Observer: observer, CauseKind: cause, ExitCode: exitCode, Signal: signal,
+				ObservedState: session.StatusExited, ExpectedGeneration: launchIdentity.Generation,
+			},
+		)
+		if err != nil {
+			slog.Warn("reaper: atomic exit state/audit persistence failed",
 				"session", st.ID, "observer", observer, "error", err)
+			if paneEvidence != nil {
+				if r.deadPaneRecordFailure == nil {
+					r.deadPaneRecordFailure = map[string]retainedPaneRecordFailure{}
+				}
+				failure := r.deadPaneRecordFailure[st.ID]
+				if failure.generation != launchIdentity.Generation || failure.paneID != paneEvidence.PaneID {
+					failure = retainedPaneRecordFailure{
+						generation: launchIdentity.Generation,
+						paneID:     paneEvidence.PaneID,
+					}
+				}
+				failure.attempts++
+				r.deadPaneRecordFailure[st.ID] = failure
+				if failure.attempts >= retainedPaneRecordFailureLimit {
+					slog.Error("reaper: managed pane exit audit unavailable after bounded retries; removing retained dead pane",
+						"session", st.ID, "tmux_session", st.TmuxSession,
+						"pane_id", paneEvidence.PaneID,
+						"attempts", failure.attempts)
+					if cleanupErr := session.CleanupDeadTmuxPane(*paneEvidence); cleanupErr != nil {
+						slog.Error("reaper: retained dead pane cleanup failed after audit retry bound",
+							"session", st.ID, "tmux_session", st.TmuxSession,
+							"pane_id", paneEvidence.PaneID, "error", cleanupErr)
+					}
+					delete(r.deadPaneRecordFailure, st.ID)
+				}
+			}
+			continue
+		}
+		if !ok {
+			delete(r.deadPaneRecordFailure, st.ID)
+			// The row changed under us — almost always a resume that
+			// flipped status back. Leave it; re-evaluated next sweep.
+			continue
+		}
+		delete(r.deadPaneRecordFailure, st.ID)
+		reaped++
+		if paneEvidence != nil {
+			if err := session.CleanupDeadTmuxPane(*paneEvidence); err != nil {
+				slog.Warn("reaper: retained dead pane cleanup failed",
+					"session", st.ID, "tmux_session", st.TmuxSession,
+					"pane_id", paneEvidence.PaneID, "error", err)
+			}
 		}
 		// Notify only for a transition we witnessed: the session must
 		// have been alive on the previous tick, and there must have

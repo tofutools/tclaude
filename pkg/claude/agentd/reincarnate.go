@@ -618,8 +618,8 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// left for a hard kill rather than typed a command it can't parse.
 	if h := harnessForConv(target); h.SupportsSoftExit() {
 		intentSet := setExitIntentBestEffort(oldSess, db.AgentExitActionReincarnate, relatedEventID)
-		if !injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit") {
-			clearFailedExitIntent(oldSess, intentSet)
+		if !injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit", intentSet) {
+			clearFailedExitIntent(intentSet)
 		}
 	}
 	if relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {

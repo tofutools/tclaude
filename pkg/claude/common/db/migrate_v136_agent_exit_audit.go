@@ -29,6 +29,8 @@ func migrateV135toV136(db *sql.DB) error {
 		{"audit_log", "pane_id", "TEXT NOT NULL DEFAULT ''"},
 		{"audit_log", "observer", "TEXT NOT NULL DEFAULT ''"},
 		{"audit_log", "cause_kind", "TEXT NOT NULL DEFAULT ''"},
+		{"audit_log", "observed_process", "TEXT NOT NULL DEFAULT ''"},
+		{"audit_log", "launch_phase", "TEXT NOT NULL DEFAULT ''"},
 		{"audit_log", "exit_code", "INTEGER"},
 		{"audit_log", "signal", "TEXT NOT NULL DEFAULT ''"},
 		{"audit_log", "lifecycle_action", "TEXT NOT NULL DEFAULT ''"},
@@ -43,6 +45,7 @@ func migrateV135toV136(db *sql.DB) error {
 		{"sessions", "exit_callback_token_hash", "TEXT NOT NULL DEFAULT ''"},
 		{"sessions", "exit_callback_pane_id", "TEXT NOT NULL DEFAULT ''"},
 		{"sessions", "exit_callback_used_at", "TEXT"},
+		{"sessions", "exit_launch_gate_state", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {
 		var have int

@@ -223,6 +223,18 @@ func SaveSessionState(state *SessionState) error {
 	return db.SaveSession(toRow(state))
 }
 
+// SaveSessionStateForLaunch is the one launch-owned session write. Supplying
+// the fresh generation makes row reuse atomically clear predecessor callback
+// and lifecycle-intent authority in the same UPSERT that establishes the new
+// launch. Generic hook saves never carry these write-only fields.
+func SaveSessionStateForLaunch(state *SessionState, generation, gateState string) error {
+	state.Updated = time.Now()
+	row := toRow(state)
+	row.ExitLaunchGeneration = generation
+	row.ExitLaunchGateState = gateState
+	return db.SaveSession(row)
+}
+
 // LoadSessionState loads session state from the database.
 func LoadSessionState(id string) (*SessionState, error) {
 	row, err := db.LoadSession(id)
@@ -287,7 +299,12 @@ func MaxUpdatedAt() (time.Time, error) {
 // into wrong-session attaches and kills.
 func IsTmuxSessionAlive(sessionName string) bool {
 	cmd := clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(sessionName))
-	return cmd.Run() == nil
+	if cmd.Run() != nil {
+		return false
+	}
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t",
+		clcommon.ExactTarget(sessionName)+":0.0", "#{pane_dead}").Output()
+	return err != nil || strings.TrimSpace(string(out)) != "1"
 }
 
 // LiveTmuxSessions returns the set of session names currently alive

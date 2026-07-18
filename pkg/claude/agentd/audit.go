@@ -154,6 +154,7 @@ var auditRoutes = []auditRoute{
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "archive"}, verb: "group.archive"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "unarchive"}, verb: "group.unarchive"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "retire"}, verb: "group.retire"},
+	{method: http.MethodPost, segs: []string{"groups", "{name}", "stand-down"}, verb: "group.stand-down"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "stop"}, verb: "group.stop"},
 	{method: http.MethodPost, segs: []string{"groups", "{name}", "resume"}, verb: "group.resume"},
 

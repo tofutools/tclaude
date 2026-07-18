@@ -134,7 +134,7 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	if force {
 		intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
 		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
-			clearFailedExitIntent(sess, intentSet)
+			clearFailedExitIntent(intentSet)
 			res.Action = "error"
 			res.Detail = "kill-session: " + err.Error()
 		} else {
@@ -151,7 +151,7 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
 		intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
-		if injectSoftExit(convID, exitCmd, "soft-exit") {
+		if injectSoftExit(convID, exitCmd, "soft-exit", intentSet) {
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
 				// separately from an unclassified user pane close.
@@ -162,7 +162,7 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 			}
 			res.Action = "soft_stopped"
 		} else {
-			clearFailedExitIntent(sess, intentSet)
+			clearFailedExitIntent(intentSet)
 			res.Action = "error"
 			res.Detail = "send-keys " + exitCmd + " failed"
 		}
@@ -172,7 +172,7 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	// lingers because we couldn't type a graceful exit.
 	intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
 	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
-		clearFailedExitIntent(sess, intentSet)
+		clearFailedExitIntent(intentSet)
 		res.Action = "error"
 		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
 	} else {
@@ -181,25 +181,26 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	return res
 }
 
-func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string) bool {
+func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string) *db.SessionExitIntentRef {
 	if sess == nil || action == "" {
-		return false
+		return nil
 	}
-	if err := db.SetSessionExitIntent(sess.ID, action, relatedEventID, time.Now()); err != nil {
+	ref, err := db.SetSessionExitIntent(sess.ID, action, relatedEventID, time.Now())
+	if err != nil {
 		slog.Warn("exit audit: record lifecycle intent failed",
 			"session", sess.ID, "action", action, "error", err)
-		return false
+		return nil
 	}
-	return true
+	return &ref
 }
 
-func clearFailedExitIntent(sess *db.SessionRow, intentSet bool) {
-	if sess == nil || !intentSet {
+func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
+	if intentRef == nil {
 		return
 	}
-	if err := db.ClearSessionExitIntent(sess.ID); err != nil {
+	if _, err := db.ClearSessionExitIntentIfCurrent(*intentRef); err != nil {
 		slog.Warn("exit audit: clear failed lifecycle intent failed",
-			"session", sess.ID, "error", err)
+			"session", intentRef.SessionID, "error", err)
 	}
 }
 
@@ -246,11 +247,15 @@ func refreshStoppedSessionResumeProvenance(sess *db.SessionRow) error {
 // buffer, though, so a second /exit a few seconds later lands on a clean
 // input box and takes. scheduleSoftExitRetry re-injects while the SAME
 // pane process is still alive.
-func injectSoftExit(convID, exitCmd, reason string) bool {
+func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitIntentRef) bool {
 	sess := aliveSessionForConv(convID)
 	if sess == nil {
 		return false
 	}
+	// Capture before injection: a responsive pane can exit synchronously after
+	// Enter, but that successful exit still owns the lifecycle intent and must
+	// remain correlatable by callback/reaper.
+	panePID := livePanePID(sess.TmuxSession)
 	if !injectSlashCommand(convID, exitCmd, "", reason) {
 		return false
 	}
@@ -258,8 +263,10 @@ func injectSoftExit(convID, exitCmd, reason string) bool {
 	// from a later one that reused the same tmux name (a resume re-derives the
 	// name from the conv-id — see scheduleSoftExitRetry). 0 = couldn't read
 	// it; skip the retry rather than risk re-injecting blind.
-	if pid := livePanePID(sess.TmuxSession); pid > 0 {
-		scheduleSoftExitRetry(convID, sess.TmuxSession, pid, exitCmd, reason)
+	if panePID > 0 {
+		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, reason, intentRef)
+	} else {
+		clearFailedExitIntent(intentRef)
 	}
 	return true
 }
@@ -296,7 +303,7 @@ const softExitMaxAttempts = 3
 //
 // Runs through goBackground so it outlives the HTTP handler that asked for
 // the stop and flow tests can drain it with WaitForBackgroundForTest.
-func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string) {
+func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
 	target := tmuxSession + ":0.0"
 	goBackground(func() {
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
@@ -314,8 +321,12 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 			if err := injectTextAndSubmit(target, exitCmd); err != nil {
 				slog.Warn("soft-exit retry inject failed",
 					"error", err, "tmux_session", tmuxSession, "reason", reason)
+				clearFailedExitIntent(intentRef)
 				return
 			}
+		}
+		if livePanePID(tmuxSession) == panePID {
+			clearFailedExitIntent(intentRef)
 		}
 	})
 }
@@ -328,11 +339,15 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 // signal the soft-exit retry needs to avoid re-injecting into a resumed
 // pane that reused the tmux name.
 func livePanePID(tmuxSession string) int {
-	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_pid}").Output()
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", "#{pane_dead}|#{pane_pid}").Output()
 	if err != nil {
 		return 0
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(parts) != 2 || parts[0] == "1" {
+		return 0
+	}
+	pid, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return 0
 	}

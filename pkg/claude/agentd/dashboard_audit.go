@@ -51,6 +51,8 @@ type auditEntryView struct {
 	PaneID          string `json:"pane_id,omitempty"`
 	Observer        string `json:"observer,omitempty"`
 	CauseKind       string `json:"cause_kind,omitempty"`
+	ObservedProcess string `json:"observed_process,omitempty"`
+	LaunchPhase     string `json:"launch_phase,omitempty"`
 	ExitCode        *int   `json:"exit_code,omitempty"`
 	Signal          string `json:"signal,omitempty"`
 	LifecycleAction string `json:"lifecycle_action,omitempty"`
@@ -165,6 +167,8 @@ func handleDashboardAudit(w http.ResponseWriter, r *http.Request) {
 			PaneID:          e.PaneID,
 			Observer:        e.Observer,
 			CauseKind:       e.CauseKind,
+			ObservedProcess: e.ObservedProcess,
+			LaunchPhase:     e.LaunchPhase,
 			ExitCode:        e.ExitCode,
 			Signal:          e.Signal,
 			LifecycleAction: e.LifecycleAction,

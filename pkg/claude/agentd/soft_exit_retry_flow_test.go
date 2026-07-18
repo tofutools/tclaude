@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -130,6 +131,13 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	// total. Guards against an unbounded re-injection loop into a wedged pane.
 	assert.Equal(t, 3, countExitSends(f, target, "/exit"),
 		"soft-exit attempts must be capped (initial + retries), not infinite")
+	d, err := db.Open()
+	require.NoError(t, err)
+	var intent, eventID string
+	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id FROM sessions WHERE id = ?`,
+		"spwn-sxjc").Scan(&intent, &eventID))
+	assert.Empty(t, intent, "a successful send that never exits cannot leave reusable intent")
+	assert.Empty(t, eventID)
 }
 
 // Scenario: the regression the live-PID guard exists to prevent. After a

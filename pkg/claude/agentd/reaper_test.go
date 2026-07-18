@@ -78,8 +78,9 @@ func TestSessionReaper_ReapsDeadCodexSessionAndNotifies(t *testing.T) {
 	require.True(t, r.aliveLastTick[sessionID], "the live Codex session was witnessed alive")
 	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID,
 		"11111111111111111111111111111111"))
-	require.NoError(t, db.SetSessionExitIntent(sessionID, db.AgentExitActionStop,
-		"evt_1234567890abcdef12345678", time.Now()))
+	_, err := db.SetSessionExitIntent(sessionID, db.AgentExitActionStop,
+		"evt_1234567890abcdef12345678", time.Now())
+	require.NoError(t, err)
 
 	// The process goes away (PID cleared). Status is still 'working' in
 	// the DB — the reaper, not a hook, is what will flip it.

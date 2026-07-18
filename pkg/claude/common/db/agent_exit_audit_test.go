@@ -25,12 +25,15 @@ func seedExitAuditSession(t *testing.T, id, conv string) string {
 func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 	setupTestDB(t)
 	agentID := seedExitAuditSession(t, "spwn-exit", "conv-exit")
+	const generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-exit", generation))
 	require.NoError(t, SetSessionExitLaunchBinding(
-		"spwn-exit", strings.Repeat("a", 32), strings.Repeat("b", 64), "%7"))
+		"spwn-exit", generation, strings.Repeat("b", 64), "%7"))
+	require.NoError(t, MarkSessionExitLaunchReleased("spwn-exit", generation))
 
 	first, err := RecordAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-exit", Observer: AgentExitObserverReconcile,
-		CauseKind: AgentExitCauseUnknown, ObservedState: "working",
+		CauseKind: AgentExitCauseUnknown, ObservedState: "working", ExpectedGeneration: generation,
 	})
 	require.NoError(t, err)
 	assert.True(t, first.Inserted)
@@ -39,7 +42,7 @@ func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 
 	dup, err := RecordAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-exit", Observer: AgentExitObserverReconcile,
-		CauseKind: AgentExitCauseUnknown, ObservedState: "working",
+		CauseKind: AgentExitCauseUnknown, ObservedState: "working", ExpectedGeneration: generation,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, first.EventID, dup.EventID)
@@ -50,7 +53,7 @@ func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 	richer, err := RecordAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-exit", Observer: AgentExitObserverHook,
 		CauseKind: AgentExitCauseNormal, ExitCode: &zero,
-		Reason: "logout", ObservedState: "exited",
+		Reason: "logout", ObservedState: "exited", ExpectedGeneration: generation,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, first.EventID, richer.EventID)
@@ -59,7 +62,7 @@ func TestAgentExitAudit_DeduplicatesAndOnlyEnriches(t *testing.T) {
 	// A later poorer reconciliation observation cannot erase the hook evidence.
 	poorer, err := RecordAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-exit", Observer: AgentExitObserverReaper,
-		CauseKind: AgentExitCauseDisappeared, ObservedState: "unknown",
+		CauseKind: AgentExitCauseDisappeared, ObservedState: "unknown", ExpectedGeneration: generation,
 	})
 	require.NoError(t, err)
 	assert.False(t, poorer.Enriched)
@@ -81,6 +84,7 @@ func TestAgentExitAudit_CallbackBindingReplayAndRelaunch(t *testing.T) {
 	seedExitAuditSession(t, "spwn-callback", "conv-callback")
 	const generation1 = "11111111111111111111111111111111"
 	const token1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-callback", generation1))
 	require.NoError(t, SetSessionExitLaunchBinding("spwn-callback", generation1, token1, "%9"))
 
 	// The unauthenticated API may never impersonate the tmux observer.
@@ -118,10 +122,12 @@ func TestAgentExitAudit_CallbackBindingReplayAndRelaunch(t *testing.T) {
 
 	// A relaunch replaces the binding and creates a distinct launch event. The
 	// delayed predecessor callback is stale even though the session id is reused.
-	require.NoError(t, SetSessionExitIntent("spwn-callback", AgentExitActionStop,
-		"evt_1234567890abcdef12345678", time.Now()))
+	_, err = SetSessionExitIntent("spwn-callback", AgentExitActionStop,
+		"evt_1234567890abcdef12345678", time.Now())
+	require.NoError(t, err)
 	const generation2 = "22222222222222222222222222222222"
 	const token2 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-callback", generation2))
 	require.NoError(t, SetSessionExitLaunchBinding("spwn-callback", generation2, token2, "%12"))
 	_, err = RecordAuthenticatedAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-callback", TmuxSession: "tmux-spwn-callback", PaneID: "%9",
@@ -150,14 +156,17 @@ func TestAgentExitAudit_CallbackBindingReplayAndRelaunch(t *testing.T) {
 func TestAgentExitAudit_CallbackCanEnrichHookRace(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-race", "conv-race")
+	const generation = "cccccccccccccccccccccccccccccccc"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-race", generation))
 	require.NoError(t, SetSessionExitLaunchBinding(
-		"spwn-race", strings.Repeat("c", 32), strings.Repeat("d", 64), "%21"))
+		"spwn-race", generation, strings.Repeat("d", 64), "%21"))
+	require.NoError(t, MarkSessionExitLaunchReleased("spwn-race", generation))
 
 	code := 143
 	hook, err := RecordAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-race", Observer: AgentExitObserverHook,
 		CauseKind: AgentExitCauseNormal, ExitCode: &code,
-		Reason: "logout", ObservedState: "exited",
+		Reason: "logout", ObservedState: "exited", ExpectedGeneration: generation,
 	})
 	require.NoError(t, err)
 	require.True(t, hook.Inserted)
@@ -166,7 +175,7 @@ func TestAgentExitAudit_CallbackCanEnrichHookRace(t *testing.T) {
 		SessionID: "spwn-race", TmuxSession: "tmux-spwn-race", PaneID: "%21",
 		Observer: AgentExitObserverTmux, CauseKind: AgentExitCauseSignal, Signal: "HUP",
 	}, ExitCallbackAuth{
-		Generation: strings.Repeat("c", 32), TokenHash: strings.Repeat("d", 64), PaneID: "%21",
+		Generation: generation, TokenHash: strings.Repeat("d", 64), PaneID: "%21",
 	})
 	require.NoError(t, err)
 	assert.True(t, callback.Enriched)
@@ -184,8 +193,9 @@ func TestAgentExitAudit_CallbackCanEnrichHookRace(t *testing.T) {
 func TestAgentExitAudit_ConcurrentHookAndReaperConverge(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-concurrent", "conv-concurrent")
+	const generation = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	require.NoError(t, SetSessionExitLaunchGeneration(
-		"spwn-concurrent", strings.Repeat("e", 32)))
+		"spwn-concurrent", generation))
 
 	start := make(chan struct{})
 	errCh := make(chan error, 8)
@@ -199,6 +209,7 @@ func TestAgentExitAudit_ConcurrentHookAndReaperConverge(t *testing.T) {
 			observation := AgentExitObservation{
 				SessionID: "spwn-concurrent", Observer: AgentExitObserverReaper,
 				CauseKind: AgentExitCauseDisappeared, ObservedState: "exited",
+				ExpectedGeneration: generation,
 			}
 			if i == 0 {
 				observation.Observer = AgentExitObserverHook
@@ -226,7 +237,8 @@ func TestSessionExitIntent_ClearAfterFailedAttemptContract(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-intent", "conv-intent")
 	const eventID = "evt_1234567890abcdef12345678"
-	require.NoError(t, SetSessionExitIntent("spwn-intent", AgentExitActionStop, eventID, time.Now()))
+	_, err := SetSessionExitIntent("spwn-intent", AgentExitActionStop, eventID, time.Now())
+	require.NoError(t, err)
 	require.NoError(t, ClearSessionExitIntent("spwn-intent"))
 
 	result, err := RecordAgentExitObservation(AgentExitObservation{
@@ -245,9 +257,10 @@ func TestSessionExitIntent_ClearAfterFailedAttemptContract(t *testing.T) {
 func TestSessionExitIntent_ExpiredIntentIsNotAttributed(t *testing.T) {
 	setupTestDB(t)
 	seedExitAuditSession(t, "spwn-expired-intent", "conv-expired-intent")
-	require.NoError(t, SetSessionExitIntent("spwn-expired-intent", AgentExitActionStop,
-		"evt_1234567890abcdef12345678", time.Now().Add(-agentExitIntentMaxAge-time.Minute)))
-	_, err := RecordAgentExitObservation(AgentExitObservation{
+	_, err := SetSessionExitIntent("spwn-expired-intent", AgentExitActionStop,
+		"evt_1234567890abcdef12345678", time.Now().Add(-agentExitIntentMaxAge-time.Minute))
+	require.NoError(t, err)
+	_, err = RecordAgentExitObservation(AgentExitObservation{
 		SessionID: "spwn-expired-intent", Observer: AgentExitObserverReaper,
 		CauseKind: AgentExitCauseDisappeared,
 	})
@@ -257,6 +270,84 @@ func TestSessionExitIntent_ExpiredIntentIsNotAttributed(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Empty(t, rows[0].LifecycleAction)
 	assert.Empty(t, rows[0].RelatedEventID)
+}
+
+func TestSessionExitIntent_CompareAndClearDoesNotEraseOverlappingOwner(t *testing.T) {
+	setupTestDB(t)
+	seedExitAuditSession(t, "spwn-overlap", "conv-overlap")
+	const generation = "99999999999999999999999999999999"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-overlap", generation))
+	first, err := SetSessionExitIntent("spwn-overlap", AgentExitActionStop,
+		"evt_111111111111111111111111", time.Now())
+	require.NoError(t, err)
+	second, err := SetSessionExitIntent("spwn-overlap", AgentExitActionRetire,
+		"evt_222222222222222222222222", time.Now())
+	require.NoError(t, err)
+	cleared, err := ClearSessionExitIntentIfCurrent(first)
+	require.NoError(t, err)
+	assert.False(t, cleared, "an older attempt cannot clear a newer action/event owner")
+
+	_, err = RecordAgentExitObservation(AgentExitObservation{
+		SessionID: "spwn-overlap", Observer: AgentExitObserverReaper,
+		CauseKind: AgentExitCauseDisappeared, ExpectedGeneration: generation,
+	})
+	require.NoError(t, err)
+	rows, err := ListAuditLog(AuditLogFilter{Verb: AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, second.Action, rows[0].LifecycleAction)
+	assert.Equal(t, second.RelatedEventID, rows[0].RelatedEventID)
+}
+
+func TestClearSessionExitLaunchBinding_DoesNotClearSuccessor(t *testing.T) {
+	setupTestDB(t)
+	seedExitAuditSession(t, "spwn-clear-binding", "conv-clear-binding")
+	const predecessor = "11111111111111111111111111111111"
+	const successor = "22222222222222222222222222222222"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-clear-binding", predecessor))
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-clear-binding", successor))
+	require.NoError(t, SetSessionExitLaunchBinding(
+		"spwn-clear-binding", successor, strings.Repeat("a", 64), "%12"))
+
+	require.NoError(t, ClearSessionExitLaunchBinding("spwn-clear-binding", predecessor))
+	d, err := Open()
+	require.NoError(t, err)
+	var tokenHash, paneID string
+	require.NoError(t, d.QueryRow(`SELECT exit_callback_token_hash, exit_callback_pane_id
+		FROM sessions WHERE id = ?`, "spwn-clear-binding").Scan(&tokenHash, &paneID))
+	assert.Equal(t, strings.Repeat("a", 64), tokenHash)
+	assert.Equal(t, "%12", paneID)
+}
+
+func TestReaperExitCASAndAuditRejectPredecessorAfterRelaunch(t *testing.T) {
+	setupTestDB(t)
+	seedExitAuditSession(t, "spwn-stale-reaper", "conv-stale-reaper")
+	const predecessor = "11111111111111111111111111111111"
+	const successor = "22222222222222222222222222222222"
+	require.NoError(t, SetSessionExitLaunchGeneration("spwn-stale-reaper", predecessor))
+	observed, err := LoadSession("spwn-stale-reaper")
+	require.NoError(t, err)
+	time.Sleep(time.Millisecond)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "spwn-stale-reaper", TmuxSession: "tmux-spwn-stale-reaper",
+		ConvID: "conv-stale-reaper", Status: "working", CreatedAt: time.Now().UTC(),
+		ExitLaunchGeneration: successor, ExitLaunchGateState: SessionExitGateUngated,
+	}))
+	ok, _, err := MarkSessionExitedAndRecordObservationIfUnchanged(
+		"spwn-stale-reaper", observed.Status, observed.UpdatedAt, "unexpected",
+		AgentExitObservation{
+			SessionID: "spwn-stale-reaper", Observer: AgentExitObserverReaper,
+			CauseKind: AgentExitCauseDisappeared, ExpectedGeneration: predecessor,
+		},
+	)
+	require.NoError(t, err)
+	assert.False(t, ok)
+	current, err := LoadSession("spwn-stale-reaper")
+	require.NoError(t, err)
+	assert.Equal(t, "working", current.Status)
+	n, err := CountAuditLog(AuditLogFilter{Verb: AuditVerbAgentExit})
+	require.NoError(t, err)
+	assert.Zero(t, n)
 }
 
 func TestAgentExitAudit_RejectsInvalidOrConflictingEvidence(t *testing.T) {

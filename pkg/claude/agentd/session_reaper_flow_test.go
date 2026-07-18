@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // statusOf reads a session row's persisted status straight from the DB.
@@ -135,6 +136,113 @@ func TestSessionReaper_NoNotifyForPreexistingCorpse(t *testing.T) {
 	assert.Equal(t, "exited", statusOf(t, "spwn-corp"))
 	assert.Empty(t, notified,
 		"the first sweep only seeds — a pre-existing corpse must not notify")
+}
+
+func TestSessionReaper_RestartReconcilesRetainedPaneEvidenceThenCleansIt(t *testing.T) {
+	f := newFlow(t)
+	const conv = "dead-1111-2222-3333-444444444444"
+	const tmuxName = "tmux-retained-status"
+	f.HaveConvWithTitle(conv, "retained-worker")
+	f.HaveAliveSession(conv, "spwn-retained", tmuxName, "/tmp/retained")
+	code := 9
+	f.World.Tmux.MarkPaneDead(tmuxName, &code, "")
+	assert.False(t, session.IsTmuxSessionAlive(tmuxName),
+		"a retained dead pane is immediately offline on point-read status paths")
+	live, err := session.LiveTmuxSessions()
+	require.NoError(t, err)
+	assert.NotContains(t, live, tmuxName,
+		"snapshot/list status paths must also exclude retained dead panes")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick())
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, db.AgentExitObserverReconcile, rows[0].Observer)
+	assert.Equal(t, db.AgentExitCauseNormal, rows[0].CauseKind)
+	require.NotNil(t, rows[0].ExitCode)
+	assert.Equal(t, 9, *rows[0].ExitCode)
+	assert.Equal(t, db.AgentExitObservedProcessPaneBootstrap, rows[0].ObservedProcess)
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName, "record-first cleanup removes retained corpse")
+}
+
+func TestSessionReaper_PredecessorRetainedPaneCannotExitSuccessorGeneration(t *testing.T) {
+	f := newFlow(t)
+	const conv = "stale-pane-1111-2222-3333-444444444444"
+	const tmuxName = "tmux-stale-retained"
+	const predecessor = "11111111111111111111111111111111"
+	const successor = "22222222222222222222222222222222"
+	f.HaveConvWithTitle(conv, "stale-pane-worker")
+	f.HaveAliveSession(conv, "spwn-stale-retained", tmuxName, "/tmp/stale-retained")
+	originalStatus := statusOf(t, "spwn-stale-retained")
+	require.NoError(t, db.SetSessionExitLaunchGeneration("spwn-stale-retained", successor))
+	f.World.Tmux.SetPaneExitGeneration(tmuxName, predecessor)
+	code := 4
+	f.World.Tmux.MarkPaneDead(tmuxName, &code, "")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	assert.Equal(t, 0, reaper.Tick())
+	assert.Equal(t, originalStatus, statusOf(t, "spwn-stale-retained"),
+		"predecessor evidence must not mutate the successor row")
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName,
+		"the exact predecessor corpse is safe to clean without attributing it to the successor")
+	n, err := db.CountAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	assert.Zero(t, n)
+}
+
+func TestSessionReaper_CleanupFailureKeepsSavedEvidenceAndExitedState(t *testing.T) {
+	f := newFlow(t)
+	const conv = "fail-1111-2222-3333-444444444444"
+	const tmuxName = "tmux-retained-fail"
+	f.HaveConvWithTitle(conv, "cleanup-fail-worker")
+	f.HaveAliveSession(conv, "spwn-retained-fail", tmuxName, "/tmp/retained-fail")
+	f.World.Tmux.MarkPaneDead(tmuxName, nil, "15")
+	for range 3 {
+		f.World.Tmux.FailNextCommand("kill-pane")
+	}
+	f.World.Tmux.FailNextCommand("kill-session")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick())
+	assert.Equal(t, "exited", statusOf(t, "spwn-retained-fail"))
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, db.AgentExitCauseSignal, rows[0].CauseKind)
+	assert.Equal(t, "15", rows[0].Signal)
+	assert.Contains(t, f.World.Tmux.Sessions(), tmuxName, "failed cleanup leaves retained evidence for a later sweep")
+	assert.Equal(t, 0, reaper.Tick(), "the already-exited row needs cleanup, not another lifecycle transition")
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName,
+		"a later sweep retries record-first cleanup even though lifecycle state is already exited")
+}
+
+func TestSessionReaper_AuditFailureRemovesRetainedPaneAfterBoundedRetries(t *testing.T) {
+	f := newFlow(t)
+	const conv = "audit-fail-1111-2222-3333-444444444444"
+	const tmuxName = "tmux-retained-audit-fail"
+	f.HaveConvWithTitle(conv, "audit-fail-worker")
+	f.HaveAliveSession(conv, "spwn-retained-audit-fail", tmuxName, "/tmp/audit-fail")
+	originalStatus := statusOf(t, "spwn-retained-audit-fail")
+	code := 17
+	f.World.Tmux.MarkPaneDead(tmuxName, &code, "")
+	d, err := db.Open()
+	require.NoError(t, err)
+	require.NoError(t, func() error {
+		_, dropErr := d.Exec(`DROP TABLE audit_log`)
+		return dropErr
+	}())
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	assert.Equal(t, 0, reaper.Tick())
+	assert.Equal(t, 0, reaper.Tick())
+	assert.Contains(t, f.World.Tmux.Sessions(), tmuxName,
+		"retained evidence survives the bounded audit retry window")
+	assert.Equal(t, 0, reaper.Tick())
+	assert.NotContains(t, f.World.Tmux.Sessions(), tmuxName,
+		"the retry bound removes the credential-bearing retained pane even while audit storage is unavailable")
+	assert.Equal(t, originalStatus, statusOf(t, "spwn-retained-audit-fail"),
+		"failed atomic persistence must not partially change lifecycle state")
 }
 
 // Scenario: a session row created moments ago (mid-spawn — its tmux

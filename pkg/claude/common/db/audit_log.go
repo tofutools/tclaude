@@ -24,7 +24,7 @@ const (
 	AuditSourceCLI       = "cli"       // /v1/* over the unix socket (the `tclaude agent` CLI)
 	AuditSourceDashboard = "dashboard" // /api/* on the loopback dashboard server
 	AuditSourcePopup     = "popup"     // /approve/* on the loopback popup server (human approval decisions)
-	AuditSourceTmux      = "tmux"      // pane-local pane-exited callback
+	AuditSourceTmux      = "tmux"      // pane-local pane-died callback
 	AuditSourceHook      = "hook"      // harness lifecycle hook
 	AuditSourceReaper    = "reaper"    // steady-state liveness reconciliation
 	AuditSourceReconcile = "reconcile" // daemon-start reconciliation of a pre-existing corpse
@@ -66,6 +66,8 @@ type AuditLogEntry struct {
 	PaneID          string
 	Observer        string
 	CauseKind       string
+	ObservedProcess string
+	LaunchPhase     string
 	ExitCode        *int
 	Signal          string
 	LifecycleAction string
@@ -96,18 +98,19 @@ func insertAuditLog(x auditExecer, e AuditLogEntry) (int64, error) {
 			 method, path, status, source,
 			 actor_agent, target_agent,
 			 event_id, related_event_id, session_id, tmux_session, pane_id,
-			 observer, cause_kind, exit_code, signal, lifecycle_action,
-			 reason, observed_state, dedup_key)
+			 observer, cause_kind, observed_process, launch_phase,
+			 exit_code, signal, lifecycle_action, reason, observed_state, dedup_key)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`),
 			COALESCE(NULLIF(?, ''), `+agentForConvExpr+`),
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		at.UTC().Format(time.RFC3339Nano), e.ActorKind, e.ActorConv, e.ActorLabel, e.Verb,
 		e.TargetConv, e.TargetLabel, e.GroupName, e.Detail,
 		e.Method, e.Path, e.Status, e.Source,
 		e.ActorAgent, e.ActorConv, e.TargetAgent, e.TargetConv,
 		e.EventID, e.RelatedEventID, e.SessionID, e.TmuxSession, e.PaneID,
-		e.Observer, e.CauseKind, e.ExitCode, e.Signal, e.LifecycleAction,
+		e.Observer, e.CauseKind, e.ObservedProcess, e.LaunchPhase,
+		e.ExitCode, e.Signal, e.LifecycleAction,
 		e.Reason, e.ObservedState, e.DedupKey)
 	if err != nil {
 		return 0, fmt.Errorf("insert audit log: %w", err)
@@ -233,7 +236,8 @@ const auditSelectCols = `
 	       target_conv, target_agent, target_label, group_name, detail,
 	       method, path, status, source,
 	       event_id, related_event_id, session_id, tmux_session, pane_id,
-	       observer, cause_kind, exit_code, signal, lifecycle_action,
+	       observer, cause_kind, observed_process, launch_phase,
+	       exit_code, signal, lifecycle_action,
 	       reason, observed_state, dedup_key
 	FROM audit_log`
 
@@ -275,7 +279,8 @@ func ListAuditLog(f AuditLogFilter) ([]AuditLogEntry, error) {
 			&e.TargetConv, &e.TargetAgent, &e.TargetLabel, &e.GroupName, &e.Detail,
 			&e.Method, &e.Path, &e.Status, &e.Source,
 			&e.EventID, &e.RelatedEventID, &e.SessionID, &e.TmuxSession, &e.PaneID,
-			&e.Observer, &e.CauseKind, &e.ExitCode, &e.Signal, &e.LifecycleAction,
+			&e.Observer, &e.CauseKind, &e.ObservedProcess, &e.LaunchPhase,
+			&e.ExitCode, &e.Signal, &e.LifecycleAction,
 			&e.Reason, &e.ObservedState, &e.DedupKey); err != nil {
 			return nil, err
 		}

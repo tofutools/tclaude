@@ -43,6 +43,8 @@ type auditEntryResp struct {
 	SessionID       string `json:"session_id"`
 	Observer        string `json:"observer"`
 	CauseKind       string `json:"cause_kind"`
+	ObservedProcess string `json:"observed_process"`
+	LaunchPhase     string `json:"launch_phase"`
 	ExitCode        *int   `json:"exit_code"`
 	Signal          string `json:"signal"`
 	LifecycleAction string `json:"lifecycle_action"`
@@ -144,7 +146,9 @@ func TestAuditEndpoint_SurfacesTypedExitFieldsAdditively(t *testing.T) {
 		Verb: db.AuditVerbAgentExit, Status: 200, Source: db.AuditSourceTmux,
 		EventID: "evt_1234567890abcdef12345678", SessionID: "session-exit",
 		Observer: db.AgentExitObserverTmux, CauseKind: db.AgentExitCauseNormal,
-		ExitCode: &code, LifecycleAction: db.AgentExitActionStop,
+		ObservedProcess: db.AgentExitObservedProcessPaneBootstrap,
+		LaunchPhase:     db.AgentExitLaunchPhaseRuntime,
+		ExitCode:        &code, LifecycleAction: db.AgentExitActionStop,
 	})
 	require.NoError(t, err)
 
@@ -155,9 +159,26 @@ func TestAuditEndpoint_SurfacesTypedExitFieldsAdditively(t *testing.T) {
 	assert.Equal(t, "session-exit", entry.SessionID)
 	assert.Equal(t, db.AgentExitObserverTmux, entry.Observer)
 	assert.Equal(t, db.AgentExitCauseNormal, entry.CauseKind)
+	assert.Equal(t, db.AgentExitObservedProcessPaneBootstrap, entry.ObservedProcess)
+	assert.Equal(t, db.AgentExitLaunchPhaseRuntime, entry.LaunchPhase)
 	require.NotNil(t, entry.ExitCode)
 	assert.Zero(t, *entry.ExitCode)
 	assert.Equal(t, db.AgentExitActionStop, entry.LifecycleAction)
+}
+
+func TestAuditEndpoint_LegacyCommandRowOmitsAdditiveExitFields(t *testing.T) {
+	newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	_, err := db.InsertAuditLog(db.AuditLogEntry{
+		ActorKind: db.AuditActorHuman, ActorLabel: "operator", Verb: "message",
+		Status: 200, Source: db.AuditSourceCLI,
+	})
+	require.NoError(t, err)
+	got := fetchAudit(t, agentd.BuildDashboardHandlerForTest(), "")
+	require.Len(t, got.Entries, 1)
+	assert.Empty(t, got.Entries[0].ObservedProcess)
+	assert.Empty(t, got.Entries[0].LaunchPhase)
+	assert.Nil(t, got.Entries[0].ExitCode)
 }
 
 // The endpoint pages and sorts server-side: a page_size of 1 returns one

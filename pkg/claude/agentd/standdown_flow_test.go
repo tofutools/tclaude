@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -133,6 +134,22 @@ func TestStandDown_RetiresSweepsAndKeepsGroup(t *testing.T) {
 	require.NotNil(t, survivor, "the group row survives a stand-down (dormant record)")
 	assert.Equal(t, mission, survivor.Mission, "the mission is preserved")
 	assert.Equal(t, "wind-crew", survivor.SourceTemplate, "the provenance is preserved")
+
+	commands, err := db.ListAuditLog(db.AuditLogFilter{Verb: "group.stand-down"})
+	require.NoError(t, err)
+	require.Len(t, commands, 1, "stand-down has one canonical command audit row")
+	require.NotEmpty(t, commands[0].EventID)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE sessions SET created_at = ? WHERE conv_id = ?`,
+		time.Now().Add(-2*time.Minute).UTC().Format(time.RFC3339Nano), sd.Members[0].ConvID)
+	require.NoError(t, err)
+	_ = agentd.RunReaperTickForTest(time.Now())
+	exits, err := db.ListAuditLog(db.AuditLogFilter{Verb: db.AuditVerbAgentExit})
+	require.NoError(t, err)
+	require.NotEmpty(t, exits, "stand-down's resulting managed pane exit is audited")
+	assert.Equal(t, commands[0].EventID, exits[0].RelatedEventID)
+	assert.Equal(t, db.AgentExitActionRetire, exits[0].LifecycleAction)
 }
 
 // Scenario: standing down a plain hand-built group (no template, no rhythms, no

@@ -42,13 +42,13 @@ func (LiveTmux) Command(args ...string) *exec.Cmd {
 	return exec.Command("tmux", TmuxArgs(args...)...)
 }
 
-// ListSessions forks one `tmux -L tclaude list-sessions -F '#{session_name}'`
-// and returns the set of alive session names. Non-zero exit (typically
+// ListSessions forks one tmux list-sessions command and returns session names
+// whose active pane is not retained-dead. Non-zero exit (typically
 // "no server running on …" when the tmux server is down) collapses to
 // an empty set with nil error — the snapshot semantics are the same as
 // "every session is offline".
 func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
-	out, err := l.Command("list-sessions", "-F", "#{session_name}").Output()
+	out, err := l.Command("list-sessions", "-F", "#{session_name}\t#{pane_dead}").Output()
 	if err != nil {
 		// `tmux ls` exits non-zero when there is no server. Treat that
 		// as the empty set rather than an error — it is the normal
@@ -60,8 +60,9 @@ func (l LiveTmux) ListSessions() (map[string]struct{}, error) {
 	}
 	alive := map[string]struct{}{}
 	for line := range strings.SplitSeq(string(out), "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		name := fields[0]
+		if name == "" || (len(fields) == 2 && fields[1] == "1") {
 			continue
 		}
 		alive[name] = struct{}{}

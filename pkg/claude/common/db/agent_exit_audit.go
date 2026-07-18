@@ -13,15 +13,26 @@ import (
 	"time"
 )
 
-const AuditVerbAgentExit = "agent.exit"
+const AuditVerbAgentExit = "managed_pane.exit"
 
 const agentExitIntentMaxAge = 10 * time.Minute
 
 const (
 	AgentExitCauseNormal      = "normal_exit"
 	AgentExitCauseSignal      = "signal"
+	AgentExitCauseLaunch      = "launch_failure"
 	AgentExitCauseDisappeared = "disappeared"
 	AgentExitCauseUnknown     = "unknown"
+)
+
+const (
+	AgentExitObservedProcessPaneBootstrap = "pane-bootstrap"
+	AgentExitLaunchPhaseRuntime           = "runtime"
+	AgentExitLaunchPhasePreHarness        = "pre-harness"
+	AgentExitLaunchPhaseUnverified        = "unverified"
+	SessionExitGatePending                = "pending"
+	SessionExitGateReleased               = "released"
+	SessionExitGateUngated                = "ungated"
 )
 
 const (
@@ -62,12 +73,18 @@ type AgentExitObservation struct {
 	PaneID          string
 	Observer        string
 	CauseKind       string
+	ObservedProcess string
+	LaunchPhase     string
 	ExitCode        *int
 	Signal          string
 	LifecycleAction string
 	Reason          string
 	ObservedState   string
 	RelatedEventID  string
+	// ExpectedGeneration binds non-callback evidence to the launch that was
+	// actually observed. A current generated launch rejects an empty or stale
+	// value; legacy pre-v136 rows with no generation remain reconcilable.
+	ExpectedGeneration string
 }
 
 // ExitCallbackAuth is the launch-scoped proof carried only by the pane-local
@@ -101,6 +118,20 @@ type exitSessionMeta struct {
 	CallbackTokenHash  string
 	CallbackPaneID     string
 	CallbackUsedAt     sql.NullString
+	LaunchGateState    string
+}
+
+type SessionExitLaunchIdentity struct {
+	Generation  string
+	TmuxSession string
+	GateState   string
+}
+
+type SessionExitIntentRef struct {
+	SessionID      string
+	Generation     string
+	Action         string
+	RelatedEventID string
 }
 
 // SetSessionExitLaunchBinding replaces the callback authority for exactly one
@@ -121,7 +152,8 @@ func SetSessionExitLaunchGeneration(sessionID, generation string) error {
 		exit_callback_token_hash = '', exit_callback_pane_id = '',
 		exit_callback_used_at = NULL, exit_intent = '',
 		exit_intent_event_id = '', exit_intent_generation = '',
-		exit_intent_at = NULL WHERE id = ?`, generation, sessionID)
+		exit_intent_at = NULL, exit_launch_gate_state = ? WHERE id = ?`,
+		generation, SessionExitGateUngated, sessionID)
 	if err != nil {
 		return err
 	}
@@ -147,11 +179,11 @@ func SetSessionExitLaunchBinding(sessionID, generation, tokenHash, paneID string
 		return err
 	}
 	res, err := d.Exec(`UPDATE sessions SET
-		exit_callback_generation = ?, exit_callback_token_hash = ?,
+		exit_callback_token_hash = ?,
 		exit_callback_pane_id = ?, exit_callback_used_at = NULL,
-		exit_intent = '', exit_intent_event_id = '',
-		exit_intent_generation = '', exit_intent_at = NULL
-		WHERE id = ?`, generation, tokenHash, paneID, sessionID)
+		exit_launch_gate_state = ?
+		WHERE id = ? AND exit_callback_generation = ?`,
+		tokenHash, paneID, SessionExitGatePending, sessionID, generation)
 	if err != nil {
 		return err
 	}
@@ -165,37 +197,31 @@ func SetSessionExitLaunchBinding(sessionID, generation, tokenHash, paneID string
 	return nil
 }
 
-func ClearSessionExitLaunchBinding(sessionID string) error {
+func ClearSessionExitLaunchBinding(sessionID, generation string) error {
+	if err := validateExitIdentifier("session_id", sessionID, 128); err != nil {
+		return err
+	}
+	if !isLowerHex(generation, 32) {
+		return fmt.Errorf("invalid exit callback generation")
+	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE sessions SET exit_callback_generation = '',
-		exit_callback_token_hash = '', exit_callback_pane_id = '',
-		exit_callback_used_at = NULL WHERE id = ?`, sessionID)
+	_, err = d.Exec(`UPDATE sessions SET exit_callback_token_hash = '', exit_callback_pane_id = '',
+		exit_callback_used_at = NULL WHERE id = ? AND exit_callback_generation = ?`,
+		sessionID, generation)
 	return err
 }
 
-// SetSessionExitIntent records an authorized lifecycle request immediately
-// before its termination attempt. Callers must clear it if that attempt fails.
-func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time) error {
-	if !validExitAction(action) {
-		return fmt.Errorf("invalid exit lifecycle action %q", action)
-	}
-	if relatedEventID != "" && !validEventID(relatedEventID) {
-		return fmt.Errorf("invalid related audit event id")
-	}
-	if at.IsZero() {
-		at = time.Now()
-	}
+func MarkSessionExitLaunchReleased(sessionID, generation string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	res, err := d.Exec(`UPDATE sessions SET exit_intent = ?,
-		exit_intent_event_id = ?, exit_intent_generation = exit_callback_generation,
-		exit_intent_at = ? WHERE id = ?`,
-		action, relatedEventID, at.UTC().Format(time.RFC3339Nano), sessionID)
+	res, err := d.Exec(`UPDATE sessions SET exit_launch_gate_state = ?
+		WHERE id = ? AND exit_callback_generation = ? AND exit_launch_gate_state = ?`,
+		SessionExitGateReleased, sessionID, generation, SessionExitGatePending)
 	if err != nil {
 		return err
 	}
@@ -204,9 +230,111 @@ func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time
 		return err
 	}
 	if n != 1 {
-		return fmt.Errorf("set exit intent: session not found")
+		return fmt.Errorf("mark exit launch released: stale generation or state")
 	}
 	return nil
+}
+
+func MarkSessionExitLaunchUngated(sessionID, generation string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE sessions SET exit_launch_gate_state = ?
+		WHERE id = ? AND exit_callback_generation = ?`,
+		SessionExitGateUngated, sessionID, generation)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("mark exit launch ungated: stale generation")
+	}
+	return nil
+}
+
+func MarkSessionExitLaunchPending(sessionID, generation string) error {
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	res, err := d.Exec(`UPDATE sessions SET exit_launch_gate_state = ?
+		WHERE id = ? AND exit_callback_generation = ?`,
+		SessionExitGatePending, sessionID, generation)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("mark exit launch pending: stale generation")
+	}
+	return nil
+}
+
+func GetSessionExitLaunchIdentity(sessionID string) (SessionExitLaunchIdentity, error) {
+	d, err := Open()
+	if err != nil {
+		return SessionExitLaunchIdentity{}, err
+	}
+	var out SessionExitLaunchIdentity
+	err = d.QueryRow(`SELECT exit_callback_generation, tmux_session,
+		exit_launch_gate_state FROM sessions WHERE id = ?`, sessionID).
+		Scan(&out.Generation, &out.TmuxSession, &out.GateState)
+	return out, err
+}
+
+// SetSessionExitIntent records an authorized lifecycle request immediately
+// before its termination attempt. Callers must clear it if that attempt fails.
+func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time) (SessionExitIntentRef, error) {
+	if !validExitAction(action) {
+		return SessionExitIntentRef{}, fmt.Errorf("invalid exit lifecycle action %q", action)
+	}
+	if relatedEventID != "" && !validEventID(relatedEventID) {
+		return SessionExitIntentRef{}, fmt.Errorf("invalid related audit event id")
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	d, err := Open()
+	if err != nil {
+		return SessionExitIntentRef{}, err
+	}
+	var generation string
+	err = d.QueryRow(`UPDATE sessions SET exit_intent = ?,
+		exit_intent_event_id = ?, exit_intent_generation = exit_callback_generation,
+		exit_intent_at = ? WHERE id = ? RETURNING exit_callback_generation`,
+		action, relatedEventID, at.UTC().Format(time.RFC3339Nano), sessionID).Scan(&generation)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return SessionExitIntentRef{}, fmt.Errorf("set exit intent: session not found")
+		}
+		return SessionExitIntentRef{}, err
+	}
+	return SessionExitIntentRef{SessionID: sessionID, Generation: generation,
+		Action: action, RelatedEventID: relatedEventID}, nil
+}
+
+func ClearSessionExitIntentIfCurrent(ref SessionExitIntentRef) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE sessions SET exit_intent = '',
+		exit_intent_event_id = '', exit_intent_generation = '', exit_intent_at = NULL
+		WHERE id = ? AND exit_callback_generation = ? AND exit_intent_generation = ?
+		AND exit_intent = ? AND exit_intent_event_id = ?`,
+		ref.SessionID, ref.Generation, ref.Generation, ref.Action, ref.RelatedEventID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func ClearSessionExitIntent(sessionID string) error {
@@ -276,19 +404,47 @@ func recordAgentExitObservationOnce(o AgentExitObservation, auth *ExitCallbackAu
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	meta, err := loadExitSessionMeta(tx, o.SessionID)
+	result, entry, changed, err := recordAgentExitObservationTx(tx, o, auth)
 	if err != nil {
 		return AgentExitRecordResult{}, err
 	}
+	if err := tx.Commit(); err != nil {
+		return AgentExitRecordResult{}, err
+	}
+	if changed {
+		logAgentExitObservation(entry, result)
+	}
+	return result, nil
+}
+
+// recordAgentExitObservationTx performs generation validation, optional
+// callback consumption, intent correlation, and audit deduplication inside the
+// caller's transaction. Keeping the transaction boundary with the caller lets
+// reaper and SessionEnd state changes commit atomically with their observation.
+func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *ExitCallbackAuth) (AgentExitRecordResult, AuditLogEntry, bool, error) {
+	meta, err := loadExitSessionMeta(tx, o.SessionID)
+	if err != nil {
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, err
+	}
 	if o.TmuxSession != "" && o.TmuxSession != meta.TmuxSession {
-		return AgentExitRecordResult{}, fmt.Errorf("%w: tmux session mismatch", ErrExitCallbackRejected)
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, fmt.Errorf("%w: tmux session mismatch", ErrExitCallbackRejected)
 	}
 	if o.TmuxSession == "" {
 		o.TmuxSession = meta.TmuxSession
 	}
+	expectedGeneration := o.ExpectedGeneration
+	if auth != nil {
+		expectedGeneration = auth.Generation
+	}
+	if meta.CallbackGeneration != "" && expectedGeneration != meta.CallbackGeneration {
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, fmt.Errorf("%w: stale or missing launch generation", ErrExitCallbackRejected)
+	}
+	if meta.CallbackGeneration == "" && expectedGeneration != "" {
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, fmt.Errorf("%w: launch generation mismatch", ErrExitCallbackRejected)
+	}
 	if auth != nil {
 		if err := consumeExitCallback(tx, o.SessionID, meta, *auth); err != nil {
-			return AgentExitRecordResult{}, err
+			return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 		}
 	}
 	if o.PaneID == "" {
@@ -308,8 +464,18 @@ func recordAgentExitObservationOnce(o AgentExitObservation, auth *ExitCallbackAu
 	if o.ObservedState == "" {
 		o.ObservedState = meta.Status
 	}
+	o.ObservedProcess = AgentExitObservedProcessPaneBootstrap
+	switch meta.LaunchGateState {
+	case SessionExitGateReleased:
+		o.LaunchPhase = AgentExitLaunchPhaseRuntime
+	case SessionExitGatePending:
+		o.LaunchPhase = AgentExitLaunchPhasePreHarness
+		o.CauseKind = AgentExitCauseLaunch
+	default:
+		o.LaunchPhase = AgentExitLaunchPhaseUnverified
+	}
 	if err := validateExitObservation(&o); err != nil {
-		return AgentExitRecordResult{}, err
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 	}
 
 	launchIdentity := meta.CallbackGeneration
@@ -319,7 +485,7 @@ func recordAgentExitObservationOnce(o AgentExitObservation, auth *ExitCallbackAu
 	dedupKey, eventID := exitEventIdentity(launchIdentity)
 	existing, err := loadExitAuditByDedup(tx, dedupKey)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return AgentExitRecordResult{}, err
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 	}
 
 	entry := AuditLogEntry{
@@ -328,36 +494,36 @@ func recordAgentExitObservationOnce(o AgentExitObservation, auth *ExitCallbackAu
 		TargetLabel: meta.ConvID, Status: 200, Source: exitAuditSource(o.Observer),
 		EventID: eventID, RelatedEventID: o.RelatedEventID,
 		SessionID: o.SessionID, TmuxSession: o.TmuxSession, PaneID: o.PaneID,
-		Observer: o.Observer, CauseKind: o.CauseKind, ExitCode: cloneInt(o.ExitCode),
-		Signal: o.Signal, LifecycleAction: o.LifecycleAction, Reason: o.Reason,
+		Observer: o.Observer, CauseKind: o.CauseKind,
+		ObservedProcess: o.ObservedProcess, LaunchPhase: o.LaunchPhase,
+		ExitCode: cloneInt(o.ExitCode),
+		Signal:   o.Signal, LifecycleAction: o.LifecycleAction, Reason: o.Reason,
 		ObservedState: o.ObservedState, DedupKey: dedupKey,
 	}
 	entry.Detail = exitAuditDetail(entry)
 	result := AgentExitRecordResult{EventID: eventID}
 	if errors.Is(err, sql.ErrNoRows) {
 		if _, err := insertAuditLog(tx, entry); err != nil {
-			return AgentExitRecordResult{}, err
+			return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 		}
 		result.Inserted = true
 	} else {
 		merged := mergeExitAudit(*existing, entry)
 		if exitAuditEqual(*existing, merged) {
-			if err := tx.Commit(); err != nil {
-				return AgentExitRecordResult{}, err
-			}
-			return result, nil
+			return result, *existing, false, nil
 		}
 		merged.Detail = exitAuditDetail(merged)
 		if err := updateExitAudit(tx, merged); err != nil {
-			return AgentExitRecordResult{}, err
+			return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 		}
 		entry = merged
 		result.Enriched = true
 	}
-	if err := tx.Commit(); err != nil {
-		return AgentExitRecordResult{}, err
-	}
-	slog.Info("agent exit observed",
+	return result, entry, true, nil
+}
+
+func logAgentExitObservation(entry AuditLogEntry, result AgentExitRecordResult) {
+	slog.Info("managed pane exit observed",
 		"event_id", entry.EventID,
 		"related_event_id", entry.RelatedEventID,
 		"agent_id", entry.TargetAgent,
@@ -367,12 +533,153 @@ func recordAgentExitObservationOnce(o AgentExitObservation, auth *ExitCallbackAu
 		"pane_id", entry.PaneID,
 		"observer", entry.Observer,
 		"cause_kind", entry.CauseKind,
+		"observed_process", entry.ObservedProcess,
+		"launch_phase", entry.LaunchPhase,
 		"exit_code", nullableLogInt(entry.ExitCode),
 		"signal", unavailable(entry.Signal),
 		"lifecycle_action", unavailable(entry.LifecycleAction),
 		"observed_state", entry.ObservedState,
 		"enriched", result.Enriched)
-	return result, nil
+}
+
+// MarkSessionExitedAndRecordObservationIfUnchanged atomically applies the
+// reaper's state CAS and records the evidence for the same launch generation.
+// A relaunch, hook update, or generation rotation makes the CAS a benign no-op.
+func MarkSessionExitedAndRecordObservationIfUnchanged(
+	id, observedStatus string,
+	observedUpdatedAt time.Time,
+	fallbackExitReason string,
+	o AgentExitObservation,
+) (bool, AgentExitRecordResult, error) {
+	if o.SessionID != id {
+		return false, AgentExitRecordResult{}, fmt.Errorf("exit observation session mismatch")
+	}
+	if err := validateExitObservation(&o); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		ok, result, err := markSessionExitedAndRecordObservationOnce(
+			id, observedStatus, observedUpdatedAt, fallbackExitReason, o,
+		)
+		if err == nil || !retryableExitAuditConflict(err) {
+			return ok, result, err
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	return false, AgentExitRecordResult{}, lastErr
+}
+
+func markSessionExitedAndRecordObservationOnce(
+	id, observedStatus string,
+	observedUpdatedAt time.Time,
+	fallbackExitReason string,
+	o AgentExitObservation,
+) (bool, AgentExitRecordResult, error) {
+	d, err := Open()
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(`UPDATE sessions
+		SET status = 'exited', status_detail = '', updated_at = ?,
+			subagent_count = 0, subagents_json = '',
+			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
+		WHERE id = ? AND status = ? AND updated_at = ?
+			AND exit_callback_generation = ?`,
+		time.Now().Format(time.RFC3339Nano), fallbackExitReason,
+		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano), o.ExpectedGeneration)
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if n != 1 {
+		return false, AgentExitRecordResult{}, nil
+	}
+	o.ObservedState = "exited"
+	result, entry, changed, err := recordAgentExitObservationTx(tx, o, nil)
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if changed {
+		logAgentExitObservation(entry, result)
+	}
+	return true, result, nil
+}
+
+// RecordSessionEndExitObservation atomically binds a SessionEnd status/reason
+// transition and its exit audit row to the generation supplied by the hook.
+// A delayed predecessor hook therefore cannot mutate or attribute a relaunch.
+func RecordSessionEndExitObservation(o AgentExitObservation) (bool, AgentExitRecordResult, error) {
+	if o.Observer != AgentExitObserverHook {
+		return false, AgentExitRecordResult{}, fmt.Errorf("SessionEnd observation requires hook observer")
+	}
+	if err := validateExitObservation(&o); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		ok, result, err := recordSessionEndExitObservationOnce(o)
+		if err == nil || !retryableExitAuditConflict(err) {
+			return ok, result, err
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	return false, AgentExitRecordResult{}, lastErr
+}
+
+func recordSessionEndExitObservationOnce(o AgentExitObservation) (bool, AgentExitRecordResult, error) {
+	d, err := Open()
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(`UPDATE sessions SET status = 'exited', status_detail = '',
+		updated_at = ?, subagent_count = 0, subagents_json = '',
+		exit_reason = CASE WHEN ? <> '' THEN ? ELSE exit_reason END
+		WHERE id = ? AND exit_callback_generation = ?`,
+		time.Now().Format(time.RFC3339Nano), o.Reason, o.Reason,
+		o.SessionID, o.ExpectedGeneration)
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if n != 1 {
+		return false, AgentExitRecordResult{}, nil
+	}
+	o.ObservedState = "exited"
+	result, entry, changed, err := recordAgentExitObservationTx(tx, o, nil)
+	if err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, AgentExitRecordResult{}, err
+	}
+	if changed {
+		logAgentExitObservation(entry, result)
+	}
+	return true, result, nil
 }
 
 func retryableExitAuditConflict(err error) bool {
@@ -392,12 +699,12 @@ func loadExitSessionMeta(tx *sql.Tx, sessionID string) (exitSessionMeta, error) 
 	err := tx.QueryRow(`SELECT tmux_session, conv_id, agent_id, status, created_at,
 		exit_reason, exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at,
 		exit_callback_generation, exit_callback_token_hash,
-		exit_callback_pane_id, exit_callback_used_at
+		exit_callback_pane_id, exit_callback_used_at, exit_launch_gate_state
 		FROM sessions WHERE id = ?`, sessionID).Scan(
 		&m.TmuxSession, &m.ConvID, &m.AgentID, &m.Status, &m.CreatedAt,
 		&exitReason, &m.Intent, &m.IntentEventID, &m.IntentGeneration, &m.IntentAt,
 		&m.CallbackGeneration, &m.CallbackTokenHash,
-		&m.CallbackPaneID, &m.CallbackUsedAt)
+		&m.CallbackPaneID, &m.CallbackUsedAt, &m.LaunchGateState)
 	if err != nil {
 		return m, err
 	}
@@ -461,6 +768,16 @@ func validateExitObservation(o *AgentExitObservation) error {
 	if !validExitObserver(o.Observer) || !validExitCause(o.CauseKind) {
 		return fmt.Errorf("invalid exit observer or cause")
 	}
+	if o.ObservedProcess != "" && o.ObservedProcess != AgentExitObservedProcessPaneBootstrap {
+		return fmt.Errorf("invalid observed process")
+	}
+	if o.LaunchPhase != "" && o.LaunchPhase != AgentExitLaunchPhaseRuntime &&
+		o.LaunchPhase != AgentExitLaunchPhasePreHarness && o.LaunchPhase != AgentExitLaunchPhaseUnverified {
+		return fmt.Errorf("invalid launch phase")
+	}
+	if o.ExpectedGeneration != "" && !isLowerHex(o.ExpectedGeneration, 32) {
+		return fmt.Errorf("invalid expected launch generation")
+	}
 	if o.ExitCode != nil && (*o.ExitCode < 0 || *o.ExitCode > 255) {
 		return fmt.Errorf("invalid exit code")
 	}
@@ -496,13 +813,15 @@ func loadExitAuditByDedup(tx *sql.Tx, dedupKey string) (*AuditLogEntry, error) {
 	err := tx.QueryRow(`SELECT id, at, actor_kind, actor_conv, actor_agent,
 		actor_label, verb, target_conv, target_agent, target_label, group_name,
 		detail, method, path, status, source, event_id, related_event_id,
-		session_id, tmux_session, pane_id, observer, cause_kind, exit_code,
-		signal, lifecycle_action, reason, observed_state, dedup_key
+		session_id, tmux_session, pane_id, observer, cause_kind,
+		observed_process, launch_phase, exit_code, signal, lifecycle_action,
+		reason, observed_state, dedup_key
 		FROM audit_log WHERE dedup_key = ?`, dedupKey).Scan(
 		&e.ID, new(string), &e.ActorKind, &e.ActorConv, &e.ActorAgent,
 		&e.ActorLabel, &e.Verb, &e.TargetConv, &e.TargetAgent, &e.TargetLabel, &e.GroupName,
 		&e.Detail, &e.Method, &e.Path, &e.Status, &e.Source, &e.EventID, &e.RelatedEventID,
-		&e.SessionID, &e.TmuxSession, &e.PaneID, &e.Observer, &e.CauseKind, &e.ExitCode,
+		&e.SessionID, &e.TmuxSession, &e.PaneID, &e.Observer, &e.CauseKind,
+		&e.ObservedProcess, &e.LaunchPhase, &e.ExitCode,
 		&e.Signal, &e.LifecycleAction, &e.Reason, &e.ObservedState, &e.DedupKey)
 	return &e, err
 }
@@ -510,10 +829,12 @@ func loadExitAuditByDedup(tx *sql.Tx, dedupKey string) (*AuditLogEntry, error) {
 func updateExitAudit(tx *sql.Tx, e AuditLogEntry) error {
 	_, err := tx.Exec(`UPDATE audit_log SET target_conv = ?, target_agent = ?,
 		target_label = ?, detail = ?, source = ?, related_event_id = ?,
-		tmux_session = ?, pane_id = ?, observer = ?, cause_kind = ?, exit_code = ?,
+		tmux_session = ?, pane_id = ?, observer = ?, cause_kind = ?,
+		observed_process = ?, launch_phase = ?, exit_code = ?,
 		signal = ?, lifecycle_action = ?, reason = ?, observed_state = ? WHERE id = ?`,
 		e.TargetConv, e.TargetAgent, e.TargetLabel, e.Detail, e.Source, e.RelatedEventID,
-		e.TmuxSession, e.PaneID, e.Observer, e.CauseKind, e.ExitCode,
+		e.TmuxSession, e.PaneID, e.Observer, e.CauseKind,
+		e.ObservedProcess, e.LaunchPhase, e.ExitCode,
 		e.Signal, e.LifecycleAction, e.Reason, e.ObservedState, e.ID)
 	return err
 }
@@ -540,6 +861,12 @@ func mergeExitAudit(old, next AuditLogEntry) AuditLogEntry {
 	}
 	if causeRank(next.CauseKind) > causeRank(m.CauseKind) {
 		m.CauseKind = next.CauseKind
+	}
+	if m.ObservedProcess == "" {
+		m.ObservedProcess = next.ObservedProcess
+	}
+	if launchPhaseRank(next.LaunchPhase) > launchPhaseRank(m.LaunchPhase) {
+		m.LaunchPhase = next.LaunchPhase
 	}
 	switch m.CauseKind {
 	case AgentExitCauseSignal:
@@ -573,6 +900,7 @@ func exitAuditEqual(a, b AuditLogEntry) bool {
 		a.TargetLabel == b.TargetLabel && a.Source == b.Source &&
 		a.RelatedEventID == b.RelatedEventID && a.TmuxSession == b.TmuxSession &&
 		a.PaneID == b.PaneID && a.Observer == b.Observer && a.CauseKind == b.CauseKind &&
+		a.ObservedProcess == b.ObservedProcess && a.LaunchPhase == b.LaunchPhase &&
 		intEqual(a.ExitCode, b.ExitCode) && a.Signal == b.Signal &&
 		a.LifecycleAction == b.LifecycleAction && a.Reason == b.Reason &&
 		a.ObservedState == b.ObservedState
@@ -584,7 +912,9 @@ func exitAuditDetail(e AuditLogEntry) string {
 		code = strconv.Itoa(*e.ExitCode)
 	}
 	return strings.Join([]string{
-		"cause=" + e.CauseKind,
+		"pane_cause=" + e.CauseKind,
+		"observed_process=" + unavailable(e.ObservedProcess),
+		"launch_phase=" + unavailable(e.LaunchPhase),
 		"exit_code=" + code,
 		"signal=" + unavailable(e.Signal),
 		"lifecycle=" + unavailable(e.LifecycleAction),
@@ -615,7 +945,7 @@ func exitAuditSource(observer string) string {
 
 func validExitCause(v string) bool {
 	return v == AgentExitCauseNormal || v == AgentExitCauseSignal ||
-		v == AgentExitCauseDisappeared || v == AgentExitCauseUnknown
+		v == AgentExitCauseLaunch || v == AgentExitCauseDisappeared || v == AgentExitCauseUnknown
 }
 func validExitObserver(v string) bool {
 	return v == AgentExitObserverTmux || v == AgentExitObserverHook ||
@@ -689,7 +1019,13 @@ func isLowerHex(v string, n int) bool {
 	return true
 }
 func causeRank(v string) int {
-	return map[string]int{AgentExitCauseUnknown: 1, AgentExitCauseDisappeared: 2, AgentExitCauseNormal: 3, AgentExitCauseSignal: 4}[v]
+	return map[string]int{AgentExitCauseUnknown: 1, AgentExitCauseDisappeared: 2,
+		AgentExitCauseNormal: 3, AgentExitCauseSignal: 4, AgentExitCauseLaunch: 5}[v]
+}
+
+func launchPhaseRank(v string) int {
+	return map[string]int{AgentExitLaunchPhaseUnverified: 1,
+		AgentExitLaunchPhaseRuntime: 2, AgentExitLaunchPhasePreHarness: 3}[v]
 }
 func observerRank(v string) int {
 	return map[string]int{AgentExitObserverReconcile: 1, AgentExitObserverReaper: 2, AgentExitObserverHook: 3, AgentExitObserverTmux: 4}[v]
