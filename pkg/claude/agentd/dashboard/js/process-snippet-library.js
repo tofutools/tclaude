@@ -29,18 +29,25 @@ async function request(path, options = {}) {
   return body;
 }
 
-function safeName(value) {
+export function validateProcessSnippetName(value) {
   const name = typeof value === 'string' ? value.trim() : '';
-  if (!name || [...name].length > PROCESS_SNIPPET_NAME_MAX_RUNES
-      || new TextEncoder().encode(name).length > PROCESS_SNIPPET_NAME_MAX_BYTES
-      || /[\u0000-\u001f\u007f-\u009f]/u.test(name)) return '';
-  return name;
+  if (!name) return { name: '', error: 'Snippet name is required.' };
+  if ([...name].length > PROCESS_SNIPPET_NAME_MAX_RUNES) {
+    return { name: '', error: `Snippet name must be at most ${PROCESS_SNIPPET_NAME_MAX_RUNES} characters.` };
+  }
+  if (new TextEncoder().encode(name).length > PROCESS_SNIPPET_NAME_MAX_BYTES) {
+    return { name: '', error: `Snippet name must be at most ${PROCESS_SNIPPET_NAME_MAX_BYTES} UTF-8 bytes.` };
+  }
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(name)) {
+    return { name: '', error: 'Snippet name cannot contain control characters.' };
+  }
+  return { name, error: '' };
 }
 
 export function normalizeProcessSnippet(raw) {
   if (!raw || typeof raw !== 'object' || !SNIPPET_ID.test(raw.id)
       || !Number.isSafeInteger(raw.revision) || raw.revision < 1) return null;
-  const name = safeName(raw.name) || 'Unavailable custom snippet';
+  const name = validateProcessSnippetName(raw.name).name || 'Unavailable custom snippet';
   const base = {
     id: raw.id, name, revision: raw.revision,
     createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : '',

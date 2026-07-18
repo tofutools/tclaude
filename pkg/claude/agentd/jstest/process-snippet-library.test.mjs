@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
-  PROCESS_SNIPPET_UNAVAILABLE, normalizeProcessSnippetLibrary,
+  PROCESS_SNIPPET_UNAVAILABLE, normalizeProcessSnippetLibrary, validateProcessSnippetName,
 } from '../dashboard/js/process-snippet-library.js';
+import { validateProcessSelectionPayload } from '../dashboard/js/process-editor-clipboard.js';
 
 const envelope = (id = 'task') => ({
   kind: 'tclaude/process-selection', version: 1,
@@ -41,4 +43,29 @@ test('unavailable server rows remain manageable without accepting a payload', ()
   assert.equal(library.snippets[0].available, false);
   assert.equal(library.snippets[0].unavailableReason, PROCESS_SNIPPET_UNAVAILABLE,
     'client uses one bounded public reason rather than echoing server/corrupt bytes');
+});
+
+test('snippet names share rune, UTF-8 byte, and control validation', () => {
+  assert.deepEqual(validateProcessSnippetName('  🚀 Review  '), { name: '🚀 Review', error: '' });
+  assert.equal(validateProcessSnippetName('🚀'.repeat(40)).error, '', '40 emoji are exactly 160 UTF-8 bytes');
+  assert.match(validateProcessSnippetName('🚀'.repeat(41)).error, /160 UTF-8 bytes/);
+  assert.match(validateProcessSnippetName(`bad\u0000name`).error, /control/);
+});
+
+test('shared node-wire fixtures match the shipped browser authority', () => {
+  const fixtures = JSON.parse(readFileSync(new URL('./process-snippet-wire-fixtures.json', import.meta.url), 'utf8'));
+  for (const fixture of fixtures.cases) {
+    if (fixture.accepted) {
+      assert.doesNotThrow(() => validateProcessSelectionPayload(fixture.envelope), fixture.name);
+    } else {
+      assert.throws(() => validateProcessSelectionPayload(fixture.envelope), undefined, fixture.name);
+    }
+  }
+});
+
+test('JSON.stringify keeps markup and JavaScript separators within the shared byte boundary', () => {
+  const payload = envelope();
+  payload.nodes[0].node.doc = '<>&'.repeat(20_000) + '\u2028\u2029' + String.raw`\u2028`;
+  assert.doesNotThrow(() => validateProcessSelectionPayload(payload));
+  assert.ok(new TextEncoder().encode(JSON.stringify(payload)).length < 256 * 1024);
 });

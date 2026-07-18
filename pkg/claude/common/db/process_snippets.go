@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -17,6 +18,7 @@ const (
 	MaxProcessSnippetEnvelopeBytes  = 256 << 10
 	MaxProcessSnippetNameRunes      = 80
 	MaxProcessSnippetNameBytes      = 160
+	maxProcessSnippetTimestampBytes = 64
 )
 
 var (
@@ -59,23 +61,16 @@ func parseSnippetTime(value string) (time.Time, error) {
 	return parsed, nil
 }
 
-func scanProcessSnippet(scanner interface{ Scan(...any) error }) (ProcessSnippet, error) {
-	var snippet ProcessSnippet
-	var created, updated string
-	if err := scanner.Scan(&snippet.ID, &snippet.Name, &snippet.EnvelopeJSON, &snippet.Revision, &created, &updated); err != nil {
-		return ProcessSnippet{}, err
+func validProcessSnippetID(value string) bool {
+	if len(value) != len(ProcessSnippetIDPrefix)+32 || !strings.HasPrefix(value, ProcessSnippetIDPrefix) {
+		return false
 	}
-	var err error
-	if snippet.CreatedAt, err = parseSnippetTime(created); err != nil {
-		snippet.Corrupt = true
+	for _, b := range []byte(value[len(ProcessSnippetIDPrefix):]) {
+		if (b < '0' || b > '9') && (b < 'a' || b > 'f') {
+			return false
+		}
 	}
-	if snippet.UpdatedAt, err = parseSnippetTime(updated); err != nil {
-		snippet.Corrupt = true
-	}
-	if snippet.Revision <= 0 || !strings.HasPrefix(snippet.ID, ProcessSnippetIDPrefix) {
-		snippet.Corrupt = true
-	}
-	return snippet, nil
+	return true
 }
 
 func scanListedProcessSnippet(scanner interface{ Scan(...any) error }) (ProcessSnippet, error) {
@@ -92,7 +87,12 @@ func scanListedProcessSnippet(scanner interface{ Scan(...any) error }) (ProcessS
 	if snippet.UpdatedAt, err = parseSnippetTime(updated); err != nil {
 		snippet.Corrupt = true
 	}
-	if snippet.Revision <= 0 || !strings.HasPrefix(snippet.ID, ProcessSnippetIDPrefix) || storedBytes < 0 || storedBytes > MaxProcessSnippetEnvelopeBytes {
+	if snippet.Name == "" || !utf8.ValidString(snippet.Name) ||
+		utf8.RuneCountInString(snippet.Name) > MaxProcessSnippetNameRunes || len(snippet.Name) > MaxProcessSnippetNameBytes {
+		snippet.Corrupt = true
+		snippet.Name = ""
+	}
+	if snippet.Revision <= 0 || !validProcessSnippetID(snippet.ID) || storedBytes < 0 || storedBytes > MaxProcessSnippetEnvelopeBytes {
 		snippet.Corrupt = true
 		snippet.EnvelopeJSON = ""
 	}
@@ -114,10 +114,17 @@ func ListProcessSnippets() (ProcessSnippetLibrary, error) {
 	// Never materialize a manually corrupted oversized payload, and never let
 	// rows injected outside the bounded writer turn a list into an unbounded
 	// response. Valid application state has at most MaxProcessSnippetCount rows.
-	rows, err := d.Query(`SELECT id, name,
+	rows, err := d.Query(`SELECT
+		CASE WHEN length(CAST(id AS BLOB)) <= ? THEN id ELSE '' END,
+		CASE WHEN length(CAST(name AS BLOB)) <= ? THEN name ELSE '' END,
 		CASE WHEN length(CAST(envelope_json AS BLOB)) <= ? THEN envelope_json ELSE '' END,
-		revision, created_at, updated_at, length(CAST(envelope_json AS BLOB))
-		FROM process_snippets ORDER BY name_key, id LIMIT ?`, MaxProcessSnippetEnvelopeBytes, MaxProcessSnippetCount)
+		CASE WHEN typeof(revision) = 'integer' THEN revision ELSE 0 END,
+		CASE WHEN length(CAST(created_at AS BLOB)) <= ? THEN created_at ELSE '' END,
+		CASE WHEN length(CAST(updated_at AS BLOB)) <= ? THEN updated_at ELSE '' END,
+		length(CAST(envelope_json AS BLOB))
+		FROM process_snippets ORDER BY name_key, id LIMIT ?`,
+		len(ProcessSnippetIDPrefix)+32, MaxProcessSnippetNameBytes, MaxProcessSnippetEnvelopeBytes,
+		maxProcessSnippetTimestampBytes, maxProcessSnippetTimestampBytes, MaxProcessSnippetCount)
 	if err != nil {
 		return ProcessSnippetLibrary{}, err
 	}
@@ -261,8 +268,19 @@ func RenameProcessSnippet(id, name, nameKey string, revision int64) (ProcessSnip
 		}
 		return ProcessSnippet{}, 0, ErrProcessSnippetConflict
 	}
-	snippet, err := scanProcessSnippet(tx.QueryRow(`SELECT id, name, envelope_json, revision, created_at, updated_at
-		FROM process_snippets WHERE id = ?`, id))
+	// Rename remains available for corrupt rows, but it must preserve the list
+	// path's payload bound rather than materializing an arbitrarily large
+	// manually corrupted envelope into the daemon.
+	snippet, err := scanListedProcessSnippet(tx.QueryRow(`SELECT
+		CASE WHEN length(CAST(id AS BLOB)) <= ? THEN id ELSE '' END,
+		CASE WHEN length(CAST(name AS BLOB)) <= ? THEN name ELSE '' END,
+		CASE WHEN length(CAST(envelope_json AS BLOB)) <= ? THEN envelope_json ELSE '' END,
+		CASE WHEN typeof(revision) = 'integer' THEN revision ELSE 0 END,
+		CASE WHEN length(CAST(created_at AS BLOB)) <= ? THEN created_at ELSE '' END,
+		CASE WHEN length(CAST(updated_at AS BLOB)) <= ? THEN updated_at ELSE '' END,
+		length(CAST(envelope_json AS BLOB))
+		FROM process_snippets WHERE id = ?`, len(ProcessSnippetIDPrefix)+32, MaxProcessSnippetNameBytes,
+		MaxProcessSnippetEnvelopeBytes, maxProcessSnippetTimestampBytes, maxProcessSnippetTimestampBytes, id))
 	if err != nil {
 		return ProcessSnippet{}, 0, err
 	}

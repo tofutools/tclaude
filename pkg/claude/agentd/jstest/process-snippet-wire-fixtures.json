@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "name": "valid task performer",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"human","ask":"Approve?","choices":["yes"],"choiceOutcomes":{"yes":"pass"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "valid plan performer",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","plan":{"id":"plan","performer":{"kind":"agent","prompt":"Plan"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "bogus performer kind",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"bogus"}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "missing step performer",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","plan":{"id":"plan"}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "present null string",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","name":null},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "present null string list",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","captures":null},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "fractional retry integer",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","retry":{"maxAttempts":1.5}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "prototype choice outcome",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"human","choiceOutcomes":{"__proto__":"pass"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    }
+  ]
+}

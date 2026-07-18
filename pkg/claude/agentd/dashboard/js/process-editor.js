@@ -376,7 +376,7 @@ export class ProcessTemplateEditor {
   }
 
   canSaveSelectionAsSnippet() {
-    if (!this.model.config.canInsert || externalInteractionPending(this)) return false;
+    if (!this.model.config.canInsert || this.snippetLibrary.loading || externalInteractionPending(this)) return false;
     return selectionItems(this.selection).some((item) => item.type === 'node' && this.model.node(item.id));
   }
 
@@ -402,6 +402,31 @@ export class ProcessTemplateEditor {
 
   customSnippet(id) { return this.customSnippets.find((snippet) => snippet.id === id) || null; }
 
+  async reconcileCustomSnippetMutation(result, expectedGeneration, patch) {
+    if (Number.isSafeInteger(result?.generation) && result.generation === expectedGeneration) {
+      this.snippetLoadSeq += 1;
+      patch();
+      this.snippetLibrary = {
+        ...this.snippetLibrary, loading: false, error: '', generation: result.generation,
+      };
+      return true;
+    }
+    const loaded = await this.loadCustomSnippets();
+    if (!loaded && !this.abort.signal.aborted) {
+      // The mutation committed even though the authoritative reconciliation
+      // failed. Preserve that known item change in the last-good collection;
+      // the visible load error keeps Retry available for missing generations.
+      patch();
+      this.snippetLibrary = {
+        ...this.snippetLibrary, loading: false,
+        generation: Number.isSafeInteger(result?.generation)
+          ? Math.max(this.snippetLibrary.generation, result.generation) : this.snippetLibrary.generation,
+      };
+      this.publish?.();
+    }
+    return loaded;
+  }
+
   async saveSelectionAsSnippet() {
     if (!this.canSaveSelectionAsSnippet() || this.snippetLibrary.creating) return false;
     const layout = this.graph?.layoutSnapshot?.();
@@ -415,14 +440,17 @@ export class ProcessTemplateEditor {
     }
     const name = await this.nameSnippetModal({ title: 'Save selection as custom snippet', submitLabel: 'Save snippet' });
     if (!name || this.abort.signal.aborted) return false;
+    const expectedGeneration = this.snippetLibrary.generation + 1;
     this.snippetLibrary = { ...this.snippetLibrary, creating: true };
     this.publish?.();
     try {
       const result = await createProcessSnippet(name, envelope, { signal: this.abort.signal });
       if (!result.snippet || this.abort.signal.aborted) throw new Error('The saved snippet response was invalid.');
-      this.snippetLoadSeq += 1;
-      this.customSnippets = [...this.customSnippets, result.snippet].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-      this.snippetLibrary = { ...this.snippetLibrary, generation: result.generation || this.snippetLibrary.generation };
+      await this.reconcileCustomSnippetMutation(result, expectedGeneration, () => {
+        this.customSnippets = [...this.customSnippets.filter((item) => item.id !== result.snippet.id), result.snippet]
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      });
+      if (this.abort.signal.aborted) return false;
       this.status(`Saved custom snippet ${result.snippet.name}.`);
       return true;
     } catch (error) {
@@ -446,15 +474,17 @@ export class ProcessTemplateEditor {
       title: 'Rename custom snippet', submitLabel: 'Rename snippet', initialName: snippet.name,
     });
     if (!name || name === snippet.name || this.abort.signal.aborted) return false;
+    const expectedGeneration = this.snippetLibrary.generation + 1;
     this.snippetLibrary = { ...this.snippetLibrary, pendingID: id };
     this.publish?.();
     try {
       const result = await renameProcessSnippet(snippet, name, { signal: this.abort.signal });
       if (!result.snippet || this.abort.signal.aborted) throw new Error('The renamed snippet response was invalid.');
-      this.snippetLoadSeq += 1;
-      this.customSnippets = this.customSnippets.map((item) => item.id === id ? result.snippet : item)
-        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-      this.snippetLibrary = { ...this.snippetLibrary, generation: result.generation || this.snippetLibrary.generation };
+      await this.reconcileCustomSnippetMutation(result, expectedGeneration, () => {
+        this.customSnippets = this.customSnippets.map((item) => item.id === id ? result.snippet : item)
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      });
+      if (this.abort.signal.aborted) return false;
       this.status(`Renamed custom snippet to ${result.snippet.name}.`);
       return true;
     } catch (error) {
@@ -480,14 +510,16 @@ export class ProcessTemplateEditor {
       choices: [{ key: 'delete', label: 'Delete snippet', danger: true, initialFocus: true }],
     });
     if (choice !== 'delete' || this.abort.signal.aborted) return false;
+    const expectedGeneration = this.snippetLibrary.generation + 1;
     this.snippetLibrary = { ...this.snippetLibrary, pendingID: id };
     this.publish?.();
     try {
       const result = await deleteProcessSnippet(snippet, { signal: this.abort.signal });
       if (this.abort.signal.aborted) return false;
-      this.snippetLoadSeq += 1;
-      this.customSnippets = this.customSnippets.filter((item) => item.id !== id);
-      this.snippetLibrary = { ...this.snippetLibrary, generation: result.generation || this.snippetLibrary.generation };
+      await this.reconcileCustomSnippetMutation(result, expectedGeneration, () => {
+        this.customSnippets = this.customSnippets.filter((item) => item.id !== id);
+      });
+      if (this.abort.signal.aborted) return false;
       this.status(`Deleted custom snippet ${snippet.name}.`);
       return true;
     } catch (error) {

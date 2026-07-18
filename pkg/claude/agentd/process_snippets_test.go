@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -74,6 +75,41 @@ func TestProcessSnippetEnvelopeParityWithClipboardAuthority(t *testing.T) {
 	assert.Equal(t, processSnippetMaxNodeIDBytes, integerConstant("PROCESS_CLIPBOARD_MAX_ID"))
 	assert.Equal(t, processSnippetMaxOutcomeBytes, integerConstant("PROCESS_CLIPBOARD_MAX_OUTCOME"))
 	assert.Equal(t, processSnippetMaxCoordinate, integerConstant("PROCESS_CLIPBOARD_MAX_COORDINATE"))
+}
+
+func TestProcessSnippetWireFixturesMatchBrowserAuthority(t *testing.T) {
+	raw, err := os.ReadFile("jstest/process-snippet-wire-fixtures.json")
+	require.NoError(t, err)
+	var fixtures struct {
+		Cases []struct {
+			Name     string          `json:"name"`
+			Accepted bool            `json:"accepted"`
+			Envelope json.RawMessage `json:"envelope"`
+		} `json:"cases"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &fixtures))
+	require.NotEmpty(t, fixtures.Cases)
+	for _, fixture := range fixtures.Cases {
+		t.Run(fixture.Name, func(t *testing.T) {
+			_, err := canonicalizeProcessSnippetEnvelope(fixture.Envelope)
+			if fixture.Accepted {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestProcessSnippetCanonicalEncodingMatchesJSONStringifyCharacters(t *testing.T) {
+	doc := strings.Repeat("<>&", 20_000) + "\u2028\u2029" + `\u2028`
+	raw := []byte(`{"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","doc":` +
+		strconv.Quote(doc) + `},"position":{"x":1,"y":2}}],"edges":[]}`)
+	canonical, err := canonicalizeProcessSnippetEnvelope(raw)
+	require.NoError(t, err, "JSON.stringify-sized markup must stay below the shared 256 KiB boundary")
+	assert.Contains(t, string(canonical), "<>&")
+	assert.Contains(t, string(canonical), "\u2028\u2029", "JavaScript line separators remain literal UTF-8")
+	assert.Contains(t, string(canonical), `\\u2028`, "a caller's literal backslash-u text is not unescaped")
 }
 
 func TestProcessSnippetAPIAuthCRUDCASAndNamePolicy(t *testing.T) {
@@ -176,4 +212,19 @@ func TestProcessSnippetAPICorruptRowIsolation(t *testing.T) {
 	assert.Equal(t, false, broken["available"])
 	assert.NotEmpty(t, broken["unavailableReason"])
 	assert.NotContains(t, recorder.Body.String(), "{not-json")
+
+	oversizedID := "psn_22222222222222222222222222222222"
+	oversized := strings.Repeat("sensitive-corrupt-payload", db.MaxProcessSnippetEnvelopeBytes/20)
+	_, err = database.Exec(`INSERT INTO process_snippets
+		(id, name, name_key, envelope_json, revision, created_at, updated_at)
+		VALUES (?, 'Oversized', 'oversized', ?, 1, ?, ?)`,
+		oversizedID, oversized, "2026-07-18T00:00:00Z", "2026-07-18T00:00:00Z")
+	require.NoError(t, err)
+	rename := serveProcessSnippetRequest(dashboardRequest(http.MethodPatch, "/api/process/snippets/"+oversizedID,
+		`{"name":"Still manageable","revision":1}`))
+	require.Equal(t, http.StatusOK, rename.Code, "body=%s", rename.Body.String())
+	renamed := decodeProcessSnippetResponse(t, rename)["snippet"].(map[string]any)
+	assert.Equal(t, false, renamed["available"])
+	assert.NotEmpty(t, renamed["unavailableReason"])
+	assert.NotContains(t, rename.Body.String(), "sensitive-corrupt-payload")
 }

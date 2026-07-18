@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -190,6 +191,242 @@ func validateSnippetJSONValue(value any) error {
 	return walk(value, 0)
 }
 
+func snippetWireRecord(value any, fields ...string) (map[string]any, error) {
+	record, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("custom snippet contains incompatible process node data")
+	}
+	for field := range record {
+		if !slices.Contains(fields, field) {
+			return nil, errors.New("custom snippet contains incompatible process node data")
+		}
+	}
+	return record, nil
+}
+
+func snippetOptionalStrings(record map[string]any, fields ...string) error {
+	for _, field := range fields {
+		if value, present := record[field]; present {
+			if _, ok := value.(string); !ok {
+				return errors.New("custom snippet contains incompatible process node data")
+			}
+		}
+	}
+	return nil
+}
+
+func snippetStringList(value any) error {
+	items, ok := value.([]any)
+	if !ok {
+		return errors.New("custom snippet contains incompatible process node data")
+	}
+	for _, item := range items {
+		if _, ok := item.(string); !ok {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+	}
+	return nil
+}
+
+func snippetStringMap(value any) error {
+	record, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("custom snippet contains incompatible process node data")
+	}
+	for key, item := range record {
+		if key == "__proto__" || key == "prototype" || key == "constructor" {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+		if _, ok := item.(string); !ok {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+	}
+	return nil
+}
+
+func snippetSafeInteger(value any) bool {
+	number, ok := value.(json.Number)
+	if !ok {
+		return false
+	}
+	parsed, err := strconv.ParseFloat(number.String(), 64)
+	return err == nil && math.Trunc(parsed) == parsed && math.Abs(parsed) <= 9_007_199_254_740_991
+}
+
+func validateSnippetRetryWire(value any) error {
+	record, err := snippetWireRecord(value, "maxAttempts", "backoff", "onFail")
+	if err != nil {
+		return err
+	}
+	if maxAttempts, present := record["maxAttempts"]; present && !snippetSafeInteger(maxAttempts) {
+		return errors.New("custom snippet contains incompatible process node data")
+	}
+	return snippetOptionalStrings(record, "backoff", "onFail")
+}
+
+func validateSnippetPerformerWire(value any) error {
+	record, err := snippetWireRecord(value,
+		"kind", "profile", "prompt", "ask", "choices", "choiceOutcomes", "assignee",
+		"model", "effort", "run", "args", "timeout", "contact")
+	if err != nil {
+		return err
+	}
+	kind, ok := record["kind"].(string)
+	if !ok || (kind != string(model.PerformerHuman) && kind != string(model.PerformerAgent) && kind != string(model.PerformerProgram)) {
+		return errors.New("custom snippet contains incompatible process node data")
+	}
+	if err := snippetOptionalStrings(record, "profile", "prompt", "ask", "assignee", "model", "effort", "run", "timeout"); err != nil {
+		return err
+	}
+	for _, field := range []string{"choices", "args"} {
+		if item, present := record[field]; present {
+			if err := snippetStringList(item); err != nil {
+				return err
+			}
+		}
+	}
+	if item, present := record["choiceOutcomes"]; present {
+		if err := snippetStringMap(item); err != nil {
+			return err
+		}
+	}
+	if item, present := record["contact"]; present {
+		contact, err := snippetWireRecord(item, "cadence", "budget", "escalationTarget")
+		if err != nil {
+			return err
+		}
+		if err := snippetOptionalStrings(contact, "cadence", "budget", "escalationTarget"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSnippetStepWire(value any) error {
+	record, err := snippetWireRecord(value,
+		"id", "name", "description", "doc", "performer", "approval", "approvalRetry", "retry")
+	if err != nil {
+		return err
+	}
+	if err := snippetOptionalStrings(record, "id", "name", "description", "doc", "approval"); err != nil {
+		return err
+	}
+	if err := validateSnippetPerformerWire(record["performer"]); err != nil {
+		return err
+	}
+	for _, field := range []string{"approvalRetry", "retry"} {
+		if retry, present := record[field]; present {
+			if err := validateSnippetRetryWire(retry); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateSnippetNodeWire(value any) error {
+	record, err := snippetWireRecord(value,
+		"type", "join", "name", "description", "doc", "performer", "plan", "checks",
+		"review", "retry", "wait", "next", "result", "captures", "metadata")
+	if err != nil {
+		return err
+	}
+	typeName, ok := record["type"].(string)
+	if !ok || !slices.Contains([]string{
+		string(model.NodeTypeTask), string(model.NodeTypeDecision), string(model.NodeTypeParallel),
+		string(model.NodeTypeWait), string(model.NodeTypeStart), string(model.NodeTypeEnd),
+	}, typeName) {
+		return errors.New("custom snippet contains incompatible process node data")
+	}
+	if err := snippetOptionalStrings(record, "join", "name", "description", "doc", "result"); err != nil {
+		return err
+	}
+	if performer, present := record["performer"]; present {
+		if err := validateSnippetPerformerWire(performer); err != nil {
+			return err
+		}
+	}
+	for _, field := range []string{"plan", "review"} {
+		if step, present := record[field]; present {
+			if err := validateSnippetStepWire(step); err != nil {
+				return err
+			}
+		}
+	}
+	if checks, present := record["checks"]; present {
+		items, ok := checks.([]any)
+		if !ok {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+		for _, step := range items {
+			if err := validateSnippetStepWire(step); err != nil {
+				return err
+			}
+		}
+	}
+	if retry, present := record["retry"]; present {
+		if err := validateSnippetRetryWire(retry); err != nil {
+			return err
+		}
+	}
+	if wait, present := record["wait"]; present {
+		config, err := snippetWireRecord(wait, "duration", "until", "signal")
+		if err != nil {
+			return err
+		}
+		if err := snippetOptionalStrings(config, "duration", "until", "signal"); err != nil {
+			return err
+		}
+	}
+	if captures, present := record["captures"]; present {
+		if err := snippetStringList(captures); err != nil {
+			return err
+		}
+	}
+	if metadata, present := record["metadata"]; present {
+		if _, ok := metadata.(map[string]any); !ok {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+	}
+	return nil
+}
+
+func marshalProcessSnippetEnvelope(value any) ([]byte, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	encoded := bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'})
+	// encoding/json always escapes the two JavaScript line separators for
+	// JSONP safety. JSON.stringify emits them as UTF-8, so unescape only real
+	// JSON escapes (an even number of preceding backslashes), not a literal
+	// caller string such as "\\u2028".
+	result := make([]byte, 0, len(encoded))
+	for index := 0; index < len(encoded); {
+		if index+6 <= len(encoded) && encoded[index] == '\\' &&
+			(string(encoded[index:index+6]) == `\u2028` || string(encoded[index:index+6]) == `\u2029`) {
+			preceding := 0
+			for cursor := index - 1; cursor >= 0 && encoded[cursor] == '\\'; cursor-- {
+				preceding++
+			}
+			if preceding%2 == 0 {
+				if encoded[index+5] == '8' {
+					result = append(result, "\u2028"...)
+				} else {
+					result = append(result, "\u2029"...)
+				}
+				index += 6
+				continue
+			}
+		}
+		result = append(result, encoded[index])
+		index++
+	}
+	return result, nil
+}
+
 func validSnippetNodeID(value string) bool {
 	return value != "" && len(value) <= processSnippetMaxNodeIDBytes && processSnippetNodeID.MatchString(value)
 }
@@ -309,6 +546,12 @@ func canonicalizeProcessSnippetEnvelope(raw []byte) ([]byte, error) {
 		if _, hasTopology := rawNode["next"]; hasTopology {
 			return nil, errors.New("custom snippet contains unsupported nested topology data")
 		}
+		var generic any
+		decoder := json.NewDecoder(bytes.NewReader(entry.Node))
+		decoder.UseNumber()
+		if err := decoder.Decode(&generic); err != nil || validateSnippetJSONValue(generic) != nil || validateSnippetNodeWire(generic) != nil {
+			return nil, errors.New("custom snippet contains incompatible process node data")
+		}
 		if err := strictJSON(entry.Node, &entry.decoded); err != nil {
 			return nil, errors.New("custom snippet contains incompatible process node data")
 		}
@@ -325,12 +568,6 @@ func canonicalizeProcessSnippetEnvelope(raw []byte) ([]byte, error) {
 			model.NodeTypeWait, model.NodeTypeStart, model.NodeTypeEnd:
 		default:
 			return nil, errors.New("custom snippet contains an unsupported node type")
-		}
-		var generic any
-		decoder := json.NewDecoder(bytes.NewReader(entry.Node))
-		decoder.UseNumber()
-		if err := decoder.Decode(&generic); err != nil || validateSnippetJSONValue(generic) != nil {
-			return nil, errors.New("custom snippet node data exceeds the supported structure limits")
 		}
 		if math.IsNaN(entry.decodedPosition.X) || math.IsInf(entry.decodedPosition.X, 0) ||
 			math.IsNaN(entry.decodedPosition.Y) || math.IsInf(entry.decodedPosition.Y, 0) ||
@@ -370,7 +607,7 @@ func canonicalizeProcessSnippetEnvelope(raw []byte) ([]byte, error) {
 	if err := validateSnippetTopology(nodes, envelope.Edges); err != nil {
 		return nil, err
 	}
-	canonical, err := json.Marshal(canonicalProcessSnippetEnvelope{
+	canonical, err := marshalProcessSnippetEnvelope(canonicalProcessSnippetEnvelope{
 		Kind: processSnippetEnvelopeKind, Version: processSnippetEnvelopeVersion,
 		Nodes: canonicalNodes, Edges: envelope.Edges,
 	})

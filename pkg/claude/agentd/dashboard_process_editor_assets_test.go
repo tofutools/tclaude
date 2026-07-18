@@ -147,6 +147,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"const API = '/api/process/snippets';",
 		"credentials: 'same-origin'",
 		"base.payload = validateProcessSelectionPayload(raw.envelope)",
+		"export function validateProcessSnippetName(value)",
 		"body: JSON.stringify({ name, envelope })",
 		"body: JSON.stringify({ name, revision: snippet.revision })",
 		"body: JSON.stringify({ revision: snippet.revision })",
@@ -239,6 +240,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"createProcessSelectionPayload(this.model, this.selection, layout?.nodes || [])",
 		"validateProcessSelectionPayload(snippet.payload)",
 		"this.snippetLoadSeq += 1",
+		"result.generation === expectedGeneration",
+		"const loaded = await this.loadCustomSnippets()",
 		"this.validation?.focusIssue(delta)",
 	)
 	if strings.Contains(editor, "navigator.clipboard") {
@@ -282,6 +285,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"controller.insertPaletteItem(payload)",
 		"controller.renameCustomSnippet(payload.id)",
 		"controller.deleteCustomSnippet(payload.id)",
+		"validateProcessSnippetName(name)",
+		`aria-describedby="process-snippet-name-help process-snippet-name-error"`,
 	)
 	adapter := read("js/process-graph-adapter.js")
 	mustContain("process-graph-adapter.js", adapter,

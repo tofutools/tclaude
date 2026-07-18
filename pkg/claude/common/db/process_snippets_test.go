@@ -142,3 +142,43 @@ func TestProcessSnippetsConcurrentQuotaAndCAS(t *testing.T) {
 	assert.Equal(t, 1, successes)
 	assert.Equal(t, 1, limited)
 }
+
+func TestProcessSnippetsCorruptIDsAndRenamePayloadStayBounded(t *testing.T) {
+	setupTestDB(t)
+	database, err := Open()
+	require.NoError(t, err)
+	now := "2026-07-18T00:00:00Z"
+	for index, id := range []string{
+		"psn_invalid",
+		"psn_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"psn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	} {
+		_, err := database.Exec(`INSERT INTO process_snippets
+			(id, name, name_key, envelope_json, revision, created_at, updated_at)
+			VALUES (?, ?, ?, '{}', 1, ?, ?)`, id, fmt.Sprintf("bad-%d", index), fmt.Sprintf("bad-%d", index), now, now)
+		require.NoError(t, err)
+	}
+	oversizedID := "psn_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	oversized := strings.Repeat("x", MaxProcessSnippetEnvelopeBytes+1)
+	_, err = database.Exec(`INSERT INTO process_snippets
+		(id, name, name_key, envelope_json, revision, created_at, updated_at)
+		VALUES (?, 'oversized', 'oversized', ?, 1, ?, ?)`, oversizedID, oversized, now, now)
+	require.NoError(t, err)
+	_, err = database.Exec(`INSERT INTO process_snippets
+		(id, name, name_key, envelope_json, revision, created_at, updated_at)
+		VALUES ('psn_cccccccccccccccccccccccccccccccc', ?, 'oversized-name', '{}', 1, ?, ?)`,
+		strings.Repeat("n", MaxProcessSnippetNameBytes+1), now, now)
+	require.NoError(t, err)
+
+	library, err := ListProcessSnippets()
+	require.NoError(t, err)
+	require.Len(t, library.Snippets, 5)
+	for _, snippet := range library.Snippets {
+		assert.True(t, snippet.Corrupt, snippet.ID)
+	}
+
+	renamed, _, err := RenameProcessSnippet(oversizedID, "renamed", "renamed", 1)
+	require.NoError(t, err)
+	assert.True(t, renamed.Corrupt)
+	assert.Empty(t, renamed.EnvelopeJSON, "rename must not materialize an oversized corrupt payload")
+}

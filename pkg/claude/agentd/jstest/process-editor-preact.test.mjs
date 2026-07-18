@@ -122,9 +122,17 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   const nameInput = host.querySelector('#process-snippet-name-input');
   assert.ok(nameInput, 'named save action opens an editor-owned accessible dialog');
   await harness.act(() => {
+    nameInput.value = '🚀'.repeat(41);
+    harness.fireEvent(nameInput, 'input');
+  });
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  assert.ok(host.querySelector('#process-snippet-name-modal'), 'invalid UTF-8 byte length keeps the dialog open');
+  assert.match(host.querySelector('#process-snippet-name-error').textContent, /160 UTF-8 bytes/);
+  await harness.act(() => {
     nameInput.value = 'Review gate';
     harness.fireEvent(nameInput, 'input');
   });
+  assert.equal(host.querySelector('#process-snippet-name-error').textContent, '', 'editing clears the inline error');
   await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
   await savePromise;
   await harness.act(async () => { await Promise.resolve(); });
@@ -159,6 +167,94 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   assert.equal(deleted, true);
   assert.equal(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`), null);
   assert.match(host.querySelector('.process-palette-state').textContent, /No custom snippets/);
+  editor.destroy();
+});
+
+test('initial custom-snippet load blocks save instead of stranding a fast mutation', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const initial = deferred();
+  let posts = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/process/snippets' && (!options.method || options.method === 'GET')) return initial.promise;
+    if (url === '/api/process/snippets' && options.method === 'POST') posts += 1;
+    return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) };
+  };
+  t.after(() => {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  });
+
+  const { harness, host, editor } = await openBlank(t);
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  assert.equal(editor.canSaveSelectionAsSnippet(), false);
+  assert.equal(await editor.saveSelectionAsSnippet(), false);
+  assert.equal(posts, 0);
+  assert.equal(host.querySelector('#process-snippet-name-modal'), null);
+  assert.match(host.querySelector('.process-palette-state').textContent, /Loading custom snippets/);
+
+  initial.resolve({
+    ok: true, status: 200, statusText: 'OK',
+    json: async () => ({ generation: 0, snippets: [] }),
+  });
+  await harness.act(async () => {
+    await initial.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  assert.equal(editor.canSaveSelectionAsSnippet(), true);
+  await harness.act(async () => { await Promise.resolve(); });
+  assert.match(host.querySelector('.process-palette-state').textContent, /No custom snippets/);
+  editor.destroy();
+});
+
+test('custom-snippet mutation generation gaps reload the authoritative collection', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const existingID = `psn_${'b'.repeat(32)}`;
+  const externalID = `psn_${'c'.repeat(32)}`;
+  const createdID = `psn_${'d'.repeat(32)}`;
+  const snippetEnvelope = (nodeID) => ({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id: nodeID, node: { type: 'task' }, position: { x: 1, y: 2 } }], edges: [],
+  });
+  const row = (id, name, nodeID) => ({ id, name, revision: 1, available: true, envelope: snippetEnvelope(nodeID) });
+  let gets = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/process/snippets' && (!options.method || options.method === 'GET')) {
+      gets += 1;
+      const snippets = gets === 1
+        ? [row(existingID, 'Existing', 'existing')]
+        : [row(existingID, 'Existing', 'existing'), row(externalID, 'External', 'external'), row(createdID, 'New local', 'start')];
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ generation: gets === 1 ? 1 : 3, snippets }) };
+    }
+    if (url === '/api/process/snippets' && options.method === 'POST') {
+      return { ok: true, status: 201, statusText: 'Created', json: async () => ({
+        generation: 3, snippet: row(createdID, JSON.parse(options.body).name, 'start'),
+      }) };
+    }
+    return { ok: true, status: 200, statusText: 'OK', json: async () => ({ diagnostics: [] }) };
+  };
+  t.after(() => {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  });
+
+  const { harness, host, editor } = await openBlank(t);
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  const save = editor.saveSelectionAsSnippet();
+  await harness.act(async () => { await Promise.resolve(); });
+  const input = host.querySelector('#process-snippet-name-input');
+  await harness.act(() => { input.value = 'New local'; harness.fireEvent(input, 'input'); });
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await save;
+  await harness.act(async () => { await Promise.resolve(); });
+
+  assert.equal(gets, 2, 'generation jump triggers an authoritative reload');
+  assert.equal(editor.snippetLibrary.generation, 3);
+  assert.equal(editor.snippetLibrary.loading, false);
+  assert.deepEqual(editor.customSnippets.map((snippet) => snippet.name), ['Existing', 'External', 'New local']);
+  assert.equal(host.querySelectorAll('.process-palette-card.is-custom').length, 3);
   editor.destroy();
 });
 
