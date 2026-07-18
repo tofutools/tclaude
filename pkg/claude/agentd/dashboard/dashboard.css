@@ -1652,7 +1652,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-observed-line {
   fill: none; stroke: #58a6ff; stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round;
 }
-.usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; pointer-events: none; }
+.usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: .5; pointer-events: none; }
 .usage-point-mark:hover .usage-point,
 .usage-point-mark.active .usage-point,
 .usage-point-mark:focus-within .usage-point { r: 4px; fill: #cae8ff; }
