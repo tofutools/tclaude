@@ -1101,6 +1101,45 @@ func baseStates() []dashsnap.State {
 			SettleMS: 1100,
 		},
 		{
+			Key:     "process-editor-conditional-overlays",
+			Title:   "Process editor — conditional node information",
+			Caption: "TCL-565: clean nodes have no decorative top-right circle while a real validation diagnostic keeps its glyph, tooltip, node-level accessible disclosure, selection behavior, and unchanged connector geometry in regular and wizard skins.",
+			JS: processEditorStateJS(`var beforeSave=JSON.stringify(ed.model.saveBody());
+  var layoutGeometry=function(){var layout=ed.graph.layoutSnapshot();return {bounds:layout.bounds,nodes:layout.nodes.map(function(n){return {id:n.id,x:n.x,y:n.y,width:n.width,height:n.height,layer:n.layer,pinned:n.pinned};}),edges:layout.edges.map(function(e){return {id:e.id,from:e.from,to:e.to,path:e.path,label:e.label};})};};
+  var beforeGeometry=JSON.stringify(layoutGeometry());
+  var portGeometry=function(id){return Array.from(document.querySelectorAll('.process-node-ports[data-node-id="'+id+'"] .process-port')).map(function(port){return [port.dataset.port,port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r'),port.getAttribute('role'),port.getAttribute('tabindex'),port.getAttribute('aria-label')];});};
+  var beforePorts=JSON.stringify({start:portGeometry('begin'),end:portGeometry('ship')});
+  if(document.querySelector('.process-overlay-anchor')) throw new Error('clean editor rendered an empty overlay placeholder');
+  var diagnostic={severity:'error',code:'E_BEGIN',scope:'node',targetId:'begin',message:'Beginning requires operator review'};
+  ed.validation.applyDiagnostics([diagnostic]);
+  await editorPaint();
+  var begin=document.querySelector('.process-node[data-node-id="begin"]');
+  var ship=document.querySelector('.process-node[data-node-id="ship"]');
+  var marker=begin&&begin.querySelector('.process-overlay-anchor');
+  if(!marker||!marker.classList.contains('has-overlay')) throw new Error('diagnostic overlay anchor missing');
+  if(ship&&ship.querySelector('.process-overlay-anchor')) throw new Error('clean sibling gained an overlay anchor');
+  if(marker.getAttribute('aria-hidden')!=='true'||marker.hasAttribute('role')||marker.hasAttribute('tabindex')) throw new Error('overlay became a separate accessibility action');
+  if(!begin.getAttribute('aria-label').includes('E_BEGIN: Beginning requires operator review')) throw new Error('node accessible diagnostic missing');
+  var tooltip=marker.querySelector('.process-overlay-tooltip');
+  if(!tooltip||!tooltip.textContent.includes('Beginning requires operator review')) throw new Error('diagnostic tooltip missing');
+  var ringStyle=getComputedStyle(marker.querySelector('.process-overlay-ring'));
+  if(ringStyle.strokeDasharray!=='none') throw new Error('populated overlay retained placeholder dashes: '+ringStyle.strokeDasharray);
+  if(JSON.stringify(layoutGeometry())!==beforeGeometry) throw new Error('overlay changed graph layout geometry');
+  if(JSON.stringify({start:portGeometry('begin'),end:portGeometry('ship')})!==beforePorts) throw new Error('overlay changed connector geometry or accessibility');
+  marker.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  if(ed.selection?.type!=='node'||ed.selection.id!=='begin'||!begin.classList.contains('is-selected')) throw new Error('overlay click stopped selecting its node');
+  begin.focus();
+  if(document.activeElement!==begin||getComputedStyle(tooltip).display==='none') throw new Error('node focus stopped disclosing its diagnostic tooltip');
+  ed.validation.applyDiagnostics([]);
+  await editorPaint();
+  if(document.querySelector('.process-overlay-anchor')) throw new Error('cleared diagnostic left an overlay anchor');
+  ed.validation.applyDiagnostics([diagnostic]);
+  await editorPaint();
+  if(!document.querySelector('.process-node[data-node-id="begin"] .process-overlay-anchor')) throw new Error('diagnostic overlay did not restore for capture');
+  if(JSON.stringify(ed.model.saveBody())!==beforeSave) throw new Error('overlay lifecycle changed the template round trip');`),
+			SettleMS: 1100,
+		},
+		{
 			Key:     "process-editor-inside-labels",
 			Title:   "Process editor — bounded labels inside every node",
 			Caption: "TCL-566: all six editor node kinds keep long and Unicode names inside fixed semantic shapes, with readable overflow and both connector-port bands unobscured in regular and wizard skins.",

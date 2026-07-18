@@ -55,6 +55,57 @@ test('every node kind keeps its bounded label inside the shape and clear of conn
   }
 });
 
+test('node overlay anchors render only for information disclosed by the node', () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
+  try {
+    const base = { id: 'work', label: 'Work', type: 'task', x: 100, y: 200, width: 168, height: 68 };
+    const render = (extra = {}) => ProcessGraph.prototype.renderNode.call(
+      { instanceID: 51, labelSerial: 0 }, { ...base, ...extra },
+    );
+
+    const clean = render();
+    const empty = render({ overlay: {} });
+    for (const [label, node] of [['undefined', clean], ['empty', empty]]) {
+      assert.equal(node.querySelector('.process-overlay-anchor'), null, `${label} overlay has no placeholder anchor`);
+      assert.equal(node.getAttribute('aria-label'), 'Work, task', `${label} overlay adds no accessible disclosure`);
+    }
+
+    const diagnostic = render({
+      overlay: { glyph: '!', severity: 'error', issues: ['E_PERFORMER: Work performer is required'] },
+    });
+    const diagnosticAnchor = diagnostic.querySelector('.process-overlay-anchor');
+    assert.ok(diagnosticAnchor?.classList.contains('has-overlay'));
+    assert.equal(diagnosticAnchor.getAttribute('aria-hidden'), 'true');
+    assert.equal(diagnosticAnchor.hasAttribute('role'), false, 'the marker is disclosure presentation, not a separate action');
+    assert.equal(diagnosticAnchor.hasAttribute('tabindex'), false);
+    assert.match(diagnostic.getAttribute('aria-label'), /has error.*Work performer is required/);
+    assert.match(diagnosticAnchor.querySelector('.process-overlay-tooltip').textContent, /Work performer is required/);
+
+    const status = render({
+      stateOverlay: { glyph: '●', status: 'running', progress: { current: 2, total: 4 }, attempt: 1, retry: 0 },
+    });
+    const statusAnchor = status.querySelector('.process-overlay-anchor');
+    assert.ok(statusAnchor, 'viewer/status information retains the shared anchor');
+    assert.equal(statusAnchor.querySelector('.process-overlay-tooltip'), null, 'status without issues does not invent a tooltip');
+    assert.match(status.getAttribute('aria-label'), /●, running, 2\/4, attempt 1, retry 0/);
+
+    for (const node of [clean, empty, diagnostic, status]) {
+      const shape = node.querySelector('.process-node-shape');
+      assert.equal(shape.getAttribute('x'), String(-base.width / 2));
+      assert.equal(shape.getAttribute('y'), String(-base.height / 2));
+      assert.equal(shape.getAttribute('width'), String(base.width));
+      assert.equal(shape.getAttribute('height'), String(base.height));
+      const ports = ProcessGraph.prototype.renderPortNode.call({}, base);
+      assert.equal(ports.querySelector('.process-port-in').getAttribute('cy'), String(-base.height / 2));
+      assert.equal(ports.querySelector('.process-port-out').getAttribute('cy'), String(base.height / 2));
+    }
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
 test('edge renderer gives the exact routed path to the auto-oriented SVG marker', () => {
   const previousDocument = globalThis.document;
   globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
