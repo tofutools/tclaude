@@ -1605,9 +1605,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage.multiline .urem   { display: inline-block; min-width: 8ch; }            /* up to "(23h59m)" */
 
 /* -- Usage history tab -------------------------------------------------- */
-.usage-history-controls button.tool.active {
-  border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
-}
 .usage-history-controls { flex-wrap: wrap; }
 .usage-control-group { display: inline-flex; align-items: center; gap: 8px; }
 .usage-control-label { color: #8b949e; font-size: 11px; font-weight: 600; }
@@ -1627,9 +1624,18 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-legend-swatch.forecast { border-color: #d29922; border-top-style: dashed; }
 .usage-legend-swatch.reset { border-color: #a371f7; border-top-style: dashed; }
 .usage-legend-swatch.now { border-color: #6e7681; border-top-style: dotted; }
+/* One full-width card per row: each chart gets the whole line and the
+   operator scrolls to the series they care about. */
 .usage-series-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+  display: grid; grid-template-columns: minmax(0, 1fr);
   gap: 14px;
+}
+.usage-card-controls {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 2px 0 8px;
+}
+.usage-card-controls button.tool.active {
+  border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
 }
 .usage-series-card {
   min-width: 0; padding: 14px; background: #0d1117;
@@ -1702,7 +1708,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-reset-count { flex-basis: 100%; text-align: right; }
 .usage-history-error { margin-bottom: 12px; color: #f85149; }
 @media (max-width: 600px) {
-  .usage-series-grid { grid-template-columns: minmax(0, 1fr); }
   .usage-series-card { padding: 10px; }
   .usage-history-controls .muted { display: none; }
   .usage-control-group { flex-basis: 100%; }

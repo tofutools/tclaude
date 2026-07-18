@@ -1,10 +1,12 @@
 package agentd
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -19,6 +21,7 @@ const (
 	usageForecastStaleAfter  = 2 * time.Hour
 	maxUsageChartPoints      = 1200
 	maxUsageResetMarkers     = 500
+	maxUsageSpanOverrides    = 100
 )
 
 type usageHistoryPoint struct {
@@ -47,6 +50,7 @@ type usageHistorySeries struct {
 	Provider        string               `json:"provider"`
 	WindowName      string               `json:"window_name"`
 	DurationSeconds int64                `json:"duration_seconds,omitempty"`
+	From            string               `json:"from"`
 	Points          []usageHistoryPoint  `json:"points"`
 	Resets          []usageHistoryReset  `json:"resets"`
 	ResetCount      int                  `json:"reset_count"`
@@ -61,7 +65,12 @@ type usageHistoryResponse struct {
 
 type usageSeriesKey struct{ provider, window string }
 
-func collectUsageHistory(since, now time.Time) (usageHistoryResponse, error) {
+// collectUsageHistory builds one series per provider × quota window. Each
+// series is clipped to its own view start: the per-series override when the
+// request carried one, the shared default otherwise. Series with retained
+// rows but none inside their view are kept with empty points so a card whose
+// span the operator narrowed past its data never loses its span controls.
+func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Time, now time.Time) (usageHistoryResponse, error) {
 	// Forecast from the whole retained history so a 24h chart can still anchor
 	// a weekly series at a reset that happened several days earlier. Only the
 	// plotted points/reset markers are clipped to the requested view below.
@@ -90,25 +99,27 @@ func collectUsageHistory(since, now time.Time) (usageHistoryResponse, error) {
 	}
 	for _, key := range keys {
 		rows := bySeries[key]
+		seriesFrom := since
+		if override, ok := seriesSince[key]; ok {
+			seriesFrom = override
+		}
 		series := usageHistorySeries{
 			Provider: key.provider, WindowName: key.window,
+			From:   seriesFrom.UTC().Format(time.RFC3339Nano),
 			Points: make([]usageHistoryPoint, 0), Resets: make([]usageHistoryReset, 0),
 		}
 		visibleRows := make([]db.SubscriptionUsageHistoryRow, 0, len(rows))
 		for _, row := range rows {
-			if row.ObservedAt.Before(since) {
-				continue
-			}
-			visibleRows = append(visibleRows, row)
 			if row.Duration > 0 {
 				series.DurationSeconds = int64(row.Duration / time.Second)
 			}
-		}
-		if len(visibleRows) == 0 {
-			continue
+			if row.ObservedAt.Before(seriesFrom) {
+				continue
+			}
+			visibleRows = append(visibleRows, row)
 		}
 		series.Forecast, series.Resets = forecastUsage(rows, now)
-		series.Resets = resetMarkersSince(series.Resets, since)
+		series.Resets = resetMarkersSince(series.Resets, seriesFrom)
 		series.ResetCount = len(series.Resets)
 		series.Resets = downsampleUsageResets(series.Resets, maxUsageResetMarkers)
 		visibleRows = downsampleUsageRows(visibleRows, series.Resets, maxUsageChartPoints)
@@ -268,6 +279,33 @@ func forecastUsage(points []db.SubscriptionUsageHistoryRow, now time.Time) (usag
 	return forecast, resets
 }
 
+// parseUsageHistorySpans parses the `spans` query parameter: a comma-separated
+// list of provider:window:hours per-series view overrides, e.g.
+// "anthropic:seven_day:24,openai:five_hour:720". Entries for series that do
+// not exist are harmless; they simply match nothing.
+func parseUsageHistorySpans(raw string, now time.Time) (map[usageSeriesKey]time.Time, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	entries := strings.Split(raw, ",")
+	if len(entries) > maxUsageSpanOverrides {
+		return nil, fmt.Errorf("too many span overrides, max %d", maxUsageSpanOverrides)
+	}
+	out := make(map[usageSeriesKey]time.Time, len(entries))
+	for _, entry := range entries {
+		parts := strings.Split(entry, ":")
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("bad span %q, want provider:window:hours", entry)
+		}
+		hours, err := strconv.Atoi(parts[2])
+		if err != nil || hours < 1 || hours > maxUsageHistoryHours {
+			return nil, fmt.Errorf("bad span hours in %q, want 1..%d", entry, maxUsageHistoryHours)
+		}
+		out[usageSeriesKey{provider: parts[0], window: parts[1]}] = now.Add(-time.Duration(hours) * time.Hour)
+	}
+	return out, nil
+}
+
 func handleDashboardUsageHistory(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -286,7 +324,12 @@ func handleDashboardUsageHistory(w http.ResponseWriter, r *http.Request) {
 		hours = parsed
 	}
 	now := time.Now()
-	out, err := collectUsageHistory(now.Add(-time.Duration(hours)*time.Hour), now)
+	seriesSince, err := parseUsageHistorySpans(r.URL.Query().Get("spans"), now)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	out, err := collectUsageHistory(now.Add(-time.Duration(hours)*time.Hour), seriesSince, now)
 	if err != nil {
 		http.Error(w, "collect usage history: "+err.Error(), http.StatusInternalServerError)
 		return

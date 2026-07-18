@@ -3,30 +3,63 @@ import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
 import { usageSeriesSort } from './usage-history-model.js';
 
-const HISTORY_HOURS_KEY = 'tclaude.dash.usage.historyHours';
-const LOOKAHEAD_HOURS_KEY = 'tclaude.dash.usage.lookaheadHours';
+// Per-series (provider × quota window) spans live under one JSON pref key.
+// The legacy global keys seed the default span so an operator's last global
+// choice carries over to series without an explicit per-series entry.
+const SERIES_SPANS_KEY = 'tclaude.dash.usage.seriesSpans';
+const LEGACY_HISTORY_HOURS_KEY = 'tclaude.dash.usage.historyHours';
+const LEGACY_LOOKAHEAD_HOURS_KEY = 'tclaude.dash.usage.lookaheadHours';
 const HISTORY_HOURS = [24, 168, 720, 2160];
 const LOOKAHEAD_HOURS = [5, 24, 168, 720];
+const DEFAULT_HISTORY_HOURS = 168;
+const DEFAULT_LOOKAHEAD_HOURS = 168;
 
 function errorMessage(error) { return String(error?.message || error); }
+
+function parseStoredSpans(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const entry = {};
+      if (HISTORY_HOURS.includes(Number(value?.hours))) entry.hours = Number(value.hours);
+      if (LOOKAHEAD_HOURS.includes(Number(value?.lookaheadHours))) entry.lookaheadHours = Number(value.lookaheadHours);
+      if (Object.keys(entry).length) out[key] = entry;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 export function createUsageHistoryState({
   snapshot = dashboardState.snapshot,
   activeTab = dashboardState.activeTab,
   prefs = dashPrefs,
 } = {}) {
-  const hours = signal(168);
-  const lookaheadHours = signal(168);
+  const seriesSpans = signal({});
+  const defaultSpan = signal({ hours: DEFAULT_HISTORY_HOURS, lookaheadHours: DEFAULT_LOOKAHEAD_HOURS });
   const payload = signal(null);
   const request = signal({ phase: 'idle', requestId: 0, hasLoaded: false, error: null });
   let initialized = false;
+  const spanFor = (spans, fallback, key) => ({
+    hours: spans[key]?.hours ?? fallback.hours,
+    lookaheadHours: spans[key]?.lookaheadHours ?? fallback.lookaheadHours,
+  });
   const view = computed(() => {
     const snap = snapshot.value;
+    const spans = seriesSpans.value;
+    const fallback = defaultSpan.value;
     return {
-      hours: hours.value,
-      lookaheadHours: lookaheadHours.value,
+      defaultHours: fallback.hours,
       payload: payload.value,
       series: [...(payload.value?.series || [])].sort(usageSeriesSort),
+      spanFor: (key) => spanFor(spans, fallback, key),
+      spanOverrides: Object.fromEntries(Object.entries(spans)
+        .filter(([, entry]) => entry.hours !== undefined && entry.hours !== fallback.hours)
+        .map(([key, entry]) => [key, entry.hours])),
       request: request.value,
       active: activeTab.value === 'usage',
       activeTab: activeTab.value,
@@ -37,26 +70,32 @@ export function createUsageHistoryState({
   function initialize() {
     if (initialized) return false;
     initialized = true;
-    const savedHours = Number(prefs.getItem(HISTORY_HOURS_KEY));
-    const savedLookahead = Number(prefs.getItem(LOOKAHEAD_HOURS_KEY));
+    const legacyHours = Number(prefs.getItem(LEGACY_HISTORY_HOURS_KEY));
+    const legacyLookahead = Number(prefs.getItem(LEGACY_LOOKAHEAD_HOURS_KEY));
     batch(() => {
-      if (HISTORY_HOURS.includes(savedHours)) hours.value = savedHours;
-      if (LOOKAHEAD_HOURS.includes(savedLookahead)) lookaheadHours.value = savedLookahead;
+      defaultSpan.value = {
+        hours: HISTORY_HOURS.includes(legacyHours) ? legacyHours : DEFAULT_HISTORY_HOURS,
+        lookaheadHours: LOOKAHEAD_HOURS.includes(legacyLookahead) ? legacyLookahead : DEFAULT_LOOKAHEAD_HOURS,
+      };
+      seriesSpans.value = parseStoredSpans(prefs.getItem(SERIES_SPANS_KEY));
     });
     return true;
   }
-  function setHours(value) {
+  function persistSpan(key, patch) {
+    const next = { ...seriesSpans.value, [key]: { ...seriesSpans.value[key], ...patch } };
+    seriesSpans.value = next;
+    prefs.setItem(SERIES_SPANS_KEY, JSON.stringify(next));
+  }
+  function setSeriesHours(key, value) {
     const parsed = Number(value);
-    if (!HISTORY_HOURS.includes(parsed)) return false;
-    hours.value = parsed;
-    prefs.setItem(HISTORY_HOURS_KEY, String(parsed));
+    if (typeof key !== 'string' || !key || !HISTORY_HOURS.includes(parsed)) return false;
+    persistSpan(key, { hours: parsed });
     return true;
   }
-  function setLookaheadHours(value) {
+  function setSeriesLookaheadHours(key, value) {
     const parsed = Number(value);
-    if (!LOOKAHEAD_HOURS.includes(parsed)) return false;
-    lookaheadHours.value = parsed;
-    prefs.setItem(LOOKAHEAD_HOURS_KEY, String(parsed));
+    if (typeof key !== 'string' || !key || !LOOKAHEAD_HOURS.includes(parsed)) return false;
+    persistSpan(key, { lookaheadHours: parsed });
     return true;
   }
   function beginRequest(requestId) { request.value = { ...request.value, phase: 'loading', requestId, error: null }; }
@@ -75,8 +114,8 @@ export function createUsageHistoryState({
     return true;
   }
   return Object.freeze({
-    hours, lookaheadHours, payload, request, view,
-    initialize, setHours, setLookaheadHours, beginRequest, commitRequest, failRequest,
+    seriesSpans, defaultSpan, payload, request, view,
+    initialize, setSeriesHours, setSeriesLookaheadHours, beginRequest, commitRequest, failRequest,
   });
 }
 

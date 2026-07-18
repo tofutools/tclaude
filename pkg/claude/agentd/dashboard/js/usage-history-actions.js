@@ -12,7 +12,11 @@ export function createUsageHistoryActions({ state, fetchImpl = globalThis.fetch 
     const requestId = ++sequence;
     state.beginRequest(requestId);
     try {
-      const response = await fetchImpl(`/api/usage-history?hours=${state.view.value.hours}`, { credentials: 'same-origin' });
+      const current = state.view.value;
+      const overrides = Object.entries(current.spanOverrides || {})
+        .map(([key, hours]) => `${key}:${hours}`).join(',');
+      const spans = overrides ? `&spans=${encodeURIComponent(overrides)}` : '';
+      const response = await fetchImpl(`/api/usage-history?hours=${current.defaultHours}${spans}`, { credentials: 'same-origin' });
       if (!response.ok) throw new Error(await responseError(response));
       return state.commitRequest(requestId, await response.json());
     } catch (error) {

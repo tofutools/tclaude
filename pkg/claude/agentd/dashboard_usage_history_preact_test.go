@@ -44,9 +44,12 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"Usage chart legend",
 		"USAGE_LOOKAHEAD_SPANS",
 		"Look ahead",
-		`role="group" aria-label="History range"`,
-		`role="group" aria-label="Forecast lookahead"`,
+		"`History range, ${scope}`",
+		"`Forecast lookahead, ${scope}`",
 		"aria-pressed=",
+		"usage-card-controls",
+		"&spans=",
+		"tclaude.dash.usage.seriesSpans",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)
