@@ -291,6 +291,19 @@ The provenance tag reads `explicit`, `profile "<name>"`,
 `profile "codex-kit" model ignored (not valid for claude)`. If a field shows a
 profile tier you didn't intend, re-spawn with the explicit flag.
 
+When approval is unset through the whole profile chain, the harness default is
+also bounded by the agent caller's authority. If the caller cannot grant that
+default to a same-harness child, tclaude narrows it to the caller's own posture
+and discloses the adjustment in the echo, for example:
+
+```
+Note:    approval inherit (harness default auto, narrowed to caller posture)
+```
+
+This compatibility fallback applies only to a genuinely unset approval.
+An explicit flag or profile-set posture is never silently reduced; an attempted
+escalation fails with `403 approval_restricted`.
+
 Agent callers are also bound by **approval lineage** after the whole profile
 stack resolves: a child may not automatically accept a broader class of
 commands than its parent. Claude `plan`/`default`/`dontAsk` and Codex

@@ -279,6 +279,36 @@ func TestSpawnApprovalLineage_TemplateInstantiateRejectsBypass(t *testing.T) {
 	assert.Contains(t, res.Agents[0].Error, "may not spawn")
 }
 
+func TestSpawnApprovalLineage_TemplateBareApprovalNarrowsToCaller(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-template-narrow-parent-aaaa-bbbb-cccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermTemplatesUse, "test"))
+
+	require.Equal(t, http.StatusCreated, humanReq(t, f, http.MethodPost, "/v1/templates", map[string]any{
+		"name": "approval-default-template",
+		"agents": []map[string]any{{
+			"name": "worker", "harness": harness.DefaultName,
+			"sandbox": harness.ClaudeSandboxOff,
+		}},
+	}).Code)
+	rec := agentReqProof(t, f, parent, http.MethodPost, "/v1/templates/approval-default-template/instantiate",
+		map[string]any{"group_name": "approval-default-cast", "cwd": t.TempDir()})
+	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate: %s", rec.Body.String())
+	var res instantiateResult
+	testharness.DecodeJSON(t, rec, &res)
+	assert.Equal(t, 1, res.Spawned)
+	assert.Equal(t, 0, res.Failed)
+	require.Len(t, res.Agents, 1)
+	assert.Contains(t, res.Agents[0].Notes,
+		"approval inherit (harness default auto, narrowed to caller posture)")
+	approval, ok := f.World.SpawnApproval(res.Agents[0].ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.ClaudePermissionInherit, approval)
+}
+
 // A bare delegation (no approval flag, no profile) from an `inherit` parent must
 // keep working. The Claude default is `auto`, which an inherit parent — credited
 // only approvalAutoBaseline — may not mint, so without

@@ -57,6 +57,15 @@ func narrowDefaultApprovalToCaller(parentConvID, childHarness, defaultPolicy str
 	return parentPolicy
 }
 
+// callerNarrowedApprovalNote describes the exceptional case where the harness
+// default could not be delegated by an agent caller and was reduced to that
+// caller's own same-harness posture. Callers append it only when the resolved
+// value actually differs from defaultPolicy, keeping ordinary human/default
+// spawns quiet.
+func callerNarrowedApprovalNote(policy, defaultPolicy string) string {
+	return fmt.Sprintf("approval %s (harness default %s, narrowed to caller posture)", policy, defaultPolicy)
+}
+
 // spawnApprovalLineageFailure prevents an agent from minting a child with
 // broader automatic command-acceptance capability than its own launch
 // posture. Humans have no caller conv-id and remain the trust root.

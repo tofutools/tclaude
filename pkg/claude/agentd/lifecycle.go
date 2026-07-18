@@ -2039,7 +2039,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	if approvalUnset {
+		defaultApprovalPolicy := approvalPolicy
 		approvalPolicy = narrowDefaultApprovalToCaller(spawnerConvID, h.Name, approvalPolicy)
+		if approvalPolicy != defaultApprovalPolicy {
+			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+				callerNarrowedApprovalNote(approvalPolicy, defaultApprovalPolicy))
+		}
 	}
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
 	if arErr != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -20,6 +21,19 @@ import (
 func runSpawnCLI(t *testing.T, f *testharness.Flow, p *agent.SpawnParams) (*agent.SpawnResponse, string) {
 	t.Helper()
 	bridgeAgentClientToMux(t, f.Mux)
+	chdirTo(t, resolveSym(t, t.TempDir()))
+	stdout := new(bytes.Buffer)
+	stderr := new(bytes.Buffer)
+	resp, rc := agent.RunSpawn(p, stdout, stderr, new(bytes.Buffer))
+	require.Equalf(t, 0, rc, "RunSpawn stderr=%s", stderr.String())
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Resolved, "spawn response must carry the resolved-shape echo")
+	return resp, stdout.String()
+}
+
+func runSpawnCLIAsAgent(t *testing.T, f *testharness.Flow, caller string, p *agent.SpawnParams) (*agent.SpawnResponse, string) {
+	t.Helper()
+	bridgeAgentClientToMuxAsAgent(t, f.Mux, caller)
 	chdirTo(t, resolveSym(t, t.TempDir()))
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -125,6 +139,37 @@ func TestSpawnResolvedEcho_HarnessDefault(t *testing.T) {
 	assert.Equal(t, agent.ResolvedField{Value: "", Source: agent.ProvHarnessDefault}, resp.Resolved.Model)
 	assert.Contains(t, out, "Harness: claude (harness default)")
 	assert.Contains(t, out, "Model:   (harness default)")
+}
+
+func TestSpawnResolvedEcho_DisclosesCallerNarrowedApproval(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-echo-parent-aaaa-bbbb-cccccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+
+	resp, out := runSpawnCLIAsAgent(t, f, parent, &agent.SpawnParams{Group: "alpha", Name: "worker"})
+
+	const note = "approval inherit (harness default auto, narrowed to caller posture)"
+	assert.Contains(t, resp.Resolved.Notes, note)
+	assert.Contains(t, out, "Note:    "+note)
+	approval, ok := f.World.SpawnApproval(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.ClaudePermissionInherit, approval)
+}
+
+func TestSpawnResolvedEcho_OmitsApprovalNoteWhenDefaultUnchanged(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-echo-auto-parent-aaaa-bbbb-cccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName, "auto", false)
+
+	resp, out := runSpawnCLIAsAgent(t, f, parent, &agent.SpawnParams{Group: "alpha", Name: "worker"})
+
+	for _, note := range resp.Resolved.Notes {
+		assert.NotContains(t, note, "narrowed to caller posture")
+	}
+	assert.NotContains(t, out, "narrowed to caller posture")
 }
 
 // An explicit model no longer pins the harness; a matching default profile is
