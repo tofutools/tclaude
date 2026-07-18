@@ -844,3 +844,21 @@ CREATE TABLE subscription_usage_windows (
 			PRIMARY KEY(sample_id, window_name)
 		);
 
+CREATE TABLE process_snippet_library (
+			id         INTEGER PRIMARY KEY CHECK(id = 1),
+			generation INTEGER NOT NULL CHECK(generation >= 0)
+		);
+
+CREATE TABLE process_snippets (
+			id            TEXT PRIMARY KEY,
+			name          TEXT NOT NULL,
+			name_key      TEXT NOT NULL UNIQUE,
+			envelope_json TEXT NOT NULL,
+			revision      INTEGER NOT NULL CHECK(revision > 0),
+			created_at    TEXT NOT NULL,
+			updated_at    TEXT NOT NULL
+		);
+
+CREATE INDEX idx_process_snippets_order
+			ON process_snippets(name_key, id);
+

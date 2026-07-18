@@ -1426,6 +1426,55 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "process-editor-browser-custom-snippets",
+			Title:   "Process editor — custom snippet library",
+			Caption: "TCL-567 real Chrome input in regular and wizard skins: a named selected subgraph persists through the authenticated library, inserts through the canonical remap/history path, then revision-CAS rename/delete leave built-ins stable.",
+			JS: processEditorStateJS(`window.__browserEd=ed;
+  await ed.loadCustomSnippets();
+  ed.setSelection({type:'multi',items:[{type:'node',id:'begin'},{type:'node',id:'ship'}]});
+  await editorPaint();
+  var saveSnippet=document.querySelector('.process-palette-save');
+  if(!saveSnippet||saveSnippet.disabled) throw new Error('custom snippet save action unavailable: '+JSON.stringify(ed.snapshot().snippets));
+  window.__customBefore={nodes:Object.keys(ed.model.template.nodes).length,edges:ed.model.edges.length,undo:ed.model.undoStack.length,builtins:document.querySelectorAll('.process-palette-card.is-built-in').length};`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "eval", JS: `document.querySelector('.process-palette-save').scrollIntoView({block:'center'});`},
+				{Kind: "click", Selector: ".process-palette-save"},
+				{Kind: "eval", JS: `if(!document.querySelector('#process-snippet-name-input')) throw new Error('custom snippet name dialog did not open; status='+(document.querySelector('.process-editor-status')?.textContent||''));`},
+				{Kind: "input", Selector: "#process-snippet-name-input", Text: "Browser reusable"},
+				{Kind: "click", Selector: "#process-snippet-name-modal .primary"},
+				{Kind: "eval", JS: `return new Promise(function(resolve,reject){var stop=Date.now()+3000;(function poll(){
+  var card=document.querySelector('.process-palette-card.is-custom');
+  if(card&&card.textContent.includes('Browser reusable')) return resolve(true);
+  if(Date.now()>stop) return reject(new Error('custom snippet create did not settle'));
+  setTimeout(poll,25);})();});`},
+				{Kind: "click", Selector: ".process-palette-card.is-custom .process-palette-insert"},
+				{Kind: "eval", JS: `var ed=window.__browserEd,before=window.__customBefore;
+  if(Object.keys(ed.model.template.nodes).length!==before.nodes+2) throw new Error('custom insert did not add two nodes');
+  if(ed.model.edges.length!==before.edges+1) throw new Error('custom insert did not retain exactly the internal edge');
+  if(ed.model.undoStack.length!==before.undo+1) throw new Error('custom insert was not one history transaction');
+  var selected=ed.snapshot().selection?.items||[];
+  if(selected.length!==2) throw new Error('custom insert did not select remapped nodes');
+  if(document.activeElement?.dataset?.nodeId!==selected[0].id&&document.activeElement?.dataset?.nodeId!==selected[1].id) throw new Error('custom insert did not restore graph focus');`},
+				{Kind: "click", Selector: ".process-palette-card.is-custom .process-palette-manage:not(.process-palette-delete)"},
+				{Kind: "input", Selector: "#process-snippet-name-input", Text: "Browser renamed"},
+				{Kind: "click", Selector: "#process-snippet-name-modal .primary"},
+				{Kind: "eval", JS: `return new Promise(function(resolve,reject){var stop=Date.now()+3000;(function poll(){
+  var card=document.querySelector('.process-palette-card.is-custom');
+  if(card&&card.textContent.includes('Browser renamed')) return resolve(true);
+  if(Date.now()>stop) return reject(new Error('custom snippet rename did not settle'));
+  setTimeout(poll,25);})();});`},
+				{Kind: "click", Selector: ".process-palette-card.is-custom .process-palette-delete"},
+				{Kind: "click", Selector: "#process-editor-choice-modal .confirm-danger"},
+				{Kind: "eval", JS: `return new Promise(function(resolve,reject){var stop=Date.now()+3000;(function poll(){
+  if(!document.querySelector('.process-palette-card.is-custom')) return resolve(true);
+  if(Date.now()>stop) return reject(new Error('custom snippet delete did not settle'));
+  setTimeout(poll,25);})();});`},
+				{Kind: "eval", JS: `if(document.querySelectorAll('.process-palette-card.is-built-in').length!==window.__customBefore.builtins) throw new Error('custom lifecycle mutated built-in palette');
+  if(!document.querySelector('.process-palette-state')?.textContent.includes('No custom snippets')) throw new Error('custom empty state missing after delete');`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-browser-edge-click",
 			Title:   "Process editor — trusted edge click + Delete",
 			Caption: "Real Chrome input: pointer capture still resolves the clicked connector, opens its edge inspector, and confirmed Delete removes exactly that edge.",

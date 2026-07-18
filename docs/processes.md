@@ -722,6 +722,27 @@ fields, embedded editors, and open dialogs retain their native clipboard
 behavior. Unrelated clipboard text is ignored, while malformed, stale, or
 oversized editor payloads are rejected atomically without changing the graph.
 
+Selected nodes can also be saved as a reusable **custom snippet**. Choose
+**Save selection…** in the palette (or **save as snippet…** in the selection
+inspector), give it a name, then drag it onto a canvas or use its keyboard-
+accessible **Insert** button. The saved value is the same validated v1
+selection envelope used by copy/paste: only selected nodes, their relative
+layout, and edges with both endpoints selected are retained. Top-level
+template/run identity, parameters, save metadata, and crossing edges are never
+copied. Parameter or performer references are not silently rewritten for a
+different template, so inserting a snippet elsewhere may produce the normal
+editor diagnostics until that template declares the referenced values.
+
+Custom snippets are global to the local operator dashboard and persist in its
+SQLite store across daemon restarts and random dashboard ports. Names are
+unique after trimming and case-folding; snippets can be renamed or deleted
+from their palette cards. Built-in snippets remain immutable and visually
+distinct. The library allows at most 128 custom entries, 256 KiB per canonical
+selection, and 4 MiB total payload. A stale edit is rejected with a conflict;
+an incompatible or corrupted stored entry remains visible as unavailable so
+it can be renamed or deleted without breaking built-ins or other custom
+snippets. Read-only process views disable saving and insertion.
+
 The same palette can **Ask agent about selection**, **Ask agent to fix this
 issue**, or **Edit / refactor with agent**. The first two require a live graph
 selection or an explicitly focused validation issue. Before anything is sent,

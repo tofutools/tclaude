@@ -30,6 +30,7 @@ import {
   ProcessClipboardError, createProcessSelectionPayload,
   isProcessSelectionClipboardText, parseProcessSelection,
   processSelectionFingerprint, serializeProcessSelection,
+  validateProcessSelectionPayload,
 } from './process-editor-clipboard.js';
 import { LiveValidation } from './process-validation.js';
 import {
@@ -49,6 +50,9 @@ import {
   processScribeContextPreview, processScribeEditorContext,
   processScribeHandoff, processScribePrompt,
 } from './process-scribe.js';
+import {
+  createProcessSnippet, deleteProcessSnippet, loadProcessSnippets, renameProcessSnippet,
+} from './process-snippet-library.js';
 
 // Custom drag payload MIME (dock-dnd idiom): withholding text/plain keeps
 // every other document-level DnD feature out of a palette drag.
@@ -137,6 +141,9 @@ export class ProcessTemplateEditor {
     this.externalChange = NO_EXTERNAL_CHANGE;
     this.externalReviewOpen = false;
     this.paletteHidden = false;
+    this.customSnippets = [];
+    this.snippetLibrary = { loading: true, error: '', generation: 0, pendingID: '', creating: false };
+    this.snippetLoadSeq = 0;
     this.statusState = { message: '', error: false };
     this.inlineState = { open: false, token: 0, left: 0, top: 0, value: '' };
     this.inspectorFocusRequest = 0;
@@ -162,6 +169,7 @@ export class ProcessTemplateEditor {
     // graph so its initial diagnostics paint can decorate it.
     this.validation = new LiveValidation(this, options.validation || {});
     this.updateChrome();
+    void this.loadCustomSnippets();
     // Test/automation handle (dashsnap drives states through this; not an API).
     this.mount.__processEditor = this;
   }
@@ -222,6 +230,12 @@ export class ProcessTemplateEditor {
       },
       status: { ...this.statusState },
       paletteHidden: this.paletteHidden,
+      snippets: {
+        ...this.snippetLibrary,
+        items: this.customSnippets.map(({ payload, ...metadata }) => ({ ...metadata })),
+        canInsert: this.model.config.canInsert && !externalInteractionPending(this),
+        canSaveSelection: this.canSaveSelectionAsSnippet(),
+      },
       inline: { ...this.inlineState },
       inspectorFocusRequest: this.inspectorFocusRequest,
       external: {
@@ -346,7 +360,10 @@ export class ProcessTemplateEditor {
 
   paletteDragStart(event) {
     const card = event.target.closest?.('.process-palette-card');
-    if (!card) return;
+    if (!card || card.getAttribute('draggable') !== 'true') {
+      event.preventDefault?.();
+      return;
+    }
     event.dataTransfer.setData(PALETTE_MIME, card.getAttribute('data-palette-item'));
     event.dataTransfer.effectAllowed = 'copy';
     this.paletteDragPayload = card.getAttribute('data-palette-item');
@@ -356,6 +373,206 @@ export class ProcessTemplateEditor {
   paletteDragEnd(event) {
     this.paletteDragPayload = null;
     event.target.closest?.('.process-palette-card')?.classList.remove('is-dragging');
+  }
+
+  canSaveSelectionAsSnippet() {
+    if (!this.model.config.canInsert || this.snippetLibrary.loading || externalInteractionPending(this)) return false;
+    return selectionItems(this.selection).some((item) => item.type === 'node' && this.model.node(item.id));
+  }
+
+  async loadCustomSnippets() {
+    if (this.abort.signal.aborted) return false;
+    const requestSeq = ++this.snippetLoadSeq;
+    this.snippetLibrary = { ...this.snippetLibrary, loading: true, error: '' };
+    this.publish?.();
+    try {
+      const library = await loadProcessSnippets({ signal: this.abort.signal });
+      if (this.abort.signal.aborted || requestSeq !== this.snippetLoadSeq) return false;
+      this.customSnippets = library.snippets;
+      this.snippetLibrary = { ...this.snippetLibrary, loading: false, error: '', generation: library.generation };
+      this.publish?.();
+      return true;
+    } catch (error) {
+      if (this.abort.signal.aborted || requestSeq !== this.snippetLoadSeq) return false;
+      this.snippetLibrary = { ...this.snippetLibrary, loading: false, error: error.message || 'Custom snippets could not be loaded.' };
+      this.publish?.();
+      return false;
+    }
+  }
+
+  customSnippet(id) { return this.customSnippets.find((snippet) => snippet.id === id) || null; }
+
+  async reconcileCustomSnippetMutation(result, expectedGeneration, patch) {
+    if (Number.isSafeInteger(result?.generation) && result.generation === expectedGeneration) {
+      this.snippetLoadSeq += 1;
+      patch();
+      this.snippetLibrary = {
+        ...this.snippetLibrary, loading: false, error: '', generation: result.generation,
+      };
+      return true;
+    }
+    const loaded = await this.loadCustomSnippets();
+    if (!loaded && !this.abort.signal.aborted) {
+      // The mutation committed even though the authoritative reconciliation
+      // failed. Preserve that known item change in the last-good collection;
+      // the visible load error keeps Retry available for missing generations.
+      patch();
+      this.snippetLibrary = {
+        ...this.snippetLibrary, loading: false,
+        generation: Number.isSafeInteger(result?.generation)
+          ? Math.max(this.snippetLibrary.generation, result.generation) : this.snippetLibrary.generation,
+      };
+      this.publish?.();
+    }
+    return loaded;
+  }
+
+  async saveSelectionAsSnippet() {
+    if (!this.canSaveSelectionAsSnippet() || this.snippetLibrary.creating) return false;
+    const layout = this.graph?.layoutSnapshot?.();
+    let envelope;
+    try {
+      envelope = createProcessSelectionPayload(this.model, this.selection, layout?.nodes || []);
+      if (!envelope) throw new ProcessClipboardError('empty', 'Select one or more nodes first.');
+    } catch (error) {
+      this.status(error.message || 'The selection cannot be saved as a custom snippet.', true);
+      return false;
+    }
+    const name = await this.nameSnippetModal({ title: 'Save selection as custom snippet', submitLabel: 'Save snippet' });
+    if (!name || this.abort.signal.aborted) return false;
+    const expectedGeneration = this.snippetLibrary.generation + 1;
+    this.snippetLibrary = { ...this.snippetLibrary, creating: true };
+    this.publish?.();
+    try {
+      const result = await createProcessSnippet(name, envelope, { signal: this.abort.signal });
+      if (!result.snippet || this.abort.signal.aborted) throw new Error('The saved snippet response was invalid.');
+      await this.reconcileCustomSnippetMutation(result, expectedGeneration, () => {
+        this.customSnippets = [...this.customSnippets.filter((item) => item.id !== result.snippet.id), result.snippet]
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      });
+      if (this.abort.signal.aborted) return false;
+      this.status(`Saved custom snippet ${result.snippet.name}.`);
+      return true;
+    } catch (error) {
+      if (!this.abort.signal.aborted) {
+        this.status(`Custom snippet save failed: ${error.message}`, true);
+        void this.loadCustomSnippets();
+      }
+      return false;
+    } finally {
+      if (!this.abort.signal.aborted) {
+        this.snippetLibrary = { ...this.snippetLibrary, creating: false };
+        this.publish?.();
+      }
+    }
+  }
+
+  async renameCustomSnippet(id) {
+    const snippet = this.customSnippet(id);
+    if (!snippet || this.snippetLibrary.pendingID) return false;
+    const name = await this.nameSnippetModal({
+      title: 'Rename custom snippet', submitLabel: 'Rename snippet', initialName: snippet.name,
+    });
+    if (!name || name === snippet.name || this.abort.signal.aborted) return false;
+    const expectedGeneration = this.snippetLibrary.generation + 1;
+    this.snippetLibrary = { ...this.snippetLibrary, pendingID: id };
+    this.publish?.();
+    try {
+      const result = await renameProcessSnippet(snippet, name, { signal: this.abort.signal });
+      if (!result.snippet || this.abort.signal.aborted) throw new Error('The renamed snippet response was invalid.');
+      await this.reconcileCustomSnippetMutation(result, expectedGeneration, () => {
+        this.customSnippets = this.customSnippets.map((item) => item.id === id ? result.snippet : item)
+          .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      });
+      if (this.abort.signal.aborted) return false;
+      this.status(`Renamed custom snippet to ${result.snippet.name}.`);
+      return true;
+    } catch (error) {
+      if (!this.abort.signal.aborted) {
+        this.status(`Custom snippet rename failed: ${error.message}`, true);
+        void this.loadCustomSnippets();
+      }
+      return false;
+    } finally {
+      if (!this.abort.signal.aborted) {
+        this.snippetLibrary = { ...this.snippetLibrary, pendingID: '' };
+        this.publish?.();
+      }
+    }
+  }
+
+  async deleteCustomSnippet(id) {
+    const snippet = this.customSnippet(id);
+    if (!snippet || this.snippetLibrary.pendingID) return false;
+    const choice = await this.choiceModal({
+      title: `Delete custom snippet ${snippet.name}?`,
+      body: 'This removes the reusable snippet from the local library. Process templates that used it are unchanged.',
+      choices: [{ key: 'delete', label: 'Delete snippet', danger: true, initialFocus: true }],
+    });
+    if (choice !== 'delete' || this.abort.signal.aborted) return false;
+    const expectedGeneration = this.snippetLibrary.generation + 1;
+    this.snippetLibrary = { ...this.snippetLibrary, pendingID: id };
+    this.publish?.();
+    try {
+      const result = await deleteProcessSnippet(snippet, { signal: this.abort.signal });
+      if (this.abort.signal.aborted) return false;
+      await this.reconcileCustomSnippetMutation(result, expectedGeneration, () => {
+        this.customSnippets = this.customSnippets.filter((item) => item.id !== id);
+      });
+      if (this.abort.signal.aborted) return false;
+      this.status(`Deleted custom snippet ${snippet.name}.`);
+      return true;
+    } catch (error) {
+      if (!this.abort.signal.aborted) {
+        this.status(`Custom snippet delete failed: ${error.message}`, true);
+        void this.loadCustomSnippets();
+      }
+      return false;
+    } finally {
+      if (!this.abort.signal.aborted) {
+        this.snippetLibrary = { ...this.snippetLibrary, pendingID: '' };
+        this.publish?.();
+      }
+    }
+  }
+
+  insertCustomSnippet(id, point = this.canvasCenterPoint()) {
+    const snippet = this.customSnippet(id);
+    if (!snippet || !snippet.available || !snippet.payload) {
+      this.status('This custom snippet is unavailable and was not inserted.', true);
+      return false;
+    }
+    if (!this.model.config.canInsert || externalInteractionPending(this)) {
+      this.status('Inserting snippets is not allowed in this read-only view.', true);
+      return false;
+    }
+    let payload;
+    let idMap;
+    try {
+      payload = validateProcessSelectionPayload(snippet.payload);
+      idMap = this.model.insertClipboardSelection(payload, { center: point, offset: { x: 0, y: 0 } });
+    } catch (error) {
+      this.status(error.message || 'The custom snippet could not be inserted.', true);
+      return false;
+    }
+    this.status('');
+    this.refresh();
+    const ids = [...idMap.values()];
+    this.setSelection(makeSelection(ids.map((nodeID) => ({ type: 'node', id: nodeID }))));
+    this.status(`Inserted custom snippet ${snippet.name} (${ids.length} node${ids.length === 1 ? '' : 's'}).`);
+    queueMicrotask(() => this.graph?.focusNode?.(ids[0]));
+    return idMap;
+  }
+
+  insertPaletteItem(payload, point = this.canvasCenterPoint()) {
+    if (payload.kind === 'primitive') return this.addNodeType(payload.type, point);
+    if (payload.kind === 'custom-snippet') return this.insertCustomSnippet(payload.id, point);
+    if (payload.kind !== 'snippet') return false;
+    const snippet = PALETTE_SNIPPETS.find((candidate) => candidate.key === payload.key);
+    if (!snippet) return false;
+    const idMap = this.mutate(() => this.model.insertSnippet(snippet, { x: point.x, y: point.y }));
+    if (idMap) this.status(`Inserted snippet ${snippet.label} (${idMap.size} nodes).`);
+    return idMap;
   }
 
   refresh({ fit = false } = {}) {
@@ -853,14 +1070,7 @@ export class ProcessTemplateEditor {
     if (!raw) return;
     let payload;
     try { payload = JSON.parse(raw); } catch { return; }
-    if (payload.kind === 'primitive') {
-      this.addNodeType(payload.type, point);
-    } else if (payload.kind === 'snippet') {
-      const snippet = PALETTE_SNIPPETS.find((candidate) => candidate.key === payload.key);
-      if (!snippet) return;
-      const idMap = this.mutate(() => this.model.insertSnippet(snippet, { x: point.x, y: point.y }));
-      if (idMap) this.status(`Inserted snippet ${snippet.label} (${idMap.size} nodes).`);
-    }
+    ProcessTemplateEditor.prototype.insertPaletteItem.call(this, payload, point);
   }
 
   canvasCenterPoint() {
@@ -1074,6 +1284,12 @@ export class ProcessTemplateEditor {
     if (!choice || externalInteractionPending(this)) return false;
     this.mutate(() => this.model.deleteItems(items, { rewire: choice === 'rewire' }));
     this.setSelection(null);
+  }
+
+  nameSnippetModal({ title, submitLabel, initialName = '' }) {
+    return new Promise((resolve) => this.openModal({
+      kind: 'snippet-name', title, submitLabel, initialName,
+    }, resolve));
   }
 
   onEditorKeyDown(event) {

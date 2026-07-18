@@ -1,0 +1,101 @@
+{
+  "cases": [
+    {
+      "name": "valid task performer",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"human","ask":"Approve?","choices":["yes"],"choiceOutcomes":{"yes":"pass"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "valid plan performer",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","plan":{"id":"plan","performer":{"kind":"agent","prompt":"Plan"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "valid contact budget",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"cadence":"5m","budget":3,"escalationTarget":"operator"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "exponent selection version",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1e0,"nodes":[{"id":"task","node":{"type":"task"},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "exponent contact budget",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":1e3}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "integral decimal retry attempts",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","retry":{"maxAttempts":2.0}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "negative zero contact budget",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":-0.0}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "negative zero retry attempts",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","retry":{"maxAttempts":-0.0}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "fractional contact budget",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":1.5}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "unsafe contact budget",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":9007199254740992}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "bogus performer kind",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"bogus"}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "missing step performer",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","plan":{"id":"plan"}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "present null string",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","name":null},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "present null string list",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","captures":null},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "fractional retry integer",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","retry":{"maxAttempts":1.5}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "prototype choice outcome",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"human","choiceOutcomes":{"__proto__":"pass"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "512 multibyte outcome code units",
+      "accepted": true,
+      "outcomeRepeat": {"value":"漢","count":512},
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"a","node":{"type":"task"},"position":{"x":1,"y":2}},{"id":"b","node":{"type":"end"},"position":{"x":3,"y":4}}],"edges":[{"from":"a","outcome":"repeat","to":"b"}]}
+    },
+    {
+      "name": "513 multibyte outcome code units",
+      "accepted": false,
+      "outcomeRepeat": {"value":"漢","count":513},
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"a","node":{"type":"task"},"position":{"x":1,"y":2}},{"id":"b","node":{"type":"end"},"position":{"x":3,"y":4}}],"edges":[{"from":"a","outcome":"repeat","to":"b"}]}
+    },
+    {
+      "name": "C1 control outcome",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"a","node":{"type":"task"},"position":{"x":1,"y":2}},{"id":"b","node":{"type":"end"},"position":{"x":3,"y":4}}],"edges":[{"from":"a","outcome":"next\u0085stage","to":"b"}]}
+    }
+  ]
+}

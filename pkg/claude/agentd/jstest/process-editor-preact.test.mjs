@@ -67,6 +67,197 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(host.childNodes.length, 0);
 });
 
+test('custom snippets create, keyboard-insert, rename, and delete through the Preact palette', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const id = `psn_${'a'.repeat(32)}`;
+  let revision = 1;
+  let name = 'Review gate';
+  let deleted = false;
+  let savedEnvelope = null;
+  const response = (body, status = 200) => ({
+    ok: status >= 200 && status < 300, status, statusText: status === 200 ? 'OK' : 'Error',
+    json: async () => body,
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/process/snippets' && (!options.method || options.method === 'GET')) {
+      return response({ generation: 0, snippets: [] });
+    }
+    if (url === '/api/process/snippets' && options.method === 'POST') {
+      const body = JSON.parse(options.body);
+      savedEnvelope = body.envelope;
+      name = body.name;
+      return response({ generation: 1, snippet: {
+        id, name, revision, available: true, envelope: savedEnvelope,
+      } }, 201);
+    }
+    if (url === `/api/process/snippets/${id}` && options.method === 'PATCH') {
+      const body = JSON.parse(options.body);
+      assert.equal(body.revision, revision, 'rename carries item revision CAS');
+      revision += 1;
+      name = body.name;
+      return response({ generation: 2, snippet: {
+        id, name, revision, available: true, envelope: savedEnvelope,
+      } });
+    }
+    if (url === `/api/process/snippets/${id}` && options.method === 'DELETE') {
+      const body = JSON.parse(options.body);
+      assert.equal(body.revision, revision, 'delete carries newest item revision CAS');
+      deleted = true;
+      return response({ ok: true, generation: 3 });
+    }
+    return response({ diagnostics: [] });
+  };
+  t.after(() => {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  });
+
+  const { harness, host, editor } = await openBlank(t);
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  assert.match(host.querySelector('.process-palette-state')?.textContent || '', /No custom snippets/);
+
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  const savePromise = editor.saveSelectionAsSnippet();
+  await harness.act(async () => { await Promise.resolve(); });
+  const nameInput = host.querySelector('#process-snippet-name-input');
+  assert.ok(nameInput, 'named save action opens an editor-owned accessible dialog');
+  await harness.act(() => {
+    nameInput.value = '🚀'.repeat(41);
+    harness.fireEvent(nameInput, 'input');
+  });
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  assert.ok(host.querySelector('#process-snippet-name-modal'), 'invalid UTF-8 byte length keeps the dialog open');
+  assert.match(host.querySelector('#process-snippet-name-error').textContent, /160 UTF-8 bytes/);
+  await harness.act(() => {
+    nameInput.value = 'Review gate';
+    harness.fireEvent(nameInput, 'input');
+  });
+  assert.equal(host.querySelector('#process-snippet-name-error').textContent, '', 'editing clears the inline error');
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await savePromise;
+  await harness.act(async () => { await Promise.resolve(); });
+  assert.equal(savedEnvelope.nodes[0].id, 'start');
+  assert.equal(savedEnvelope.edges.length, 0, 'external crossing edges are not stored');
+  const card = host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`);
+  assert.ok(card?.classList.contains('is-custom'));
+  const insert = card.querySelector('.process-palette-insert');
+  assert.equal(insert.disabled, false);
+  insert.focus();
+  await harness.act(() => insert.click());
+  assert.ok(editor.model.node('start-2'), 'button activation uses canonical selection insertion');
+  assert.equal(editor.model.canUndo, true);
+
+  const renamePromise = editor.renameCustomSnippet(id);
+  await harness.act(async () => { await Promise.resolve(); });
+  const renameInput = host.querySelector('#process-snippet-name-input');
+  await harness.act(() => {
+    renameInput.value = 'Approval gate';
+    harness.fireEvent(renameInput, 'input');
+  });
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await renamePromise;
+  await harness.act(async () => { await Promise.resolve(); });
+  assert.match(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`).textContent, /Approval gate/);
+
+  const deletePromise = editor.deleteCustomSnippet(id);
+  await harness.act(async () => { await Promise.resolve(); });
+  await harness.act(() => host.querySelector('#process-editor-choice-modal .confirm-danger').click());
+  await deletePromise;
+  await harness.act(async () => { await Promise.resolve(); });
+  assert.equal(deleted, true);
+  assert.equal(host.querySelector(`.process-palette-card[data-palette-item*="${id}"]`), null);
+  assert.match(host.querySelector('.process-palette-state').textContent, /No custom snippets/);
+  editor.destroy();
+});
+
+test('initial custom-snippet load blocks save instead of stranding a fast mutation', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const initial = deferred();
+  let posts = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/process/snippets' && (!options.method || options.method === 'GET')) return initial.promise;
+    if (url === '/api/process/snippets' && options.method === 'POST') posts += 1;
+    return { ok: true, status: 200, statusText: 'OK', json: async () => ({}) };
+  };
+  t.after(() => {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  });
+
+  const { harness, host, editor } = await openBlank(t);
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  assert.equal(editor.canSaveSelectionAsSnippet(), false);
+  assert.equal(await editor.saveSelectionAsSnippet(), false);
+  assert.equal(posts, 0);
+  assert.equal(host.querySelector('#process-snippet-name-modal'), null);
+  assert.match(host.querySelector('.process-palette-state').textContent, /Loading custom snippets/);
+
+  initial.resolve({
+    ok: true, status: 200, statusText: 'OK',
+    json: async () => ({ generation: 0, snippets: [] }),
+  });
+  await harness.act(async () => {
+    await initial.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  assert.equal(editor.canSaveSelectionAsSnippet(), true);
+  await harness.act(async () => { await Promise.resolve(); });
+  assert.match(host.querySelector('.process-palette-state').textContent, /No custom snippets/);
+  editor.destroy();
+});
+
+test('custom-snippet mutation generation gaps reload the authoritative collection', async (t) => {
+  const previousFetch = globalThis.fetch;
+  const existingID = `psn_${'b'.repeat(32)}`;
+  const externalID = `psn_${'c'.repeat(32)}`;
+  const createdID = `psn_${'d'.repeat(32)}`;
+  const snippetEnvelope = (nodeID) => ({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id: nodeID, node: { type: 'task' }, position: { x: 1, y: 2 } }], edges: [],
+  });
+  const row = (id, name, nodeID) => ({ id, name, revision: 1, available: true, envelope: snippetEnvelope(nodeID) });
+  let gets = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === '/api/process/snippets' && (!options.method || options.method === 'GET')) {
+      gets += 1;
+      const snippets = gets === 1
+        ? [row(existingID, 'Existing', 'existing')]
+        : [row(existingID, 'Existing', 'existing'), row(externalID, 'External', 'external'), row(createdID, 'New local', 'start')];
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ generation: gets === 1 ? 1 : 3, snippets }) };
+    }
+    if (url === '/api/process/snippets' && options.method === 'POST') {
+      return { ok: true, status: 201, statusText: 'Created', json: async () => ({
+        generation: 3, snippet: row(createdID, JSON.parse(options.body).name, 'start'),
+      }) };
+    }
+    return { ok: true, status: 200, statusText: 'OK', json: async () => ({ diagnostics: [] }) };
+  };
+  t.after(() => {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  });
+
+  const { harness, host, editor } = await openBlank(t);
+  await harness.act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  const save = editor.saveSelectionAsSnippet();
+  await harness.act(async () => { await Promise.resolve(); });
+  const input = host.querySelector('#process-snippet-name-input');
+  await harness.act(() => { input.value = 'New local'; harness.fireEvent(input, 'input'); });
+  await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
+  await save;
+  await harness.act(async () => { await Promise.resolve(); });
+
+  assert.equal(gets, 2, 'generation jump triggers an authoritative reload');
+  assert.equal(editor.snippetLibrary.generation, 3);
+  assert.equal(editor.snippetLibrary.loading, false);
+  assert.deepEqual(editor.customSnippets.map((snippet) => snippet.name), ['Existing', 'External', 'New local']);
+  assert.equal(host.querySelectorAll('.process-palette-card.is-custom').length, 3);
+  editor.destroy();
+});
+
 test('Preact editor routes native copy/paste through the graph boundary and restores pasted focus', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
