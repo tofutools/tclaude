@@ -1654,13 +1654,14 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; pointer-events: none; }
 .usage-point-mark:hover .usage-point,
+.usage-point-mark.active .usage-point,
 .usage-point-mark:focus-within .usage-point { r: 4px; fill: #cae8ff; }
 .usage-point-hit-target {
-  fill: transparent; stroke: transparent; pointer-events: all; cursor: crosshair; outline: none;
+  fill: transparent; stroke: transparent; pointer-events: none; outline: none;
 }
 .usage-forecast-line { stroke: #d29922; stroke-width: 2; stroke-dasharray: 6 5; }
 .usage-forecast-hit-target {
-  stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: crosshair;
+  stroke: transparent; stroke-width: 14; fill: none; pointer-events: none;
 }
 .usage-forecast-hit-target:focus { stroke: rgb(210 153 34 / 18%); outline: none; }
 .usage-scheduled-reset line { stroke: #a371f7; stroke-width: 1.5; stroke-dasharray: 5 4; }
@@ -1668,13 +1669,14 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-reset-mark line.usage-marker-hit-target,
 .usage-now-mark line.usage-marker-hit-target {
   stroke: transparent; stroke-width: 14; stroke-dasharray: none;
-  fill: none; pointer-events: stroke; cursor: crosshair;
+  fill: none; pointer-events: none;
 }
 .usage-scheduled-reset line.usage-marker-hit-target:focus,
 .usage-reset-mark line.usage-marker-hit-target:focus,
 .usage-now-mark line.usage-marker-hit-target:focus {
   stroke: rgb(163 113 247 / 18%); outline: none;
 }
+.usage-chart-hover-surface { fill: transparent; pointer-events: all; cursor: crosshair; }
 .usage-chart-tooltip { pointer-events: none; }
 .usage-chart-tooltip rect { fill: #161b22; stroke: #d29922; stroke-width: 1; opacity: .97; }
 .usage-chart-tooltip.observed rect { stroke: #58a6ff; }

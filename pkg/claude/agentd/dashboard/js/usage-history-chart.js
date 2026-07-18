@@ -5,7 +5,7 @@ import {
   formatUsageAxisTick, usageAxisStart, usageAxisTicks, usageForecastPoint,
 } from './usage-history-axis.js';
 import {
-  formatUsageDuration, formatUsageTime, usageProviderLabel, usageWindowLabel,
+  formatUsageDuration, usageProviderLabel, usageWindowLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -14,6 +14,8 @@ const H = 210;
 const PAD = { left: 42, right: 18, top: 14, bottom: 28 };
 const TOOLTIP_WIDTH = 270;
 const TOOLTIP_LINE_HEIGHT = 13;
+const HOVER_DISTANCE = 8;
+const HOVER_TIE_EPSILON = 1e-6;
 
 function finiteDate(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -45,6 +47,26 @@ function chartPointerPosition(svg, event) {
     x: (event.clientX - rect.left - offsetX) / scale,
     y: (event.clientY - rect.top - offsetY) / scale,
   };
+}
+
+function distanceToSegment(pointer, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const ratio = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
+    ((pointer.x - start.x) * dx + (pointer.y - start.y) * dy) / lengthSquared));
+  const nearest = { x: start.x + ratio * dx, y: start.y + ratio * dy };
+  return {
+    ratio,
+    distance: (pointer.x - nearest.x) ** 2 + (pointer.y - nearest.y) ** 2,
+  };
+}
+
+function nearestCandidate(best, candidate) {
+  if (!best || candidate.distance < best.distance - HOVER_TIE_EPSILON) return candidate;
+  if (Math.abs(candidate.distance - best.distance) <= HOVER_TIE_EPSILON
+      && candidate.priority < best.priority) return candidate;
+  return best;
 }
 
 function beforeResetLabel(resetAt, time) {
@@ -116,15 +138,8 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     : resetMarkers.length - 1;
   const xTicks = usageAxisTicks(start, horizon);
   const scope = `${usageProviderLabel(series.provider)} · ${usageWindowLabel(series.window_name, series.duration_seconds)} window`;
-  const updateForecastHover = (event) => {
-    const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
-    const rect = svg?.getBoundingClientRect();
-    if (!rect?.width) return;
-    const svgX = (event.clientX - rect.left) * W / rect.width;
-    const firstX = x(latest.time);
-    const lastX = x(forecastAt);
-    const hoverPoint = usageForecastPoint(latest.time, latest.pct, rate, forecastAt,
-      (svgX - firstX) / Math.max(1, lastX - firstX));
+  const showForecastTooltip = (ratio) => {
+    const hoverPoint = usageForecastPoint(latest.time, latest.pct, rate, forecastAt, ratio);
     setTooltip({
       x: x(hoverPoint.time), y: y(hoverPoint.pct), tone: 'forecast', title: 'Prediction',
       lines: [
@@ -134,26 +149,78 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       ],
     });
   };
-  const showTooltip = (anchorX, anchorY, tone, title, lines) => setTooltip({ x: anchorX, y: anchorY, tone, title, lines });
+  const showTooltip = (anchorX, anchorY, tone, title, lines, pointAt = null) => {
+    setTooltip({ x: anchorX, y: anchorY, tone, title, lines, pointAt });
+  };
   const hideTooltip = () => setTooltip(null);
   const showPointTooltip = (point) => {
     const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
     showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
       scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
       pointResetLabel,
+    ], point.time);
+  };
+  const showResetTooltip = (reset, index) => {
+    const title = index === resetMarkers.length - 1 ? 'Last reset' : 'Previous reset';
+    showTooltip(x(reset.time), y(reset.pct), 'reset', title, [
+      scope, new Date(reset.time).toLocaleString(),
+      `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now)}`,
     ]);
   };
-  const updatePointHover = (event) => {
+  const showScheduledResetTooltip = () => showTooltip(
+    x(resetAt), PAD.top + 18, 'reset', 'Next reset',
+    [scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now)],
+  );
+  const showNowTooltip = () => showTooltip(x(now), PAD.top + 18, 'now', 'Now', [
+    scope, new Date(now).toLocaleString(), resetTimingLabel(resetAt, now),
+  ]);
+  const updateChartHover = (event) => {
     const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
     const pointer = chartPointerPosition(svg, event);
     if (!pointer) return;
-    // Hit circles intentionally overlap. Resolve them from the pointer hotspot
-    // instead of letting the last (usually newest/up-right) SVG node win.
-    const nearest = pointMarkers.reduce((best, point) => {
+    let nearest = pointMarkers.reduce((best, point) => {
       const distance = (x(point.time) - pointer.x) ** 2 + (y(point.pct) - pointer.y) ** 2;
-      return !best || distance < best.distance ? { point, distance } : best;
+      return nearestCandidate(best, { kind: 'point', point, distance, priority: 0 });
     }, null);
-    if (nearest) showPointTooltip(nearest.point);
+    if (hasForecastLine) {
+      const forecastDistance = distanceToSegment(pointer,
+        { x: x(latest.time), y: y(latest.pct) },
+        { x: x(forecastAt), y: y(forecastPct) });
+      nearest = nearestCandidate(nearest, {
+        kind: 'forecast', priority: 1, ...forecastDistance,
+      });
+    }
+    resetMarkers.forEach((reset, index) => {
+      nearest = nearestCandidate(nearest, {
+        kind: 'reset', reset, index, priority: 2,
+        distance: (x(reset.time) - pointer.x) ** 2,
+      });
+    });
+    if (scheduledResetVisible) {
+      nearest = nearestCandidate(nearest, {
+        kind: 'scheduled-reset', priority: 2,
+        distance: (x(resetAt) - pointer.x) ** 2,
+      });
+    }
+    if (now > start && now < horizon) {
+      nearest = nearestCandidate(nearest, {
+        kind: 'now', priority: 3,
+        distance: (x(now) - pointer.x) ** 2,
+      });
+    }
+    if (!nearest || nearest.distance > HOVER_DISTANCE ** 2) {
+      hideTooltip();
+    } else if (nearest.kind === 'point') {
+      showPointTooltip(nearest.point);
+    } else if (nearest.kind === 'forecast') {
+      showForecastTooltip(nearest.ratio);
+    } else if (nearest.kind === 'reset') {
+      showResetTooltip(nearest.reset, nearest.index);
+    } else if (nearest.kind === 'scheduled-reset') {
+      showScheduledResetTooltip();
+    } else if (nearest.kind === 'now') {
+      showNowTooltip();
+    }
   };
   const focusChartItemByKey = (event, index, selector, length) => {
     let target = index;
@@ -195,16 +262,9 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         <line class="usage-marker-hit-target" x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom}
           tabIndex=${index === keyboardResetIndex ? '0' : '-1'} role="img"
           aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; new post-reset baseline ${reset.pct.toFixed(1)}%; ${relativeMarkerTime(at, now)}${index === keyboardResetIndex ? '; use left and right arrow keys to explore detected resets' : ''}`}
-          onmouseenter=${() => showTooltip(x(at), y(reset.pct), 'reset', title, [
-            scope, new Date(at).toLocaleString(),
-            `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(at, now)}`,
-          ])} onmouseleave=${hideTooltip}
           onfocus=${() => {
             setKeyboardResetAt(index);
-            showTooltip(x(at), y(reset.pct), 'reset', title, [
-              scope, new Date(at).toLocaleString(),
-              `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(at, now)}`,
-            ]);
+            showResetTooltip(reset, index);
           }} onblur=${hideTooltip}
           onkeydown=${(event) => focusChartItemByKey(event, index, '.usage-reset-mark .usage-marker-hit-target', resetMarkers.length)} />
       </g>`;
@@ -214,12 +274,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line class="usage-marker-hit-target" x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom}
         tabIndex="0" role="img"
         aria-label=${`Next reset; ${scope}; ${new Date(resetAt).toLocaleString()}; ${relativeMarkerTime(resetAt, now)}`}
-        onmouseenter=${() => showTooltip(x(resetAt), PAD.top + 18, 'reset', 'Next reset', [
-          scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now),
-        ])} onmouseleave=${hideTooltip}
-        onfocus=${() => showTooltip(x(resetAt), PAD.top + 18, 'reset', 'Next reset', [
-          scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now),
-        ])} onblur=${hideTooltip} />
+        onfocus=${showScheduledResetTooltip} onblur=${hideTooltip} />
     </g>`}
     ${hasForecastLine && html`<${Fragment}>
       <line class="usage-forecast-line" x1=${x(latest.time)} y1=${y(latest.pct)}
@@ -227,33 +282,21 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
         x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
         aria-label=${`Prediction; ${scope}; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt)}`}
-        onmousemove=${updateForecastHover} onmouseleave=${hideTooltip}
-        onfocus=${() => showTooltip(x(forecastAt), y(forecastPct), 'forecast', 'Prediction', [
-          scope, `${forecastPct.toFixed(1)}% · ${new Date(forecastAt).toLocaleString()}`,
-          beforeResetLabel(resetAt, forecastAt),
-        ])} onblur=${hideTooltip} />
+        onfocus=${() => showForecastTooltip(1)} onblur=${hideTooltip} />
     </${Fragment}>`}
     ${now > start && now < horizon && html`<g class="usage-now-mark">
       <line x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <line class="usage-marker-hit-target" x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom}
         tabIndex="0" role="img" aria-label=${`Now; ${scope}; ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now)}`}
-        onmouseenter=${() => showTooltip(x(now), PAD.top + 18, 'now', 'Now', [
-          scope, new Date(now).toLocaleString(),
-          resetTimingLabel(resetAt, now),
-        ])} onmouseleave=${hideTooltip}
-        onfocus=${() => showTooltip(x(now), PAD.top + 18, 'now', 'Now', [
-          scope, new Date(now).toLocaleString(),
-          resetTimingLabel(resetAt, now),
-        ])} onblur=${hideTooltip} />
+        onfocus=${showNowTooltip} onblur=${hideTooltip} />
     </g>`}
     ${pointMarkers.map((point, index) => {
       const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
-      return html`<g class="usage-point-mark" key=${point.at}>
+      return html`<g class=${`usage-point-mark${tooltip?.pointAt === point.time ? ' active' : ''}`} key=${point.at}>
         <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.5" />
         <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
           tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
           aria-label=${`Sample; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? '; use left and right arrow keys to explore samples' : ''}`}
-          onmouseenter=${updatePointHover} onmousemove=${updatePointHover} onmouseleave=${hideTooltip}
           onfocus=${() => {
             setKeyboardPointAt(index);
             showPointTooltip(point);
@@ -261,6 +304,10 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
           onkeydown=${(event) => focusChartItemByKey(event, index, '.usage-point-hit-target', pointMarkers.length)} />
       </g>`;
     })}
+    <rect class="usage-chart-hover-surface" x=${PAD.left} y=${PAD.top}
+      width=${W - PAD.left - PAD.right} height=${H - PAD.top - PAD.bottom}
+      aria-hidden="true" onmouseenter=${updateChartHover} onmousemove=${updateChartHover}
+      onmouseleave=${hideTooltip} />
     ${tooltip && html`<g class=${`usage-chart-tooltip ${tooltip.tone}`} transform=${`translate(${tooltipX} ${tooltipY})`}>
       <rect width=${TOOLTIP_WIDTH} height=${tooltipHeight} rx="4" />
       <text x="7" y="12"><tspan class="usage-tooltip-title" x="7">${tooltip.title}</tspan>
