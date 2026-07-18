@@ -137,6 +137,10 @@ export class ProcessTemplateEditor {
   constructor(mount, view, options = {}) {
     this.mount = mount;
     this.options = options;
+    // Public command methods must be harmless after destroy(): they may not
+    // mutate editor/model state, touch the disposed graph/UI, start network
+    // or modal work, or invoke outward callbacks. Guards check this flag.
+    this.destroyed = false;
     this.model = new ProcessEditModel(view, {
       mode: options.mode || 'template',
       nodeEditable: options.nodeEditable,
@@ -196,6 +200,7 @@ export class ProcessTemplateEditor {
   }
 
   attachGraphHost(host) {
+    if (this.destroyed) return;
     if (!host) {
       this.canvasPointer = null;
       this.graph?.dispose?.();
@@ -288,6 +293,15 @@ export class ProcessTemplateEditor {
   }
 
   openModal(descriptor, resolve = null) {
+    if (this.destroyed) {
+      // The island can no longer render this modal; resolve immediately so
+      // awaiting callers observe a cancellation instead of hanging forever.
+      resolve?.(null);
+      const dispose = () => false;
+      dispose.isDirty = () => false;
+      dispose.requestClose = async () => true;
+      return dispose;
+    }
     const generation = ++this.modalGeneration;
     this.modalState = { ...descriptor, generation };
     this.modalHandle = null;
@@ -361,6 +375,7 @@ export class ProcessTemplateEditor {
   // ---- chrome ------------------------------------------------------------
 
   setTemplateID(value) {
+    if (this.destroyed) return false;
     if (this.savePending || externalInteractionPending(this)) return false;
     if (!this.model.setTemplateID(String(value || '').trim())) {
       this.status('Template id is fixed once an existing version is selected.', true);
@@ -379,9 +394,9 @@ export class ProcessTemplateEditor {
   renameNode(id, name) { return this.mutate(() => this.model.renameNode(id, String(name || '').trim())); }
   setJoin(id, join) { return this.mutate(() => this.model.setJoin(id, join)); }
   setStart(id) { return this.mutate(() => this.model.setStart(id)); }
-  togglePalette() { this.paletteHidden = !this.paletteHidden; this.publish?.(); }
-  openCommands() { requestCommandPalette(); }
-  openExternalActor() { this.options.onOpenActor?.(this.externalChange.actor); }
+  togglePalette() { if (this.destroyed) return; this.paletteHidden = !this.paletteHidden; this.publish?.(); }
+  openCommands() { if (this.destroyed) return; requestCommandPalette(); }
+  openExternalActor() { if (this.destroyed) return; this.options.onOpenActor?.(this.externalChange.actor); }
   setIssuesOpen(open) { this.validation?.setPanelOpen(open); }
   focusIssueAt(index, focusButton = false) { return this.validation?.focusIssueAt(index, { focusButton }) || false; }
 
@@ -455,7 +470,7 @@ export class ProcessTemplateEditor {
   }
 
   async saveSelectionAsSnippet() {
-    if (!this.canSaveSelectionAsSnippet() || this.snippetLibrary.creating) return false;
+    if (this.destroyed || !this.canSaveSelectionAsSnippet() || this.snippetLibrary.creating) return false;
     const layout = this.graph?.layoutSnapshot?.();
     let envelope;
     try {
@@ -495,6 +510,7 @@ export class ProcessTemplateEditor {
   }
 
   async renameCustomSnippet(id) {
+    if (this.destroyed) return false;
     const snippet = this.customSnippet(id);
     if (!snippet || this.snippetLibrary.pendingID) return false;
     const name = await this.nameSnippetModal({
@@ -529,6 +545,7 @@ export class ProcessTemplateEditor {
   }
 
   async deleteCustomSnippet(id) {
+    if (this.destroyed) return false;
     const snippet = this.customSnippet(id);
     if (!snippet || this.snippetLibrary.pendingID) return false;
     const choice = await this.choiceModal({
@@ -564,6 +581,7 @@ export class ProcessTemplateEditor {
   }
 
   insertCustomSnippet(id, point = this.canvasCenterPoint()) {
+    if (this.destroyed) return false;
     const snippet = this.customSnippet(id);
     if (!snippet || !snippet.available || !snippet.payload) {
       this.status('This custom snippet is unavailable and was not inserted.', true);
@@ -603,6 +621,7 @@ export class ProcessTemplateEditor {
   }
 
   refresh({ fit = false } = {}) {
+    if (this.destroyed) return;
     // decorate() re-anchors the last known diagnostics on the fresh graph
     // (badges for deleted targets drop immediately); schedule() debounces the
     // next validation round for the mutated draft.
@@ -616,6 +635,7 @@ export class ProcessTemplateEditor {
   }
 
   updateChrome() {
+    if (this.destroyed) return;
     const { model } = this;
     if (this.externalChange?.ref) {
       this.externalChange = reconcileExternalChange(this.externalChange, {
@@ -632,6 +652,7 @@ export class ProcessTemplateEditor {
   }
 
   observeExternalHead({ ref: currentRef, sourceHash: currentSourceHash, actor, authoredAt } = {}) {
+    if (this.destroyed) return this.externalChange;
     const previous = this.externalChange;
     const observedKey = currentRef && currentSourceHash ? `${currentRef}\n${currentSourceHash}` : '';
     if (this.externalReviewRequest && this.externalReviewRequest.key !== observedKey) cancelExternalReview(this);
@@ -648,7 +669,7 @@ export class ProcessTemplateEditor {
   }
 
   toggleExternalReview() {
-    if (this.externalReviewPending || externalInteractionPending(this)) return false;
+    if (this.destroyed || this.externalReviewPending || externalInteractionPending(this)) return false;
     this.externalReviewOpen = !this.externalReviewOpen;
     if (this.externalReviewOpen && !this.externalChange.review) void this.loadExternalReview();
     this.renderExternalChange();
@@ -722,7 +743,7 @@ export class ProcessTemplateEditor {
   }
 
   keepExternalChange() {
-    if (externalInteractionPending(this)) return false;
+    if (this.destroyed || externalInteractionPending(this)) return false;
     this.externalChange = keepExternalChange(this.externalChange);
     this.renderExternalChange();
   }
@@ -734,6 +755,7 @@ export class ProcessTemplateEditor {
   }
 
   async reloadExternalChange() {
+    if (this.destroyed) return false;
     const targetRef = this.externalChange.ref;
     const targetSourceHash = this.externalChange.sourceHash;
     if (!targetRef || !targetSourceHash || externalInteractionPending(this) || this.savePending) return false;
@@ -834,6 +856,7 @@ export class ProcessTemplateEditor {
   }
 
   status(message, isError = false) {
+    if (this.destroyed) return;
     this.statusState = { message: message || '', error: !!isError };
     this.publish?.();
   }
@@ -849,6 +872,7 @@ export class ProcessTemplateEditor {
   }
 
   setSelection(selection) {
+    if (this.destroyed) return;
     // Template metadata is editor chrome, not a graph entity. Keep it outside
     // process-selection's node/edge-only normalization while explicitly
     // clearing the canvas highlight. A refresh replays this same branch;
@@ -889,7 +913,7 @@ export class ProcessTemplateEditor {
   }
 
   async openParamsSettings() {
-    if (externalInteractionPending(this) || this.savePending) return false;
+    if (this.destroyed || externalInteractionPending(this) || this.savePending) return false;
     const current = this.modalDispose;
     if (current) {
       const closed = current.requestClose ? await current.requestClose() : (current(null), true);
@@ -911,7 +935,7 @@ export class ProcessTemplateEditor {
   }
 
   async requestInstantiate() {
-    if (externalInteractionPending(this) || this.savePending) return false;
+    if (this.destroyed || externalInteractionPending(this) || this.savePending) return false;
     if (this.blank || this.dirty || !this.model.currentRef) {
       const choice = await this.choiceModal({
         title: 'Save before instantiating',
@@ -923,12 +947,14 @@ export class ProcessTemplateEditor {
       // Edits made while the save was in flight deliberately leave the model
       // dirty; requiring another click is what makes unsaved instantiation
       // impossible by construction.
-      if (!saved || this.dirty || !this.model.currentRef) {
+      if (!saved || this.destroyed || this.dirty || !this.model.currentRef) {
         if (saved && this.dirty) this.status('The editor changed while saving. Save the latest changes before instantiating.', true);
         return false;
       }
     }
-    if (typeof this.options.onInstantiate !== 'function') return false;
+    // The save's onSaved hook may navigate away and destroy this editor;
+    // never hand a destroyed editor's identity to the instantiate flow.
+    if (this.destroyed || typeof this.options.onInstantiate !== 'function') return false;
     this.options.onInstantiate({
       id: this.model.template.id,
       ref: this.model.currentRef,
@@ -941,7 +967,7 @@ export class ProcessTemplateEditor {
   // editability seam decides the mode: a node the view may not edit renders
   // the exact same component read-only — the viewer's detail card.
   async openNodeSettings(nodeId) {
-    if (externalInteractionPending(this)) return false;
+    if (this.destroyed || externalInteractionPending(this)) return false;
     if (!this.model.node(nodeId)) return false;
     const current = this.modalDispose;
     if (current) {
@@ -978,6 +1004,7 @@ export class ProcessTemplateEditor {
   }
 
   commitNodeDrag({ starts, delta, moved = true }) {
+    if (this.destroyed || !this.graph) return;
     if (!moved || !starts?.length || !delta) return;
     // The core's own click-vs-drag threshold is 3 CLIENT px; the delta is in
     // graph units, so scale by the zoom before comparing — at high zoom a
@@ -991,18 +1018,20 @@ export class ProcessTemplateEditor {
   // ---- edge drawing (rubber band) -------------------------------------------
 
   portPoint(nodeId, port) {
-    const laid = this.graph.layoutSnapshot().nodes.find((candidate) => candidate.id === nodeId);
+    const laid = this.graph?.layoutSnapshot().nodes.find((candidate) => candidate.id === nodeId);
     if (!laid) return { x: 0, y: 0 };
     return { x: laid.x, y: laid.y + (port === 'in' ? -laid.height / 2 : laid.height / 2) };
   }
 
   onPortDragStart({ nodeId, port, point }) {
+    if (this.destroyed) return;
     this.nodeChooserDispose?.();
     this.nodeChooserDispose = null;
     this.band = { source: { nodeId, port } };
   }
 
   onPortDragEnd({ nodeId, port, point, targetNodeId, targetPort, emptyCanvas, cancelled, event }) {
+    if (this.destroyed) return;
     const source = this.band?.source || { nodeId, port };
     this.removeBand();
     if (cancelled) return;
@@ -1034,6 +1063,10 @@ export class ProcessTemplateEditor {
   }
 
   openConnectedNodeChooser(source, point, event) {
+    // Only the destroyed guard here: the semantic feedback rejection below is
+    // valid without a live graph; the adapter is needed only past that point,
+    // to anchor the chooser.
+    if (this.destroyed) return false;
     const feedback = resolveProcessConnectionFeedback(this.model, {
       phase: 'target', source, candidate: { emptyCanvas: true },
     });
@@ -1071,13 +1104,14 @@ export class ProcessTemplateEditor {
   }
 
   addConnectedNodeType(type, source, point) {
+    if (this.destroyed) return false;
     const connection = source.port === 'in'
       ? { connectTo: source.nodeId } : { connectFrom: source.nodeId };
     const created = this.mutate(() => this.model.addConnectedNode(type, {
       x: point.x, y: point.y, ...connection,
     }));
     if (!created) {
-      queueMicrotask(() => this.graph.focus());
+      queueMicrotask(() => this.graph?.focus());
       return false;
     }
     this.setSelection({ type: 'node', id: created.id });
@@ -1086,7 +1120,7 @@ export class ProcessTemplateEditor {
     if (nodeType?.requiresConfiguration) {
       void this.openNodeSettings(created.id);
     } else {
-      queueMicrotask(() => this.graph.focusNode(created.id));
+      queueMicrotask(() => this.graph?.focusNode(created.id));
     }
     return created.id;
   }
@@ -1108,7 +1142,7 @@ export class ProcessTemplateEditor {
   }
 
   canvasCenterPoint() {
-    return this.graph.canvasCenter();
+    return this.graph ? this.graph.canvasCenter() : { x: 0, y: 0 };
   }
 
   onCanvasPointerMove({ clientX, clientY, pointerType = '', event } = {}) {
@@ -1139,6 +1173,7 @@ export class ProcessTemplateEditor {
   }
 
   addNodeType(type, point = this.canvasCenterPoint()) {
+    if (this.destroyed) return false;
     const id = this.mutate(() => this.model.addNode(type, { x: point.x, y: point.y }));
     if (!id) return false;
     this.setSelection({ type: 'node', id });
@@ -1147,6 +1182,7 @@ export class ProcessTemplateEditor {
   }
 
   editSelection() {
+    if (this.destroyed) return false;
     if (this.selection?.type === 'template') {
       this.setSelection({ type: 'template' });
       this.inspectorFocusRequest += 1;
@@ -1165,6 +1201,7 @@ export class ProcessTemplateEditor {
   }
 
   duplicateSelection() {
+    if (this.destroyed || !this.graph) return false;
     const items = selectionItems(this.selection);
     if (!items.length || items.some((item) => item.type !== 'node')) return false;
     const layout = this.graph.layoutSnapshot();
@@ -1180,6 +1217,7 @@ export class ProcessTemplateEditor {
   }
 
   selectAll() {
+    if (this.destroyed) return false;
     const items = [
       ...Object.keys(this.model.template.nodes).map((id) => ({ type: 'node', id })),
       ...this.model.edges.filter((edge) => edge.from).map((edge) => ({ type: 'edge', from: edge.from, outcome: edge.outcome })),
@@ -1189,17 +1227,19 @@ export class ProcessTemplateEditor {
   }
 
   clearSelection() {
-    if (!this.selection) return false;
+    if (this.destroyed || !this.selection) return false;
     this.setSelection(null);
     return true;
   }
 
   fitGraph() {
+    if (this.destroyed || !this.graph) return false;
     this.graph.fit();
     return true;
   }
 
   centerSelection() {
+    if (this.destroyed || !this.graph) return false;
     const layout = this.graph.layoutSnapshot();
     const points = selectionItems(this.selection).map((item) => {
       if (item.type === 'node') return layout.nodes.find((node) => node.id === item.id);
@@ -1215,10 +1255,12 @@ export class ProcessTemplateEditor {
   }
 
   zoomGraph(factor) {
+    if (this.destroyed || !this.graph) return false;
     return this.graph.zoomBy(factor);
   }
 
   resetZoom() {
+    if (this.destroyed || !this.graph) return false;
     return this.graph.resetZoom();
   }
 
@@ -1233,6 +1275,22 @@ export class ProcessTemplateEditor {
   }
 
   commandContext() {
+    if (this.destroyed) {
+      // A stale provider snapshot may still ask a destroyed editor for its
+      // context; every affordance reads as unavailable rather than live.
+      const closedReason = 'The process editor is closed.';
+      return {
+        hasGraph: false, hasSelection: false, hasGraphSelection: false,
+        canCreate: false, createReason: closedReason,
+        canEdit: false, editReason: closedReason,
+        canDuplicate: false, duplicateReason: closedReason,
+        canDelete: false, deleteReason: closedReason,
+        canValidate: false, validateReason: closedReason,
+        issueCount: 0, hasCurrentIssue: false,
+        canSave: false, saveReason: closedReason,
+        canInstantiate: false, instantiateReason: closedReason,
+      };
+    }
     const pending = externalInteractionPending(this);
     const selected = selectionItems(this.selection).filter((item) => item.type === 'node'
       ? !!this.model.node(item.id) : !!this.model.findEdge(item.from, item.outcome));
@@ -1284,6 +1342,7 @@ export class ProcessTemplateEditor {
   // rejection (duplicate outcome, read-only node, …). Returns the mutation's
   // result, or undefined when rejected.
   mutate(operation, { fit = false } = {}) {
+    if (this.destroyed) return undefined;
     if (externalInteractionPending(this)) {
       this.status('Wait for the external reload to finish before editing.');
       return undefined;
@@ -1301,7 +1360,7 @@ export class ProcessTemplateEditor {
   }
 
   applyHistory(direction) {
-    if (externalInteractionPending(this)) return false;
+    if (this.destroyed || externalInteractionPending(this)) return false;
     const moved = direction === 'undo' ? this.model.undo() : this.model.redo();
     if (!moved) return;
     // Template settings remain valid across metadata history. Graph selections
@@ -1321,7 +1380,7 @@ export class ProcessTemplateEditor {
   }
 
   async deleteSelection() {
-    if (externalInteractionPending(this)) return false;
+    if (this.destroyed || externalInteractionPending(this)) return false;
     const items = selectionItems(this.selection).filter((item) => item.type === 'node'
       ? this.model.node(item.id) : this.model.findEdge(item.from, item.outcome));
     if (!items.length) return;
@@ -1375,7 +1434,7 @@ export class ProcessTemplateEditor {
   }
 
   onEditorCopy(event) {
-    if (event?.isTrusted === false || isProcessEditorFormControl(event.target)
+    if (this.destroyed || event?.isTrusted === false || isProcessEditorFormControl(event.target)
         || this.modalDispose || !event.clipboardData?.setData) return false;
     if (hasNonCollapsedDOMSelection(event)) return false;
     const layout = this.graph?.layoutSnapshot?.();
@@ -1403,7 +1462,7 @@ export class ProcessTemplateEditor {
   }
 
   onEditorPaste(event) {
-    if (event?.isTrusted === false || isProcessEditorFormControl(event.target)
+    if (this.destroyed || event?.isTrusted === false || isProcessEditorFormControl(event.target)
         || this.modalDispose || !event.clipboardData?.getData) return false;
     let text;
     try {
@@ -1466,11 +1525,11 @@ export class ProcessTemplateEditor {
   // ---- inline (in-place) label editing ------------------------------------------
 
   stagePosition(x, y) {
-    return this.graph.graphPointToHost({ x, y }, this.stage);
+    return this.graph ? this.graph.graphPointToHost({ x, y }, this.stage) : { left: 0, top: 0 };
   }
 
   openInline(x, y, value, commit) {
-    if (externalInteractionPending(this)) return false;
+    if (this.destroyed || externalInteractionPending(this)) return false;
     this.closeInline(false);
     const position = this.stagePosition(x, y);
     this.inlineCommit = commit;
@@ -1502,6 +1561,7 @@ export class ProcessTemplateEditor {
   // ---- save + conflict -----------------------------------------------------------
 
   async save() {
+    if (this.destroyed) return false;
     const id = (this.model.template.id || '').trim();
     if (!id) {
       this.status('Template id is required before saving.', true);
@@ -1513,7 +1573,10 @@ export class ProcessTemplateEditor {
     this.updateChrome();
     try {
       await this.saveRequest(requestSeq);
-      return true;
+      // destroy() (or a newer lifecycle generation) invalidates the sequence
+      // mid-flight; a discarded completion must not report success to callers
+      // like requestInstantiate that act on it.
+      return requestSeq === this.saveSeq;
     } catch (error) {
       if (requestSeq === this.saveSeq) this.status(`Save failed: ${error.message}`, true);
       return false;
@@ -1526,7 +1589,7 @@ export class ProcessTemplateEditor {
   }
 
   async requestScribe(kind = 'template') {
-    if (!this.options.onScribe || this.savePending || externalInteractionPending(this)) return false;
+    if (this.destroyed || !this.options.onScribe || this.savePending || externalInteractionPending(this)) return false;
     const originalBlank = this.blank;
     if (this.dirty) {
       const choice = await this.choiceModal({

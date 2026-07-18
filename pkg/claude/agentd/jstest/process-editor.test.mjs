@@ -5,6 +5,7 @@ import {
   isProcessEditorFormControl, resolveProcessPastePlacement,
 } from '../dashboard/js/process-editor.js';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
+import { buildProcessEditorCommands } from '../dashboard/js/process-command-registry.js';
 import { parseProcessSelection, serializeProcessSelection } from '../dashboard/js/process-editor-clipboard.js';
 import { diagnosticIdentity, LiveValidation } from '../dashboard/js/process-validation.js';
 
@@ -1548,6 +1549,263 @@ test('a new dialog draft during external Reload cancels the swap', async () => {
     assert.equal(editor.model, original);
     assert.equal(editor.modalDispose, draft, 'the new dialog draft remains owned by the old model');
     assert.deepEqual(editor.externalChange, { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' });
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+// ---- TCL-530: controller command hardening after destroy ---------------------
+
+// A real-prototype editor with just enough state for destroy() and every
+// public command method to run. Object.create keeps the class getters
+// (dirty) and lets each test call methods directly instead of through
+// ProcessTemplateEditor.prototype.<name>.call.
+function destroyableEditor() {
+  const editor = Object.create(ProcessTemplateEditor.prototype);
+  Object.assign(editor, {
+    destroyed: false,
+    model: new ProcessEditModel({
+      template: { id: 'alpha', name: 'Loaded', start: 'a', nodes: { a: { type: 'start' }, b: { type: 'task' } } },
+      edges: [{ from: '', outcome: 'start', to: 'a' }, { from: 'a', outcome: 'pass', to: 'b' }],
+      layout: { nodes: { a: { x: 0, y: 0 }, b: { x: 0, y: 80 } } },
+      sourceHash: 'source-old', semanticHash: 'semantic-old', currentRef: 'alpha@sha256:old',
+    }),
+    loadedView: null, blank: false,
+    selection: { type: 'node', id: 'b' },
+    band: null, nodeChooserDispose: null,
+    savePending: false, saveSeq: 0,
+    externalReloadPending: false, externalDecisionPending: false, externalReloadSeq: 0,
+    externalReviewSeq: 0, externalReviewPending: false, externalReviewRequest: null,
+    externalChange: { kind: 'clean', ref: 'alpha@sha256:new', sourceHash: 'source-new' },
+    externalReviewOpen: false,
+    paletteHidden: false,
+    customSnippets: [{ id: 'snip', name: 'Snip', available: true, payload: { nodes: [] } }],
+    snippetLibrary: { loading: false, error: '', generation: 1, pendingID: '', creating: false },
+    snippetLoadSeq: 0,
+    statusState: { message: '', error: false },
+    inlineState: { open: false, token: 0, left: 0, top: 0, value: '' },
+    inlineCommit: null, inspectorFocusRequest: 0,
+    modalState: null, modalGeneration: 0, modalHandle: null, modalDispose: null,
+    pasteFingerprint: '', pasteRepeat: 0, pasteAnchor: null, canvasPointer: null,
+    abort: new AbortController(),
+    graph: { dispose() {} },
+    validation: null,
+    snapshotSignal: { value: 'initial' },
+    uiCleanup: null,
+    options: {},
+    mount: { classList: { add() {}, remove() {} } },
+  });
+  editor.mount.__processEditor = editor;
+  return editor;
+}
+
+function failingFetch(name) {
+  return () => { throw new Error(`${name} must not start network work after destroy`); };
+}
+
+test('synchronous commands are inert and cannot mutate state after repeated destroy', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = failingFetch('sync command');
+  try {
+    const editor = destroyableEditor();
+    editor.destroy();
+    editor.destroy(); // repeated destroy stays a safe no-op
+    assert.equal(editor.destroyed, true);
+    assert.equal(editor.graph, null);
+
+    const before = editor.model.saveBody();
+    const revBefore = editor.model.rev;
+    const selectionBefore = editor.selection;
+    const externalBefore = editor.externalChange;
+
+    assert.equal(editor.addNodeType('task'), false, 'default placement must survive the disposed graph');
+    assert.equal(editor.editSelection(), false);
+    assert.equal(editor.duplicateSelection(), false);
+    assert.equal(editor.selectAll(), false);
+    assert.equal(editor.clearSelection(), false);
+    assert.equal(editor.fitGraph(), false);
+    assert.equal(editor.centerSelection(), false);
+    assert.equal(editor.zoomGraph(1.2), false);
+    assert.equal(editor.resetZoom(), false);
+    assert.equal(editor.validateNow(), false);
+    assert.equal(editor.focusIssue(1), false);
+    assert.equal(editor.setTemplateID('renamed'), false);
+    assert.equal(editor.model.template.id, 'alpha');
+    assert.equal(editor.setTemplateMeta({ name: 'renamed' }), undefined);
+    assert.equal(editor.renameNode('b', 'renamed'), undefined);
+    assert.equal(editor.mutate(() => editor.model.setTemplateMeta({ doc: 'late' })), undefined);
+    assert.equal(editor.applyHistory('undo'), false);
+    assert.equal(editor.insertPaletteItem({ kind: 'primitive', type: 'task' }, { x: 1, y: 2 }), false);
+    assert.equal(editor.insertCustomSnippet('snip'), false);
+    assert.equal(editor.toggleExternalReview(), false);
+    assert.equal(editor.keepExternalChange(), false);
+    assert.equal(editor.observeExternalHead({ ref: 'alpha@sha256:next', sourceHash: 'source-next' }), externalBefore,
+      'a stale head poll cannot restart review work on a destroyed editor');
+    assert.equal(editor.externalChange, externalBefore);
+    assert.equal(editor.openInline(5, 6, 'label', () => assert.fail('inline commit must not attach')), false);
+    assert.equal(editor.inlineState.open, false);
+    editor.togglePalette();
+    assert.equal(editor.paletteHidden, false);
+    editor.openCommands(); // must not reach the global command palette
+    editor.openExternalActor();
+    editor.status('late status', true);
+    assert.deepEqual(editor.statusState, { message: '', error: false });
+    editor.setSelection({ type: 'node', id: 'a' });
+    assert.equal(editor.selection, selectionBefore);
+    editor.attachGraphHost({});
+    assert.equal(editor.graph, null, 'a destroyed editor cannot mint a new graph adapter');
+    // Stale graph-gesture callbacks a disposed adapter (or held closure) may
+    // still fire must not dereference the nulled adapter or arm gesture state.
+    editor.commitNodeDrag({ starts: [{ id: 'b', x: 0, y: 80 }], delta: { x: 10, y: 10 }, moved: true });
+    editor.onPortDragStart({ nodeId: 'b', port: 'out', point: { x: 0, y: 0 } });
+    assert.equal(editor.band, null, 'a port drag cannot arm a rubber band after destroy');
+    editor.onPortDragEnd({ nodeId: 'b', port: 'out', point: { x: 0, y: 0 } });
+    assert.equal(editor.openConnectedNodeChooser({ nodeId: 'b', port: 'out' }, { x: 0, y: 0 }), false);
+    assert.equal(editor.nodeChooserDispose, null);
+    assert.equal(editor.addConnectedNodeType('task', { nodeId: 'a', port: 'out' }, { x: 5, y: 5 }), false);
+    // Flush microtasks so any stray queued graph focus would surface as an
+    // uncaught TypeError and fail the run.
+    await new Promise((resolve) => setImmediate(resolve));
+    editor.publish();
+    assert.equal(editor.snapshotSignal.value, 'initial', 'destroyed editor publishes no snapshots');
+    editor.refresh();
+
+    const context = editor.commandContext();
+    for (const flag of ['hasGraph', 'hasSelection', 'hasGraphSelection', 'canCreate', 'canEdit',
+      'canDuplicate', 'canDelete', 'canValidate', 'canSave', 'canInstantiate', 'hasCurrentIssue']) {
+      assert.equal(context[flag], false, `destroyed context must disable ${flag}`);
+    }
+    assert.equal(context.issueCount, 0);
+
+    assert.deepEqual(editor.model.saveBody(), before, 'no command may mutate the model after destroy');
+    assert.equal(editor.model.rev, revBefore);
+    assert.equal(editor.model.canUndo, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('asynchronous commands cannot start network, modal, or callback work after destroy', async () => {
+  const previousFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = () => { fetches += 1; throw new Error('must not fetch'); };
+  try {
+    const editor = destroyableEditor();
+    let outward = 0;
+    editor.options.onScribe = async () => { outward += 1; return {}; };
+    editor.options.onInstantiate = () => { outward += 1; };
+    editor.options.confirmDiscard = async () => { outward += 1; return true; };
+    editor.destroy();
+    editor.destroy();
+    const before = editor.model.saveBody();
+
+    assert.equal(await editor.save(), false);
+    assert.equal(editor.savePending, false);
+    assert.equal(await editor.requestScribe('template'), false);
+    assert.equal(await editor.requestInstantiate(), false,
+      'a clean saved model must not reach onInstantiate after destroy');
+    assert.equal(await editor.deleteSelection(), false);
+    assert.equal(await editor.openNodeSettings('b'), false);
+    assert.equal(await editor.openParamsSettings(), false);
+    assert.equal(await editor.saveSelectionAsSnippet(), false);
+    assert.equal(await editor.renameCustomSnippet('snip'), false);
+    assert.equal(await editor.deleteCustomSnippet('snip'), false);
+    assert.equal(await editor.reloadExternalChange(), false);
+    assert.equal(editor.externalDecisionPending, false);
+    assert.equal(editor.externalReloadPending, false);
+
+    // Modal requests resolve immediately as cancelled instead of hanging on
+    // UI that can no longer render, and never touch modal state.
+    let resolved = 'unresolved';
+    const dispose = editor.openModal({ kind: 'choice' }, (value) => { resolved = value; });
+    assert.equal(resolved, null);
+    assert.equal(await dispose.requestClose(), true);
+    assert.equal(dispose.isDirty(), false);
+    assert.equal(await editor.choiceModal({ title: 't', body: 'b', choices: [{ key: 'k', label: 'l' }] }), null);
+    assert.equal(await editor.nameSnippetModal({ title: 't', submitLabel: 's' }), null);
+    assert.equal(await editor.scribePreviewModal({ kind: 'template', prompt: '', context: '' }), null);
+    assert.equal(editor.modalState, null);
+    assert.equal(editor.modalGeneration, 0);
+    assert.equal(editor.modalDispose, null);
+
+    assert.equal(fetches, 0, 'no async command may start a request after destroy');
+    assert.equal(outward, 0, 'no async command may invoke outward callbacks after destroy');
+    assert.deepEqual(editor.model.saveBody(), before);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('every palette command built from a destroyed editor is disabled and inert to run', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = failingFetch('registry command');
+  try {
+    const editor = destroyableEditor();
+    editor.options.onScribe = async () => assert.fail('scribe handoff must not start');
+    editor.options.onInstantiate = () => assert.fail('instantiation must not start');
+    editor.destroy();
+    const before = editor.model.saveBody();
+
+    const navigations = [];
+    const commands = buildProcessEditorCommands({
+      editor, actions: { activateSubtab: (name) => navigations.push(name) }, wizard: false,
+    });
+    assert.ok(commands.length > 0);
+    const byID = Object.fromEntries(commands.map((command) => [command.id, command]));
+    for (const id of ['process.create.task', 'process.edit-selection', 'process.duplicate-selection',
+      'process.delete-selection', 'process.select-all', 'process.clear-selection', 'process.fit',
+      'process.center', 'process.validate', 'process.next-issue', 'process.previous-issue',
+      'process.scribe-selection', 'process.scribe-diagnostic', 'process.save', 'process.instantiate']) {
+      assert.equal(byID[id].enabled, false, `${id} must be disabled on a destroyed editor`);
+    }
+    // Even the always-enabled commands (zoom, whole-template scribe) and any
+    // stale run handler a client may still hold must be harmless.
+    for (const command of commands) await command.run();
+    // The templates/runs commands only navigate AWAY from the dead editor
+    // surface through actions and never touch the editor — the one deliberate
+    // exemption from run inertness. Everything editor-bound stayed inert.
+    assert.deepEqual(navigations, ['templates', 'runs']);
+    assert.deepEqual(editor.model.saveBody(), before);
+    assert.equal(editor.modalState, null);
+    assert.equal(editor.graph, null);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('destroy during an in-flight save reports failure and blocks the instantiate handoff', async () => {
+  const previousFetch = globalThis.fetch;
+  const started = deferred();
+  const response = deferred();
+  let fetches = 0;
+  globalThis.fetch = () => { fetches += 1; started.resolve(); return response.promise; };
+  try {
+    const editor = destroyableEditor();
+    let instantiations = 0;
+    editor.options.onInstantiate = () => { instantiations += 1; };
+    editor.choiceModal = async () => 'save';
+    editor.model.setTemplateMeta({ name: 'Local draft' });
+    assert.equal(editor.model.dirty, true);
+
+    const pending = editor.requestInstantiate();
+    await started.promise;
+    // Teardown lands while the save POST is in flight — e.g. the onSaved /
+    // navigation path unmounting the editor. The discarded completion must
+    // read as a failed save and never reach onInstantiate.
+    editor.destroy();
+    response.resolve({
+      ok: true, status: 201, statusText: 'Created',
+      json: async () => ({ sourceHash: 'source-late', semanticHash: 'semantic-late', diagnostics: [] }),
+    });
+    assert.equal(await pending, false);
+    assert.equal(instantiations, 0, 'a destroyed editor identity is never handed to the instantiate flow');
+    assert.equal(fetches, 1);
+    assert.equal(editor.model.sourceHash, 'source-old', 'the delayed completion cannot adopt a CAS head after destroy');
+    assert.equal(editor.savePending, false);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;
