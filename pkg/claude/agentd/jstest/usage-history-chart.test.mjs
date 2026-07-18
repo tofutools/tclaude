@@ -59,7 +59,19 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   assert.match(point.getAttribute('aria-label'), /7d before reset/,
     'screen-reader text includes the point-specific reset timing');
   assert.doesNotMatch(point.getAttribute('aria-label'), /source|codex-cli/i);
-  await harness.act(() => harness.fireEvent(point, 'mouseenter'));
+  chart.getBoundingClientRect = () => ({ left: 0, top: 0, width: 720, height: 210 });
+  const firstPoint = points[0];
+  await harness.act(() => harness.fireEvent(point, 'mouseenter', {
+    clientX: Number(firstPoint.getAttribute('cx')),
+    clientY: Number(firstPoint.getAttribute('cy')),
+  }));
+  assert.match(view.container.querySelector('.usage-chart-tooltip.observed').textContent,
+    /Codex · 7 day window.*10\.0%.*2d 2h before reset/s,
+    'overlapping hit targets select the sample nearest the pointer instead of the topmost sample');
+  await harness.act(() => harness.fireEvent(point, 'mousemove', {
+    clientX: Number(point.getAttribute('cx')),
+    clientY: Number(point.getAttribute('cy')),
+  }));
   assert.match(view.container.querySelector('.usage-chart-tooltip.observed').textContent,
     /Codex · 7 day window.*12\.5%.*7d before reset/s);
   await harness.act(() => harness.fireEvent(point, 'mouseleave'));
@@ -119,7 +131,6 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   const forecastTarget = view.container.querySelector('.usage-forecast-hit-target');
   assert.equal(forecastTarget.getAttribute('role'), 'img');
   assert.match(forecastTarget.getAttribute('aria-label'), /100\.0%.*6d before reset/);
-  chart.getBoundingClientRect = () => ({ left: 0, width: 720 });
   await harness.act(() => harness.fireEvent(forecastTarget, 'mousemove', { clientX: 702 }));
   assert.match(view.container.querySelector('.usage-chart-tooltip.forecast').textContent, /Prediction.*100\.0%.*6d before reset/s);
   await harness.act(() => harness.fireEvent(forecastTarget, 'mouseleave'));
