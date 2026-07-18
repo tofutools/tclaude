@@ -1608,6 +1608,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-history-controls button.tool.active {
   border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
 }
+.usage-history-controls { flex-wrap: wrap; }
+.usage-control-group { display: inline-flex; align-items: center; gap: 8px; }
 .usage-control-label { color: #8b949e; font-size: 11px; font-weight: 600; }
 .usage-control-divider { width: 1px; height: 20px; margin: 0 3px; background: #30363d; }
 .usage-history-note {
@@ -1681,7 +1683,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   .usage-series-grid { grid-template-columns: minmax(0, 1fr); }
   .usage-series-card { padding: 10px; }
   .usage-history-controls .muted { display: none; }
-  .usage-control-divider { flex-basis: 100%; width: 0; height: 0; margin: 0; }
+  .usage-control-group { flex-basis: 100%; }
+  .usage-control-divider { display: none; }
 }
 
 /* -- Costs tab ------------------------------------------------------

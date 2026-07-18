@@ -31,6 +31,7 @@ test('usage chart renders even time ticks and self-contained hover titles', asyn
   const ticks = [...view.container.querySelectorAll('.usage-x-tick line')];
   assert.equal(ticks.length, 5);
   assert.deepEqual(ticks.map((line) => Number(line.getAttribute('x1'))), [42, 207, 372, 537, 702]);
+  assert.equal(view.container.querySelector('svg').getAttribute('role'), 'group');
 
   const pointTitle = view.container.querySelector('.usage-point title').textContent;
   assert.match(pointTitle, /Codex · 7 day window · 12\.5%/);
@@ -41,6 +42,7 @@ test('usage chart renders even time ticks and self-contained hover titles', asyn
   assert.match(reset.querySelector('title').textContent, /Codex · 7 day window · scheduled reset/);
 
   const forecastTarget = view.container.querySelector('.usage-forecast-hit-target');
+  assert.equal(forecastTarget.getAttribute('role'), 'img');
   assert.match(forecastTarget.getAttribute('aria-label'), /100\.0%.*6d before reset/);
   const svg = view.container.querySelector('svg');
   svg.getBoundingClientRect = () => ({ left: 0, width: 720 });

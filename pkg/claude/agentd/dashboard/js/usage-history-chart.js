@@ -80,7 +80,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
   const hoverY = hoverPoint ? y(hoverPoint.pct) : 0;
   const tooltipX = hoverX > W / 2 ? hoverX - 254 : hoverX + 10;
   const tooltipY = hoverY < 64 ? hoverY + 10 : hoverY - 54;
-  return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="img"
+  return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="group"
     aria-label=${`${series.provider} ${series.window_name} subscription usage history`}>
     ${[0, 50, 100].map((tick) => html`<g class="usage-grid" key=${tick}>
       <line x1=${PAD.left} x2=${W - PAD.right} y1=${y(tick)} y2=${y(tick)} />
@@ -111,7 +111,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line class="usage-forecast-line" x1=${x(latest.time)} y1=${y(latest.pct)}
         x2=${x(forecastAt)} y2=${y(forecastPct)} />
       <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
-        x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0"
+        x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
         aria-label=${`${scope} forecast; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt)}`}
         onmousemove=${updateForecastHover} onmouseleave=${() => setForecastHoverRatio(null)}
         onfocus=${() => setForecastHoverRatio(1)} onblur=${() => setForecastHoverRatio(null)} />

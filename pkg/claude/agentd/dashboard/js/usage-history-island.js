@@ -48,13 +48,21 @@ export function UsageHistoryApp({ state, actions }) {
   const setLookahead = (hours) => state.setLookaheadHours(hours);
   return html`<div class="usage-history-island">
     <div class="filter-bar usage-history-controls">
-      <span class="usage-control-label">History</span>
-      ${USAGE_HISTORY_SPANS.map((span) => html`<button class=${`tool${current.hours === span.hours ? ' active' : ''}`}
-        onClick=${() => setSpan(span.hours)}>${span.label}</button>`)}
-      <span class="usage-control-divider"></span>
-      <span class="usage-control-label">Look ahead</span>
-      ${USAGE_LOOKAHEAD_SPANS.map((span) => html`<button class=${`tool${current.lookaheadHours === span.hours ? ' active' : ''}`}
-        onClick=${() => setLookahead(span.hours)}>${span.label}</button>`)}
+      <div class="usage-control-group" role="group" aria-label="History range">
+        <span class="usage-control-label" aria-hidden="true">History</span>
+        ${USAGE_HISTORY_SPANS.map((span) => html`<button type="button"
+          class=${`tool${current.hours === span.hours ? ' active' : ''}`}
+          aria-label=${`History ${span.label}`} aria-pressed=${current.hours === span.hours}
+          onClick=${() => setSpan(span.hours)}>${span.label}</button>`)}
+      </div>
+      <span class="usage-control-divider" aria-hidden="true"></span>
+      <div class="usage-control-group" role="group" aria-label="Forecast lookahead">
+        <span class="usage-control-label" aria-hidden="true">Look ahead</span>
+        ${USAGE_LOOKAHEAD_SPANS.map((span) => html`<button type="button"
+          class=${`tool${current.lookaheadHours === span.hours ? ' active' : ''}`}
+          aria-label=${`Look ahead ${span.label}`} aria-pressed=${current.lookaheadHours === span.hours}
+          onClick=${() => setLookahead(span.hours)}>${span.label}</button>`)}
+      </div>
       <span class="spacer"></span><span class="muted">Account-wide provider limits · 15-minute samples</span>
     </div>
     <${AsyncLoadState} label="Usage" request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
