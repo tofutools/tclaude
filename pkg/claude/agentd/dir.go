@@ -492,6 +492,12 @@ func handleDashboardOpenWindowAPI(w http.ResponseWriter, r *http.Request) {
 // in a recorder so they can assert which dir would have been opened
 // without spawning a real window. Mirrors the clcommon.Default /
 // agentd.Spawn boundary handles.
+//
+// Under `go test` this default is never reached as-is: the agentd
+// test binary's TestMain swaps in an error-returning stub for the
+// whole run, and terminal.OpenWithCommand itself refuses test
+// binaries — so no agentd test can pop a real terminal window on a
+// developer desktop (TCL-584).
 var openTerminal = terminal.OpenWithCommand
 
 // openShellCmd builds the payload terminal.OpenWithCommand runs to
