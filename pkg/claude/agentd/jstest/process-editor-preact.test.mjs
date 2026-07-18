@@ -67,6 +67,50 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(host.childNodes.length, 0);
 });
 
+test('Preact editor layering is transient across focus, read-only selection, and rerender', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const nodeLayer = host.querySelector('.process-node-layer');
+  const portLayer = host.querySelector('.process-port-layer');
+  const frontNodeLayer = host.querySelector('.process-front-node-layer');
+  const saveBefore = editor.model.saveBody();
+  const revisionBefore = editor.model.rev;
+  const undoBefore = editor.model.undoStack.length;
+  const traversalBefore = [
+    ...nodeLayer.querySelectorAll('[tabindex="0"]'),
+    ...portLayer.querySelectorAll('[tabindex="0"]'),
+  ].map((element) => `${element.closest('[data-node-id]').dataset.nodeId}:${element.dataset.port || 'node'}`);
+
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'start');
+  await harness.act(() => editor.refresh());
+  assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'start',
+    'ordinary Preact/controller rerenders preserve the front identity');
+
+  editor.model.config.nodeEditable = () => false;
+  editor.model.config.edgeEditable = () => false;
+  editor.model.config.canInsert = false;
+  editor.graph.resetInteractionLayering();
+  await harness.act(() => harness.fireEvent(
+    nodeLayer.querySelector('[data-node-id="start"]'), 'click',
+  ));
+  assert.deepEqual(editor.selection, { type: 'node', id: 'start' },
+    'read-only interaction still exposes and selects an overlapped node');
+  assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'start');
+  assert.deepEqual(editor.model.saveBody(), saveBefore);
+  assert.equal(editor.model.rev, revisionBefore);
+  assert.equal(editor.model.undoStack.length, undoBefore);
+  assert.deepEqual([
+    ...nodeLayer.querySelectorAll('[tabindex="0"]'),
+    ...portLayer.querySelectorAll('[tabindex="0"]'),
+  ].map((element) => `${element.closest('[data-node-id]').dataset.nodeId}:${element.dataset.port || 'node'}`), traversalBefore,
+  'raising remains outside canonical sequential keyboard navigation');
+
+  harness.fireEvent(nodeLayer.querySelector('[data-node-id="start"]'), 'focusin');
+  assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'start',
+    'keyboard focus uses the same transient presentation layer');
+  editor.destroy();
+});
+
 test('custom snippets create, keyboard-insert, rename, and delete through the Preact palette', async (t) => {
   const previousFetch = globalThis.fetch;
   const id = `psn_${'a'.repeat(32)}`;

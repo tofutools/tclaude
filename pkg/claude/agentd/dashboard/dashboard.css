@@ -11995,6 +11995,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 }
 .process-node:hover .process-node-shape,
 .process-node:focus .process-node-shape,
+.process-node.is-focus-copy .process-node-shape,
 .process-node.is-selected .process-node-shape { stroke: var(--pg-accent); }
 .process-node.is-selected .process-node-shape { stroke-width: 4; }
 .process-node-label { fill: currentColor; font-size: 13px; font-weight: 650; pointer-events: none; }
@@ -12017,7 +12018,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 }
 .process-node-ports.is-node-hover .process-port,
 .process-node-ports:hover .process-port, .process-port:hover, .process-port:active { opacity: 1; }
-.process-port:focus, .process-port.is-keyboard-source { opacity: 1; stroke-width: 4; outline: none; }
+.process-port:focus, .process-port.is-focus-copy, .process-port.is-keyboard-source { opacity: 1; stroke-width: 4; outline: none; }
 .process-port.is-keyboard-source { fill: var(--pg-accent); }
 .process-port.is-action-disabled {
   opacity: .5; stroke: var(--pg-invalid); stroke-dasharray: 3 2; cursor: help;
@@ -12086,6 +12087,7 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-overlay-anchor:hover .process-overlay-tooltip,
 .process-node:focus .process-overlay-tooltip,
 .process-node:focus-visible .process-overlay-tooltip,
+.process-node.is-focus-copy .process-overlay-tooltip,
 .process-edge:hover .process-overlay-tooltip,
 .process-edge:focus .process-overlay-tooltip,
 .process-edge:focus-visible .process-overlay-tooltip { display: block; }

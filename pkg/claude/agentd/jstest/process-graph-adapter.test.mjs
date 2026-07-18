@@ -27,6 +27,99 @@ async function mountedAdapter(t, events = {}, options = {}) {
   return { harness, host, adapter };
 }
 
+test('editor interaction layering raises one node without changing semantic layers or keyboard order', async (t) => {
+  const { harness, adapter, host } = await mountedAdapter(t, {}, { interactionLayering: true });
+  const svg = host.querySelector('.process-graph-svg');
+  const viewport = host.querySelector('.process-graph-viewport');
+  const nodeLayer = host.querySelector('.process-node-layer');
+  const portLayer = host.querySelector('.process-port-layer');
+  const frontNodeLayer = host.querySelector('.process-front-node-layer');
+  const frontPortLayer = host.querySelector('.process-front-port-layer');
+  const edgePath = host.querySelector('.process-edge-path').getAttribute('d');
+  const nodeOrder = () => [...nodeLayer.children].map((node) => node.dataset.nodeId);
+  const portOrder = () => [...portLayer.children].map((node) => node.dataset.nodeId);
+  const canonicalNodeOrder = nodeOrder();
+  const canonicalPortOrder = portOrder();
+  assert.deepEqual([...viewport.children].map((layer) => layer.dataset.key),
+    ['edges', 'nodes', 'front-node', 'ports', 'front-ports'],
+    'edges, nodes, ports, and the two contained paint layers keep fixed semantic stacking');
+
+  const start = nodeLayer.querySelector('[data-node-id="start"]');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(start, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  let blurs = 0;
+  start.addEventListener('blur', () => { blurs += 1; });
+  start.focus();
+  adapter.setSelection({ type: 'node', id: 'start' });
+  assert.equal(harness.document.activeElement, start,
+    'painting the focused node at the front leaves the canonical focus owner live');
+  assert.equal(blurs, 0, 'raising does not synthesize blur');
+  assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'start');
+  assert.equal(frontPortLayer.firstElementChild?.dataset.nodeId, 'start');
+  assert.equal(frontNodeLayer.getAttribute('aria-hidden'), 'true');
+  assert.equal(frontPortLayer.getAttribute('aria-hidden'), 'true');
+  assert.equal(frontNodeLayer.querySelector('[role], [tabindex], [aria-label]'), null,
+    'the paint/hit copy never joins the accessibility tree');
+  assert.equal(frontPortLayer.querySelector('[role], [tabindex], [aria-label]'), null,
+    'copied ports never duplicate canonical button ownership');
+  assert.deepEqual(nodeOrder(), canonicalNodeOrder);
+  assert.deepEqual(portOrder(), canonicalPortOrder);
+  assert.equal(host.querySelector('.process-edge-path').getAttribute('d'), edgePath,
+    'raising a node never changes edge routing');
+
+  const canonicalTraversal = () => [
+    ...nodeLayer.querySelectorAll('[tabindex="0"]'),
+    ...portLayer.querySelectorAll('[tabindex="0"]'),
+  ].map((element) => `${element.closest('[data-node-id]')?.dataset.nodeId}:${element.dataset.port || 'node'}`);
+  const traversal = canonicalTraversal();
+  adapter.setSelection({ type: 'node', id: 'end' });
+  adapter.setSelection({ type: 'node', id: 'start' });
+  assert.deepEqual(canonicalTraversal(), traversal,
+    'sequential node/port traversal is canonical rather than click-history ordered');
+  for (const port of portLayer.querySelectorAll('.process-port')) {
+    assert.equal(port.getAttribute('role'), 'button');
+    assert.equal(port.getAttribute('tabindex'), '0');
+    assert.ok(port.getAttribute('aria-label'));
+  }
+
+  let captured = 0;
+  svg.setPointerCapture = () => { captured += 1; };
+  svg.releasePointerCapture = () => {};
+  const end = nodeLayer.querySelector('[data-node-id="end"]');
+  harness.fireEvent(end, 'pointerdown', {
+    button: 0, pointerId: 77, pointerType: 'mouse', clientX: 1, clientY: 2,
+  });
+  assert.equal(captured, 1, 'raising during pointerdown retains SVG pointer capture');
+  assert.equal(adapter.interactionSnapshot().active, true);
+  harness.fireEvent(svg, 'pointerup', {
+    pointerId: 77, pointerType: 'mouse', clientX: 1, clientY: 2,
+  });
+  assert.equal(adapter.interactionSnapshot().active, false);
+
+  adapter.setGraph({
+    nodes: [{ id: 'start', type: 'start' }, { id: 'end', type: 'end' }], edges: [],
+  });
+  assert.equal(frontNodeLayer.firstElementChild?.dataset.nodeId, 'end',
+    'ordinary rerenders preserve the one live semantic front identity');
+  adapter.setGraph({ nodes: [{ id: 'start', type: 'start' }], edges: [] });
+  assert.equal(frontNodeLayer.childElementCount, 0, 'node deletion prunes the front identity');
+  assert.equal(frontPortLayer.childElementCount, 0);
+  adapter.setGraph({
+    nodes: [{ id: 'start', type: 'start' }, { id: 'end', type: 'end' }], edges: [],
+  });
+  assert.equal(frontNodeLayer.childElementCount, 0,
+    'reusing a deleted ID does not resurrect stale presentation state');
+  adapter.setSelection({ type: 'node', id: 'end' });
+  adapter.setGraph({
+    nodes: [{ id: 'start', type: 'start' }, { id: 'end', type: 'end' }], edges: [],
+  }, { resetInteractionLayering: true });
+  assert.equal(frontNodeLayer.childElementCount, 0,
+    'whole-model replacement explicitly resets even when node IDs are reused');
+});
+
 test('editor connection feedback covers pointer, keyboard, timing, and cleanup without changing hit geometry', async (t) => {
   const received = [];
   const feedback = ({ phase, source, candidate = {} }) => {

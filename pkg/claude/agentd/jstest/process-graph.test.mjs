@@ -1,7 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessGraph, isGraphTypingTarget, normalizeWheelDelta } from '../dashboard/js/process-graph.js';
+import {
+  ProcessGraph, interactionNode, isGraphTypingTarget, normalizeWheelDelta,
+} from '../dashboard/js/process-graph.js';
 import { parseHTML } from './vendor/linkedom.mjs';
+
+test('interaction node identity is exact, deterministic, and bounded to live nodes', () => {
+  const nodes = [{ id: 'alpha' }, { id: '10' }, { id: 'beta' }];
+  assert.equal(interactionNode(nodes, 'alpha'), nodes[0]);
+  assert.equal(interactionNode(nodes, 10), nodes[1]);
+  assert.equal(interactionNode(nodes, 'missing'), null);
+  assert.equal(interactionNode(nodes, null), null);
+  assert.deepEqual(nodes.map((node) => node.id), ['alpha', '10', 'beta'],
+    'identity resolution never reorders or annotates canonical nodes');
+});
 
 test('every node kind keeps its bounded label inside the shape and clear of connector ports', () => {
   const previousDocument = globalThis.document;

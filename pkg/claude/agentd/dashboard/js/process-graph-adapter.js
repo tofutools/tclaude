@@ -17,6 +17,7 @@ export class ProcessGraphAdapter {
     graph = { nodes: [], edges: [] }, ariaLabel = '', events = {}, connectionFeedback,
     connectionFeedbackPreparation,
     actionFeedbackDelay, keyboardFeedbackDelay,
+    interactionLayering = false,
   } = {}) {
     this.host = host;
     this.events = events;
@@ -33,6 +34,7 @@ export class ProcessGraphAdapter {
       connectionFeedbackPreparation,
       actionFeedbackDelay,
       keyboardFeedbackDelay,
+      interactionLayering,
       onInteractionStart: () => { this.interactionGeneration += 1; },
       onInteractionEnd: () => { this.interactionGeneration += 1; },
       onNodeClick: emit('nodeClick'),
@@ -117,6 +119,7 @@ export class ProcessGraphAdapter {
   centerOn(x, y) { if (!this.disposed) this.widget.centerOn(x, y); }
   zoomBy(factor) { return this.disposed ? false : this.widget.zoomBy(factor); }
   resetZoom() { return this.disposed ? false : this.widget.resetZoom(); }
+  resetInteractionLayering() { if (!this.disposed) this.widget.resetInteractionLayering(); }
   focus() { if (!this.disposed) this.widget.root.focus({ preventScroll: true }); }
   focusNode(id) { if (!this.disposed) this.widget.focusNode(id); }
 

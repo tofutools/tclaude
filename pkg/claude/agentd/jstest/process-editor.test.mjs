@@ -1302,6 +1302,8 @@ test('confirmed external Reload swaps in the new head without fitting the viewpo
   });
   try {
     const editor = externalReloadEditor({ dirty: true, confirmDiscard: async () => { prompts += 1; return true; } });
+    let layeringResets = 0;
+    editor.graph = { resetInteractionLayering() { layeringResets += 1; } };
     editor.selection = { type: 'multi', items: [{ type: 'node', id: 'a' }, { type: 'node', id: 'gone' }] };
     const dispose = () => { modalClosed += 1; editor.modalDispose = null; };
     dispose.isDirty = () => false;
@@ -1315,6 +1317,8 @@ test('confirmed external Reload swaps in the new head without fitting the viewpo
     assert.equal(editor.refreshOptions, undefined, 'no fit request preserves the graph pan/zoom');
     assert.equal(editor.loadedView.currentRef, 'alpha@sha256:new', 'applied canonical view becomes the next review baseline');
     assert.equal(editor.externalChange.kind, 'none');
+    assert.equal(layeringResets, 1,
+      'whole-model replacement explicitly drops presentation layering before reused IDs render');
     assert.match(editor.lastStatus.message, /Reloaded external version/);
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
