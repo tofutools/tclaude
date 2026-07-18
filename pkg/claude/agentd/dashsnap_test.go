@@ -27,11 +27,13 @@ package agentd_test
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +44,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -60,7 +63,26 @@ func TestDashSnap(t *testing.T) {
 	// the session cookie on every request (so a browser is authed without a login
 	// flow), and popupBaseURL is left empty so the loopback Origin pin is off —
 	// the browser's same-origin fetches carry a Referer and pass auth.
-	srv := httptest.NewServer(agentd.BuildDashboardHandlerForTest())
+	//
+	// One guard wraps it: the retire-busy state relies on an InitJS fetch hold
+	// to keep its retire POST inside the browser, and that seam must fail
+	// CLOSED. If the production dialog ever stops routing through the held
+	// window.fetch (different primitive, changed URL), the escaped request is
+	// recorded and rejected here — 503, nothing mutated — instead of retiring
+	// the live fixture agent and poisoning the later wizard-skin pass. The
+	// count is asserted to be zero after the matrix.
+	var busyRetireEscapes atomic.Int64
+	dash := agentd.BuildDashboardHandlerForTest()
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/agents/"+retireBusyConv+"/retire" {
+			busyRetireEscapes.Add(1)
+			http.Error(w, "dashsnap: the retire-busy POST must be held open in the browser, never reach the daemon",
+				http.StatusServiceUnavailable)
+			return
+		}
+		dash.ServeHTTP(w, r)
+	})
+	srv := httptest.NewServer(guarded)
 	defer srv.Close()
 
 	states := dashSnapStates()
@@ -135,6 +157,10 @@ if (!__preactShell || !__preactShell.firstElementChild) throw new Error('Preact 
 	t.Logf("dashsnap: %d states, %d failed, captured in %s", len(shots), len(failed), elapsed.Round(time.Second))
 	t.Logf("contact sheet: file://%s", sheet)
 
+	if n := busyRetireEscapes.Load(); n != 0 {
+		t.Errorf("retire-busy: %d retire request(s) escaped the browser fetch hold and reached the daemon — "+
+			"the InitJS seam no longer matches the production request path (rejected without mutating)", n)
+	}
 	if len(failed) > 0 {
 		t.Fatalf("dashsnap: %d/%d states failed to capture: %s (sheet: %s)",
 			len(failed), len(shots), strings.Join(failed, ", "), sheet)
@@ -175,6 +201,26 @@ const (
 	otherGroup   = "infra-crew"
 	linearTask   = "https://linear.app/tofutools/issue/JOH-386"
 	otherTaskURL = "https://github.com/tofutools/tclaude/pull/386"
+
+	// The single-agent retire dialog states (TCL-491) each pin one transaction
+	// phase to its own fixture target so no state can mutate what another
+	// state's skin pass still needs:
+	//   - retireWorktreeConv: idle defaults only — never submitted.
+	//   - retireBusyConv: submitted, but its retire POST is held open in the
+	//     browser (see retireBusyFetchHoldJS) and never reaches the daemon.
+	//   - retireErrorConv: a resolvable conv that is NOT a live agent, so the
+	//     real daemon answers the submission with a non-mutating 409.
+	//   - retireDanglingConv: an enrollment with no conversation data, so the
+	//     real daemon answers 409 {dangling:true} (read-only) and the dialog
+	//     hands off to the shell confirm — whose OK is never pressed.
+	retireWorktreeConv = "c2000000-0000-4000-8000-000000000003"
+	retireBusyConv     = "c2000000-0000-4000-8000-000000000004"
+	retireErrorConv    = "e4910000-0000-4000-8000-000000000001"
+	retireDanglingConv = "da491000-0000-4000-8000-000000000001"
+
+	retireWorktreeDir = "/tmp/lbl-in-wt"
+	retireBusyDir     = "/tmp/lbl-in-busy"
+	retireErrorDir    = "/tmp/lbl-retire-err"
 )
 
 // dashMemberSpec is one seeded member.
@@ -218,6 +264,13 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 		{convID: "c2000000-0000-4000-8000-000000000002", label: "lbl-in-dev", tmux: "tmux-in-dev",
 			title: "infra-dev-db", role: "dev", online: false,
 			tags: []string{"backend", "sqlite"}},
+		// The retire-dialog states' row-opened targets (TCL-491). Their cwds
+		// ("/tmp/"+label) carry canned removable-worktree probes; see
+		// seedRetireDialogDashSnap for why each state gets its own agent.
+		{convID: retireWorktreeConv, label: "lbl-in-wt", tmux: "tmux-in-wt",
+			title: "infra-dev-worktree", role: "dev", status: "running", online: true},
+		{convID: retireBusyConv, label: "lbl-in-busy", tmux: "tmux-in-busy",
+			title: "infra-dev-busy", role: "dev", status: "running", online: true},
 	}
 
 	for _, m := range feMembers {
@@ -270,6 +323,39 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 	seedPalette(t, f)
 	seedProcessDashSnap(t, f)
 	seedUsageHistoryDashSnap(t)
+	seedRetireDialogDashSnap(t, f)
+}
+
+// seedRetireDialogDashSnap stages the single-agent retire dialog states
+// (TCL-491). The two roster members above cover the idle and busy phases; this
+// adds the two 409-answered targets plus the deterministic worktree probes.
+// Every retire state either never submits, is held open in the browser, or is
+// answered by a real non-mutating daemon 409 — so the default-skin pass leaves
+// the fixture exactly as the wizard-skin pass expects to find it.
+func seedRetireDialogDashSnap(t *testing.T, f *testharness.Flow) {
+	t.Helper()
+
+	// A resolvable plain conversation that was never an agent: retiring it makes
+	// the REAL daemon answer 409 "not a live agent … nothing to retire" without
+	// mutating anything, which the error state uses for its inline-error/retry
+	// phase instead of a stubbed response.
+	f.HaveConvWithTitle(retireErrorConv, "retire-error-target")
+	f.HaveAliveSession(retireErrorConv, "lbl-retire-err", "tmux-retire-err", retireErrorDir)
+
+	// A dangling enrollment — an active agent row whose conversation data is
+	// gone. Retire answers the read-only 409 {dangling:true}, handing the dialog
+	// off to the shell confirm (the state never presses its OK).
+	f.HaveEnrolledAgent(retireDanglingConv)
+
+	// Canned worktree probes through the same fake-git seam the cleanup flow
+	// tests use: the three retire targets report their cwd as a removable linked
+	// worktree; every other directory stays kind "none", so no unrelated dialog
+	// grows a worktree row.
+	installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		retireWorktreeDir: {Root: retireWorktreeDir, Branch: "tcl-491-idle-probe", Kind: "linked"},
+		retireBusyDir:     {Root: retireBusyDir, Branch: "tcl-491-busy-probe", Kind: "linked"},
+		retireErrorDir:    {Root: retireErrorDir, Branch: "tcl-491-error-probe", Kind: "linked"},
+	})
 }
 
 func seedUsageHistoryDashSnap(t *testing.T) {
@@ -2231,6 +2317,46 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			JS:       summonJS(`details[data-dnd-target-group="`+tfTemplate+`"]`, true),
 			SettleMS: 800,
 		},
+		// --- Single-agent retire dialog (TCL-491) — the four transaction phases
+		// of the Preact #retire-modal, each opened for real (row button or the
+		// same controller seam the palette/DnD use) and self-checked. See the
+		// retire* fixture constants for why each phase owns a separate target.
+		{
+			Key:      "retire-idle-worktree",
+			Title:    "Retire dialog — idle removable worktree",
+			Caption:  "TCL-491 (self-checked): the row-opened retire dialog after the worktree probe — shutdown and delete-worktree default ON, probed path·branch shown, primary focused, skin-correct title copy.",
+			JS:       retireDialogIdleJS(),
+			SettleMS: 300,
+		},
+		{
+			Key:     "retire-busy-locked",
+			Title:   "Retire dialog — busy, non-dismissible",
+			Caption: "TCL-491 (self-checked): the retire POST is held open in the browser, freezing the dialog mid-submission — spinner + busy label, cancel and both choices disabled, and a real Escape keypress bounces off.",
+			JS:      retireDialogBusyJS(),
+			InitJS:  retireBusyFetchHoldJS(),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "key", Key: "escape"},
+				{Kind: "eval", JS: `
+if (!document.querySelector('#retire-modal.show')) throw new Error('retire-busy: Escape dismissed a busy transaction');
+if (document.querySelector('#confirm-modal.show')) throw new Error('retire-busy: Escape opened a discard confirm during a busy transaction');
+if (!document.querySelector('#retire-ok[aria-busy="true"]')) throw new Error('retire-busy: busy lock dropped after Escape');`},
+			},
+			SettleMS: 300,
+		},
+		{
+			Key:      "retire-error-retry",
+			Title:    "Retire dialog — inline HTTP error + retry",
+			Caption:  "TCL-491 (self-checked): a real daemon 409 answers the submission — inline role=alert error, primary relabelled Retry, the submitted choices stay frozen while cancel re-enables.",
+			JS:       retireDialogErrorJS(),
+			SettleMS: 300,
+		},
+		{
+			Key:      "retire-dangling-confirm",
+			Title:    "Retire dialog — dangling entry hand-off",
+			Caption:  "TCL-491 (self-checked): retiring a dangling enrollment (real 409 {dangling:true}) unmounts the transaction dialog and hands off to the shell confirm, which takes focus. Its OK is never pressed.",
+			JS:       retireDialogDanglingJS(),
+			SettleMS: 300,
+		},
 	}
 	return append(states, processGraphStates()...)
 }
@@ -3497,4 +3623,161 @@ resolve();
 });
 `
 	return js
+}
+
+// ---------------------------------------------------------------------------
+// Single-agent retire dialog states (TCL-491). Each helper returns a complete
+// self-checking program for one transaction phase of the Preact #retire-modal.
+// The idle and busy phases open the dialog through the production per-row
+// retire button on the Groups tab; the error and dangling phases open it
+// through the same controller seam the command palette and DnD launchers use
+// (their targets are not roster members, deliberately — see the fixture).
+// ---------------------------------------------------------------------------
+
+// retireDialogWaitJS is the shared bounded poll each retire state prepends:
+// __retireWait(state, what, get) resolves with get()'s first truthy value or
+// throws a labelled error, so a hung phase fails the shot with a real reason.
+const retireDialogWaitJS = `var __retireWait = async function(state, what, get) {
+  var deadline = Date.now() + 8000;
+  for (;;) {
+    var got = get();
+    if (got) return got;
+    if (Date.now() > deadline) throw new Error(state + ': ' + what + ' did not appear');
+    await new Promise(function(resolve){ setTimeout(resolve, 30); });
+  }
+};`
+
+// retireRowOpenJS opens conv's retire dialog exactly as an operator does:
+// Groups tab, groups expanded, the row's retire button clicked, then waits for
+// the keyed transaction owner to mount AND for the worktree probe to land its
+// removable default (worktree checkbox present, ON, enabled) so a submission
+// after this prologue always freezes the fully-populated choice row.
+func retireRowOpenJS(stateKey, conv string) string {
+	return fmt.Sprintf(`document.querySelector('nav [data-tab="groups"]').click();
+document.querySelectorAll('details[data-dnd-target-group]').forEach(function(d){d.open=true;});
+return (async function(){
+  %s
+  var btn = await __retireWait(%q, 'row retire button', function(){
+    return document.querySelector('button[data-act="retire-agent"][data-conv=%q]');
+  });
+  btn.click();
+  await __retireWait(%q, 'retire dialog', function(){ return document.querySelector('#retire-modal.show'); });
+  var wt = await __retireWait(%q, 'probed removable worktree default', function(){
+    var el = document.querySelector('#retire-wt');
+    return el && el.checked && !el.disabled ? el : null;
+  });
+`, retireDialogWaitJS, stateKey, conv, stateKey, stateKey)
+}
+
+func retireDialogIdleJS() string {
+	return retireRowOpenJS("retire-idle", retireWorktreeConv) + fmt.Sprintf(`
+  var shutdown = document.querySelector('#retire-shutdown');
+  if (!shutdown.checked || shutdown.disabled) throw new Error('retire-idle: shutdown default is not an enabled ON');
+  var label = document.querySelector('#retire-wt-label').textContent;
+  if (label.indexOf(%q) === -1 || label.indexOf(%q) === -1 || label.indexOf('removed after the agent exits') === -1) {
+    throw new Error('retire-idle: worktree row does not show the probed path/branch: ' + label);
+  }
+  var ok = document.querySelector('#retire-ok');
+  if (ok.disabled || ok.textContent.trim() !== 'Retire') throw new Error('retire-idle: primary is not an enabled Retire');
+  if (document.activeElement !== ok) throw new Error('retire-idle: primary did not take initial focus');
+  if (document.querySelector('#retire-cancel').disabled) throw new Error('retire-idle: cancel must stay enabled while idle');
+  if (document.querySelector('#retire-meta').textContent.trim() !== 'infra-dev-worktree') throw new Error('retire-idle: meta label mismatch');
+  var wizard = document.body.classList.contains('wizard');
+  var regularTitle = document.querySelector('#retire-title .retire-title-regular');
+  var wizardTitle = document.querySelector('#retire-title .retire-title-wizard');
+  if (wizard) {
+    if (getComputedStyle(wizardTitle).display === 'none' || getComputedStyle(regularTitle).display !== 'none') throw new Error('retire-idle: wizard title copy missing');
+    if (wizardTitle.textContent.trim() !== 'Banish this familiar?') throw new Error('retire-idle: wizard title copy changed: ' + wizardTitle.textContent);
+  } else {
+    if (getComputedStyle(regularTitle).display === 'none' || getComputedStyle(wizardTitle).display !== 'none') throw new Error('retire-idle: regular title copy missing');
+    if (regularTitle.textContent.trim() !== 'Retire this agent?') throw new Error('retire-idle: regular title copy changed: ' + regularTitle.textContent);
+  }
+})();`, retireWorktreeDir, "tcl-491-idle-probe")
+}
+
+// retireBusyFetchHoldJS is the busy state's InitJS: it wraps window.fetch
+// BEFORE the dashboard modules capture it at bootstrap, holding exactly the
+// busy target's retire POST open forever (a promise that never settles) while
+// every other request passes through untouched. The request therefore never
+// reaches the daemon — nothing mutates — and the dialog is frozen genuinely
+// mid-submission, not painted to look that way.
+func retireBusyFetchHoldJS() string {
+	return fmt.Sprintf(`(function(){
+  if (window.__tclaudeRetireHold) return;
+  var realFetch = window.fetch;
+  window.__tclaudeRetireHold = true;
+  window.__tclaudeRetireHoldHits = 0;
+  window.fetch = function(input) {
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    if (url.indexOf('/api/agents/%s/retire') !== -1) {
+      window.__tclaudeRetireHoldHits += 1;
+      return new Promise(function(){});
+    }
+    return realFetch.apply(this, arguments);
+  };
+})();`, retireBusyConv)
+}
+
+func retireDialogBusyJS() string {
+	return `if (!window.__tclaudeRetireHold) throw new Error('retire-busy: the fetch hold was not installed before page scripts');
+` + retireRowOpenJS("retire-busy", retireBusyConv) + `
+  document.querySelector('#retire-ok').click();
+  var ok = await __retireWait('retire-busy', 'busy submit lock', function(){
+    var el = document.querySelector('#retire-ok');
+    return el && el.disabled && el.getAttribute('aria-busy') === 'true' ? el : null;
+  });
+  if (!ok.querySelector('.btn-spinner')) throw new Error('retire-busy: busy primary lost its spinner');
+  var busyRegular = ok.querySelector('.theme-copy-regular');
+  var busyWizard = ok.querySelector('.theme-copy-wizard');
+  if (document.body.classList.contains('wizard')) {
+    if (getComputedStyle(busyWizard).display === 'none' || busyWizard.textContent !== 'Banishing…') throw new Error('retire-busy: wizard busy label missing');
+  } else if (getComputedStyle(busyRegular).display === 'none' || busyRegular.textContent !== 'Retiring…') {
+    throw new Error('retire-busy: regular busy label missing');
+  }
+  if (!document.querySelector('#retire-cancel').disabled) throw new Error('retire-busy: cancel must be blocked while busy');
+  if (!document.querySelector('#retire-shutdown').disabled || !wt.disabled) throw new Error('retire-busy: the in-flight choices must be locked');
+  if (window.__tclaudeRetireHoldHits !== 1) throw new Error('retire-busy: expected exactly one held retire request, saw ' + window.__tclaudeRetireHoldHits);
+})();`
+}
+
+func retireDialogErrorJS() string {
+	return fmt.Sprintf(`return (async function(){
+  %s
+  var controller = await import('/static/js/transaction-dialog-controller.js');
+  void controller.openRetireAgentDialog(%q, 'retire-error-target').catch(function(){});
+  await __retireWait('retire-error', 'retire dialog', function(){ return document.querySelector('#retire-modal.show'); });
+  await __retireWait('retire-error', 'probed removable worktree default', function(){
+    var el = document.querySelector('#retire-wt');
+    return el && el.checked && !el.disabled ? el : null;
+  });
+  document.querySelector('#retire-ok').click();
+  var error = await __retireWait('retire-error', 'inline request error', function(){
+    var el = document.querySelector('#retire-error');
+    return el && el.textContent.trim() ? el : null;
+  });
+  if (error.getAttribute('role') !== 'alert') throw new Error('retire-error: the inline error is not announced as an alert');
+  if (error.textContent.indexOf('nothing to retire') === -1) throw new Error('retire-error: unexpected daemon error copy: ' + error.textContent);
+  var ok = document.querySelector('#retire-ok');
+  if (ok.disabled || ok.textContent.trim() !== 'Retry') throw new Error('retire-error: primary must re-arm as an enabled Retry');
+  if (!document.querySelector('#retire-shutdown').disabled || !document.querySelector('#retire-wt').disabled) throw new Error('retire-error: the submitted choices must stay frozen for the retry');
+  if (!document.querySelector('#retire-wt').checked) throw new Error('retire-error: the frozen worktree opt-in lost its visible ON state');
+  if (document.querySelector('#retire-cancel').disabled) throw new Error('retire-error: cancel must re-enable after the failed attempt');
+})();`, retireDialogWaitJS, retireErrorConv)
+}
+
+func retireDialogDanglingJS() string {
+	return fmt.Sprintf(`return (async function(){
+  %s
+  var controller = await import('/static/js/transaction-dialog-controller.js');
+  void controller.openRetireAgentDialog(%q, 'dangling-entry').catch(function(){});
+  await __retireWait('retire-dangling', 'retire dialog', function(){ return document.querySelector('#retire-modal.show'); });
+  document.querySelector('#retire-ok').click();
+  var confirmOK = await __retireWait('retire-dangling', 'shell confirm hand-off', function(){
+    return document.querySelector('#confirm-modal.show #confirm-ok');
+  });
+  if (document.querySelector('#retire-modal')) throw new Error('retire-dangling: the transaction dialog must unmount before the shell confirm owns the viewport');
+  if (document.querySelector('#confirm-title').textContent.indexOf('Remove dangling agent entry?') === -1) throw new Error('retire-dangling: confirm title mismatch');
+  if (document.querySelector('#confirm-meta').textContent.indexOf('dangling-entry') === -1) throw new Error('retire-dangling: confirm meta does not carry the agent label');
+  if (document.activeElement !== confirmOK) throw new Error('retire-dangling: focus did not hand off to the confirm action');
+})();`, retireDialogWaitJS, retireDanglingConv)
 }

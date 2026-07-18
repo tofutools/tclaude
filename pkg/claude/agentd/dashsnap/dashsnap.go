@@ -131,6 +131,14 @@ type State struct {
 	// captures the freshly-loaded page. A thrown error marks the shot failed but
 	// does not abort the run — the sheet records the error under the tile.
 	JS string
+	// InitJS, when non-empty, is installed via Page.addScriptToEvaluateOnNewDocument
+	// before this state's navigation and removed again when the state finishes, so
+	// it runs in the fresh document BEFORE any dashboard module executes. Use it
+	// for deterministic seams the page scripts capture at bootstrap (e.g. wrapping
+	// window.fetch to hold one request open) — the post-load JS above runs too
+	// late for those. Scoped strictly to its own state: the reused page never
+	// carries it into the next navigation.
+	InitJS string
 	// Actions run after JS using Chrome's input domain. Supported kinds: click,
 	// key-down, key-up, key, mouse-down, mouse-down-at, move-by, move-to-at,
 	// mouse-up, eval.
@@ -286,8 +294,24 @@ func Capture(cfg Config) ([]Shot, error) {
 	for _, st := range cfg.States {
 		shot := Shot{State: st}
 		start := time.Now()
-		png, capErr := captureState(page, cfg, st)
+		png, tainted, capErr := captureState(page, cfg, st)
 		shot.Elapsed = time.Since(start)
+		if tainted {
+			// The state's InitJS script could not be confirmed removed, so this
+			// page would carry it into every later navigation. Isolation is the
+			// seam's contract: replace the page rather than continue on hidden
+			// state. A failed replacement aborts the run — there is no clean page
+			// to continue on.
+			if renewErr := rod.Try(func() {
+				_ = page.Close()
+				page = browser.MustPage("")
+				page.MustSetViewport(cfg.Width, cfg.Height, 1, false)
+			}); renewErr != nil {
+				shot.Err = errors.Join(capErr, renewErr).Error()
+				shots = append(shots, shot)
+				return shots, fmt.Errorf("replace page after unconfirmed InitJS removal: %w", renewErr)
+			}
+		}
 		if capErr != nil {
 			shot.Err = capErr.Error()
 			var evalErr *rod.EvalError
@@ -325,14 +349,41 @@ func configureScrollbarVisibility(l *launcher.Launcher, show bool) {
 // becomes a returned error, not a panic) and under a per-state deadline (so one
 // stuck state can't consume the whole matrix's budget).
 //
+// tainted reports that the state's InitJS script was installed but its removal
+// could not be CONFIRMED — the page may still carry the script, so the caller
+// must not reuse it for later states. A confirmed removal failure also joins
+// the returned error, so a leak can never pass silently.
+//
 // It deliberately does NOT WaitDOMStable: the dashboard repaints on a 2s poll
 // (+ wizard FX), so the DOM is never "stable" and the wait would block for
 // seconds every state. Waiting for the ready selector + a fixed settle yields a
 // coherent frame far faster.
-func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) {
+func captureState(page *rod.Page, cfg Config, st State) (png []byte, tainted bool, err error) {
+	var cleanupErr error
 	err = rod.Try(func() {
 		sp := page.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
 		defer sp.CancelTimeout() // release the per-state timeout's timer
+		if strings.TrimSpace(st.InitJS) != "" {
+			res, initErr := proto.PageAddScriptToEvaluateOnNewDocument{Source: st.InitJS}.Call(sp)
+			if initErr != nil {
+				panic(initErr)
+			}
+			tainted = true
+			// Remove under a FRESH bounded context: the state's own deadline may
+			// already be spent when this defer runs, and the removal must neither
+			// inherit that dead deadline nor hang the matrix on a stalled CDP.
+			// Only a confirmed removal clears tainted; a failure is surfaced (via
+			// cleanupErr below) and makes the caller retire the page.
+			defer func() {
+				cp := page.Timeout(10 * time.Second)
+				defer cp.CancelTimeout()
+				if rmErr := (proto.PageRemoveScriptToEvaluateOnNewDocument{Identifier: res.Identifier}).Call(cp); rmErr != nil {
+					cleanupErr = fmt.Errorf("remove InitJS script (would leak into later states): %w", rmErr)
+					return
+				}
+				tainted = false
+			}()
+		}
 		width, height := cfg.Width, cfg.Height
 		if st.Width > 0 {
 			width = st.Width
@@ -462,7 +513,10 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 
 		png = sp.MustScreenshot()
 	})
-	return png, err
+	if cleanupErr != nil {
+		err = errors.Join(err, cleanupErr)
+	}
+	return png, tainted, err
 }
 
 func browserKey(name string) input.Key {
