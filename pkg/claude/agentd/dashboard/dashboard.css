@@ -11958,7 +11958,10 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-node.is-selected .process-node-shape { stroke: var(--pg-accent); }
 .process-node.is-selected .process-node-shape { stroke-width: 4; }
 .process-node-label { fill: currentColor; font-size: 13px; font-weight: 650; pointer-events: none; }
-.process-node-label-peripheral { font-size: 11px; fill: var(--pg-muted); }
+.process-node-label-inside { dominant-baseline: auto; }
+.process-node-label-compact { font-size: 10px; }
+.process-node-label-small { font-size: 9px; }
+.process-node-label-compound { font-size: 12px; }
 .process-clock-face, .process-clock-hand {
   fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none;
 }
