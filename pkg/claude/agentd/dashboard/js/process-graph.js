@@ -680,6 +680,12 @@ export class ProcessGraph {
     return { node, edge, port };
   }
 
+  portElement(nodeId, port) {
+    return this.portLayer.querySelector(
+      `[data-node-id="${CSS.escape(String(nodeId))}"] [data-port="${CSS.escape(String(port))}"]`,
+    );
+  }
+
   connectionFeedback(request) {
     if (!this.feedbackEnabled) return null;
     const feedback = this.options.connectionFeedback(request, this.connectionEvaluation) || {};
@@ -912,8 +918,31 @@ export class ProcessGraph {
       if (feedback.enabled === false) {
         event.preventDefault();
         event.stopPropagation();
+        const identity = { nodeId: source.nodeId, port: source.port };
         target.port.focus({ preventScroll: true });
-        this.showActionFeedback(target.port, feedback, { immediate: true, keyboard: event.pointerType === '' });
+        // Focusing a connector can blur-commit an inspector edit, whose
+        // synchronous refresh replaces both SVG layers. Rebind by semantic
+        // identity before focus/ARIA/tooltip ownership so none of the
+        // disclosure lands on the detached event target.
+        let livePort = this.portElement(identity.nodeId, identity.port);
+        if (!livePort) {
+          this.clearActionFeedback();
+          return;
+        }
+        if (livePort !== target.port) {
+          livePort.focus({ preventScroll: true });
+          livePort = this.portElement(identity.nodeId, identity.port);
+          if (!livePort) {
+            this.clearActionFeedback();
+            return;
+          }
+        }
+        const liveFeedback = this.connectionFeedback({ phase: 'source', source: identity });
+        if (liveFeedback.enabled !== false) {
+          this.clearActionFeedback();
+          return;
+        }
+        this.showActionFeedback(livePort, liveFeedback, { immediate: true, keyboard: event.pointerType === '' });
         return;
       }
     }
@@ -1279,7 +1308,7 @@ export class ProcessGraph {
           const feedback = this.connectionFeedback({
             phase: 'target', source, candidate: { nodeId, port },
           });
-          if (feedback?.state !== 'valid') {
+          if (feedback?.state !== 'valid' && feedback?.state !== 'source') {
             this.showActionFeedback(target.port, feedback, { immediate: true, keyboard: true });
             return;
           }

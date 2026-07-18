@@ -197,6 +197,113 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
   adapter.dispose();
 });
 
+test('same-source activation toggles keyboard feedback off with pointer lifecycle parity', async (t) => {
+  const received = [];
+  const feedback = ({ phase, source, candidate = {} }) => {
+    if (phase === 'source') return { state: 'available', enabled: true, message: 'Start a connection.' };
+    if (candidate.nodeId === source.nodeId && candidate.port === source.port) {
+      return { state: 'source', enabled: true, message: 'Start a connection.' };
+    }
+    return { state: 'valid', enabled: true, message: 'Drop to connect.' };
+  };
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    portDragStart: (payload) => received.push(['start', payload]),
+    portDragEnd: (payload) => received.push(['end', payload]),
+  }, { connectionFeedback: feedback });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => {};
+  const source = host.querySelector('[data-node-id="start"] .process-port-out');
+  assert.equal(source.getAttribute('r'), '6');
+
+  harness.fireEvent(source, 'keydown', { key: 'Enter' });
+  const keyboardActive = adapter.interactionSnapshot();
+  assert.equal(keyboardActive.active, true);
+  assert.equal(source.getAttribute('aria-pressed'), 'true');
+  assert.ok(host.querySelector('.process-editor-band'));
+  harness.fireEvent(source, 'keydown', { key: 'Enter' });
+  const keyboardEnds = received.filter(([kind]) => kind === 'end');
+  assert.equal(keyboardEnds.length, 1,
+    'second activation emits one semantic end');
+  assert.equal(keyboardEnds[0][1].targetNodeId, 'start');
+  assert.equal(keyboardEnds[0][1].targetPort, 'out');
+  assert.equal(keyboardEnds[0][1].keyboard, true);
+  assert.equal(source.getAttribute('aria-pressed'), 'false');
+  assert.equal(host.querySelector('.process-editor-band'), null);
+  assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
+  const keyboardEnded = adapter.interactionSnapshot();
+  assert.deepEqual(keyboardEnded, {
+    generation: keyboardActive.generation + 1, active: false,
+  }, 'reload freshness observes the keyboard toggle completion');
+
+  const originalHitTest = harness.document.elementFromPoint;
+  harness.document.elementFromPoint = () => source;
+  t.after(() => { harness.document.elementFromPoint = originalHitTest; });
+  harness.fireEvent(source, 'pointerdown', {
+    button: 0, pointerId: 61, pointerType: 'mouse', clientX: 10, clientY: 20,
+  });
+  assert.ok(host.querySelector('.process-editor-band'));
+  harness.fireEvent(svg, 'pointerup', {
+    pointerId: 61, pointerType: 'mouse', clientX: 10, clientY: 20,
+  });
+  const pointerEnds = received.filter(([kind]) => kind === 'end');
+  assert.equal(pointerEnds.length, 2,
+    'same-source pointer release ends through the same adapter lifecycle');
+  assert.equal(pointerEnds[1][1].targetNodeId, 'start');
+  assert.equal(pointerEnds[1][1].targetPort, 'out');
+  assert.equal(host.querySelector('.process-editor-band'), null);
+  assert.deepEqual(adapter.interactionSnapshot(), {
+    generation: keyboardEnded.generation + 2, active: false,
+  });
+  assert.equal(source.getAttribute('r'), '6');
+  adapter.dispose();
+});
+
+test('disabled pointer feedback rebinds after a synchronous focus rerender', async (t) => {
+  const feedback = ({ phase, source }) => source.nodeId === 'end' && source.port === 'out'
+    ? { state: 'disabled', enabled: false, message: 'End nodes cannot have outgoing connections.' }
+    : { state: phase === 'source' ? 'available' : 'valid', enabled: true, message: 'Connect.' };
+  const graph = {
+    nodes: [{ id: 'start', type: 'start', label: 'Start' }, { id: 'end', type: 'end', label: 'End' }],
+    edges: [{ id: 'start:pass', from: 'start', outcome: 'pass', to: 'end' }],
+  };
+  const { harness, adapter, host } = await mountedAdapter(t, {}, {
+    connectionFeedback: feedback, actionFeedbackDelay: 50, keyboardFeedbackDelay: 50,
+  });
+  const stalePort = host.querySelector('[data-node-id="end"] .process-port-out');
+  const staleFocus = stalePort.focus.bind(stalePort);
+  let freshPort = null;
+  let freshFocuses = 0;
+  Object.defineProperty(stalePort, 'focus', {
+    configurable: true,
+    value(options) {
+      adapter.setGraph(graph);
+      freshPort = host.querySelector('[data-node-id="end"] .process-port-out');
+      const freshFocus = freshPort.focus.bind(freshPort);
+      Object.defineProperty(freshPort, 'focus', {
+        configurable: true,
+        value(nextOptions) { freshFocuses += 1; return freshFocus(nextOptions); },
+      });
+      return staleFocus(options);
+    },
+  });
+
+  harness.fireEvent(stalePort, 'pointerdown', {
+    button: 0, pointerId: 62, pointerType: 'mouse', clientX: 1, clientY: 2,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  const tooltip = host.querySelector('.process-action-tooltip');
+  assert.ok(freshPort && freshPort !== stalePort && host.contains(freshPort));
+  assert.equal(freshFocuses, 1, 'the live connector regains focus after blur-driven replacement');
+  assert.equal(freshPort.getAttribute('r'), '6', 'rebind preserves connector geometry');
+  assert.equal(freshPort.getAttribute('aria-describedby'), tooltip.id);
+  assert.equal(stalePort.hasAttribute('aria-describedby'), false,
+    'detached event target never owns the live tooltip relationship');
+  assert.ok(tooltip.classList.contains('is-visible'));
+  assert.match(tooltip.textContent, /End nodes cannot/);
+  adapter.dispose();
+});
+
 test('graph adapter translates semantic events and keeps transient pointer frames private', async (t) => {
   const received = [];
   const { harness, adapter, host } = await mountedAdapter(t, {
