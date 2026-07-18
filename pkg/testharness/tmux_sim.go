@@ -520,7 +520,7 @@ func (t *TmuxSim) resolveTarget(target string, paneTyped bool) string {
 		t.mu.Lock()
 		defer t.mu.Unlock()
 		for name, session := range t.sessions {
-			if strings.TrimPrefix(session.paneID, "%") == strconv.Itoa(pid) || session.panePID == pid {
+			if strings.TrimPrefix(session.paneID, "%") == strconv.Itoa(pid) {
 				return name
 			}
 		}

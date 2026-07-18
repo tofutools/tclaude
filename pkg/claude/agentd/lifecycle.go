@@ -361,15 +361,16 @@ func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarg
 }
 
 func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
-	err := clcommon.TmuxCommand("has-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
-	if err == nil {
-		return true, true
+	out, err := clcommon.TmuxCommand("list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return false, false
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return false, true
+	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if name == tmuxSession {
+			return true, true
+		}
 	}
-	return false, false
+	return false, true
 }
 
 func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.SessionExitIntentRef) {
