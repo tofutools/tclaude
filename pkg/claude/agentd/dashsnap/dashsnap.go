@@ -89,6 +89,13 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 )
 
+// ErrBrowserUnavailable marks a failure to find, launch, or connect to a local
+// Chrome/Chromium — an ENVIRONMENT gap, not a dashboard regression. The
+// env-gated browser smokes t.Skip on errors.Is(err, ErrBrowserUnavailable) so
+// a host without a usable browser reads as a skip, while per-state failures
+// (Shot.Err) remain hard product failures.
+var ErrBrowserUnavailable = errors.New("browser unavailable")
+
 // BrowserAction is one trusted DevTools input step (or an assertion evaluated
 // between steps). Unlike dispatchEvent-based fixture JS, click/drag/key actions
 // exercise Chrome's real pointer capture, focus, blur and click sequencing.
@@ -124,8 +131,9 @@ type State struct {
 	// does not abort the run — the sheet records the error under the tile.
 	JS string
 	// Actions run after JS using Chrome's input domain. Supported kinds: click,
-	// key-down, key-up, key, mouse-down, mouse-down-at, move-by, move-to-at,
-	// mouse-up, eval.
+	// dblclick, input, type-text, key-down, key-up, key, mouse-down,
+	// mouse-down-at, move-by, move-to-at, mouse-up, eval, popup-eval,
+	// popup-close.
 	Actions []BrowserAction
 	// SettleMS optionally overrides the post-JS settle wait (ms) for states with
 	// animations/transitions that need longer to paint. 0 uses cfg.SettleMS.
@@ -144,6 +152,11 @@ type Config struct {
 	// Keep false for ordinary layout snapshots; opt in only when scrollbar
 	// rendering itself is part of the visual contract under test.
 	ShowScrollbars bool
+	// GrantClipboard grants the BaseURL origin clipboard read/write permission
+	// before any state runs, so copy flows can assert the REAL
+	// navigator.clipboard round trip instead of the legacy execCommand
+	// fallback headless Chrome would otherwise force.
+	GrantClipboard bool
 	// Width/Height is the browser window (and viewport) size. 0 uses defaults.
 	Width, Height int
 	// States is the matrix to capture, in order.
@@ -204,8 +217,8 @@ func resolveChrome(explicit string) (string, error) {
 	if p, ok := launcher.LookPath(); ok {
 		return p, nil
 	}
-	return "", fmt.Errorf("no Chrome/Chromium found (looked at TCLAUDE_DASHSNAP_CHROME, %s, and the platform's usual install locations); "+
-		"install one or set TCLAUDE_DASHSNAP_CHROME", defaultChromeBin)
+	return "", fmt.Errorf("%w: no Chrome/Chromium found (looked at TCLAUDE_DASHSNAP_CHROME, %s, and the platform's usual install locations); "+
+		"install one or set TCLAUDE_DASHSNAP_CHROME", ErrBrowserUnavailable, defaultChromeBin)
 }
 
 // Capture launches one headless Chrome, walks the state matrix, writes a PNG per
@@ -249,14 +262,27 @@ func Capture(cfg Config) ([]Shot, error) {
 	defer l.Kill()
 	controlURL, err := l.Launch()
 	if err != nil {
-		return nil, fmt.Errorf("launch chrome (%s): %w%s", chromeBin, err, platformLaunchHint)
+		return nil, fmt.Errorf("launch chrome (%s): %w: %w%s", chromeBin, ErrBrowserUnavailable, err, platformLaunchHint)
 	}
 
 	browser := rod.New().ControlURL(controlURL)
 	if err := browser.Connect(); err != nil {
-		return nil, fmt.Errorf("connect to chrome: %w", err)
+		return nil, fmt.Errorf("connect to chrome: %w: %w", ErrBrowserUnavailable, err)
 	}
 	defer func() { _ = browser.Close() }()
+
+	if cfg.GrantClipboard {
+		err := proto.BrowserGrantPermissions{
+			Permissions: []proto.BrowserPermissionType{
+				proto.BrowserPermissionTypeClipboardReadWrite,
+				proto.BrowserPermissionTypeClipboardSanitizedWrite,
+			},
+			Origin: cfg.BaseURL,
+		}.Call(browser)
+		if err != nil {
+			return nil, fmt.Errorf("grant clipboard permission for %s: %w", cfg.BaseURL, err)
+		}
+	}
 
 	// One reused page (navigated per state) — creating/closing a target per state
 	// was the bulk of the wall-clock. A full navigation reloads the document, so
@@ -375,8 +401,34 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 				if err := sp.Mouse.Click(proto.InputMouseButtonLeft, 1); err != nil {
 					panic(err)
 				}
+			case "dblclick":
+				// A real double click (two clicks in one gesture) — used to
+				// word-select text inside an xterm. Position comes from JS
+				// ({x,y}) when set, else the selector's element centre.
+				point := actionPoint(sp, action)
+				if err := sp.Mouse.MoveTo(point); err != nil {
+					panic(err)
+				}
+				if err := sp.Mouse.Click(proto.InputMouseButtonLeft, 2); err != nil {
+					panic(err)
+				}
 			case "input":
 				sp.MustElement(action.Selector).MustInput(action.Text)
+			case "type-text":
+				// Types Text into the focused element as REAL per-key events
+				// (keydown/keyup with text), which is what an xterm consumes.
+				// Covers the single-rune keys of a US layout plus \r/\n
+				// (Enter) — enough for terminal smokes; unknown runes panic
+				// via input.Key.Info, failing the state loudly.
+				for _, r := range action.Text {
+					key := input.Key(r)
+					if r == '\r' || r == '\n' {
+						key = input.Enter
+					}
+					if err := sp.Keyboard.Type(key); err != nil {
+						panic(err)
+					}
+				}
 			case "key-down":
 				key := browserKey(action.Key)
 				if err := sp.Keyboard.Press(key); err != nil {
@@ -436,6 +488,21 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 				mouseDown = false
 			case "eval":
 				sp.MustEval(`() => { ` + action.JS + ` }`)
+			case "popup-eval":
+				// Evaluates JS on ANOTHER page of the same browser — one whose
+				// URL contains Selector — so a state can assert inside a
+				// window.open pop-out (e.g. the /terminals?solo=1 page).
+				popup := findPopupPage(sp, action.Selector, cfg)
+				pp := popup.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+				pp.MustWaitLoad()
+				pp.MustEval(`() => { ` + action.JS + ` }`)
+				pp.CancelTimeout()
+			case "popup-close":
+				// Closes the pop-out page whose URL contains Selector,
+				// accepting a beforeunload confirmation if the page raises one
+				// (the terminal pop-out arms one while a pane is open).
+				popup := findPopupPage(sp, action.Selector, cfg)
+				closePopupPage(popup)
 			default:
 				panic(fmt.Sprintf("unknown browser action %q", action.Kind))
 			}
@@ -450,6 +517,67 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 		png = sp.MustScreenshot()
 	})
 	return png, err
+}
+
+// actionPoint resolves where a positional action lands: the {x,y} object the
+// action's JS returns when set, else the centre of the Selector's element.
+func actionPoint(sp *rod.Page, action BrowserAction) proto.Point {
+	if strings.TrimSpace(action.JS) != "" {
+		position := sp.MustEval(`() => { ` + action.JS + ` }`)
+		return proto.NewPoint(position.Get("x").Num(), position.Get("y").Num())
+	}
+	position := sp.MustElement(action.Selector).MustEval(`() => {
+      const rect = this.getBoundingClientRect();
+      return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
+    }`)
+	return proto.NewPoint(position.Get("x").Num(), position.Get("y").Num())
+}
+
+// findPopupPage polls the browser's page list for a page other than sp whose
+// URL contains urlPart, panicking (into the state's rod.Try) when none appears
+// within the state timeout. Used by the popup-eval / popup-close actions.
+func findPopupPage(sp *rod.Page, urlPart string, cfg Config) *rod.Page {
+	deadline := time.Now().Add(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+	for {
+		pages, err := sp.Browser().Pages()
+		if err != nil {
+			panic(fmt.Errorf("list browser pages: %w", err))
+		}
+		for _, candidate := range pages {
+			if candidate.TargetID == sp.TargetID {
+				continue
+			}
+			info, err := candidate.Info()
+			if err != nil {
+				continue // page may be mid-navigation or already gone
+			}
+			if strings.Contains(info.URL, urlPart) {
+				return candidate
+			}
+		}
+		if time.Now().After(deadline) {
+			panic(fmt.Sprintf("no popup page with URL containing %q appeared", urlPart))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// closePopupPage closes a popup, accepting the beforeunload confirmation if
+// the page raises one (rod's Page.Close otherwise waits on that dialog
+// forever). The dialog waiter runs in a goroutine because the dialog may or
+// may not appear; if it never does, the waiter ends with the page's session.
+func closePopupPage(popup *rod.Page) {
+	wait, handle := popup.HandleDialog()
+	go func() {
+		// The page (and its event stream) dying without a dialog can panic the
+		// waiter; that is the expected no-dialog outcome, so swallow it.
+		defer func() { _ = recover() }()
+		wait()
+		_ = handle(&proto.PageHandleJavaScriptDialog{Accept: true})
+	}()
+	if err := popup.Close(); err != nil {
+		panic(fmt.Errorf("close popup page: %w", err))
+	}
 }
 
 func browserKey(name string) input.Key {

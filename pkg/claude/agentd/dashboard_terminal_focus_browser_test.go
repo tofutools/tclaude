@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -41,6 +42,9 @@ func TestDashboardTerminalRevealFocusChrome(t *testing.T) {
 			terminalRevealFromOtherTabFocusState(),
 		},
 	})
+	if errors.Is(err, dashsnap.ErrBrowserUnavailable) {
+		t.Skipf("environment: %v", err)
+	}
 	if err != nil {
 		t.Fatalf("dashsnap.Capture: %v", err)
 	}

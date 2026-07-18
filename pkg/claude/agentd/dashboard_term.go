@@ -281,6 +281,28 @@ func handleDashboardSpawnFocusWS(w http.ResponseWriter, r *http.Request) {
 	runPTYOverWS(w, r, openAttachCmd(label), sess.TmuxSession)
 }
 
+// termWSHook lets the env-gated real-browser terminal smoke observe and
+// redirect runPTYOverWS without touching the HTTP routes above it: the smoke
+// swaps the tmux/attach command for a deterministic PTY program and counts
+// PTY starts, applied resizes, and teardowns from outside the browser
+// (TCL-490). Same seam discipline as openTerminal / clcommon.Default — a
+// package-level variable that is nil in production and swapped only from
+// testhooks (SetTermWSHookForTest).
+type termWSHook struct {
+	// RewriteCommand replaces the shell command (and associated tmux session)
+	// a terminal WebSocket route hands to runPTYOverWS.
+	RewriteCommand func(shellCommand, tmuxSession string) (string, string)
+	// OnStart observes the PTY child process right after pty.Start.
+	OnStart func(proc *os.Process)
+	// OnResize observes each resize applied to the PTY.
+	OnResize func(cols, rows int)
+	// OnTeardown observes the completed per-connection teardown (detach +
+	// PTY close + process-group hangup + reap) — exactly once per PTY.
+	OnTeardown func()
+}
+
+var termWSTestHook *termWSHook
+
 // termResizeMsg is sent from the browser when the xterm instance
 // resizes. Mirrors the former standalone `tclaude web` resize payload.
 type termResizeMsg struct {
@@ -356,6 +378,10 @@ func hangupProcessGroup(proc *os.Process) {
 // detaches on the tmux level. Pass "" when there is no associated session
 // (then teardown falls back to the process-group SIGHUP alone).
 func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSession string) {
+	hook := termWSTestHook
+	if hook != nil && hook.RewriteCommand != nil {
+		shellCommand, tmuxSession = hook.RewriteCommand(shellCommand, tmuxSession)
+	}
 	conn, err := upgradeTerminalWebSocket(w, r)
 	if err != nil {
 		return
@@ -370,6 +396,9 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 		_ = conn.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "Error: %v\r\n", err))
 		return
 	}
+	if hook != nil && hook.OnStart != nil {
+		hook.OnStart(cmd.Process)
+	}
 	defer func() {
 		// Reliable detach first: tell the tmux server to drop the session's
 		// clients. Then tear down the PTY/process tree (the SIGHUP is a
@@ -378,6 +407,9 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 		_ = ptmx.Close()
 		hangupProcessGroup(cmd.Process)
 		_ = cmd.Wait()
+		if hook != nil && hook.OnTeardown != nil {
+			hook.OnTeardown()
+		}
 	}()
 
 	// Closing ptmx unblocks the PTY->WS reader; closing conn unblocks the
@@ -431,6 +463,9 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 				if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
 					if msg.Cols > 0 && msg.Rows > 0 {
 						_ = pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)})
+						if hook != nil && hook.OnResize != nil {
+							hook.OnResize(msg.Cols, msg.Rows)
+						}
 					}
 					continue
 				}
