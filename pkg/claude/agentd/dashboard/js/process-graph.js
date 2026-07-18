@@ -972,6 +972,10 @@ export class ProcessGraph {
     // while still letting a primary pointer drag nodes and ports normally.
     const directPan = middle || (this.spaceHeld && event.button === 0) || (!target.node && !target.port
       && (event.pointerType === 'touch' || event.pointerType === 'pen'));
+    if (directPan) {
+      this.cancelQueuedPointerFeedback?.();
+      this.clearActionFeedback?.();
+    }
     const mode = directPan ? 'pan'
       : target.port ? 'port'
         : target.node ? 'node'
@@ -1013,7 +1017,7 @@ export class ProcessGraph {
     }
     if (this.pointer.id !== event.pointerId) return;
     if (this.pointer.mode !== 'port') this.updatePortHover(event);
-    this.queuePointerFeedback?.(event);
+    if (this.pointer.mode !== 'pan') this.queuePointerFeedback?.(event);
     this.pointer.lastClientX = event.clientX;
     this.pointer.lastClientY = event.clientY;
     const dx = event.clientX - this.pointer.startClientX;
@@ -1317,13 +1321,26 @@ export class ProcessGraph {
       return;
     }
     if (target.port && target.node) {
+      let sourceFeedback = null;
+      if (!this.keyboardPort) {
+        sourceFeedback = this.connectionFeedback({
+          phase: 'source', source: { nodeId: target.node.dataset.nodeId, port: target.port.dataset.port },
+        });
+        // A disabled connector still explains itself when Space is tapped,
+        // but it must not consume the graph's Space+pointer pan modifier.
+        // Claim pan ownership before preventDefault stops the document-level
+        // listener; Enter and unclaimed Space activation stay unchanged.
+        if (sourceFeedback?.enabled === false && (event.key === ' ' || event.code === 'Space')) {
+          this.onSpaceKey(event, { allowActionTarget: true });
+        }
+      }
       event.preventDefault();
       const nodeId = target.node.dataset.nodeId;
       const port = target.port.dataset.port;
       const node = this.layout.nodes.find((candidate) => candidate.id === nodeId);
       const point = { x: node.x, y: node.y + (port === 'out' ? node.height / 2 : -node.height / 2) };
       if (!this.keyboardPort) {
-        const feedback = this.connectionFeedback({ phase: 'source', source: { nodeId, port } });
+        const feedback = sourceFeedback;
         if (feedback?.enabled === false) {
           this.showActionFeedback(target.port, feedback, { immediate: true, keyboard: true });
           return;
@@ -1357,13 +1374,14 @@ export class ProcessGraph {
     this.onClick(event);
   }
 
-  onSpaceKey(event) {
+  onSpaceKey(event, { allowActionTarget = false } = {}) {
     if (event.key !== ' ' && event.code !== 'Space') return;
     if (event.type === 'keyup') {
       this.setSpaceHeld(false);
       return;
     }
-    if (event.defaultPrevented || event.repeat || this.pointer || isGraphTypingTarget(event.target)) return;
+    if (event.defaultPrevented || event.repeat || this.pointer
+      || (!allowActionTarget && isGraphTypingTarget(event.target))) return;
     const ownsKey = this.root.contains(event.target) || this.root.matches(':hover');
     if (!ownsKey) return;
     event.preventDefault();

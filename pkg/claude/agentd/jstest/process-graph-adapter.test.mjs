@@ -371,6 +371,15 @@ test('disabled connectors preserve middle-button and Space-primary pan priority'
   svg.releasePointerCapture = () => {};
   const port = host.querySelector('[data-node-id="end"] .process-port-out');
   const tooltip = host.querySelector('.process-action-tooltip');
+  // LinkeDOM does not model SVG focus and its SVG isConnected traversal
+  // recurses indefinitely. Reuse the harness's browsing-context focus shim;
+  // production focus and event propagation otherwise remain unchanged.
+  const focusPort = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(port, 'focus', {
+    configurable: true,
+    value(options) { return focusPort.call(this, options); },
+  });
+  Object.defineProperty(port, 'isConnected', { configurable: true, value: true });
   assert.equal(port.getAttribute('r'), '6');
 
   const beforeMiddle = adapter.viewSnapshot();
@@ -389,19 +398,30 @@ test('disabled connectors preserve middle-button and Space-primary pan priority'
   assert.equal(afterMiddle.x, beforeMiddle.x + 20);
   assert.equal(afterMiddle.y, beforeMiddle.y + 30);
 
-  harness.fireEvent(root, 'keydown', { key: ' ', code: 'Space' });
-  assert.ok(root.classList.contains('is-space-pan'));
-  const beforeSpace = adapter.viewSnapshot();
   harness.fireEvent(port, 'pointerdown', {
     button: 0, pointerId: 66, pointerType: 'mouse', clientX: 40, clientY: 60,
   });
+  assert.equal(harness.document.activeElement, port, 'disabled connector owns focus before Space');
+  assert.match(tooltip.textContent, /End nodes cannot/);
+  assert.equal(port.getAttribute('aria-describedby'), tooltip.id);
+
+  harness.fireEvent(port, 'keydown', { key: ' ', code: 'Space' });
+  assert.ok(root.classList.contains('is-space-pan'));
+  assert.match(tooltip.textContent, /End nodes cannot/,
+    'tapping Space retains disabled keyboard feedback until a pan begins');
+  const beforeSpace = adapter.viewSnapshot();
+  harness.fireEvent(port, 'pointerdown', {
+    button: 0, pointerId: 67, pointerType: 'mouse', clientX: 40, clientY: 60,
+  });
   assert.equal(adapter.interactionSnapshot().active, true);
   assert.equal(host.querySelector('.process-editor-band'), null);
+  assert.equal(tooltip.textContent, '', 'starting navigation clears disabled feedback');
+  assert.equal(port.hasAttribute('aria-describedby'), false);
   harness.fireEvent(svg, 'pointermove', {
-    button: 0, pointerId: 66, pointerType: 'mouse', clientX: 55, clientY: 85,
+    button: 0, pointerId: 67, pointerType: 'mouse', clientX: 55, clientY: 85,
   });
   harness.fireEvent(svg, 'pointerup', {
-    button: 0, pointerId: 66, pointerType: 'mouse', clientX: 55, clientY: 85,
+    button: 0, pointerId: 67, pointerType: 'mouse', clientX: 55, clientY: 85,
   });
   harness.fireEvent(root, 'keyup', { key: ' ', code: 'Space' });
   const afterSpace = adapter.viewSnapshot();
