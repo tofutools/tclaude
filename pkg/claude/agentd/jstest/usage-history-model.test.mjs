@@ -4,7 +4,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 
 test('usage prediction copy states lockout duration and unambiguous average rate', async (t) => {
   const harness = await createPreactHarness(t);
-  const { formatUsageDuration, usageForecastView } =
+  const { formatUsageDuration, formatUsageResetCountdown, usageForecastView } =
     await harness.importDashboardModule('js/usage-history-model.js');
   const now = Date.UTC(2026, 6, 18, 12);
   const hour = 60 * 60_000;
@@ -16,6 +16,11 @@ test('usage prediction copy states lockout duration and unambiguous average rate
   }, now);
 
   assert.equal(formatUsageDuration(2 * 24 * hour + 3 * hour + 17 * 60_000), '2d 3h 17m');
+  assert.equal(
+    formatUsageResetCountdown(new Date(now + 6 * 24 * hour + 23 * hour + 17 * 60_000).toISOString(), now),
+    'resets in 6d 23h 17m',
+  );
+  assert.equal(formatUsageResetCountdown(new Date(now - 60_001).toISOString(), now), 'reset 1m ago');
   assert.equal(forecast.headline, 'Prediction: limit hit in 47h (5d 1h before reset)');
   assert.deepEqual(forecast.lines, [
     'Predicted time without quota access: 5d 1h',

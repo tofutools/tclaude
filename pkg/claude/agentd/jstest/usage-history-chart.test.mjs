@@ -43,11 +43,17 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   const ticks = [...view.container.querySelectorAll('.usage-x-tick line')];
   assert.equal(ticks.length, 5);
   assert.deepEqual(ticks.map((line) => Number(line.getAttribute('x1'))), [42, 207, 372, 537, 702]);
-  assert.equal(view.container.querySelector('svg').getAttribute('role'), 'group');
+  const chart = view.container.querySelector('svg');
+  assert.equal(chart.getAttribute('role'), 'group');
 
-  const points = [...view.container.querySelectorAll('.usage-point')];
+  const points = [...view.container.querySelectorAll('.usage-point-hit-target')];
   assert.equal(points.filter((item) => item.getAttribute('tabIndex') === '0').length, 1,
     'only the latest sample is in sequential keyboard navigation');
+  assert.ok(points.every((item) => item.getAttribute('r') === '8'), 'samples have a generous hover target');
+  const hitTargets = [...chart.querySelectorAll('.usage-forecast-hit-target, .usage-marker-hit-target, .usage-point-hit-target')];
+  const firstPointTarget = hitTargets.findIndex((item) => item.classList.contains('usage-point-hit-target'));
+  const lastLineTarget = hitTargets.findLastIndex((item) => !item.classList.contains('usage-point-hit-target'));
+  assert.ok(firstPointTarget > lastLineTarget, 'sample hit targets render above every dashed-line target');
   const point = points[points.length - 1];
   assert.match(point.getAttribute('aria-label'), /Codex · 7 day window; 12\.5%/);
   assert.match(point.getAttribute('aria-label'), /7d before reset/,
@@ -58,13 +64,13 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
     /Codex · 7 day window.*12\.5%.*7d before reset/s);
   await harness.act(() => harness.fireEvent(point, 'mouseleave'));
 
-  const keyboardPoints = [...view.container.querySelectorAll('.usage-point')];
+  const keyboardPoints = [...view.container.querySelectorAll('.usage-point-hit-target')];
   const keyboardPoint = keyboardPoints[keyboardPoints.length - 1];
   let focusedPrevious = false;
   keyboardPoints[0].addEventListener('focus', () => { focusedPrevious = true; });
   await harness.act(() => harness.fireEvent(keyboardPoint, 'keydown', { key: 'ArrowLeft' }));
   assert.equal(focusedPrevious, true, 'left arrow moves toward the previous sample');
-  const movedPoints = [...view.container.querySelectorAll('.usage-point')];
+  const movedPoints = [...view.container.querySelectorAll('.usage-point-hit-target')];
   assert.deepEqual(movedPoints.map((item) => item.getAttribute('tabIndex')), ['0', '-1'],
     'roving tab stop follows the arrow-key selection');
   assert.match(view.container.querySelector('.usage-chart-tooltip.observed').textContent,
@@ -74,10 +80,10 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   const reset = view.container.querySelector('.usage-scheduled-reset');
   assert.ok(reset, 'upcoming reset inside lookahead is rendered');
   const resetTarget = reset.querySelector('.usage-marker-hit-target');
-  assert.match(resetTarget.getAttribute('aria-label'), /Codex · 7 day window; scheduled quota reset/);
+  assert.match(resetTarget.getAttribute('aria-label'), /Next reset; Codex · 7 day window/);
   await harness.act(() => harness.fireEvent(resetTarget, 'mouseenter'));
   assert.match(view.container.querySelector('.usage-chart-tooltip.reset').textContent,
-    /Scheduled quota reset.*7d remaining/s);
+    /Next reset.*Codex · 7 day window.*7d remaining/s);
   await harness.act(() => harness.fireEvent(resetTarget, 'mouseleave'));
 
   const detectedResetTargets = [...view.container.querySelectorAll('.usage-reset-mark .usage-marker-hit-target')];
@@ -87,7 +93,7 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   assert.match(detectedResetTarget.getAttribute('aria-label'), /new post-reset baseline 3\.5%/);
   await harness.act(() => harness.fireEvent(detectedResetTarget, 'focus'));
   assert.match(view.container.querySelector('.usage-chart-tooltip.reset').textContent,
-    /Quota reset detected.*New post-reset baseline: 3\.5%.*1d ago/s);
+    /Last reset.*New post-reset baseline: 3\.5%.*1d ago/s);
   await harness.act(() => harness.fireEvent(detectedResetTarget, 'blur'));
 
   const resetKeyboardTargets = [...view.container.querySelectorAll('.usage-reset-mark .usage-marker-hit-target')];
@@ -100,9 +106,11 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
       .map((item) => item.getAttribute('tabIndex')),
     ['0', '-1'],
   );
+  assert.match(view.container.querySelector('.usage-chart-tooltip.reset').textContent, /Previous reset/);
   await harness.act(() => harness.fireEvent(resetKeyboardTargets[0], 'blur'));
 
   const nowTarget = view.container.querySelector('.usage-now-mark .usage-marker-hit-target');
+  assert.equal(view.container.querySelector('.usage-now-mark text'), null, 'now is labelled by its tooltip only');
   await harness.act(() => harness.fireEvent(nowTarget, 'mouseenter'));
   assert.match(view.container.querySelector('.usage-chart-tooltip.now').textContent,
     /Now.*Quota resets in 7d/s);
@@ -111,10 +119,9 @@ test('usage chart renders even time ticks and unified immediate tooltips', async
   const forecastTarget = view.container.querySelector('.usage-forecast-hit-target');
   assert.equal(forecastTarget.getAttribute('role'), 'img');
   assert.match(forecastTarget.getAttribute('aria-label'), /100\.0%.*6d before reset/);
-  const svg = view.container.querySelector('svg');
-  svg.getBoundingClientRect = () => ({ left: 0, width: 720 });
+  chart.getBoundingClientRect = () => ({ left: 0, width: 720 });
   await harness.act(() => harness.fireEvent(forecastTarget, 'mousemove', { clientX: 702 }));
-  assert.match(view.container.querySelector('.usage-chart-tooltip.forecast').textContent, /100\.0%.*6d before reset/s);
+  assert.match(view.container.querySelector('.usage-chart-tooltip.forecast').textContent, /Prediction.*100\.0%.*6d before reset/s);
   await harness.act(() => harness.fireEvent(forecastTarget, 'mouseleave'));
   assert.equal(view.container.querySelector('.usage-chart-tooltip'), null);
 

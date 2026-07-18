@@ -1646,15 +1646,18 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-current span { color: #7d8590; font-size: 11px; margin-top: 4px; }
 .usage-line-chart { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
 .usage-grid line { stroke: #1c2430; stroke-width: 1; }
-.usage-grid text, .usage-x-tick text, .usage-now-mark text { fill: #6e7681; font-size: 10px; }
+.usage-grid text, .usage-x-tick text { fill: #6e7681; font-size: 10px; }
 .usage-x-tick line { stroke: #151b24; stroke-width: 1; }
 .usage-now-mark line { stroke: #30363d; stroke-width: 1; stroke-dasharray: 2 4; }
-.usage-now-mark text { fill: #8b949e; }
 .usage-observed-line {
   fill: none; stroke: #58a6ff; stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round;
 }
-.usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; }
-.usage-point:hover, .usage-point:focus { r: 4px; fill: #cae8ff; outline: none; }
+.usage-point { fill: #79c0ff; stroke: #0d1117; stroke-width: 1; pointer-events: none; }
+.usage-point-mark:hover .usage-point,
+.usage-point-mark:focus-within .usage-point { r: 4px; fill: #cae8ff; }
+.usage-point-hit-target {
+  fill: transparent; stroke: transparent; pointer-events: all; cursor: crosshair; outline: none;
+}
 .usage-forecast-line { stroke: #d29922; stroke-width: 2; stroke-dasharray: 6 5; }
 .usage-forecast-hit-target {
   stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: crosshair;
@@ -1678,6 +1681,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-chart-tooltip.reset rect { stroke: #a371f7; }
 .usage-chart-tooltip.now rect { stroke: #6e7681; }
 .usage-chart-tooltip text { fill: #c9d1d9; font-size: 9px; }
+.usage-chart-tooltip .usage-tooltip-title { fill: #f0f3f6; font-weight: 600; }
 .usage-reset-mark line { stroke: #a371f7; stroke-width: 1; stroke-dasharray: 3 4; opacity: .8; }
 .usage-reset-mark circle { fill: #a371f7; }
 .usage-chart-empty { height: 180px; display: grid; place-items: center; color: #6e7681; }

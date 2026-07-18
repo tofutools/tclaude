@@ -4,7 +4,7 @@ import htm from 'htm';
 import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import {
-  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageTime,
+  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageResetCountdown, formatUsageTime,
   usageForecastView, usageProviderLabel, usageWindowLabel,
 } from './usage-history-model.js';
 
@@ -20,7 +20,7 @@ function UsageSeriesCard({ series, payload, lookaheadHours }) {
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${usageWindowLabel(series.window_name, series.duration_seconds)} window</h3></div>
       <div class="usage-current"><strong>${latest ? `${latest.pct.toFixed(1)}%` : '—'}</strong>
-        <span>${latest ? `sampled ${formatUsageTime(latest.at, now)}` : 'no sample'} · ${latest?.resets_at ? `resets ${formatUsageTime(latest.resets_at, now)}` : 'reset unknown'}</span></div>
+        <span>${latest ? `sampled ${formatUsageTime(latest.at, now)}` : 'no sample'} · ${formatUsageResetCountdown(latest?.resets_at, now)}</span></div>
     </div>
     <${UsageHistoryChart} series=${series} from=${payload.from} generatedAt=${payload.generated_at}
       lookaheadHours=${lookaheadHours} />
