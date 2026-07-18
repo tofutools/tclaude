@@ -140,6 +140,10 @@ type Config struct {
 	OutDir string
 	// ChromeBin overrides the Chrome binary; "" resolves via env then defaults.
 	ChromeBin string
+	// ShowScrollbars omits Chrome's default --hide-scrollbars capture flag.
+	// Keep false for ordinary layout snapshots; opt in only when scrollbar
+	// rendering itself is part of the visual contract under test.
+	ShowScrollbars bool
 	// Width/Height is the browser window (and viewport) size. 0 uses defaults.
 	Width, Height int
 	// States is the matrix to capture, in order.
@@ -232,9 +236,9 @@ func Capture(cfg Config) ([]Shot, error) {
 		Headless(true).
 		NoSandbox(true).
 		Leakless(false).
-		Set("disable-gpu").
-		Set("hide-scrollbars").
-		Set("window-size", fmt.Sprintf("%d,%d", cfg.Width, cfg.Height))
+		Set("disable-gpu")
+	configureScrollbarVisibility(l, cfg.ShowScrollbars)
+	l.Set("window-size", fmt.Sprintf("%d,%d", cfg.Width, cfg.Height))
 	configurePlatformChrome(l, browserRoot)
 	// Leakless(false) disables rod's reaper watchdog, so once Launch may have
 	// spawned a process we must kill it ourselves or orphan a headless Chrome.
@@ -294,6 +298,12 @@ func Capture(cfg Config) ([]Shot, error) {
 		return shots, fmt.Errorf("write contact sheet: %w", err)
 	}
 	return shots, nil
+}
+
+func configureScrollbarVisibility(l *launcher.Launcher, show bool) {
+	if !show {
+		l.Set("hide-scrollbars")
+	}
 }
 
 // captureState navigates the reused page to the dashboard (optionally

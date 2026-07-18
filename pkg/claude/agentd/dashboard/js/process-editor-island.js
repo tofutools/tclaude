@@ -173,7 +173,7 @@ function Palette({ controller, hidden, snippets }) {
       </span>
     </div>`;
   };
-  return html`<aside class="process-editor-palette" aria-label="Node palette" hidden=${hidden}
+  return html`<aside class="process-editor-palette process-scroll-surface" aria-label="Node palette" hidden=${hidden}
     onDragStart=${(event) => controller.paletteDragStart(event)}
     onDragEnd=${(event) => controller.paletteDragEnd(event)}>
     <div class="process-palette-section">Primitives</div>
@@ -210,7 +210,7 @@ function Inspector({ controller, view }) {
     <input class="process-inspector-input process-template-id-locked" type="text" value=${view.model.id} disabled title="Template ids are immutable after creation" aria-label="Template id (immutable)" />
     <${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="display name" aria-label="Template display name" value=${view.model.name} onCommit=${(name) => controller.setTemplateMeta({ name })} />
     <${StableField} blocked=${pending} class="process-inspector-input process-template-description" type="text" spellcheck="true" placeholder="description" aria-label="Template description" value=${view.model.description} onCommit=${(description) => controller.setTemplateMeta({ description })} />
-    <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
+    <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc process-scroll-surface" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
   </div>`;
   if (selected.length > 1) {
     const nodes = selected.filter((item) => item.type === 'node').length;
@@ -245,7 +245,7 @@ function Issues({ controller, issues }) {
   return html`<details class="process-issues-panel" hidden=${issues.hidden} open=${issues.open}
     onToggle=${(event) => controller.setIssuesOpen(event.currentTarget.open)}>
     <summary class="process-issues-summary">${issues.summary}</summary>
-    <ul ref=${list} class="process-issues-list">
+    <ul ref=${list} class="process-issues-list process-scroll-surface">
       ${issues.entries.map((entry, index) => html`<li key=${`${entry.code}:${entry.scope}:${entry.targetId}:${entry.message}`}><button type="button" class=${`process-issue process-issue-${entry.severity}`} data-issue-index=${index} onClick=${() => controller.focusIssueAt(index, false)}><span class="process-issue-glyph">${severityGlyph(entry.severity)}</span><span class="process-issue-target">${entry.scope === 'edge' && entry.edge ? `${entry.edge.from} → (${entry.edge.outcome})` : entry.node || 'template'}</span><span class="process-issue-message" title=${`${entry.code}: ${entry.message}`}>${entry.message}</span></button></li>`)}
     </ul>
   </details>`;
@@ -315,12 +315,12 @@ export function ScribeDialog({ descriptor, complete }) {
       : descriptor.scribeKind === 'diagnostic' ? 'The current diagnostic identity below will be shared.'
         : 'A bounded whole-template summary will be shared.'}</p>
     <label class="process-scribe-prompt-label">Your request (editable)</label>
-    <textarea ref=${input} class="process-scribe-prompt" rows="4" maxlength=${PROCESS_SCRIBE_PROMPT_MAX}
+    <textarea ref=${input} class="process-scribe-prompt process-scroll-surface" rows="4" maxlength=${PROCESS_SCRIBE_PROMPT_MAX}
       aria-label="Request for the process scribe" spellcheck="true" data-select-on-focus
       value=${prompt} onInput=${(event) => setPrompt(event.currentTarget.value)} />
     <span class="process-scribe-prompt-count">${prompt.length} / ${PROCESS_SCRIBE_PROMPT_MAX}</span>
     <div class="process-scribe-context-label">BEGIN BOUNDED EDITOR CONTEXT · read-only · not template source</div>
-    <pre class="process-scribe-context-preview" aria-label="Read-only bounded editor context" tabindex="0">${descriptor.context}</pre>
+    <pre class="process-scribe-context-preview process-scroll-surface" aria-label="Read-only bounded editor context" tabindex="0">${descriptor.context}</pre>
     <div class=${`process-scribe-context-end${descriptor.truncated ? ' is-truncated' : ''}`}>
       ${descriptor.truncated
         ? 'END BOUNDED EDITOR CONTEXT · visibly truncated; the scribe must reread canonical YAML'
