@@ -5,16 +5,37 @@ import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import {
   USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageResetCountdown, formatUsageTime,
-  usageForecastView, usageProviderLabel, usageWindowLabel,
+  usageForecastView, usageProviderLabel, usageSeriesKeyOf, usageWindowLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
 
-function UsageSeriesCard({ series, payload, lookaheadHours }) {
+function UsageSpanControls({ scope, span, onSetHours, onSetLookahead }) {
+  return html`<div class="usage-card-controls">
+    <div class="usage-control-group" role="group" aria-label=${`History range, ${scope}`}>
+      <span class="usage-control-label" aria-hidden="true">History</span>
+      ${USAGE_HISTORY_SPANS.map((option) => html`<button type="button"
+        class=${`tool${span.hours === option.hours ? ' active' : ''}`}
+        aria-label=${`History ${option.label}, ${scope}`} aria-pressed=${span.hours === option.hours}
+        onClick=${() => onSetHours(option.hours)}>${option.label}</button>`)}
+    </div>
+    <span class="usage-control-divider" aria-hidden="true"></span>
+    <div class="usage-control-group" role="group" aria-label=${`Forecast lookahead, ${scope}`}>
+      <span class="usage-control-label" aria-hidden="true">Look ahead</span>
+      ${USAGE_LOOKAHEAD_SPANS.map((option) => html`<button type="button"
+        class=${`tool${span.lookaheadHours === option.hours ? ' active' : ''}`}
+        aria-label=${`Look ahead ${option.label}, ${scope}`} aria-pressed=${span.lookaheadHours === option.hours}
+        onClick=${() => onSetLookahead(option.hours)}>${option.label}</button>`)}
+    </div>
+  </div>`;
+}
+
+function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead }) {
   const latest = series.points?.[series.points.length - 1];
   const now = new Date(payload.generated_at).getTime();
   const forecast = usageForecastView(series.forecast, now, latest?.at);
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
+  const scope = `${usageProviderLabel(series.provider)} ${usageWindowLabel(series.window_name, series.duration_seconds)} window`;
   return html`<article class="usage-series-card">
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
@@ -22,8 +43,9 @@ function UsageSeriesCard({ series, payload, lookaheadHours }) {
       <div class="usage-current"><strong>${latest ? `${latest.pct.toFixed(1)}%` : '—'}</strong>
         <span>${latest ? `sampled ${formatUsageTime(latest.at, now)}` : 'no sample'} · ${formatUsageResetCountdown(latest?.resets_at, now)}</span></div>
     </div>
-    <${UsageHistoryChart} series=${series} from=${payload.from} generatedAt=${payload.generated_at}
-      lookaheadHours=${lookaheadHours} />
+    <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead} />
+    <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}
+      lookaheadHours=${span.lookaheadHours} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong>
       ${(forecast.lines || []).map((line) => html`<span class="usage-forecast-line-copy" key=${line}>${line}</span>`)}
@@ -45,26 +67,11 @@ export function UsageHistoryApp({ state, actions }) {
     const timer = setInterval(() => void actions.load(), 60_000);
     return () => clearInterval(timer);
   }, [current.active]);
-  const setSpan = (hours) => { if (state.setHours(hours)) void actions.load(); };
-  const setLookahead = (hours) => state.setLookaheadHours(hours);
+  const setSpan = (key, hours) => { if (state.setSeriesHours(key, hours)) void actions.load(); };
+  const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);
   return html`<div class="usage-history-island">
     <div class="filter-bar usage-history-controls">
-      <div class="usage-control-group" role="group" aria-label="History range">
-        <span class="usage-control-label" aria-hidden="true">History</span>
-        ${USAGE_HISTORY_SPANS.map((span) => html`<button type="button"
-          class=${`tool${current.hours === span.hours ? ' active' : ''}`}
-          aria-label=${`History ${span.label}`} aria-pressed=${current.hours === span.hours}
-          onClick=${() => setSpan(span.hours)}>${span.label}</button>`)}
-      </div>
-      <span class="usage-control-divider" aria-hidden="true"></span>
-      <div class="usage-control-group" role="group" aria-label="Forecast lookahead">
-        <span class="usage-control-label" aria-hidden="true">Look ahead</span>
-        ${USAGE_LOOKAHEAD_SPANS.map((span) => html`<button type="button"
-          class=${`tool${current.lookaheadHours === span.hours ? ' active' : ''}`}
-          aria-label=${`Look ahead ${span.label}`} aria-pressed=${current.lookaheadHours === span.hours}
-          onClick=${() => setLookahead(span.hours)}>${span.label}</button>`)}
-      </div>
-      <span class="spacer"></span><span class="muted">Account-wide provider limits · 15-minute samples</span>
+      <span class="muted">Account-wide provider limits · 15-minute samples · spans persist per graph</span>
     </div>
     <${AsyncLoadState} label="Usage" request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
@@ -76,9 +83,12 @@ export function UsageHistoryApp({ state, actions }) {
         <span><i class="usage-legend-swatch now"></i>Now</span>
       </div>
       ${current.series.length
-        ? html`<div class="usage-series-grid">${current.series.map((series) => html`<${UsageSeriesCard}
-            key=${`${series.provider}:${series.window_name}`} series=${series} payload=${current.payload}
-            lookaheadHours=${current.lookaheadHours} />`)}</div>`
+        ? html`<div class="usage-series-grid">${current.series.map((series) => {
+            const key = usageSeriesKeyOf(series);
+            return html`<${UsageSeriesCard} key=${key} series=${series} payload=${current.payload}
+              span=${current.spanFor(key)} onSetHours=${(hours) => setSpan(key, hours)}
+              onSetLookahead=${(hours) => setLookahead(key, hours)} />`;
+          })}</div>`
         : html`<div class="empty">No subscription usage samples in this range yet.</div>`}
     </${Fragment}>`}
   </div>`;

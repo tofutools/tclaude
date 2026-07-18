@@ -12,6 +12,13 @@ export const USAGE_LOOKAHEAD_SPANS = [
   { hours: 720, label: '30d' },
 ];
 
+// usageSeriesKeyOf identifies a series (provider × quota window) for the
+// per-series span preferences and the request's `spans` overrides. Provider
+// and window names are server-defined slugs without ':' or ','.
+export function usageSeriesKeyOf(series) {
+  return `${series.provider}:${series.window_name}`;
+}
+
 export function usageProviderLabel(provider) {
   if (provider === 'anthropic') return 'Claude';
   if (provider === 'openai') return 'Codex';

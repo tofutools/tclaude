@@ -18,6 +18,7 @@ type usageHistoryResp struct {
 	Series []struct {
 		Provider   string `json:"provider"`
 		WindowName string `json:"window_name"`
+		From       string `json:"from"`
 		Points     []struct {
 			Pct float64 `json:"pct"`
 		} `json:"points"`
@@ -61,6 +62,64 @@ func TestDashboardUsageHistorySeriesForecastAndVisibility(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(snapshot.Body.Bytes(), &snap))
 	assert.True(t, snap.UsageTabVisible, "a retained subscription cache keeps the Usage tab visible")
+}
+
+func TestDashboardUsageHistoryPerSeriesSpans(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	newFlow(t)
+	now := time.Now().UTC().Truncate(15 * time.Minute)
+	for i, pct := range []float64{10, 15, 20} {
+		_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+			Provider: db.SubscriptionProviderAnthropic, ObservedAt: now.Add(-72*time.Hour + time.Duration(i)*15*time.Minute),
+			Windows: []db.SubscriptionUsageWindow{{Name: "seven_day", Duration: 7 * 24 * time.Hour, UsedPercent: pct}},
+		})
+		require.NoError(t, err)
+	}
+	for i, pct := range []float64{30, 35} {
+		_, err := db.SaveCodexUsageCacheIfNewer(json.RawMessage(`{}`), now.Add(-time.Hour+time.Duration(i)*15*time.Minute), "rollout",
+			db.SubscriptionUsageWindow{Name: "five_hour", Duration: 5 * time.Hour, UsedPercent: pct, ResetsAt: now.Add(4 * time.Hour)})
+		require.NoError(t, err)
+	}
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	byKey := func(out usageHistoryResp) map[string]int {
+		index := map[string]int{}
+		for i, series := range out.Series {
+			index[series.Provider+":"+series.WindowName] = i
+		}
+		return index
+	}
+
+	// Without an override the 24h default clips the 3-day-old Claude samples
+	// away, but the series stays in the response so its card keeps rendering.
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/usage-history?hours=24", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out usageHistoryResp
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Series, 2)
+	index := byKey(out)
+	assert.Empty(t, out.Series[index["anthropic:seven_day"]].Points, "stale series retained with empty points")
+	assert.Len(t, out.Series[index["openai:five_hour"]].Points, 2)
+
+	// A per-series override widens only the Claude series' view.
+	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet,
+		"/api/usage-history?hours=24&spans=anthropic:seven_day:168", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	out = usageHistoryResp{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Len(t, out.Series, 2)
+	index = byKey(out)
+	claude := out.Series[index["anthropic:seven_day"]]
+	assert.Len(t, claude.Points, 3, "override admits the 3-day-old samples")
+	assert.NotEqual(t, out.From, claude.From, "overridden series reports its own view start")
+	codex := out.Series[index["openai:five_hour"]]
+	assert.Len(t, codex.Points, 2)
+	assert.Equal(t, out.From, codex.From, "non-overridden series keeps the default view start")
+
+	for _, bad := range []string{"nonsense", "a:b:0", "a:b:2161", "a:b:c:1", ":seven_day:24"} {
+		rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/usage-history?hours=24&spans="+bad, nil))
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "spans=%s", bad)
+	}
 }
 
 func TestDashboardUsageHistoryRejectsOversizedSpan(t *testing.T) {
