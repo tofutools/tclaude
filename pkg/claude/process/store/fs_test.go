@@ -1446,9 +1446,9 @@ func TestConcurrentAppendHammer(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			for {
-				// LoadRun is intentionally unlocked and may observe a JSONL write
-				// in progress. The atomically replaced checkpoint is the safe CAS
-				// head here; Append still validates it against the locked manifest.
+				// LoadRunState is intentionally unlocked; it reads the atomically replaced
+				// state.json checkpoint, avoiding in-progress JSONL writes. Append validates
+				// that checkpoint's possibly stale LastLogSeq against the manifest head under the run lock.
 				st, err := fs.LoadRunState(ctx, runID)
 				if err != nil {
 					t.Errorf("load run state: %v", err)
