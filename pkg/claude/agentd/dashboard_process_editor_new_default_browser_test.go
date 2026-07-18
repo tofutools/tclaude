@@ -65,12 +65,18 @@ func newProcessDefaultState(wizard bool) dashsnap.State {
   var nav=document.querySelector('nav [data-tab="processes"]');
   if(!nav||nav.offsetParent===null) throw new Error('Processes nav is not visible');
   nav.click();
-  var deadline=Date.now()+5000;
-  while(!document.querySelector('#process-template-new')&&Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,40);});}
-  var create=document.querySelector('#process-template-new');
-  if(!create) throw new Error('new-template action did not render');
+  var waitFor=async function(predicate,label){
+    var deadline=Date.now()+5000;
+    while(Date.now()<deadline){
+      var value=predicate();
+      if(value)return value;
+      await new Promise(function(resolve){setTimeout(resolve,40);});
+    }
+    throw new Error(label);
+  };
+  var create=await waitFor(function(){return document.querySelector('#process-template-new');},'new-template action did not render');
   create.click();
-  while(!document.querySelector('#process-editor-canvas .process-graph-svg')&&Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,40);});}
+  await waitFor(function(){return document.querySelector('#process-editor-canvas .process-graph-svg');},'new-template graph did not render');
   var mount=document.querySelector('#process-editor-canvas'),ed=mount&&mount.__processEditor;
   if(!ed) throw new Error('new-template editor did not mount');
   var paint=function(){return new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});};
@@ -85,7 +91,7 @@ func newProcessDefaultState(wizard bool) dashsnap.State {
   var endCard=Array.from(mount.querySelectorAll('.process-palette-card')).find(function(card){return JSON.parse(card.dataset.paletteItem).type==='end';});
   if(!startOut||startOut.getAttribute('role')!=='button'||!endCard||endCard.querySelector('.process-palette-insert').disabled) throw new Error('ordinary connect/add affordances are unavailable');
   ed.validateNow();
-  while((!ed.validation.mapped||!ed.validation.mapped.entries.some(function(entry){return entry.code==='missing_next'&&entry.targetId==='start';}))&&Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,25);});}
+  await waitFor(function(){return ed.validation.mapped&&ed.validation.mapped.entries.some(function(entry){return entry.code==='missing_next'&&entry.targetId==='start';});},'start-only validation did not finish');
   await paint();
   if(!ed.validation.mapped||!ed.validation.mapped.entries.some(function(entry){return entry.code==='missing_next'&&entry.targetId==='start';})) throw new Error('start-only validation did not report missing_next');
   var issues=mount.querySelector('.process-issues-summary'),overlay=mount.querySelector('.process-node[data-node-id="start"] .process-overlay-anchor');
@@ -104,13 +110,14 @@ func newProcessDefaultState(wizard bool) dashsnap.State {
   // Reopen through the real action so the captured visual state is a pristine
   // blank draft, not the post-acceptance undo state exercised above.
   document.querySelector('[data-process-close-view]').click();
-  while((!document.querySelector('#process-template-new')||document.querySelector('#process-editor-canvas'))&&Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,25);});}
-  document.querySelector('#process-template-new').click();
-  while((!document.querySelector('#process-editor-canvas')||document.querySelector('#process-editor-canvas').__processEditor===ed)&&Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,25);});}
-  mount=document.querySelector('#process-editor-canvas');ed=mount&&mount.__processEditor;
+  create=await waitFor(function(){return !document.querySelector('#process-editor-canvas')&&document.querySelector('#process-template-new');},'new-template action did not return after closing the editor');
+  create.click();
+  var previousEditor=ed;
+  ed=await waitFor(function(){var candidate=document.querySelector('#process-editor-canvas')?.__processEditor;return candidate&&candidate!==previousEditor?candidate:null;},'reopened blank editor did not mount');
+  mount=document.querySelector('#process-editor-canvas');
   if(!ed||Object.keys(ed.model.template.nodes).length!==1||ed.model.node('end')||ed.model.canUndo||ed.model.canRedo||ed.selection!==null) throw new Error('reopened blank draft did not reset history and selection');
   ed.validateNow();
-  while((!ed.validation.mapped||!ed.validation.mapped.entries.some(function(entry){return entry.code==='missing_next'&&entry.targetId==='start';}))&&Date.now()<deadline){await new Promise(function(resolve){setTimeout(resolve,25);});}
+  await waitFor(function(){return ed.validation.mapped&&ed.validation.mapped.entries.some(function(entry){return entry.code==='missing_next'&&entry.targetId==='start';});},'reopened start-only validation did not finish');
   await paint();
   if(!mount.querySelector('.process-node[data-node-id="start"] .process-overlay-anchor')||mount.querySelector('[data-node-id="end"]')) throw new Error('reopened visual state is not the honest start-only draft');
 })();`,
