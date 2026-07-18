@@ -28,6 +28,25 @@ function sampledPoints(points, maxPoints) {
   return sampled.length <= maxPoints ? sampled : [...sampled.slice(0, maxPoints - 1), points[points.length - 1]];
 }
 
+function chartPointerPosition(svg, event) {
+  const matrix = svg?.getScreenCTM?.();
+  if (matrix?.inverse && svg?.createSVGPoint) {
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    return point.matrixTransform(matrix.inverse());
+  }
+  const rect = svg?.getBoundingClientRect();
+  if (!rect?.width || !rect?.height) return null;
+  const scale = Math.min(rect.width / W, rect.height / H);
+  const offsetX = (rect.width - W * scale) / 2;
+  const offsetY = (rect.height - H * scale) / 2;
+  return {
+    x: (event.clientX - rect.left - offsetX) / scale,
+    y: (event.clientY - rect.top - offsetY) / scale,
+  };
+}
+
 function beforeResetLabel(resetAt, time) {
   if (resetAt === null) return 'reset time unknown';
   const delta = resetAt - time;
@@ -117,6 +136,25 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
   };
   const showTooltip = (anchorX, anchorY, tone, title, lines) => setTooltip({ x: anchorX, y: anchorY, tone, title, lines });
   const hideTooltip = () => setTooltip(null);
+  const showPointTooltip = (point) => {
+    const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
+    showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
+      scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
+      pointResetLabel,
+    ]);
+  };
+  const updatePointHover = (event) => {
+    const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
+    const pointer = chartPointerPosition(svg, event);
+    if (!pointer) return;
+    // Hit circles intentionally overlap. Resolve them from the pointer hotspot
+    // instead of letting the last (usually newest/up-right) SVG node win.
+    const nearest = pointMarkers.reduce((best, point) => {
+      const distance = (x(point.time) - pointer.x) ** 2 + (y(point.pct) - pointer.y) ** 2;
+      return !best || distance < best.distance ? { point, distance } : best;
+    }, null);
+    if (nearest) showPointTooltip(nearest.point);
+  };
   const focusChartItemByKey = (event, index, selector, length) => {
     let target = index;
     if (event.key === 'ArrowLeft') target = Math.max(0, index - 1);
@@ -215,16 +253,10 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
           tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
           aria-label=${`Sample; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? '; use left and right arrow keys to explore samples' : ''}`}
-          onmouseenter=${() => showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
-            scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
-            pointResetLabel,
-          ])} onmouseleave=${hideTooltip}
+          onmouseenter=${updatePointHover} onmousemove=${updatePointHover} onmouseleave=${hideTooltip}
           onfocus=${() => {
             setKeyboardPointAt(index);
-            showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
-              scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
-              pointResetLabel,
-            ]);
+            showPointTooltip(point);
           }} onblur=${hideTooltip}
           onkeydown=${(event) => focusChartItemByKey(event, index, '.usage-point-hit-target', pointMarkers.length)} />
       </g>`;
