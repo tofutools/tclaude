@@ -65,6 +65,7 @@ type mailboxMsg struct {
 	Body             string `json:"body"`
 	Read             bool   `json:"read"`
 	NudgeDiscardedAt string `json:"nudge_discarded_at"`
+	OperatorAuthored bool   `json:"operator_authored"`
 }
 
 // seedMailboxes stands up two named agents in a group with one message
@@ -346,6 +347,40 @@ func TestDashboardMailbox_AllFolderListsEverythingNewestFirst(t *testing.T) {
 	assert.Equal(t, "bob", payload.Messages[0].FromTitle)
 	assert.Equal(t, "alice", payload.Messages[0].ToTitle)
 	assert.Equal(t, "hi bob", payload.Messages[1].Subject)
+}
+
+// Scenario: mail the human/operator sent to an agent reaches the aggregate
+// "all" folder flagged as operator-authored, not just the recipient's own
+// folder. Those rows carry an empty from_conv — indistinguishable on the
+// wire from an internal system handoff — so without the flag the frontend
+// has no sender to name and renders them party-less, which is what made
+// human mail read as absent from the firehose.
+func TestDashboardMailbox_OperatorMailIsFlaggedInAllFolder(t *testing.T) {
+	f := newFlow(t)
+	dash := seedMailboxes(t, f)
+
+	// The operator messages alice, exactly as the dashboard's "message an
+	// agent" path records it: no sender conv, explicit operator marker.
+	_, err := db.InsertAgentMessage(&db.AgentMessage{
+		ToConv: mbAlice, Subject: "from the human", Body: "please rebase",
+		ToRecipients: []string{mbAlice}, OperatorAuthored: true,
+	})
+	require.NoError(t, err)
+
+	all := getMailbox(t, dash, "all")
+	got := findMsg(t, all, "from the human")
+	assert.True(t, got.OperatorAuthored, "the firehose flags operator mail so the row can name a sender")
+	assert.Empty(t, got.FromConv, "operator mail has no originating conv")
+	assert.Equal(t, "alice", got.ToTitle)
+
+	// Same row, same flag, in the recipient's own folder — the two views
+	// agree, so the reader's "From" header renders either way.
+	own := findMsg(t, getMailbox(t, dash, mbAlice), "from the human")
+	assert.True(t, own.OperatorAuthored)
+	assert.Equal(t, "in", own.Direction)
+
+	// Agent-to-agent mail in the same page stays unflagged.
+	assert.False(t, findMsg(t, all, "hi bob").OperatorAuthored)
 }
 
 // Scenario: POST /api/mailbox/delete removes the named agent_messages

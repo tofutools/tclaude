@@ -120,6 +120,41 @@ func IsOperatorAgentMessage(messageID int64) bool {
 	return d.QueryRow(`SELECT COUNT(*) FROM operator_agent_messages WHERE message_id = ?`, messageID).Scan(&n) == nil && n == 1
 }
 
+// OperatorAuthoredMessages reports which of ids are operator-authored, as
+// a set (absent id == not operator-authored). The mailbox read path
+// decorates a whole page at once and runs on every 2s dashboard refresh,
+// so this batches what IsOperatorAgentMessage answers one row at a time —
+// a 50-row page would otherwise cost 50 round trips. An empty ids slice
+// short-circuits rather than building a zero-placeholder IN ().
+func OperatorAuthoredMessages(ids []int64) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := d.Query(`SELECT message_id FROM operator_agent_messages
+		WHERE message_id IN (`+sqlPlaceholders(len(ids))+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 func ListAgentMessageAttachments(messageID int64) ([]AgentMessageAttachment, error) {
 	d, err := Open()
 	if err != nil {

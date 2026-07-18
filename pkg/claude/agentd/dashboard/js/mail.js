@@ -760,31 +760,37 @@ function paintSidebar() { mailState.touch(); }
 // agent folders are ticked in the sidebar.
 function paintWipeBar() { mailState.touch(); }
 
+// HUMAN_SENDER labels mail the human/operator sent to an agent. Those rows
+// carry no from_conv, so before the backend flagged them (operator_authored)
+// they rendered party-less and read as sender-less system mail — in the
+// aggregate "all" folder they were effectively invisible as human mail.
+const HUMAN_SENDER = 'human operator';
+
+// senderLabel names a row's sender, or '' when there is no real sender to
+// name. Operator-authored mail is named explicitly. A message with no
+// originating conv and no operator marker is an internal system handoff, not
+// an agent: it returns '' so the caller drops the party rather than showing
+// a misleading "(unknown)". A genuinely unresolvable but real conv still
+// falls back to its short conv-id. Shared by the aggregate + per-agent rows
+// and the reader's "From" header so all three agree.
+function senderLabel(m) {
+  if (m.operator_authored) return wz(HUMAN_SENDER, 'the Archmage');
+  return m.from_title || shortAgentId(m.from_agent, m.from_conv);
+}
+
 // counterparty returns the name to show in a non-aggregate message-list
 // row — the OTHER party relative to the selected mailbox. For a received
-// message that's the sender; for a sent one, the recipient. A received
-// message with no originating conv (from_conv empty, so no resolvable title
-// either) was sent by the human/operator — e.g. the "Startup context" brief
-// from a spawn dialog — not an agent; it returns '' so the row drops the
-// party (caller-side, like the "all" firehose) rather than a misleading
-// "(unknown sender)". Mirrors allSenderLabel + the reader's omitted "From".
+// message that's the sender; for a sent one, the recipient.
 function counterparty(m) {
   if (m.direction === 'out') {
     return m.to_title || shortAgentId(m.to_agent, m.to_conv) || '(unknown)';
   }
-  return m.from_title || shortAgentId(m.from_agent, m.from_conv);
+  return senderLabel(m);
 }
 
-// allSenderLabel names a row's sender in the aggregate "all" view, or ''
-// when there is no real sender to name. A message with no originating conv
-// (from_conv empty, so no resolvable title either) was sent by the
-// human/operator — e.g. from a spawn dialog — not an agent; we render it as
-// a bare "→ recipient" rather than a misleading "(unknown)". A genuinely
-// unresolvable but real conv still falls back to its short conv-id, so only
-// the truly-sender-less rows lose the party. Mirrors the reader pane, which
-// already omits the "From" header entirely for these.
+// allSenderLabel names a row's sender in the aggregate "all" view.
 function allSenderLabel(m) {
-  return m.from_title || shortAgentId(m.from_agent, m.from_conv);
+  return senderLabel(m);
 }
 
 // allRecipientLabel names a row's recipient in the aggregate "all" view,
@@ -816,12 +822,12 @@ function msgPreview(m) {
 //   proclamation — a multicast addressed to many. A weathered broadsheet.
 //   reply        — a threaded reply (carries a parent). A continued scroll.
 //   raven        — the default 1:1 agent-to-agent missive. Plain parchment.
-// Precedence: decree > proclamation > reply > raven. Decree is folder-scoped
-// (the whole Human folder) rather than per-message, so a human notification
-// surfacing in the "all" firehose reads as a raven there — an accepted, minor
-// simplification that avoids brittle per-message operator detection.
+// Precedence: decree > proclamation > reply > raven. Decree covers the whole
+// Human folder (agent → human) plus any operator-authored row wherever it
+// surfaces, so the human's word reads the same in the "all" firehose and in
+// an agent's own folder as it does in the Human folder.
 function msgKind(m) {
-  if (mail.selected === HUMAN_ID) return 'decree';
+  if (mail.selected === HUMAN_ID || m.operator_authored) return 'decree';
   if ((m.to_recipients || []).length > 1) return 'proclamation';
   if (m.parent_id) return 'reply';
   return 'raven';
