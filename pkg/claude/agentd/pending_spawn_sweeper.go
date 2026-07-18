@@ -168,6 +168,15 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		requeuePendingSpawn(ps.Label, ps)
 		return
 	} else if m != nil {
+		// A prior attempt got past the membership write but may have failed
+		// before the task-ref write — repair the link before dropping the row
+		// so the requested binding isn't lost with it. The claimed row is the
+		// only durable copy of the intent: a failed repair requeues it for the
+		// next tick instead of dropping the link silently.
+		if !ensurePendingTaskRefBound(convID, ps) {
+			requeuePendingSpawn(ps.Label, ps)
+			return
+		}
 		slog.Info("pending-spawn sweeper: already enrolled; cleared pending row",
 			"label", ps.Label, "conv", convID)
 		return
@@ -196,17 +205,17 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 		SpawnedByAgent: ps.SpawnedByAgent,
 		WorktreePath:   ps.WorktreePath,
 		WorktreeBranch: ps.WorktreeBranch,
-		// NOTE: the per-agent task-reference link (TaskURL/TaskLabel) is
-		// NOT carried here — the same treatment SpawnConfigJSON gets (it's
-		// not persisted on the pending row either). A spawn that reaches
-		// enrollment via this async sweeper (chiefly Codex, whose conv-id
-		// materialises late) therefore lands with no task link; the inline
-		// CC path — the common lead-spawns-worker case — persists it fine.
-		// Carrying it would mean two more pending_spawns columns; deferred
-		// until the async-spawn-at-task path actually needs it.
+		// The per-agent task-reference link the spawn requested (TCL-568).
+		// Persisted on the pending row precisely so this delayed-
+		// materialization path binds it like the inline paths do; dropping
+		// it here was how `spawn --task` lost the link whenever enrollment
+		// went through the sweeper. (SpawnConfigJSON is still not carried —
+		// it is a best-effort audit snapshot, not caller-visible state.)
 		// Birth-time access controls: the sweeper applies the same
 		// owner grant + permission overrides the inline paths do, now that the
 		// conv-id exists. enrollSpawnedConv reads these off spawnParams.
+		TaskURL:             sweeperTaskRefURL(ps),
+		TaskLabel:           ps.TaskLabel,
 		IsOwner:             ps.IsOwner,
 		PermissionOverrides: ps.PermissionOverrides,
 		ProcessCommandID:    ps.ProcessCommandID,
@@ -223,6 +232,75 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	}
 	slog.Info("pending-spawn sweeper: enrolled pending spawn",
 		"label", ps.Label, "conv", convID, "group", g.Name)
+}
+
+// sweeperTaskRefURL returns a pending row's task-reference URL, re-applying
+// the write-path scheme guard the spawn boundary enforced when the row was
+// written. The row is trusted state, so a failure here is defence in depth
+// (every path into agents.task_ref_url stays validated); it logs and drops
+// the link rather than wedging the enrollment.
+func sweeperTaskRefURL(ps *db.PendingSpawn) string {
+	if ps.TaskURL == "" {
+		return ""
+	}
+	if err := validateTaskRefURL(ps.TaskURL); err != nil {
+		slog.Warn("pending-spawn sweeper: dropping invalid task-reference link",
+			"label", ps.Label, "error", err)
+		return ""
+	}
+	return ps.TaskURL
+}
+
+// ensurePendingTaskRefBound re-applies a pending spawn's task-reference link
+// on the "already enrolled" idempotency path: a prior enrollment attempt may
+// have committed the membership and then failed before its task-ref write,
+// and re-running the full enrollment would double the one-shot welcome.
+//
+// The write is a DB-level compare-and-set (SetAgentTaskRefIfEmpty) so a link
+// the operator set or edited concurrently is never clobbered by the stale
+// spawn value — a plain read-then-write would race exactly that edit.
+//
+// Returns true when the link is settled (bound now, already bound/edited, or
+// none requested) and false on any failure — the row being claimed is the
+// ONLY durable copy of the intent, so a false return tells the caller to
+// requeue the pending row rather than silently dropping the link with it.
+func ensurePendingTaskRefBound(convID string, ps *db.PendingSpawn) bool {
+	taskURL := sweeperTaskRefURL(ps)
+	if taskURL == "" {
+		return true
+	}
+	agentID, err := db.AgentIDForConv(convID)
+	if err != nil || agentID == "" {
+		slog.Warn("pending-spawn sweeper: cannot repair task-reference link (no actor)",
+			"label", ps.Label, "conv", convID, "error", err)
+		return false
+	}
+	n, err := db.SetAgentTaskRefIfEmpty(agentID, taskURL, ps.TaskLabel)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: task-reference repair write failed",
+			"label", ps.Label, "agent", agentID, "error", err)
+		return false
+	}
+	if n > 0 {
+		slog.Info("pending-spawn sweeper: repaired task-reference link on already-enrolled spawn",
+			"label", ps.Label, "agent", agentID)
+		return true
+	}
+	// CAS matched no row: either a link is already present (bound earlier, or
+	// an operator's edit that must win) — settled — or the agent row itself is
+	// missing, which the empty read distinguishes and the caller must retry.
+	ref, err := db.GetAgentTaskRef(agentID)
+	if err != nil {
+		slog.Warn("pending-spawn sweeper: task-reference repair read-back failed",
+			"label", ps.Label, "agent", agentID, "error", err)
+		return false
+	}
+	if ref.URL == "" {
+		slog.Warn("pending-spawn sweeper: task-reference repair found no agent row",
+			"label", ps.Label, "agent", agentID)
+		return false
+	}
+	return true
 }
 
 // deletePendingSpawnRow removes a pending row, logging (not bubbling) a

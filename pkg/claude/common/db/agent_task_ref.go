@@ -46,6 +46,36 @@ func SetAgentTaskRef(agentID, url, label string) (int64, error) {
 	return res.RowsAffected()
 }
 
+// SetAgentTaskRefIfEmpty sets an agent's task-reference link only when no
+// link is currently stored — a single compare-and-set UPDATE, so a
+// concurrent edit (an operator setting a different link between a caller's
+// read and write) can never be clobbered by a stale value. Returns the
+// number of rows updated: 0 means either the agent already has a link (the
+// caller's value must not win) or no such agent exists — GetAgentTaskRef
+// distinguishes the two when a caller needs to.
+func SetAgentTaskRefIfEmpty(agentID, url, label string) (int64, error) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return 0, errors.New("SetAgentTaskRefIfEmpty: agent_id required")
+	}
+	url = strings.TrimSpace(url)
+	label = strings.TrimSpace(label)
+	if url == "" {
+		return 0, errors.New("SetAgentTaskRefIfEmpty: url required (use SetAgentTaskRef to clear)")
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	res, err := d.Exec(`UPDATE agents SET task_ref_url = ?, task_ref_label = ?
+		WHERE agent_id = ? AND task_ref_url = ''`,
+		url, label, agentID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // GetAgentTaskRef returns an agent's stored task-reference URL and
 // explicit label (both "" when unset). A missing agent yields ("", "",
 // nil) — the same shape as an agent with no link — so callers needn't

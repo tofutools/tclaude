@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigrateV134toV135AddsProcessSnippetsAdditively(t *testing.T) {
-	require.Equal(t, 135, currentVersion, "tripwire: bump this with the next migration")
+	require.Equal(t, 136, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v135?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })
