@@ -1100,6 +1100,20 @@ func baseStates() []dashsnap.State {
 			JS:       processEditorStateJS(``),
 			SettleMS: 1100,
 		},
+		processConnectionFeedbackState(
+			"process-editor-connection-valid",
+			"Process editor — valid connection target",
+			".process-node-ports[data-node-id=\"begin\"] .process-port-out",
+			".process-node-ports[data-node-id=\"ship\"] .process-port-in",
+			"valid", "Drop to connect begin to ship.",
+		),
+		processConnectionFeedbackState(
+			"process-editor-connection-invalid",
+			"Process editor — invalid connection target reason",
+			".process-node-ports[data-node-id=\"begin\"] .process-port-in",
+			".process-node-ports[data-node-id=\"ship\"] .process-port-in",
+			"invalid", "Connect this input to an output port or another node body.",
+		),
 		{
 			Key:     "process-editor-conditional-overlays",
 			Title:   "Process editor — conditional node information",
@@ -2444,6 +2458,51 @@ const nodeDialogScrollToWork = `
   var workHead = Array.from(document.querySelectorAll('.process-node-section-title')).find(function(el){ return el.textContent === 'work'; });
   if (!workHead) throw new Error('work section missing');
   workHead.scrollIntoView();`
+
+func processConnectionFeedbackState(key, title, sourceSelector, targetSelector, state, message string) dashsnap.State {
+	caption := "TCL-563: a trusted connector drag exposes the shared source/valid/invalid action vocabulary, delayed bounded tooltip, accessible reason, unchanged port geometry, and readable regular/wizard contrast."
+	return dashsnap.State{
+		Key: key, Title: title, Caption: caption,
+		JS: processEditorStateJS(fmt.Sprintf(`var source=document.querySelector(%q),target=document.querySelector(%q);
+  if(!source||!target) throw new Error('connection feedback fixture ports missing');
+  var geometry=function(port){return [port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')].join(':');};
+  window.__connectionFeedback={sourceSelector:%q,targetSelector:%q,state:%q,message:%q,
+    before:Array.from(document.querySelectorAll('.process-port')).map(geometry)};`, sourceSelector, targetSelector, sourceSelector, targetSelector, state, message)),
+		Actions: []dashsnap.BrowserAction{
+			{Kind: "mouse-down", Selector: sourceSelector},
+			{Kind: "eval", JS: `var fixture=window.__connectionFeedback,root=document.querySelector('.process-graph'),tip=root.querySelector('.process-action-tooltip');
+  if(!root.classList.contains('is-connecting')) throw new Error('trusted pointerdown did not enter connection feedback');
+  if(!document.querySelector(fixture.sourceSelector).classList.contains('is-connection-source')) throw new Error('source port state missing');
+  if(tip.classList.contains('is-visible')) throw new Error('action tooltip appeared before its delay');`},
+			{Kind: "move-to-at", JS: fmt.Sprintf(`var r=document.querySelector(%q).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`, targetSelector), Steps: 6},
+			{Kind: "eval", JS: `var fixture=window.__connectionFeedback,target=document.querySelector(fixture.targetSelector),tip=document.querySelector('.process-action-tooltip');
+  if(!target.classList.contains('is-connection-'+fixture.state)) throw new Error(fixture.state+' target class missing');
+  if(target.getAttribute('aria-disabled')!==String(fixture.state==='invalid')) throw new Error('target aria-disabled disagrees with feedback state');
+  if(tip.classList.contains('is-visible')) throw new Error('target tooltip skipped the reasonable delay');`},
+			{Kind: "move-by", DX: 0.25, DY: 0.25, Steps: 1},
+			{Kind: "eval", JS: `return new Promise(function(resolve,reject){setTimeout(function(){try{
+  var fixture=window.__connectionFeedback,root=document.querySelector('.process-graph'),target=document.querySelector(fixture.targetSelector),tip=root.querySelector('.process-action-tooltip');
+  if(!tip.classList.contains('is-visible')||tip.textContent.trim()!==fixture.message) throw new Error('delayed target tooltip/reason missing: '+tip.textContent);
+  if(tip.getAttribute('role')!=='tooltip'||target.getAttribute('aria-describedby')!==tip.id) throw new Error('tooltip accessibility relationship missing');
+  if(getComputedStyle(tip).pointerEvents!=='none') throw new Error('tooltip blocks graph input');
+  var rootRect=root.getBoundingClientRect(),tipRect=tip.getBoundingClientRect();
+  if(tipRect.left<rootRect.left-1||tipRect.right>rootRect.right+1||tipRect.top<rootRect.top-1||tipRect.bottom>rootRect.bottom+1||tipRect.width>301) throw new Error('tooltip escaped its bounded graph surface');
+  var after=Array.from(document.querySelectorAll('.process-port')).map(function(port){return [port.getAttribute('cx'),port.getAttribute('cy'),port.getAttribute('r')].join(':');});
+  if(JSON.stringify(after)!==JSON.stringify(fixture.before)||after.some(function(value){return !value.endsWith(':6');})) throw new Error('feedback changed connector geometry');
+  var rgb=function(value){var parts=String(value).match(/[\d.]+/g);if(!parts||parts.length<3)throw new Error('unparseable colour '+value);return parts.slice(0,3).map(Number);};
+  var luminance=function(value){return rgb(value).map(function(channel){channel/=255;return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4);}).reduce(function(total,channel,index){return total+channel*[.2126,.7152,.0722][index];},0);};
+  var contrast=function(a,b){var x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
+  var targetStyle=getComputedStyle(target),rootStyle=getComputedStyle(root),tipStyle=getComputedStyle(tip);
+  if(contrast(targetStyle.stroke,rootStyle.backgroundColor)<3) throw new Error('target affordance contrast below 3:1');
+  if(contrast(tipStyle.color,tipStyle.backgroundColor)<4.5) throw new Error('tooltip text contrast below 4.5:1');
+  var dash=targetStyle.strokeDasharray;
+  if(fixture.state==='invalid'&&(dash==='none'||dash==='0px')) throw new Error('invalid target is color-only');
+  if(fixture.state==='valid'&&dash!=='none'&&dash!=='0px') throw new Error('valid target retained invalid dash vocabulary');
+  resolve();}catch(error){reject(error);}},820);});`},
+		},
+		SettleMS: 250,
+	}
+}
 
 // processEditorStateJS opens the seeded release-train template in the graph
 // editor (Processes tab → Templates → open) and waits for the lazily imported

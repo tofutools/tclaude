@@ -36,6 +36,9 @@ import {
 } from './process-selection.js';
 import { requestCommandPalette } from './command-registry.js';
 import { openProcessNodeTypeChooser } from './process-node-chooser.js';
+import {
+  prepareProcessConnectionFeedback, resolveProcessConnectionFeedback,
+} from './process-connection-feedback.js';
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import {
   processScribeContextPreview, processScribeEditorContext,
@@ -149,6 +152,8 @@ export class ProcessTemplateEditor {
     this.graph = createProcessGraphAdapter(host, {
       graph: this.model.graph(),
       ariaLabel: `Process template editor: ${this.model.template.id}`,
+      connectionFeedback: (request, prepared) => resolveProcessConnectionFeedback(this.model, request, prepared),
+      connectionFeedbackPreparation: () => prepareProcessConnectionFeedback(this.model),
       events: {
         nodeClick: (event) => this.onNodeClick(event),
         nodeDoubleClick: (event) => this.onNodeDblClick(event),
@@ -731,37 +736,26 @@ export class ProcessTemplateEditor {
     const source = this.band?.source || { nodeId, port };
     this.removeBand();
     if (cancelled) return;
+    const feedback = resolveProcessConnectionFeedback(this.model, {
+      phase: 'target', source, candidate: { nodeId: targetNodeId, port: targetPort, emptyCanvas },
+    });
     if (!targetNodeId) {
-      if (emptyCanvas) this.openConnectedNodeChooser(source, point, event);
+      if (emptyCanvas && feedback.state === 'valid') this.openConnectedNodeChooser(source, point, event);
+      else if (feedback.state === 'invalid' || feedback.state === 'disabled') this.status(feedback.message, true);
       return;
     }
     // A plain CLICK on a port arrives here too (the core starts a port drag on
     // pointerdown and hit-tests on pointerup): source and target are the same
     // port. Never treat that as an edge gesture — without this, clicking an
-    // out port silently minted a pass self-loop. A deliberate out → own-in
-    // drop still creates a self-loop edge.
-    if (targetNodeId === source.nodeId && targetPort === source.port) return;
-    // Direction: an out-port drag connects source → target; an in-port drag
-    // dropped on an out port (or a node body) connects target → source.
-    let from = source.nodeId;
-    let to = targetNodeId;
-    if (source.port === 'in') {
-      if (targetPort === 'in') {
-        this.status('Connect an output to an input: one end must be an out port.', true);
-        return;
-      }
-      from = targetNodeId;
-      to = source.nodeId;
-    }
-    if (from === to) {
-      // Released back on the source's own body: a fumbled click, stay silent.
-      if (!targetPort) return;
-      // v1 processes are acyclic — a hand-drawn self-loop is always a
-      // graph_cycle ERROR, and advisory saves would ship it silently. Block
-      // the gesture outright (the model refuses too, belt and braces).
-      this.status('Self-loop edges are not supported (v1 processes are acyclic).', true);
+    // out port silently minted a pass self-loop. The resolver keeps a
+    // deliberate out → own-in drop distinct so it receives the self-loop
+    // reason without committing.
+    if (feedback.state === 'source') return;
+    if (feedback.state !== 'valid') {
+      if (feedback.message) this.status(feedback.message, true);
       return;
     }
+    const { from, to } = feedback;
     const outcome = this.model.freeOutcome(from, 'pass');
     const created = this.mutate(() => this.model.addEdge(from, outcome, to));
     if (!created) return;
@@ -770,21 +764,11 @@ export class ProcessTemplateEditor {
   }
 
   openConnectedNodeChooser(source, point, event) {
-    const sourceNode = this.model.node(source?.nodeId);
-    if (!sourceNode) {
-      this.status(`unknown node ${source?.nodeId || ''}`.trim(), true);
-      return false;
-    }
-    if (source.port !== 'in' && source.port !== 'out') {
-      this.status('Connect an output to an input: one end must be an out port.', true);
-      return false;
-    }
-    if (!this.model.config.canInsert) {
-      this.status('adding nodes is not allowed in this view', true);
-      return false;
-    }
-    if (source.port === 'out' && sourceNode.type === 'end') {
-      this.status('end node must not have outgoing edges', true);
+    const feedback = resolveProcessConnectionFeedback(this.model, {
+      phase: 'target', source, candidate: { emptyCanvas: true },
+    });
+    if (feedback.state !== 'valid') {
+      this.status(feedback.message || 'This connector is not available.', true);
       return false;
     }
 

@@ -98,10 +98,10 @@ test('Preact editor projects every canonical node kind through the inside-label 
     assert.equal(node.querySelector('.process-node-label-peripheral'), null);
     assert.ok(node.getAttribute('aria-label').startsWith(`${before.template.nodes[id].name}, ${type}`));
     assert.equal(ports.closest('.process-node'), null, `${type} connector controls remain outside the node button`);
-    assert.equal(ports.querySelector('.process-port-in').getAttribute('aria-label'),
-      `Input port for ${before.template.nodes[id].name}`);
-    assert.equal(ports.querySelector('.process-port-out').getAttribute('aria-label'),
-      `Output port for ${before.template.nodes[id].name}`);
+    assert.match(ports.querySelector('.process-port-in').getAttribute('aria-label'),
+      new RegExp(`^Input port for ${before.template.nodes[id].name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\. .*predecessor\\.$`));
+    assert.match(ports.querySelector('.process-port-out').getAttribute('aria-label'),
+      type === 'end' ? /End nodes cannot have outgoing connections\.$/ : /successor\.$/);
   }
   assert.deepEqual(editor.model.saveBody(), before,
     'rendering and refreshing labels does not change names, layout, edges, or the save payload');

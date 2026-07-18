@@ -76,6 +76,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	}
 
 	editor := read("js/process-editor.js")
+	connectionFeedback := read("js/process-connection-feedback.js")
 	mustContain("process-editor.js", editor,
 		"export class ProcessTemplateEditor",
 		"export async function openTemplateEditor(",
@@ -125,8 +126,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"ref: this.model.currentRef",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
-		// Hand-drawn self-loops are blocked at the gesture with a message.
-		"Self-loop edges are not supported",
+		// The pure semantic resolver is shared by presentation and commit
+		// preflight, so feedback cannot drift from accepted editor gestures.
+		"prepareProcessConnectionFeedback, resolveProcessConnectionFeedback,",
+		"connectionFeedback: (request, prepared) => resolveProcessConnectionFeedback(this.model, request, prepared)",
+		"connectionFeedbackPreparation: () => prepareProcessConnectionFeedback(this.model)",
+		"const feedback = resolveProcessConnectionFeedback(this.model, {",
 		// Editor semantics cross the one explicit adapter. Pointer-frame state
 		// never becomes controller or Signals state.
 		"createProcessGraphAdapter(host, {",
@@ -142,6 +147,19 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.model.duplicateNodes(",
 		"this.validation?.focusIssue(delta)",
 	)
+	mustContain("process-connection-feedback.js", connectionFeedback,
+		"export function prepareProcessConnectionFeedback(",
+		"export function resolveProcessConnectionFeedback(",
+		"End nodes cannot have outgoing connections.",
+		"Self-loop connections are not supported because v1 processes are acyclic.",
+		"Connect this input to an output port or another node body.",
+		"Adding connected nodes is not allowed in this view.",
+	)
+	for _, banned := range []string{"document.", "fetch(", "setTimeout(", "setInterval("} {
+		if strings.Contains(connectionFeedback, banned) {
+			t.Errorf("process-connection-feedback.js must stay pure; found %q", banned)
+		}
+	}
 	island := read("js/process-editor-island.js")
 	mustContain("process-editor-island.js", island,
 		"export function ProcessEditorApp(",

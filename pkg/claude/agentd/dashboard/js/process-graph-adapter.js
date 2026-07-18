@@ -13,7 +13,11 @@ function cloneLayout(layout) {
 }
 
 export class ProcessGraphAdapter {
-  constructor(host, { graph = { nodes: [], edges: [] }, ariaLabel = '', events = {} } = {}) {
+  constructor(host, {
+    graph = { nodes: [], edges: [] }, ariaLabel = '', events = {}, connectionFeedback,
+    connectionFeedbackPreparation,
+    actionFeedbackDelay, keyboardFeedbackDelay,
+  } = {}) {
     this.host = host;
     this.events = events;
     this.disposed = false;
@@ -25,6 +29,10 @@ export class ProcessGraphAdapter {
     this.widget = new ProcessGraph(host, graph, {
       ariaLabel,
       colorScheme: 'dark',
+      connectionFeedback,
+      connectionFeedbackPreparation,
+      actionFeedbackDelay,
+      keyboardFeedbackDelay,
       onInteractionStart: () => { this.interactionGeneration += 1; },
       onInteractionEnd: () => { this.interactionGeneration += 1; },
       onNodeClick: emit('nodeClick'),
