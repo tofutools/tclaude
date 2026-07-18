@@ -92,6 +92,31 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("timed out waiting for pane-died marker %s", path)
 }
 
+func waitForPaneOption(t *testing.T, tmux isolatedRealTmux, paneID, option, want string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var lastValue string
+	var lastErr error
+	for time.Now().Before(deadline) {
+		out, err := tmux.Command("show-options", "-p", "-v", "-t", paneID, option).Output()
+		if err == nil {
+			lastValue = strings.TrimSpace(string(out))
+			if lastValue == want {
+				return
+			}
+		}
+		lastErr = err
+		time.Sleep(10 * time.Millisecond)
+	}
+	version, versionErr := tmux.Command("-V").CombinedOutput()
+	hook, hookErr := tmux.Command("show-hooks", "-p", "-t", paneID, "pane-died").CombinedOutput()
+	evidence, evidenceErr := tmux.Command("display-message", "-p", "-t", paneID,
+		"#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}").CombinedOutput()
+	t.Fatalf("timed out waiting for pane-died pane option %s=%s on %s: last_value=%q last_error=%v tmux=%q tmux_error=%v hook=%q hook_error=%v evidence=%q evidence_error=%v",
+		option, want, paneID, lastValue, lastErr, strings.TrimSpace(string(version)), versionErr,
+		strings.TrimSpace(string(hook)), hookErr, strings.TrimSpace(string(evidence)), evidenceErr)
+}
+
 func waitForPIDFile(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -185,7 +210,6 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 			release := filepath.Join(dir, "release")
 			ready := filepath.Join(dir, "ready")
 			helperError := ready + ".error"
-			marker := filepath.Join(dir, "emitted")
 			name := fmt.Sprintf("tcl573-%d", i)
 			paneCommand := "exec " + realTmuxPaneHelperCommand(
 				t, ready, release, helperError, tc.helperCode)
@@ -196,7 +220,13 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 			generation := fmt.Sprintf("%032x", i+1)
 			require.NoError(t, tmux.Command("set-option", "-p", "-t", target,
 				paneExitGenerationOption, generation).Run())
-			hook := "run-shell " + clcommon.ShellQuoteArg("printf emitted > "+clcommon.ShellQuoteArg(marker))
+			paneRaw, err := tmux.Command("display-message", "-p", "-t", target, "#{pane_id}").Output()
+			require.NoError(t, err)
+			paneID := strings.TrimSpace(string(paneRaw))
+			require.True(t, validCallbackPaneID(paneID))
+			const emittedOption = "@tcl573_test_pane_died_emitted"
+			emittedToken := fmt.Sprintf("event-%d", i+1)
+			hook := "set-option -p -t " + paneID + " " + emittedOption + " " + emittedToken
 			require.NoError(t, tmux.Command("set-hook", "-p", "-t", target, "pane-died", hook).Run())
 			helperPID := waitForPIDFile(t, ready)
 			out, err := tmux.Command("display-message", "-p", "-t", target, "#{pane_pid}").Output()
@@ -209,7 +239,7 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 			} else {
 				require.NoError(t, syscall.Kill(panePID, tc.signalPane))
 			}
-			waitForFile(t, marker)
+			waitForPaneOption(t, tmux, paneID, emittedOption, emittedToken)
 			evidence, err := InspectDeadTmuxSessionPane(name)
 			require.NoError(t, err)
 			if tc.wantCode == nil {
