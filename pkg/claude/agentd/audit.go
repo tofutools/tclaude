@@ -63,6 +63,7 @@ type auditCtx struct {
 type auditResult struct {
 	targetLabel string
 	eventID     string
+	detail      string
 }
 
 type auditResultContextKey struct{}
@@ -70,6 +71,16 @@ type auditResultContextKey struct{}
 func setAuditTargetLabel(r *http.Request, label string) {
 	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
 		result.targetLabel = auditClip(label, 120)
+	}
+}
+
+// setAuditDetail lets a handler attach a short, privacy-bounded diagnostic to
+// its command row. It is intentionally a string-only, tightly capped channel:
+// handlers must never place pane content, prompts, environment, argv, or
+// subprocess output here.
+func setAuditDetail(r *http.Request, detail string) {
+	if result, ok := r.Context().Value(auditResultContextKey{}).(*auditResult); ok {
+		result.detail = auditClip(detail, 240)
 	}
 }
 
@@ -422,6 +433,9 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	}
 	if route.describe != nil {
 		route.describe(&auditCtx{vars: vars, body: body, fields: &fields})
+	}
+	if result != nil && result.detail != "" {
+		fields.Detail = result.detail
 	}
 	if status < http.StatusBadRequest && result != nil && result.targetLabel != "" {
 		fields.TargetLabel = result.targetLabel

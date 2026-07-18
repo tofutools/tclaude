@@ -186,11 +186,17 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 		return exec.Command(echoBin, strings.Join(alive, "\n"))
 	case len(args) >= 4 && args[0] == "send-keys" && args[1] == "-t":
+		if strings.HasPrefix(args[2], "=%") {
+			return exec.Command(falseBin)
+		}
 		t.routeSendKeys(args[2], args[3])
 	case len(args) >= 5 && args[0] == "send-keys" && args[1] == "-l" && args[2] == "-t":
 		// Literal mode prevents text such as "Enter" or "C-c" from being
 		// interpreted as tmux key names. The pane simulator already treats
 		// routed text literally; account for the extra production flag here.
+		if strings.HasPrefix(args[3], "=%") {
+			return exec.Command(falseBin)
+		}
 		t.routeSendKeys(args[3], args[4])
 	case len(args) >= 3 && args[0] == "set-buffer":
 		t.setBuffer(args[1:])
@@ -518,8 +524,11 @@ func (t *TmuxSim) pasteBuffer(args []string) {
 // Returns the resolved session-table key, or "" when nothing matches (an
 // ambiguous prefix errors in real tmux; the sim treats it as no match).
 func (t *TmuxSim) resolveTarget(target string, paneTyped bool) string {
-	if strings.HasPrefix(strings.TrimPrefix(target, "="), "%") {
-		paneID := strings.TrimPrefix(strings.TrimPrefix(target, "="), "%")
+	if strings.HasPrefix(target, "=%") {
+		return ""
+	}
+	if strings.HasPrefix(target, "%") {
+		paneID := strings.TrimPrefix(target, "%")
 		pid, err := strconv.Atoi(paneID)
 		if err != nil {
 			return ""

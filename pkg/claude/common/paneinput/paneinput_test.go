@@ -72,6 +72,20 @@ func TestInjectTextAndSubmitUsesLiteralModeForSingleLineText(t *testing.T) {
 	require.Equal(t, []string{"send-keys", "-l", "-t", "=pane-literal:0.0", "Enter"}, commands[0])
 }
 
+func TestInjectTextAndSubmitPreservesExactPaneID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var commands [][]string
+	err := InjectTextAndSubmit("%42", "/exit", Options{
+		Run: func(args ...string) error {
+			commands = append(commands, append([]string(nil), args...))
+			return nil
+		},
+		SettleDelay: 0, SettleDelaySet: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"send-keys", "-l", "-t", "%42", "/exit"}, commands[0])
+}
+
 func TestPaneLockPathUsesPrivateDataDirectory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
