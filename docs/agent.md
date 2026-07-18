@@ -693,6 +693,17 @@ unattended — even though both postures are "automatic".
 | Codex `on-failure` / `on-request` / `never`, auto-review off | the above, plus Codex `never` / `on-request` / `on-failure` without auto-review and Claude `acceptEdits` / `auto` |
 | Codex `on-failure` / `on-request` with active classifier review | any Codex posture, and every Claude posture except `bypassPermissions` — including `inherit`, whose capability shape is exactly this one |
 
+The table governs *explicit* postures. When a child's posture is **unset** —
+no `--ask-for-approval` flag and no spawn-profile value — tclaude applies the
+harness default (Claude: `auto`), but first narrows it to something the caller
+is actually allowed to grant. In practice this affects one case: a Claude
+`inherit` parent defaults its children to `inherit` rather than `auto`, so bare
+delegation keeps working from agents launched before `auto` became the default
+and from your own `tclaude session new` session. Spawns with no agent caller
+(you, or the dashboard) always get the plain harness default. An explicitly
+requested escalation is never silently narrowed — it fails with
+`approval_restricted`.
+
 Claude `auto` is **not** the Codex Auto-review equivalent (see
 [TCL-92](https://linear.app/johan-kjolhede/issue/TCL-92)). The `auto`
 supervisor reviews and tightens operations that remain inside the Claude

@@ -2027,10 +2027,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
 		return
 	}
+	// body.ApprovalPolicy is already profile-merged above (resolveStringLaunchField
+	// overlays the profile tiers without defaulting), so an empty value here means
+	// NOTHING chose a posture — neither an explicit flag nor a spawn profile. Only
+	// then may the harness default be narrowed to what this caller can mint; an
+	// explicit or profile-set posture must fail loudly in the guard below.
+	approvalUnset := strings.TrimSpace(body.ApprovalPolicy) == ""
 	approvalPolicy, apErr := harness.ResolveApprovalPolicy(h, body.ApprovalPolicy)
 	if apErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_approval", apErr.Error())
 		return
+	}
+	if approvalUnset {
+		approvalPolicy = narrowDefaultApprovalToCaller(spawnerConvID, h.Name, approvalPolicy)
 	}
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
 	if arErr != nil {
@@ -2978,8 +2987,16 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if p.SandboxMode, err = harness.ResolveSandboxMode(h, p.SandboxMode); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
+	// As at the HTTP boundary: empty HERE (after the profile tiers above) means
+	// no flag and no profile chose a posture, so the harness default may be
+	// narrowed to one this caller is allowed to grant. A value already resolved
+	// by the HTTP boundary arrives non-empty and is left exactly as it is.
+	approvalUnset := strings.TrimSpace(p.ApprovalPolicy) == ""
 	if p.ApprovalPolicy, err = harness.ResolveApprovalPolicy(h, p.ApprovalPolicy); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
+	}
+	if approvalUnset {
+		p.ApprovalPolicy = narrowDefaultApprovalToCaller(p.SpawnedByConv, h.Name, p.ApprovalPolicy)
 	}
 	if p.AskUserQuestionTimeout, err = harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}

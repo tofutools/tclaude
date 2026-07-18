@@ -279,6 +279,55 @@ func TestSpawnApprovalLineage_TemplateInstantiateRejectsBypass(t *testing.T) {
 	assert.Contains(t, res.Agents[0].Error, "may not spawn")
 }
 
+// A bare delegation (no approval flag, no profile) from an `inherit` parent must
+// keep working. The Claude default is `auto`, which an inherit parent — credited
+// only approvalAutoBaseline — may not mint, so without
+// narrowDefaultApprovalToCaller this 403s. That would break every agent spawned
+// before `auto` became the default (approvalForRelaunch preserves their recorded
+// `inherit`) and every human `tclaude session new` session.
+func TestSpawnApprovalLineage_BareSpawnFromInheritParentNarrowsToInherit(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-narrow-parent-aaaa-bbbb-cccccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusOK, resp.Code, "bare delegation from an inherit parent: %s", resp.Raw)
+}
+
+// The narrowing applies ONLY to a defaulted posture. An EXPLICITLY requested
+// escalation must still fail loudly rather than being silently downgraded.
+func TestSpawnApprovalLineage_ExplicitAutoFromInheritParentStillRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-explicit-parent-aaaa-bbbb-cccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker", "approval": "auto"})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "approval_restricted")
+}
+
+// A posture chosen by a spawn PROFILE is an explicit choice too, not a default,
+// so it is not narrowed either — the profile's escalation fails loudly.
+func TestSpawnApprovalLineage_ProfileSetAutoFromInheritParentStillRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-profile-auto-parent-aaaa-bbbb-cccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "auto-approval", "harness": harness.DefaultName, "approval": "auto",
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "auto-approval").Code)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "approval_restricted")
+}
+
 func TestSpawnApprovalLineage_ProfileDerivedBypassRejected(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

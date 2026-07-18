@@ -108,12 +108,22 @@ func sandboxForHarness(name string) string {
 // have no recorded posture. Current relaunches use approvalForRelaunch to
 // preserve the source generation exactly.
 func approvalForHarness(name string) string {
-	if h, err := harness.Resolve(strings.TrimSpace(name)); err == nil && h.SupportsApproval() {
-		// Validate the harness default before threading it. Claude Code's default
-		// is `auto`, so a legacy row with no recorded posture relaunches under the
-		// supervisor-classifier mode rather than the old unknown `inherit` — a
-		// deliberate broadening, bounded to in-sandbox execution, that keeps a
-		// reconstructed agent from deadlocking or failing the lineage guard.
+	name = strings.TrimSpace(name)
+	if name == harness.DefaultName {
+		// NOT the harness default (`auto`). A relaunch reconstructs an existing
+		// agent, so it must tighten, never loosen — the same principle
+		// sandboxForHarness states and the Codex branch above enforces by
+		// returning `untrusted` rather than the current `never` default.
+		//
+		// A blank Claude row is also not ambiguous the way a Codex one is: every
+		// legacy Claude launch emitted no `--permission-mode`, so `inherit` IS the
+		// faithful reconstruction. Returning `auto` here would silently mint full
+		// in-sandbox delegation authority the row never provably had — and because
+		// the remaining callers are error fallbacks, it would do so on a mere DB
+		// hiccup (widen-on-error).
+		return harness.ClaudePermissionInherit
+	}
+	if h, err := harness.Resolve(name); err == nil && h.SupportsApproval() {
 		// Codex's `never` default validates to itself.
 		if pol, verr := h.Approval.ValidatePolicy(h.Approval.DefaultPolicy()); verr == nil {
 			return pol
