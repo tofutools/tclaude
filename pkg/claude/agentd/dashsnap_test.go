@@ -1456,6 +1456,58 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "process-editor-snippet-name-input",
+			Title:   "Process editor — themed snippet name input",
+			Caption: "TCL-570 real Chrome proof: the accessible snippet-name field uses the active dashboard skin across placeholder, hover, focus-visible, populated, disabled and invalid states, with computed contrast assertions.",
+			JS: processEditorStateJS(`window.__browserEd=ed;
+  await ed.loadCustomSnippets();
+  ed.setSelection({type:'multi',items:[{type:'node',id:'begin'},{type:'node',id:'ship'}]});
+  await editorPaint();`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "eval", JS: `var save=document.querySelector('.process-palette-save');
+  if(!save||save.disabled) throw new Error('snippet save action unavailable: '+JSON.stringify(window.__browserEd.snapshot().snippets));
+  save.scrollIntoView({block:'center'});`},
+				{Kind: "click", Selector: ".process-palette-save"},
+				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input'),modal=document.querySelector('#process-snippet-name-modal .modal');
+	if(!input) throw new Error('snippet name dialog did not open');
+	if(!modal) throw new Error('snippet name dialog surface missing');
+  var label=modal.querySelector('label[for="process-snippet-name-input"]');
+  if(!label||input.getAttribute('aria-describedby')!=='process-snippet-name-help process-snippet-name-error') throw new Error('snippet field accessible naming contract drifted');
+  if(input.placeholder!=='e.g. Release review'||input.autocomplete!=='off') throw new Error('snippet field placeholder/autocomplete contract drifted');
+  input.blur();
+  var rgb=function(value){var parts=(value.match(/[\d.]+/g)||[]).slice(0,3).map(Number);if(parts.length!==3) throw new Error('unparseable color '+value);return parts;};
+  var luminance=function(value){return rgb(value).map(function(channel){channel/=255;return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4);}).reduce(function(total,channel,index){return total+channel*[.2126,.7152,.0722][index];},0);};
+  window.__snippetContrast=function(a,b){var x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
+  var style=getComputedStyle(input),placeholder=getComputedStyle(input,'::placeholder');
+  if(style.backgroundColor==='rgb(255, 255, 255)'||style.backgroundColor==='rgba(0, 0, 0, 0)') throw new Error('snippet field fell back to UA background');
+  if(window.__snippetContrast(style.color,style.backgroundColor)<4.5) throw new Error('snippet field text contrast below 4.5:1');
+  if(window.__snippetContrast(placeholder.color,style.backgroundColor)<4.5) throw new Error('snippet placeholder contrast below 4.5:1');
+  window.__snippetNormalBorder=style.borderColor;`},
+				{Kind: "move-to-at", JS: `var r=document.querySelector('#process-snippet-name-input').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};`, Steps: 3},
+				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input');
+  if(getComputedStyle(input).borderColor===window.__snippetNormalBorder) throw new Error('snippet field hover affordance missing');`},
+				{Kind: "click", Selector: "#process-snippet-name-input"},
+				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input'),style=getComputedStyle(input),modal=getComputedStyle(document.querySelector('#process-snippet-name-modal .modal'));
+  if(document.activeElement!==input||style.outlineStyle==='none'||parseFloat(style.outlineWidth)<2) throw new Error('snippet focus-visible ring missing');
+  if(window.__snippetContrast(style.outlineColor,modal.backgroundColor)<3) throw new Error('snippet focus ring contrast below 3:1');`},
+				{Kind: "input", Selector: "#process-snippet-name-input", Text: "Release review Release review Release review Release review Release review Release review Release review"},
+				{Kind: "click", Selector: "#process-snippet-name-modal .primary"},
+				{Kind: "click", Selector: "#process-snippet-name-input"},
+				{Kind: "eval", JS: `var input=document.querySelector('#process-snippet-name-input'),error=document.querySelector('#process-snippet-name-error'),style=getComputedStyle(input),errorStyle=getComputedStyle(error),modal=getComputedStyle(document.querySelector('#process-snippet-name-modal .modal'));
+	if(input.getAttribute('aria-invalid')!=='true'||!error.textContent.includes('80 characters')) throw new Error('snippet invalid/inline-error state missing');
+  if(style.borderColor===window.__snippetNormalBorder||style.outlineColor!==style.borderColor) throw new Error('snippet invalid focus treatment missing');
+  if(window.__snippetContrast(style.outlineColor,modal.backgroundColor)<3) throw new Error('snippet invalid focus contrast below 3:1');
+  if(window.__snippetContrast(errorStyle.color,errorStyle.backgroundColor)<4.5) throw new Error('snippet inline error contrast below 4.5:1');
+  input.disabled=true;var disabled=getComputedStyle(input);
+  if(disabled.backgroundColor==='rgb(255, 255, 255)'||window.__snippetContrast(disabled.color,disabled.backgroundColor)<4.5) throw new Error('snippet disabled state is unthemed or below 4.5:1');
+  input.disabled=false;input.focus();input.setSelectionRange(input.value.length,input.value.length);
+  if(input.selectionStart!==input.value.length||input.selectionEnd!==input.value.length) throw new Error('native snippet caret/selection behavior drifted');
+  var rect=input.getBoundingClientRect(),modalRect=document.querySelector('#process-snippet-name-modal .modal').getBoundingClientRect();
+  if(rect.width<240||rect.left<modalRect.left||rect.right>modalRect.right) throw new Error('snippet input does not fit its zoom-safe modal field');`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-browser-custom-snippets",
 			Title:   "Process editor — custom snippet library",
 			Caption: "TCL-567 real Chrome input in regular and wizard skins: a named selected subgraph persists through the authenticated library, inserts through the canonical remap/history path, then revision-CAS rename/delete leave built-ins stable.",

@@ -292,6 +292,8 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"controller.renameCustomSnippet(payload.id)",
 		"controller.deleteCustomSnippet(payload.id)",
 		"validateProcessSnippetName(name)",
+		`class="field process-editor-field process-snippet-name-field"`,
+		`placeholder="e.g. Release review"`,
 		`aria-describedby="process-snippet-name-help process-snippet-name-error"`,
 	)
 	adapter := read("js/process-graph-adapter.js")
@@ -484,6 +486,11 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-instantiate-dialog",
 		"body.wizard .process-param-dialog",
 		"body.wizard .process-instantiate-dialog",
+		".process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus)",
+		`.process-editor-modal .process-editor-field input[aria-invalid="true"]`,
+		".process-editor-modal .process-editor-field input:disabled",
+		".process-editor-modal .process-editor-field input:-webkit-autofill",
+		"body.wizard .process-editor-modal",
 		".palette-item.disabled",
 	)
 

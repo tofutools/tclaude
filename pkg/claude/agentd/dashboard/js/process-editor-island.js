@@ -358,14 +358,16 @@ export function SnippetNameDialog({ descriptor, complete }) {
   >
     <h3 id="process-snippet-name-title">${descriptor.title}</h3>
     <p>Only the selected nodes, their internal edges, and relative layout are saved. Template identity and crossing edges are excluded.</p>
-    <label for="process-snippet-name-input">Snippet name</label>
-    <input ref=${input} id="process-snippet-name-input" type="text" autocomplete="off" spellcheck="true"
-      value=${name} data-select-on-focus aria-invalid=${error ? 'true' : undefined}
-      aria-describedby="process-snippet-name-help process-snippet-name-error"
-      onInput=${(event) => { setName(event.currentTarget.value); setError(''); }}
-      onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } }} />
-    <div id="process-snippet-name-help" class="muted">Up to ${PROCESS_SNIPPET_NAME_MAX_RUNES} characters and ${PROCESS_SNIPPET_NAME_MAX_BYTES} UTF-8 bytes.</div>
-    <div id="process-snippet-name-error" class="cron-create-error" role="alert">${error}</div>
+    <div class="field process-editor-field process-snippet-name-field">
+      <label for="process-snippet-name-input">Snippet name</label>
+      <input ref=${input} id="process-snippet-name-input" type="text" autocomplete="off" spellcheck="true"
+        placeholder="e.g. Release review" value=${name} data-select-on-focus aria-invalid=${error ? 'true' : undefined}
+        aria-describedby="process-snippet-name-help process-snippet-name-error"
+        onInput=${(event) => { setName(event.currentTarget.value); setError(''); }}
+        onKeyDown=${(event) => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); submit(); } }} />
+      <div id="process-snippet-name-help" class="muted">Up to ${PROCESS_SNIPPET_NAME_MAX_RUNES} characters and ${PROCESS_SNIPPET_NAME_MAX_BYTES} UTF-8 bytes.</div>
+      <div id="process-snippet-name-error" class="cron-create-error" role="alert">${error}</div>
+    </div>
     <div class="modal-buttons"><button type="button" class="process-editor-modal-btn" onClick=${() => complete(null)}>Cancel</button><button
       type="button" class="primary process-editor-modal-btn" disabled=${!trimmed} onClick=${submit}>${descriptor.submitLabel}</button></div>
   </${Overlay}>`;
