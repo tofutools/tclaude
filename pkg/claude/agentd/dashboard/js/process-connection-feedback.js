@@ -2,6 +2,10 @@
 // connector gestures. The graph widget owns presentation and timing; this
 // module owns which actions the edit model can actually perform.
 
+import {
+  processEdgePortAvailability, processNodePortAvailable, processPortUnavailableMessage,
+} from './process-port-availability.js';
+
 function nodeLabel(model, id) {
   const node = model?.node?.(id);
   return String(node?.name || id || 'node');
@@ -56,8 +60,8 @@ export function resolveProcessConnectionFeedback(model, request = {}, prepared =
   if (!sourceNode || (source.port !== 'in' && source.port !== 'out')) {
     return disabled('This connector is not available.');
   }
-  if (source.port === 'out' && sourceNode.type === 'end') {
-    return disabled('End nodes cannot have outgoing connections.');
+  if (!processNodePortAvailable(sourceNode, source.port)) {
+    return disabled(processPortUnavailableMessage(sourceNode, source.port));
   }
   if (request.phase === 'source') {
     return { state: 'available', enabled: true, message: sourceInstruction(model, source) };
@@ -90,8 +94,9 @@ export function resolveProcessConnectionFeedback(model, request = {}, prepared =
 
   const from = source.port === 'in' ? candidate.nodeId : source.nodeId;
   const to = source.port === 'in' ? source.nodeId : candidate.nodeId;
-  if (model.node(from)?.type === 'end') {
-    return invalid('End nodes cannot have outgoing connections.');
+  const endpointAvailability = processEdgePortAvailability(model.node(from), model.node(to));
+  if (!endpointAvailability.enabled) {
+    return invalid(endpointAvailability.message);
   }
   const outcome = prepared?.freeOutcome?.(from) || model.freeOutcome?.(from, 'pass') || 'pass';
   const prospective = { from, outcome, to };

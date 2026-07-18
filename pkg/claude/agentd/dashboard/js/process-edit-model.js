@@ -22,6 +22,9 @@
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import { layoutProcessGraph } from './process-layout.js';
 import {
+  processEdgePortAvailability, processNodePortAvailability,
+} from './process-port-availability.js';
+import {
   PROCESS_CLIPBOARD_MAX_COORDINATE, PROCESS_CLIPBOARD_MAX_EDGES,
   PROCESS_CLIPBOARD_MAX_ID, PROCESS_CLIPBOARD_MAX_NODES, ProcessClipboardError,
   validateProcessSelectionPayload,
@@ -205,6 +208,11 @@ export class ProcessEditModel {
     if (!this.config.edgeEditable(edge)) throw new Error(`edge ${edge.from} -> ${edge.to} is read-only in this view`);
   }
 
+  assertNewEdgePortsAvailable(from, to, nodes = this.template.nodes) {
+    const availability = processEdgePortAvailability(nodes?.[from], nodes?.[to]);
+    if (!availability.enabled) throw new Error(availability.message);
+  }
+
   assertCanInsert() {
     if (!this.config.canInsert) throw new Error('adding nodes is not allowed in this view');
   }
@@ -267,8 +275,8 @@ export class ProcessEditModel {
     const nodeID = this.uniqueNodeID(nodeType);
     const from = connectFrom || nodeID;
     const to = connectTo || nodeID;
-    const fromNode = from === nodeID ? { type: nodeType } : this.template.nodes[from];
-    if (fromNode.type === 'end') throw new Error('end node must not have outgoing edges');
+    const plannedNodes = { ...this.template.nodes, [nodeID]: { type: nodeType } };
+    this.assertNewEdgePortsAvailable(from, to, plannedNodes);
     const outcome = this.freeOutcome(from, 'pass');
     const edge = { from, outcome, to };
     this.assertEdgeEditable(edge);
@@ -293,10 +301,13 @@ export class ProcessEditModel {
     const incoming = this.incomingEdges(id);
     const outgoing = this.outgoingEdges(id);
     for (const edge of [...incoming, ...outgoing]) this.assertEdgeEditable(edge);
-    this.begin();
     const successor = rewire
       ? [...outgoing].sort((a, b) => String(a.outcome).localeCompare(String(b.outcome), 'en'))[0]?.to
       : undefined;
+    if (rewire && successor && successor !== id) {
+      for (const edge of incoming) this.assertNewEdgePortsAvailable(edge.from, successor);
+    }
+    this.begin();
     delete this.template.nodes[id];
     delete this.layout.nodes[id];
     this.edges = this.edges.filter((edge) => edge.from !== id && edge.to !== id);
@@ -336,10 +347,22 @@ export class ProcessEditModel {
     const sourceIDs = [...new Set(ids || [])].filter((id) => this.template.nodes[id]);
     if (!sourceIDs.length) return new Map();
     const idMap = new Map();
+    const taken = new Set(Object.keys(this.template.nodes));
+    for (const sourceID of sourceIDs) {
+      let cloneID = sourceID;
+      for (let suffix = 2; taken.has(cloneID); suffix += 1) cloneID = `${sourceID}-${suffix}`;
+      taken.add(cloneID);
+      idMap.set(sourceID, cloneID);
+    }
+    const plannedNodes = { ...this.template.nodes };
+    for (const sourceID of sourceIDs) plannedNodes[idMap.get(sourceID)] = this.template.nodes[sourceID];
+    const internalEdges = this.edges.filter((edge) => idMap.has(edge.from) && idMap.has(edge.to));
+    for (const edge of internalEdges) {
+      this.assertNewEdgePortsAvailable(idMap.get(edge.from), idMap.get(edge.to), plannedNodes);
+    }
     this.begin();
     for (const sourceID of sourceIDs) {
-      const cloneID = this.uniqueNodeID(sourceID);
-      idMap.set(sourceID, cloneID);
+      const cloneID = idMap.get(sourceID);
       this.template.nodes[cloneID] = clone(this.template.nodes[sourceID]);
       const point = positions[sourceID] || this.layout.nodes[sourceID];
       if (Number.isFinite(point?.x) && Number.isFinite(point?.y)) {
@@ -349,10 +372,8 @@ export class ProcessEditModel {
         };
       }
     }
-    for (const edge of [...this.edges]) {
-      const from = idMap.get(edge.from);
-      const to = idMap.get(edge.to);
-      if (from && to) this.edges.push({ from, outcome: edge.outcome, to });
+    for (const edge of internalEdges) {
+      this.edges.push({ from: idMap.get(edge.from), outcome: edge.outcome, to: idMap.get(edge.to) });
     }
     return idMap;
   }
@@ -400,6 +421,8 @@ export class ProcessEditModel {
     const edges = selection.edges.map((edge) => ({
       from: idMap.get(edge.from), outcome: edge.outcome, to: idMap.get(edge.to),
     }));
+    const plannedNodes = Object.fromEntries(nodes.map((entry) => [entry.id, entry.node]));
+    for (const edge of edges) this.assertNewEdgePortsAvailable(edge.from, edge.to, plannedNodes);
 
     this.begin();
     for (const entry of nodes) {
@@ -447,6 +470,12 @@ export class ProcessEditModel {
       .filter((edge) => !nodes.has(edge.from) && nodes.has(edge.to) && !selectedEdge(edge))
       .map((edge) => ({ ...edge, to: successor(edge.to) }))
       .filter((edge) => edge.to && !nodes.has(edge.to)) : [];
+    // Template.Start is a persisted pseudo-edge, not an ordinary connector:
+    // preserve its existing delete-through rewire without requiring a source
+    // port. Every ordinary bridge still passes the shared endpoint authority.
+    for (const edge of bridges) {
+      if (edge.from !== '') this.assertNewEdgePortsAvailable(edge.from, edge.to);
+    }
 
     this.begin();
     for (const id of nodes) {
@@ -523,6 +552,7 @@ export class ProcessEditModel {
     // version through silently — refuse at the source.
     if (from === to) throw new Error('self-loop edges are not supported (v1 processes are acyclic)');
     if (this.findEdge(from, outcome)) throw new Error(`duplicate edge: ${from} already has outcome ${outcome}`);
+    this.assertNewEdgePortsAvailable(from, to);
     const edge = { from, outcome, to };
     this.assertEdgeEditable(edge);
     this.begin();
@@ -554,6 +584,7 @@ export class ProcessEditModel {
     if (!edge) throw new Error(`unknown edge ${from} (${outcome})`);
     if (!this.template.nodes[to]) throw new Error(`unknown node ${to}`);
     this.assertEdgeEditable(edge);
+    this.assertNewEdgePortsAvailable(from, to);
     this.begin();
     edge.to = to;
   }
@@ -617,22 +648,33 @@ export class ProcessEditModel {
   insertSnippet(snippet, { x = 0, y = 0 } = {}) {
     this.assertCanInsert();
     const idMap = new Map();
-    this.begin();
+    const taken = new Set(Object.keys(this.template.nodes));
     for (const [nodeID, node] of Object.entries(snippet.nodes)) {
-      // uniqueNodeID sees nodes inserted earlier in this loop, so intra-snippet
-      // uniqueness holds even when every id collides with the template.
-      const cloneID = this.uniqueNodeID(nodeID);
+      // The planned taken set covers both current and earlier snippet ids, so
+      // intra-snippet uniqueness holds before the transaction begins.
+      let cloneID = nodeID;
+      for (let suffix = 2; taken.has(cloneID); suffix += 1) cloneID = `${nodeID}-${suffix}`;
+      taken.add(cloneID);
       idMap.set(nodeID, cloneID);
-      this.template.nodes[cloneID] = clone(node);
-      const offset = snippet.layout?.[nodeID] || { x: 0, y: 0 };
-      this.layout.nodes[cloneID] = { x: x + offset.x, y: y + offset.y };
     }
+    const plannedNodes = { ...this.template.nodes };
+    for (const [nodeID, node] of Object.entries(snippet.nodes)) plannedNodes[idMap.get(nodeID)] = node;
+    const edges = [];
     for (const edge of snippet.edges || []) {
       const from = idMap.get(edge.from);
       const to = idMap.get(edge.to);
       if (!from || !to) continue;
-      this.edges.push({ from, outcome: edge.outcome, to });
+      this.assertNewEdgePortsAvailable(from, to, plannedNodes);
+      edges.push({ from, outcome: edge.outcome, to });
     }
+    this.begin();
+    for (const [nodeID, node] of Object.entries(snippet.nodes)) {
+      const cloneID = idMap.get(nodeID);
+      this.template.nodes[cloneID] = clone(node);
+      const offset = snippet.layout?.[nodeID] || { x: 0, y: 0 };
+      this.layout.nodes[cloneID] = { x: x + offset.x, y: y + offset.y };
+    }
+    this.edges.push(...edges);
     return idMap;
   }
 
@@ -645,6 +687,7 @@ export class ProcessEditModel {
       id,
       type: node.type || 'task',
       label: node.name || id,
+      portAvailability: processNodePortAvailability(node),
       pinned: this.layout.nodes[id] ? { ...this.layout.nodes[id] } : undefined,
     }));
     const inCounts = new Map();

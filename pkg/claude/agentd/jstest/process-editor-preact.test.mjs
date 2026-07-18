@@ -497,13 +497,75 @@ test('Preact editor projects every canonical node kind through the inside-label 
     assert.equal(node.querySelector('.process-node-label-peripheral'), null);
     assert.ok(node.getAttribute('aria-label').startsWith(`${before.template.nodes[id].name}, ${type}`));
     assert.equal(ports.closest('.process-node'), null, `${type} connector controls remain outside the node button`);
-    assert.match(ports.querySelector('.process-port-in').getAttribute('aria-label'),
+    const input = ports.querySelector('.process-port-in');
+    const output = ports.querySelector('.process-port-out');
+    assert.equal(!!input, type !== 'start', `${type} input presence follows editor semantics`);
+    assert.equal(!!output, type !== 'end', `${type} output presence follows editor semantics`);
+    if (input) assert.match(input.getAttribute('aria-label'),
       new RegExp(`^Input port for ${before.template.nodes[id].name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\. .*predecessor\\.$`));
-    assert.match(ports.querySelector('.process-port-out').getAttribute('aria-label'),
-      type === 'end' ? /End nodes cannot have outgoing connections\.$/ : /successor\.$/);
+    if (output) assert.match(output.getAttribute('aria-label'), /successor\.$/);
+    assert.equal(ports.querySelectorAll('[role="button"][tabindex="0"]').length,
+      type === 'start' || type === 'end' ? 1 : 2, `${type} has the exact native focusable connector count`);
   }
   assert.deepEqual(editor.model.saveBody(), before,
     'rendering and refreshing labels does not change names, layout, edges, or the save payload');
+  editor.destroy();
+});
+
+test('editor chooser and stale controller commits revalidate the shared port authority', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.model.template.nodes.ordinary = { type: 'task', name: 'Ordinary' };
+  editor.model.template.nodes.target = { type: 'task', name: 'Target' };
+  editor.model.layout.nodes.ordinary = { x: 120, y: 260 };
+  editor.model.layout.nodes.target = { x: 320, y: 260 };
+  await harness.act(() => editor.refresh());
+
+  assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
+  await Promise.resolve();
+  let startChoice = host.querySelector('[data-command-id="process.create.start"]');
+  let endChoice = host.querySelector('[data-command-id="process.create.end"]');
+  assert.equal(startChoice.getAttribute('aria-disabled'), 'true');
+  assert.match(startChoice.textContent, /Start nodes cannot have incoming connections/);
+  assert.equal(endChoice.getAttribute('aria-disabled'), 'false');
+  editor.nodeChooserDispose();
+
+  assert.equal(editor.openConnectedNodeChooser({ nodeId: 'ordinary', port: 'in' }, { x: 20, y: 30 }), true);
+  await Promise.resolve();
+  startChoice = host.querySelector('[data-command-id="process.create.start"]');
+  endChoice = host.querySelector('[data-command-id="process.create.end"]');
+  assert.equal(startChoice.getAttribute('aria-disabled'), 'false');
+  assert.equal(endChoice.getAttribute('aria-disabled'), 'true');
+  assert.match(endChoice.textContent, /End nodes cannot have outgoing connections/);
+  editor.nodeChooserDispose();
+
+  const assertNoCommit = (operation, message) => {
+    const before = editor.model.saveBody();
+    const selection = structuredClone(editor.selection);
+    const history = { rev: editor.model.rev, undo: editor.model.undoStack.length, redo: editor.model.redoStack.length };
+    operation();
+    assert.deepEqual(editor.model.saveBody(), before);
+    assert.deepEqual(editor.selection, selection);
+    assert.deepEqual({ rev: editor.model.rev, undo: editor.model.undoStack.length, redo: editor.model.redoStack.length }, history);
+    assert.match(editor.statusState.message, message);
+  };
+  assertNoCommit(() => {
+    editor.onPortDragStart({ nodeId: 'start', port: 'in' });
+    editor.onPortDragEnd({
+      nodeId: 'start', port: 'in', point: { x: 0, y: 0 },
+      targetNodeId: 'ordinary', targetPort: 'out', emptyCanvas: false,
+    });
+  }, /Start nodes cannot have incoming/);
+
+  // The target had an input in the stale rendered/controller snapshot, then
+  // changed type before release. Commit authority must read the live model.
+  editor.model.template.nodes.target.type = 'start';
+  assertNoCommit(() => {
+    editor.onPortDragStart({ nodeId: 'ordinary', port: 'out' });
+    editor.onPortDragEnd({
+      nodeId: 'ordinary', port: 'out', point: { x: 0, y: 0 },
+      targetNodeId: 'target', targetPort: 'in', emptyCanvas: false,
+    });
+  }, /Start nodes cannot have incoming/);
   editor.destroy();
 });
 

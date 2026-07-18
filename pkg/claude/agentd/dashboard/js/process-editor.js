@@ -26,6 +26,7 @@ import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
+import { processEdgePortAvailability } from './process-port-availability.js';
 import {
   ProcessClipboardError, createProcessSelectionPayload,
   isProcessSelectionClipboardText, parseProcessSelection,
@@ -1050,10 +1051,16 @@ export class ProcessTemplateEditor {
       host: this.stage,
       anchor: { x: anchor.left, y: anchor.top },
       restoreFocus: () => this.graph.focus(),
-      availability: (type) => source.port === 'in' && type === 'end' ? {
-        enabled: false,
-        disabledReason: 'End nodes cannot be sources because they cannot have outgoing edges.',
-      } : null,
+      availability: (type) => {
+        const candidate = { type };
+        const endpoints = source.port === 'in'
+          ? [candidate, this.model.node(source.nodeId)]
+          : [this.model.node(source.nodeId), candidate];
+        const availability = processEdgePortAvailability(...endpoints);
+        return availability.enabled ? null : {
+          enabled: false, disabledReason: availability.message,
+        };
+      },
       onChoose: (type) => this.addConnectedNodeType(type, source, dropPoint),
       onClose: () => {
         if (this.nodeChooserDispose === dispose) this.nodeChooserDispose = null;
