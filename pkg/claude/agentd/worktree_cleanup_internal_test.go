@@ -14,8 +14,8 @@ func TestAgentWorktreeClaimSnapshotIncompleteFailsClosed(t *testing.T) {
 		views: map[string]agentWorktreeView{
 			conv: {Path: "/tmp/worktree", Branch: "feat", Kind: "linked"},
 		},
-		claims:   map[string]map[string]bool{},
-		complete: false,
+		dirClaims: map[string]map[string]bool{},
+		complete:  false,
 	}
 
 	got := snap.resolve(conv, map[string]bool{conv: true})
@@ -23,11 +23,18 @@ func TestAgentWorktreeClaimSnapshotIncompleteFailsClosed(t *testing.T) {
 	assert.False(t, got.Removable(), "an unknown claimant set must fail closed")
 }
 
+func TestDirContains(t *testing.T) {
+	assert.True(t, dirContains("/tmp/agent-root", "/tmp/agent-root"))
+	assert.True(t, dirContains("/tmp/agent-root", "/tmp/agent-root/pkg"))
+	assert.False(t, dirContains("/tmp/agent-root", "/tmp/agent-root-2"))
+	assert.False(t, dirContains("/tmp/agent-root", "/tmp"))
+}
+
 func TestCompareSessionLaunchRecencyIgnoresExitedStatus(t *testing.T) {
 	base := time.Now()
 	old := &db.SessionRow{
 		CreatedAt: base,
-		UpdatedAt: base.Add(time.Minute),
+		UpdatedAt: base.Add(4 * time.Minute),
 		Status:    "running",
 	}
 	newExited := &db.SessionRow{
@@ -37,6 +44,6 @@ func TestCompareSessionLaunchRecencyIgnoresExitedStatus(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, compareSessionLaunchRecency(newExited, old),
-		"the newer launch owns a reused tmux name even while its pane is exiting")
+		"the newer launch wins even when the older row received a later update")
 	assert.Equal(t, -1, compareSessionLaunchRecency(old, newExited))
 }

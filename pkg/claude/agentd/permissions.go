@@ -80,6 +80,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Set own agent tags — the short labels rendered as chips in the Description column (tclaude agent tags set/add/rm). Default-granted, mirroring the self-lifecycle slugs.",
 	},
 	{
+		Slug:        PermSelfDirRepair,
+		Description: "Recreate own recorded startup directory when it has been deleted (tclaude agent dir --repair). The path is daemon-selected and cannot be overridden. Default-granted.",
+	},
+	{
 		Slug:         PermAgentReincarnate,
 		OwnerImplied: true,
 		Description:  "Reincarnate ANOTHER agent (tclaude agent reincarnate --target). Group owners can reincarnate members of groups they own without this slug.",

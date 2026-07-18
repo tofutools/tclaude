@@ -362,6 +362,51 @@ func TestCleanup_Agents_KeepsSharedWorktree(t *testing.T) {
 	assert.Contains(t, resp.Outcomes[0].Detail, "shared")
 }
 
+// The request-time ownership snapshot is not the deletion boundary: stopping
+// and purging the target can take long enough for another agent to start in the
+// same root. The final recheck must observe that new claimant and keep its cwd.
+func TestCleanup_Agents_RechecksOwnershipBeforeWorktreeRemoval(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const leaving = "wrcl-1111-2222-3333-4444"
+	const arriving = "wrca-1111-2222-3333-4444"
+	repo, _ := initRepoOnMain(t)
+	shared, err := worktree.AddWorktreeIn(repo, "recheck-ownership", "main", "")
+	require.NoError(t, err)
+	f.HaveConvWithTitle(leaving, "leaving-before-race")
+	f.HaveAliveSession(leaving, "spwn-wrcl", "tmux-wrcl", shared)
+	f.HaveEnrolledAgent(leaving)
+	f.MarkOffline("tmux-wrcl")
+
+	var launchOnce sync.Once
+	inspect := func(dir string) worktree.WorktreeStatus {
+		launchOnce.Do(func() {
+			// captureAgentWorktreeClaims has already read sessions/agents before
+			// it reaches Git inspection, so this claimant is absent from the
+			// request snapshot but present at the removal boundary.
+			f.HaveConvWithTitle(arriving, "arriving-during-delete")
+			f.HaveAliveSession(arriving, "spwn-wrca", "tmux-wrca", shared)
+			f.HaveEnrolledAgent(arriving)
+		})
+		return worktree.InspectWorktree(dir)
+	}
+	// Keep the production Git inspection/removal behavior; the seam injects
+	// only the claimant-registration timing between the request snapshot and
+	// the destructive boundary.
+	t.Cleanup(agentd.SetWorktreeFnsForTest(inspect, worktree.RemoveLinkedWorktree))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	resp := postCleanup(t, mux, "/api/cleanup/agents",
+		`{"agents":["`+leaving+`"],"delete":true,"delete_worktrees":true}`)
+
+	require.Len(t, resp.Outcomes, 1)
+	assert.Equal(t, 1, resp.Deleted)
+	assert.Contains(t, resp.Outcomes[0].Detail, "shared")
+	assert.DirExists(t, shared,
+		"a claimant appearing after the initial snapshot must keep the worktree")
+}
+
 // Scenario: the repo's main worktree is never removed by cleanup.
 func TestCleanup_Agents_KeepsMainWorktree(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))

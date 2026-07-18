@@ -2,15 +2,19 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
+	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 )
 
 // --- /v1/whoami/dir and /v1/agent/{selector}/dir ---
@@ -65,6 +69,33 @@ type dirOpenResp struct {
 	// CallerAgentID is the asking agent's stable actor key — companion to
 	// CallerConv, set when a different agent asked.
 	CallerAgentID string `json:"caller_agent_id,omitempty"`
+}
+
+// dirRepairResp is the wire shape for POST /v1/whoami/dir/repair.
+type dirRepairResp struct {
+	ConvID   string `json:"conv_id"`
+	Dir      string `json:"dir"`
+	Repaired bool   `json:"repaired"`
+}
+
+// recordedStartupDir returns the immutable physical launch directory when the
+// session has trusted resume provenance. Keeping the physical path matters when
+// sessions.cwd used a symlink that was later removed or retargeted. Legacy rows
+// have no provenance, so they retain the recorded lexical cwd as a best-effort
+// fallback.
+func recordedStartupDir(sess *db.SessionRow) (string, error) {
+	if sess == nil {
+		return "", nil
+	}
+	raw := strings.TrimSpace(sess.ResumeProvenance)
+	if raw == "" {
+		return strings.TrimSpace(sess.Cwd), nil
+	}
+	provenance, err := resumeprovenance.Decode(raw)
+	if err != nil {
+		return "", fmt.Errorf("decode recorded startup provenance: %w", err)
+	}
+	return strings.TrimSpace(provenance.Cwd.Path), nil
 }
 
 // resolveDirs adapts agent.ResolveLocation to this endpoint's wire
@@ -128,6 +159,62 @@ func handleWhoamiDir(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET or POST")
 	}
+}
+
+// handleWhoamiDirRepair recreates exactly the calling agent's immutable
+// startup directory. The request accepts no path: sessions.cwd is the trusted
+// selector, so this is not an agentd-mediated arbitrary mkdir primitive and
+// does not require granting the sandbox write access to the parent directory.
+//
+// It intentionally creates only directories. Reconstructing Git worktree
+// metadata, branches, or later directories an agent moved into is outside this
+// command's contract; the purpose is to unbrick the agent's original root so
+// its existing sandbox mounts become reachable again.
+func handleWhoamiDirRepair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
+		return
+	}
+	convID, ok := requirePermission(w, r, PermSelfDirRepair)
+	if !ok {
+		return
+	}
+	sess, err := db.FindSessionByConvID(convID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "repair_failed",
+			"load recorded startup directory: "+err.Error())
+		return
+	}
+	if sess == nil || strings.TrimSpace(sess.Cwd) == "" {
+		writeError(w, http.StatusNotFound, "not_found",
+			"no recorded startup directory for "+short8(convID))
+		return
+	}
+	dir, err := recordedStartupDir(sess)
+	if err != nil {
+		writeError(w, http.StatusConflict, "invalid_startup_dir", err.Error())
+		return
+	}
+	if !filepath.IsAbs(dir) {
+		writeError(w, http.StatusConflict, "invalid_startup_dir",
+			"recorded startup directory is not absolute; refusing host-side repair")
+		return
+	}
+	missing, err := launchDirMissing(dir)
+	if err != nil {
+		writeError(w, http.StatusConflict, "path_conflict", err.Error())
+		return
+	}
+	// Always traverse the full path through descriptor-held parents, even for
+	// an existing directory. That both refuses symlink substitution and closes
+	// the os.Stat/os.MkdirAll check-use race for this default-granted host-side
+	// mkdir capability.
+	if err := mkdirAllNoFollow(dir, 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, "repair_failed",
+			"recreate recorded startup directory: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dirRepairResp{ConvID: convID, Dir: dir, Repaired: missing})
 }
 
 // handleAgentDir serves another agent's directory info — the

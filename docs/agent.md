@@ -68,7 +68,8 @@ only once.
 - **`tclaude setup --install-default-agent-permissions`** — grants the
   self-targeted slugs the bundled skills exercise (`self.rename`,
   `self.compact`, `self.clone`, `self.schedule`,
-  `self.remote-control`, `self.task`, `self.pr`, `self.tags`) as agent
+  `self.remote-control`, `self.task`, `self.pr`, `self.tags`,
+  `self.dir-repair`) as agent
   defaults. Self-reincarnation needs no slug. Idempotent; only adds missing slugs.
 - **`tclaude agentd serve`** — running in a non-sandboxed shell. The
   CLI refuses to fall back to direct DB access when the daemon is
@@ -863,6 +864,7 @@ tclaude agent dir [selector]                 # print an agent's working director
 tclaude agent dir --worktree                 # git worktree/repo root instead
 tclaude agent dir --start                     # the launch directory instead
 tclaude agent dir --open                      # open a terminal there (via the daemon)
+tclaude agent dir --repair                    # recreate own deleted launch directory
 ```
 
 `stop` / `resume` are idempotent — already-offline / already-online
@@ -881,6 +883,13 @@ Directory write proof remains required for fresh agent spawns and
 caller-selected launch locations. A missing recorded launch directory also
 fails closed; only a direct human or approved `--ask-human` recovery may opt
 into recreating it with `--recreate-dir`.
+
+A still-running agent whose launch directory was deleted can recover without
+write access to the parent by running `agent dir --repair`. This self-only
+operation is gated on `self.dir-repair` and recreates exactly the immutable
+physical startup directory recorded by tclaude; it accepts no selector or path,
+refuses symlink substitution, and does not reconstruct Git metadata or later
+directories the agent moved into.
 
 ### cron
 
@@ -1339,7 +1348,7 @@ gate group, messaging, template, and permission administration.
 
 | Family        | Slugs |
 |---------------|-------|
-| `self.*`      | `self.rename`, `self.compact`, `self.clone`, `self.schedule`, `self.remote-control` |
+| `self.*`      | `self.rename`, `self.compact`, `self.clone`, `self.schedule`, `self.remote-control`, `self.task`, `self.pr`, `self.tags`, `self.dir-repair` |
 | `agent.*`     | `agent.rename`, `agent.compact`, `agent.reincarnate`, `agent.clone`, `agent.context-info`, `agent.resume`, `agent.stop`, `agent.delete`, `agent.schedule`, `agent.promote`, `agent.retire`, `agent.remote-control` |
 | `groups.*`    | `groups.create`, `groups.rm`, `groups.archive`, `groups.stop`, `groups.resume`, `groups.retire`, `groups.spawn`, `groups.own`, `groups.link.add`, `groups.link.rm`, `groups.export`, `groups.import` |
 | `member.*`    | `member.add`, `member.remove`, `member.redesignate` |

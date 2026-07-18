@@ -3,6 +3,7 @@ package agentd
 import (
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,16 +80,17 @@ func inspectAgentWorktree(convID string) agentWorktreeView {
 }
 
 // agentWorktreeClaimSnapshot is one operation's stable view of worktree
-// ownership. claims maps a root to the active agents / live panes using it;
+// ownership. dirClaims maps every immutable startup dir (plus the tracked
+// current dir) to the active agents / live panes using it;
 // views caches their already-inspected worktrees so a batch does not repeat
 // global DB/tmux discovery and git inspection once per member.
 //
 // complete is false when any global discovery step failed. Deletion safety
 // fails closed in that case: shared reports every non-empty path as claimed.
 type agentWorktreeClaimSnapshot struct {
-	views    map[string]agentWorktreeView
-	claims   map[string]map[string]bool
-	complete bool
+	views     map[string]agentWorktreeView
+	dirClaims map[string]map[string]bool
+	complete  bool
 }
 
 // captureAgentWorktreeClaims returns the worktrees in use by active agents or
@@ -108,8 +110,8 @@ type agentWorktreeClaimSnapshot struct {
 // conservatively across their roots.
 func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	snap := agentWorktreeClaimSnapshot{
-		views:  map[string]agentWorktreeView{},
-		claims: map[string]map[string]bool{},
+		views:     map[string]agentWorktreeView{},
+		dirClaims: map[string]map[string]bool{},
 	}
 	sessions, err := db.ListSessions()
 	if err != nil {
@@ -124,10 +126,25 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		return snap
 	}
 
-	// Resolve one location per claimant. Active agents claim their worktree
-	// even while offline. Live panes claim theirs regardless of enrollment
-	// state so cleanup can never remove a running process's cwd.
+	// Resolve one location per claimant. Active agents claim their immutable
+	// startup root even while offline, plus their tracked current directory.
+	// Keeping startup separate is load-bearing: a PostToolUse edit elsewhere
+	// must not make cleanup forget the directory the agent was launched in.
+	// Live panes claim their recorded session cwd regardless of enrollment
+	// state so cleanup can never remove a running process's root.
 	claimants := map[string]bool{}
+	extraDirs := map[string]map[string]bool{}
+	latestSessions := map[string][]*db.SessionRow{}
+	addExtraDir := func(convID, dir string) {
+		dir = cleanClaimDir(dir)
+		if convID == "" || dir == "" {
+			return
+		}
+		if extraDirs[convID] == nil {
+			extraDirs[convID] = map[string]bool{}
+		}
+		extraDirs[convID][dir] = true
+	}
 	for _, a := range active {
 		if a.CurrentConvID != "" {
 			claimants[a.CurrentConvID] = true
@@ -135,6 +152,15 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	}
 	liveOwners := map[string][]*db.SessionRow{}
 	for _, s := range sessions {
+		if s.ConvID != "" {
+			cur := latestSessions[s.ConvID]
+			switch {
+			case len(cur) == 0 || compareSessionLaunchRecency(s, cur[0]) > 0:
+				latestSessions[s.ConvID] = []*db.SessionRow{s}
+			case compareSessionLaunchRecency(s, cur[0]) == 0:
+				latestSessions[s.ConvID] = append(cur, s)
+			}
+		}
 		if s.ConvID == "" || s.TmuxSession == "" {
 			continue
 		}
@@ -156,6 +182,9 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	for _, owners := range liveOwners {
 		for _, s := range owners {
 			claimants[s.ConvID] = true
+			addExtraDir(s.ConvID, s.Cwd)
+			physical, _ := recordedStartupDir(s)
+			addExtraDir(s.ConvID, physical)
 		}
 	}
 
@@ -163,22 +192,32 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	// InspectWorktree shells out to git.
 	dirViews := map[string]agentWorktreeView{}
 	for convID := range claimants {
-		dir := agent.ResolveLocation(convID).CurrentDir
+		loc := agent.ResolveLocation(convID)
+		dir := loc.CurrentDir
 		if dir == "" {
-			continue
+			dir = loc.StartupDir
 		}
-		view, cached := dirViews[dir]
-		if !cached {
-			st := inspectWorktreeFn(dir)
-			view = agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
-			dirViews[dir] = view
-		}
-		snap.views[convID] = view
-		if view.Path != "" {
-			if snap.claims[view.Path] == nil {
-				snap.claims[view.Path] = map[string]bool{}
+		if dir != "" {
+			view, cached := dirViews[dir]
+			if !cached {
+				st := inspectWorktreeFn(dir)
+				view = agentWorktreeView{Path: st.Root, Branch: st.Branch, Kind: st.Kind}
+				dirViews[dir] = view
 			}
-			snap.claims[view.Path][convID] = true
+			snap.views[convID] = view
+		}
+		for _, claimDir := range []string{loc.StartupDir, loc.CurrentDir} {
+			addExtraDir(convID, claimDir)
+		}
+		for _, sess := range latestSessions[convID] {
+			physical, _ := recordedStartupDir(sess)
+			addExtraDir(convID, physical)
+		}
+		for claimDir := range extraDirs[convID] {
+			if snap.dirClaims[claimDir] == nil {
+				snap.dirClaims[claimDir] = map[string]bool{}
+			}
+			snap.dirClaims[claimDir][convID] = true
 		}
 	}
 	snap.complete = true
@@ -200,13 +239,51 @@ func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]
 		wt.Shared = true
 		return wt
 	}
-	for claimant := range s.claims[wt.Path] {
-		if !excluding[claimant] {
-			wt.Shared = true
-			break
+	for claimDir, claimants := range s.dirClaims {
+		if !dirContains(wt.Path, claimDir) {
+			continue
+		}
+		for claimant := range claimants {
+			if !excluding[claimant] {
+				wt.Shared = true
+				return wt
+			}
 		}
 	}
 	return wt
+}
+
+// cleanClaimDir normalises a stored directory for containment comparisons.
+// EvalSymlinks is best-effort: startup roots can already be missing after an
+// incident, in which case the lexical absolute path is still the only useful
+// identity available to the repair and cleanup guards.
+func cleanClaimDir(dir string) string {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	dir = filepath.Clean(dir)
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = filepath.Clean(real)
+	}
+	return dir
+}
+
+// dirContains reports whether deleting root would delete dir too. filepath.Rel
+// avoids prefix traps such as /repo-agent matching /repo-agent-2.
+func dirContains(root, dir string) bool {
+	root, dir = cleanClaimDir(root), cleanClaimDir(dir)
+	if root == "" || dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // compareSessionLaunchRecency compares rows that share a tmux name. The pane's
@@ -266,6 +343,19 @@ func applyWorktreeCleanup(wt agentWorktreeView, requested bool) string {
 		return "worktree kept (main repo)"
 	case wt.Shared:
 		return "worktree kept (shared with another agent)"
+	}
+	// Agent deletion deliberately opens a gap between its request-time claim
+	// snapshot and filesystem removal. Re-read ownership at the destructive
+	// boundary so an agent that launched or moved into this root during that
+	// gap cannot have its cwd removed from underneath it.
+	snap := captureAgentWorktreeClaims()
+	if !snap.complete {
+		return "worktree kept — could not confirm current worktree ownership"
+	}
+	for claimDir := range snap.dirClaims {
+		if dirContains(wt.Path, claimDir) {
+			return "worktree kept (shared with another agent)"
+		}
 	}
 	removed, err := removeWorktreeFn(wt.Path, true)
 	switch {
@@ -364,9 +454,14 @@ func retireWorktreeDrift(convID string, wt agentWorktreeView) string {
 	if !snap.complete {
 		return "worktree kept — could not confirm current worktree ownership"
 	}
-	for claimant := range snap.claims[wt.Path] {
-		if claimant != convID {
-			return "worktree kept (shared with another agent)"
+	for claimDir, claimants := range snap.dirClaims {
+		if !dirContains(wt.Path, claimDir) {
+			continue
+		}
+		for claimant := range claimants {
+			if claimant != convID {
+				return "worktree kept (shared with another agent)"
+			}
 		}
 	}
 	return ""
