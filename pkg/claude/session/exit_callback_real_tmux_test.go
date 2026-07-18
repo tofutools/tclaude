@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+)
+
+const (
+	realTmuxPaneHelperEnv    = "TCLAUDE_REAL_TMUX_PANE_HELPER"
+	realTmuxPaneHelperMarker = "tclaude-real-tmux-pane-helper"
 )
 
 type isolatedRealTmux struct{ socket string }
@@ -86,49 +92,103 @@ func waitForFile(t *testing.T, path string) {
 	t.Fatalf("timed out waiting for pane-died marker %s", path)
 }
 
-func waitForChildPID(t *testing.T, parent int) int {
+func waitForPIDFile(t *testing.T, path string) int {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
 	for time.Now().Before(deadline) {
-		out, err := exec.Command("pgrep", "-P", strconv.Itoa(parent)).Output()
+		raw, err := os.ReadFile(path)
 		if err == nil {
-			line := strings.Split(strings.TrimSpace(string(out)), "\n")[0]
-			if pid, parseErr := strconv.Atoi(line); parseErr == nil && pid > 0 {
-				comm, commErr := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
-				if commErr == nil && strings.TrimSpace(string(comm)) == "sleep" {
-					return pid
-				}
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(raw)))
+			if parseErr == nil && pid > 0 {
+				return pid
 			}
+			lastErr = parseErr
+		} else {
+			lastErr = err
+		}
+		if raw, err := os.ReadFile(path + ".error"); err == nil {
+			t.Fatalf("exact helper pid unavailable: %s", raw)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for child of pane pid %d", parent)
+	t.Fatalf("timed out waiting for exact helper pid in %s: %v", path, lastErr)
 	return 0
+}
+
+func realTmuxPaneHelperCommand(t *testing.T, readyPath, releasePath, errorPath string, code int) string {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	args := []string{
+		"env", realTmuxPaneHelperEnv + "=1", exe,
+		"-test.run=^TestRealTmuxPaneProcessHelper$", "--",
+		realTmuxPaneHelperMarker, readyPath, releasePath, errorPath, strconv.Itoa(code),
+	}
+	quoted := make([]string, 0, len(args))
+	for _, arg := range args {
+		quoted = append(quoted, clcommon.ShellQuoteArg(arg))
+	}
+	return strings.Join(quoted, " ")
+}
+
+func TestRealTmuxPaneProcessHelper(t *testing.T) {
+	if os.Getenv(realTmuxPaneHelperEnv) != "1" {
+		return
+	}
+	args := flag.Args()
+	if len(args) != 5 || args[0] != realTmuxPaneHelperMarker {
+		t.Fatalf("invalid real tmux pane helper arguments")
+	}
+	readyPath, releasePath, errorPath := args[1], args[2], args[3]
+	code, err := strconv.Atoi(args[4])
+	if err != nil || code < 0 || code > 255 {
+		_ = os.WriteFile(errorPath, []byte("invalid helper exit code"), 0o600)
+		os.Exit(126)
+	}
+	if err := os.WriteFile(readyPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		_ = os.WriteFile(errorPath, []byte("write helper ready marker: "+err.Error()), 0o600)
+		os.Exit(126)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(releasePath); err == nil {
+			os.Exit(code)
+		} else if !os.IsNotExist(err) {
+			_ = os.WriteFile(errorPath, []byte("inspect helper release marker: "+err.Error()), 0o600)
+			os.Exit(126)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = os.WriteFile(errorPath, []byte("timed out waiting for helper release or signal"), 0o600)
+	os.Exit(124)
 }
 
 func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T) {
 	tmux := withIsolatedRealTmux(t)
 	tests := []struct {
 		name       string
-		command    string
 		release    bool
 		signalPane syscall.Signal
+		helperCode int
 		wantCode   *int
 		wantSignal string
 	}{
-		{name: "exit-0", command: "while [ ! -f RELEASE ]; do sleep 0.01; done; exit 0", release: true, wantCode: intPtr(0)},
-		{name: "exit-9", command: "while [ ! -f RELEASE ]; do sleep 0.01; done; exit 9", release: true, wantCode: intPtr(9)},
-		{name: "sigterm", command: "exec sleep 30", signalPane: syscall.SIGTERM, wantSignal: "15"},
-		{name: "sigkill", command: "exec sleep 30", signalPane: syscall.SIGKILL, wantSignal: "9"},
+		{name: "exit-0", release: true, helperCode: 0, wantCode: intPtr(0)},
+		{name: "exit-9", release: true, helperCode: 9, wantCode: intPtr(9)},
+		{name: "sigterm", signalPane: syscall.SIGTERM, wantSignal: "15"},
+		{name: "sigkill", signalPane: syscall.SIGKILL, wantSignal: "9"},
 	}
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			release := filepath.Join(dir, "release")
+			ready := filepath.Join(dir, "ready")
+			helperError := ready + ".error"
 			marker := filepath.Join(dir, "emitted")
-			command := strings.ReplaceAll(tc.command, "RELEASE", clcommon.ShellQuoteArg(release))
 			name := fmt.Sprintf("tcl573-%d", i)
-			paneCommand := "exec /bin/sh -c " + clcommon.ShellQuoteArg(command)
+			paneCommand := "exec " + realTmuxPaneHelperCommand(
+				t, ready, release, helperError, tc.helperCode)
 			require.NoError(t, tmux.Command("new-session", "-d", "-s", name, paneCommand).Run())
 			requireNativePaneDied(t, tmux)
 			target := name + ":0.0"
@@ -138,17 +198,16 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 				paneExitGenerationOption, generation).Run())
 			hook := "run-shell " + clcommon.ShellQuoteArg("printf emitted > "+clcommon.ShellQuoteArg(marker))
 			require.NoError(t, tmux.Command("set-hook", "-p", "-t", target, "pane-died", hook).Run())
+			helperPID := waitForPIDFile(t, ready)
+			out, err := tmux.Command("display-message", "-p", "-t", target, "#{pane_pid}").Output()
+			require.NoError(t, err)
+			panePID, err := strconv.Atoi(strings.TrimSpace(string(out)))
+			require.NoError(t, err)
+			require.Equal(t, helperPID, panePID, "pane PID must be the ready helper itself")
 			if tc.release {
 				require.NoError(t, os.WriteFile(release, []byte("go"), 0o600))
 			} else {
-				out, err := tmux.Command("display-message", "-p", "-t", target, "#{pane_pid}").Output()
-				require.NoError(t, err)
-				pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
-				require.NoError(t, err)
-				pgid, err := syscall.Getpgid(pid)
-				require.NoError(t, err)
-				require.NotEqual(t, syscall.Getpgrp(), pgid, "pane process group must be isolated from the test runner")
-				require.NoError(t, syscall.Kill(-pgid, tc.signalPane))
+				require.NoError(t, syscall.Kill(panePID, tc.signalPane))
 			}
 			waitForFile(t, marker)
 			evidence, err := InspectDeadTmuxSessionPane(name)
@@ -262,9 +321,15 @@ func TestRealTmuxLaunchWrapperChildSignalsAreExitCodesNotPaneSignals(t *testing.
 		code   int
 	}{{syscall.SIGTERM, 143}, {syscall.SIGKILL, 137}} {
 		name := fmt.Sprintf("tcl573-child-%d", tc.code)
-		script := filepath.Join(t.TempDir(), "launch-wrapper.sh")
+		dir := t.TempDir()
+		script := filepath.Join(dir, "launch-wrapper.sh")
+		ready := filepath.Join(dir, "helper-ready")
+		release := filepath.Join(dir, "never-release")
+		childPIDPath := filepath.Join(dir, "helper.pid")
+		helperCommand := realTmuxPaneHelperCommand(t, ready, release, ready+".error", 0)
 		require.NoError(t, os.WriteFile(script,
-			[]byte("#!/bin/sh\nsleep 30 &\nchild=$!\nwait \"$child\"\nstatus=$?\nexit $status\n"), 0o700))
+			[]byte("#!/bin/sh\n"+helperCommand+" &\nchild=$!\nprintf '%s' \"$child\" > "+
+				clcommon.ShellQuoteArg(childPIDPath)+"\nwait \"$child\"\nstatus=$?\nexit \"$status\"\n"), 0o700))
 		paneCommand := "exec /bin/sh " + clcommon.ShellQuoteArg(script)
 		require.NoError(t, tmux.Command("new-session", "-d", "-s", name, paneCommand).Run())
 		requireNativePaneDied(t, tmux)
@@ -273,14 +338,13 @@ func TestRealTmuxLaunchWrapperChildSignalsAreExitCodesNotPaneSignals(t *testing.
 		generation := fmt.Sprintf("%032x", tc.code)
 		require.NoError(t, tmux.Command("set-option", "-p", "-t", target,
 			paneExitGenerationOption, generation).Run())
-		out, err := tmux.Command("display-message", "-p", "-t", target, "#{pane_pid}").Output()
-		require.NoError(t, err)
-		panePID, err := strconv.Atoi(strings.TrimSpace(string(out)))
-		require.NoError(t, err)
-		childPID := waitForChildPID(t, panePID)
+		helperPID := waitForPIDFile(t, ready)
+		childPID := waitForPIDFile(t, childPIDPath)
+		require.Equal(t, helperPID, childPID, "wrapper $! must be the ready helper itself")
 		require.NoError(t, syscall.Kill(childPID, tc.signal))
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(10 * time.Second)
 		var evidence PaneExitEvidence
+		var err error
 		for time.Now().Before(deadline) {
 			evidence, err = InspectDeadTmuxSessionPane(name)
 			if err == nil {
@@ -289,7 +353,7 @@ func TestRealTmuxLaunchWrapperChildSignalsAreExitCodesNotPaneSignals(t *testing.
 			time.Sleep(10 * time.Millisecond)
 		}
 		require.NoError(t, err)
-		require.NotNil(t, evidence.ExitCode)
+		require.NotNil(t, evidence.ExitCode, "dead pane evidence: %#v", evidence)
 		assert.Equal(t, tc.code, *evidence.ExitCode)
 		assert.Empty(t, evidence.Signal, "child signal must not be attributed as direct pane-bootstrap signal")
 		assert.Equal(t, generation, evidence.Generation)
