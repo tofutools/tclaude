@@ -421,7 +421,7 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, name+"|"+s.paneID+"|"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
+		return exec.Command(echoBin, name+"|"+paneID+"|"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
 	}
 	return exec.Command(echoBin, strconv.Itoa(panePID))
 }

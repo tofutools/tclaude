@@ -321,12 +321,6 @@ func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time
 		return SessionExitIntentRef{}, fmt.Errorf("invalid exit lifecycle action %q", action)
 	}
 	if relatedEventID != "" && !validEventID(relatedEventID) {
-		return SessionExitIntentRef{}, fmt.Errorf("invalid related event id %q", relatedEventID)
-	}
-	if at.IsZero() {
-		return SessionExitIntentRef{}, fmt.Errorf("missing exit intent timestamp")
-	}
-	if relatedEventID != "" && !validEventID(relatedEventID) {
 		return SessionExitIntentRef{}, fmt.Errorf("invalid related audit event id")
 	}
 	if at.IsZero() {
@@ -356,6 +350,12 @@ func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time
 func SetSessionExitIntentIfTarget(sessionID, tmuxSession, generation, action, relatedEventID string, at time.Time) (SessionExitIntentRef, error) {
 	if !validExitAction(action) {
 		return SessionExitIntentRef{}, fmt.Errorf("invalid exit lifecycle action %q", action)
+	}
+	if relatedEventID != "" && !validEventID(relatedEventID) {
+		return SessionExitIntentRef{}, fmt.Errorf("invalid related audit event id")
+	}
+	if at.IsZero() {
+		at = time.Now()
 	}
 	d, err := Open()
 	if err != nil {
