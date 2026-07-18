@@ -127,10 +127,18 @@ function labelUnits(value) {
 }
 
 function labelUnitWidth(unit) {
-  // Count non-Latin graphemes as full-em. This keeps CJK and emoji labels from
-  // receiving the optimistic half-em budget that works for ordinary IDs while
-  // the clip rectangle remains the final hard geometry boundary.
-  return Array.from(unit).some((character) => character.codePointAt(0) > 0xff) ? 2 : 1;
+  // Conservative em-relative buckets keep wrapping deterministic before the
+  // disconnected SVG text can be measured. Wide Latin glyphs are not allowed
+  // to consume the ordinary half-em budget; CJK, emoji, combining clusters,
+  // and the ellipsis receive a full-em allowance. The clip rectangle remains
+  // the final hard geometry boundary, while Chrome dashsnap verifies that each
+  // emitted line fits without relying on that clip.
+  if (Array.from(unit).some((character) => character.codePointAt(0) > 0xff)) return 1.1;
+  if (/^[WM@#%&QOGmw]$/u.test(unit)) return 1.15;
+  if (/^[A-Z]$/u.test(unit)) return 0.8;
+  if (/^[ilI1.,'`:;|!]$/u.test(unit)) return 0.4;
+  if (/^\s$/u.test(unit)) return 0.35;
+  return 0.65;
 }
 
 function labelWidth(units) {
@@ -188,7 +196,8 @@ function wrapLabel(label, maxUnits, maxLines) {
   if (words.length || line.length) truncated = true;
   if (truncated && lines.length) {
     const last = labelUnits(lines.at(-1));
-    while (last.length && labelWidth(last) + 1 > maxUnits) last.pop();
+    const ellipsisWidth = labelUnitWidth('…');
+    while (last.length && labelWidth(last) + ellipsisWidth > maxUnits) last.pop();
     lines[lines.length - 1] = `${last.join('').trimEnd()}…`;
   }
   return lines.slice(0, maxLines);
@@ -196,21 +205,21 @@ function wrapLabel(label, maxUnits, maxLines) {
 
 function insideLabelLayout(node) {
   if (node.compound?.collapsed) {
-    return { x: -78, y: -31, width: 156, height: 42, centerY: -10, maxUnits: 22, maxLines: 2, lineHeight: 15, className: 'process-node-label-compound' };
+    return { x: -78, y: -31, width: 156, height: 42, centerY: -10, maxUnits: 12, maxLines: 2, lineHeight: 15, className: 'process-node-label-compound' };
   }
   switch (node.type) {
     case 'decision':
-      return { x: -32, y: -18, width: 64, height: 36, centerY: 0, maxUnits: 12, maxLines: 2, lineHeight: 14, className: 'process-node-label-compact' };
+      return { x: -32, y: -18, width: 64, height: 36, centerY: 0, maxUnits: 5.7, maxLines: 2, lineHeight: 14, className: 'process-node-label-compact' };
     case 'parallel':
-      return { x: -29, y: 5, width: 58, height: 24, centerY: 17, maxUnits: 10, maxLines: 1, lineHeight: 12, className: 'process-node-label-compact' };
+      return { x: -29, y: 5, width: 58, height: 24, centerY: 17, maxUnits: 5.2, maxLines: 1, lineHeight: 12, className: 'process-node-label-compact' };
     case 'wait':
-      return { x: -28, y: 5, width: 56, height: 25, centerY: 17, maxUnits: 10, maxLines: 1, lineHeight: 12, className: 'process-node-label-compact' };
+      return { x: -28, y: 5, width: 56, height: 25, centerY: 17, maxUnits: 5, maxLines: 1, lineHeight: 12, className: 'process-node-label-compact' };
     case 'start':
-      return { x: -20, y: -15, width: 40, height: 30, centerY: 0, maxUnits: 7, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+      return { x: -20, y: -15, width: 40, height: 30, centerY: 0, maxUnits: 4, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
     case 'end':
-      return { x: -21, y: -15, width: 42, height: 30, centerY: 0, maxUnits: 7, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
+      return { x: -21, y: -15, width: 42, height: 30, centerY: 0, maxUnits: 4.2, maxLines: 2, lineHeight: 11, className: 'process-node-label-small' };
     default:
-      return { x: -70, y: -25, width: 140, height: 50, centerY: 0, maxUnits: 17, maxLines: 3, lineHeight: 16, className: '' };
+      return { x: -70, y: -25, width: 140, height: 50, centerY: 0, maxUnits: 10.2, maxLines: 3, lineHeight: 16, className: '' };
   }
 }
 

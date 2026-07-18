@@ -16,7 +16,7 @@ test('every node kind keeps its bounded label inside the shape and clear of conn
       { type: 'end', width: 62, height: 62 },
       { type: 'task', width: 190, height: 88, compound: { collapsed: true, stages: ['one', 'two'] } },
     ];
-    const fullLabel = '設計レビュー🙂超長識別子withoutspaces-and-more-and-more-and-more';
+    const fullLabel = `${'W'.repeat(24)} 設計レビュー🙂超長識別子withoutspaces-and-more`;
     for (const [index, entry] of cases.entries()) {
       const node = { id: `node-${index}`, label: fullLabel, x: 100, y: 200, ...entry };
       const fake = { instanceID: 41, labelSerial: index };

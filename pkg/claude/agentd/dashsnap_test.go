@@ -1105,12 +1105,12 @@ func baseStates() []dashsnap.State {
 			Title:   "Process editor — bounded labels inside every node",
 			Caption: "TCL-566: all six editor node kinds keep long and Unicode names inside fixed semantic shapes, with readable overflow and both connector-port bands unobscured in regular and wizard skins.",
 			JS: processEditorStateJS(`var specs = [
-    {id:'start-label',type:'start',name:'Start 起点',x:130,y:120},
-	    {id:'task-label',type:'task',name:'Implement-国際化🙂withoutspaces-and-extra-detail-bounded-overflow',x:380,y:120},
-    {id:'decision-label',type:'decision',name:'レビュー結果を確認しますか',x:690,y:135},
-    {id:'parallel-label',type:'parallel',name:'並列分岐🙂long-name',x:150,y:390},
-    {id:'wait-label',type:'wait',name:'Wait for signal 待機',x:420,y:390},
-    {id:'end-label',type:'end',name:'Done 完了',x:690,y:390}
+	    {id:'start-label',type:'start',name:'Start WWWWWWW 起点',x:130,y:120},
+	    {id:'task-label',type:'task',name:'WWWWWWWWWWWWWWWWW Implement-国際化🙂withoutspaces-and-extra-detail-bounded-overflow',x:380,y:120},
+	    {id:'decision-label',type:'decision',name:'WWWWWWWWWWWW レビュー結果を確認しますか',x:690,y:135},
+	    {id:'parallel-label',type:'parallel',name:'並列分岐🙂long-name',x:150,y:390},
+	    {id:'wait-label',type:'wait',name:'Wait for signal 待機',x:420,y:390},
+	    {id:'end-label',type:'end',name:'Done 完了',x:690,y:390}
   ];
   ed.model.template.nodes = Object.fromEntries(specs.map(function(spec){ return [spec.id,{type:spec.type,name:spec.name}]; }));
   ed.model.template.start = 'start-label';

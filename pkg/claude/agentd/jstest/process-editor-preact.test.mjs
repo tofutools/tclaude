@@ -79,7 +79,7 @@ test('Preact editor projects every canonical node kind through the inside-label 
   ];
   editor.model.template.nodes = Object.fromEntries(cases.map(([id, type], index) => [id, {
     type,
-    name: `${type} 設計レビュー🙂 ${'long'.repeat(index + 5)}`,
+    name: `${type} ${'W'.repeat(index + 12)} 設計レビュー🙂 ${'long'.repeat(index + 5)}`,
   }]));
   editor.model.template.start = 'start-node';
   editor.model.edges = [{ from: '', outcome: 'start', to: 'start-node' }];
