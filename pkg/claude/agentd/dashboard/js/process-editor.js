@@ -26,6 +26,11 @@ import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
+import {
+  ProcessClipboardError, createProcessSelectionPayload,
+  isProcessSelectionClipboardText, parseProcessSelection,
+  processSelectionFingerprint, serializeProcessSelection,
+} from './process-editor-clipboard.js';
 import { LiveValidation } from './process-validation.js';
 import {
   NO_EXTERNAL_CHANGE, attachExternalReview, keepExternalChange, reconcileExternalChange,
@@ -51,8 +56,22 @@ const PALETTE_MIME = 'application/x-tclaude-process-palette';
 const EXTERNAL_REVIEW_TIMEOUT_MS = 15_000;
 
 export function isProcessEditorFormControl(target) {
-  const tag = String(target?.tagName || '').toUpperCase();
-  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+  const element = target?.nodeType === 1 ? target : target?.parentElement || target;
+  const tag = String(element?.tagName || '').toUpperCase();
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return true;
+  if (element?.isContentEditable) return true;
+  return !!element?.closest?.('[contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, .monaco-editor');
+}
+
+export function hasNonCollapsedDOMSelection(event) {
+  try {
+    const selection = event?.view?.getSelection?.() || globalThis.window?.getSelection?.();
+    return selection?.isCollapsed === false;
+  } catch {
+    // If the host selection cannot be inspected, preserve native copy rather
+    // than risk replacing user-highlighted text with a graph payload.
+    return true;
+  }
 }
 
 function externalInteractionPending(editor) {
@@ -100,6 +119,7 @@ export class ProcessTemplateEditor {
       mode: options.mode || 'template',
       nodeEditable: options.nodeEditable,
       edgeEditable: options.edgeEditable,
+      canInsert: options.canInsert,
     });
     this.loadedView = structuredClone(view);
     this.blank = !!options.blank;
@@ -123,6 +143,11 @@ export class ProcessTemplateEditor {
     this.modalState = null;
     this.modalGeneration = 0;
     this.modalHandle = null;
+    // Only the bounded fingerprint + repeat count survive a paste event. Raw
+    // clipboard bytes are never stored on the editor, logged, or published.
+    this.pasteFingerprint = '';
+    this.pasteRepeat = 0;
+    this.pasteAnchor = null;
     this.abort = new AbortController();
     this.graph = null;
     if (!options.ui?.createPublisher || !options.ui?.mount) {
@@ -1070,6 +1095,92 @@ export class ProcessTemplateEditor {
       event.preventDefault();
       this.deleteSelection();
     }
+  }
+
+  onEditorCopy(event) {
+    if (event?.isTrusted === false || isProcessEditorFormControl(event.target)
+        || this.modalDispose || !event.clipboardData?.setData) return false;
+    if (hasNonCollapsedDOMSelection(event)) return false;
+    const layout = this.graph?.layoutSnapshot?.();
+    let payload;
+    let text;
+    try {
+      payload = createProcessSelectionPayload(this.model, this.selection, layout?.nodes || []);
+      if (!payload) return false;
+      text = serializeProcessSelection(payload);
+      event.clipboardData.setData('text/plain', text);
+    } catch (error) {
+      this.status(error instanceof ProcessClipboardError
+        ? error.message : 'The selected nodes could not be serialized for the clipboard.', true);
+      return false;
+    }
+    // ClipboardEvent data is committed only when the native copy is claimed.
+    // Do this after successful serialization + setData so native selection copy
+    // remains untouched on every failure path.
+    event.preventDefault();
+    this.pasteFingerprint = '';
+    this.pasteRepeat = 0;
+    this.pasteAnchor = null;
+    this.status(`Copied ${payload.nodes.length} node${payload.nodes.length === 1 ? '' : 's'}.`);
+    return true;
+  }
+
+  onEditorPaste(event) {
+    if (event?.isTrusted === false || isProcessEditorFormControl(event.target)
+        || this.modalDispose || !event.clipboardData?.getData) return false;
+    let text;
+    try {
+      text = event.clipboardData.getData('text/plain');
+    } catch {
+      return false;
+    }
+    // Unrelated clipboard text is never claimed, inspected further, or copied
+    // into editor state. Native browser ownership remains intact.
+    if (!isProcessSelectionClipboardText(text)) return false;
+    event.preventDefault();
+    let payload;
+    try {
+      payload = parseProcessSelection(text);
+    } catch (error) {
+      this.status(error instanceof ProcessClipboardError
+        ? error.message : 'Clipboard selection is invalid or unsupported.', true);
+      return true;
+    }
+    if (externalInteractionPending(this)) {
+      this.status('Wait for the external reload to finish before pasting.', true);
+      return true;
+    }
+    if (!this.model.config.canInsert) {
+      this.status('Pasting nodes is not allowed in this read-only view.', true);
+      return true;
+    }
+
+    const fingerprint = processSelectionFingerprint(text);
+    const repeated = fingerprint === this.pasteFingerprint && this.pasteAnchor;
+    const repeat = repeated ? this.pasteRepeat + 1 : 0;
+    const center = repeated ? this.pasteAnchor : this.canvasCenterPoint();
+    let idMap;
+    try {
+      idMap = this.model.insertClipboardSelection(payload, {
+        center,
+        offset: { x: repeat * 36, y: repeat * 36 },
+      });
+    } catch (error) {
+      this.status(error instanceof ProcessClipboardError
+        ? error.message : 'Clipboard selection could not be pasted.', true);
+      return true;
+    }
+
+    this.pasteFingerprint = fingerprint;
+    this.pasteRepeat = repeat;
+    this.pasteAnchor = center;
+    this.status('');
+    this.refresh();
+    const ids = [...idMap.values()];
+    this.setSelection(makeSelection(ids.map((id) => ({ type: 'node', id }))));
+    this.status(`Pasted ${ids.length} node${ids.length === 1 ? '' : 's'}.`);
+    queueMicrotask(() => this.graph?.focusNode?.(ids[0]));
+    return true;
   }
 
   // ---- inline (in-place) label editing ------------------------------------------

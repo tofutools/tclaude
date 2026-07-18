@@ -709,6 +709,19 @@ commands remain visible with a reason. The global shortcut deliberately does
 not fire while an input, textarea, select, contenteditable, or embedded editor
 owns the keystroke.
 
+`Ctrl-C` / `Cmd-C` copies the nodes in the current graph selection, including
+their complete node settings, relative layout, and edges whose two endpoints
+are both selected. `Ctrl-V` / `Cmd-V` pastes that subgraph at the visible canvas
+center; repeating paste creates fresh ids and offsets each copy. Each paste is
+one undoable editor operation; copying does not modify the draft. Neither path
+imports template identity, params, save hashes, run state, or edges crossing
+out of the selection. The format is versioned, bounded to 256 KiB, and carried
+through the browser's
+ordinary text clipboard, so it works between dashboard template editors. Text
+fields, embedded editors, and open dialogs retain their native clipboard
+behavior. Unrelated clipboard text is ignored, while malformed, stale, or
+oversized editor payloads are rejected atomically without changing the graph.
+
 The same palette can **Ask agent about selection**, **Ask agent to fix this
 issue**, or **Edit / refactor with agent**. The first two require a live graph
 selection or an explicitly focused validation issue. Before anything is sent,

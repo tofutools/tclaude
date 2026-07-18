@@ -332,7 +332,10 @@ export function ProcessEditorApp({ controller }) {
   const view = controller.snapshotSignal.value;
   const graphRef = useCallback((host) => controller.attachGraphHost(host), [controller]);
   const stageRef = useCallback((stage) => { controller.stage = stage; }, [controller]);
-  return html`<${Fragment}><div inert=${!!view.modal} class=${`process-editor${view.pending.externalDecision || view.pending.externalReload ? ' is-reloading' : ''}`} onKeyDown=${(event) => controller.onEditorKeyDown(event)}>
+  return html`<${Fragment}><div inert=${!!view.modal} class=${`process-editor${view.pending.externalDecision || view.pending.externalReload ? ' is-reloading' : ''}`}
+    onKeyDown=${(event) => controller.onEditorKeyDown(event)}
+    onCopy=${(event) => controller.onEditorCopy(event)}
+    onPaste=${(event) => controller.onEditorPaste(event)}>
     <${Header} controller=${controller} view=${view} />
     <${ExternalChange} controller=${controller} view=${view} />
     <div class="process-editor-body" inert=${view.pending.externalDecision || view.pending.externalReload}>

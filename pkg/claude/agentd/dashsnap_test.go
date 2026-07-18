@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -483,6 +484,10 @@ func dashSnapStates() []dashsnap.State {
 }
 
 func baseStates() []dashsnap.State {
+	clipboardModifier := "Control"
+	if runtime.GOOS == "darwin" {
+		clipboardModifier = "Meta"
+	}
 	// showGroups activates the Groups tab. expandGroups opens every real group's
 	// <details> so the member rows (tags, task links, online/offline, owner) show;
 	// collapseGroups closes them for a header-only view.
@@ -1364,6 +1369,59 @@ func baseStates() []dashsnap.State {
 				{Kind: "eval", JS: `if(!document.querySelector('.process-editor-modal')) throw new Error('Delete did not open node confirmation');`},
 				{Kind: "click", Selector: ".process-editor-modal .confirm-danger"},
 				{Kind: "eval", JS: `if(window.__browserEd.model.node('ship')) throw new Error('confirmed node Delete did not remove ship');`},
+			},
+			SettleMS: 300,
+		},
+		{
+			Key:     "process-editor-browser-copy-paste",
+			Title:   "Process editor — trusted selection copy/paste",
+			Caption: "TCL-564 real Chrome input in regular and wizard skins: native copy preserves highlighted text, while the platform graph shortcut copies a subgraph and repeated paste remaps edges, positions, history, selection, and focus.",
+			JS: processEditorStateJS(`window.__browserEd=ed;
+  ed.setSelection({type:'multi',items:[{type:'node',id:'begin'},{type:'node',id:'ship'}]});
+  await editorPaint();
+  var begin=document.querySelector('.process-node[data-node-id="begin"]');
+  if(!begin) throw new Error('clipboard fixture node missing');
+  begin.focus({preventScroll:true});
+  if(document.activeElement!==begin) throw new Error('clipboard fixture did not take graph focus');
+  var title=document.querySelector('.process-editor-title'),range=document.createRange(),selection=getSelection();
+  window.__nativeCopyText=title.textContent;range.selectNodeContents(title);selection.removeAllRanges();selection.addRange(range);
+  window.__clipboardBefore={nodes:Object.keys(ed.model.template.nodes).length,edges:ed.model.edges.length,undo:ed.model.undoStack.length};`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "c"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "eval", JS: `var probe=document.createElement('textarea');probe.id='clipboard-native-probe';document.body.appendChild(probe);getSelection().removeAllRanges();probe.focus();`},
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "v"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "eval", JS: `var probe=document.querySelector('#clipboard-native-probe');
+  if(probe.value!==window.__nativeCopyText) throw new Error('highlighted read-only text lost native clipboard ownership');
+  probe.remove();var begin=document.querySelector('.process-node[data-node-id="begin"]');begin.focus({preventScroll:true});`},
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "c"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "eval", JS: `var status=document.querySelector('.process-editor-status')?.textContent||'';
+				  if(!status.includes('Copied 2 nodes')) throw new Error('trusted graph shortcut did not copy the selected nodes: '+status);`},
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "v"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "v"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "eval", JS: `var ed=window.__browserEd,before=window.__clipboardBefore;
+  for(var id of ['begin-2','ship-2','begin-3','ship-3']) if(!ed.model.node(id)) throw new Error('repeated paste missing '+id);
+  if(Object.keys(ed.model.template.nodes).length!==before.nodes+4) throw new Error('repeated paste node count drifted');
+  if(ed.model.edges.length!==before.edges+2) throw new Error('only internal copied edges should be pasted');
+  if(!ed.model.findEdge('begin-2','pass')||ed.model.findEdge('begin-2','pass').to!=='ship-2') throw new Error('first paste did not remap its internal edge');
+  if(!ed.model.findEdge('begin-3','pass')||ed.model.findEdge('begin-3','pass').to!=='ship-3') throw new Error('second paste did not remap its internal edge');
+  var first=ed.model.layout.nodes['begin-2'],second=ed.model.layout.nodes['begin-3'];
+  if(Math.abs(second.x-first.x-36)>.01||Math.abs(second.y-first.y-36)>.01) throw new Error('repeated paste did not cascade by 36px');
+  if(ed.model.undoStack.length!==before.undo+2) throw new Error('each paste was not one history transaction');
+  var selected=ed.snapshot().selection?.items||[];
+  if(selected.length!==2||!selected.some(function(item){return item.id==='begin-3';})||!selected.some(function(item){return item.id==='ship-3';})) throw new Error('second paste did not select its new nodes');
+  if(document.activeElement?.dataset?.nodeId!=='begin-3') throw new Error('second paste did not restore graph focus');
+  var status=document.querySelector('.process-editor-status')?.textContent||'';
+  if(!status.includes('Pasted 2 nodes')) throw new Error('trusted Ctrl-V status missing');`},
 			},
 			SettleMS: 300,
 		},

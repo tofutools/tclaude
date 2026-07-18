@@ -446,6 +446,12 @@ func browserKey(name string) input.Key {
 	switch strings.ToLower(name) {
 	case "control", "ctrl":
 		return input.ControlLeft
+	case "meta", "command", "cmd":
+		return input.MetaLeft
+	case "c":
+		return input.KeyC
+	case "v":
+		return input.KeyV
 	case "delete":
 		return input.Delete
 	case "backspace":

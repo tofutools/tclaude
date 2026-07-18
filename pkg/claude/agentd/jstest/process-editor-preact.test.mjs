@@ -67,6 +67,49 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(host.childNodes.length, 0);
 });
 
+test('Preact editor routes native copy/paste through the graph boundary and restores pasted focus', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  await harness.act(() => editor.setSelection({ type: 'node', id: 'start' }));
+  const start = host.querySelector('.process-node[data-node-id="start"]');
+  const editorRoot = host.querySelector('.process-editor');
+  assert.ok(start);
+  start.focus();
+  let focusedID = '';
+  const focusNode = editor.graph.focusNode.bind(editor.graph);
+  editor.graph.focusNode = (id) => { focusedID = id; return focusNode(id); };
+
+  let text = '';
+  let copy;
+  // LinkeDOM does not expose `oncopy` / `onpaste` properties, so Preact's
+  // feature detection registers the canonical event names with initial caps.
+  // Real browsers register lowercase; the handler and bubbling contract are
+  // otherwise the same.
+  await harness.act(() => { copy = harness.fireEvent(editorRoot, 'Copy', {
+    clipboardData: { setData(type, value) { assert.equal(type, 'text/plain'); text = value; } },
+  }); });
+  assert.match(text, /^tclaude-process-selection:v1\n/);
+  assert.equal(copy.defaultPrevented, true);
+
+  let ordinary;
+  await harness.act(() => { ordinary = harness.fireEvent(editorRoot, 'Paste', {
+    clipboardData: { getData: () => 'ordinary prose' },
+  }); });
+  assert.equal(ordinary.defaultPrevented, false);
+  assert.equal(editor.model.node('start-2'), undefined);
+
+  let paste;
+  await harness.act(() => { paste = harness.fireEvent(editorRoot, 'Paste', {
+    clipboardData: { getData: () => text },
+  }); });
+  await Promise.resolve();
+  assert.equal(paste.defaultPrevented, true);
+  assert.ok(editor.model.node('start-2'));
+  assert.deepEqual(editor.selection, { type: 'node', id: 'start-2' });
+  assert.equal(focusedID, 'start-2');
+  assert.match(host.querySelector('.process-editor-status').textContent, /Pasted 1 node/);
+  editor.destroy();
+});
+
 test('Preact editor projects every canonical node kind through the inside-label contract without model drift', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   const cases = [
