@@ -19,9 +19,11 @@
 package terminal
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 )
 
 // Canonical terminal IDs. These are the values the --terminal flag and
@@ -189,11 +191,27 @@ func ResolvedTerminal() string {
 	return resolvedID
 }
 
+// ErrRefusedInTest is the error OpenWithCommand returns when called
+// from a test binary. Exposed so tests can pin the guard.
+var ErrRefusedInTest = errors.New(
+	"refusing to open a terminal window from a test binary; swap the caller's test seam instead")
+
 // OpenWithCommand opens a new terminal window running command, using
 // the terminal chosen by Resolve. If the process never called Resolve
 // (e.g. the `tclaude` CLI rather than the daemon), the first call
 // resolves lazily.
+//
+// Test binaries are refused unconditionally: tests exercise
+// terminal-opening code paths through seams (agentd's openTerminal,
+// session's linuxOpenTerminal), so a call that reaches this far under
+// `go test` is a missing swap — and on a developer machine with a
+// display it would pop a real terminal window onto the desktop
+// (TCL-584). Refusing returns the same degraded "could not open"
+// error path a headless host already exercises.
 func OpenWithCommand(command string) error {
+	if testing.Testing() {
+		return ErrRefusedInTest
+	}
 	if err := Resolve(); err != nil {
 		return err
 	}

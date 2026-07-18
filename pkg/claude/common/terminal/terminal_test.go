@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"errors"
 	"reflect"
 	"slices"
 	"testing"
@@ -103,5 +104,17 @@ func TestOrderedCandidates_UnknownPreference(t *testing.T) {
 	withPreferred(t, "definitely-not-a-terminal")
 	if got := orderedCandidates(); !reflect.DeepEqual(got, terminalPriority) {
 		t.Fatalf("orderedCandidates() = %v, want the unmodified priority list", got)
+	}
+}
+
+// TestOpenWithCommand_RefusesUnderGoTest pins the TCL-584 guard: a
+// test binary must never spawn a real terminal window, so
+// OpenWithCommand refuses — before resolving a launcher — whenever it
+// runs under `go test`. Callers that need to observe the open path in
+// tests swap their own seam instead.
+func TestOpenWithCommand_RefusesUnderGoTest(t *testing.T) {
+	err := OpenWithCommand("echo tclaude-tcl-584")
+	if !errors.Is(err, ErrRefusedInTest) {
+		t.Fatalf("OpenWithCommand() under go test = %v, want ErrRefusedInTest", err)
 	}
 }
