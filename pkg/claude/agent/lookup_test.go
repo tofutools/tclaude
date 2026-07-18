@@ -160,8 +160,10 @@ func TestResolveSelector_AmbiguousByPendingName(t *testing.T) {
 
 	var out bytes.Buffer
 	printAmbiguous(&out, "shared-pending", matches)
-	assert.Equal(t, 2, strings.Count(out.String(), "shared-pending"),
-		"each candidate renders the pending name it matched")
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	require.Len(t, lines, 4)
+	assert.Contains(t, lines[1], "shared-pending", "first candidate renders the pending name it matched")
+	assert.Contains(t, lines[2], "shared-pending", "second candidate renders the pending name it matched")
 }
 
 func TestResolveSelector_AmbiguousByTitle(t *testing.T) {
