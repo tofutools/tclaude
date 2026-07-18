@@ -329,3 +329,134 @@ func TestForceStop_SelectedPaneSwapDoesNotKillSuccessor(t *testing.T) {
 	assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"))
 	assert.Empty(t, f.World.Tmux.MutationTargets("kill-session"))
 }
+
+func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
+	const (
+		boundGeneration = "11111111111111111111111111111111"
+		otherGeneration = "22222222222222222222222222222222"
+	)
+	tests := []struct {
+		name, slug, afterGeneration, wantAction string
+		force, bound                            bool
+		wantSends                               int
+		wantKill                                bool
+	}{
+		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3},
+		{name: "bound generation disappears after delivery", slug: "bound-missing", bound: true, afterGeneration: "missing", wantAction: "soft_stopped", wantSends: 1},
+		{name: "bound generation mismatches after delivery", slug: "bound-mismatch", bound: true, afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
+		{name: "degraded force control", slug: "degraded-force", force: true, wantAction: "killed", wantKill: true},
+		{name: "bound generation mismatches before force", slug: "bound-force-mismatch", force: true, bound: true, afterGeneration: otherGeneration, wantAction: "error"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			conv := "generation-" + tc.slug
+			sessionID := "spwn-generation-" + tc.slug
+			tmuxSession := "tmux-generation-" + tc.slug
+			f.HaveConvWithTitle(conv, tc.name)
+			f.HaveAliveSession(conv, sessionID, tmuxSession, f.TestCwd(tc.slug))
+			if !tc.force {
+				cc := f.World.CCs.GetByConvID(conv)
+				require.NotNil(t, cc)
+				cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+			}
+			if tc.bound {
+				require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, boundGeneration))
+				f.World.Tmux.SetPaneExitGeneration(tmuxSession, boundGeneration)
+			}
+			if tc.afterGeneration != "" {
+				drift := func() {
+					generation := tc.afterGeneration
+					if generation == "missing" {
+						generation = ""
+					}
+					f.World.Tmux.SetPaneExitGeneration(tmuxSession, generation)
+				}
+				if tc.force {
+					t.Cleanup(agentd.SetBeforeSoftExitTargetRevalidateForTest(drift))
+				} else {
+					t.Cleanup(agentd.SetAfterSoftExitTargetSendForTest(drift))
+				}
+			}
+
+			stop := f.AsHuman().Stop(conv, tc.force)
+			assert.Equal(t, tc.wantAction, stop.Action)
+			if tc.wantSends > 1 {
+				agentd.WaitForBackgroundForTest()
+			}
+			assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
+			if tc.wantKill {
+				assert.NotEmpty(t, f.World.Tmux.MutationTargets("kill-pane"))
+			} else {
+				assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"))
+			}
+		})
+	}
+}
+
+func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
+	const (
+		generation = "33333333333333333333333333333333"
+		eventID    = "evt_555555555555555555555555"
+	)
+	tests := []struct {
+		name, slug string
+		dualFault  bool
+		wantSends  int
+	}{
+		{name: "dual unknown after initial delivery", slug: "dual-unknown", dualFault: true, wantSends: 1},
+		{name: "final successful retry", slug: "final-retry", wantSends: 3},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(100 * time.Millisecond))
+			conv := "intent-" + tc.slug
+			sessionID := "spwn-intent-" + tc.slug
+			tmuxSession := "tmux-intent-" + tc.slug
+			f.HaveConvWithTitle(conv, tc.name)
+			f.HaveAliveSession(conv, sessionID, tmuxSession, f.TestCwd(tc.slug))
+			require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+			f.World.Tmux.SetPaneExitGeneration(tmuxSession, generation)
+			cc := f.World.CCs.GetByConvID(conv)
+			require.NotNil(t, cc)
+			cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+			if tc.dualFault {
+				t.Cleanup(agentd.SetAfterSoftExitTargetSendForTest(func() {
+					f.World.Tmux.FailNextCommand("display-message")
+					f.World.Tmux.FailNextCommand("list-sessions")
+				}))
+			}
+
+			action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID)
+			assert.Equal(t, "soft_stopped", action)
+			require.Eventually(t, func() bool {
+				return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
+			}, 50*time.Millisecond, time.Millisecond)
+
+			d, err := db.Open()
+			require.NoError(t, err)
+			var intent, gotEventID, intentGeneration, intentAt, gotTmux string
+			readIntent := func() {
+				t.Helper()
+				require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id,
+					exit_intent_generation, COALESCE(exit_intent_at, ''), tmux_session
+					FROM sessions WHERE id = ?`, sessionID).Scan(
+					&intent, &gotEventID, &intentGeneration, &intentAt, &gotTmux))
+			}
+			readIntent()
+			assert.Equal(t, db.AgentExitActionStop, intent, "delivered command retains attribution during observer window")
+			assert.Equal(t, eventID, gotEventID)
+			assert.Equal(t, generation, intentGeneration)
+			assert.NotEmpty(t, intentAt)
+			assert.Equal(t, tmuxSession, gotTmux)
+
+			agentd.WaitForBackgroundForTest()
+			readIntent()
+			assert.Empty(t, intent, "bounded cleanup clears the exact action/event/generation owner")
+			assert.Empty(t, gotEventID)
+			assert.Empty(t, intentGeneration)
+			assert.Empty(t, intentAt)
+		})
+	}
+}

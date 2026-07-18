@@ -249,6 +249,15 @@ func SetSoftExitRetryDelayForTest(d time.Duration) func() {
 	return func() { softExitRetryDelay = prev }
 }
 
+// SetUnknownIntentCleanupDelayForTest shrinks the observer window retained
+// after a delivered soft-exit whose outcome cannot yet be observed. Production
+// leaves enough time for the reaper; flow tests use a short, explicit window.
+func SetUnknownIntentCleanupDelayForTest(d time.Duration) func() {
+	prev := unknownIntentCleanupDelay
+	unknownIntentCleanupDelay = d
+	return func() { unknownIntentCleanupDelay = prev }
+}
+
 // SetRemoteControlConfirmDelayForTest shrinks the remote-control disable
 // timing for the duration of a test — BOTH the pause before CC's confirm menu
 // renders and the gap between the menu keystrokes (Up/Up/Enter) — the same
@@ -630,8 +639,12 @@ func SetBeforeSoftExitTargetRevalidateForTest(fn func()) func() {
 	return func() { beforeSoftExitTargetRevalidateForTest = prev }
 }
 
-func StopOneConvWithIntentForTest(convID, action string) string {
-	return stopOneConvWithIntent(convID, false, action, "").Action
+func StopOneConvWithIntentForTest(convID, action string, relatedEventID ...string) string {
+	eventID := ""
+	if len(relatedEventID) > 0 {
+		eventID = relatedEventID[0]
+	}
+	return stopOneConvWithIntent(convID, false, action, eventID).Action
 }
 
 // SetAfterSoftExitTargetSendForTest installs a probe seam after exact-pane
