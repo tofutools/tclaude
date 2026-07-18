@@ -34,7 +34,7 @@ func TestCompareSessionLaunchRecencyIgnoresExitedStatus(t *testing.T) {
 	base := time.Now()
 	old := &db.SessionRow{
 		CreatedAt: base,
-		UpdatedAt: base.Add(time.Minute),
+		UpdatedAt: base.Add(4 * time.Minute),
 		Status:    "running",
 	}
 	newExited := &db.SessionRow{
@@ -44,6 +44,6 @@ func TestCompareSessionLaunchRecencyIgnoresExitedStatus(t *testing.T) {
 	}
 
 	assert.Equal(t, 1, compareSessionLaunchRecency(newExited, old),
-		"the newer launch owns a reused tmux name even while its pane is exiting")
+		"the newer launch wins even when the older row received a later update")
 	assert.Equal(t, -1, compareSessionLaunchRecency(old, newExited))
 }

@@ -155,9 +155,9 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		if s.ConvID != "" {
 			cur := latestSessions[s.ConvID]
 			switch {
-			case len(cur) == 0 || s.UpdatedAt.After(cur[0].UpdatedAt):
+			case len(cur) == 0 || compareSessionLaunchRecency(s, cur[0]) > 0:
 				latestSessions[s.ConvID] = []*db.SessionRow{s}
-			case s.UpdatedAt.Equal(cur[0].UpdatedAt):
+			case compareSessionLaunchRecency(s, cur[0]) == 0:
 				latestSessions[s.ConvID] = append(cur, s)
 			}
 		}
@@ -183,7 +183,8 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		for _, s := range owners {
 			claimants[s.ConvID] = true
 			addExtraDir(s.ConvID, s.Cwd)
-			addExtraDir(s.ConvID, recordedStartupDir(s))
+			physical, _ := recordedStartupDir(s)
+			addExtraDir(s.ConvID, physical)
 		}
 	}
 
@@ -209,7 +210,8 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			addExtraDir(convID, claimDir)
 		}
 		for _, sess := range latestSessions[convID] {
-			addExtraDir(convID, recordedStartupDir(sess))
+			physical, _ := recordedStartupDir(sess)
+			addExtraDir(convID, physical)
 		}
 		for claimDir := range extraDirs[convID] {
 			if snap.dirClaims[claimDir] == nil {

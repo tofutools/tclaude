@@ -371,15 +371,14 @@ func TestCleanup_Agents_RechecksOwnershipBeforeWorktreeRemoval(t *testing.T) {
 
 	const leaving = "wrcl-1111-2222-3333-4444"
 	const arriving = "wrca-1111-2222-3333-4444"
-	const shared = "/tmp/wt-recheck-ownership"
+	repo, _ := initRepoOnMain(t)
+	shared, err := worktree.AddWorktreeIn(repo, "recheck-ownership", "main", "")
+	require.NoError(t, err)
 	f.HaveConvWithTitle(leaving, "leaving-before-race")
 	f.HaveAliveSession(leaving, "spwn-wrcl", "tmux-wrcl", shared)
 	f.HaveEnrolledAgent(leaving)
 	f.MarkOffline("tmux-wrcl")
 
-	fw := &fakeWorktrees{byDir: map[string]worktree.WorktreeStatus{
-		shared: {Root: shared, Branch: "feat", Kind: "linked"},
-	}}
 	var launchOnce sync.Once
 	inspect := func(dir string) worktree.WorktreeStatus {
 		launchOnce.Do(func() {
@@ -390,9 +389,12 @@ func TestCleanup_Agents_RechecksOwnershipBeforeWorktreeRemoval(t *testing.T) {
 			f.HaveAliveSession(arriving, "spwn-wrca", "tmux-wrca", shared)
 			f.HaveEnrolledAgent(arriving)
 		})
-		return fw.inspect(dir)
+		return worktree.InspectWorktree(dir)
 	}
-	t.Cleanup(agentd.SetWorktreeFnsForTest(inspect, fw.remove))
+	// Keep the production Git inspection/removal behavior; the seam injects
+	// only the claimant-registration timing between the request snapshot and
+	// the destructive boundary.
+	t.Cleanup(agentd.SetWorktreeFnsForTest(inspect, worktree.RemoveLinkedWorktree))
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	resp := postCleanup(t, mux, "/api/cleanup/agents",
@@ -401,7 +403,7 @@ func TestCleanup_Agents_RechecksOwnershipBeforeWorktreeRemoval(t *testing.T) {
 	require.Len(t, resp.Outcomes, 1)
 	assert.Equal(t, 1, resp.Deleted)
 	assert.Contains(t, resp.Outcomes[0].Detail, "shared")
-	assert.False(t, fw.wasRemoved(shared),
+	assert.DirExists(t, shared,
 		"a claimant appearing after the initial snapshot must keep the worktree")
 }
 

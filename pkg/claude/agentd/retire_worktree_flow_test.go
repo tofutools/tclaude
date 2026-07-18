@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -157,8 +158,10 @@ func TestRetire_DeleteWorktreeKeepsLiveSiblingStartupRoot(t *testing.T) {
 
 	const leaving = "rwsl-1111-2222-3333-4444"
 	const original = "rwso-1111-2222-3333-4444"
-	const root = "/tmp/rw-original-agent-root"
-	const trackedElsewhere = "/tmp/rw-original-agent-other-edit"
+	repo, _ := initRepoOnMain(t)
+	root, err := worktree.AddWorktreeIn(repo, "original-agent", "main", "")
+	require.NoError(t, err)
+	trackedElsewhere := t.TempDir()
 	f.HaveConvWithTitle(leaving, "disposable-sibling")
 	f.HaveConvWithTitle(original, "original-agent")
 	f.HaveAliveSession(leaving, "spwn-rwsl", "tmux-rwsl", root)
@@ -166,19 +169,15 @@ func TestRetire_DeleteWorktreeKeepsLiveSiblingStartupRoot(t *testing.T) {
 	f.HaveEnrolledAgent(leaving)
 	f.HaveEnrolledAgent(original)
 	require.NoError(t, db.UpsertAgentWorkdir(original, trackedElsewhere, trackedElsewhere, "other"))
-	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
-		root:             {Root: root, Branch: "original-agent", Kind: "linked"},
-		trackedElsewhere: {Root: trackedElsewhere, Branch: "other", Kind: "linked"},
-	})
-
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, leaving, "shutdown=1&delete_worktree=1")
 	require.Equal(t, http.StatusOK, code)
 	require.NotNil(t, resp.Worktree)
 	assert.Equal(t, "kept", resp.Worktree.Action)
 	assert.Contains(t, resp.Worktree.Detail, "shared")
-	assert.False(t, fw.wasRemoved(root), "another live agent's startup root must survive")
-	assert.NotContains(t, fw.branchesRemoved(), "original-agent",
+	assert.DirExists(t, root, "another live agent's startup root must survive")
+	assert.NoError(t, exec.Command("git", "-C", repo, "show-ref", "--verify",
+		"refs/heads/original-agent").Run(),
 		"the live agent's startup branch must survive with its directory")
 }
 
@@ -192,11 +191,11 @@ func TestRetire_DeleteWorktreeKeepsPhysicalStartupAfterAliasRemoved(t *testing.T
 
 	const leaving = "rwal-1111-2222-3333-4444"
 	const original = "rwap-1111-2222-3333-4444"
-	base := t.TempDir()
-	root := filepath.Join(base, "physical-root")
+	repo, base := initRepoOnMain(t)
+	root, err := worktree.AddWorktreeIn(repo, "physical-owner", "main", "")
+	require.NoError(t, err)
 	alias := filepath.Join(base, "launch-alias")
-	trackedElsewhere := filepath.Join(base, "other-edit")
-	require.NoError(t, os.MkdirAll(root, 0o755))
+	trackedElsewhere := t.TempDir()
 	require.NoError(t, os.Symlink(root, alias))
 
 	f.HaveConvWithTitle(leaving, "disposable-alias-sibling")
@@ -207,18 +206,13 @@ func TestRetire_DeleteWorktreeKeepsPhysicalStartupAfterAliasRemoved(t *testing.T
 	f.HaveEnrolledAgent(original)
 	require.NoError(t, db.UpsertAgentWorkdir(original, trackedElsewhere, trackedElsewhere, "other"))
 	require.NoError(t, os.Remove(alias), "simulate launch alias disappearing")
-	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
-		root:             {Root: root, Branch: "physical-owner", Kind: "linked"},
-		trackedElsewhere: {Root: trackedElsewhere, Branch: "other", Kind: "linked"},
-	})
-
 	mux := agentd.BuildDashboardHandlerForTest()
 	code, resp := postRetireWt(t, mux, leaving, "shutdown=1&delete_worktree=1")
 	require.Equal(t, http.StatusOK, code)
 	require.NotNil(t, resp.Worktree)
 	assert.Equal(t, "kept", resp.Worktree.Action)
 	assert.Contains(t, resp.Worktree.Detail, "shared")
-	assert.False(t, fw.wasRemoved(root),
+	assert.DirExists(t, root,
 		"the live pane's physical startup root must remain claimed after its alias disappears")
 }
 

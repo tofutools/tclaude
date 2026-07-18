@@ -31,6 +31,8 @@ func TestDir_RepairRecreatesOnlyOwnStartupRoot(t *testing.T) {
 	f.HaveConvWithTitle(conv, "repairer")
 	f.HaveAliveSession(conv, "lbl-dirr", "tclaude-dirr", startDir)
 	f.HaveEnrolledAgent(conv)
+	physicalStartDir, err := filepath.EvalSymlinks(startDir)
+	require.NoError(t, err)
 	require.NoError(t, os.Remove(startDir), "simulate deletion after launch provenance was captured")
 	require.NoError(t, db.UpsertAgentWorkdir(conv, trackedDir, trackedDir, "elsewhere"))
 	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
@@ -44,9 +46,9 @@ func TestDir_RepairRecreatesOnlyOwnStartupRoot(t *testing.T) {
 		Repaired bool   `json:"repaired"`
 	}
 	testharness.DecodeJSON(t, rec, &got)
-	assert.Equal(t, startDir, got.Dir)
+	assert.Equal(t, physicalStartDir, got.Dir)
 	assert.True(t, got.Repaired)
-	assert.DirExists(t, startDir)
+	assert.DirExists(t, physicalStartDir)
 	assert.NoDirExists(t, trackedDir, "repair must ignore mutable tracked/current directories")
 
 	// Idempotent: once the startup root exists, report it without changing it.
@@ -108,6 +110,8 @@ func TestDir_RepairUsesPhysicalStartupAndRefusesSymlinkSubstitution(t *testing.T
 		f.HaveConvWithTitle(conv, "alias-repairer")
 		f.HaveAliveSession(conv, "lbl-dira", "tclaude-dira", alias)
 		f.HaveEnrolledAgent(conv)
+		physicalStartup, err := filepath.EvalSymlinks(alias)
+		require.NoError(t, err)
 		require.NoError(t, os.Remove(alias))
 		require.NoError(t, os.Remove(physical))
 		require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
@@ -121,9 +125,9 @@ func TestDir_RepairUsesPhysicalStartupAndRefusesSymlinkSubstitution(t *testing.T
 			Repaired bool   `json:"repaired"`
 		}
 		testharness.DecodeJSON(t, rec, &got)
-		assert.Equal(t, physical, got.Dir)
+		assert.Equal(t, physicalStartup, got.Dir)
 		assert.True(t, got.Repaired)
-		assert.DirExists(t, physical)
+		assert.DirExists(t, physicalStartup)
 		assert.NoFileExists(t, alias, "repair must not recreate a deleted launch alias")
 	})
 
@@ -152,6 +156,27 @@ func TestDir_RepairUsesPhysicalStartupAndRefusesSymlinkSubstitution(t *testing.T
 		assert.NoDirExists(t, filepath.Join(redirect, "root"),
 			"host-side repair must not follow an ancestor swapped to a symlink")
 	})
+}
+
+func TestDir_RepairRejectsMalformedRecordedProvenance(t *testing.T) {
+	f := newFlow(t)
+	const conv = "dirm-aaaa-bbbb-cccc-dddd"
+	startDir := filepath.Join(t.TempDir(), "must-stay-missing")
+
+	f.HaveConvWithTitle(conv, "malformed-provenance-repairer")
+	f.HaveAliveSession(conv, "lbl-dirm", "tclaude-dirm", startDir)
+	f.HaveEnrolledAgent(conv)
+	require.NoError(t, db.SetSessionResumeProvenance("lbl-dirm", `{"version":1,"broken":true}`))
+	require.NoError(t, os.Remove(startDir))
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
+
+	rec := testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/whoami/dir/repair", nil), conv))
+	assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "invalid_startup_dir")
+	assert.NoDirExists(t, startDir,
+		"malformed non-empty provenance must fail closed instead of using lexical cwd")
 }
 
 // dirInfo mirrors the daemon's dirResp wire shape.

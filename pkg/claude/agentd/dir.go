@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -82,14 +83,19 @@ type dirRepairResp struct {
 // sessions.cwd used a symlink that was later removed or retargeted. Legacy rows
 // have no provenance, so they retain the recorded lexical cwd as a best-effort
 // fallback.
-func recordedStartupDir(sess *db.SessionRow) string {
+func recordedStartupDir(sess *db.SessionRow) (string, error) {
 	if sess == nil {
-		return ""
+		return "", nil
 	}
-	if provenance, err := resumeprovenance.Decode(sess.ResumeProvenance); err == nil {
-		return strings.TrimSpace(provenance.Cwd.Path)
+	raw := strings.TrimSpace(sess.ResumeProvenance)
+	if raw == "" {
+		return strings.TrimSpace(sess.Cwd), nil
 	}
-	return strings.TrimSpace(sess.Cwd)
+	provenance, err := resumeprovenance.Decode(raw)
+	if err != nil {
+		return "", fmt.Errorf("decode recorded startup provenance: %w", err)
+	}
+	return strings.TrimSpace(provenance.Cwd.Path), nil
 }
 
 // resolveDirs adapts agent.ResolveLocation to this endpoint's wire
@@ -184,7 +190,11 @@ func handleWhoamiDirRepair(w http.ResponseWriter, r *http.Request) {
 			"no recorded startup directory for "+short8(convID))
 		return
 	}
-	dir := recordedStartupDir(sess)
+	dir, err := recordedStartupDir(sess)
+	if err != nil {
+		writeError(w, http.StatusConflict, "invalid_startup_dir", err.Error())
+		return
+	}
 	if !filepath.IsAbs(dir) {
 		writeError(w, http.StatusConflict, "invalid_startup_dir",
 			"recorded startup directory is not absolute; refusing host-side repair")
