@@ -1,13 +1,14 @@
 ---
 name: agent-dir
 description: >-
-  Report — or open a terminal in — the directory an agent is working in, via
-  `tclaude agent dir`. A tool-using agent cannot read tclaude's "where am I
-  building" state or spawn a terminal window from a tool; tclaude agentd tracks
-  the most-recent dir you've edited files in (the PostToolUse hook records it)
-  and, being outside your sandbox, can open a terminal there. Use when the user
-  asks "what directory are you working in / building in", "where are you",
-  "open a terminal here / in the repo", or "/agent-dir". Manager pattern:
+  Report, recover, or open a terminal in the directory an agent is working in,
+  via `tclaude agent dir`. A tool-using agent cannot read tclaude's "where am I
+  building" state, recreate a deleted sandbox root, or spawn a terminal window
+  from a tool; tclaude agentd tracks the immutable startup dir and the
+  most-recent dir you've edited files in. Use when the user asks "what
+  directory are you working in / building in", "where are you", "recover your
+  deleted directory", "open a terminal here / in the repo", or "/agent-dir".
+  Manager pattern:
   `tclaude agent dir <peer>` reports another agent's dir; `tclaude agent dir
   <peer> --open` opens a terminal in it.
 ---
@@ -62,6 +63,29 @@ only been reading files and running commands — `current` falls back to
 the launch dir. The JSON form (`source` field) distinguishes `hook`
 (tracked) from `fallback` (no edit seen yet).
 
+## Recovering a deleted startup directory
+
+If cleanup or an external process deleted the directory where this agent was
+launched, recreate that exact root through the daemon:
+
+```bash
+tclaude agent dir --repair
+```
+
+This is permission-gated on `self.dir-repair` (installed with the bundled
+default agent permissions). The command is deliberately self-only and accepts
+no selector or path. Agentd reads the immutable startup directory recorded for
+the caller and recreates only its original physical directory tree, so the
+sandbox does not need broad write access to its parent. Repair refuses symlink
+substitution. It does not recreate Git worktree metadata, branches, or a later
+directory the agent moved into.
+
+If permission is missing, the human can grant it with:
+
+```bash
+tclaude agent permissions grant default self.dir-repair
+```
+
 ## Opening a terminal
 
 ```bash
@@ -108,6 +132,8 @@ is likewise ungated; it's the human's machine and they asked.
 - **Stale after a big `cd`.** The tracker follows *file edits*, not
   shell `cd`. If you `cd` somewhere in Bash but don't edit a file
   there, `current` won't move. Edit a file and it catches up.
+- **`--repair` says the path conflicts.** The recorded startup path exists as
+  a non-directory. Repair never overwrites it; the human must inspect it.
 
 ## Why a separate command
 

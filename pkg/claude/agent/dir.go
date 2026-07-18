@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -35,16 +36,17 @@ import (
 func dirCmd() *cobra.Command {
 	return boa.CmdT[dirParams]{
 		Use:   "dir",
-		Short: "Report (or open a terminal in) a directory an agent is working in",
+		Short: "Report, repair, or open an agent directory",
 		Long: "Prints a directory an agent is working in. With no selector the target\n" +
 			"is the calling agent itself.\n\n" +
 			"  tclaude agent dir                 # current working dir of self\n" +
 			"  tclaude agent dir --worktree      # git worktree/repo root of self\n" +
 			"  tclaude agent dir --start         # launch dir of self\n" +
+			"  tclaude agent dir --repair        # recreate a deleted launch dir\n" +
 			"  tclaude agent dir worker-1        # current working dir of worker-1\n" +
 			"  tclaude agent dir --open          # open a terminal there instead\n\n" +
-			"Opening a terminal goes through tclaude agentd, which runs outside the\n" +
-			"agent sandbox and can spawn the window the agent itself cannot.",
+			"Opening a terminal and repairing a deleted startup directory go through\n" +
+			"tclaude agentd, which runs outside the agent sandbox.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *dirParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.Selector).SetAlternativesFunc(completeConvSelectors)
@@ -61,6 +63,7 @@ type dirParams struct {
 	Start    bool   `long:"start" help:"Use the launch directory (where Claude Code started)."`
 	Worktree bool   `long:"worktree" help:"Use the git worktree/repo root containing the current working dir (falls back to the launch dir if not in a git repo)."`
 	Open     bool   `long:"open" help:"Open a terminal window in the directory (via tclaude agentd) instead of printing it."`
+	Repair   bool   `long:"repair" help:"Recreate this agent's recorded startup directory via agentd. Accepts no selector or path."`
 }
 
 // whichDir maps the flags to the daemon's which selector. --worktree
@@ -78,10 +81,30 @@ func (p *dirParams) whichDir() string {
 }
 
 func runDir(p *dirParams, stdout, stderr io.Writer) int {
+	selector := strings.TrimSpace(p.Selector)
+	if p.Repair && (selector != "" || p.Open || p.Start || p.Worktree) {
+		fmt.Fprintln(stderr, "Error: --repair targets only this agent's recorded startup directory and cannot be combined with a selector, --open, --start, or --worktree")
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
-	selector := strings.TrimSpace(p.Selector)
+	if p.Repair {
+		var resp struct {
+			Dir      string `json:"dir"`
+			Repaired bool   `json:"repaired"`
+		}
+		if err := DaemonRequest(http.MethodPost, "/v1/whoami/dir/repair", struct{}{}, &resp, DaemonOpts{}); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return MapDaemonErrorToRC(err)
+		}
+		if resp.Repaired {
+			fmt.Fprintf(stdout, "Recreated startup directory: %s\n", resp.Dir)
+		} else {
+			fmt.Fprintf(stdout, "Startup directory already exists: %s\n", resp.Dir)
+		}
+		return rcOK
+	}
 	path := "/v1/whoami/dir"
 	if selector != "" {
 		path = "/v1/agent/" + url.PathEscape(selector) + "/dir"

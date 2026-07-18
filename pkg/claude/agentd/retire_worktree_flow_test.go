@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -143,6 +145,81 @@ func TestRetire_DeleteWorktreeKeepsSharedWorktree(t *testing.T) {
 	assert.Contains(t, resp.Worktree.Detail, "shared")
 	assert.False(t, fw.wasRemoved(shared),
 		"a worktree another agent still works in must be kept")
+}
+
+// Regression for TCL-581: the surviving agent's PostToolUse tracker can point
+// somewhere other than the directory it was launched in. Its startup root is
+// still its process cwd and must remain claimed independently; retiring the
+// last disposable sibling must not delete that live agent's root and branch.
+func TestRetire_DeleteWorktreeKeepsLiveSiblingStartupRoot(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const leaving = "rwsl-1111-2222-3333-4444"
+	const original = "rwso-1111-2222-3333-4444"
+	const root = "/tmp/rw-original-agent-root"
+	const trackedElsewhere = "/tmp/rw-original-agent-other-edit"
+	f.HaveConvWithTitle(leaving, "disposable-sibling")
+	f.HaveConvWithTitle(original, "original-agent")
+	f.HaveAliveSession(leaving, "spwn-rwsl", "tmux-rwsl", root)
+	f.HaveAliveSession(original, "spwn-rwso", "tmux-rwso", root)
+	f.HaveEnrolledAgent(leaving)
+	f.HaveEnrolledAgent(original)
+	require.NoError(t, db.UpsertAgentWorkdir(original, trackedElsewhere, trackedElsewhere, "other"))
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		root:             {Root: root, Branch: "original-agent", Kind: "linked"},
+		trackedElsewhere: {Root: trackedElsewhere, Branch: "other", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, leaving, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "kept", resp.Worktree.Action)
+	assert.Contains(t, resp.Worktree.Detail, "shared")
+	assert.False(t, fw.wasRemoved(root), "another live agent's startup root must survive")
+	assert.NotContains(t, fw.branchesRemoved(), "original-agent",
+		"the live agent's startup branch must survive with its directory")
+}
+
+// A launch-time symlink may disappear while the pane still has the resolved
+// physical directory as its cwd. The immutable provenance captured at launch
+// must keep that physical root claimed; the now-dangling lexical startup path
+// alone cannot do so.
+func TestRetire_DeleteWorktreeKeepsPhysicalStartupAfterAliasRemoved(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const leaving = "rwal-1111-2222-3333-4444"
+	const original = "rwap-1111-2222-3333-4444"
+	base := t.TempDir()
+	root := filepath.Join(base, "physical-root")
+	alias := filepath.Join(base, "launch-alias")
+	trackedElsewhere := filepath.Join(base, "other-edit")
+	require.NoError(t, os.MkdirAll(root, 0o755))
+	require.NoError(t, os.Symlink(root, alias))
+
+	f.HaveConvWithTitle(leaving, "disposable-alias-sibling")
+	f.HaveConvWithTitle(original, "physical-root-owner")
+	f.HaveAliveSession(leaving, "spwn-rwal", "tmux-rwal", root)
+	f.HaveAliveSession(original, "spwn-rwap", "tmux-rwap", alias)
+	f.HaveEnrolledAgent(leaving)
+	f.HaveEnrolledAgent(original)
+	require.NoError(t, db.UpsertAgentWorkdir(original, trackedElsewhere, trackedElsewhere, "other"))
+	require.NoError(t, os.Remove(alias), "simulate launch alias disappearing")
+	fw := installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		root:             {Root: root, Branch: "physical-owner", Kind: "linked"},
+		trackedElsewhere: {Root: trackedElsewhere, Branch: "other", Kind: "linked"},
+	})
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	code, resp := postRetireWt(t, mux, leaving, "shutdown=1&delete_worktree=1")
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, resp.Worktree)
+	assert.Equal(t, "kept", resp.Worktree.Action)
+	assert.Contains(t, resp.Worktree.Detail, "shared")
+	assert.False(t, fw.wasRemoved(root),
+		"the live pane's physical startup root must remain claimed after its alias disappears")
 }
 
 // Scenario: an agent is retired, then a fresh agent reuses the same name and

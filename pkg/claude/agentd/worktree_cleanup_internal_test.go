@@ -14,13 +14,20 @@ func TestAgentWorktreeClaimSnapshotIncompleteFailsClosed(t *testing.T) {
 		views: map[string]agentWorktreeView{
 			conv: {Path: "/tmp/worktree", Branch: "feat", Kind: "linked"},
 		},
-		claims:   map[string]map[string]bool{},
-		complete: false,
+		dirClaims: map[string]map[string]bool{},
+		complete:  false,
 	}
 
 	got := snap.resolve(conv, map[string]bool{conv: true})
 	assert.True(t, got.Shared, "incomplete claimant discovery must make deletion unsafe")
 	assert.False(t, got.Removable(), "an unknown claimant set must fail closed")
+}
+
+func TestDirContains(t *testing.T) {
+	assert.True(t, dirContains("/tmp/agent-root", "/tmp/agent-root"))
+	assert.True(t, dirContains("/tmp/agent-root", "/tmp/agent-root/pkg"))
+	assert.False(t, dirContains("/tmp/agent-root", "/tmp/agent-root-2"))
+	assert.False(t, dirContains("/tmp/agent-root", "/tmp"))
 }
 
 func TestCompareSessionLaunchRecencyIgnoresExitedStatus(t *testing.T) {

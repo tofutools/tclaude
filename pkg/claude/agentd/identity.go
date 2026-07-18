@@ -275,6 +275,7 @@ const (
 	PermSelfTask           = "self.task"
 	PermSelfPR             = "self.pr"
 	PermSelfTags           = "self.tags"
+	PermSelfDirRepair      = "self.dir-repair"
 	PermAgentReincarnate   = "agent.reincarnate"
 	PermAgentCompact       = "agent.compact"
 	PermAgentRename        = "agent.rename"

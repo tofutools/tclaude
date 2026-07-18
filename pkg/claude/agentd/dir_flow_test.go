@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +15,144 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+// Scenario: an agent's startup root was deleted outside its sandbox while its
+// tracked edit directory points somewhere else. The self-repair verb must ask
+// agentd to recreate exactly sessions.cwd — never the tracked directory and
+// never a caller-supplied path.
+func TestDir_RepairRecreatesOnlyOwnStartupRoot(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "dirr-aaaa-bbbb-cccc-dddd"
+	base := t.TempDir()
+	startDir := filepath.Join(base, "deleted-startup-root")
+	trackedDir := filepath.Join(base, "tracked-elsewhere")
+
+	f.HaveConvWithTitle(conv, "repairer")
+	f.HaveAliveSession(conv, "lbl-dirr", "tclaude-dirr", startDir)
+	f.HaveEnrolledAgent(conv)
+	require.NoError(t, os.Remove(startDir), "simulate deletion after launch provenance was captured")
+	require.NoError(t, db.UpsertAgentWorkdir(conv, trackedDir, trackedDir, "elsewhere"))
+	require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
+
+	rec := testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/whoami/dir/repair", nil), conv))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var got struct {
+		Dir      string `json:"dir"`
+		Repaired bool   `json:"repaired"`
+	}
+	testharness.DecodeJSON(t, rec, &got)
+	assert.Equal(t, startDir, got.Dir)
+	assert.True(t, got.Repaired)
+	assert.DirExists(t, startDir)
+	assert.NoDirExists(t, trackedDir, "repair must ignore mutable tracked/current directories")
+
+	// Idempotent: once the startup root exists, report it without changing it.
+	rec = testharness.Serve(f.Mux,
+		agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/whoami/dir/repair", nil), conv))
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	testharness.DecodeJSON(t, rec, &got)
+	assert.False(t, got.Repaired)
+}
+
+func TestDir_RepairRequiresPermissionAndRefusesPathConflict(t *testing.T) {
+	t.Run("permission", func(t *testing.T) {
+		f := newFlow(t)
+		const conv = "dirp-aaaa-bbbb-cccc-dddd"
+		startDir := filepath.Join(t.TempDir(), "must-not-be-created")
+		f.HaveConvWithTitle(conv, "ungranted-repairer")
+		f.HaveAliveSession(conv, "lbl-dirp", "tclaude-dirp", startDir)
+		f.HaveEnrolledAgent(conv)
+		require.NoError(t, os.Remove(startDir), "simulate deletion after launch")
+
+		rec := testharness.Serve(f.Mux,
+			agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+				"/v1/whoami/dir/repair", nil), conv))
+		assert.Equal(t, http.StatusForbidden, rec.Code, "body=%s", rec.Body.String())
+		assert.NoDirExists(t, startDir)
+	})
+
+	t.Run("non-directory conflict", func(t *testing.T) {
+		f := newFlow(t)
+		const conv = "dirf-aaaa-bbbb-cccc-dddd"
+		startPath := filepath.Join(t.TempDir(), "startup-is-a-file")
+		require.NoError(t, os.WriteFile(startPath, []byte("keep"), 0o600))
+		f.HaveConvWithTitle(conv, "conflicted-repairer")
+		f.HaveAliveSession(conv, "lbl-dirf", "tclaude-dirf", startPath)
+		f.HaveEnrolledAgent(conv)
+		require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
+
+		rec := testharness.Serve(f.Mux,
+			agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+				"/v1/whoami/dir/repair", nil), conv))
+		assert.Equal(t, http.StatusConflict, rec.Code, "body=%s", rec.Body.String())
+		contents, err := os.ReadFile(startPath)
+		require.NoError(t, err)
+		assert.Equal(t, "keep", string(contents), "repair must never overwrite existing content")
+	})
+}
+
+func TestDir_RepairUsesPhysicalStartupAndRefusesSymlinkSubstitution(t *testing.T) {
+	t.Run("deleted launch alias repairs original physical directory", func(t *testing.T) {
+		f := newFlow(t)
+		const conv = "dira-aaaa-bbbb-cccc-dddd"
+		base := t.TempDir()
+		physical := filepath.Join(base, "physical", "root")
+		alias := filepath.Join(base, "launch-alias")
+		require.NoError(t, os.MkdirAll(physical, 0o755))
+		require.NoError(t, os.Symlink(physical, alias))
+
+		f.HaveConvWithTitle(conv, "alias-repairer")
+		f.HaveAliveSession(conv, "lbl-dira", "tclaude-dira", alias)
+		f.HaveEnrolledAgent(conv)
+		require.NoError(t, os.Remove(alias))
+		require.NoError(t, os.Remove(physical))
+		require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
+
+		rec := testharness.Serve(f.Mux,
+			agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+				"/v1/whoami/dir/repair", nil), conv))
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		var got struct {
+			Dir      string `json:"dir"`
+			Repaired bool   `json:"repaired"`
+		}
+		testharness.DecodeJSON(t, rec, &got)
+		assert.Equal(t, physical, got.Dir)
+		assert.True(t, got.Repaired)
+		assert.DirExists(t, physical)
+		assert.NoFileExists(t, alias, "repair must not recreate a deleted launch alias")
+	})
+
+	t.Run("retargeted ancestor is never followed", func(t *testing.T) {
+		f := newFlow(t)
+		const conv = "dirs-aaaa-bbbb-cccc-dddd"
+		base := t.TempDir()
+		parent := filepath.Join(base, "physical-parent")
+		startDir := filepath.Join(parent, "root")
+		redirect := filepath.Join(base, "redirect")
+		require.NoError(t, os.MkdirAll(startDir, 0o755))
+		require.NoError(t, os.MkdirAll(redirect, 0o755))
+
+		f.HaveConvWithTitle(conv, "safe-repairer")
+		f.HaveAliveSession(conv, "lbl-dirs", "tclaude-dirs", startDir)
+		f.HaveEnrolledAgent(conv)
+		require.NoError(t, os.Remove(startDir))
+		require.NoError(t, os.Remove(parent))
+		require.NoError(t, os.Symlink(redirect, parent))
+		require.NoError(t, db.GrantAgentPermission(conv, agentd.PermSelfDirRepair, "test"))
+
+		rec := testharness.Serve(f.Mux,
+			agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+				"/v1/whoami/dir/repair", nil), conv))
+		assert.Equal(t, http.StatusInternalServerError, rec.Code, "body=%s", rec.Body.String())
+		assert.NoDirExists(t, filepath.Join(redirect, "root"),
+			"host-side repair must not follow an ancestor swapped to a symlink")
+	})
+}
 
 // dirInfo mirrors the daemon's dirResp wire shape.
 type dirInfo struct {
