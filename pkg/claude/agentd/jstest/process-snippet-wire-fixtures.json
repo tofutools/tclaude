@@ -11,6 +11,21 @@
       "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","plan":{"id":"plan","performer":{"kind":"agent","prompt":"Plan"}}},"position":{"x":1,"y":2}}],"edges":[]}
     },
     {
+      "name": "valid contact budget",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"cadence":"5m","budget":3,"escalationTarget":"operator"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "fractional contact budget",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":1.5}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "unsafe contact budget",
+      "accepted": false,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"agent","contact":{"budget":9007199254740992}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
       "name": "bogus performer kind",
       "accepted": false,
       "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"bogus"}},"position":{"x":1,"y":2}}],"edges":[]}
@@ -39,6 +54,23 @@
       "name": "prototype choice outcome",
       "accepted": false,
       "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"task","node":{"type":"task","performer":{"kind":"human","choiceOutcomes":{"__proto__":"pass"}}},"position":{"x":1,"y":2}}],"edges":[]}
+    },
+    {
+      "name": "512 multibyte outcome code units",
+      "accepted": true,
+      "outcomeRepeat": {"value":"漢","count":512},
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"a","node":{"type":"task"},"position":{"x":1,"y":2}},{"id":"b","node":{"type":"end"},"position":{"x":3,"y":4}}],"edges":[{"from":"a","outcome":"repeat","to":"b"}]}
+    },
+    {
+      "name": "513 multibyte outcome code units",
+      "accepted": false,
+      "outcomeRepeat": {"value":"漢","count":513},
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"a","node":{"type":"task"},"position":{"x":1,"y":2}},{"id":"b","node":{"type":"end"},"position":{"x":3,"y":4}}],"edges":[{"from":"a","outcome":"repeat","to":"b"}]}
+    },
+    {
+      "name": "C1 control outcome",
+      "accepted": true,
+      "envelope": {"kind":"tclaude/process-selection","version":1,"nodes":[{"id":"a","node":{"type":"task"},"position":{"x":1,"y":2}},{"id":"b","node":{"type":"end"},"position":{"x":3,"y":4}}],"edges":[{"from":"a","outcome":"next\u0085stage","to":"b"}]}
     }
   ]
 }

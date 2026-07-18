@@ -55,10 +55,14 @@ test('snippet names share rune, UTF-8 byte, and control validation', () => {
 test('shared node-wire fixtures match the shipped browser authority', () => {
   const fixtures = JSON.parse(readFileSync(new URL('./process-snippet-wire-fixtures.json', import.meta.url), 'utf8'));
   for (const fixture of fixtures.cases) {
+    const envelope = structuredClone(fixture.envelope);
+    if (fixture.outcomeRepeat) {
+      envelope.edges[0].outcome = fixture.outcomeRepeat.value.repeat(fixture.outcomeRepeat.count);
+    }
     if (fixture.accepted) {
-      assert.doesNotThrow(() => validateProcessSelectionPayload(fixture.envelope), fixture.name);
+      assert.doesNotThrow(() => validateProcessSelectionPayload(envelope), fixture.name);
     } else {
-      assert.throws(() => validateProcessSelectionPayload(fixture.envelope), undefined, fixture.name);
+      assert.throws(() => validateProcessSelectionPayload(envelope), undefined, fixture.name);
     }
   }
 });

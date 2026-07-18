@@ -24,7 +24,7 @@ const (
 	processSnippetEnvelopeVersion    = 1
 	processSnippetEnvelopePrefix     = "tclaude-process-selection:v1\n"
 	processSnippetMaxNodeIDBytes     = 128
-	processSnippetMaxOutcomeBytes    = 512
+	processSnippetMaxOutcomeUnits    = 512
 	processSnippetMaxCoordinate      = 1_000_000
 	processSnippetMaxJSONDepth       = 32
 	processSnippetMaxJSONItems       = 32_768
@@ -295,7 +295,10 @@ func validateSnippetPerformerWire(value any) error {
 		if err != nil {
 			return err
 		}
-		if err := snippetOptionalStrings(contact, "cadence", "budget", "escalationTarget"); err != nil {
+		if budget, present := contact["budget"]; present && !snippetSafeInteger(budget) {
+			return errors.New("custom snippet contains incompatible process node data")
+		}
+		if err := snippetOptionalStrings(contact, "cadence", "escalationTarget"); err != nil {
 			return err
 		}
 	}
@@ -432,7 +435,18 @@ func validSnippetNodeID(value string) bool {
 }
 
 func validSnippetOutcome(value string) bool {
-	return value != "" && len(value) <= processSnippetMaxOutcomeBytes && strings.IndexFunc(value, unicode.IsControl) < 0
+	units := 0
+	for _, r := range value {
+		if r > 0xffff {
+			units += 2
+		} else {
+			units++
+		}
+		if r <= 0x1f || r == 0x7f {
+			return false
+		}
+	}
+	return units > 0 && units <= processSnippetMaxOutcomeUnits
 }
 
 func snippetCompoundTask(node model.Node) bool {

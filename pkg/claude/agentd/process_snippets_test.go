@@ -73,7 +73,7 @@ func TestProcessSnippetEnvelopeParityWithClipboardAuthority(t *testing.T) {
 	assert.Equal(t, model.MaxNormalizedNodes, integerConstant("PROCESS_CLIPBOARD_MAX_NODES"))
 	assert.Equal(t, model.MaxNormalizedEdges, integerConstant("PROCESS_CLIPBOARD_MAX_EDGES"))
 	assert.Equal(t, processSnippetMaxNodeIDBytes, integerConstant("PROCESS_CLIPBOARD_MAX_ID"))
-	assert.Equal(t, processSnippetMaxOutcomeBytes, integerConstant("PROCESS_CLIPBOARD_MAX_OUTCOME"))
+	assert.Equal(t, processSnippetMaxOutcomeUnits, integerConstant("PROCESS_CLIPBOARD_MAX_OUTCOME"))
 	assert.Equal(t, processSnippetMaxCoordinate, integerConstant("PROCESS_CLIPBOARD_MAX_COORDINATE"))
 }
 
@@ -82,16 +82,30 @@ func TestProcessSnippetWireFixturesMatchBrowserAuthority(t *testing.T) {
 	require.NoError(t, err)
 	var fixtures struct {
 		Cases []struct {
-			Name     string          `json:"name"`
-			Accepted bool            `json:"accepted"`
-			Envelope json.RawMessage `json:"envelope"`
+			Name          string          `json:"name"`
+			Accepted      bool            `json:"accepted"`
+			Envelope      json.RawMessage `json:"envelope"`
+			OutcomeRepeat *struct {
+				Value string `json:"value"`
+				Count int    `json:"count"`
+			} `json:"outcomeRepeat"`
 		} `json:"cases"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &fixtures))
 	require.NotEmpty(t, fixtures.Cases)
 	for _, fixture := range fixtures.Cases {
 		t.Run(fixture.Name, func(t *testing.T) {
-			_, err := canonicalizeProcessSnippetEnvelope(fixture.Envelope)
+			envelopeJSON := fixture.Envelope
+			if fixture.OutcomeRepeat != nil {
+				var envelope processSnippetEnvelope
+				require.NoError(t, json.Unmarshal(envelopeJSON, &envelope))
+				require.Len(t, envelope.Edges, 1)
+				envelope.Edges[0].Outcome = strings.Repeat(fixture.OutcomeRepeat.Value, fixture.OutcomeRepeat.Count)
+				encoded, encodeErr := json.Marshal(envelope)
+				require.NoError(t, encodeErr)
+				envelopeJSON = encoded
+			}
+			_, err := canonicalizeProcessSnippetEnvelope(envelopeJSON)
 			if fixture.Accepted {
 				require.NoError(t, err)
 			} else {
