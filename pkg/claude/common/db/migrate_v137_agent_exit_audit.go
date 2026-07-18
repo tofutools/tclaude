@@ -5,15 +5,15 @@ import (
 	"fmt"
 )
 
-// migrateV135toV136 extends the canonical command audit with typed,
+// migrateV136toV137 extends the canonical command audit with typed,
 // privacy-bounded managed-pane exit observations. The same migration adds the
 // launch-scoped callback binding and lifecycle intent to sessions: these are
 // correlation metadata, not a second event store. All columns are additive so
 // older audit readers continue to work unchanged.
-func migrateV135toV136(db *sql.DB) error {
+func migrateV136toV137(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v135→v136: begin: %w", err)
+		return fmt.Errorf("migrate v136→v137: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -53,13 +53,13 @@ func migrateV135toV136(db *sql.DB) error {
 			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`,
 			column.table, column.name,
 		).Scan(&have); err != nil {
-			return fmt.Errorf("migrate v135→v136: probe %s.%s: %w", column.table, column.name, err)
+			return fmt.Errorf("migrate v136→v137: probe %s.%s: %w", column.table, column.name, err)
 		}
 		if have != 0 {
 			continue
 		}
 		if _, err := tx.Exec("ALTER TABLE " + column.table + " ADD COLUMN " + column.name + " " + column.type_); err != nil {
-			return fmt.Errorf("migrate v135→v136: add %s.%s: %w", column.table, column.name, err)
+			return fmt.Errorf("migrate v136→v137: add %s.%s: %w", column.table, column.name, err)
 		}
 	}
 	if _, err := tx.Exec(`
@@ -68,13 +68,13 @@ func migrateV135toV136(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_audit_log_event_id
 			ON audit_log(event_id) WHERE event_id <> '';
 	`); err != nil {
-		return fmt.Errorf("migrate v135→v136: indexes: %w", err)
+		return fmt.Errorf("migrate v136→v137: indexes: %w", err)
 	}
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 136`); err != nil {
-		return fmt.Errorf("migrate v135→v136: version: %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 137`); err != nil {
+		return fmt.Errorf("migrate v136→v137: version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v135→v136: commit: %w", err)
+		return fmt.Errorf("migrate v136→v137: commit: %w", err)
 	}
 	return nil
 }
