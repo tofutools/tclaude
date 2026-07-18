@@ -344,15 +344,43 @@ func TestSpawnApprovalLineage_ProfileDerivedBypassRejected(t *testing.T) {
 	assert.Contains(t, string(resp.Raw), "approval_restricted")
 }
 
-// A scribe leaves --harness and --approval unset, so it launches on the Claude
-// default posture (`auto` = approvalAutoInSandbox). A parent that cannot itself
-// run arbitrary commands unattended must therefore not be able to summon one:
-// Claude acceptEdits holds approvalAutoEdits only, so the summon is refused.
-func TestSpawnApprovalLineage_AgentScribeSummonRejected(t *testing.T) {
+// A scribe leaves --harness and --approval unset, so its posture is DEFAULTED
+// and narrowDefaultApprovalToCaller applies on the executeSpawn path. A Claude
+// acceptEdits parent cannot mint the `auto` default, so the scribe is narrowed
+// to the parent's own acceptEdits instead of being refused — a strictly
+// narrower delegation, which is the rule working rather than a hole in it.
+func TestSpawnApprovalLineage_AgentScribeSummonNarrowsToCallerPosture(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const parent = "approval-scribe-parent-aaaa-bbbb-cccccccccccc"
 	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName, "acceptEdits", false)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "lineage-scribe", "slugs": []string{agentd.PermTemplatesManage},
+		"brief": "Author the requested template without exceeding the caller's authority.",
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "scribe summon body=%s", rec.Body.String())
+
+	var res struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &res)
+	got, ok := f.World.SpawnApproval(res.ConvID)
+	require.True(t, ok, "the scribe spawn should have been observed by the sim spawner")
+	assert.Equal(t, "acceptEdits", got,
+		"the scribe is narrowed to the caller's own posture, not the auto default")
+}
+
+// The narrowing is same-harness only, so it cannot rescue a cross-harness
+// summon: a Codex `untrusted` parent may mint Claude plan/default/dontAsk but
+// NOT `auto`, and there is no Claude posture of its own to fall back to. The
+// refused default stands and the summon is genuinely rejected.
+func TestSpawnApprovalLineage_AgentScribeSummonRejectedCrossHarness(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-scribe-xh-parent-aaaa-bbbb-cccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalUntrusted, false)
 	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
 
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
