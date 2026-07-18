@@ -128,8 +128,8 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 			marker := filepath.Join(dir, "emitted")
 			command := strings.ReplaceAll(tc.command, "RELEASE", clcommon.ShellQuoteArg(release))
 			name := fmt.Sprintf("tcl573-%d", i)
-			require.NoError(t, tmux.Command("new-session", "-d", "-s", name,
-				"/bin/sh", "-c", command).Run())
+			paneCommand := "exec /bin/sh -c " + clcommon.ShellQuoteArg(command)
+			require.NoError(t, tmux.Command("new-session", "-d", "-s", name, paneCommand).Run())
 			requireNativePaneDied(t, tmux)
 			target := name + ":0.0"
 			require.NoError(t, tmux.Command("set-option", "-p", "-t", target, "remain-on-exit", "on").Run())
