@@ -233,8 +233,10 @@ function profileSummary(p) {
     parts.push(`group-ctx ${p.include_group_default_context ? 'on' : 'off'}`);
   }
   if (p.auto_review != null) parts.push(`auto-review ${p.auto_review ? 'on' : 'off'}`);
-  // Same as sandbox: 'inherit' is the default permission mode, not worth a chip.
-  if (p.approval && p.approval !== 'inherit') parts.push(`approval ${p.approval}`);
+  // Same idea as sandbox, but the Claude default is 'auto' now, so THAT is the
+  // value not worth a chip. An explicit 'inherit' is a real override (it drops
+  // the profile back to the operator's settings.json posture) and does show.
+  if (p.approval && p.approval !== 'auto') parts.push(`approval ${p.approval}`);
   // Birth-time access controls: a chip for the owner default and the
   // override count, when the profile carries them.
   if (p.is_owner != null) parts.push(`owner ${p.is_owner ? 'on' : 'off'}`);

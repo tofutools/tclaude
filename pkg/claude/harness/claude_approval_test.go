@@ -7,7 +7,7 @@ import (
 
 // TestClaudeApproval_Catalog pins the catalog the spawn dialog / profile editor
 // drive their Claude "Permission mode" selector off: inherit + the six
-// --permission-mode values, the inherit default, and the tri-state normalization
+// --permission-mode values, the `auto` default, and the tri-state normalization
 // — "" stays "" (omitted), inherit stays "inherit" (first-class, collapsed to
 // "omit the flag" only at emission — see claudeApprovalValue).
 func TestClaudeApproval_Catalog(t *testing.T) {
@@ -17,8 +17,8 @@ func TestClaudeApproval_Catalog(t *testing.T) {
 	if got := c.Modes(); !equalStrings(got, want) {
 		t.Fatalf("Modes() = %v, want %v", got, want)
 	}
-	if got := c.DefaultPolicy(); got != claudePermInherit {
-		t.Fatalf("DefaultPolicy() = %q, want %q", got, claudePermInherit)
+	if got := c.DefaultPolicy(); got != claudePermAuto {
+		t.Fatalf("DefaultPolicy() = %q, want %q", got, claudePermAuto)
 	}
 
 	cases := []struct {
@@ -52,8 +52,17 @@ func TestClaudeApproval_Catalog(t *testing.T) {
 			t.Fatalf("ModeHelp(%q) is empty", m)
 		}
 	}
-	if strings.Contains(c.ModeHelp("inherit"), "⚠") {
-		t.Fatalf("inherit (the default) must carry no ⚠ caveat: %q", c.ModeHelp("inherit"))
+	// The invariant is about the DEFAULT, not a particular token: whatever mode
+	// tclaude recommends must be safe for a detached agent, so it carries no ⚠.
+	// Keyed off DefaultPolicy so this can't drift if the default moves again.
+	if def := c.DefaultPolicy(); strings.Contains(c.ModeHelp(def), "⚠") {
+		t.Fatalf("%s (the default) must carry no ⚠ caveat: %q", def, c.ModeHelp(def))
+	}
+	// inherit is no longer the default: it hands the agent whatever settings.json
+	// says (usually interactive), so it must now warn like the other modes that
+	// can block a detached pane.
+	if !strings.Contains(c.ModeHelp("inherit"), "⚠") {
+		t.Fatalf("inherit must flag a ⚠ caveat: %q", c.ModeHelp("inherit"))
 	}
 	if !strings.Contains(c.ModeHelp("bypassPermissions"), "⚠") {
 		t.Fatalf("bypassPermissions must flag a ⚠ caveat: %q", c.ModeHelp("bypassPermissions"))
@@ -62,9 +71,9 @@ func TestClaudeApproval_Catalog(t *testing.T) {
 
 // TestClaudeApproval_HarnessResolution pins the harness-level wiring: Claude
 // supports approval (its permission modes) but NOT auto-review (no guardian);
-// blank resolves to the inherit default (now the first-class "inherit", which
-// emits no --permission-mode), an explicit inherit is preserved, and a real
-// mode validates.
+// blank resolves to the `auto` default on the daemon path, an explicit inherit
+// is preserved as the first-class sentinel (emitting no --permission-mode), and
+// a real mode validates.
 func TestClaudeApproval_HarnessResolution(t *testing.T) {
 	h, err := Resolve(DefaultName)
 	if err != nil {
@@ -77,10 +86,10 @@ func TestClaudeApproval_HarnessResolution(t *testing.T) {
 		t.Fatal("claude must NOT SupportsAutoReview — it has no guardian subagent")
 	}
 
-	// Daemon path: blank resolves to the inherit default, carried as the
-	// first-class "inherit" (it emits no --permission-mode — see the spawner test).
-	if got, err := ResolveApprovalPolicy(h, ""); err != nil || got != "inherit" {
-		t.Fatalf("ResolveApprovalPolicy(claude, \"\") = (%q, %v), want (inherit, nil)", got, err)
+	// Daemon path: blank resolves to the `auto` default — a detached agentd-spawned
+	// pane launches with --permission-mode auto rather than an unknown posture.
+	if got, err := ResolveApprovalPolicy(h, ""); err != nil || got != "auto" {
+		t.Fatalf("ResolveApprovalPolicy(claude, \"\") = (%q, %v), want (auto, nil)", got, err)
 	}
 	// An explicit inherit is preserved verbatim (not overwritten by an overlay).
 	if got, err := ResolveApprovalPolicy(h, "inherit"); err != nil || got != "inherit" {

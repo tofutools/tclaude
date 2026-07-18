@@ -279,6 +279,55 @@ func TestSpawnApprovalLineage_TemplateInstantiateRejectsBypass(t *testing.T) {
 	assert.Contains(t, res.Agents[0].Error, "may not spawn")
 }
 
+// A bare delegation (no approval flag, no profile) from an `inherit` parent must
+// keep working. The Claude default is `auto`, which an inherit parent — credited
+// only approvalAutoBaseline — may not mint, so without
+// narrowDefaultApprovalToCaller this 403s. That would break every agent spawned
+// before `auto` became the default (approvalForRelaunch preserves their recorded
+// `inherit`) and every human `tclaude session new` session.
+func TestSpawnApprovalLineage_BareSpawnFromInheritParentNarrowsToInherit(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-narrow-parent-aaaa-bbbb-cccccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusOK, resp.Code, "bare delegation from an inherit parent: %s", resp.Raw)
+}
+
+// The narrowing applies ONLY to a defaulted posture. An EXPLICITLY requested
+// escalation must still fail loudly rather than being silently downgraded.
+func TestSpawnApprovalLineage_ExplicitAutoFromInheritParentStillRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-explicit-parent-aaaa-bbbb-cccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker", "approval": "auto"})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "approval_restricted")
+}
+
+// A posture chosen by a spawn PROFILE is an explicit choice too, not a default,
+// so it is not narrowed either — the profile's escalation fails loudly.
+func TestSpawnApprovalLineage_ProfileSetAutoFromInheritParentStillRejected(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-profile-auto-parent-aaaa-bbbb-cccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName,
+		harness.ClaudePermissionInherit, false)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "auto-approval", "harness": harness.DefaultName, "approval": "auto",
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "alpha", "auto-approval").Code)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "approval_restricted")
+}
+
 func TestSpawnApprovalLineage_ProfileDerivedBypassRejected(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -295,11 +344,43 @@ func TestSpawnApprovalLineage_ProfileDerivedBypassRejected(t *testing.T) {
 	assert.Contains(t, string(resp.Raw), "approval_restricted")
 }
 
-func TestSpawnApprovalLineage_AgentScribeSummonRejected(t *testing.T) {
+// A scribe leaves --harness and --approval unset, so its posture is DEFAULTED
+// and narrowDefaultApprovalToCaller applies on the executeSpawn path. A Claude
+// acceptEdits parent cannot mint the `auto` default, so the scribe is narrowed
+// to the parent's own acceptEdits instead of being refused — a strictly
+// narrower delegation, which is the rule working rather than a hole in it.
+func TestSpawnApprovalLineage_AgentScribeSummonNarrowsToCallerPosture(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const parent = "approval-scribe-parent-aaaa-bbbb-cccccccccccc"
-	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalNever, false)
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.DefaultName, "acceptEdits", false)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "lineage-scribe", "slugs": []string{agentd.PermTemplatesManage},
+		"brief": "Author the requested template without exceeding the caller's authority.",
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "scribe summon body=%s", rec.Body.String())
+
+	var res struct {
+		ConvID string `json:"conv_id"`
+	}
+	testharness.DecodeJSON(t, rec, &res)
+	got, ok := f.World.SpawnApproval(res.ConvID)
+	require.True(t, ok, "the scribe spawn should have been observed by the sim spawner")
+	assert.Equal(t, "acceptEdits", got,
+		"the scribe is narrowed to the caller's own posture, not the auto default")
+}
+
+// The narrowing is same-harness only, so it cannot rescue a cross-harness
+// summon: a Codex `untrusted` parent may mint Claude plan/default/dontAsk but
+// NOT `auto`, and there is no Claude posture of its own to fall back to. The
+// refused default stands and the summon is genuinely rejected.
+func TestSpawnApprovalLineage_AgentScribeSummonRejectedCrossHarness(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-scribe-xh-parent-aaaa-bbbb-cccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalUntrusted, false)
 	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
 
 	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
@@ -308,6 +389,25 @@ func TestSpawnApprovalLineage_AgentScribeSummonRejected(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusForbidden, rec.Code, "scribe summon body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "approval_restricted")
+}
+
+// The payoff of defaulting Claude to `auto`: a parent that DOES hold unattended
+// in-sandbox execution can summon a default scribe. Under the old `inherit`
+// default the child's posture was unknowable, so lineage charged it the broadest
+// non-bypass capability and refused this summon — a false positive that made
+// every default-spawned agent unable to delegate.
+func TestSpawnApprovalLineage_AgentScribeSummonAllowedFromInSandboxParent(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-scribe-ok-parent-aaaa-bbbb-cccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalNever, false)
+	require.NoError(t, db.GrantAgentPermission(parent, agentd.PermPermissionsGrant, "test"))
+
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/scribe", map[string]any{
+		"name": "lineage-scribe", "slugs": []string{agentd.PermTemplatesManage},
+		"brief": "Author the requested template without exceeding the caller's authority.",
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "scribe summon body=%s", rec.Body.String())
 }
 
 func haveSpawnCapableApprovalParent(t *testing.T, f *testharness.Flow, group, convID, h, approval string, autoReview bool) {

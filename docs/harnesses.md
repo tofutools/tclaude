@@ -108,7 +108,7 @@ instead of slash-command injection).
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag |
-| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `inherit` (default) keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents |
+| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog |
 | **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
@@ -228,14 +228,16 @@ once for *all* agents; the two share the same `on` block so they can't drift.
 
 The **approval axis** for Claude Code is its permission mode. The spawn dialog
 (a "Permission mode" dropdown), profiles, and `--ask-for-approval` thread it
-through to `claude --permission-mode <mode>`. Modes: **`inherit`** *(default,
-recommended)* adds no override — the agent keeps your `settings.json` permission
-rules and the agentd approval popup, so a daemon-spawned agent behaves exactly as
-before; then Claude Code's six modes — `plan` (read-only), `acceptEdits`,
-`default`, `auto` (classifier), `dontAsk` (auto-deny), `bypassPermissions`
-(skip all checks). Because tclaude agents run **detached**, the dialog's live
-hint flags the modes that can block on a prompt no human can answer, auto-deny,
-or remove all guardrails. The OS sandbox (above) and the permission mode are
+through to `claude --permission-mode <mode>`. Modes: **`auto`** *(default,
+recommended)* — a supervisor model approves safe actions and blocks unsafe ones,
+the most autonomous mode that keeps guardrails and the one best suited to a
+detached pane; **`inherit`** adds no override, keeping your `settings.json`
+permission rules and the agentd approval popup; then Claude Code's remaining
+modes — `plan` (read-only), `acceptEdits`, `default`, `dontAsk` (auto-deny),
+`bypassPermissions` (skip all checks). Because tclaude agents run **detached**,
+the dialog's live hint flags the modes that can block on a prompt no human can
+answer, auto-deny, or remove all guardrails — `inherit` included, since whatever
+posture your `settings.json` holds is usually an interactive one. The OS sandbox (above) and the permission mode are
 **orthogonal** — both layers apply.
 
 Codex uses the same dashboard/profile control for its `--ask-for-approval`

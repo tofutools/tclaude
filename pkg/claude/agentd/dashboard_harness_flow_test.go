@@ -55,16 +55,19 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.NotContains(t, claude.SandboxModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
 	assert.Contains(t, claude.SandboxModeHelp["off"], "⚠", "off flags its sandbox-disabled caveat")
 	// Claude Code surfaces its --permission-mode values as the dialog's
-	// "Permission mode" dropdown (the approval axis), inherit-first.
+	// "Permission mode" dropdown (the approval axis). The list is still
+	// inherit-first (presentation), but `auto` is what the dialog pre-selects
+	// and tags "(recommended)" — the JS matches DefaultApproval by value.
 	assert.True(t, claude.CanApproval, "claude exposes a permission-mode (approval) catalog")
 	assert.False(t, claude.CanAutoReview, "claude has no separate approvals reviewer control")
 	assert.Equal(t, []string{"inherit", "plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}, claude.ApprovalModes)
-	assert.Equal(t, "inherit", claude.DefaultApproval, "inherit (= no override) is pre-selected")
+	assert.Equal(t, "auto", claude.DefaultApproval, "auto (supervisor-classifier) is pre-selected")
 	require.NotNil(t, claude.ApprovalModeHelp, "claude exposes per-mode approval help")
 	for _, m := range claude.ApprovalModes {
 		assert.NotEmpty(t, claude.ApprovalModeHelp[m], "help text for permission mode %q", m)
 	}
-	assert.NotContains(t, claude.ApprovalModeHelp["inherit"], "⚠", "the inherit default carries no caveat marker")
+	assert.NotContains(t, claude.ApprovalModeHelp["auto"], "⚠", "the auto default carries no caveat marker")
+	assert.Contains(t, claude.ApprovalModeHelp["inherit"], "⚠", "inherit is no longer the default and flags its can-block caveat")
 	assert.Contains(t, claude.ApprovalModeHelp["bypassPermissions"], "⚠", "bypassPermissions flags its no-guardrails caveat")
 	assert.True(t, claude.CanRemoteControl, "claude has built-in Remote Access (/remote-control)")
 
