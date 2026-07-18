@@ -660,27 +660,52 @@ approval policy and auto-review setting with the fully resolved child launch.
 It models automatic acceptance as capability sets rather than pretending every
 mode has a useful linear rank:
 
+Both sides are first resolved to a normalized capability shape, then compared as
+a subset test. There are no per-direction or per-harness exceptions: Codex
+approval policies and Claude permission modes are projected onto the *same*
+axes, because their labels do not form one comparable authority lattice.
+
+Human approval is baseline throughout. A posture that reaches a human — the
+Claude approval popup, a Codex escalation prompt, the operator's own allow/deny
+rules — grants the agent no automatic capability of its own. What the guard
+gates is what an agent can cause *without* a human:
+
+| Capability | Meaning | Held by |
+|------------|---------|---------|
+| in-sandbox auto-execution | takes non-read-only actions with no human in the loop, inside its sandbox | Codex `never` / `on-request` / `on-failure`; Claude `acceptEdits` / `auto` |
+| machine reviewer | a model may approve, in a human's place, actions that escalate past the sandbox boundary | Codex Auto-review (except alongside `never`, which emits no requests) |
+| unreviewed | auto-approves everything, with no reviewer of any kind | Claude `bypassPermissions` |
+
 | Parent posture | Child postures allowed by the approval guard |
 |----------------|-----------------------------------------------|
-| Claude `inherit` / `plan` / `default` / `dontAsk` / `acceptEdits` / `auto` | none |
-| Codex `untrusted`, auto-review off | Codex `untrusted`, auto-review off |
-| Codex `on-failure` / `on-request` / `never`, without active classifier review | Codex without active classifier review |
-| Codex `untrusted` with active classifier review | Codex `untrusted`, with classifier review on or off |
-| Codex `on-failure` / `on-request` with active classifier review | any Codex posture |
+| Claude `plan` / `default` / `dontAsk` | the same baseline postures, and Codex `untrusted` without auto-review |
+| Claude `acceptEdits` / `auto` | any baseline posture, plus Codex `never` / `on-request` / `on-failure` without auto-review, plus Claude `acceptEdits` / `auto` |
+| Claude `inherit` | any posture except `bypassPermissions` |
 | Claude `bypassPermissions` | any posture |
+| Codex `untrusted`, auto-review off | Codex `untrusted` without auto-review; Claude `plan` / `default` / `dontAsk` |
+| Codex `on-failure` / `on-request` / `never`, auto-review off | the above, plus Codex `never` / `on-request` / `on-failure` without auto-review and Claude `acceptEdits` / `auto` |
+| Codex `on-failure` / `on-request` with active classifier review | any Codex posture, plus every Claude posture except `inherit` and `bypassPermissions` |
 
-`acceptEdits` and classifier approval are intentionally incomparable:
-`acceptEdits` automatically permits filesystem operations a classifier may
-reject, while a classifier may approve non-edit actions `acceptEdits` would
-prompt for. More importantly, only an explicitly `bypassPermissions` Claude
-parent may delegate any child. Claude merges permission rules, hooks, and
-sandbox settings from files in the child's cwd; a parent that can write that
-cwd can change a Claude child's effective posture independently of the
-command-line mode. A Codex child is not an equivalent escape hatch: Codex
-automatically executes commands that remain inside its OS sandbox, while
-non-bypass Claude modes may prompt, deny, or classify those same actions.
-Codex parents may still delegate to Codex children when both the approval and
-separate sandbox-lineage checks pass.
+Claude `auto` is **not** the Codex Auto-review equivalent (see
+[TCL-92](https://linear.app/johan-kjolhede/issue/TCL-92)). The `auto`
+supervisor reviews and tightens operations that remain inside the Claude
+sandbox; it is not a boundary-escalation grant, so a Codex `never` parent — the
+safe unattended posture — may spawn a Claude `auto` child. Conversely, Claude
+`acceptEdits` and `auto` cannot enable Codex Auto-review, because a machine
+reviewer of *boundary escalation* is a capability neither of them holds.
+
+Claude `inherit` is the one posture that cannot be resolved at spawn time: it
+means "whatever the operator's `settings.json` decides, plus the agentd approval
+popup". It is therefore classified as the **broadest non-bypass** posture. Two
+consequences, both deliberate:
+
+- an `inherit` parent can spawn any provable non-bypass child, so a
+  human-launched agent that was given no explicit permission mode is not
+  spawn-crippled;
+- an `inherit` *child* fails closed under any narrower parent. The denial names
+  the way out — pass an explicit mode such as `auto`. A saved spawn profile
+  meant to represent the ordinary detached-agent posture should therefore
+  persist `auto` rather than `inherit`.
 
 For Codex, `untrusted` is more restrictive than the other approval policies:
 without auto-review it asks before every command outside Codex's trusted set.

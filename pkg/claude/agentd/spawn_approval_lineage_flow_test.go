@@ -22,19 +22,36 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 		childAutoReview             bool
 		wantStatus                  int
 	}{
+		// TCL-576 required allows — the postures that were wrongly blocked by the
+		// old per-direction rules. Codex `never` is the safe unattended posture
+		// and Claude `auto` is in-sandbox review, not a boundary-escalation grant.
+		{"codex never can mint claude auto", harness.CodexName, harness.ApprovalNever, false, harness.DefaultName, "auto", false, http.StatusOK},
+		{"codex never leaves guardian idle and still mints claude auto", harness.CodexName, harness.ApprovalNever, true, harness.DefaultName, "auto", false, http.StatusOK},
+		{"codex guardian can mint claude auto", harness.CodexName, harness.ApprovalOnRequest, true, harness.DefaultName, "auto", false, http.StatusOK},
+		{"codex guardian can mint accept edits", harness.CodexName, harness.ApprovalOnRequest, true, harness.DefaultName, "acceptEdits", false, http.StatusOK},
+		{"claude inherit can mint identical inherit", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, harness.ClaudePermissionInherit, false, http.StatusOK},
+		{"claude inherit can mint claude auto", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, "auto", false, http.StatusOK},
+		{"claude inherit can mint codex never", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.CodexName, harness.ApprovalNever, false, http.StatusOK},
+		{"claude auto can mint codex never", harness.DefaultName, "auto", false, harness.CodexName, harness.ApprovalNever, false, http.StatusOK},
+
+		// Bypass and unresolvable-inherit children stay gated.
 		{"codex human-gated cannot mint claude bypass", harness.CodexName, harness.ApprovalOnRequest, false, harness.DefaultName, "bypassPermissions", false, http.StatusForbidden},
 		{"claude bypass can mint claude bypass", harness.DefaultName, "bypassPermissions", false, harness.DefaultName, "bypassPermissions", false, http.StatusOK},
-		{"codex guardian cannot delegate settings-driven claude auto", harness.CodexName, harness.ApprovalOnRequest, true, harness.DefaultName, "auto", false, http.StatusForbidden},
-		{"codex never leaves guardian idle", harness.CodexName, harness.ApprovalNever, true, harness.DefaultName, "auto", false, http.StatusForbidden},
-		{"codex guardian cannot mint accept edits", harness.CodexName, harness.ApprovalOnRequest, true, harness.DefaultName, "acceptEdits", false, http.StatusForbidden},
+		{"claude auto cannot mint claude bypass", harness.DefaultName, "auto", false, harness.DefaultName, "bypassPermissions", false, http.StatusForbidden},
+		{"codex never cannot mint unresolvable claude inherit", harness.CodexName, harness.ApprovalNever, false, harness.DefaultName, harness.ClaudePermissionInherit, false, http.StatusForbidden},
+		{"claude auto cannot mint unresolvable claude inherit", harness.DefaultName, "auto", false, harness.DefaultName, harness.ClaudePermissionInherit, false, http.StatusForbidden},
+
+		// Genuinely broader capability is still denied, in both directions.
 		{"accept edits cannot mint codex guardian", harness.DefaultName, "acceptEdits", false, harness.CodexName, harness.ApprovalOnRequest, true, http.StatusForbidden},
-		{"claude auto cannot delegate codex in-sandbox execution", harness.DefaultName, "auto", false, harness.CodexName, harness.ApprovalOnRequest, true, http.StatusForbidden},
+		{"claude auto cannot delegate codex guardian review", harness.DefaultName, "auto", false, harness.CodexName, harness.ApprovalOnRequest, true, http.StatusForbidden},
 		{"claude default cannot delegate codex in-sandbox execution", harness.DefaultName, "default", false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
+		{"codex untrusted cannot delegate claude auto", harness.CodexName, harness.ApprovalUntrusted, false, harness.DefaultName, "auto", false, http.StatusForbidden},
+
+		// Same-harness Codex lineage is unchanged.
 		{"codex baseline can mint codex baseline", harness.CodexName, harness.ApprovalOnRequest, false, harness.CodexName, harness.ApprovalNever, false, http.StatusOK},
 		{"codex untrusted cannot mint codex never", harness.CodexName, harness.ApprovalUntrusted, false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
 		{"codex untrusted can mint codex untrusted", harness.CodexName, harness.ApprovalUntrusted, false, harness.CodexName, harness.ApprovalUntrusted, false, http.StatusOK},
 		{"codex guardian can mint codex guardian", harness.CodexName, harness.ApprovalOnRequest, true, harness.CodexName, harness.ApprovalUntrusted, true, http.StatusOK},
-		{"claude inherit cannot delegate settings-driven inherit", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, harness.ClaudePermissionInherit, false, http.StatusForbidden},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,6 +75,62 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 			if tt.wantStatus == http.StatusForbidden {
 				assert.Contains(t, string(resp.Raw), "approval_restricted")
 			}
+		})
+	}
+}
+
+// TCL-576: an unresolvable `inherit` child is the one denial a caller hits by
+// accident, so the refusal must name the explicit mode that works instead of
+// reading as a dead end.
+func TestSpawnApprovalLineage_InheritChildDenialNamesTheWayOut(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const parent = "approval-hint-parent-aaaa-bbbb-cccccccccccc"
+	haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalNever, false)
+
+	resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
+		"name": "worker", "harness": harness.DefaultName,
+		"sandbox": harness.ClaudeSandboxOff, "approval": harness.ClaudePermissionInherit,
+	})
+	require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+	assert.Contains(t, string(resp.Raw), "approval_restricted")
+	assert.Contains(t, string(resp.Raw), "cannot be proven at spawn time")
+	assert.Contains(t, string(resp.Raw), "auto", "the denial must name the explicit mode that works")
+}
+
+// TCL-576: the reported failure came in through a saved profile
+// (`fable[1m]-high`), so the profile path must resolve to the same effective
+// posture as the equivalent explicit flag and be allowed identically.
+func TestSpawnApprovalLineage_ProfileResolvedAutoMatchesExplicitAuto(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body map[string]any
+	}{
+		{"explicit flag", map[string]any{"approval": "auto"}},
+		{"saved profile", map[string]any{"profile": "claude-auto"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+				"name": "claude-auto", "harness": harness.DefaultName,
+				"sandbox": harness.ClaudeSandboxOff, "approval": "auto",
+			}).Code)
+			const parent = "approval-profile-auto-aaaa-bbbb-cccccccccccc"
+			haveSpawnCapableApprovalParent(t, f, "alpha", parent, harness.CodexName, harness.ApprovalNever, false)
+
+			body := map[string]any{
+				"name": "worker", "harness": harness.DefaultName,
+				"sandbox": harness.ClaudeSandboxOff,
+			}
+			for key, value := range tc.body {
+				body[key] = value
+			}
+			resp := f.AsAgent(parent).SpawnWith("alpha", body)
+			require.Equalf(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
+			approval, ok := f.World.SpawnApproval(resp.ConvID)
+			require.True(t, ok)
+			assert.Equal(t, "auto", approval, "both paths must land on the same effective posture")
 		})
 	}
 }
