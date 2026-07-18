@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ProcessTemplateEditor, isProcessEditorFormControl } from '../dashboard/js/process-editor.js';
+import {
+  ProcessTemplateEditor, hasNonCollapsedDOMSelection, isProcessEditorFormControl,
+} from '../dashboard/js/process-editor.js';
 import { ProcessEditModel } from '../dashboard/js/process-edit-model.js';
 import { parseProcessSelection, serializeProcessSelection } from '../dashboard/js/process-editor-clipboard.js';
 import { diagnosticIdentity, LiveValidation } from '../dashboard/js/process-validation.js';
@@ -71,6 +73,13 @@ test('copy claims native clipboard only after a selected node serializes success
   assert.equal(fake.pasteRepeat, 0);
   assert.equal(fake.pasteAnchor, null);
 
+  assert.equal(hasNonCollapsedDOMSelection({ view: { getSelection: () => ({ isCollapsed: false }) } }), true);
+  assert.equal(ProcessTemplateEditor.prototype.onEditorCopy.call(fake, {
+    target: { tagName: 'DIV' }, view: { getSelection: () => ({ isCollapsed: false }) },
+    clipboardData: { setData() { assert.fail('highlighted DOM text keeps native copy ownership'); } },
+    preventDefault() { assert.fail('highlighted DOM text keeps native copy ownership'); },
+  }), false);
+
   fake.selection = { type: 'edge', from: 'build', outcome: 'pass' };
   assert.equal(ProcessTemplateEditor.prototype.onEditorCopy.call(fake, {
     target: { tagName: 'DIV' }, clipboardData: { setData() { assert.fail('no node means no write'); } },
@@ -127,6 +136,20 @@ test('unrelated paste stays native and sentinel-invalid paste fails atomically w
   assert.equal(prevented, 1);
   assert.match(status[0], /not valid JSON/);
   assert.equal(status[0].includes('{"kind"'), false, 'raw clipboard bytes are never surfaced');
+  assert.deepEqual(model.saveBody(), before);
+  assert.equal(model.canUndo, false);
+  assert.equal(fake.selection, selection);
+
+  const malformed = `tclaude-process-selection:v1\n${JSON.stringify({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [{ id: 'bad', node: { type: 'task', checks: {} }, position: { x: 0, y: 0 } }], edges: [],
+  })}`;
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { getData: () => malformed },
+    preventDefault() { prevented += 1; },
+  }), true);
+  assert.equal(prevented, 2);
+  assert.match(status[0], /incompatible process node data/);
   assert.deepEqual(model.saveBody(), before);
   assert.equal(model.canUndo, false);
   assert.equal(fake.selection, selection);

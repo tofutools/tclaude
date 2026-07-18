@@ -559,6 +559,12 @@ test('clipboard insertion revalidates hostile payloads before history or state c
   assert.equal(model.canUndo, false);
 
   payload.edges = [];
+  payload.nodes[0].node.checks = {};
+  assert.throws(() => model.insertClipboardSelection(payload), /incompatible process node data/);
+  assert.deepEqual(model.saveBody(), before);
+  assert.equal(model.canUndo, false);
+
+  delete payload.nodes[0].node.checks;
   assert.throws(() => model.insertClipboardSelection(payload, {
     center: { x: Number.MAX_VALUE, y: 0 },
   }), /coordinate limits/);

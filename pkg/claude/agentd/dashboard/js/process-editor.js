@@ -63,6 +63,17 @@ export function isProcessEditorFormControl(target) {
   return !!element?.closest?.('[contenteditable]:not([contenteditable="false"]), [role="textbox"], .cm-editor, .monaco-editor');
 }
 
+export function hasNonCollapsedDOMSelection(event) {
+  try {
+    const selection = event?.view?.getSelection?.() || globalThis.window?.getSelection?.();
+    return selection?.isCollapsed === false;
+  } catch {
+    // If the host selection cannot be inspected, preserve native copy rather
+    // than risk replacing user-highlighted text with a graph payload.
+    return true;
+  }
+}
+
 function externalInteractionPending(editor) {
   return !!(editor.externalDecisionPending || editor.externalReloadPending);
 }
@@ -1089,6 +1100,7 @@ export class ProcessTemplateEditor {
   onEditorCopy(event) {
     if (event?.isTrusted === false || isProcessEditorFormControl(event.target)
         || this.modalDispose || !event.clipboardData?.setData) return false;
+    if (hasNonCollapsedDOMSelection(event)) return false;
     const layout = this.graph?.layoutSnapshot?.();
     let payload;
     let text;

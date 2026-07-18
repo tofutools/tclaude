@@ -26,6 +26,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -483,6 +484,10 @@ func dashSnapStates() []dashsnap.State {
 }
 
 func baseStates() []dashsnap.State {
+	clipboardModifier := "Control"
+	if runtime.GOOS == "darwin" {
+		clipboardModifier = "Meta"
+	}
 	// showGroups activates the Groups tab. expandGroups opens every real group's
 	// <details> so the member rows (tags, task links, online/offline, owner) show;
 	// collapseGroups closes them for a header-only view.
@@ -1370,7 +1375,7 @@ func baseStates() []dashsnap.State {
 		{
 			Key:     "process-editor-browser-copy-paste",
 			Title:   "Process editor — trusted selection copy/paste",
-			Caption: "TCL-564 real Chrome input in regular and wizard skins: Ctrl-C writes the selected subgraph through ClipboardEvent data, Ctrl-V imports it twice with remapped internal edges, cascading positions, atomic history, fresh selection, and graph focus.",
+			Caption: "TCL-564 real Chrome input in regular and wizard skins: native copy preserves highlighted text, while the platform graph shortcut copies a subgraph and repeated paste remaps edges, positions, history, selection, and focus.",
 			JS: processEditorStateJS(`window.__browserEd=ed;
   ed.setSelection({type:'multi',items:[{type:'node',id:'begin'},{type:'node',id:'ship'}]});
   await editorPaint();
@@ -1378,19 +1383,31 @@ func baseStates() []dashsnap.State {
   if(!begin) throw new Error('clipboard fixture node missing');
   begin.focus({preventScroll:true});
   if(document.activeElement!==begin) throw new Error('clipboard fixture did not take graph focus');
+  var title=document.querySelector('.process-editor-title'),range=document.createRange(),selection=getSelection();
+  window.__nativeCopyText=title.textContent;range.selectNodeContents(title);selection.removeAllRanges();selection.addRange(range);
   window.__clipboardBefore={nodes:Object.keys(ed.model.template.nodes).length,edges:ed.model.edges.length,undo:ed.model.undoStack.length};`),
 			Actions: []dashsnap.BrowserAction{
-				{Kind: "key-down", Key: "Control"},
+				{Kind: "key-down", Key: clipboardModifier},
 				{Kind: "key", Key: "c"},
-				{Kind: "key-up", Key: "Control"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "eval", JS: `var probe=document.createElement('textarea');probe.id='clipboard-native-probe';document.body.appendChild(probe);getSelection().removeAllRanges();probe.focus();`},
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "v"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "eval", JS: `var probe=document.querySelector('#clipboard-native-probe');
+  if(probe.value!==window.__nativeCopyText) throw new Error('highlighted read-only text lost native clipboard ownership');
+  probe.remove();var begin=document.querySelector('.process-node[data-node-id="begin"]');begin.focus({preventScroll:true});`},
+				{Kind: "key-down", Key: clipboardModifier},
+				{Kind: "key", Key: "c"},
+				{Kind: "key-up", Key: clipboardModifier},
 				{Kind: "eval", JS: `var status=document.querySelector('.process-editor-status')?.textContent||'';
-  if(!status.includes('Copied 2 nodes')) throw new Error('trusted Ctrl-C did not copy the selected nodes: '+status);`},
-				{Kind: "key-down", Key: "Control"},
+				  if(!status.includes('Copied 2 nodes')) throw new Error('trusted graph shortcut did not copy the selected nodes: '+status);`},
+				{Kind: "key-down", Key: clipboardModifier},
 				{Kind: "key", Key: "v"},
-				{Kind: "key-up", Key: "Control"},
-				{Kind: "key-down", Key: "Control"},
+				{Kind: "key-up", Key: clipboardModifier},
+				{Kind: "key-down", Key: clipboardModifier},
 				{Kind: "key", Key: "v"},
-				{Kind: "key-up", Key: "Control"},
+				{Kind: "key-up", Key: clipboardModifier},
 				{Kind: "eval", JS: `var ed=window.__browserEd,before=window.__clipboardBefore;
   for(var id of ['begin-2','ship-2','begin-3','ship-3']) if(!ed.model.node(id)) throw new Error('repeated paste missing '+id);
   if(Object.keys(ed.model.template.nodes).length!==before.nodes+4) throw new Error('repeated paste node count drifted');
