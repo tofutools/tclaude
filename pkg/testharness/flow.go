@@ -891,7 +891,7 @@ func (f *Flow) Stop(convID string, force bool) StopResp {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		f.T.Fatalf("Stop decode: %v body=%s", err, rec.Body.String())
 	}
-	if rec.Code != http.StatusOK && !(rec.Code == http.StatusInternalServerError && resp.Action == "error") {
+	if rec.Code != http.StatusOK && (rec.Code != http.StatusInternalServerError || resp.Action != "error") {
 		f.T.Fatalf("Stop(%q,force=%v): status=%d body=%s", convID, force, rec.Code, rec.Body.String())
 	}
 	return resp
