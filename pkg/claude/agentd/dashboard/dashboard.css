@@ -12241,6 +12241,61 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 .process-template-description { min-width: min(300px, 30vw); }
 .process-template-doc { min-width: min(260px, 26vw); resize: vertical; }
 .process-editor-body { display: flex; flex: 1; min-height: 0; align-items: stretch; }
+.process-editor-modal {
+  /* Editor-owned modal controls share one narrow skin contract. The base
+     .modal .field primitive supplies layout/typography; these variables add
+     the interaction states that process dialogs need without repainting
+     unrelated dashboard fields. */
+  --process-control-bg: #0d1117;
+  --process-control-border: #6e7681;
+  --process-control-border-hover: #8b949e;
+  --process-control-text: #e6edf3;
+  --process-control-muted: #8b949e;
+  --process-control-focus: #58a6ff;
+  --process-control-error: #f85149;
+  --process-control-disabled-bg: #161b22;
+  --process-control-disabled-text: #8b949e;
+}
+.process-editor-modal .process-editor-field > label,
+.process-editor-modal .process-editor-field .muted { color: var(--process-control-muted); }
+.process-editor-modal .process-editor-field input {
+  width: 100%; min-width: 0;
+  background: var(--process-control-bg);
+  border-color: var(--process-control-border);
+  color: var(--process-control-text);
+  caret-color: currentColor;
+}
+.process-editor-modal .process-editor-field input::placeholder {
+  color: var(--process-control-muted); opacity: 1;
+}
+.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus):not([aria-invalid="true"]) {
+  border-color: var(--process-control-border-hover);
+}
+.process-editor-modal .process-editor-field input:focus { border-color: var(--process-control-focus); outline: none; }
+.process-editor-modal .process-editor-field input:focus-visible {
+  outline: 2px solid var(--process-control-focus); outline-offset: 2px;
+}
+.process-editor-modal .process-editor-field input[aria-invalid="true"] {
+  border-color: var(--process-control-error);
+}
+.process-editor-modal .process-editor-field input[aria-invalid="true"]:focus-visible {
+  outline-color: var(--process-control-error);
+}
+.process-editor-modal .process-editor-field input:disabled {
+  background: var(--process-control-disabled-bg);
+  border-color: var(--process-control-border);
+  color: var(--process-control-disabled-text);
+  cursor: not-allowed;
+}
+/* Chromium can ignore autocomplete="off" for remembered names. Paint its
+   autofill layer through the same variables so the control never flashes or
+   settles back to the browser's white default. */
+.process-editor-modal .process-editor-field input:autofill,
+.process-editor-modal .process-editor-field input:-webkit-autofill {
+  -webkit-text-fill-color: var(--process-control-text);
+  caret-color: var(--process-control-text);
+  box-shadow: 0 0 0 1000px var(--process-control-bg) inset;
+}
 .process-editor-palette {
   width: 200px;
   flex: none;
@@ -12615,6 +12670,17 @@ body.wizard .process-node-chooser-cancel { color: #f3e6c0; background: #2c2042; 
 body.wizard .process-template-id-locked { color: #a99bc0; }
 body.wizard .process-editor-modal .modal {
   background: #211832; border-color: #6d5695; color: #f3e6c0;
+}
+body.wizard .process-editor-modal {
+  --process-control-bg: #181226;
+  --process-control-border: #8b73b5;
+  --process-control-border-hover: #a28bd4;
+  --process-control-text: #f3e6c0;
+  --process-control-muted: #b39ddb;
+  --process-control-focus: #d4af37;
+  --process-control-error: #ff7b72;
+  --process-control-disabled-bg: #211832;
+  --process-control-disabled-text: #a99bc0;
 }
 body.wizard .process-editor-modal .modal h3 { color: #f3e6c0; }
 body.wizard .process-editor-modal .modal p { color: #e7d9f5; }

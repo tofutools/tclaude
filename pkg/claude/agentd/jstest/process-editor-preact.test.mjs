@@ -165,6 +165,13 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   await harness.act(async () => { await Promise.resolve(); });
   const nameInput = host.querySelector('#process-snippet-name-input');
   assert.ok(nameInput, 'named save action opens an editor-owned accessible dialog');
+  assert.equal(nameInput.closest('.process-editor-field')?.querySelector('label')?.getAttribute('for'), nameInput.id,
+    'shared field primitive preserves the explicit label association');
+  assert.equal(nameInput.getAttribute('placeholder'), 'e.g. Release review');
+  assert.equal(nameInput.getAttribute('autocomplete'), 'off');
+  assert.equal(harness.document.activeElement, nameInput, 'snippet name remains the dialog initial focus');
+  assert.equal(host.querySelector('#process-snippet-name-modal .primary').disabled, true,
+    'blank name keeps submission disabled without disabling or skipping the input');
   await harness.act(() => {
     nameInput.value = '🚀'.repeat(41);
     harness.fireEvent(nameInput, 'input');
@@ -172,6 +179,7 @@ test('custom snippets create, keyboard-insert, rename, and delete through the Pr
   await harness.act(() => host.querySelector('#process-snippet-name-modal .primary').click());
   assert.ok(host.querySelector('#process-snippet-name-modal'), 'invalid UTF-8 byte length keeps the dialog open');
   assert.match(host.querySelector('#process-snippet-name-error').textContent, /160 UTF-8 bytes/);
+  assert.equal(nameInput.getAttribute('aria-invalid'), 'true');
   await harness.act(() => {
     nameInput.value = 'Review gate';
     harness.fireEvent(nameInput, 'input');
