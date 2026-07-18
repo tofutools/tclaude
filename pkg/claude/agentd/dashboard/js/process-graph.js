@@ -369,16 +369,36 @@ function renderOverlay(parent, node, presentation) {
   parent.append(group);
 }
 
-function renderPorts(parent, node) {
+function renderPorts(parent, node, feedbackFor) {
+  const portAttributes = (port) => {
+    const label = `${port === 'in' ? 'Input' : 'Output'} port for ${node.label || node.id}`;
+    const feedback = feedbackFor?.(port);
+    if (!feedback) return { class: `process-port process-port-${port}`, label };
+    return {
+      class: `process-port process-port-${port}${feedback.enabled === false ? ' is-action-disabled' : ''}`,
+      label: `${label}. ${feedback.message}`, baseLabel: label,
+      state: feedback.state,
+      enabled: feedback.enabled !== false,
+      message: feedback.message,
+    };
+  };
+  const inputFeedback = portAttributes('in');
   const input = svgElement('circle', {
-    class: 'process-port process-port-in', cx: 0, cy: -node.height / 2, r: 6,
+    class: inputFeedback.class, cx: 0, cy: -node.height / 2, r: 6,
     'data-port': 'in', role: 'button', tabindex: '0', 'aria-pressed': 'false',
-    'aria-label': `Input port for ${node.label || node.id}`,
+    'aria-label': inputFeedback.label, 'data-base-aria-label': inputFeedback.baseLabel || inputFeedback.label,
+    'data-source-aria-label': inputFeedback.label,
+    'aria-disabled': inputFeedback.enabled === undefined ? undefined : String(!inputFeedback.enabled),
+    'data-source-state': inputFeedback.state, 'data-feedback-message': inputFeedback.message,
   });
+  const outputFeedback = portAttributes('out');
   const output = svgElement('circle', {
-    class: 'process-port process-port-out', cx: 0, cy: node.height / 2, r: 6,
+    class: outputFeedback.class, cx: 0, cy: node.height / 2, r: 6,
     'data-port': 'out', role: 'button', tabindex: '0', 'aria-pressed': 'false',
-    'aria-label': `Output port for ${node.label || node.id}`,
+    'aria-label': outputFeedback.label, 'data-base-aria-label': outputFeedback.baseLabel || outputFeedback.label,
+    'data-source-aria-label': outputFeedback.label,
+    'aria-disabled': outputFeedback.enabled === undefined ? undefined : String(!outputFeedback.enabled),
+    'data-source-state': outputFeedback.state, 'data-feedback-message': outputFeedback.message,
   });
   parent.append(input, output);
 }
@@ -419,6 +439,12 @@ export class ProcessGraph {
     this.suppressClick = false;
     this.keyboardPort = null;
     this.spaceHeld = false;
+    this.connectionSource = null;
+    this.feedbackTarget = null;
+    this.feedbackTimer = null;
+    this.feedbackFrame = null;
+    this.pendingFeedbackPointer = null;
+    this.feedbackEnabled = typeof options.connectionFeedback === 'function';
     this.destroyed = false;
     this.abort = new AbortController();
 
@@ -443,6 +469,13 @@ export class ProcessGraph {
     this.fitButton = htmlElement('button', { class: 'process-fit-button', type: 'button', text: 'Fit', title: 'Fit graph to view' });
     this.controls.append(this.fitButton);
     this.root.append(this.svg, this.controls);
+    if (this.feedbackEnabled) {
+      this.actionTooltip = htmlElement('div', {
+        class: 'process-action-tooltip', role: 'tooltip', id: `process-action-tooltip-${this.instanceID}`,
+      });
+      this.actionTooltip.setAttribute('aria-hidden', 'true');
+      this.root.append(this.actionTooltip);
+    }
     this.bindEvents();
     this.render();
     container.replaceChildren(this.root);
@@ -470,6 +503,16 @@ export class ProcessGraph {
   }
 
   render() {
+    const feedbackResume = this.pointer?.mode === 'port' && this.actionTooltip?.textContent
+      ? {
+        message: this.actionTooltip.textContent,
+        state: this.actionTooltip.dataset.state,
+        visible: this.actionTooltip.classList.contains('is-visible'),
+        remaining: Math.max(0, Number(this.options.actionFeedbackDelay ?? 750)
+          - (Date.now() - (this.feedbackStartedAt || Date.now()))),
+      } : null;
+    this.clearActionFeedback();
+    this.feedbackResume = feedbackResume;
     const focused = this.captureFocus();
     const title = this.svg.querySelector('title');
     title.textContent = this.options.ariaLabel || `Process graph with ${this.layout.nodes.length} nodes`;
@@ -483,7 +526,14 @@ export class ProcessGraph {
     this.applyView();
     this.applySelection();
     this.applyKeyboardPort();
+    this.applyConnectionFeedback();
     this.restoreFocus(focused);
+    if (this.pointer?.mode === 'port') {
+      this.queuePointerFeedback({
+        clientX: this.pointer.lastClientX, clientY: this.pointer.lastClientY,
+        pointerType: this.pointer.pointerType, target: this.svg,
+      });
+    }
   }
 
   renderEdges(edges) {
@@ -551,6 +601,7 @@ export class ProcessGraph {
       'aria-pressed': 'false',
       'aria-label': `${node.label || node.id}, ${node.compound?.collapsed ? 'collapsed compound' : node.type || 'task'}${overlay ? `, ${overlay.description}` : ''}`,
     });
+    group.dataset.baseAriaLabel = group.getAttribute('aria-label');
     renderShape(group, node);
     const labelSerial = this.labelSerial = (this.labelSerial || 0) + 1;
     renderText(group, node, `process-node-label-clip-${this.instanceID}-${labelSerial}`);
@@ -567,7 +618,9 @@ export class ProcessGraph {
       'data-key': `ports:${node.id}`,
       'data-node-id': node.id,
     });
-    renderPorts(group, node);
+    renderPorts(group, node, this.feedbackEnabled ? (port) => this.connectionFeedback({
+      phase: 'source', source: { nodeId: node.id, port },
+    }) : null);
     return group;
   }
 
@@ -580,10 +633,17 @@ export class ProcessGraph {
     this.svg.addEventListener('pointerup', (event) => this.onPointerUp(event), { signal });
     this.svg.addEventListener('pointercancel', (event) => this.onPointerCancel(event), { signal });
     this.svg.addEventListener('lostpointercapture', (event) => this.onLostPointerCapture(event), { signal });
-    this.svg.addEventListener('pointerleave', () => this.updatePortHover(null), { signal });
+    this.svg.addEventListener('pointerleave', () => {
+      this.updatePortHover(null);
+      this.clearActionFeedback();
+    }, { signal });
     this.svg.addEventListener('click', (event) => this.onClick(event), { signal });
     this.svg.addEventListener('dblclick', (event) => this.onDoubleClick(event), { signal });
     this.svg.addEventListener('keydown', (event) => this.onKeyDown(event), { signal });
+    if (this.feedbackEnabled) {
+      this.svg.addEventListener('focusin', (event) => this.onFeedbackFocus(event), { signal });
+      this.svg.addEventListener('focusout', () => this.clearActionFeedback(), { signal });
+    }
     document.addEventListener('keydown', (event) => this.onSpaceKey(event), { signal });
     document.addEventListener('keyup', (event) => this.onSpaceKey(event), { signal });
     window.addEventListener('blur', () => {
@@ -609,6 +669,208 @@ export class ProcessGraph {
     return { node, edge, port };
   }
 
+  connectionFeedback(request) {
+    if (!this.feedbackEnabled) return null;
+    const feedback = this.options.connectionFeedback(request) || {};
+    return {
+      state: feedback.state || 'neutral', enabled: feedback.enabled !== false,
+      message: String(feedback.message || ''), ...feedback,
+    };
+  }
+
+  feedbackCandidate(target) {
+    const hit = this.eventTarget({ target });
+    if (hit.port && hit.node) {
+      return { element: hit.port, candidate: { nodeId: hit.node.dataset.nodeId, port: hit.port.dataset.port } };
+    }
+    if (hit.node) return { element: hit.node, candidate: { nodeId: hit.node.dataset.nodeId } };
+    if (target && this.svg.contains(target) && !hit.edge) {
+      return { element: this.root, candidate: { emptyCanvas: true } };
+    }
+    return null;
+  }
+
+  feedbackForTarget(target) {
+    if (!this.feedbackEnabled || !target) return null;
+    if (this.connectionSource) {
+      const resolved = this.feedbackCandidate(target);
+      if (!resolved) return null;
+      return {
+        element: resolved.element,
+        feedback: this.connectionFeedback({
+          phase: 'target', source: this.connectionSource, candidate: resolved.candidate,
+        }),
+      };
+    }
+    const hit = this.eventTarget({ target });
+    if (!hit.port || !hit.node) return null;
+    return {
+      element: hit.port,
+      feedback: this.connectionFeedback({
+        phase: 'source', source: { nodeId: hit.node.dataset.nodeId, port: hit.port.dataset.port },
+      }),
+    };
+  }
+
+  positionActionTooltip(target) {
+    if (!this.actionTooltip || !target?.getBoundingClientRect) return;
+    const rootRect = this.root.getBoundingClientRect();
+    const targetRect = target === this.root ? this.svg.getBoundingClientRect() : target.getBoundingClientRect();
+    const tooltipRect = this.actionTooltip.getBoundingClientRect();
+    const width = tooltipRect.width || Math.min(300, Math.max(180, this.actionTooltip.textContent.length * 6));
+    const height = tooltipRect.height || 42;
+    const centered = targetRect.left - rootRect.left + targetRect.width / 2 - width / 2;
+    const left = clamp(centered, 8, Math.max(8, rootRect.width - width - 8));
+    const above = targetRect.top - rootRect.top - height - 10;
+    const top = above >= 8
+      ? above : clamp(targetRect.bottom - rootRect.top + 10, 8, Math.max(8, rootRect.height - height - 8));
+    this.actionTooltip.style.left = `${left}px`;
+    this.actionTooltip.style.top = `${top}px`;
+  }
+
+  showActionFeedback(target, feedback, { immediate = false, keyboard = false } = {}) {
+    if (!this.actionTooltip || !target || !feedback?.message) {
+      this.clearActionFeedback();
+      return;
+    }
+    const unchanged = this.feedbackTarget === target
+      && this.actionTooltip.textContent === feedback.message;
+    const resume = this.feedbackResume?.message === feedback.message ? this.feedbackResume : null;
+    this.feedbackResume = null;
+    if (!unchanged) {
+      this.clearActionFeedback();
+      this.feedbackTarget = target;
+      this.actionTooltip.textContent = feedback.message;
+      this.actionTooltip.dataset.state = feedback.state;
+      this.actionTooltip.setAttribute('aria-hidden', 'false');
+      if (target !== this.root) target.setAttribute('aria-describedby', this.actionTooltip.id);
+    }
+    this.positionActionTooltip(target);
+    if (unchanged && (this.actionTooltip.classList.contains('is-visible') || this.feedbackTimer)) return;
+    const delay = immediate || resume?.visible ? 0 : resume
+      ? resume.remaining : keyboard
+        ? Number(this.options.keyboardFeedbackDelay ?? 220)
+        : Number(this.options.actionFeedbackDelay ?? 750);
+    this.feedbackStartedAt = Date.now() - (resume
+      ? Number(this.options.actionFeedbackDelay ?? 750) - resume.remaining : 0);
+    this.feedbackTimer = setTimeout(() => {
+      this.feedbackTimer = null;
+      if (this.feedbackTarget === target) this.actionTooltip.classList.add('is-visible');
+    }, Math.max(0, delay));
+  }
+
+  clearActionFeedback() {
+    if (this.feedbackTimer) clearTimeout(this.feedbackTimer);
+    this.feedbackTimer = null;
+    this.feedbackStartedAt = 0;
+    this.feedbackResume = null;
+    if (this.feedbackTarget && this.feedbackTarget !== this.root) {
+      this.feedbackTarget.removeAttribute('aria-describedby');
+      this.feedbackTarget.classList.remove('is-connection-hover');
+    }
+    this.feedbackTarget = null;
+    if (!this.actionTooltip) return;
+    this.actionTooltip.classList.remove('is-visible');
+    this.actionTooltip.setAttribute('aria-hidden', 'true');
+    this.actionTooltip.textContent = '';
+    delete this.actionTooltip.dataset.state;
+  }
+
+  onFeedbackFocus(event) {
+    const resolved = this.feedbackForTarget(event.target);
+    if (resolved) this.showActionFeedback(resolved.element, resolved.feedback, { keyboard: true });
+    else this.clearActionFeedback();
+  }
+
+  queuePointerFeedback(event) {
+    if (!this.feedbackEnabled) return;
+    this.pendingFeedbackPointer = {
+      clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType,
+      target: event.target,
+    };
+    if (this.feedbackFrame != null) return;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame : (callback) => setTimeout(callback, 16);
+    this.feedbackFrame = schedule(() => {
+      this.feedbackFrame = null;
+      const pending = this.pendingFeedbackPointer;
+      this.pendingFeedbackPointer = null;
+      if (!pending || this.destroyed) return;
+      // Pointer capture retargets moves to the SVG. One coalesced hit-test per
+      // animation frame is the only way this controller reads beneath it.
+      const target = this.connectionSource
+        ? document.elementFromPoint(pending.clientX, pending.clientY) : pending.target;
+      this.root.querySelectorAll('.is-connection-hover').forEach((element) => {
+        element.classList.remove('is-connection-hover');
+      });
+      const resolved = this.feedbackForTarget(target);
+      if (!resolved || (pending.pointerType === 'touch' && !this.connectionSource)) {
+        this.clearActionFeedback();
+        return;
+      }
+      if (resolved.element !== this.root) resolved.element.classList.add('is-connection-hover');
+      this.showActionFeedback(resolved.element, resolved.feedback);
+    });
+  }
+
+  beginConnectionFeedback(source) {
+    if (!this.feedbackEnabled) return;
+    this.clearActionFeedback();
+    this.connectionSource = { nodeId: source.nodeId, port: source.port };
+    this.applyConnectionFeedback();
+  }
+
+  endConnectionFeedback() {
+    if (!this.feedbackEnabled) return;
+    this.connectionSource = null;
+    this.pendingFeedbackPointer = null;
+    this.clearActionFeedback();
+    this.applyConnectionFeedback();
+  }
+
+  applyConnectionFeedback() {
+    if (!this.feedbackEnabled) return;
+    const active = !!this.connectionSource;
+    this.root.classList.toggle('is-connecting', active);
+    this.root.classList.remove('is-connection-canvas-valid', 'is-connection-canvas-invalid');
+    this.nodeLayer.querySelectorAll('.process-node').forEach((node) => {
+      node.classList.remove('is-connection-valid', 'is-connection-invalid', 'is-connection-source', 'is-connection-hover');
+      node.removeAttribute('aria-disabled');
+      node.setAttribute('aria-label', node.dataset.baseAriaLabel || node.getAttribute('aria-label'));
+      if (!active) return;
+      const feedback = this.connectionFeedback({
+        phase: 'target', source: this.connectionSource, candidate: { nodeId: node.dataset.nodeId },
+      });
+      node.classList.add(`is-connection-${feedback.state === 'valid' ? 'valid' : 'invalid'}`);
+      node.setAttribute('aria-disabled', String(feedback.state !== 'valid'));
+      if (feedback.message) node.setAttribute('aria-label', `${node.dataset.baseAriaLabel}. ${feedback.message}`);
+    });
+    this.portLayer.querySelectorAll('.process-port').forEach((port) => {
+      const node = port.closest('[data-node-id]');
+      const sourceState = port.dataset.sourceState;
+      port.classList.remove('is-connection-valid', 'is-connection-invalid', 'is-connection-source', 'is-connection-hover');
+      port.classList.toggle('is-action-disabled', !active && sourceState === 'disabled');
+      port.setAttribute('aria-disabled', String(sourceState === 'disabled'));
+      port.setAttribute('aria-label', active
+        ? port.dataset.baseAriaLabel || port.getAttribute('aria-label')
+        : port.dataset.sourceAriaLabel || port.dataset.baseAriaLabel || port.getAttribute('aria-label'));
+      if (!active) return;
+      const candidate = { nodeId: node.dataset.nodeId, port: port.dataset.port };
+      const isSource = candidate.nodeId === this.connectionSource.nodeId
+        && candidate.port === this.connectionSource.port;
+      const feedback = this.connectionFeedback({ phase: 'target', source: this.connectionSource, candidate });
+      const state = isSource ? 'source' : feedback.state === 'valid' ? 'valid' : 'invalid';
+      port.classList.add(`is-connection-${state}`);
+      port.setAttribute('aria-disabled', String(state === 'invalid'));
+      if (feedback.message) port.setAttribute('aria-label', `${port.dataset.baseAriaLabel}. ${feedback.message}`);
+    });
+    if (!active) return;
+    const canvas = this.connectionFeedback({
+      phase: 'target', source: this.connectionSource, candidate: { emptyCanvas: true },
+    });
+    this.root.classList.add(`is-connection-canvas-${canvas.state === 'valid' ? 'valid' : 'invalid'}`);
+  }
+
   updatePortHover(event) {
     const target = event ? this.eventTarget(event) : { node: null };
     const nodeID = target.node?.dataset.nodeId || null;
@@ -626,6 +888,17 @@ export class ProcessGraph {
     // SVG layer child. The detached original still carries the stable ids we
     // need to classify this gesture.
     const target = this.eventTarget(event);
+    if (target.port && target.node && this.feedbackEnabled) {
+      const source = { nodeId: target.node.dataset.nodeId, port: target.port.dataset.port };
+      const feedback = this.connectionFeedback({ phase: 'source', source });
+      if (feedback.enabled === false) {
+        event.preventDefault();
+        event.stopPropagation();
+        target.port.focus({ preventScroll: true });
+        this.showActionFeedback(target.port, feedback, { immediate: true, keyboard: event.pointerType === '' });
+        return;
+      }
+    }
     // Empty SVG space is not natively focusable. Explicitly focus the graph so
     // editor shortcuts bubble through its root after a canvas click instead of
     // acting on whichever palette/control happened to be focused previously.
@@ -650,6 +923,7 @@ export class ProcessGraph {
     this.pointer = {
       id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
       lastClientX: event.clientX, lastClientY: event.clientY,
+      pointerType: event.pointerType || 'mouse',
       startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
       edgeID: target.edge?.dataset.edgeId, port: target.port?.dataset.port,
       selectionStarted: false,
@@ -660,6 +934,7 @@ export class ProcessGraph {
     if (mode === 'port') {
       event.stopPropagation();
       this.clearKeyboardPort();
+      this.beginConnectionFeedback?.({ nodeId: this.pointer.nodeID, port: this.pointer.port });
       hook(this.options, 'onPortDragStart')({ nodeId: this.pointer.nodeID, port: this.pointer.port, point, event });
     } else if (mode === 'marquee') {
       this.marquee = svgElement('rect', { class: 'process-marquee', x: point.x, y: point.y, width: 0, height: 0 });
@@ -668,8 +943,14 @@ export class ProcessGraph {
   }
 
   onPointerMove(event) {
-    this.updatePortHover(event);
-    if (!this.pointer || this.pointer.id !== event.pointerId) return;
+    if (!this.pointer) {
+      this.updatePortHover(event);
+      this.queuePointerFeedback?.(event);
+      return;
+    }
+    if (this.pointer.id !== event.pointerId) return;
+    if (this.pointer.mode !== 'port') this.updatePortHover(event);
+    this.queuePointerFeedback?.(event);
     this.pointer.lastClientX = event.clientX;
     this.pointer.lastClientY = event.clientY;
     const dx = event.clientX - this.pointer.startClientX;
@@ -730,6 +1011,7 @@ export class ProcessGraph {
       // at release time before notifying the editor consumer.
       const hit = document.elementFromPoint(event.clientX, event.clientY);
       const target = this.eventTarget({ target: hit });
+      this.endConnectionFeedback?.();
       hook(this.options, 'onPortDragEnd')({
         nodeId: pointer.nodeID, port: pointer.port, point,
         targetNodeId: target.node?.dataset.nodeId || null,
@@ -804,6 +1086,7 @@ export class ProcessGraph {
     this.pointer = null;
     this.svg.releasePointerCapture?.(event.pointerId);
     if (pointer.mode === 'port') {
+      this.endConnectionFeedback?.();
       hook(this.options, 'onPortDragEnd')({
         nodeId: pointer.nodeID, port: pointer.port,
         point: this.clientToGraph(event.clientX, event.clientY),
@@ -936,6 +1219,25 @@ export class ProcessGraph {
       return;
     }
     if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (this.feedbackEnabled && this.keyboardPort && target.node && !target.port) {
+      event.preventDefault();
+      const source = this.keyboardPort;
+      const feedback = this.connectionFeedback({
+        phase: 'target', source, candidate: { nodeId: target.node.dataset.nodeId },
+      });
+      if (feedback?.state !== 'valid') {
+        this.showActionFeedback(target.node, feedback, { immediate: true, keyboard: true });
+        return;
+      }
+      const node = this.layout.nodes.find((candidate) => candidate.id === target.node.dataset.nodeId);
+      const point = { x: node.x, y: node.y };
+      this.clearKeyboardPort();
+      hook(this.options, 'onPortDragEnd')({
+        nodeId: source.nodeId, port: source.port, point,
+        targetNodeId: target.node.dataset.nodeId, targetPort: null, keyboard: true, event,
+      });
+      return;
+    }
     if (target.port && target.node) {
       event.preventDefault();
       const nodeId = target.node.dataset.nodeId;
@@ -943,11 +1245,26 @@ export class ProcessGraph {
       const node = this.layout.nodes.find((candidate) => candidate.id === nodeId);
       const point = { x: node.x, y: node.y + (port === 'out' ? node.height / 2 : -node.height / 2) };
       if (!this.keyboardPort) {
+        const feedback = this.connectionFeedback({ phase: 'source', source: { nodeId, port } });
+        if (feedback?.enabled === false) {
+          this.showActionFeedback(target.port, feedback, { immediate: true, keyboard: true });
+          return;
+        }
         this.keyboardPort = { nodeId, port, point };
+        this.beginConnectionFeedback(this.keyboardPort);
         this.applyKeyboardPort();
         hook(this.options, 'onPortDragStart')({ nodeId, port, point, keyboard: true, event });
       } else {
         const source = this.keyboardPort;
+        if (this.feedbackEnabled) {
+          const feedback = this.connectionFeedback({
+            phase: 'target', source, candidate: { nodeId, port },
+          });
+          if (feedback?.state !== 'valid') {
+            this.showActionFeedback(target.port, feedback, { immediate: true, keyboard: true });
+            return;
+          }
+        }
         this.clearKeyboardPort();
         hook(this.options, 'onPortDragEnd')({
           nodeId: source.nodeId, port: source.port, point,
@@ -1105,6 +1422,7 @@ export class ProcessGraph {
     );
     if (!source) {
       this.keyboardPort = null;
+      this.endConnectionFeedback();
       return;
     }
     source.classList.add('is-keyboard-source');
@@ -1113,6 +1431,7 @@ export class ProcessGraph {
 
   clearKeyboardPort() {
     this.keyboardPort = null;
+    this.endConnectionFeedback();
     this.applyKeyboardPort();
   }
 
@@ -1146,6 +1465,7 @@ export class ProcessGraph {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.endConnectionFeedback();
     this.abort.abort();
     this.container.replaceChildren();
   }

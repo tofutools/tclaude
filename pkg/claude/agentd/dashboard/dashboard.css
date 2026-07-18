@@ -11908,6 +11908,8 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   --pg-focus: #79c0ff;
   --pg-error: #f85149;
   --pg-warn: #e3a341;
+  --pg-valid: #3fb950;
+  --pg-invalid: #ff7b72;
   position: relative;
   min-height: 320px;
   height: 100%;
@@ -11934,6 +11936,8 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
   --pg-focus: #0550ae;
   --pg-error: #cf222e;
   --pg-warn: #9a5b00;
+  --pg-valid: #1a7f37;
+  --pg-invalid: #cf222e;
   border-color: #c9d2dd;
 }
 .process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }
@@ -11993,6 +11997,47 @@ body.wizard #agent-dock .dock-card-menu-item.danger:hover {
 .process-node-ports:hover .process-port, .process-port:hover, .process-port:active { opacity: 1; }
 .process-port:focus, .process-port.is-keyboard-source { opacity: 1; stroke-width: 4; outline: none; }
 .process-port.is-keyboard-source { fill: var(--pg-accent); }
+.process-port.is-action-disabled {
+  opacity: .5; stroke: var(--pg-invalid); stroke-dasharray: 3 2; cursor: help;
+}
+.process-port.is-action-disabled:hover,
+.process-port.is-action-disabled:focus { opacity: 1; stroke-width: 3; }
+.process-graph.is-connecting .process-port { opacity: .72; }
+.process-graph.is-connecting .process-node-shape { opacity: .78; }
+.process-graph.is-connecting .process-node.is-connection-valid .process-node-shape,
+.process-graph.is-connecting .process-port.is-connection-valid {
+  opacity: 1; stroke: var(--pg-valid); stroke-width: 4; stroke-dasharray: none;
+}
+.process-graph.is-connecting .process-node.is-connection-invalid .process-node-shape,
+.process-graph.is-connecting .process-port.is-connection-invalid {
+  opacity: .58; stroke: var(--pg-invalid); stroke-width: 3; stroke-dasharray: 5 3;
+}
+.process-graph.is-connecting .process-port.is-connection-source {
+  opacity: 1; fill: var(--pg-accent); stroke: var(--pg-focus); stroke-width: 4; stroke-dasharray: none;
+}
+.process-graph.is-connecting .is-connection-hover.process-node .process-node-shape,
+.process-graph.is-connecting .process-port.is-connection-hover { filter: drop-shadow(0 0 5px currentColor); }
+.process-graph.is-connection-canvas-valid::after,
+.process-graph.is-connection-canvas-invalid::after {
+  content: ""; position: absolute; inset: 5px; border: 2px solid var(--pg-valid);
+  border-radius: 7px; pointer-events: none; opacity: .55;
+}
+.process-graph.is-connection-canvas-invalid::after {
+  border-color: var(--pg-invalid); border-style: dashed;
+}
+.process-action-tooltip {
+  position: absolute; z-index: 35; box-sizing: border-box; width: max-content;
+  max-width: min(300px, calc(100% - 16px)); padding: 7px 9px;
+  color: var(--pg-text); background: var(--pg-panel); border: 1px solid var(--pg-border);
+  border-radius: 6px; box-shadow: 0 5px 18px rgba(0, 0, 0, .42);
+  font: 600 12px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: normal; overflow-wrap: anywhere; pointer-events: none;
+  opacity: 0; visibility: hidden; transition: opacity 100ms ease;
+}
+.process-action-tooltip[data-state="valid"] { border-color: var(--pg-valid); }
+.process-action-tooltip[data-state="invalid"],
+.process-action-tooltip[data-state="disabled"] { border-color: var(--pg-invalid); }
+.process-action-tooltip.is-visible { opacity: 1; visibility: visible; }
 .process-edge { color: var(--pg-edge); cursor: pointer; outline: none; }
 .process-edge-path {
   stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none;
@@ -12072,12 +12117,18 @@ body.wizard .process-graph {
   --pg-focus: #d4af37;
   --pg-error: #ff7b72;
   --pg-warn: #e3a341;
+  --pg-valid: #56d364;
+  --pg-invalid: #ff7b72;
   border-color: #4a3d6b;
   background-image: radial-gradient(circle at 50% 10%, rgba(98, 69, 145, 0.16), transparent 55%);
 }
 body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5); }
 @media (prefers-reduced-motion: reduce) {
   .process-graph *, .process-graph *::before, .process-graph *::after { transition: none !important; animation: none !important; }
+}
+@media (hover: none), (pointer: coarse) {
+  .process-node-ports .process-port { opacity: .72; }
+  .process-node-ports .process-port.is-action-disabled { opacity: .48; }
 }
 
 /* === Process template editor (process-editor.js, TCL-296) ==================

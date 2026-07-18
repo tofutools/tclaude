@@ -49,7 +49,9 @@ test('only a valid empty-canvas port release opens the connected chooser', () =>
   const opened = [];
   const fake = {
     band: null,
+    model: new ProcessEditModel({ template: { nodes: { a: { type: 'task' } } }, edges: [], layout: { nodes: {} } }),
     removeBand() {},
+    status() {},
     openConnectedNodeChooser: (...args) => opened.push(args),
   };
   const point = { x: 12.5, y: -8 };
@@ -68,6 +70,38 @@ test('only a valid empty-canvas port release opens the connected chooser', () =>
     nodeId: 'a', port: 'out', point, targetNodeId: null, emptyCanvas: false, event,
   });
   assert.equal(opened.length, 1, 'release over an edge, control, or outside the SVG is not empty canvas');
+});
+
+test('drop commit reuses connection feedback preflight for direction and invalid reasons', () => {
+  const statuses = [];
+  const model = new ProcessEditModel({
+    template: { nodes: { build: { type: 'task', name: 'Build' }, review: { type: 'decision', name: 'Review' }, ship: { type: 'end', name: 'Ship' } } },
+    edges: [], layout: { nodes: {} },
+  });
+  const fake = {
+    model, band: null, removeBand() {},
+    mutate(operation) { try { return operation(); } catch (error) { statuses.push([error.message, true]); return undefined; } },
+    status: (...args) => statuses.push(args),
+    setSelection() {}, openInlineOutcomeEdit() {},
+  };
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'build', port: 'in', point: {}, targetNodeId: 'review', targetPort: 'out',
+  });
+  assert.ok(model.edges.some((edge) => edge.from === 'review' && edge.to === 'build'),
+    'the resolver-provided reverse direction is the committed edge');
+
+  const before = structuredClone(model.edges);
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'build', port: 'in', point: {}, targetNodeId: 'review', targetPort: 'in',
+  });
+  assert.deepEqual(model.edges, before);
+  assert.deepEqual(statuses.at(-1), ['Connect this input to an output port or another node body.', true]);
+
+  ProcessTemplateEditor.prototype.onPortDragEnd.call(fake, {
+    nodeId: 'ship', port: 'out', point: {}, targetNodeId: 'review', targetPort: 'in',
+  });
+  assert.deepEqual(model.edges, before);
+  assert.deepEqual(statuses.at(-1), ['End nodes cannot have outgoing connections.', true]);
 });
 
 test('connected-node selection preserves direction and opens required configuration', async () => {
@@ -114,7 +148,7 @@ test('invalid end-node origin is rejected before the chooser opens', () => {
   assert.equal(ProcessTemplateEditor.prototype.openConnectedNodeChooser.call(
     fake, { nodeId: 'done', port: 'out' }, { x: 1, y: 2 }, {},
   ), false);
-  assert.deepEqual(statuses, [['end node must not have outgoing edges', true]]);
+  assert.deepEqual(statuses, [['End nodes cannot have outgoing connections.', true]]);
 });
 
 test('command context reflects selection, editability, dirty state, and validation issues', () => {

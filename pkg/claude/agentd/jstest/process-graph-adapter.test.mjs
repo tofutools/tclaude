@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-async function mountedAdapter(t, events = {}) {
+async function mountedAdapter(t, events = {}, options = {}) {
   const harness = await createPreactHarness(t);
   const previousRAF = globalThis.requestAnimationFrame;
   globalThis.requestAnimationFrame = () => 1;
@@ -22,9 +22,125 @@ async function mountedAdapter(t, events = {}) {
       edges: [{ id: 'start:pass', from: 'start', outcome: 'pass', to: 'end' }],
     },
     events,
+    ...options,
   });
   return { harness, host, adapter };
 }
+
+test('editor connection feedback covers pointer, keyboard, timing, and cleanup without changing hit geometry', async (t) => {
+  const received = [];
+  const feedback = ({ phase, source, candidate = {} }) => {
+    if (source.nodeId === 'end' && source.port === 'out') {
+      return { state: 'disabled', enabled: false, message: 'End nodes cannot have outgoing connections.' };
+    }
+    if (phase === 'source') return { state: 'available', enabled: true, message: `Start from ${source.port}.` };
+    if (candidate.nodeId === source.nodeId && candidate.port === source.port) {
+      return { state: 'source', enabled: true, message: `Start from ${source.port}.` };
+    }
+    if (source.port === 'in' && candidate.port === 'in') {
+      return { state: 'invalid', enabled: false, message: 'Connect this input to an output port.' };
+    }
+    if (candidate.nodeId === source.nodeId) {
+      return { state: 'invalid', enabled: false, message: 'Self-loop connections are not supported.' };
+    }
+    return { state: 'valid', enabled: true, message: 'Drop to connect Start to End.' };
+  };
+  const { harness, adapter, host } = await mountedAdapter(t, {
+    portDragStart: (payload) => received.push(['start', payload]),
+    portDragEnd: (payload) => received.push(['end', payload]),
+  }, { connectionFeedback: feedback, actionFeedbackDelay: 5, keyboardFeedbackDelay: 5 });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => {};
+  const startIn = host.querySelector('[data-node-id="start"] .process-port-in');
+  const startOut = host.querySelector('[data-node-id="start"] .process-port-out');
+  const endIn = host.querySelector('[data-node-id="end"] .process-port-in');
+  const endOut = host.querySelector('[data-node-id="end"] .process-port-out');
+  const tooltip = host.querySelector('.process-action-tooltip');
+  for (const port of [startIn, startOut, endIn, endOut]) assert.equal(port.getAttribute('r'), '6');
+  assert.equal(endOut.getAttribute('aria-disabled'), 'true');
+  assert.ok(endOut.classList.contains('is-action-disabled'));
+
+  harness.fireEvent(endOut, 'pointerdown', { button: 0, pointerId: 20, pointerType: 'mouse' });
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.equal(received.length, 0, 'a disabled source never starts a semantic drag');
+  assert.match(tooltip.textContent, /End nodes cannot/);
+  assert.ok(tooltip.classList.contains('is-visible'));
+  assert.equal(endOut.getAttribute('aria-describedby'), tooltip.id);
+
+  const frames = [];
+  const stubRAF = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+  t.after(() => { globalThis.requestAnimationFrame = stubRAF; });
+  let hitTests = 0;
+  let hitTarget = endIn;
+  const originalHitTest = harness.document.elementFromPoint;
+  harness.document.elementFromPoint = () => { hitTests += 1; return hitTarget; };
+  t.after(() => { harness.document.elementFromPoint = originalHitTest; });
+  harness.fireEvent(startIn, 'pointerdown', {
+    button: 0, pointerId: 21, pointerType: 'mouse', clientX: 1, clientY: 2,
+  });
+  assert.ok(host.querySelector('.process-graph').classList.contains('is-connecting'));
+  assert.ok(startIn.classList.contains('is-connection-source'));
+  assert.ok(endIn.classList.contains('is-connection-invalid'));
+  assert.ok(endOut.classList.contains('is-connection-valid'));
+  for (let index = 0; index < 8; index += 1) {
+    harness.fireEvent(svg, 'pointermove', {
+      pointerId: 21, pointerType: 'mouse', clientX: 10 + index, clientY: 20 + index,
+    });
+  }
+  assert.equal(frames.length, 1, 'pointer feedback is coalesced to one animation frame');
+  assert.equal(hitTests, 0);
+  frames.shift()();
+  assert.equal(hitTests, 1, 'one frame performs one elementFromPoint lookup');
+  await new Promise((resolve) => setTimeout(resolve, 8));
+  assert.match(tooltip.textContent, /output port/);
+  assert.ok(tooltip.classList.contains('is-visible'));
+  assert.equal(endIn.getAttribute('aria-describedby'), tooltip.id);
+
+  adapter.setGraph({
+    nodes: [{ id: 'start', type: 'start', label: 'Start' }, { id: 'end', type: 'end', label: 'End' }],
+    edges: [],
+  });
+  hitTarget = host.querySelector('[data-node-id="end"] .process-port-in');
+  assert.equal(tooltip.textContent, '', 'rerender removes the detached target disclosure immediately');
+  assert.equal(frames.length, 1, 'active pointer feedback schedules one recovery frame');
+  frames.shift()();
+  await new Promise((resolve) => setTimeout(resolve, 8));
+  assert.match(tooltip.textContent, /output port/);
+  assert.ok(tooltip.classList.contains('is-visible'), 'rerender preserves the elapsed disclosure delay');
+  assert.equal(hitTarget.getAttribute('aria-describedby'), tooltip.id);
+
+  harness.fireEvent(svg, 'pointercancel', { pointerId: 21, pointerType: 'mouse', clientX: 18, clientY: 28 });
+  assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
+  assert.equal(host.querySelector('.is-connection-valid, .is-connection-invalid, .is-connection-source'), null);
+  assert.equal(tooltip.textContent, '');
+  assert.equal(hitTarget.hasAttribute('aria-describedby'), false);
+  assert.equal(received.at(-1)[1].cancelled, true);
+
+  const keyboardStartIn = host.querySelector('[data-node-id="start"] .process-port-in');
+  const keyboardEndIn = host.querySelector('[data-node-id="end"] .process-port-in');
+  harness.fireEvent(keyboardStartIn, 'keydown', { key: 'Enter' });
+  assert.equal(received.at(-1)[0], 'start');
+  assert.equal(received.at(-1)[1].keyboard, true);
+  harness.fireEvent(keyboardEndIn, 'keydown', { key: 'Enter' });
+  assert.ok(keyboardStartIn.classList.contains('is-keyboard-source'), 'an invalid keyboard target keeps the gesture active');
+  await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.match(tooltip.textContent, /output port/);
+  adapter.setGraph({
+    nodes: [{ id: 'start', type: 'start', label: 'Start' }, { id: 'end', type: 'end', label: 'End' }],
+    edges: [],
+  });
+  assert.equal(tooltip.textContent, '', 'rerender removes stale target disclosure');
+  const rerenderedSource = host.querySelector('[data-node-id="start"] .process-port-in');
+  assert.ok(rerenderedSource.classList.contains('is-keyboard-source'), 'rerender restores the active source identity');
+  harness.fireEvent(rerenderedSource, 'keydown', { key: 'Escape' });
+  assert.equal(host.querySelector('.process-graph').classList.contains('is-connecting'), false);
+  assert.equal(received.at(-1)[1].cancelled, true);
+
+  adapter.dispose();
+  assert.equal(host.childNodes.length, 0);
+});
 
 test('graph adapter translates semantic events and keeps transient pointer frames private', async (t) => {
   const received = [];
@@ -37,6 +153,8 @@ test('graph adapter translates semantic events and keeps transient pointer frame
   });
 
   const svg = host.querySelector('.process-graph-svg');
+  assert.equal(host.querySelector('.process-action-tooltip'), null,
+    'viewer adapters without an editor feedback policy stay inert');
   svg.setPointerCapture = () => {};
   svg.releasePointerCapture = () => {};
   const node = host.querySelector('.process-node[data-node-id="start"]');
