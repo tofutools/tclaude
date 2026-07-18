@@ -622,6 +622,32 @@ func SetBeforeExecuteSpawnForTest(fn func()) func() {
 	return func() { beforeExecuteSpawnForTest = prev }
 }
 
+// SetBeforeSoftExitTargetRevalidateForTest installs a one-shot lifecycle
+// pause used to prove predecessor/successor pane-swap safety.
+func SetBeforeSoftExitTargetRevalidateForTest(fn func()) func() {
+	prev := beforeSoftExitTargetRevalidateForTest
+	beforeSoftExitTargetRevalidateForTest = fn
+	return func() { beforeSoftExitTargetRevalidateForTest = prev }
+}
+
+func StopOneConvWithIntentForTest(convID, action string) string {
+	return stopOneConvWithIntent(convID, false, action, "").Action
+}
+
+// SetAfterSoftExitTargetSendForTest installs a probe seam after exact-pane
+// delivery and before the post-send liveness probe.
+func SetAfterSoftExitTargetSendForTest(fn func()) func() {
+	prev := afterSoftExitTargetSendForTest
+	afterSoftExitTargetSendForTest = fn
+	return func() { afterSoftExitTargetSendForTest = prev }
+}
+
+func SetBeforeSoftExitTargetRetryProbeForTest(fn func(int)) func() {
+	prev := beforeSoftExitTargetRetryProbeForTest
+	beforeSoftExitTargetRetryProbeForTest = fn
+	return func() { beforeSoftExitTargetRetryProbeForTest = prev }
+}
+
 // RunPendingSpawnSweepForTest runs one pending-spawn sweep synchronously,
 // so a flow test can deterministically trigger the back-fill that enrolls a
 // pending spawn once its conv-id has materialised — without starting the

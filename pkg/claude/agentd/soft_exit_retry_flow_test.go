@@ -35,7 +35,10 @@ import (
 func countExitSends(f *testharness.Flow, target, cmd string) int {
 	n := 0
 	for _, sk := range f.World.Tmux.Sent() {
-		if sk.Target == target && sk.Text == cmd {
+		// Lifecycle soft-stop now targets the immutable pane id (%N), while
+		// older harness paths retain the session target. These scenarios have
+		// one pane, so count the command regardless of target spelling.
+		if sk.Text == cmd {
 			n++
 		}
 	}
@@ -98,6 +101,15 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 		"a clean /exit brings the pane down on the first attempt")
 	assert.Equal(t, 1, countExitSends(f, target, "/exit"),
 		"a pane that exits on the first /exit must not be re-injected")
+	var exitTarget string
+	for _, sent := range f.World.Tmux.Sent() {
+		if sent.Text == "/exit" {
+			exitTarget = sent.Target
+			break
+		}
+	}
+	assert.Equal(t, "%1", exitTarget,
+		"successful lifecycle send must target the exact pane id, not session name")
 }
 
 // Scenario: a wedged pane that ignores /exit entirely. The retry must be
@@ -187,4 +199,132 @@ func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	// retry recognised the pid change and never re-injected.
 	assert.Equal(t, 1, countExitSends(f, target, "/exit"),
 		"retry must abort once a different process owns the tmux name")
+}
+
+// A selected predecessor must not send bytes to a successor that reuses the
+// same conversation/tmux name while the stop is between selection and its
+// exact-pane revalidation.
+func TestSoftExit_SelectedPaneSwapSendsZeroBytesToSuccessor(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sxje-1111-2222-3333-4444"
+	const tmuxSes = "tmux-sxje"
+	cwd := f.TestCwd("sxje")
+	f.HaveConvWithTitle(conv, "swap-worker")
+	f.HaveAliveSession(conv, "spwn-sxje", tmuxSes, cwd)
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cleanup := agentd.SetBeforeSoftExitTargetRevalidateForTest(func() {
+		cc.MarkDead()
+		resumed := testharness.NewCCSimWithID(t, f.World.HomeDir, conv, cwd)
+		require.NoError(t, resumed.Start())
+		f.World.Tmux.Register(tmuxSes, cwd, resumed)
+	})
+	t.Cleanup(cleanup)
+
+	assert.Equal(t, "error", f.AsHuman().Stop(conv, false).Action)
+	assert.True(t, f.World.Tmux.IsAlive(tmuxSes), "successor must remain alive")
+	assert.Equal(t, 0, countExitSends(f, tmuxSes+":0.0", "/exit"), "successor receives zero /exit bytes")
+}
+
+func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(10 * time.Millisecond))
+	const conv = "sxjf-1111-2222-3333-4444"
+	const tmuxSes = "tmux-sxjf"
+	f.HaveConvWithTitle(conv, "unknown-probe")
+	f.HaveAliveSession(conv, "spwn-sxjf", tmuxSes, f.TestCwd("sxjf"))
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cleanup := agentd.SetAfterSoftExitTargetSendForTest(func() { f.World.Tmux.FailNextCommand("display-message") })
+	t.Cleanup(cleanup)
+	stop := f.AsHuman().Stop(conv, false)
+	f.AssertSoftStopped(stop)
+	agentd.WaitForBackgroundForTest()
+	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"), "unknown probe must never trigger retry reinjection")
+}
+
+func TestSoftExit_PreSendUnknownSendsZeroAndErrors(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sxjg-1111-2222-3333-4444"
+	const tmuxSes = "tmux-sxjg"
+	f.HaveConvWithTitle(conv, "pre-unknown")
+	f.HaveAliveSession(conv, "spwn-sxjg", tmuxSes, f.TestCwd("sxjg"))
+	cleanup := agentd.SetBeforeSoftExitTargetRevalidateForTest(func() { f.World.Tmux.FailNextCommand("display-message") })
+	t.Cleanup(cleanup)
+	assert.Equal(t, "error", agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop))
+	d, err := db.Open()
+	require.NoError(t, err)
+	var intent string
+	require.NoError(t, d.QueryRow(`SELECT exit_intent FROM sessions WHERE id = 'spwn-sxjg'`).Scan(&intent))
+	assert.Empty(t, intent)
+	assert.True(t, f.World.Tmux.IsAlive(tmuxSes))
+	assert.Equal(t, 0, countExitSends(f, tmuxSes+":0.0", "/exit"))
+}
+
+func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(5 * time.Millisecond))
+	const conv = "sxjh-1111-2222-3333-4444"
+	const tmuxSes = "tmux-sxjh"
+	f.HaveConvWithTitle(conv, "retry-unknown")
+	f.HaveAliveSession(conv, "spwn-sxjh", tmuxSes, f.TestCwd("sxjh"))
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+		if attempt == 2 {
+			f.World.Tmux.FailNextCommand("display-message")
+		}
+	})
+	t.Cleanup(cleanup)
+	stop := f.AsHuman().Stop(conv, false)
+	f.AssertSoftStopped(stop)
+	agentd.WaitForBackgroundForTest()
+	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"))
+}
+
+func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(5 * time.Millisecond))
+	const conv = "sxji-1111-2222-3333-4444"
+	const tmuxSes = "tmux-sxji"
+	f.HaveConvWithTitle(conv, "final-unknown")
+	f.HaveAliveSession(conv, "spwn-sxji", tmuxSes, f.TestCwd("sxji"))
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(c *testharness.CCSim, _ string) bool { return true })
+	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+		if attempt == 3 {
+			f.World.Tmux.FailNextCommand("display-message")
+		}
+	})
+	t.Cleanup(cleanup)
+	stop := f.AsHuman().Stop(conv, false)
+	f.AssertSoftStopped(stop)
+	agentd.WaitForBackgroundForTest()
+	assert.Equal(t, 2, countExitSends(f, tmuxSes+":0.0", "/exit"))
+}
+
+func TestForceStop_SelectedPaneSwapDoesNotKillSuccessor(t *testing.T) {
+	f := newFlow(t)
+	const conv = "sxjk-1111-2222-3333-4444"
+	const tmuxSes = "tmux-sxjk"
+	cwd := f.TestCwd("sxjk")
+	f.HaveConvWithTitle(conv, "force-swap")
+	f.HaveAliveSession(conv, "spwn-sxjk", tmuxSes, cwd)
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cleanup := agentd.SetBeforeSoftExitTargetRevalidateForTest(func() {
+		cc.MarkDead()
+		resumed := testharness.NewCCSimWithID(t, f.World.HomeDir, conv, cwd)
+		require.NoError(t, resumed.Start())
+		f.World.Tmux.Register(tmuxSes, cwd, resumed)
+	})
+	t.Cleanup(cleanup)
+	stop := f.AsHuman().Stop(conv, true)
+	assert.Equal(t, "error", stop.Action)
+	assert.True(t, f.World.Tmux.IsAlive(tmuxSes), "successor remains alive and receives zero kill operations")
+	assert.Empty(t, f.World.Tmux.MutationTargets("kill-pane"))
+	assert.Empty(t, f.World.Tmux.MutationTargets("kill-session"))
 }

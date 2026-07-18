@@ -123,6 +123,12 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 		return res
 	}
 	res.TmuxSes = sess.TmuxSession
+	target, targetErr := captureLifecycleTarget(sess)
+	if targetErr != nil {
+		res.Action = "error"
+		res.Detail = "capture selected pane: " + targetErr.Error()
+		return res
+	}
 	if err := refreshStoppedSessionResumeProvenance(sess); err != nil {
 		// Administrative stop must remain available even when the target cwd is
 		// unhealthy. The helper clears stale provenance before returning whenever
@@ -132,8 +138,12 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 			"session", sess.ID, "conv", convID, "error", err)
 	}
 	if force {
-		intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
-		if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+		if lifecycleAction != "" && intentSet == nil {
+			res.Action, res.Detail = "error", "selected launch intent became stale"
+			return res
+		}
+		if err := killLifecycleTarget(target); err != nil {
 			clearFailedExitIntent(intentSet)
 			res.Action = "error"
 			res.Detail = "kill-session: " + err.Error()
@@ -150,8 +160,12 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
-		intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
-		if injectSoftExit(convID, exitCmd, "soft-exit", intentSet) {
+		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+		if lifecycleAction != "" && intentSet == nil {
+			res.Action, res.Detail = "error", "selected launch intent became stale"
+			return res
+		}
+		if injectSoftExitTarget(target, exitCmd, "soft-exit", intentSet) {
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
 				// separately from an unclassified user pane close.
@@ -170,8 +184,12 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	}
 	// No soft-exit command for this harness → hard kill so the pane never
 	// lingers because we couldn't type a graceful exit.
-	intentSet := setExitIntentBestEffort(sess, lifecycleAction, relatedEventID)
-	if err := clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(sess.TmuxSession)).Run(); err != nil {
+	intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
+	if lifecycleAction != "" && intentSet == nil {
+		res.Action, res.Detail = "error", "selected launch intent became stale"
+		return res
+	}
+	if err := killLifecycleTarget(target); err != nil {
 		clearFailedExitIntent(intentSet)
 		res.Action = "error"
 		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
@@ -179,6 +197,90 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 		res.Action = "killed_no_soft_exit"
 	}
 	return res
+}
+
+type lifecycleTarget struct {
+	sessionID   string
+	tmuxSession string
+	generation  string
+	paneID      string
+	panePID     int
+}
+
+type paneProbeState int
+
+const (
+	paneProbeLive paneProbeState = iota
+	paneProbeDead
+	paneProbeUnknown
+)
+
+type lifecyclePaneProbe struct {
+	state      paneProbeState
+	paneID     string
+	panePID    int
+	generation string
+}
+
+func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
+	identity, err := db.GetSessionExitLaunchIdentity(sess.ID)
+	if err != nil {
+		return nil, err
+	}
+	p, err := probeLifecyclePane(sess.TmuxSession)
+	if err != nil {
+		return nil, err
+	}
+	if p.state != paneProbeLive {
+		return nil, fmt.Errorf("pane is not live")
+	}
+	if identity.Generation != "" && p.generation != identity.Generation {
+		return nil, fmt.Errorf("pane generation mismatch")
+	}
+	return &lifecycleTarget{sessionID: sess.ID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID}, nil
+}
+
+func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
+	format := "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
+	out, err := clcommon.TmuxCommand("display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format).Output()
+	if err != nil {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, err
+	}
+	parts := strings.Split(strings.TrimSpace(string(out)), "|")
+	if len(parts) != 6 || parts[0] != tmuxSession || !validLifecyclePaneID(parts[1]) {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, fmt.Errorf("malformed pane probe")
+	}
+	if parts[2] == "1" {
+		return lifecyclePaneProbe{state: paneProbeDead, paneID: parts[1], generation: parts[5]}, nil
+	}
+	pid, err := strconv.Atoi(strings.TrimPrefix(parts[1], "%"))
+	if err != nil {
+		return lifecyclePaneProbe{state: paneProbeUnknown}, err
+	}
+	return lifecyclePaneProbe{state: paneProbeLive, paneID: parts[1], panePID: pid, generation: parts[5]}, nil
+}
+
+func validLifecyclePaneID(v string) bool { return strings.HasPrefix(v, "%") && len(v) > 1 }
+
+func (t *lifecycleTarget) revalidate() (lifecyclePaneProbe, error) {
+	p, err := probeLifecyclePane(t.tmuxSession)
+	if err != nil {
+		return p, err
+	}
+	if p.state != paneProbeLive || p.paneID != t.paneID || (t.panePID > 0 && p.panePID != t.panePID) || (t.generation != "" && p.generation != t.generation) {
+		return p, fmt.Errorf("selected pane identity changed")
+	}
+	return p, nil
+}
+
+func killLifecycleTarget(t *lifecycleTarget) error {
+	if beforeSoftExitTargetRevalidateForTest != nil {
+		beforeSoftExitTargetRevalidateForTest()
+	}
+	if _, err := t.revalidate(); err != nil {
+		return err
+	}
+	return clcommon.TmuxCommand("kill-pane", "-t", t.paneID).Run()
 }
 
 func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string) *db.SessionExitIntentRef {
@@ -194,6 +296,18 @@ func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string)
 	return &ref
 }
 
+func setExitIntentTargetBestEffort(target *lifecycleTarget, action, relatedEventID string) *db.SessionExitIntentRef {
+	if target == nil || action == "" {
+		return nil
+	}
+	ref, err := db.SetSessionExitIntentIfTarget(target.sessionID, target.tmuxSession, target.generation, action, relatedEventID, time.Now())
+	if err != nil {
+		slog.Warn("exit audit: selected lifecycle intent CAS failed", "session", target.sessionID, "error", err)
+		return nil
+	}
+	return &ref
+}
+
 func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 	if intentRef == nil {
 		return
@@ -202,6 +316,92 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 		slog.Warn("exit audit: clear failed lifecycle intent failed",
 			"session", intentRef.SessionID, "error", err)
 	}
+}
+
+func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) bool {
+	if target == nil {
+		return false
+	}
+	if beforeSoftExitTargetRevalidateForTest != nil {
+		beforeSoftExitTargetRevalidateForTest()
+	}
+	if _, err := target.revalidate(); err != nil {
+		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+		return false
+	}
+	if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+		return false
+	}
+	if afterSoftExitTargetSendForTest != nil {
+		afterSoftExitTargetSendForTest()
+	}
+	probe, _ := probeLifecyclePane(target.tmuxSession)
+	if probe.state == paneProbeUnknown {
+		if !session.IsTmuxSessionAlive(target.tmuxSession) {
+			return true // confirmed session disappearance; reaper owns attribution
+		}
+		scheduleUnknownIntentCleanup(target, intentRef)
+		return true // preserve intent; bounded cleanup is owned by retry watchdog
+	}
+	if probe.state == paneProbeDead {
+		return true
+	}
+	if probe.paneID != target.paneID || (target.panePID > 0 && probe.panePID != target.panePID) {
+		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+		return false
+	}
+	scheduleSoftExitRetryTarget(target, exitCmd, reason, intentRef)
+	return true
+}
+
+func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.SessionExitIntentRef) {
+	goBackground(func() {
+		time.Sleep(softExitRetryDelay)
+		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+	})
+}
+
+var beforeSoftExitTargetRevalidateForTest func()
+var beforeSoftExitTargetRetryProbeForTest func(int)
+var afterSoftExitTargetSendForTest func()
+
+func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession string) {
+	if ref == nil {
+		return
+	}
+	if _, err := db.ClearSessionExitIntentIfTarget(*ref, tmuxSession); err != nil {
+		slog.Warn("exit audit: clear selected lifecycle intent failed", "session", ref.SessionID, "error", err)
+	}
+}
+
+func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string, intentRef *db.SessionExitIntentRef) {
+	goBackground(func() {
+		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
+			time.Sleep(softExitRetryDelay)
+			if beforeSoftExitTargetRetryProbeForTest != nil {
+				beforeSoftExitTargetRetryProbeForTest(attempt)
+			}
+			probe, err := probeLifecyclePane(target.tmuxSession)
+			if err != nil || probe.state == paneProbeUnknown {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				return
+			}
+			if probe.state == paneProbeDead {
+				return
+			}
+			if probe.paneID != target.paneID || (target.panePID > 0 && probe.panePID != target.panePID) {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				return
+			}
+			if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				return
+			}
+			if attempt == softExitMaxAttempts {
+				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+			}
+		}
+	})
 }
 
 func refreshStoppedSessionResumeProvenance(sess *db.SessionRow) error {

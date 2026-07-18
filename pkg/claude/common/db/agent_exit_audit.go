@@ -345,6 +345,26 @@ func SetSessionExitIntent(sessionID, action, relatedEventID string, at time.Time
 		Action: action, RelatedEventID: relatedEventID}, nil
 }
 
+// SetSessionExitIntentIfTarget is an additive selected-launch CAS used by
+// lifecycle stop. It refuses row/session/generation reuse before arming intent.
+func SetSessionExitIntentIfTarget(sessionID, tmuxSession, generation, action, relatedEventID string, at time.Time) (SessionExitIntentRef, error) {
+	if !validExitAction(action) {
+		return SessionExitIntentRef{}, fmt.Errorf("invalid exit lifecycle action %q", action)
+	}
+	d, err := Open()
+	if err != nil {
+		return SessionExitIntentRef{}, err
+	}
+	var got string
+	err = d.QueryRow(`UPDATE sessions SET exit_intent = ?, exit_intent_event_id = ?, exit_intent_generation = exit_callback_generation, exit_intent_at = ?
+		WHERE id = ? AND tmux_session = ? AND exit_callback_generation = ? RETURNING exit_callback_generation`,
+		action, relatedEventID, at.UTC().Format(time.RFC3339Nano), sessionID, tmuxSession, generation).Scan(&got)
+	if err != nil {
+		return SessionExitIntentRef{}, err
+	}
+	return SessionExitIntentRef{SessionID: sessionID, Generation: got, Action: action, RelatedEventID: relatedEventID}, nil
+}
+
 func ClearSessionExitIntentIfCurrent(ref SessionExitIntentRef) (bool, error) {
 	d, err := Open()
 	if err != nil {
@@ -355,6 +375,27 @@ func ClearSessionExitIntentIfCurrent(ref SessionExitIntentRef) (bool, error) {
 		WHERE id = ? AND exit_callback_generation = ? AND exit_intent_generation = ?
 		AND exit_intent = ? AND exit_intent_event_id = ?`,
 		ref.SessionID, ref.Generation, ref.Generation, ref.Action, ref.RelatedEventID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ClearSessionExitIntentIfTarget clears intent only when both the selected
+// launch generation and tmux session still match. It is additive so existing
+// lifecycle CAS predicates remain unchanged.
+func ClearSessionExitIntentIfTarget(ref SessionExitIntentRef, tmuxSession string) (bool, error) {
+	if tmuxSession == "" {
+		return false, fmt.Errorf("missing tmux session")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE sessions SET exit_intent = '', exit_intent_event_id = '', exit_intent_generation = '', exit_intent_at = NULL
+		WHERE id = ? AND tmux_session = ? AND exit_callback_generation = ? AND exit_intent_generation = ?`,
+		ref.SessionID, tmuxSession, ref.Generation, ref.Generation)
 	if err != nil {
 		return false, err
 	}

@@ -100,7 +100,8 @@ type TmuxSim struct {
 	// pin "snapshot collapses to ONE list-sessions and ZERO
 	// has-session calls". An accessor rather than a getter on the
 	// whole map so the lock stays internal.
-	commandCounts map[string]int
+	commandCounts   map[string]int
+	mutationTargets map[string][]string
 	// commandFaults are one-shot subprocess faults, keyed by tmux verb. They
 	// are consumed before the verb's ordinary simulated behavior: fail makes
 	// Run exit 1; hang makes it run `sleep` for the requested duration. These
@@ -135,10 +136,11 @@ type tmuxSession struct {
 
 func newTmuxSim() *TmuxSim {
 	return &TmuxSim{
-		sessions:      map[string]*tmuxSession{},
-		buffers:       map[string]string{},
-		commandCounts: map[string]int{},
-		commandFaults: map[string][]tmuxCommandFault{},
+		sessions:        map[string]*tmuxSession{},
+		buffers:         map[string]string{},
+		commandCounts:   map[string]int{},
+		mutationTargets: map[string][]string{},
+		commandFaults:   map[string][]tmuxCommandFault{},
 	}
 }
 
@@ -194,8 +196,10 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	case len(args) >= 3 && args[0] == "paste-buffer":
 		t.pasteBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
+		t.recordMutationTarget("kill-session", args[2])
 		t.killSession(args[2])
 	case len(args) >= 3 && args[0] == "kill-pane" && args[1] == "-t":
+		t.recordMutationTarget("kill-pane", args[2])
 		t.killSession(args[2])
 	case len(args) >= 1 && args[0] == "show-hooks":
 		return exec.Command(echoBin, "pane-died")
@@ -238,6 +242,17 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		}
 		t.mu.Unlock()
 		return exec.Command(trueBin)
+	case len(args) >= 6 && args[0] == "set-hook" && args[1] == "-p" && args[2] == "-u" && args[3] == "-t":
+		name := t.resolveTarget(args[4], true)
+		if name == "" || args[5] != "pane-died" {
+			return exec.Command(falseBin)
+		}
+		t.mu.Lock()
+		if s := t.sessions[name]; s != nil {
+			s.paneDiedHook = ""
+		}
+		t.mu.Unlock()
+		return exec.Command(trueBin)
 	case len(args) >= 3 && args[0] == "set-option" && args[1] == "-t":
 		// Pane-typed like the real command, so the production set-option
 		// sites' ExactTarget(name)+":" form is exercised through the same
@@ -253,6 +268,18 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 		return t.listPanes(args[2])
 	}
 	return exec.Command(trueBin)
+}
+
+func (t *TmuxSim) recordMutationTarget(verb, target string) {
+	t.mu.Lock()
+	t.mutationTargets[verb] = append(t.mutationTargets[verb], target)
+	t.mu.Unlock()
+}
+
+func (t *TmuxSim) MutationTargets(verb string) []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.mutationTargets[verb]...)
 }
 
 // FailNextCommand makes the next invocation of verb return exit status 1
@@ -357,15 +384,21 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	name := t.resolveTarget(target, true)
 	t.mu.Lock()
 	s, ok := t.sessions[name]
+	if !ok {
+		t.mu.Unlock()
+		return exec.Command(falseBin)
+	}
+	dead := !t.sessionPaneAlive(s)
+	remainOnExit, cwd, panePID := s.remainOnExit, s.cwd, s.panePID
+	exitStatus, exitSignal, exitGeneration := s.exitStatus, s.exitSignal, s.exitGeneration
 	t.mu.Unlock()
-	if !ok || (!t.sessionPaneAlive(s) && !s.remainOnExit) {
+	if dead && !remainOnExit {
 		return exec.Command(falseBin)
 	}
 	format := args[len(args)-1]
 	if format == "#{pane_current_path}" {
-		return exec.Command(echoBin, s.cwd)
+		return exec.Command(echoBin, cwd)
 	}
-	dead := !t.sessionPaneAlive(s)
 	if format == "#{pane_dead}" {
 		if dead {
 			return exec.Command(echoBin, "1")
@@ -373,23 +406,23 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		return exec.Command(echoBin, "0")
 	}
 	if format == "#{pane_id}" {
-		return exec.Command(echoBin, "%"+strconv.Itoa(s.panePID))
+		return exec.Command(echoBin, "%"+strconv.Itoa(panePID))
 	}
 	if format == "#{pane_dead}|#{pane_pid}" {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, deadValue+"|"+strconv.Itoa(s.panePID))
+		return exec.Command(echoBin, deadValue+"|"+strconv.Itoa(panePID))
 	}
 	if format == "#{session_name}|#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}" {
 		deadValue := "0"
 		if dead {
 			deadValue = "1"
 		}
-		return exec.Command(echoBin, s.name+"|%"+strconv.Itoa(s.panePID)+"|"+deadValue+"|"+s.exitStatus+"|"+s.exitSignal+"|"+s.exitGeneration)
+		return exec.Command(echoBin, name+"|%"+strconv.Itoa(panePID)+"|"+deadValue+"|"+exitStatus+"|"+exitSignal+"|"+exitGeneration)
 	}
-	return exec.Command(echoBin, strconv.Itoa(s.panePID))
+	return exec.Command(echoBin, strconv.Itoa(panePID))
 }
 
 func (t *TmuxSim) sessionPaneAlive(s *tmuxSession) bool {
@@ -688,13 +721,13 @@ func (t *TmuxSim) WaitForSendKeys(target, contains string, timeout time.Duration
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		t.mu.Lock()
-		for _, sk := range t.sentLog {
-			if sk.Target == target && strings.Contains(sk.Text, contains) {
-				t.mu.Unlock()
+		entries := append([]SentKey(nil), t.sentLog...)
+		t.mu.Unlock()
+		for _, sk := range entries {
+			if strings.Contains(sk.Text, contains) && (sk.Target == target || t.resolveTarget(sk.Target, true) == t.resolveTarget(target, true)) {
 				return true
 			}
 		}
-		t.mu.Unlock()
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false
