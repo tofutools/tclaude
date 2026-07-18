@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -372,6 +373,13 @@ type mailboxMessage struct {
 	Read             bool                             `json:"read"`
 	ParentID         int64                            `json:"parent_id,omitempty"`
 	Attachment       *dashboardHumanMessageAttachment `json:"attachment,omitempty"`
+	// OperatorAuthored marks mail the human/operator sent to an agent. Those
+	// rows carry an empty FromConv, which is indistinguishable on the wire
+	// from an internal system handoff, so without this flag the frontend has
+	// no sender to name and renders them party-less — invisible as human mail
+	// in the aggregate "all" folder. Sourced from operator_agent_messages
+	// (see db.OperatorAuthoredMessages), not from the sender columns.
+	OperatorAuthored bool `json:"operator_authored,omitempty"`
 }
 
 // Mailbox pagination bounds. defaultMailboxPageSize is what the
@@ -628,6 +636,11 @@ func humanMailboxMessages() []mailboxMessage {
 type mailboxDecorator struct {
 	groupNames map[int64]string
 	titleCache map[string]string
+	// operatorMsgs is the operator-authored subset of the page being
+	// decorated, prefilled in one query by withOperatorMessages. Nil when
+	// the caller didn't prefill, which reads as "none" — a missing flag
+	// only costs the human-operator label, never a dropped row.
+	operatorMsgs map[int64]bool
 }
 
 func newMailboxDecorator() *mailboxDecorator {
@@ -638,6 +651,30 @@ func newMailboxDecorator() *mailboxDecorator {
 		}
 	}
 	return &mailboxDecorator{groupNames: groupNames, titleCache: map[string]string{}}
+}
+
+// withOperatorMessages prefills the operator-authored set for one page of
+// rows, so toMessage can flag each without a per-row query. Every id on the
+// page is looked up, not just the sender-less ones: "operator mail always
+// has an empty from_conv" holds for today's four writers but nothing in db
+// enforces it, and the query is batched either way, so filtering would only
+// buy a silent mis-attribution the day that changes. A lookup failure leaves
+// the set empty rather than failing the page — the folder still lists
+// correctly, only the human-operator attribution is lost — but it is logged,
+// since a persistently failing lookup is otherwise invisible.
+func (d *mailboxDecorator) withOperatorMessages(rows []*db.AgentMessage) *mailboxDecorator {
+	ids := make([]int64, 0, len(rows))
+	for _, m := range rows {
+		ids = append(ids, m.ID)
+	}
+	set, err := db.OperatorAuthoredMessagesBatch(ids)
+	if err != nil {
+		slog.Warn("mailbox: operator-authored lookup failed; rows lose human-operator attribution",
+			"rows", len(ids), "error", err)
+		return d
+	}
+	d.operatorMsgs = set
+	return d
 }
 
 func (d *mailboxDecorator) titleOf(c string) string {
@@ -704,8 +741,9 @@ func (d *mailboxDecorator) toMessage(m *db.AgentMessage, dir string) mailboxMess
 		Subject:      m.Subject,
 		Body:         m.Body,
 		CreatedAt:    m.CreatedAt.Format(time.RFC3339),
-		Read:         !m.ReadAt.IsZero(),
-		ParentID:     m.ParentID,
+		Read:             !m.ReadAt.IsZero(),
+		ParentID:         m.ParentID,
+		OperatorAuthored: d.operatorMsgs[m.ID],
 	}
 	if !m.DeliveredAt.IsZero() {
 		mm.DeliveredAt = m.DeliveredAt.Format(time.RFC3339)
@@ -789,7 +827,7 @@ func mailboxPageForScope(scope db.MailboxFilter, forConv, q string, page, pageSi
 	if err != nil {
 		return mailboxPage{}, err
 	}
-	dec := newMailboxDecorator()
+	dec := newMailboxDecorator().withOperatorMessages(rows)
 	msgs := make([]mailboxMessage, 0, len(rows))
 	for _, m := range rows {
 		msgs = append(msgs, dec.toMessage(m, directionFor(forConv, m)))
