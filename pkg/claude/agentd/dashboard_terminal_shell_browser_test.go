@@ -11,9 +11,14 @@ package agentd_test
 // SetTermWSHookForTest swaps the spawned command for a fixed banner + `cat`
 // echo program and counts PTY starts / applied resizes / teardowns; the test
 // server adds /testhook/term/* routes so the page's own JS can kill the live
-// PTY and poll those counters with bounded waits. The xterm subtree stays
-// opaque throughout — states assert only public shell chrome (status text,
-// buttons, rendered row text) and never reach into widget internals.
+// PTY and poll those counters with bounded waits.
+//
+// Opacity: the smoke never renders into, mutates, or drives xterm's subtree —
+// the component/adapter boundary under test stays intact. It DOES read what a
+// user sees (rendered row text, keyboard focus location) because that is the
+// entire point of an end-to-end smoke; those read-only probes are centralized
+// in __smokePaneText / __smokeAssertXtermFocused so an xterm renderer change
+// touches one place.
 //
 // Environment skips vs product failures: a missing TCLAUDE_DASHSNAP env gate
 // or an unusable local Chrome (dashsnap.ErrBrowserUnavailable) SKIPS; any
@@ -56,18 +61,21 @@ const termSmokeShellCommand = `printf 'SMOKEREADY\nCOPYTOKEN42\n'; exec cat`
 const termSmokeExpectedStarts = 9
 
 // termSmokeCounters is the server-side ledger behind /testhook/term/*: PTY
-// starts, exact-once teardowns, the last applied resize, and the live child
-// processes the kill route signals. Teardown exceeding starts at ANY moment is
-// latched as overTeardown — the double-teardown symptom the smoke exists to
-// rule out.
+// starts, completed teardowns, applied resizes (count + last geometry), and
+// the child processes the kill route signals. "Exact once" here means every
+// PTY the matrix opened is torn down exactly once END TO END — the ledger
+// catches leaks (fewer teardowns than starts) and stray extra connections
+// (more starts than a state accounts for); client-side double-dispose
+// symptoms surface separately through the page-error capture, since the
+// widget's dispose path is deliberately repeat-safe and silent when correct.
 type termSmokeCounters struct {
-	mu           sync.Mutex
-	starts       int
-	teardowns    int
-	lastCols     int
-	lastRows     int
-	overTeardown bool
-	procs        []*os.Process
+	mu        sync.Mutex
+	starts    int
+	teardowns int
+	resizes   int
+	lastCols  int
+	lastRows  int
+	procs     []*os.Process
 }
 
 func (c *termSmokeCounters) onStart(proc *os.Process) {
@@ -80,6 +88,7 @@ func (c *termSmokeCounters) onStart(proc *os.Process) {
 func (c *termSmokeCounters) onResize(cols, rows int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resizes++
 	c.lastCols, c.lastRows = cols, rows
 }
 
@@ -87,15 +96,12 @@ func (c *termSmokeCounters) onTeardown() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.teardowns++
-	if c.teardowns > c.starts {
-		c.overTeardown = true
-	}
 }
 
-func (c *termSmokeCounters) snapshot() (starts, teardowns int, over bool) {
+func (c *termSmokeCounters) snapshot() (starts, teardowns int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.starts, c.teardowns, c.overTeardown
+	return c.starts, c.teardowns
 }
 
 func (c *termSmokeCounters) handleStats(w http.ResponseWriter, _ *http.Request) {
@@ -103,9 +109,8 @@ func (c *termSmokeCounters) handleStats(w http.ResponseWriter, _ *http.Request) 
 	defer c.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"starts": c.starts, "teardowns": c.teardowns,
+		"starts": c.starts, "teardowns": c.teardowns, "resizes": c.resizes,
 		"last_cols": c.lastCols, "last_rows": c.lastRows,
-		"over_teardown": c.overTeardown,
 	})
 }
 
@@ -203,15 +208,13 @@ func TestDashboardTerminalShellLiveChrome(t *testing.T) {
 	}
 
 	// Exact-once teardown, end to end: after the browser is gone every PTY the
-	// matrix opened must have been torn down exactly once — no leaks (fewer
-	// teardowns), no double teardown (latched the moment it would happen), and
-	// no stray reconnect the in-page assertions did not account for.
+	// matrix opened must have completed its teardown exactly once — no leaks
+	// (fewer teardowns than starts) and no stray extra connection the in-page
+	// assertions did not account for (starts must land EXACTLY on the matrix's
+	// expected total).
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		starts, teardowns, over := counters.snapshot()
-		if over {
-			t.Fatalf("terminal teardown ran more often than PTYs started (teardowns=%d starts=%d)", teardowns, starts)
-		}
+		starts, teardowns := counters.snapshot()
 		if starts == termSmokeExpectedStarts && teardowns == starts {
 			break
 		}
@@ -315,7 +318,6 @@ window.__smokeCloseAllPanesAndVerify = async function (expectStarts) {
   });
   await __smokePoll('exact-once teardown (' + expectStarts + ' PTYs)', async function () {
     var s = await __smokeStats();
-    if (s.over_teardown) throw new Error('server latched teardowns > starts');
     return s.starts - __s0.starts === expectStarts &&
       s.teardowns - __s0.teardowns === expectStarts;
   });
@@ -337,11 +339,12 @@ return (async function () {
   await __smokeOpenLivePane();
   await __smokeTwoFrames();
   __smokeAssertXtermFocused();
+  // The opacity boundary itself: Preact owns the host div but must never
+  // render a sibling next to the adapter-owned subtree inside it.
   var host = document.querySelector('.mux-pane.active .mux-pane-xterm-fit');
-  if (!host || host.childElementCount !== 1 || !host.firstElementChild.classList.contains('xterm')) {
-    throw new Error('opaque host must hold exactly the xterm-owned subtree');
+  if (!host || host.childElementCount !== 1) {
+    throw new Error('opaque host must hold exactly one adapter-owned child');
   }
-  host.firstElementChild.__smokeIdentity = true;
   // Leave the Terminals tab, park focus elsewhere, then re-trigger the same
   // terminal: the reveal must reuse the pane and return the keyboard to xterm.
   document.querySelector('nav [data-tab="groups"]').click();
@@ -352,8 +355,9 @@ return (async function () {
   if (document.querySelectorAll('.mux-pane').length !== 1) throw new Error('re-reveal opened a second pane');
   __smokeAssertXtermFocused();
   if (__smokePaneStatus() !== 'connected') throw new Error('re-reveal dropped the live socket: ' + __smokePaneStatus());
-  var child = document.querySelector('.mux-pane.active .mux-pane-xterm-fit').firstElementChild;
-  if (!child.__smokeIdentity) throw new Error('re-reveal remounted the opaque xterm subtree');
+  // A remounted widget would have reconnected (mount always dials the PTY),
+  // so a stable starts count proves the reveal reused the live widget rather
+  // than rebuilding it — without reaching into xterm's subtree for identity.
   var s = await __smokeStats();
   if (s.starts - __s0.starts !== 1) throw new Error('re-reveal opened a second PTY: ' + (s.starts - __s0.starts));
 })();`,
@@ -440,7 +444,6 @@ return (async function () {
   });
   await __smokePoll('killed PTY torn down exactly once', async function () {
     var s = await __smokeStats();
-    if (s.over_teardown) throw new Error('server latched teardowns > starts');
     return s.starts - __s0.starts === 1 && s.teardowns - __s0.teardowns === 1;
   });
   reconnect.click();
@@ -513,7 +516,6 @@ return (async function () {
   });
   await __smokePoll('exact-once teardown for both modal PTYs', async function () {
     var s = await __smokeStats();
-    if (s.over_teardown) throw new Error('server latched teardowns > starts');
     return s.starts - __s0.starts === 2 && s.teardowns - __s0.teardowns === 2;
   });
   if (document.querySelectorAll('.xterm').length !== 0) throw new Error('modal close leaked xterm DOM');
@@ -584,7 +586,6 @@ return (async function () {
 return (async function () {
   await __smokePoll('solo window teardown', async function () {
     var s = await __smokeStats();
-    if (s.over_teardown) throw new Error('server latched teardowns > starts');
     return s.starts - __s0.starts === 2 && s.teardowns - __s0.teardowns === 2;
   });
   __smokeNoPageErrors();
@@ -605,9 +606,13 @@ func terminalLiveResizeState() dashsnap.State {
 		JS: `
 return (async function () {
   await __smokeOpenLivePane();
-  var first = await __smokePoll('initial PTY geometry applied', async function () {
+  // __s0 was snapshotted BEFORE this state's pane opened and every earlier
+  // state verified its PTYs torn down, so requiring the resize COUNT to
+  // advance past the baseline pins this geometry to THIS connection — stale
+  // last_cols from an earlier state can never satisfy it.
+  var first = await __smokePoll('initial PTY geometry applied by this connection', async function () {
     var s = await __smokeStats();
-    return (s.last_cols > 0 && s.last_rows > 0) ? s : null;
+    return (s.resizes > __s0.resizes && s.last_cols > 0 && s.last_rows > 0) ? s : null;
   });
   var panes = document.querySelector('.mux-panes');
   panes.style.width = '520px';

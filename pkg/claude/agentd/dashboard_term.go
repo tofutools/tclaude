@@ -294,7 +294,8 @@ type termWSHook struct {
 	RewriteCommand func(shellCommand, tmuxSession string) (string, string)
 	// OnStart observes the PTY child process right after pty.Start.
 	OnStart func(proc *os.Process)
-	// OnResize observes each resize applied to the PTY.
+	// OnResize observes each resize actually APPLIED to the PTY (only after a
+	// successful pty.Setsize, so a smoke can never pass on failed resizes).
 	OnResize func(cols, rows int)
 	// OnTeardown observes the completed per-connection teardown (detach +
 	// PTY close + process-group hangup + reap) — exactly once per PTY.
@@ -462,9 +463,12 @@ func runPTYOverWS(w http.ResponseWriter, r *http.Request, shellCommand, tmuxSess
 				var msg termResizeMsg
 				if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" {
 					if msg.Cols > 0 && msg.Rows > 0 {
-						_ = pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)})
-						if hook != nil && hook.OnResize != nil {
-							hook.OnResize(msg.Cols, msg.Rows)
+						// Best-effort as before (a failed resize never kills the
+						// stream); the hook fires only for APPLIED resizes.
+						if err := pty.Setsize(ptmx, &pty.Winsize{Cols: uint16(msg.Cols), Rows: uint16(msg.Rows)}); err == nil {
+							if hook != nil && hook.OnResize != nil {
+								hook.OnResize(msg.Cols, msg.Rows)
+							}
 						}
 					}
 					continue

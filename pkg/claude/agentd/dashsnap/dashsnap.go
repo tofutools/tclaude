@@ -491,9 +491,11 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 			case "popup-eval":
 				// Evaluates JS on ANOTHER page of the same browser — one whose
 				// URL contains Selector — so a state can assert inside a
-				// window.open pop-out (e.g. the /terminals?solo=1 page).
-				popup := findPopupPage(sp, action.Selector, cfg)
-				pp := popup.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+				// window.open pop-out (e.g. the /terminals?solo=1 page). All
+				// popup work runs within what REMAINS of this state's budget.
+				budget := popupBudget(sp, cfg)
+				popup := findPopupPage(sp, action.Selector, budget)
+				pp := popup.Timeout(budget)
 				pp.MustWaitLoad()
 				pp.MustEval(`() => { ` + action.JS + ` }`)
 				pp.CancelTimeout()
@@ -501,10 +503,12 @@ func captureState(page *rod.Page, cfg Config, st State) (png []byte, err error) 
 				// Closes the pop-out page whose URL contains Selector,
 				// accepting a beforeunload confirmation if the page raises one
 				// (the terminal pop-out arms one while a pane is open). The
-				// close runs under the state timeout so a mishandled dialog
-				// fails this state instead of hanging the whole capture.
-				popup := findPopupPage(sp, action.Selector, cfg)
-				pp := popup.Timeout(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+				// close runs within the state's remaining budget so a
+				// mishandled dialog fails this state instead of hanging the
+				// whole capture.
+				budget := popupBudget(sp, cfg)
+				popup := findPopupPage(sp, action.Selector, budget)
+				pp := popup.Timeout(budget)
 				closePopupPage(pp)
 				pp.CancelTimeout()
 			default:
@@ -537,11 +541,24 @@ func actionPoint(sp *rod.Page, action BrowserAction) proto.Point {
 	return proto.NewPoint(position.Get("x").Num(), position.Get("y").Num())
 }
 
+// popupBudget returns how much of the enclosing state's deadline remains —
+// popup discovery/eval/close must fit INSIDE the per-state budget, not restart
+// a fresh one (browser-level calls do not inherit sp's timeout context).
+func popupBudget(sp *rod.Page, cfg Config) time.Duration {
+	budget := time.Duration(cfg.StateTimeoutMS) * time.Millisecond
+	if deadline, ok := sp.GetContext().Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < budget {
+			budget = remaining
+		}
+	}
+	return budget
+}
+
 // findPopupPage polls the browser's page list for a page other than sp whose
 // URL contains urlPart, panicking (into the state's rod.Try) when none appears
-// within the state timeout. Used by the popup-eval / popup-close actions.
-func findPopupPage(sp *rod.Page, urlPart string, cfg Config) *rod.Page {
-	deadline := time.Now().Add(time.Duration(cfg.StateTimeoutMS) * time.Millisecond)
+// within budget. Used by the popup-eval / popup-close actions.
+func findPopupPage(sp *rod.Page, urlPart string, budget time.Duration) *rod.Page {
+	deadline := time.Now().Add(budget)
 	for {
 		pages, err := sp.Browser().Pages()
 		if err != nil {
@@ -570,6 +587,8 @@ func findPopupPage(sp *rod.Page, urlPart string, cfg Config) *rod.Page {
 // the page raises one (rod's Page.Close otherwise waits on that dialog
 // forever). The dialog waiter runs in a goroutine because the dialog may or
 // may not appear; if it never does, the waiter ends with the page's session.
+// A FAILED dialog accept is still surfaced: Close then cannot complete, so it
+// errors out under the caller-provided timeout page instead of hanging.
 func closePopupPage(popup *rod.Page) {
 	wait, handle := popup.HandleDialog()
 	go func() {
