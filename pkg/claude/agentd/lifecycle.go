@@ -615,7 +615,13 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 			}
 		}
 		if livePanePID(tmuxSession) == panePID {
-			clearFailedExitIntent(intentRef)
+			// The final re-send was delivered and there is no settle delay
+			// before this check, so a pane honoring that /exit is often still
+			// alive here. Mirror the target engine's final-attempt treatment:
+			// retain attribution through the bounded observer window rather
+			// than erasing it moments before the exit lands; a genuinely
+			// wedged pane reaches the same cleared end state, just bounded.
+			scheduleUnknownIntentCleanupCurrent(intentRef)
 		}
 	})
 }
