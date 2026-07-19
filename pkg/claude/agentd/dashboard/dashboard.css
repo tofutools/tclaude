@@ -12658,13 +12658,14 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   font-size: 13px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, .5);
 }
-/* The connector pin toggle. Offset below the label anchor so it never covers
-   the key it controls, and below the inline editor's z-index so renaming an
-   outcome is never obscured by the button that hides it. */
+/* The connector pin toggle. Centred on a point the controller has already
+   offset clear of the label -- below a horizontal run, beside a vertical one
+   (edgePinOffset). Below the inline editor's z-index so renaming an outcome is
+   never obscured by the button that hides it. */
 .process-edge-pin {
   position: absolute;
   z-index: 29;
-  transform: translate(-50%, 12px);
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   justify-content: center;

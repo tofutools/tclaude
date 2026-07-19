@@ -26,7 +26,7 @@ import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
-import { edgePinTitle } from './process-edge-hint.js';
+import { edgePinOffset, edgePinTitle } from './process-edge-hint.js';
 import { defaultPinned, edgeLabelVisible } from './process-outcome-vocabulary.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
@@ -1584,12 +1584,15 @@ export class ProcessTemplateEditor {
     if (!laid?.label) return { open: false };
     const pinned = this.edgePinnedEffective(item.from, item.outcome);
     const position = this.stagePosition(laid.label.x, laid.label.y);
+    // The offset is in host pixels, so it scales with the viewport the same way
+    // the label it clears does.
+    const offset = edgePinOffset(item.outcome, laid.label.orientation, this.graph?.view?.k);
     return {
       open: true,
       from: item.from,
       outcome: item.outcome,
-      left: position.left,
-      top: position.top,
+      left: position.left + offset.dx,
+      top: position.top + offset.dy,
       pinned,
       title: edgePinTitle(item.outcome, pinned),
     };

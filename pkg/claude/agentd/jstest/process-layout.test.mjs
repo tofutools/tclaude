@@ -507,3 +507,44 @@ test('feedback-arc DFS handles a deep chain without recursion overflow', () => {
   }));
   assert.equal(defaultFeedbackArc(nodes, edges).size, 0);
 });
+
+test('label orientation follows the run the label actually sits on', () => {
+  // |dx| > |dy| is horizontal (pin hangs below); |dy| > |dx| is vertical (pin
+  // goes beside, clear of the node the arrow points at).
+  const wide = layoutProcessGraph({
+    nodes: [
+      { id: 'a', type: 'task', pinned: { x: 0, y: 0 } },
+      { id: 'b', type: 'task', pinned: { x: 900, y: 10 } },
+    ],
+    edges: [{ from: 'a', to: 'b', outcome: 'pass' }],
+  });
+  assert.equal(wide.edges[0].label.orientation, 'horizontal');
+
+  const tall = layoutProcessGraph({
+    nodes: [
+      { id: 'a', type: 'task', pinned: { x: 0, y: 0 } },
+      { id: 'b', type: 'task', pinned: { x: 10, y: 900 } },
+    ],
+    edges: [{ from: 'a', to: 'b', outcome: 'pass' }],
+  });
+  assert.equal(tall.edges[0].label.orientation, 'vertical');
+});
+
+test('every routed edge reports an orientation', () => {
+  // The pin placement reads this on every edge, including back edges, which take
+  // a different routing path entirely.
+  const laid = layoutProcessGraph({
+    nodes: [
+      { id: 'a', type: 'task' }, { id: 'b', type: 'decision' }, { id: 'c', type: 'end' },
+    ],
+    edges: [
+      { from: 'a', to: 'b', outcome: 'pass' },
+      { from: 'b', to: 'c', outcome: 'yes' },
+      { from: 'b', to: 'a', outcome: 'retry', back: true },
+    ],
+  });
+  for (const edge of laid.edges) {
+    assert.ok(['horizontal', 'vertical'].includes(edge.label.orientation),
+      `${edge.from} -> ${edge.to} reported ${edge.label.orientation}`);
+  }
+});

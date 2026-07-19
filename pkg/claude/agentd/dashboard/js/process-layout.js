@@ -506,6 +506,19 @@ function orthogonalRoute(from, to, nodes, lane, edgeSep) {
   return compressed;
 }
 
+// edgeOrientation classifies an edge by its OVERALL delta, not by the local run
+// its label happens to sit on. Decorations anchored to the label (the editor's
+// pin toggle) hang below a horizontal edge, where there is empty canvas, but go
+// beside a vertical one -- below is where the target node is.
+//
+// The local-segment reading is the tempting refinement and is wrong for exactly
+// that purpose: a tall edge routes down-across-down, so its label lands on the
+// short horizontal jog, and the space below that jog is the target node. Ties
+// count as horizontal, matching the older always-below behaviour.
+function edgeOrientation(from, to) {
+  return Math.abs(to.y - from.y) > Math.abs(to.x - from.x) ? 'vertical' : 'horizontal';
+}
+
 function routeLabel(points) {
   const segments = points.slice(1).map((point, index) => ({
     from: points[index], to: point,
@@ -519,6 +532,7 @@ function routeLabel(points) {
       return {
         x: segment.from.x + (segment.to.x - segment.from.x) * ratio + 7,
         y: segment.from.y + (segment.to.y - segment.from.y) * ratio - 7,
+        orientation: edgeOrientation(points[0], points[points.length - 1]),
       };
     }
     remaining -= segment.length;
@@ -556,7 +570,11 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
   if (startSnapped && endSnapped) {
     const points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end];
     const path = `M ${start.x} ${start.y} C ${start.x} ${midY}, ${end.x} ${midY}, ${end.x} ${end.y}`;
-    return { path, points, label: { x: (start.x + end.x) / 2, y: midY - 8 } };
+    return {
+      path,
+      points,
+      label: { x: (start.x + end.x) / 2, y: midY - 8, orientation: edgeOrientation(start, end) },
+    };
   }
 
   // A lane-offset midpoint keeps parallel fallback edges visually distinct.
@@ -579,7 +597,11 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
   const control2 = { x: end.x - endTangent.x * handle, y: end.y - endTangent.y * handle };
   const points = [start, control1, midpointIn, midpoint, midpointOut, control2, end];
   const path = `M ${start.x} ${start.y} C ${control1.x} ${control1.y}, ${midpointIn.x} ${midpointIn.y}, ${midpoint.x} ${midpoint.y} C ${midpointOut.x} ${midpointOut.y}, ${control2.x} ${control2.y}, ${end.x} ${end.y}`;
-  return { path, points, label: { x: midpoint.x, y: midpoint.y - 8 } };
+  return {
+    path,
+    points,
+    label: { x: midpoint.x, y: midpoint.y - 8, orientation: edgeOrientation(start, end) },
+  };
 }
 
 function routeBack(edge, from, to, lane, bounds) {
@@ -592,14 +614,14 @@ function routeBack(edge, from, to, lane, bounds) {
     return {
       path,
       points: [start, { x: outsideX, y: from.y - radius }, { x: outsideX, y: from.y + radius }, end],
-      label: { x: outsideX - 7, y: from.y },
+      label: { x: outsideX - 7, y: from.y, orientation: 'vertical' },
     };
   }
   const start = { x: from.x + from.width / 2, y: from.y };
   const end = { x: to.x + to.width / 2, y: to.y };
   const outsideX = bounds.maxX + 44 + lane;
   const path = `M ${start.x} ${start.y} C ${outsideX} ${start.y}, ${outsideX} ${end.y}, ${end.x} ${end.y}`;
-  return { path, points: [start, { x: outsideX, y: start.y }, { x: outsideX, y: end.y }, end], label: { x: outsideX - 7, y: (start.y + end.y) / 2 } };
+  return { path, points: [start, { x: outsideX, y: start.y }, { x: outsideX, y: end.y }, end], label: { x: outsideX - 7, y: (start.y + end.y) / 2, orientation: 'vertical' } };
 }
 
 function graphBounds(nodes, marginX, marginY) {
