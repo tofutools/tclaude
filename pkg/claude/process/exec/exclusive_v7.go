@@ -288,8 +288,12 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 
 	if deferred, ok := adapter.(DeferredAdapter); ok {
 		if !action.recover {
-			if _, err := deferred.Dispatch(ctx, request); err != nil {
+			dispatched, err := deferred.Dispatch(ctx, request)
+			if err != nil {
 				return nil, false, fmt.Errorf("dispatch path-v1 command %q: %w", request.Command.ID, err)
+			}
+			if err := e.scheduleExclusiveContact(ctx, runID, action.plan, dispatched, pathv1.ContactProvenanceDispatch); err != nil {
+				return nil, false, err
 			}
 			return nil, true, nil
 		}
@@ -299,11 +303,18 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 		}
 		switch status {
 		case DeferredMissing:
-			if _, err := deferred.Dispatch(ctx, request); err != nil {
+			dispatched, err := deferred.Dispatch(ctx, request)
+			if err != nil {
 				return nil, false, fmt.Errorf("redispatch path-v1 command %q: %w", request.Command.ID, err)
+			}
+			if err := e.scheduleExclusiveContact(ctx, runID, action.plan, dispatched, pathv1.ContactProvenanceDispatch); err != nil {
+				return nil, false, err
 			}
 			return nil, true, nil
 		case DeferredInFlight:
+			if err := e.serviceExclusiveContact(ctx, runID, action.plan, request, adapter); err != nil {
+				return nil, false, err
+			}
 			return nil, true, nil
 		case DeferredObserved:
 			return e.appendExclusiveObservation(ctx, runID, action.plan, observation, true)

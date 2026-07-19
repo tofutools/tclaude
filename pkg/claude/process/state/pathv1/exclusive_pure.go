@@ -1911,6 +1911,7 @@ func checkpointAggregate(view AggregateView) (AggregateCheckpoint, error) {
 			Genesis: view.Authority.Genesis, Scopes: cloneMap(view.Authority.Scopes), Reservations: cloneMap(view.Authority.Reservations),
 		},
 		Routing: Clone(*view.Routing), Commands: cloneCommands(view.Commands), SideEffects: cloneMap(view.SideEffects),
+		Contacts: cloneMap(view.Contacts),
 		AdminRecords: cloneMap(view.AdminRecords), AdminResolutions: cloneMap(view.AdminResolutions),
 	}
 	return cloneAggregateCheckpoint(value)
