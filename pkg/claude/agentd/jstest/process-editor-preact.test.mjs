@@ -1459,3 +1459,25 @@ test('regression: blur after Escape does not commit the abandoned title', async 
     'the trailing blur must not commit text Escape abandoned');
   editor.destroy();
 });
+
+test('regression: opening the title editor prefills the current name', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.blank = false;
+  editor.model.currentRef = `prefill@sha256:${'0'.repeat(64)}`;
+  editor.model.sourceHash = '1'.repeat(64);
+  await harness.act(() => editor.setTemplateMeta({ name: 'Existing name' }));
+  await harness.act(() => editor.status('ready'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-process-title-edit]'), 'click'));
+  const input = host.querySelector('[data-process-title-input]');
+  assert.equal(input.value, 'Existing name',
+    'a rename starts from the current name, not an empty box that reads as data loss');
+
+  // Reopening after a rename starts from the NEW name, so the seed tracks the
+  // model rather than whatever the field happened to hold first.
+  input.value = 'Second name';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-process-title-edit]'), 'click'));
+  assert.equal(host.querySelector('[data-process-title-input]').value, 'Second name');
+  editor.destroy();
+});

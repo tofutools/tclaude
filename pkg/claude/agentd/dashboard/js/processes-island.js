@@ -36,6 +36,8 @@ function EditableName({ template, actions, busy }) {
     if (!editing) return;
     const input = inputRef.current;
     if (!input) return;
+    // Seed explicitly; see EditableTitle.
+    input.value = template.name || '';
     input.focus();
     // Not every DOM implementation provides select() (the linkedom test DOM
     // does not); selecting the existing name is a convenience, not a contract.

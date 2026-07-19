@@ -75,6 +75,11 @@ function EditableTitle({ controller, view }) {
     if (!editing) return;
     const input = inputRef.current;
     if (!input) return;
+    // Seed the field explicitly rather than trusting defaultValue: StableField
+    // above does the same, because the attribute does not reliably populate a
+    // freshly mounted input here. Opening a rename must start from the current
+    // name, never from a blank box that looks like the name was lost.
+    input.value = model.name || '';
     input.focus();
     // See the list's EditableName: select() is optional in some DOMs.
     input.select?.();

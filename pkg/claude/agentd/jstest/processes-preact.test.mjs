@@ -1282,3 +1282,24 @@ test('regression: an inline list rename never flashes the rename dialog open', a
   assert.equal(mounted.container.querySelector('.process-rename-dialog'), null);
   await mounted.unmount();
 });
+
+test('regression: opening the list name editor prefills the current name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), {
+    templates: [{ id: 'prefill', name: 'Existing name' }],
+  });
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {},
+    closeCanvas() {}, describeActor: () => null, openInstantiation() {}, openRename() {}, renameTemplate() {},
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-edit="prefill"]'), 'click'));
+  assert.equal(mounted.container.querySelector('[data-process-name-input="prefill"]').value, 'Existing name',
+    'a rename starts from the current name, not an empty box');
+  await mounted.unmount();
+});
