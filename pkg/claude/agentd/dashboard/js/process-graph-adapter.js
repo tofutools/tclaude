@@ -150,6 +150,31 @@ export class ProcessGraphAdapter {
     };
   }
 
+  // edgeLabelHostBox returns the RENDERED bounds of an edge's label in the same
+  // host space graphPointToHost produces, or null when the label is not drawn.
+  //
+  // Decorations anchored to a label must use its real box, not the layout's
+  // anchor point: the anchor is a point on the edge geometry, while the text
+  // grows around it differently per edge (text-anchor is `end` on back edges and
+  // `middle` elsewhere) and scales with the viewport. Deriving a clearance from
+  // the anchor alone therefore collides with the very label it is avoiding.
+  edgeLabelHostBox(edgeID, host = this.host) {
+    if (this.disposed || !host) return null;
+    const group = Array.from(this.widget.edgeLayer?.children || [])
+      .find((element) => element.dataset.edgeId === String(edgeID));
+    const label = group?.querySelector('.process-edge-label');
+    if (!label) return null;
+    const rect = label.getBoundingClientRect();
+    if (!rect.width && !rect.height) return null;
+    const hostRect = host.getBoundingClientRect();
+    return {
+      left: rect.left - hostRect.left,
+      top: rect.top - hostRect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
   clientPointToHost({ clientX, clientY }, host = this.host) {
     if (this.disposed || !host) return { left: 0, top: 0 };
     const rect = host.getBoundingClientRect();
