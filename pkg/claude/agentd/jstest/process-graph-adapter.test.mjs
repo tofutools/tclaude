@@ -763,3 +763,35 @@ test('lost capture and window blur cancel active adapter gestures exactly once',
   harness.window.dispatchEvent(new harness.window.Event('blur'));
   assert.equal(cancelled.length, 2);
 });
+
+test('a drag whose terminal event was lost cannot poison the next drag commit', async (t) => {
+  const ends = [];
+  const cancels = [];
+  const { harness, host, adapter } = await mountedAdapter(t, {
+    nodeDragEnd: (payload) => ends.push(payload),
+    nodeDragCancel: (payload) => cancels.push(payload),
+  });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => {};
+  const laidStart = () => adapter.layoutSnapshot().nodes.find((node) => node.id === 'start');
+  const before = laidStart();
+
+  // Gesture A moves 'start' but its pointerup never reaches the SVG.
+  const start = host.querySelector('.process-node[data-node-id="start"]');
+  harness.fireEvent(start, 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: before.x, clientY: before.y });
+  harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: before.x + 30, clientY: before.y + 20 });
+
+  // Gesture B reuses the mouse's pointer id: the dead gesture must cancel and
+  // the new one must commit from the CURRENT layout, not gesture A's frame.
+  harness.fireEvent(start, 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: before.x + 30, clientY: before.y + 20 });
+  harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: before.x + 70, clientY: before.y + 60 });
+  harness.fireEvent(svg, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: before.x + 70, clientY: before.y + 60 });
+
+  assert.equal(cancels.length, 1, 'the dead gesture ends through nodeDragCancel');
+  assert.equal(ends.length, 1, 'only the live gesture commits');
+  assert.deepEqual(ends[0].starts, [{ id: 'start', x: before.x, y: before.y }],
+    'the commit starts from the layout at the live gesture, not a stale snapshot');
+  assert.deepEqual(ends[0].delta, { x: 40, y: 40 },
+    'the delta covers only the live gesture');
+});

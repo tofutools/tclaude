@@ -1030,7 +1030,23 @@ export class ProcessGraph {
 
   onPointerDown(event) {
     this.observeCanvasPointer?.(event);
-    if (this.pointer) return;
+    if (this.pointer) {
+      // A pointerdown repeating the armed gesture's own pointer id AND button
+      // means that button was released without its pointerup/pointercancel
+      // ever reaching this SVG (one button cannot press twice in a row):
+      // cancel the dead gesture instead of letting it swallow this one and
+      // replay a stale drag. Everything else leaves the owned gesture alone —
+      // a mouse keeps one pointer id across ALL its buttons, so a secondary
+      // button pressed mid-drag arrives as a same-id pointerdown too, and a
+      // multi-touch second finger arrives under a different id.
+      if (this.pointer.id !== event.pointerId || this.pointer.button !== event.button) return;
+      this.onPointerCancel({
+        pointerId: this.pointer.id,
+        clientX: this.pointer.lastClientX,
+        clientY: this.pointer.lastClientY,
+        type: 'stale-gesture',
+      });
+    }
     const middle = event.button === 1;
     if (event.button !== 0 && !middle) return;
     // Resolve the target before focus: focusing the graph blurs an inspector
@@ -1100,11 +1116,18 @@ export class ProcessGraph {
       .map((item) => item.id);
     const nodeIDs = mode === 'node' && selectionContains(this.selected, { type: 'node', id: nodeID })
       ? selectedNodes : nodeID ? [nodeID] : [];
+    // The gesture owns its own start-position snapshot: a node-drag commit
+    // may only ever see coordinates captured inside this pointer's lifetime.
+    const starts = mode !== 'node' ? [] : nodeIDs
+      .map((id) => this.layout.nodes.find((node) => node.id === id))
+      .filter(Boolean)
+      .map(({ id, x, y }) => ({ id, x, y }));
     this.pointer = {
-      id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
+      id: event.pointerId, button: event.button, mode,
+      startClientX: event.clientX, startClientY: event.clientY,
       lastClientX: event.clientX, lastClientY: event.clientY,
       pointerType: event.pointerType || 'mouse',
-      startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
+      startPoint: point, startView: { ...this.view }, nodeID, nodeIDs, starts,
       edgeID: target.edge?.dataset.edgeId, port: target.port?.dataset.port,
       selectionStarted: false,
     };
@@ -1212,6 +1235,7 @@ export class ProcessGraph {
       this.restoreTransientEdges();
       hook(this.options, 'onNodeDragEnd')({
         nodeId: pointer.nodeID, nodeIds: [...(pointer.nodeIDs || [pointer.nodeID])],
+        starts: (pointer.starts || []).map((start) => ({ ...start })),
         delta: {
           x: point.x - pointer.startPoint.x,
           y: point.y - pointer.startPoint.y,
@@ -1253,7 +1277,10 @@ export class ProcessGraph {
     }
     // The synthetic click follows pointerup in the same task. Clear on the next
     // task so a completed drag never also selects/activates the dragged node.
+    // If another gesture armed before this drains, that gesture owns these
+    // flags now — stomping dragMoved mid-drag would void its commit.
     setTimeout(() => {
+      if (this.pointer) return;
       this.dragMoved = false;
       this.suppressClick = false;
       this.pendingClickTarget = null;
@@ -1291,7 +1318,11 @@ export class ProcessGraph {
     hook(this.options, 'onInteractionEnd')({ mode: pointer.mode, pointerId: event.pointerId, cancelled: true, event });
     this.suppressClick = this.dragMoved;
     this.pendingClickTarget = null;
+    // The stale-gesture heal cancels from INSIDE the pointerdown arming the
+    // replacement gesture, so this timer can fire mid-drag: never let it
+    // stomp a live gesture's flags (a false dragMoved voids the commit).
     setTimeout(() => {
+      if (this.pointer) return;
       this.dragMoved = false;
       this.suppressClick = false;
     }, 0);

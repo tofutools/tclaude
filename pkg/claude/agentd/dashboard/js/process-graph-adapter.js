@@ -43,29 +43,11 @@ export class ProcessGraphAdapter {
       onCanvasClick: emit('canvasClick'),
       onMarqueeSelect: emit('marqueeSelection'),
       onNodeDragStart: emit('nodeDragStart'),
-      onNodeDrag: (payload) => {
-        if (!this.pendingNodeDrag) {
-          const ids = payload.nodeIds || [payload.nodeId];
-          this.pendingNodeDrag = {
-            starts: ids.map((id) => this.widget.layout.nodes.find((node) => node.id === id))
-              .filter(Boolean).map(({ id, x, y }) => ({ id, x, y })),
-          };
-        }
-        this.pendingNodeDrag.latest = payload;
-      },
-      onNodeDragEnd: (payload) => {
-        const pending = this.pendingNodeDrag;
-        this.pendingNodeDrag = null;
-        emit('nodeDragEnd')({
-          ...payload,
-          starts: pending?.starts || [],
-          delta: pending?.latest?.delta || payload.delta,
-        });
-      },
-      onNodeDragCancel: (payload) => {
-        this.pendingNodeDrag = null;
-        emit('nodeDragCancel')(payload);
-      },
+      // The widget's pointer state owns the whole gesture, including its
+      // `starts` snapshot: nodeDragEnd payloads arrive commit-ready, and this
+      // boundary must never hold drag state across callbacks.
+      onNodeDragEnd: emit('nodeDragEnd'),
+      onNodeDragCancel: emit('nodeDragCancel'),
       onPortDragStart: (payload) => {
         if (payload.keyboard) this.interactionGeneration += 1;
         const laid = this.widget.layout.nodes.find((node) => node.id === payload.nodeId);
