@@ -113,7 +113,7 @@ func (claudeAskTimeout) ValidateMode(mode string) (string, error) {
 // value. Keyed by value; inherit carries no ⚠ (it's the safe default).
 var claudeAskTimeoutModeHelp = map[string]string{
 	ClaudeAskTimeoutInherit: "Use settings.json askUserQuestionTimeout as-is; if unset, Claude Code waits for a human.",
-	ClaudeAskTimeoutNever:   "The AskUserQuestion dialog waits indefinitely for a human answer — never auto-continues — even if your settings.json opts in. Use for an agent whose questions must always reach you.",
+	ClaudeAskTimeoutNever:   "The AskUserQuestion dialog waits indefinitely for a human answer, even if your settings.json opts in. Use for an agent whose questions must always reach you. ⚠ Never auto-continues, so a detached agent stalls on a question until you answer it.",
 	ClaudeAskTimeout60s:     "Auto-continue the dialog with its default answer after 60s idle. Keeps an unattended agent moving instead of stalling on a question.",
 	ClaudeAskTimeout5m:      "Auto-continue the dialog with its default answer after 5m idle.",
 	ClaudeAskTimeout10m:     "Auto-continue the dialog with its default answer after 10m idle.",

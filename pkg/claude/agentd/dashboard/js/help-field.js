@@ -8,20 +8,17 @@ const html = htm.bind(h);
    exception is a caveat: help that carries a "⚠" is warning the operator that
    the selected mode can deadlock a detached agent or drop guardrails, and
    burying that behind a click would be a safety regression. helpCaveat pulls
-   just the warning sentence out so it can stay visible while the rest of the
-   copy collapses.
+   the warning out so it can stay visible while the rest of the copy collapses.
 
-   The caveat ends at the first sentence break — a terminator followed by
-   whitespace and a capital letter or an opening paren. Terminators inside a
-   clause (e.g. "…skip-permissions): auto-approve everything.") do not split,
-   and help with no trailing sentence yields the whole remainder. */
+   Everything from the ⚠ to the end of the string is the caveat. The harness
+   help puts the neutral description first and the warning last precisely so
+   this split works; truncating at the first sentence break instead would cut
+   "…auto-approve everything." off from "No deadlocks but no guardrails", which
+   is the half that matters. */
 export function helpCaveat(help) {
   const text = String(help || '');
   const start = text.indexOf('⚠');
-  if (start < 0) return '';
-  const rest = text.slice(start);
-  const brk = /[.!?](?=\s+[A-Z(])/.exec(rest);
-  return (brk ? rest.slice(0, brk.index + 1) : rest).trim();
+  return start < 0 ? '' : text.slice(start).trim();
 }
 
 /* A labelled <select> whose help copy is reachable three ways: the native title
@@ -30,28 +27,42 @@ export function helpCaveat(help) {
 
    `open`/`setOpen` are lifted so only one field's disclosure shows at a time;
    the caller keys them by field id. onChange receives the raw event, matching
-   the plain <select> rows these replaced. */
+   the plain <select> rows these replaced.
+
+   The caveat renders as a sibling of .spawn-field-with-help rather than inside
+   it: that element is the containing block for the absolutely-positioned
+   description, so growing it would push the popover up off its own control.
+
+   `busy` disables the select but never the [?] — a spawn in flight is no reason
+   to stop the operator reading what they picked. */
 export function HelpField({
   id, descriptionID = `${id}-hint`, label, title, value, options,
   onChange, help, open, setOpen, disabled = false, busy = false,
 }) {
   const caveat = helpCaveat(help);
+  /* A browser focuses the button on mousedown, which would open the disclosure
+     before onClick ran and make the click read as a toggle-closed. Suppressing
+     the default mousedown keeps click a plain toggle while Tab still opens it
+     via onFocus. */
+  const swallowFocus = (event) => event.preventDefault();
   return html`<div class="cron-create-row" id=${`${id}-row`} title=${title} hidden=${disabled}>
     <label class="cron-create-label" for=${id}>${label}</label>
-    <div class="cron-create-target spawn-field-with-help">
-      <select id=${id} value=${value} title=${help} aria-describedby=${descriptionID} disabled=${busy}
-        onChange=${onChange}>
-        ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
-      </select>
-      <button type="button" class="spawn-field-help-trigger" aria-label=${`Show ${label} help`}
-        aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${`Show ${label} help`}
-        disabled=${busy}
-        onClick=${() => setOpen(open ? '' : id)}
-        onFocus=${() => setOpen(id)}>?</button>
-      <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
-        aria-live="polite" onFocus=${() => setOpen(id)}>${help}</span>
+    <div class="cron-create-target spawn-field-help-column">
+      <div class=${`spawn-field-with-help${help ? '' : ' spawn-field-no-help'}`}>
+        <select id=${id} value=${value} title=${help} aria-describedby=${descriptionID} disabled=${busy}
+          onChange=${onChange}>
+          ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
+        </select>
+        ${help && html`<button type="button" class="spawn-field-help-trigger" aria-label=${`Show ${label} help`}
+          aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${`Show ${label} help`}
+          onMouseDown=${swallowFocus}
+          onClick=${() => setOpen(open ? '' : id)}
+          onFocus=${() => setOpen(id)}>?</button>`}
+        <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
+          aria-live="polite" onFocus=${() => setOpen(id)}>${help}</span>
+      </div>
       ${caveat && html`<div class="spawn-field-hint warn spawn-field-caveat" id=${`${id}-caveat`}
-        aria-live="polite">${caveat}</div>`}
+        aria-hidden="true">${caveat}</div>`}
     </div>
   </div>`;
 }

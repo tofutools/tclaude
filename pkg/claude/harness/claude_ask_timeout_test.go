@@ -62,6 +62,16 @@ func TestClaudeAskTimeout_Catalog(t *testing.T) {
 	if c.ModeHelp("nonsense") != "" {
 		t.Fatal("ModeHelp of an unknown value must be empty")
 	}
+	// The spawn UI collapses mode help behind a [?] but keeps the text from the
+	// ⚠ onward visible. "never" is the one value that can stall a detached agent
+	// indefinitely, so its warning must survive the collapse; inherit is the
+	// safe default and must stay unmarked.
+	if !strings.Contains(c.ModeHelp(ClaudeAskTimeoutNever), "⚠") {
+		t.Fatalf("never can stall a detached agent and must flag a ⚠ caveat: %q", c.ModeHelp(ClaudeAskTimeoutNever))
+	}
+	if strings.Contains(c.ModeHelp(ClaudeAskTimeoutInherit), "⚠") {
+		t.Fatalf("inherit (the default) must carry no ⚠ caveat: %q", c.ModeHelp(ClaudeAskTimeoutInherit))
+	}
 }
 
 // TestClaudeAskTimeout_HarnessResolution pins the harness-level resolver: Claude

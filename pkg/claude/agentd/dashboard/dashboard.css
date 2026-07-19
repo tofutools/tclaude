@@ -3921,13 +3921,19 @@ body.wizard .group-pending-title-wizard { display: inline; }
 /* Sandbox dropdown help uses the same native title tooltip as the other
    spawn-dialog selects. A dedicated help button reveals the long copy for
    keyboard/touch users without making select hover or focus open an overlay. */
-.cron-create-target.spawn-field-with-help {
+/* The select and its [?] sit in their own grid, and the ⚠ caveat stacks below
+   as a sibling. The popover is anchored to .spawn-field-with-help, so keeping
+   the caveat outside it means a long caveat cannot shove the popover up off
+   the control that opened it. */
+.cron-create-target.spawn-field-help-column {
+  display: flex; flex-direction: column; gap: 4px;
+}
+.spawn-field-with-help {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 24px;
   align-items: stretch; gap: 6px;
 }
-/* The ⚠ caveat is the only copy that stays visible, so it spans under both the
-   select and the [?] button instead of landing in one grid column. */
-.spawn-field-caveat { grid-column: 1 / -1; }
+/* A mode with no help entry renders no [?], so it must not reserve the column. */
+.spawn-field-with-help.spawn-field-no-help { grid-template-columns: minmax(0, 1fr); }
 .spawn-field-help-trigger {
   padding: 0; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; background: #161b22; cursor: help; font-weight: 600;
@@ -6894,6 +6900,9 @@ body.wizard #agent-spawn-modal .spawn-owner-toggle,
 body.wizard #agent-spawn-modal .spawn-perms-indicator,
 body.wizard #agent-spawn-modal .spawn-field-hint,
 body.wizard #agent-spawn-modal .spawn-attachments-hint { color: #b39ddb; }
+/* The wizard hint colour above outranks .spawn-field-hint.warn on specificity,
+   which would repaint a ⚠ caveat as ordinary help. Warnings keep warning. */
+body.wizard #agent-spawn-modal .spawn-field-hint.warn { color: #f0883e; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
 body.wizard #agent-spawn-modal .cron-create-row input[type=url],
 body.wizard #agent-spawn-modal .cron-create-row select,
