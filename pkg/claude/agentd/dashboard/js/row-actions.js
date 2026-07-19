@@ -6,6 +6,8 @@
 
 import { handleRowAction } from './row-action-handler.js';
 
+const BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window']);
+
 export function liveActionSource(event, selector = '[data-act]') {
   const source = event?.target?.closest?.(selector);
   if (!source || source.ownerDocument !== document || !source.isConnected) return null;
@@ -33,6 +35,21 @@ export function bindRowActions() {
   };
   document.addEventListener('click', onClick);
 
+  // macOS turns Control-primary-click into a context-menu gesture instead of
+  // the click above. Route that native event only for the two Groups terminal
+  // actions that advertise background opening; ordinary context menus and
+  // every unrelated data-act remain untouched.
+  const onContextMenu = (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    const source = liveActionSource(event);
+    if (!source) return;
+    const action = actionDescriptor(source, event);
+    if (!BACKGROUND_CONTEXT_ACTIONS.has(action.data.act)) return;
+    event.preventDefault();
+    void handleRowAction(action);
+  };
+  document.addEventListener('contextmenu', onContextMenu);
+
   // Focusable span chips need explicit Enter/Space activation. Native buttons
   // already synthesize clicks, and all clicks share the live-source guard above.
   const onChipKeyDown = (event) => {
@@ -47,6 +64,7 @@ export function bindRowActions() {
 
   const cleanup = () => {
     document.removeEventListener('click', onClick);
+    document.removeEventListener('contextmenu', onContextMenu);
     document.removeEventListener('keydown', onChipKeyDown);
     if (rowActionsCleanup === cleanup) rowActionsCleanup = null;
   };

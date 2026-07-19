@@ -93,15 +93,31 @@ test('row root delegation installs once, cleans every listener, and survives sta
   const first = bindRowActions();
   assert.equal(bindRowActions(), first);
   assert.equal(added.filter(([type]) => type === 'click').length, 1);
+  assert.equal(added.filter(([type]) => type === 'contextmenu').length, 1);
   assert.equal(added.filter(([type]) => type === 'keydown').length, 1);
   first();
-  for (const [type, listener] of added.slice(0, 2)) {
+  for (const [type, listener] of added.slice(0, 3)) {
     assert.ok(removed.some(([removedType, removedListener]) =>
       removedType === type && removedListener === listener));
   }
 
   const second = bindRowActions();
   first();
+  const terminalAction = harness.document.body.appendChild(harness.document.createElement('button'));
+  terminalAction.dataset.act = 'web-open-window';
+  terminalAction.dataset.agent = 'agt_background';
+  terminalAction.dataset.label = 'background';
+  const macControlClick = harness.fireEvent(terminalAction, 'contextmenu', { ctrlKey: true });
+  assert.equal(macControlClick.defaultPrevented, true,
+    'macOS Control-click context gestures dispatch the terminal action instead of opening a menu');
+  const ordinaryContextMenu = harness.fireEvent(terminalAction, 'contextmenu');
+  assert.equal(ordinaryContextMenu.defaultPrevented, false,
+    'ordinary terminal context menus remain available');
+  const unrelated = harness.document.body.appendChild(harness.document.createElement('button'));
+  unrelated.dataset.act = 'documented-cross-feature-route';
+  const unrelatedModifiedMenu = harness.fireEvent(unrelated, 'contextmenu', { ctrlKey: true });
+  assert.equal(unrelatedModifiedMenu.defaultPrevented, false,
+    'modified context gestures do not activate unrelated row actions');
   const chip = harness.document.body.appendChild(harness.document.createElement('span'));
   chip.dataset.act = 'documented-cross-feature-route';
   chip.setAttribute('role', 'button');
