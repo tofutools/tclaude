@@ -207,8 +207,8 @@ function Inspector({ controller, view }) {
   const sel = view.selection;
   if (sel?.type === 'template') return html`<div ref=${root} class="process-editor-inspector" inert=${pending}>
     <span class="process-inspector-kind">template</span>
-    <input class="process-inspector-input process-template-id-locked" type="text" value=${view.model.id} disabled title="Template ids are immutable after creation" aria-label="Template id (immutable)" />
     <${StableField} blocked=${pending} class="process-inspector-input" type="text" spellcheck="false" placeholder="display name" aria-label="Template display name" value=${view.model.name} onCommit=${(name) => controller.setTemplateMeta({ name })} />
+    <span class="process-inspector-id process-template-id-locked" title="Template id: the permanent store key that pinned versions and running instances resolve through">${view.model.id}</span>
     <${StableField} blocked=${pending} class="process-inspector-input process-template-description" type="text" spellcheck="true" placeholder="description" aria-label="Template description" value=${view.model.description} onCommit=${(description) => controller.setTemplateMeta({ description })} />
     <${StableField} blocked=${pending} multiline class="process-inspector-input process-template-doc process-scroll-surface" rows="2" spellcheck="true" placeholder="documentation" aria-label="Template documentation" value=${view.model.doc} onCommit=${(doc) => controller.setTemplateMeta({ doc })} />
   </div>`;

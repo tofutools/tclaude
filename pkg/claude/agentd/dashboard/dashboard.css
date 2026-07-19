@@ -12429,7 +12429,11 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 .process-inspector-input:focus,
 .process-inspector-select:focus { border-color: #58a6ff; outline: none; }
 .process-editor-id-input:disabled { color: #8b949e; }
-.process-template-id-locked { color: #8b949e; max-width: 180px; }
+/* The id is orientation only, not an editable field. Specificity keeps it muted
+   over the later generic .process-inspector-id colour. */
+.process-editor-inspector .process-template-id-locked {
+  color: #8b949e; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .process-template-description { min-width: min(300px, 30vw); }
 .process-template-doc { min-width: min(260px, 26vw); resize: vertical; }
 .process-editor-body { display: flex; flex: 1; min-height: 0; align-items: stretch; }
@@ -12739,6 +12743,27 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   background: #161b22;
   border: 1px solid #30363d;
 }
+.process-rename-dialog {
+  width: min(460px, 94vw);
+  color: #c9d1d9;
+  background: #161b22;
+  border: 1px solid #30363d;
+}
+.process-rename-dialog > label { display: flex; flex-direction: column; gap: 5px; margin: 14px 0 8px; font-size: 12px; font-weight: 650; color: #e6edf3; }
+.process-rename-dialog input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  background: #0d1117;
+}
+.process-rename-dialog input[type="text"]:focus { border-color: #58a6ff; outline: none; }
+.process-rename-dialog code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
+/* An unnamed template falls back to its id; mark it so the row reads as
+   "not named yet" rather than as a deliberate name. */
+.process-unnamed { color: #8b949e; font-style: italic; }
 .process-instantiate-fields { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
 .process-instantiate-field { padding: 9px 10px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
 .process-instantiate-field > label:not(.process-instantiate-boolean) { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 650; color: #e6edf3; }
@@ -12869,7 +12894,7 @@ body.wizard .process-node-chooser-icon { color: #d4af37; }
 body.wizard .process-node-chooser-hint,
 body.wizard .process-node-chooser-empty { color: #a99bc0; }
 body.wizard .process-node-chooser-cancel { color: #f3e6c0; background: #2c2042; border-color: #6d5695; }
-body.wizard .process-template-id-locked { color: #a99bc0; }
+body.wizard .process-editor-inspector .process-template-id-locked { color: #a99bc0; }
 body.wizard .process-editor-modal .modal {
   background: #211832; border-color: #6d5695; color: #f3e6c0;
 }
@@ -12902,17 +12927,23 @@ body.wizard .process-editor-modal .modal-buttons button.primary {
 }
 body.wizard .process-param-dialog,
 body.wizard .process-instantiate-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-rename-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-unnamed { color: #a99bc0; }
 body.wizard .process-param-row,
 body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }
 body.wizard .process-param-row input[type="text"],
+body.wizard .process-rename-dialog input[type="text"],
 body.wizard .process-instantiate-field input[type="text"],
 body.wizard .process-instantiate-field input[type="number"],
 body.wizard .process-instantiate-field select { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-param-row input:focus,
+body.wizard .process-rename-dialog input:focus,
 body.wizard .process-instantiate-field input:focus,
 body.wizard .process-instantiate-field select:focus { border-color: #d4af37; outline: none; }
 body.wizard .process-param-check,
+body.wizard .process-rename-dialog > label,
 body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean) { color: #f3e6c0; }
+body.wizard .process-rename-dialog code { color: #d4af37; }
 
 /* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======
    One component, two modes: the editor's modal and the viewer's read-only

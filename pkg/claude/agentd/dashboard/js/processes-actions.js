@@ -329,6 +329,69 @@ export function createProcessesActions({
       return false;
     }
   }
+  // Renaming edits only the display name. The immutable id stays the store key,
+  // so every pinned ref and running instance is unaffected -- but the name is
+  // part of the semantic hash, so this still commits a normal CAS version.
+  // sourceHash is captured when the dialog opens, not when it is submitted, so
+  // the CAS check covers the whole time the operator sat in the dialog. Saving
+  // against the head read at submit time would silently clobber a concurrent
+  // edit by an agent or another tab.
+  async function openRename({ id, name = '', sourceHash = '' } = {}) {
+    if (!id) return false;
+    const key = `${id}:${Date.now()}`;
+    state.setRename({ key, id, name: String(name || ''), sourceHash: String(sourceHash || ''), error: '' });
+    return true;
+  }
+  function closeRename() {
+    if (state.mutation.value.busy) return false;
+    state.setRename(null);
+    return true;
+  }
+  async function submitRename(name) {
+    const spec = state.rename.value;
+    if (!spec?.id) return false;
+    const next = String(name ?? '').trim();
+    if (next === String(spec.name || '').trim()) { state.setRename(null); return true; }
+    if (!state.beginMutation()) { state.setNotice('Another process action is still running; retry the rename once it settles.'); return false; }
+    const path = `/v1/process/templates/${encodeURIComponent(spec.id)}`;
+    try {
+      // Round-trip the head's full edit view so layout and edges survive the
+      // rename untouched; only the display name differs from what we read. The
+      // save is expressed against the hash observed when the dialog opened, so
+      // a head that moved in the meantime is rejected rather than overwritten.
+      const head = await processJSON(path, fetchImpl);
+      if (!head.template) throw new Error('template head returned no editable model');
+      const response = await fetchImpl(path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        // Only these four keys are decodable: the save handler rejects unknown
+        // fields, so read-only view fields must not be forwarded.
+        body: JSON.stringify({
+          template: { ...head.template, name: next },
+          edges: head.edges, layout: head.layout, sourceHash: spec.sourceHash || head.sourceHash,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 409 || body.code === 'process_template_conflict') {
+        throw new Error('this template changed since the rename dialog opened; reopen it and try again');
+      }
+      if (body.code === 'process_template_invalid') {
+        throw new Error('this template no longer passes validation, so it cannot be saved under a new name until the graph is fixed in the editor');
+      }
+      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+      if (state.rename.value?.key !== spec.key) return true;
+      state.setRename(null);
+      state.setNotice(next ? `Renamed ${spec.id} to ${next}.` : `Cleared the display name for ${spec.id}.`);
+      void load('templates', { quiet: true });
+      return true;
+    } catch (error) {
+      if (state.rename.value?.key === spec.key) state.setRename({ ...spec, error: error.message });
+      state.setNotice(`Rename failed: ${error.message}`);
+      notify(`process template rename failed: ${error.message}`, true);
+      return false;
+    } finally {
+      state.endMutation();
+    }
+  }
   function closeInstantiation() {
     if (state.mutation.value.busy) return false;
     state.setInstantiation(null);
@@ -413,6 +476,7 @@ export function createProcessesActions({
   return Object.freeze({
     load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
+    openRename, closeRename, submitRename,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }
