@@ -197,7 +197,7 @@ export function createProcessesActions({
     } catch (error) {
       const message = error?.message || String(error);
       state.setNotice(`Process scribe unavailable: ${message}`);
-      notify(`Could not open a process scribe: ${message}. Check the agent daemon and Scribe defaults, then retry.`, true);
+      notify(`Could not open a process scribe: ${message}. Check the agent daemon and Ask & scribe defaults, then retry.`, true);
       return null;
     }
   }

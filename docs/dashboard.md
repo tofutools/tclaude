@@ -664,7 +664,8 @@ build of tclaude recognises. Edits are staged in the form until you press
 settings apply on next use; a few resolved at `agentd` startup (spawn
 rate-limit, clone cooldown) take effect only after an agentd restart.
 
-The **Usage readout** section controls the top-bar Claude subscription bars.
+The **Usage, costs & rate limits** section controls the top-bar Claude
+subscription bars.
 By default agentd does **not** periodically call Anthropic's usage API; it uses
 Claude Code's statusline callback when sessions run and otherwise shows the
 last cached reading for `usage.idle_timeout` (default `72h`). Enable

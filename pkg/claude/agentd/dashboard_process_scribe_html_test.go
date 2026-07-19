@@ -61,7 +61,7 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		"async function stopScribe(scribe)",
 		"async function retireScribe(scribe)",
 		"delete_worktree: '0'",
-		"Check the agent daemon and Scribe defaults, then retry.",
+		"Check the agent daemon and Ask & scribe defaults, then retry.",
 		"result.reused ? 'Reopened' : 'Summoned'",
 		"openTermModal({ wsPath: result.focus_ws",
 	)

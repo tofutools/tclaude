@@ -78,7 +78,7 @@ tclaude ask --model opus --effort high "analyze this concurrency design"
 ```
 
 To make fresh asks use Codex, select a saved **spawn profile** in the dashboard's
-**Config → Ask defaults** section. Only the profile's harness, model, and effort
+**Config → Ask & scribe defaults** section. Only the profile's harness, model, and effort
 are used; its agent name, role, sandbox, and other spawn fields are ignored.
 The setting is stored in `~/.tclaude/data/config.json` as the profile name:
 
