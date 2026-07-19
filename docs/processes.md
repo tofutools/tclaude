@@ -535,13 +535,22 @@ worklist semantics would create runs the engine could not explain or settle.
 
 Production rejects incoherent capability combinations and parallel templates
 outside the released executor subset before creating a run. The supported
-subset includes direct task/decision performers (agent or human), exact waits,
-retries, start/end routing, nested forks that the reducer can poison safely,
-complete innermost-scope reductions, terminal cause propagation, all joins, and
-any joins with winner/detachment semantics. Compound nodes, program performers,
-contact schedules on schema-7 performer nodes, and unsafe nested-fork shapes
-remain outside that parallel subset and are rejected rather than silently
-falling back.
+subset includes direct task/decision performers (agent or human) with their
+contact schedules (explicit or engine defaults), exact waits, retries,
+start/end routing, nested forks that the reducer can poison safely, complete
+innermost-scope reductions, terminal cause propagation, all joins, and any
+joins with winner/detachment semantics. Compound nodes, program performers,
+and unsafe nested-fork shapes remain outside that parallel subset and are
+rejected rather than silently falling back.
+
+Schema-7 contact state (reminders and escalation for deferred agent/human
+performers) lives in the checkpoint's `contacts` registry beside its
+side-effect marker. Nil contact configuration means engine defaults, exactly
+as on legacy v6, and used budgets survive restart, replay, and recovery.
+Rollback limitation: binaries older than contact parity cannot read a
+contact-bearing schema-7 checkpoint — the strict decoder refuses it
+(fail-closed) rather than silently dropping the schedule; contact-less
+checkpoints remain byte-identical and readable either way.
 
 The allowed dependency direction is from process hosts and API/CLI entry
 points through the released engine, executor, store/migration, and viewer
