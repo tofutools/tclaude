@@ -1482,7 +1482,18 @@ func acquirePaneInjectLock(mu *sync.Mutex) error {
 // injectors targeting the same pane single-file instead of interleaving
 // their send-keys (JOH-310 — see paneInjectLock).
 func injectTextAndSubmit(tmuxTarget, text string) error {
-	mu := paneInjectLock(tmuxTarget)
+	return injectTextAndSubmitSerializedBy(tmuxTarget, tmuxTarget, text)
+}
+
+// injectTextAndSubmitSerializedBy sends to tmuxTarget while serializing
+// under lockTarget's identity. Lifecycle types into the exact pane ID
+// (%N), but the same pane's message/nudge streams lock its session-shaped
+// target — the two spellings otherwise key different in-process mutexes
+// AND different cross-process advisory lock files, so the input sequences
+// would not single-file. Callers that know the pane's session pass it as
+// lockTarget; plain injectTextAndSubmit keeps target == lock identity.
+func injectTextAndSubmitSerializedBy(lockTarget, tmuxTarget, text string) error {
+	mu := paneInjectLock(injectLockKey(lockTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		return err
 	}
@@ -1492,7 +1503,20 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 		SettleDelay:    injectSettleDelay,
 		SettleDelaySet: true,
 		LockTimeout:    paneInjectLockTimeout,
+		LockID:         lockTarget,
 	})
+}
+
+// injectLockKey canonicalizes a lock identity the same way paneinput keys
+// its advisory file (pane IDs pass through; session-shaped targets get the
+// exact pin), so "sess:0.0" and "=sess:0.0" spellings share one in-process
+// mutex.
+func injectLockKey(target string) string {
+	trimmed := strings.TrimPrefix(target, "=")
+	if strings.HasPrefix(trimmed, "%") {
+		return trimmed
+	}
+	return "=" + trimmed
 }
 
 // injectMenuToggle types a slash command that opens a confirm MENU, submits
@@ -1520,7 +1544,7 @@ func injectTextAndSubmit(tmuxTarget, text string) error {
 // into the middle of the menu navigation (JOH-310 — see paneInjectLock).
 // It does NOT call injectTextAndSubmit, so there is no re-entrant lock.
 func injectMenuToggle(tmuxTarget, toggle string, menuKeys []string, confirmDelay, stepDelay time.Duration) error {
-	mu := paneInjectLock(tmuxTarget)
+	mu := paneInjectLock(injectLockKey(tmuxTarget))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		return err
 	}

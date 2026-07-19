@@ -90,10 +90,63 @@ func TestAudit_FailedStopRecordsFailureAndBoundedDiagnostic(t *testing.T) {
 		testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+conv+"/stop", nil)))
 	require.Equal(t, http.StatusInternalServerError, stopped.Code, "body=%s", stopped.Body.String())
 
+	// The failure body carries the standard {"error": ...} envelope on top of
+	// the lifecycle result fields: DaemonError.Msg is decoded from "error",
+	// so without it the CLI could only print "agentd returned 500".
+	var body struct {
+		Action string `json:"action"`
+		Detail string `json:"detail"`
+		Error  string `json:"error"`
+		Code   string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(stopped.Body.Bytes(), &body))
+	assert.Equal(t, "error", body.Action)
+	assert.Equal(t, "stop failed: send-keys /exit failed", body.Error)
+	assert.Equal(t, "stop_failed", body.Code)
+
 	row := auditRowByVerb(t, "stop")
 	assert.Equal(t, http.StatusInternalServerError, row.Status)
 	assert.Equal(t, "send-keys /exit failed", row.Detail)
 	assert.LessOrEqual(t, len(row.Detail), 240)
+}
+
+// Scenario: the dashboard's per-agent Off action fails the same way. The
+// cookie-auth twin must mirror the v1 route's semantics — non-2xx with the
+// standard error envelope, and a command-audit row recording the failure
+// status plus the bounded diagnostic — so a failed stop is neither shown as
+// success to the operator nor recorded as one in the Logs tab.
+func TestAudit_DashboardFailedStopRecordsFailureAndEnvelope(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const (
+		conv = "failed-dstop-1111-2222-3333-444444444444"
+		tmux = "failed-dstop-tmux"
+	)
+	f.HaveConvWithTitle(conv, "failed-dstop-worker")
+	f.HaveAliveSession(conv, "spwn-failed-dstop", tmux, f.TestCwd("failed-dstop"))
+	f.World.Tmux.FailNextCommand("send-keys")
+
+	dash := agentd.BuildDashboardHandlerForTest()
+	stopped := testharness.Serve(dash, testharness.JSONRequest(t, http.MethodPost,
+		"/api/agents/"+conv+"/stop", map[string]any{"force": false}))
+	require.Equal(t, http.StatusInternalServerError, stopped.Code, "body=%s", stopped.Body.String())
+
+	var body struct {
+		Action string `json:"action"`
+		Detail string `json:"detail"`
+		Error  string `json:"error"`
+		Code   string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(stopped.Body.Bytes(), &body))
+	assert.Equal(t, "error", body.Action)
+	assert.Equal(t, "send-keys /exit failed", body.Detail)
+	assert.Equal(t, "stop failed: send-keys /exit failed", body.Error)
+	assert.Equal(t, "stop_failed", body.Code)
+
+	row := auditRowByVerb(t, "stop")
+	assert.Equal(t, http.StatusInternalServerError, row.Status)
+	assert.Equal(t, "send-keys /exit failed", row.Detail)
+	assert.Equal(t, db.AuditSourceDashboard, row.Source)
 }
 
 // Scenario: an agent sends an intra-group message. The trail records

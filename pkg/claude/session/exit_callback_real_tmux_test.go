@@ -77,11 +77,32 @@ func requireNativePaneDied(t *testing.T, tmux isolatedRealTmux) {
 	}
 }
 
-func skipTmux34TopologyProof(t *testing.T) {
+// skipTmux34PaneDeathEvidenceLoss gates the real-tmux proofs that depend on
+// tmux delivering dead-pane evidence. tmux 3.4 built WITH systemd support —
+// how Ubuntu ships it, and therefore what ubuntu-latest CI runs — can mark a
+// pane dead while recording neither pane_dead_status nor pane_dead_signal and
+// never firing the pane-local pane-died hook. The loss is nondeterministic
+// (roughly half of runs against tmux_3.4-1ubuntu0.1; hooks verified installed,
+// evidence probe returns "%N|1||"). Vanilla tmux 3.4 built from the upstream
+// release without libsystemd delivers the same contract reliably (10/10 local
+// runs), so the skip probes the binary's systemd linkage instead of blanket
+// version matching; a failed probe conservatively counts as affected. This is
+// a tmux-side defect in one distribution build, not something a fixture can
+// compensate for — production already degrades to the daemon reaper when the
+// hook never fires.
+func skipTmux34PaneDeathEvidenceLoss(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("tmux", "-V").Output()
-	if err == nil && strings.TrimSpace(string(out)) == "tmux 3.4" {
-		t.Skip("tmux 3.4 differs in retained dead-pane option/wrapper evidence; portable proof tracked separately")
+	if err != nil || strings.TrimSpace(string(out)) != "tmux 3.4" {
+		return
+	}
+	path, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux 3.4: cannot resolve binary; assuming systemd-linked pane-death evidence loss")
+	}
+	ldd, err := exec.Command("ldd", path).Output()
+	if err != nil || strings.Contains(string(ldd), "libsystemd") {
+		t.Skip("tmux 3.4 with systemd support nondeterministically loses dead-pane evidence (no pane-died event, empty pane_dead_status)")
 	}
 }
 
@@ -198,7 +219,7 @@ func TestRealTmuxPaneProcessHelper(t *testing.T) {
 }
 
 func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T) {
-	skipTmux34TopologyProof(t)
+	skipTmux34PaneDeathEvidenceLoss(t)
 	tmux := withIsolatedRealTmux(t)
 	tests := []struct {
 		name       string
@@ -265,6 +286,11 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 }
 
 func TestRealTmuxAuthenticatedPaneDiedCallbackRecordsExactlyOnce(t *testing.T) {
+	// TCL-573 left this proof enabled on tmux 3.4, but it depends on the same
+	// pane-died delivery the systemd-linked 3.4 builds lose nondeterministically
+	// (reproduced: the marker never appears because the hook never fires), so it
+	// was a latent CI flake on ubuntu-latest. Same gate, same reason.
+	skipTmux34PaneDeathEvidenceLoss(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -354,7 +380,7 @@ func TestRealTmuxAuthenticatedCallbackHelper(t *testing.T) {
 }
 
 func TestRealTmuxLaunchWrapperChildSignalsAreExitCodesNotPaneSignals(t *testing.T) {
-	skipTmux34TopologyProof(t)
+	skipTmux34PaneDeathEvidenceLoss(t)
 	tmux := withIsolatedRealTmux(t)
 	for _, tc := range []struct {
 		signal syscall.Signal

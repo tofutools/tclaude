@@ -103,3 +103,63 @@ func TestPaneLockPathUsesPrivateDataDirectory(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not a directory")
 }
+
+// A lifecycle send types into the exact pane ID while message/nudge sends
+// type into the same pane's session-shaped target. Those spellings hash
+// to different advisory lock files, so the streams would interleave
+// mid-sequence; a caller that knows the pane's session passes it as
+// LockID and must contend for the SAME lock as the session-shaped stream.
+func TestInjectTextAndSubmitLockIDSerializesPaneIDWithSessionStream(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var once sync.Once
+
+	firstRun := func(args ...string) error {
+		if args[0] == "send-keys" && args[len(args)-1] == "first" {
+			once.Do(func() { close(firstStarted) })
+			<-releaseFirst
+		}
+		return nil
+	}
+	opts := func(run Runner) Options {
+		return Options{
+			Run: run, SettleDelay: 0, SettleDelaySet: true,
+			LockTimeout: time.Second, LockRetry: time.Millisecond,
+		}
+	}
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- InjectTextAndSubmit("lockid-sess:0.0", "first", opts(firstRun)) }()
+	select {
+	case <-firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first caller did not acquire the pane lock")
+	}
+
+	secondCalled := false
+	secondOpts := opts(func(args ...string) error {
+		secondCalled = true
+		return nil
+	})
+	secondOpts.LockTimeout = 10 * time.Millisecond
+	secondOpts.LockID = "lockid-sess:0.0"
+	err := InjectTextAndSubmit("%41", "second", secondOpts)
+	require.ErrorIs(t, err, ErrLockTimeout,
+		"a pane-ID send declaring the session lock identity must contend with the session-shaped stream")
+	require.False(t, secondCalled, "second caller wrote while first caller held the pane lock")
+
+	close(releaseFirst)
+	require.NoError(t, <-firstDone)
+	released := opts(func(args ...string) error {
+		if args[0] == "send-keys" || args[0] == "paste-buffer" {
+			require.Equal(t, "%41", args[len(args)-2],
+				"LockID changes only the serialization identity, never the send target")
+		}
+		secondCalled = true
+		return nil
+	})
+	released.LockID = "lockid-sess:0.0"
+	require.NoError(t, InjectTextAndSubmit("%41", "second", released))
+	require.True(t, secondCalled, "second caller never wrote after the lock was released")
+}

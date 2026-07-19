@@ -307,16 +307,41 @@ func (g *exitLaunchGuard) release() error {
 	return nil
 }
 
+// writeExistingExitLaunchGate publishes new gate content atomically by
+// renaming a same-directory sibling over the gate. An in-place
+// truncate+write briefly exposes an empty gate, and the pane's poll loop
+// treats any non-"pending" read as terminal — that window could turn a
+// correct release into a spurious exit-125 launch failure. The rename
+// flips the complete content in one step and composes with the reviewed
+// single-winner protocol, whose gate→ack / gate→abort renames move the
+// gate name itself regardless of which inode carries it. The initial
+// stat preserves the fail-fast contract: a gate the pane already timed
+// out on and removed must never be resurrected by a delayed parent (a
+// pane racing that stat can at worst delay the same failure, not launch).
 func writeExistingExitLaunchGate(path, state string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), exitLaunchArtifactPrefix)
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
+	cleanup := func() { _ = os.Remove(tmp) }
 	if _, err := f.WriteString(state); err != nil {
 		_ = f.Close()
+		cleanup()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 func (g *exitLaunchGuard) waitForPaneGateAck() error {
