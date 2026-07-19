@@ -38,6 +38,7 @@ import {
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
+import { HelpField } from './help-field.js';
 
 const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
@@ -72,28 +73,6 @@ function ErrorBanner({ error, onDismiss }) {
   return html`<div ref=${ref} class="cron-create-error dismissible" id="agent-spawn-error" role="alert">
     <span class="cron-create-error-msg">${error}</span>
     <button type="button" class="cron-create-error-x" aria-label="Dismiss error" onClick=${onDismiss}>×</button>
-  </div>`;
-}
-
-function HelpField({
-  id, descriptionID = `${id}-hint`, label, title, value, options,
-  onChange, help, open, setOpen, disabled = false, busy = false,
-}) {
-  return html`<div class="cron-create-row" id=${`${id}-row`} title=${title} hidden=${disabled}>
-    <label class="cron-create-label" for=${id}>${label}</label>
-    <div class="cron-create-target spawn-field-with-help">
-      <select id=${id} value=${value} title=${help} aria-describedby=${descriptionID} disabled=${busy}
-        onChange=${onChange}>
-        ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
-      </select>
-      <button type="button" class="spawn-field-help-trigger" aria-label=${`Show ${label} help`}
-        aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${`Show ${label} help`}
-        disabled=${busy}
-        onClick=${() => setOpen(open ? '' : id)}
-        onFocus=${() => setOpen(id)}>?</button>
-      <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
-        aria-live="polite" onFocus=${() => setOpen(id)}>${help}</span>
-    </div>
   </div>`;
 }
 
@@ -738,36 +717,27 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => update('sandboxProfile', event.currentTarget.value)}
       help=${sandboxPolicy.preview} open=${helpOpen === 'agent-spawn-sandbox-profile'} setOpen=${setHelpOpen}
       disabled=${view.sandboxProfilesDisabled} busy=${busy} />
-    <label class="cron-create-row" id="agent-spawn-approval-row" hidden=${!view.approval.visible}
-      title="Controls when the new agent requests approval; it does not change the sandbox.">
-      <span class="cron-create-label">${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}</span>
-      <div class="cron-create-target">
-        <select id="agent-spawn-approval" value=${draft.approval} disabled=${busy}
-          aria-describedby="agent-spawn-approval-hint" onChange=${(event) => update('approval', event.currentTarget.value)}>
-          ${view.approval.modes.map((mode) => html`<option key=${mode} value=${mode}>${approvalPolicyLabel(draft.harness, mode, view.approval.recommended)}</option>`)}
-        </select>
-        <div id="agent-spawn-approval-hint" class=${`spawn-field-hint${approvalHelp.includes('⚠') ? ' warn' : ''}`}
-          aria-live="polite">${approvalHelp}</div>
-      </div>
-    </label>
+    <${HelpField} id="agent-spawn-approval" label=${draft.harness === 'codex' ? 'Approval policy' : 'Permission mode'}
+      title="Controls when the new agent requests approval; it does not change the sandbox."
+      value=${draft.approval}
+      options=${view.approval.modes.map((mode) => ({
+        value: mode, label: approvalPolicyLabel(draft.harness, mode, view.approval.recommended),
+      }))}
+      onChange=${(event) => update('approval', event.currentTarget.value)}
+      help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
+      disabled=${!view.approval.visible} busy=${busy} />
     <${HelpField} id="agent-spawn-approval-reviewer" label="Approval reviewer"
       title="Controls who decides eligible approval requests; it does not change the approval policy or sandbox."
       value=${draft.approvalReviewer} options=${approvalReviewerOptions(false)}
       onChange=${(event) => update('approvalReviewer', event.currentTarget.value)}
       help=${reviewerHelp} open=${helpOpen === 'agent-spawn-approval-reviewer'} setOpen=${setHelpOpen}
       disabled=${!view.showApprovalReviewer} busy=${busy} />
-    <label class="cron-create-row" id="agent-spawn-ask-timeout-row" hidden=${!view.askTimeout.visible}
-      title="AskUserQuestion idle-timeout for the new agent.">
-      <span class="cron-create-label">Question timeout</span>
-      <div class="cron-create-target">
-        <select id="agent-spawn-ask-timeout" value=${draft.askTimeout} disabled=${busy}
-          aria-describedby="agent-spawn-ask-timeout-hint" onChange=${(event) => update('askTimeout', event.currentTarget.value)}>
-          ${SettingOptions({ setting: view.askTimeout }).map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
-        </select>
-        <div id="agent-spawn-ask-timeout-hint" class=${`spawn-field-hint${askTimeoutHelp.includes('⚠') ? ' warn' : ''}`}
-          aria-live="polite">${askTimeoutHelp}</div>
-      </div>
-    </label>
+    <${HelpField} id="agent-spawn-ask-timeout" label="Question timeout"
+      title="AskUserQuestion idle-timeout for the new agent."
+      value=${draft.askTimeout} options=${SettingOptions({ setting: view.askTimeout })}
+      onChange=${(event) => update('askTimeout', event.currentTarget.value)}
+      help=${askTimeoutHelp} open=${helpOpen === 'agent-spawn-ask-timeout'} setOpen=${setHelpOpen}
+      disabled=${!view.askTimeout.visible} busy=${busy} />
     <label class="cron-create-enabled cron-check-aligned" id="agent-spawn-trust-dir-row" hidden=${!view.showTrustDir}
       title="Pre-trust the launch directory for Codex so the new agent doesn't freeze on Codex's trust-folder modal.">
       <input id="agent-spawn-trust-dir" type="checkbox" checked=${draft.trustDir} disabled=${busy}

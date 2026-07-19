@@ -3907,9 +3907,10 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .cron-create-row > button.tool {
   flex: 0 0 auto; align-self: stretch; padding: 0 12px; white-space: nowrap;
 }
-/* Live inline help under spawn-dialog controls that still need it (name,
-   permission mode, and question timeout). The "warn" variant flags a caveat
-   the operator should notice. */
+/* Live inline help under the one spawn-dialog control that still needs it: the
+   name field, whose hint is validation feedback rather than static docs. The
+   "warn" variant flags a caveat the operator should notice; .spawn-field-caveat
+   reuses it for the ⚠ sentence a HelpField keeps visible below its select. */
 .spawn-field-hint { font-size: 11px; color: #7d8590; line-height: 1.4; }
 .spawn-field-hint:empty { display: none; }
 .spawn-field-hint.warn { color: #f0883e; }
@@ -3924,6 +3925,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 24px;
   align-items: stretch; gap: 6px;
 }
+/* The ⚠ caveat is the only copy that stays visible, so it spans under both the
+   select and the [?] button instead of landing in one grid column. */
+.spawn-field-caveat { grid-column: 1 / -1; }
 .spawn-field-help-trigger {
   padding: 0; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; background: #161b22; cursor: help; font-weight: 600;
