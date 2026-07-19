@@ -1,11 +1,11 @@
 import { Fragment, h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   formatUsageAxisTick, usageAxisStart, usageAxisTicks, usageForecastPoint,
 } from './usage-history-axis.js';
 import {
-  formatUsageDuration, usageProviderLabel, usageWindowLabel,
+  formatUsageDuration, usageScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -116,6 +116,12 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
   const [tooltip, setTooltip] = useState(null);
   const [keyboardPointAt, setKeyboardPointAt] = useState(null);
   const [keyboardResetAt, setKeyboardResetAt] = useState(null);
+  // A tooltip's strings are baked when it is shown, so an OPEN one (a
+  // keyboard-focused marker holds it open indefinitely) would keep the
+  // previous theme's voice after a flip — the one path the island's repaint
+  // does not reach. Dismiss it instead of trying to rebuild it: the hover or
+  // focus that produced it will produce it again in the new voice.
+  useEffect(() => { setTooltip(null); }, [wizard]);
   const points = (series.points || []).map((point) => ({ ...point, time: finiteDate(point.at) })).filter((point) => point.time !== null);
   if (!points.length) return html`<div class="usage-chart-empty">${w('No samples in this range.', 'No readings in this span of the scrying.')}</div>`;
   const now = finiteDate(generatedAt) ?? points[points.length - 1].time;
@@ -156,7 +162,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     ? keyboardResetAt
     : resetMarkers.length - 1;
   const xTicks = usageAxisTicks(start, horizon);
-  const scope = `${usageProviderLabel(series.provider)} · ${usageWindowLabel(series.window_name, series.duration_seconds)} ${w('window', 'cycle')}`;
+  const scope = usageScopeLabel(series, wizard, ' · ');
   const showForecastTooltip = (ratio) => {
     const hoverPoint = usageForecastPoint(latest.time, latest.pct, rate, forecastAt, ratio);
     setTooltip({

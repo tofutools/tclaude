@@ -13218,16 +13218,24 @@ body.wizard .usage-forecast-line {
   filter: drop-shadow(0 0 4px rgba(169, 123, 214, 0.5));
 }
 body.wizard .usage-forecast-hit-target:focus { stroke: rgb(169 123 214 / 22%); }
-/* Replenishments — tarnished gold, the hour the reserves are refilled. */
-body.wizard .usage-reset-mark line,
-body.wizard .usage-scheduled-reset line { stroke: #d9b45a; }
+/* Replenishments — tarnished gold, the hour the reserves are refilled.
+   :not(.usage-marker-hit-target) is load-bearing, not decoration. The
+   invisible 14px keyboard hit-target is a `line` inside these same groups,
+   kept transparent by `.usage-reset-mark line.usage-marker-hit-target`
+   (0,2,1). A bare `body.wizard .usage-reset-mark line` is (0,2,2) AND sits
+   later in this flat stylesheet, so it would win twice over and paint each
+   hit target as a solid 14px opaque band (its stroke-dasharray is forced to
+   `none`) straight across the data. Same trap for the scheduled-reset and
+   now markers below. */
+body.wizard .usage-reset-mark line:not(.usage-marker-hit-target),
+body.wizard .usage-scheduled-reset line:not(.usage-marker-hit-target) { stroke: #d9b45a; }
 body.wizard .usage-reset-mark circle {
   fill: #f0d066; filter: drop-shadow(0 0 4px rgba(240, 208, 102, 0.6));
 }
 body.wizard .usage-scheduled-reset line.usage-marker-hit-target:focus,
 body.wizard .usage-reset-mark line.usage-marker-hit-target:focus,
 body.wizard .usage-now-mark line.usage-marker-hit-target:focus { stroke: rgb(217 180 90 / 22%); }
-body.wizard .usage-now-mark line { stroke: #8f7bb5; }
+body.wizard .usage-now-mark line:not(.usage-marker-hit-target) { stroke: #8f7bb5; }
 /* Hover tooltip → a small arcane slab, edged in the tone it describes. */
 body.wizard .usage-chart-tooltip rect {
   fill: #241b3d; stroke: #a97bd6;

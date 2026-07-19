@@ -871,6 +871,17 @@ func baseStates() []dashsnap.State {
   var cardStyle = getComputedStyle(card);
   var lineStyle = getComputedStyle(line);
   var titleStyle = getComputedStyle(title);
+  // The invisible 14px keyboard hit targets must stay invisible in BOTH
+  // themes. They are plain <line>s inside the marker groups, so a wizard rule
+  // written as '.usage-reset-mark line' outspecifies the transparent hit-target
+  // rule and paints an opaque band across the data. Checked by computed style
+  // because that is the only way to see the cascade actually resolve.
+  document.querySelectorAll('.usage-marker-hit-target, .usage-point-hit-target, .usage-forecast-hit-target').forEach(function(target){
+    var stroke = getComputedStyle(target).stroke;
+    if (stroke !== 'rgba(0, 0, 0, 0)' && stroke !== 'transparent' && stroke !== 'none') {
+      throw new Error('usage-mana: hit target became visible (stroke ' + stroke + ') — a marker rule is outspecifying the transparent hit-target rule');
+    }
+  });
   if (wizard) {
     if (titleStyle.display === 'none') throw new Error('debug-alchemy: wizard title is hidden');
     if (!cardStyle.backgroundImage.includes('gradient')) throw new Error('debug-alchemy: wizard card lacks gradient chrome');
@@ -887,17 +898,10 @@ func baseStates() []dashsnap.State {
 			Key:     "usage-mana",
 			Title:   "Usage / mana reserves",
 			Caption: "The quota graphs keep their readable default skin while wizard mode adds The Mana Reserves nameplate, violet scrying pools, a mana-blue channeled trace and the replenishment/prophecy vocabulary.",
+			// Reuses the shared bounded-tab setup/settle rather than re-rolling the
+			// usage_tab_visible + click + ready-poll dance, then asserts on top of it.
 			JS: `return (async function(){
-  var modules = await Promise.all([import('/static/js/snapshot-store.js')]);
-  var store = modules[0];
-  store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
-    usage_tab_visible: true
-  });
-  await Promise.resolve();
-  document.querySelector('nav [data-tab="usage"]').click();
-  for (var i = 0; i < 80 && !document.querySelector('.usage-series-card'); i++) {
-    await new Promise(function(resolve){ setTimeout(resolve, 50); });
-  }
+  await (async function(){ ` + boundedTabJS("usage", ".usage-series-card") + ` })();
   var card = document.querySelector('.usage-series-card');
   var line = document.querySelector('.usage-observed-line');
   var title = document.querySelector('.usage-wizard-title');

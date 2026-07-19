@@ -2107,14 +2107,44 @@ func TestDashboardCSS_WizardUsageScoped(t *testing.T) {
 		}
 	}
 	// Every wizard rule that mentions a usage selector must be anchored on one,
-	// not merely contain it after a broader leading selector.
-	for _, line := range strings.Split(dashboardAssets, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "body.wizard ") || !strings.Contains(line, ".usage-") {
-			continue
-		}
-		if !strings.HasPrefix(line, "body.wizard .usage-") {
-			t.Errorf("wizard usage rule is not anchored on a .usage-* selector: %s", line)
+	// not merely contain it after a broader leading selector. Selector lists are
+	// reassembled across newlines first: checking line-by-line would wave through
+	// a leaky branch that merely happens to sit on a continuation line, e.g.
+	//   body.wizard .usage-card-header,
+	//   body.wizard svg text { … }
+	for _, selector := range wizardUsageSelectorLists(dashboardAssets) {
+		for _, part := range strings.Split(selector, ",") {
+			part = strings.Join(strings.Fields(part), " ")
+			if part == "" || !strings.HasPrefix(part, "body.wizard") {
+				continue
+			}
+			if !strings.HasPrefix(part, "body.wizard .usage-") {
+				t.Errorf("wizard usage rule branch is not anchored on a .usage-* selector: %q (in %q)", part, selector)
+			}
 		}
 	}
+}
+
+// wizardUsageSelectorLists returns each complete selector list (newlines folded
+// out) that both names a .usage-* selector and carries a body.wizard branch.
+func wizardUsageSelectorLists(css string) []string {
+	var lists []string
+	for _, block := range strings.Split(css, "}") {
+		open := strings.LastIndex(block, "{")
+		if open < 0 {
+			continue
+		}
+		selector := block[:open]
+		// Keep only the last rule's selector: everything before the previous
+		// declaration block belongs to earlier rules.
+		if prev := strings.LastIndex(selector, ";"); prev >= 0 {
+			selector = selector[prev+1:]
+		}
+		selector = strings.Join(strings.Fields(selector), " ")
+		if !strings.Contains(selector, ".usage-") || !strings.Contains(selector, "body.wizard") {
+			continue
+		}
+		lists = append(lists, selector)
+	}
+	return lists
 }

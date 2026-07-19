@@ -44,8 +44,10 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"w('Prediction paused',",
 		"USAGE_LOOKAHEAD_SPANS",
 		"Look ahead",
-		"range, ${scope}`",
-		"lookahead, ${scope}`",
+		// Still pins the plain-theme label word, which the bare "range, ${scope}`"
+		// form would not: deleting or renaming 'History' must keep failing here.
+		"'History'} range, ${scope}`",
+		"'Forecast'} lookahead, ${scope}`",
 		"aria-pressed=",
 		"usage-card-controls",
 		"&spans=",

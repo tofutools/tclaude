@@ -6,7 +6,7 @@ import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
 import {
   USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageResetCountdown, formatUsageTime,
-  usageForecastView, usageProviderLabel, usageSeriesKeyOf, usageWindowLabel,
+  usageForecastView, usageProviderLabel, usageScopeLabel, usageSeriesKeyOf, usageWindowScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -77,8 +77,8 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, wi
   const now = new Date(payload.generated_at).getTime();
   const forecast = usageForecastView(series.forecast, now, latest?.at, wizard);
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
-  const windowLabel = `${usageWindowLabel(series.window_name, series.duration_seconds)} ${w('window', 'cycle')}`;
-  const scope = `${usageProviderLabel(series.provider)} ${windowLabel}`;
+  const windowLabel = usageWindowScopeLabel(series, wizard);
+  const scope = usageScopeLabel(series, wizard);
   return html`<article class="usage-series-card">
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
@@ -162,7 +162,7 @@ export function UsageHistoryApp({ state, actions }) {
     </${Fragment}>`}
     <p class="usage-history-note">${w(
       'Account-wide provider limits, sampled every 15 minutes; history and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.',
-      'Account-wide provider wards, scried every 15 minutes; chronicle and scry-ahead spans persist per graph. Prophecies are cast per provider × mana cycle. The providers reveal no trustworthy per-model attribution. A dashed line is the pace of channeling since the last replenishment; downward steps of at least 2 motes are read as an unforeseen replenishment.',
+      'Account-wide provider wards, scried every 15 minutes; chronicle and scry-ahead spans persist per graph. Prophecies are cast per provider × mana cycle. The providers reveal no trustworthy per-model attribution. A dashed line is the pace of channeling since the last replenishment; downward steps of at least 2 percentage points are read as an unforeseen replenishment.',
     )}</p>
   </div>`;
 }

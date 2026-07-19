@@ -36,6 +36,19 @@ export function usageWindowLabel(name, durationSeconds = 0) {
   return String(name || 'limit').replaceAll('_', ' ');
 }
 
+// usageScopeLabel names the series (provider × quota window) for the chart's
+// tooltips and aria-labels. Shared because both used to build it inline: two
+// copies of the same sentence, differing only in separator, both applying the
+// same window/cycle swap — editing one and not the other would desync a
+// graph's spoken name from its visible tooltip.
+export function usageWindowScopeLabel(series, wizard = false) {
+  return `${usageWindowLabel(series.window_name, series.duration_seconds)} ${wizard ? 'cycle' : 'window'}`;
+}
+
+export function usageScopeLabel(series, wizard = false, separator = ' ') {
+  return `${usageProviderLabel(series.provider)}${separator}${usageWindowScopeLabel(series, wizard)}`;
+}
+
 export function formatUsageTime(value, now = Date.now()) {
   const at = new Date(value).getTime();
   if (!Number.isFinite(at)) return 'unknown';
@@ -90,7 +103,7 @@ export function usageForecastView(forecast, now = Date.now(), latestAt = '', wiz
   if (!forecast) return { tone: 'muted', headline: w('Prediction unavailable', 'No prophecy to be had'), lines: [] };
   const rate = forecast.rate_pct_per_hour
     ? w(`Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`,
-      `Channeling rate: ${forecast.rate_pct_per_hour.toFixed(1)} motes of mana per hour`)
+      `Channeling rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points of mana per hour`)
     : '';
   const hitAt = new Date(forecast.hits_limit_at).getTime();
   const resetAt = new Date(forecast.reset_at).getTime();

@@ -54,13 +54,23 @@ test('usage copy speaks the wizard voice without changing the reading', async (t
   assert.equal(wizard.headline, 'Prophecy: reserves run dry in 47h (5d 1h before replenishment)');
   assert.deepEqual(wizard.lines, [
     'Foretold time without mana: 5d 1h',
-    'Channeling rate: 1.9 motes of mana per hour',
+    // Keeps "percentage points": the plain copy names that unit deliberately
+    // (see the test above), and the axis, tooltips and header all read %.
+    'Channeling rate: 1.9 percentage points of mana per hour',
   ]);
-  // Same urgency, same figures — only the wording differs.
+  // Same urgency, different wording — and, the point of the check, the same
+  // figures. Rather than restate literals the assertions above already pin,
+  // pull every number out of the PLAIN copy and require the wizard copy to
+  // carry all of them: a future edit that drops or rounds a figure only in the
+  // wizard voice then fails here even though both exact-match assertions above
+  // were updated in step with it.
   assert.equal(wizard.tone, plain.tone);
   assert.notEqual(wizard.headline, plain.headline);
-  for (const needle of ['47h', '5d 1h', '1.9']) {
-    assert.ok(wizard.headline.includes(needle) || wizard.lines.join(' ').includes(needle),
-      `wizard copy dropped the figure ${needle}`);
+  const figures = (view) => `${view.headline} ${view.lines.join(' ')}`.match(/\d+(?:\.\d+)?[a-z%]*/g) ?? [];
+  const plainFigures = figures(plain);
+  assert.ok(plainFigures.length >= 3, `expected the plain copy to carry figures, got ${plainFigures}`);
+  const wizardFigures = new Set(figures(wizard));
+  for (const figure of plainFigures) {
+    assert.ok(wizardFigures.has(figure), `wizard copy dropped or altered the figure ${figure}`);
   }
 });
