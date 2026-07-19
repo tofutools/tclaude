@@ -55,8 +55,11 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead }) 
 }
 
 // groupSeriesByProvider splits the flat series list into one row per provider
-// so a provider's quota windows share a line. current.series arrives sorted by
-// provider then window duration, so first-seen order keeps that ordering.
+// so a provider's quota windows share a line. current.series is sorted by
+// usageSeriesSort (provider label, then window duration) in usage-history-state
+// — note the server sorts by window *name*, so don't read the order off the API
+// — which puts each provider's entries together, so first-seen order preserves
+// both the provider order and the window order within a row.
 function groupSeriesByProvider(series) {
   const rows = [];
   const byProvider = new Map();

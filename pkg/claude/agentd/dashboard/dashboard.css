@@ -1612,22 +1612,30 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    row holds one card per quota window and may be several cards wide.
    Everything is centred on the island instead of sharing a left edge — with
    rows of differing column counts there is no single edge to share. */
-.usage-history-island { --usage-card-max: 1100px; --usage-card-gap: 14px; }
-.usage-history-controls, .usage-history-note, .usage-chart-legend, .usage-history-error {
-  max-width: var(--usage-card-max); margin-inline: auto;
-}
+/* On the host, not the island: the island-load-failure banner is rendered
+   straight into #usage-root (preact-loader's failureClass) and would not
+   inherit these from the island. */
+#usage-root { --usage-card-max: 1100px; --usage-card-gap: 14px; }
+.usage-history-error { max-width: var(--usage-card-max); }
+/* Each centred element carries `auto` in its own margin shorthand rather than
+   relying on a shared `margin-inline: auto` rule: a later shorthand elsewhere
+   in this file resets the inline margins it sets, silently un-centring the
+   element (.filter-bar, below, does exactly that to the controls bar). */
+.filter-bar.usage-history-controls { max-width: var(--usage-card-max); margin: 0 auto 12px; }
 .usage-history-controls { flex-wrap: wrap; }
 .usage-control-group { display: inline-flex; align-items: center; gap: 8px; }
 .usage-control-label { color: #8b949e; font-size: 11px; font-weight: 600; }
 .usage-control-divider { width: 1px; height: 20px; margin: 0 3px; background: #30363d; }
 .usage-history-note {
-  margin: 0 0 14px; padding: 8px 10px;
+  max-width: var(--usage-card-max);
+  margin: 0 auto 14px; padding: 8px 10px;
   color: #8b949e; background: #161b22; border: 1px solid #2a3340;
   border-radius: 5px; font-size: 12px;
 }
 .usage-chart-legend {
   display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
-  margin: -4px 2px 12px; color: #8b949e; font-size: 11px;
+  max-width: var(--usage-card-max);
+  margin: -4px auto 12px; color: #8b949e; font-size: 11px;
 }
 .usage-chart-legend span { display: inline-flex; gap: 6px; align-items: center; }
 .usage-legend-swatch { display: inline-block; width: 18px; height: 0; border-top: 2px solid; }
@@ -1643,10 +1651,15 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 /* --usage-cols is the row's card count (set inline). The row is capped at what
    that many capped cards need, and centred; auto-fit then wraps the row onto
-   more lines when the viewport can't hold that many at a readable width. */
+   more lines when the viewport can't hold that many at a readable width.
+   The 645px floor is the letterbox threshold, not a guess: .usage-line-chart
+   has min-height 180px over a 720x210 viewBox, so below 617px of chart (645px
+   of card, +14px padding each side) the SVG stops scaling and pads itself with
+   blank bands. Wrapping at exactly that point means a chart is always either
+   at its natural aspect or on a wider line. */
 .usage-provider-row {
   display: grid; gap: var(--usage-card-gap);
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 645px), 1fr));
   max-width: calc(var(--usage-cols) * var(--usage-card-max)
     + (var(--usage-cols) - 1) * var(--usage-card-gap));
   margin-inline: auto; width: 100%;
