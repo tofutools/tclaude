@@ -34,7 +34,13 @@ export function helpCaveat(help) {
    description, so growing it would push the popover up off its own control.
 
    `busy` disables the select but never the [?] — a spawn in flight is no reason
-   to stop the operator reading what they picked. */
+   to stop the operator reading what they picked.
+
+   Help can be transiently empty (the sandbox-profile preview arrives from an
+   async fetch), so the trigger and its description are both gated on it: an
+   empty description would be a focusable, unnamed, blank tooltip in the tab
+   order. The CSS reserves the trigger column unconditionally so the select
+   does not resize when the help lands. */
 export function HelpField({
   id, descriptionID = `${id}-hint`, label, title, value, options,
   onChange, help, open, setOpen, disabled = false, busy = false,
@@ -48,8 +54,8 @@ export function HelpField({
   return html`<div class="cron-create-row" id=${`${id}-row`} title=${title} hidden=${disabled}>
     <label class="cron-create-label" for=${id}>${label}</label>
     <div class="cron-create-target spawn-field-help-column">
-      <div class=${`spawn-field-with-help${help ? '' : ' spawn-field-no-help'}`}>
-        <select id=${id} value=${value} title=${help} aria-describedby=${descriptionID} disabled=${busy}
+      <div class="spawn-field-with-help">
+        <select id=${id} value=${value} title=${help} aria-describedby=${help ? descriptionID : null} disabled=${busy}
           onChange=${onChange}>
           ${options.map((option) => html`<option key=${option.value} value=${option.value}>${option.label}</option>`)}
         </select>
@@ -58,8 +64,8 @@ export function HelpField({
           onMouseDown=${swallowFocus}
           onClick=${() => setOpen(open ? '' : id)}
           onFocus=${() => setOpen(id)}>?</button>`}
-        <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
-          aria-live="polite" onFocus=${() => setOpen(id)}>${help}</span>
+        ${help && html`<span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
+          aria-live="polite" onFocus=${() => setOpen(id)}>${help}</span>`}
       </div>
       ${caveat && html`<div class="spawn-field-hint warn spawn-field-caveat" id=${`${id}-caveat`}
         aria-hidden="true">${caveat}</div>`}

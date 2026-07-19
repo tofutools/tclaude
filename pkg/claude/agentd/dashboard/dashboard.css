@@ -3909,8 +3909,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 /* Live inline help under the one spawn-dialog control that still needs it: the
    name field, whose hint is validation feedback rather than static docs. The
-   "warn" variant flags a caveat the operator should notice; .spawn-field-caveat
-   reuses it for the ⚠ sentence a HelpField keeps visible below its select. */
+   "warn" variant flags a caveat the operator should notice. A HelpField's ⚠
+   caveat takes both classes and needs no styling of its own; it carries a bare
+   .spawn-field-caveat marker so tests can tell it from the name hint. */
 .spawn-field-hint { font-size: 11px; color: #7d8590; line-height: 1.4; }
 .spawn-field-hint:empty { display: none; }
 .spawn-field-hint.warn { color: #f0883e; }
@@ -3924,16 +3925,16 @@ body.wizard .group-pending-title-wizard { display: inline; }
 /* The select and its [?] sit in their own grid, and the ⚠ caveat stacks below
    as a sibling. The popover is anchored to .spawn-field-with-help, so keeping
    the caveat outside it means a long caveat cannot shove the popover up off
-   the control that opened it. */
-.cron-create-target.spawn-field-help-column {
-  display: flex; flex-direction: column; gap: 4px;
-}
+   the control that opened it. .cron-create-target is already a flex column;
+   this only tightens the gap between the control and its caveat. */
+.cron-create-target.spawn-field-help-column { gap: 4px; }
+/* The trigger column is reserved even while help is empty. The sandbox-profile
+   preview arrives from an async fetch, and collapsing the column until then
+   would resize the select out from under the operator on every dialog open. */
 .spawn-field-with-help {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 24px;
   align-items: stretch; gap: 6px;
 }
-/* A mode with no help entry renders no [?], so it must not reserve the column. */
-.spawn-field-with-help.spawn-field-no-help { grid-template-columns: minmax(0, 1fr); }
 .spawn-field-help-trigger {
   padding: 0; border: 1px solid #30363d; border-radius: 4px;
   color: #8b949e; background: #161b22; cursor: help; font-weight: 600;

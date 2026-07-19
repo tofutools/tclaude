@@ -698,13 +698,23 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
     assert.equal(row.querySelector(`#${id}`).getAttribute('aria-describedby'), descriptionID);
     assert.match(row.querySelector(`#${descriptionID}`).getAttribute('class'), /spawn-field-description/,
       `${id} help is a collapsed description, not a paragraph`);
+
+    // Pin the row's exact shape. Asserting only that a [?] exists would still
+    // pass if a help paragraph were reintroduced alongside it, which is the
+    // regression this test exists to prevent.
+    assert.deepEqual([...row.querySelector('.cron-create-target').children].map((node) => node.className),
+      ['spawn-field-with-help'], `${id} renders nothing beside the control group`);
+    assert.deepEqual([...row.querySelector('.spawn-field-with-help').children].map((node) => node.tagName),
+      ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
   }
 
   // The name hint is the sole surviving inline hint: it reports what the name
-  // will be normalized to, which is feedback rather than documentation.
-  const persistent = [...host.querySelectorAll('.spawn-field-hint')]
-    .map((node) => node.id).filter(Boolean);
-  assert.deepEqual(persistent, ['agent-spawn-name-hint']);
+  // will be normalized to, which is feedback rather than documentation. Count
+  // the nodes rather than their ids — an id-less paragraph is exactly the shape
+  // this dialog used to render.
+  const persistent = [...host.querySelectorAll('.spawn-field-hint')];
+  assert.equal(persistent.length, 1, 'exactly one persistent hint survives');
+  assert.equal(persistent[0].id, 'agent-spawn-name-hint');
 
   // Fixture help carries no ⚠, so no caveat line is on screen at all. The
   // caveat path itself is covered against real harness copy in
