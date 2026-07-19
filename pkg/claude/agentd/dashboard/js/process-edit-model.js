@@ -22,7 +22,7 @@
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
 import { layoutProcessGraph } from './process-layout.js';
 import {
-  processEdgePortAvailability, processNodePortAvailability,
+  processEdgeMutationMessage, processEdgePortAvailability, processNodePortAvailability,
 } from './process-port-availability.js';
 import {
   PROCESS_CLIPBOARD_MAX_COORDINATE, PROCESS_CLIPBOARD_MAX_EDGES,
@@ -208,9 +208,20 @@ export class ProcessEditModel {
     if (!this.config.edgeEditable(edge)) throw new Error(`edge ${edge.from} -> ${edge.to} is read-only in this view`);
   }
 
-  assertNewEdgePortsAvailable(from, to, nodes = this.template.nodes) {
+  // edgePortRejection returns the operator-facing reason a prospective edge may
+  // not be created, or '' when the endpoints are allowed. `context` names the
+  // mutation and the edge to blame, which is what turns a bare port sentence
+  // into recovery guidance; callers with nothing better to say omit it.
+  edgePortRejection(from, to, nodes = this.template.nodes, context = null) {
     const availability = processEdgePortAvailability(nodes?.[from], nodes?.[to]);
-    if (!availability.enabled) throw new Error(availability.message);
+    if (availability.enabled) return '';
+    if (!context) return availability.message;
+    return processEdgeMutationMessage(context.operation, context.edge || { from, to }, availability.message);
+  }
+
+  assertNewEdgePortsAvailable(from, to, nodes = this.template.nodes, context = null) {
+    const message = this.edgePortRejection(from, to, nodes, context);
+    if (message) throw new Error(message);
   }
 
   assertCanInsert() {
@@ -305,7 +316,10 @@ export class ProcessEditModel {
       ? [...outgoing].sort((a, b) => String(a.outcome).localeCompare(String(b.outcome), 'en'))[0]?.to
       : undefined;
     if (rewire && successor && successor !== id) {
-      for (const edge of incoming) this.assertNewEdgePortsAvailable(edge.from, successor);
+      for (const edge of incoming) {
+        this.assertNewEdgePortsAvailable(edge.from, successor, this.template.nodes,
+          { operation: 'delete-rewire', edge: { from: edge.from, outcome: edge.outcome, to: successor } });
+      }
     }
     this.begin();
     delete this.template.nodes[id];
@@ -357,8 +371,11 @@ export class ProcessEditModel {
     const plannedNodes = { ...this.template.nodes };
     for (const sourceID of sourceIDs) plannedNodes[idMap.get(sourceID)] = this.template.nodes[sourceID];
     const internalEdges = this.edges.filter((edge) => idMap.has(edge.from) && idMap.has(edge.to));
+    // Blame the source edge, not the clone ids: it is the source edge the
+    // operator can actually deselect or delete to unblock the duplicate.
     for (const edge of internalEdges) {
-      this.assertNewEdgePortsAvailable(idMap.get(edge.from), idMap.get(edge.to), plannedNodes);
+      this.assertNewEdgePortsAvailable(idMap.get(edge.from), idMap.get(edge.to), plannedNodes,
+        { operation: 'duplicate', edge });
     }
     this.begin();
     for (const sourceID of sourceIDs) {
@@ -422,7 +439,14 @@ export class ProcessEditModel {
       from: idMap.get(edge.from), outcome: edge.outcome, to: idMap.get(edge.to),
     }));
     const plannedNodes = Object.fromEntries(nodes.map((entry) => [entry.id, entry.node]));
-    for (const edge of edges) this.assertNewEdgePortsAvailable(edge.from, edge.to, plannedNodes);
+    // Report the payload's own ids rather than the remapped destination ids,
+    // and stay inside the clipboard error type so the paste handler surfaces
+    // this instead of collapsing it to the generic clipboard failure.
+    for (let index = 0; index < edges.length; index += 1) {
+      const rejection = this.edgePortRejection(edges[index].from, edges[index].to, plannedNodes,
+        { operation: 'paste', edge: selection.edges[index] });
+      if (rejection) throw new ProcessClipboardError('port', rejection);
+    }
 
     this.begin();
     for (const entry of nodes) {
@@ -474,7 +498,10 @@ export class ProcessEditModel {
     // preserve its existing delete-through rewire without requiring a source
     // port. Every ordinary bridge still passes the shared endpoint authority.
     for (const edge of bridges) {
-      if (edge.from !== '') this.assertNewEdgePortsAvailable(edge.from, edge.to);
+      if (edge.from !== '') {
+        this.assertNewEdgePortsAvailable(edge.from, edge.to, this.template.nodes,
+          { operation: 'delete-rewire', edge });
+      }
     }
 
     this.begin();

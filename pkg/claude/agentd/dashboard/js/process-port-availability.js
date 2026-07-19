@@ -30,6 +30,43 @@ export function processPortUnavailableMessage(node, port) {
   return 'This connector is not available.';
 }
 
+// Mutations that copy or synthesize an edge need more than the bare port
+// sentence. Templates authored before Start/End became single-sided still load
+// with edges like `ordinary -> Start`; those render, save, and delete fine, but
+// no mutation may re-create one. Naming the offending edge and the way out
+// keeps the (correct) wholesale rejection from reading as a dead end.
+const PROCESS_EDGE_MUTATION_GUIDANCE = new Map([
+  ['duplicate', Object.freeze({
+    subject: 'Duplicate cannot copy the edge',
+    cause: 'That edge predates the current Start/End port rules, so it can be kept but not re-created.',
+    recovery: 'Deselect or delete that edge, then duplicate the remaining nodes.',
+  })],
+  ['paste', Object.freeze({
+    subject: 'Paste cannot re-create the edge',
+    cause: 'That edge predates the current Start/End port rules, so it can be kept but not re-created.',
+    recovery: 'Copy the selection again without that edge, or delete the edge first.',
+  })],
+  ['delete-rewire', Object.freeze({
+    subject: 'Delete with rewire cannot re-create the edge',
+    cause: 'Rewiring has to build that connection anew, which the current Start/End port rules forbid.',
+    recovery: 'Delete without rewiring instead, then reconnect the remaining nodes by hand.',
+  })],
+]);
+
+export function describeProcessEdge(edge) {
+  const label = `${edge?.from || '?'} -> ${edge?.to || '?'}`;
+  return edge?.outcome ? `${label} (outcome "${edge.outcome}")` : label;
+}
+
+// processEdgeMutationMessage wraps a port-availability rejection in
+// operation-specific recovery guidance. Unknown operations fall back to the
+// bare sentence, so callers that have nothing better to say stay unchanged.
+export function processEdgeMutationMessage(operation, edge, message) {
+  const guidance = PROCESS_EDGE_MUTATION_GUIDANCE.get(operation);
+  if (!guidance) return message;
+  return `${guidance.subject} ${describeProcessEdge(edge)}: ${message} ${guidance.cause} ${guidance.recovery}`;
+}
+
 export function processEdgePortAvailability(fromNode, toNode) {
   if (!processNodePortAvailable(fromNode, PROCESS_PORT_OUT)) {
     return Object.freeze({

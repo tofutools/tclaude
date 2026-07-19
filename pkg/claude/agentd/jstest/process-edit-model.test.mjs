@@ -14,6 +14,7 @@ import {
   templateIDEditable,
 } from '../dashboard/js/process-edit-model.js';
 import { layoutProcessGraph } from '../dashboard/js/process-layout.js';
+import { ProcessClipboardError } from '../dashboard/js/process-editor-clipboard.js';
 
 function view() {
   return {
@@ -161,6 +162,110 @@ test('all topology creation paths reject unavailable Start/End sides transaction
     edges: [{ from: 'end', outcome: 'after', to: 'ordinary' }], layout: { nodes: {} },
   });
   assertRejected(legacy, () => legacy.duplicateNodes(['end', 'ordinary']), /End nodes cannot have outgoing/);
+});
+
+test('duplicate, paste, and delete-with-rewire name the offending legacy edge and a recovery path', () => {
+  const legacyView = () => ({
+    template: {
+      id: 'legacy', start: 'start', params: {}, nodes: {
+        start: { type: 'start' }, ordinary: { type: 'task' }, end: { type: 'end' },
+      },
+    },
+    edges: [
+      { from: '', outcome: 'start', to: 'start' },
+      { from: 'end', outcome: 'legacy-out', to: 'ordinary' },
+    ],
+    layout: { nodes: { start: { x: 0, y: 0 }, ordinary: { x: 0, y: 100 }, end: { x: 0, y: 200 } } },
+  });
+  const rejects = (model, operation, expectations) => {
+    const before = model.saveBody();
+    const history = { rev: model.rev, undo: model.undoStack.length, redo: model.redoStack.length };
+    assert.throws(operation, (error) => {
+      for (const expectation of expectations) assert.match(error.message, expectation);
+      return true;
+    });
+    assert.deepEqual(model.saveBody(), before, 'rejection mutates nothing');
+    assert.deepEqual({ rev: model.rev, undo: model.undoStack.length, redo: model.redoStack.length },
+      history, 'rejection leaves undo/redo history untouched');
+  };
+
+  // Duplicate blames the source edge ids, not the clone ids the operator has
+  // never seen and cannot select.
+  const duplicate = new ProcessEditModel(legacyView());
+  rejects(duplicate, () => duplicate.duplicateNodes(['end', 'ordinary']), [
+    /Duplicate cannot copy the edge end -> ordinary \(outcome "legacy-out"\)/,
+    /End nodes cannot have outgoing connections\./,
+    /predates the current Start\/End port rules/,
+    /Deselect or delete that edge, then duplicate the remaining nodes\./,
+  ]);
+  assert.doesNotMatch(
+    (() => { try { duplicate.duplicateNodes(['end', 'ordinary']); return ''; } catch (e) { return e.message; } })(),
+    /end-2|ordinary-2/, 'clone ids never leak into the recovery guidance',
+  );
+
+  // Paste stays inside the clipboard error type so the paste handler surfaces
+  // it instead of collapsing it to the generic clipboard failure.
+  const paste = new ProcessEditModel(legacyView());
+  rejects(paste, () => paste.insertClipboardSelection({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'end', node: { type: 'end', result: 'success' }, position: { x: 0, y: 0 } },
+      { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 100 } },
+    ],
+    edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+  }), [
+    /Paste cannot re-create the edge end -> ordinary \(outcome "legacy-out"\)/,
+    /End nodes cannot have outgoing connections\./,
+    /Copy the selection again without that edge, or delete the edge first\./,
+  ]);
+  try {
+    paste.insertClipboardSelection({
+      kind: 'tclaude/process-selection', version: 1,
+      nodes: [
+        { id: 'end', node: { type: 'end', result: 'success' }, position: { x: 0, y: 0 } },
+        { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 100 } },
+      ],
+      edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+    });
+    assert.fail('paste of a legacy illegal-side edge must be rejected');
+  } catch (error) {
+    assert.equal(error instanceof ProcessClipboardError, true, 'paste rejections are clipboard errors');
+    assert.equal(error.code, 'port');
+  }
+
+  // Delete-with-rewire describes the bridge it would have to build, and must
+  // not call that synthesized edge legacy. Plain delete stays the way out.
+  const rewireView = {
+    template: { nodes: { source: { type: 'task' }, middle: { type: 'task' }, start: { type: 'start' } } },
+    edges: [
+      { from: 'source', outcome: 'pass', to: 'middle' },
+      { from: 'middle', outcome: 'pass', to: 'start' },
+    ],
+    layout: { nodes: {} },
+  };
+  const rewire = new ProcessEditModel(structuredClone(rewireView));
+  rejects(rewire, () => rewire.deleteItems([{ type: 'node', id: 'middle' }], { rewire: true }), [
+    /Delete with rewire cannot re-create the edge source -> start \(outcome "pass"\)/,
+    /Start nodes cannot have incoming connections\./,
+    /Rewiring has to build that connection anew/,
+    /Delete without rewiring instead/,
+  ]);
+  rejects(rewire, () => rewire.deleteNode('middle', { rewire: true }), [
+    /Delete with rewire cannot re-create the edge source -> start/,
+    /Delete without rewiring instead/,
+  ]);
+  assert.doesNotMatch(
+    (() => { try { rewire.deleteNode('middle', { rewire: true }); return ''; } catch (e) { return e.message; } })(),
+    /predates/, 'a synthesized bridge is never described as legacy topology',
+  );
+  rewire.deleteItems([{ type: 'node', id: 'middle' }], { rewire: false });
+  assert.equal(rewire.template.nodes.middle, undefined, 'plain delete is the working recovery path');
+  assert.deepEqual(rewire.edges, [], 'plain delete drops the touching edges instead of bridging them');
+
+  // Paths that are not copying preserved topology keep the bare sentence.
+  const plain = new ProcessEditModel(legacyView());
+  assert.throws(() => plain.addEdge('end', 'again', 'ordinary'),
+    (error) => error.message === 'End nodes cannot have outgoing connections.');
 });
 
 test('legacy ordinary illegal-side edges and the Start pseudo-edge load, render, delete, undo, and round-trip unchanged', () => {
