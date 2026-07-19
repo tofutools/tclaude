@@ -9,6 +9,12 @@ on:
     # dnd-palette is the long-lived drag-and-drop-palette integration branch
     # (JOH-374..377) — same deal; drop it once dnd-palette→main lands.
     branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
+  # Post-merge run on main: PRs skip the coverage-redundant matrix cells (see
+  # the exclude below) to keep the review loop fast; the main run keeps the
+  # full matrix as the safety net. The concurrency block below already
+  # special-cases refs/heads/main (never cancel in-progress main runs).
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -50,20 +56,18 @@ jobs:
         # bounded by the slowest single package instead of the sum. The three
         # named shards are the measured heavyweights (agentd ~2.5min serial,
         # jstest's 124 Node suites, the process tree's CPU-bound packages);
-        # `rest` is everything else via an exclusion filter in the run step.
-        # That filter must stay in sync with this list: each named shard's
-        # target is excluded by an anchored pattern, so a package can be
-        # dropped from CI only if a named shard's path stops existing — which
-        # fails that shard loudly ("no such package") rather than silently.
+        # `rest` is everything else, derived in the run step by subtracting
+        # the named shards' own `go list` output from the full package list,
+        # so the partition cannot drift from this shard list.
         shard: [agentd, jstest, process, rest]
-        exclude:
-          # The jstest shard exercises browser-targeted dashboard JS under
-          # Node + the vendored LinkeDOM runtime — nothing in it varies by
-          # runner OS (end-user browsers are a different axis entirely), so
-          # one Linux run is full coverage. The Go shards keep both OSes:
-          # they carry _unix/_darwin build-tagged code and real fs behavior.
-          - os: macos-latest
-            shard: jstest
+        # PR runs skip macOS jstest: the shard exercises browser-targeted
+        # dashboard JS under Node + the vendored LinkeDOM runtime, so nothing
+        # in it varies by runner OS (end-user browsers are a different axis
+        # entirely) and one Linux run is full PR coverage. The post-merge run
+        # on main keeps it as the cross-OS safety net. The Go shards run on
+        # both OSes everywhere — they carry _unix/_darwin build-tagged code
+        # and real fs behavior.
+        exclude: ${{ github.event_name == 'pull_request' && fromJSON('[{"os":"macos-latest","shard":"jstest"}]') || fromJSON('[]') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
