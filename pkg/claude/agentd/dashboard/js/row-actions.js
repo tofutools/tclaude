@@ -26,9 +26,25 @@ let rowActionsCleanup = null;
 export function bindRowActions() {
   if (rowActionsCleanup) return rowActionsCleanup;
 
+  let contextActivatedSource = null;
+  let contextActivationTimer = null;
+  const clearContextActivation = () => {
+    if (contextActivationTimer !== null) clearTimeout(contextActivationTimer);
+    contextActivationTimer = null;
+    contextActivatedSource = null;
+  };
+
   const onClick = (event) => {
     const source = liveActionSource(event);
     if (!source) return;
+    // WebKit follows macOS Control-click's contextmenu with a click for the
+    // same producer. The context handler already dispatched it; consume this
+    // one event-sequence duplicate before it can open a second terminal.
+    if (source === contextActivatedSource) {
+      clearContextActivation();
+      event.preventDefault();
+      return;
+    }
     // data-act controls can live inside <summary>; never also toggle it.
     event.preventDefault();
     void handleRowAction(actionDescriptor(source, event));
@@ -46,6 +62,9 @@ export function bindRowActions() {
     const action = actionDescriptor(source, event);
     if (!BACKGROUND_CONTEXT_ACTIONS.has(action.data.act)) return;
     event.preventDefault();
+    clearContextActivation();
+    contextActivatedSource = source;
+    contextActivationTimer = setTimeout(clearContextActivation, 0);
     void handleRowAction(action);
   };
   document.addEventListener('contextmenu', onContextMenu);
@@ -66,6 +85,7 @@ export function bindRowActions() {
     document.removeEventListener('click', onClick);
     document.removeEventListener('contextmenu', onContextMenu);
     document.removeEventListener('keydown', onChipKeyDown);
+    clearContextActivation();
     if (rowActionsCleanup === cleanup) rowActionsCleanup = null;
   };
   rowActionsCleanup = cleanup;

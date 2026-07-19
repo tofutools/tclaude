@@ -53,6 +53,11 @@ test('tab installers are idempotent and stale cleanup cannot tear down a reinsta
 test('row root delegation installs once, cleans every listener, and survives stale cleanup', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
+  await harness.replaceDashboardModule('js/row-action-handler.js', `
+    export const handledActions = [];
+    export function handleRowAction(action) { handledActions.push(action); }
+  `);
+  const { handledActions } = await harness.importDashboardModule('js/row-action-handler.js');
   const {
     actionDescriptor, bindRowActions, liveActionSource,
   } = await harness.importDashboardModule('js/row-actions.js');
@@ -110,6 +115,11 @@ test('row root delegation installs once, cleans every listener, and survives sta
   const macControlClick = harness.fireEvent(terminalAction, 'contextmenu', { ctrlKey: true });
   assert.equal(macControlClick.defaultPrevented, true,
     'macOS Control-click context gestures dispatch the terminal action instead of opening a menu');
+  assert.equal(handledActions.length, 1);
+  assert.equal(handledActions[0].openInBackground, true);
+  harness.fireEvent(terminalAction, 'click', { ctrlKey: true });
+  assert.equal(handledActions.length, 1,
+    'WebKit follow-up click is suppressed after the context gesture dispatches the action');
   const ordinaryContextMenu = harness.fireEvent(terminalAction, 'contextmenu');
   assert.equal(ordinaryContextMenu.defaultPrevented, false,
     'ordinary terminal context menus remain available');
