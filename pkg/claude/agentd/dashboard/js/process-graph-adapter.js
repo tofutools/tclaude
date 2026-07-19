@@ -43,10 +43,9 @@ export class ProcessGraphAdapter {
       onCanvasClick: emit('canvasClick'),
       onMarqueeSelect: emit('marqueeSelection'),
       onNodeDragStart: emit('nodeDragStart'),
-      // The widget's pointer state owns the gesture, including its `starts`
-      // snapshot; nodeDragEnd payloads arrive commit-ready. Keeping a parallel
-      // snapshot here across callbacks let a gesture that lost its terminal
-      // event feed stale start positions into the next drag's commit.
+      // The widget's pointer state owns the whole gesture, including its
+      // `starts` snapshot: nodeDragEnd payloads arrive commit-ready, and this
+      // boundary must never hold drag state across callbacks.
       onNodeDragEnd: emit('nodeDragEnd'),
       onNodeDragCancel: emit('nodeDragCancel'),
       onPortDragStart: (payload) => {

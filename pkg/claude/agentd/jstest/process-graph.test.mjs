@@ -344,6 +344,7 @@ test('pointer target survives focus-triggered graph refresh', () => {
       root: { focus() { targetIsLive = false; } },
       options: {}, selected: null, view: { x: 0, y: 0, k: 1 },
       svg: { setPointerCapture() {} },
+      layout: { nodes: [] },
       eventTarget() {
         return targetIsLive ? { node, edge: null, port } : { node: null, edge: null, port: null };
       },
@@ -426,7 +427,7 @@ test('a pointerdown reusing the armed pointer id cancels the dead gesture instea
   const cancels = [];
   const snapped = [];
   const fake = {
-    pointer: { id: 1, mode: 'node', nodeID: 'a', nodeIDs: ['a'], lastClientX: 40, lastClientY: 30 },
+    pointer: { id: 1, button: 0, mode: 'node', nodeID: 'a', nodeIDs: ['a'], lastClientX: 40, lastClientY: 30 },
     dragMoved: true,
     root: { focus() {} }, selected: null, spaceHeld: false,
     options: { onNodeDragCancel: (value) => cancels.push(value) },
@@ -450,6 +451,45 @@ test('a pointerdown reusing the armed pointer id cancels the dead gesture instea
   assert.equal(fake.pointer.mode, 'node');
   assert.deepEqual(fake.pointer.starts, [{ id: 'a', x: 12, y: 34 }],
     'the new gesture snapshots start positions from the live layout');
+});
+
+test('a secondary mouse button pressed mid-drag never destroys the live gesture', () => {
+  // A mouse keeps ONE pointer id across all its buttons, so pressing right or
+  // middle while left-dragging delivers a same-id pointerdown with a
+  // different button and no intervening pointerup. That is a live gesture,
+  // not a lost one: it must be left completely alone.
+  const pointer = {
+    id: 1, button: 0, mode: 'node', nodeID: 'a', nodeIDs: ['a'],
+    lastClientX: 40, lastClientY: 30,
+  };
+  const fake = {
+    pointer,
+    dragMoved: true,
+    root: { focus() { throw new Error('a live gesture must not refocus'); } },
+    selected: null, spaceHeld: false,
+    options: {
+      onNodeDragCancel() { throw new Error('a live gesture must not cancel'); },
+    },
+    view: { x: 0, y: 0, k: 1 },
+    svg: {
+      setPointerCapture() { throw new Error('a live gesture must not recapture'); },
+      releasePointerCapture() {},
+    },
+    eventTarget() { return { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }; },
+    clientToGraph: (x, y) => ({ x, y }),
+    layout: { nodes: [{ id: 'a', x: 12, y: 34 }] },
+    snapNodesHome() { throw new Error('a live gesture must not snap home'); },
+    restoreTransientEdges() {},
+    raiseNode() {},
+    onPointerCancel: ProcessGraph.prototype.onPointerCancel,
+  };
+  for (const button of [1, 2]) {
+    ProcessGraph.prototype.onPointerDown.call(fake, {
+      button, pointerId: 1, clientX: 44, clientY: 33, preventDefault() {},
+    });
+    assert.equal(fake.pointer, pointer, `button ${button} leaves the armed gesture untouched`);
+    assert.equal(fake.dragMoved, true);
+  }
 });
 
 test('node drag end reports the start positions captured by its own gesture', () => {
@@ -550,6 +590,7 @@ test('touch and pen pan empty canvas but still drag nodes', () => {
     const fake = {
       root: { focus() {} }, options: { marqueeSelect: true }, selected: null,
       view: { x: 0, y: 0, k: 1 }, svg: { setPointerCapture() {} },
+      layout: { nodes: [] },
       eventTarget(event) { return event.overNode
         ? { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }
         : { node: null, edge: null, port: null }; },

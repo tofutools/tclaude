@@ -199,19 +199,23 @@ test('rapid same-node drags always commit the drop, even across a lost terminal 
   assert.deepEqual(editor.model.layout.nodes.build, { x: 340, y: 230 });
 
   // Drag 2 loses its pointerup entirely (released off-SVG with no delivered
-  // capture). Drag 3 reuses the mouse pointer id: the dead gesture must not
-  // swallow it or replay its stale start frame into the commit.
+  // capture). Drag 3 reuses the mouse pointer id and — crucially — presses at
+  // a point that differs from drag 2's start, so a commit replaying drag 2's
+  // stale frame would land at (400,275) instead of the true (380,260).
   harness.fireEvent(buildEl(), 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: 340, clientY: 230 });
   harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 400 });
-  harness.fireEvent(buildEl(), 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: 340, clientY: 230 });
+  assert.deepEqual(editor.model.layout.nodes.build, { x: 340, y: 230 },
+    'the gesture that lost its pointerup commits nothing');
+  harness.fireEvent(buildEl(), 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: 360, clientY: 245 });
   harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 380, clientY: 260 });
   // A validation response repaint landing mid-drag must not disturb the commit.
   await harness.act(() => editor.validation.applyDiagnostics([]));
-  harness.fireEvent(svg, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 380, clientY: 260 });
+  harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 400, clientY: 275 });
+  harness.fireEvent(svg, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 400, clientY: 275 });
   assert.deepEqual(editor.model.layout.nodes.build, { x: 380, y: 260 },
-    'the drop is authoritative: committed from the live gesture against the current model');
+    'the drop commits from the live gesture: model position + this drag\'s own delta');
   assert.equal(buildEl().getAttribute('transform'), 'translate(380 260)',
-    'the rendered node settles exactly where it was dropped');
+    'the rendered node settles exactly where the live gesture dropped it');
   editor.destroy();
 });
 
