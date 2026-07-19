@@ -25,6 +25,51 @@ function RequestBody({ request, label, retry, children }) {
   return html`<${Fragment}>${request.phase === 'error' && html`<div role="alert" class="island-error">Refresh failed: ${request.error} <button onClick=${retry}>retry</button></div>`}${children}</${Fragment}>`;
 }
 
+// Click-to-edit name in the list. Unlike the editor header, there is no draft
+// to fold this into, so committing is an immediate CAS save through
+// submitRename -- which is also why the row still offers the dialog, where the
+// id and the consequences are spelled out.
+function EditableName({ template, actions, busy }) {
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    // Not every DOM implementation provides select() (the linkedom test DOM
+    // does not); selecting the existing name is a convenience, not a contract.
+    input.select?.();
+  }, [editing]);
+  // Read through the ref, not the event: see EditableTitle.
+  const commit = async () => {
+    const next = String(inputRef.current?.value ?? '').trim();
+    setEditing(false);
+    if (next === (template.name || '')) return;
+    await actions.openRename({ id: template.id, name: template.name || '', sourceHash: template.latestVersion?.sourceHash || '' });
+    await actions.submitRename(next);
+  };
+  if (editing) {
+    return html`<input
+      ref=${inputRef} class="process-name-input" type="text" spellcheck="false"
+      placeholder="display name" aria-label=${`Display name for ${template.id}`}
+      data-process-name-input=${template.id} defaultValue=${template.name || ''}
+      onBlur=${() => commit()}
+      onKeyDown=${(event) => {
+        if (event.isComposing || event.keyCode === 229) return;
+        if (event.key === 'Enter') { event.preventDefault(); commit(); }
+        if (event.key === 'Escape') { event.preventDefault(); setEditing(false); }
+      }}
+    />`;
+  }
+  return html`<button
+    class=${`process-name-edit${template.name ? '' : ' process-unnamed'}`}
+    type="button" data-process-name-edit=${template.id} disabled=${busy}
+    title="Click to rename" aria-label=${`Rename ${template.name || template.id}`}
+    onClick=${() => setEditing(true)}
+  >${template.name || template.id}</button>`;
+}
+
 function Templates({ current, actions }) {
   const rows = current.templates;
   return html`<div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
@@ -32,7 +77,7 @@ function Templates({ current, actions }) {
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}>
       <${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
         ${rows.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>
-          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id}><td><strong class=${template.name ? '' : 'process-unnamed'}>${template.name || template.id}</strong><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="rename" data-id=${template.id} type="button" title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button></td></tr>`; })}
+          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id}><td><${EditableName} template=${template} actions=${actions} busy=${current.mutation.busy} /><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="rename" data-id=${template.id} type="button" title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button></td></tr>`; })}
         </tbody></table>`}
       </${RequestBody}>
     </div>
@@ -125,6 +170,24 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
   return html`<div id="process-editor-canvas" ref=${mountRef} class="process-canvas-mount" data-process-mount="editor">${error && html`<div class="process-placeholder" role="alert">Could not open editor: ${error}</div>`}</div>`;
 }
 
+// Ctrl/Cmd+Enter is the dashboard-wide confirm hotkey (helpers.js
+// bindModalSubmitHotkey for imperative modals, fieldSubmit in the Preact
+// dialogs). Both modifiers are accepted on every platform so no OS sniffing is
+// needed, and IME composition is excluded so committing a candidate never
+// submits the form. Plain Enter is left to the browser's native form handling.
+//
+// Bound per field rather than on the form, matching fieldSubmit: a keydown
+// handler on an ancestor makes Preact register its shared event proxy for a
+// type the descendants never registered, which the linkedom test DOM then
+// dispatches against the wrong element.
+export function fieldSubmitHotkey(submit) {
+  return (event) => {
+    if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey) || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    submit();
+  };
+}
+
 function paramDefaultText(value) {
   if (value === undefined) return '';
   if (typeof value === 'string') return value;
@@ -159,7 +222,7 @@ function InstantiateDialog({ spec, busy, actions }) {
   }, [spec.phase, spec.ref, spec.template]);
   const change = (name, value) => setValues((current) => ({ ...current, [name]: value }));
   const submit = (event) => {
-    event.preventDefault();
+    event?.preventDefault();
     const resolved = {};
     for (const [name, param] of params) {
       const value = values[name] ?? '';
@@ -191,10 +254,16 @@ function RenameDialog({ spec, busy, actions }) {
   const [name, setName] = useState(spec.name || '');
   const close = () => { if (!busy) actions.closeRename(); };
   const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: nameRef, onEscape: close });
-  const submit = (event) => { event.preventDefault(); void actions.submitRename(name); };
-  return html`<div class="modal-overlay show process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-rename-title" onSubmit=${submit}>
+  const submit = (event) => { event?.preventDefault(); void actions.submitRename(name); };
+  // process-editor-modal is the editor's shared modal skin contract: it carries
+  // the --process-control-* variables and the wizard button/field treatment, so
+  // this dialog matches its siblings instead of needing its own theme rules.
+  return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-rename-title" onSubmit=${submit}>
     <h3 id="process-rename-title">Rename template</h3>
-    <label><span>Display name</span><input ref=${nameRef} data-process-rename-input type="text" spellcheck="false" placeholder="display name" value=${name} onInput=${(event) => setName(event.currentTarget.value)} /></label>
+    <div class="field process-editor-field process-rename-field">
+      <label for="process-rename-input">Display name</label>
+      <input ref=${nameRef} id="process-rename-input" data-process-rename-input type="text" autocomplete="off" spellcheck="false" placeholder="display name" value=${name} data-select-on-focus onInput=${(event) => setName(event.currentTarget.value)} onKeyDown=${fieldSubmitHotkey(() => { if (!busy) submit(); })} />
+    </div>
     <p class="muted">Shown wherever this template is listed. Leave it empty to fall back to the id. The id <code>${spec.id}</code> is permanent and keeps existing runs and pinned versions working.</p>
     ${spec.error && html`<div class="island-error" role="alert">${spec.error}</div>`}
     <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${close}>Cancel</button><button class="primary" type="submit" disabled=${busy}>${busy ? 'Saving…' : 'Save name'}</button></div>

@@ -700,15 +700,25 @@ afterwards. Its `name` is a free-text display label shown wherever the template
 is listed, and it can be changed at any time. A template with no name falls back
 to showing its id.
 
-Rename a template from the **rename** button on its row in the Templates list,
-or from the display-name field in the editor's **template settings…** inspector.
-Both paths write the name through the ordinary content-addressed save, so a
+Rename a template by clicking its name in the Templates list or its title in the
+open editor, and editing in place; Enter commits and Escape abandons. The
+list's **rename** button opens the same edit in a dialog that also states the
+id and what a rename does and does not affect, and confirms with Ctrl/Cmd+Enter
+like the dashboard's other dialogs. The editor's **template settings…**
+inspector carries the same field alongside the description and documentation.
+
+The two surfaces commit differently, which is deliberate. In the editor the
+name is part of the draft: it is undoable and is written when the template is
+saved, like any other edit. In the Templates list there is no draft, so
+committing saves immediately against the version the row published — a template
+changed by an agent or another tab in the meantime is reported as a conflict
+rather than overwritten.
+
+Every path writes the name through the ordinary content-addressed save, so a
 rename is a normal new version rather than a mutation of history; existing runs
-and pinned refs are unaffected. The list-row dialog saves against the version it
-observed when it opened, so a template edited by an agent or another tab while
-the dialog sat open is reported as a conflict instead of being overwritten.
-The underlying endpoint requires `process.templates.manage`, which the local
-operator dashboard already satisfies.
+and pinned refs are unaffected. The underlying endpoint requires
+`process.templates.manage`, which the local operator dashboard already
+satisfies.
 
 The dashboard template editor can declare params and instantiate any clean,
 saved version. Instantiation always sends the exact `id@sha256:<hash>` currently

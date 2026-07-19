@@ -1140,3 +1140,108 @@ test('a rename with no observed version still saves against the head it read', a
   assert.equal(body.sourceHash, 'head-only', 'a list row without a published hash still renames rather than dead-locking');
   assert.equal(body.template.name, 'Named at last');
 });
+
+test('Ctrl/Cmd+Enter confirms the rename dialog and plain Enter is left to the form', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const submitted = [];
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeRename() { state.setRename(null); }, submitRename(name) { submitted.push(name); },
+  };
+  state.setRename({ key: 'hotkey-1', id: 'hotkey', name: 'Before', sourceHash: 'v1', error: '' });
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  const input = mounted.container.querySelector('[data-process-rename-input]');
+  input.value = 'After';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+
+  // A bare Enter must not be intercepted: the browser's native form submission
+  // already handles it, and swallowing it here would double-submit.
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(submitted, [], 'plain Enter is left to native form submission');
+
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', metaKey: true }));
+  assert.deepEqual(submitted, ['After'], 'Cmd+Enter confirms with the current draft');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', ctrlKey: true }));
+  assert.deepEqual(submitted, ['After', 'After'], 'Ctrl+Enter confirms on non-mac keyboards too');
+
+  // An IME candidate commit also arrives as Enter; submitting there would eat
+  // the composition instead of confirming it.
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', metaKey: true, isComposing: true }));
+  assert.equal(submitted.length, 2, 'an IME composition commit is not a confirm');
+  await mounted.unmount();
+});
+
+test('the Templates list renames inline on click, committing an immediate CAS save', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{
+        id: 'inline', name: 'Old inline name', latestVersion: { sourceHash: 'inline-v1' },
+      }] }) };
+      if (options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'inline@sha256:new' }) };
+      return { ok: true, json: async () => ({ template: { id: 'inline', name: 'Old inline name' }, sourceHash: 'inline-v1' }) };
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+
+  const trigger = mounted.container.querySelector('[data-process-name-edit="inline"]');
+  assert.ok(trigger, 'the name itself is the rename affordance');
+  assert.equal(trigger.textContent, 'Old inline name');
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  const input = mounted.container.querySelector('[data-process-name-input="inline"]');
+  assert.ok(input, 'clicking the name swaps in an editor');
+  assert.equal(harness.document.activeElement, input);
+
+  input.value = 'Renamed inline';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  for (let i = 0; i < 10 && !requests.some((r) => r.options.method === 'POST'); i++) await harness.act(() => Promise.resolve());
+  const post = requests.find((request) => request.options.method === 'POST');
+  const body = JSON.parse(post.options.body);
+  assert.equal(body.template.name, 'Renamed inline');
+  assert.equal(body.sourceHash, 'inline-v1', 'the inline edit still uses the row version as its CAS baseline');
+  await mounted.unmount();
+});
+
+test('Escape abandons an inline list rename without saving', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  let posts = 0;
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      if (options.method === 'POST') posts += 1;
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{ id: 'escaped', name: 'Keep me' }] }) };
+      return { ok: true, json: async () => ({ template: { id: 'escaped' }, sourceHash: 'x' }) };
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-edit="escaped"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-name-input="escaped"]');
+  input.value = 'Discard this';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Escape' }));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  assert.equal(posts, 0, 'Escape commits nothing');
+  assert.equal(mounted.container.querySelector('[data-process-name-edit="escaped"]').textContent, 'Keep me');
+  await mounted.unmount();
+});

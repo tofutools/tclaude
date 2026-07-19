@@ -1376,3 +1376,43 @@ test('production node dialog generations isolate forced same-turn descriptor rep
   await harness.act(() => editor.modalDispose(null));
   editor.destroy();
 });
+
+test('the editor header title renames inline and hides the id behind a tooltip', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  // A saved template: the blank scaffold still owns the id input instead.
+  editor.blank = false;
+  editor.model.currentRef = `header-rename@sha256:${'0'.repeat(64)}`;
+  editor.model.sourceHash = '1'.repeat(64);
+  await harness.act(() => editor.status('ready'));
+
+  const title = host.querySelector('[data-process-title-edit]');
+  assert.ok(title, 'the header title is the rename affordance');
+  assert.equal(title.textContent, editor.model.template.id,
+    'an unnamed template falls back to its id as the label');
+  assert.doesNotMatch(title.textContent, /\(/,
+    'the id is no longer appended in parentheses beside the name');
+  assert.match(title.getAttribute('title'), new RegExp(`id ${editor.model.template.id}\\b`),
+    'the id stays reachable through the tooltip');
+
+  await harness.act(() => harness.fireEvent(title, 'click'));
+  const input = host.querySelector('[data-process-title-input]');
+  assert.ok(input, 'clicking the title swaps in an editor');
+  input.value = 'Named from the header';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+
+  assert.equal(editor.model.template.name, 'Named from the header',
+    'the header edit commits to the draft, not straight to the store');
+  assert.equal(editor.model.dirty, true, 'a header rename is an ordinary unsaved edit');
+  const renamed = host.querySelector('[data-process-title-edit]');
+  assert.equal(renamed.textContent, 'Named from the header');
+  assert.doesNotMatch(renamed.textContent, new RegExp(editor.model.template.id),
+    'the id is not shown once a name exists');
+
+  // Escape abandons rather than committing.
+  await harness.act(() => harness.fireEvent(renamed, 'click'));
+  const second = host.querySelector('[data-process-title-input]');
+  second.value = 'Discarded';
+  await harness.act(() => harness.fireEvent(second, 'keydown', { key: 'Escape' }));
+  assert.equal(editor.model.template.name, 'Named from the header', 'Escape keeps the previous name');
+  editor.destroy();
+});
