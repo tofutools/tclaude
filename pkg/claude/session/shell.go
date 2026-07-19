@@ -1,6 +1,8 @@
 package session
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -97,6 +99,25 @@ func runNewShell(params *NewParams) error {
 		Created:     launchCreated,
 		Updated:     launchCreated,
 	}
+	// Same launch-row rollback contract as runNew: a launch that fails before
+	// its pane survives deletes the row it just created, so a failed shell
+	// launch cannot strand a ghost session row. Pre-existing rows (a reused
+	// dead label) keep their prior state on failure, exactly as before.
+	priorRow, err := db.LoadSession(sessionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check for existing session row: %w", err)
+	}
+	launchRowOwned := priorRow == nil
+	launchRowCommitted := false
+	defer func() {
+		if launchRowCommitted || !launchRowOwned {
+			return
+		}
+		if derr := db.DeleteSession(sessionID); derr != nil {
+			slog.Warn("shell launch failed; could not remove its session row",
+				"session_id", sessionID, "error", derr)
+		}
+	}()
 	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
 		return fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
@@ -133,6 +154,10 @@ func runNewShell(params *NewParams) error {
 
 	state.PID = pid
 	if err := SaveSessionState(state); err != nil {
+		// Kill the pane like the exit-audit failure path below: leaving it
+		// alive while the launch-row defer rolls the row back would orphan a
+		// live pane tclaude can no longer see.
+		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
 	if err := exitGuard.release(); err != nil {
@@ -140,6 +165,9 @@ func runNewShell(params *NewParams) error {
 		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 
+	// The pane is up and bound; from here the row belongs to the live session
+	// (an attach failure below must not delete it).
+	launchRowCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created shell session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
 }
 
