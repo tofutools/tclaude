@@ -503,6 +503,14 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("dashboard.css", css,
 		".process-editor-header",
 		".process-editor-external",
+		// TCL-583: actionable error statuses carry recovery instructions, so
+		// they take a full-width wrapping row rather than a truncated slot in
+		// the toolbar. Neither skin overrides .is-error layout, so the same
+		// rule serves the default and wizard chrome; the markup must not fall
+		// back to a pointer-only title.
+		".process-editor-status.is-error {",
+		"flex: 1 0 100%",
+		"white-space: normal",
 		"body.wizard .process-editor-external",
 		".process-external-review",
 		"body.wizard .process-external-source-summary",

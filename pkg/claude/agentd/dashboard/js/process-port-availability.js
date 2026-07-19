@@ -52,13 +52,20 @@ const PROCESS_EDGE_MUTATION_GUIDANCE = new Map([
   })],
   // Payloads of unknown provenance carry no `cause`: restating the base
   // sentence as a rule would add length without adding information.
+  // Copy always includes every edge whose endpoints are both selected, so
+  // "copy without that edge" is only reachable by changing the source first or
+  // by not selecting both endpoints -- and deleting the edge after copying does
+  // not change what is already on the clipboard. Say the sequence, not a choice.
   ['paste', Object.freeze({
     subject: 'Paste cannot re-create the edge',
-    recovery: 'Copy the selection again without that edge, or delete the edge first.',
+    recovery: 'Delete that edge in the source template and copy again, or copy without selecting both of its endpoints.',
   })],
+  // Stored snippet payloads are immutable: the API creates, renames, and
+  // deletes, but never updates. "Re-save" would name an operation that does not
+  // exist, and creating under the same name conflicts.
   ['snippet', Object.freeze({
     subject: 'This snippet cannot be inserted because of the edge',
-    recovery: 'Re-save the snippet from a selection that omits that edge.',
+    recovery: 'Save a replacement snippet from a corrected selection, then delete or rename the old one.',
   })],
   ['delete-rewire', Object.freeze({
     subject: 'Delete with rewire cannot re-create the edge',

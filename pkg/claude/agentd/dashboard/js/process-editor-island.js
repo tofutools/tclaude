@@ -78,8 +78,7 @@ function Header({ controller, view }) {
       ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}
     </span>
     <span class="process-editor-dirty" hidden=${!model.dirty}>● modified</span>
-    <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status"
-      title=${view.status.message || undefined}>${view.status.message}</span>
+    <span class=${`process-editor-status${view.status.error ? ' is-error' : ''}`} role="status">${view.status.message}</span>
     <span class="spacer"></span>
     <button class="process-action" type="button" disabled=${externalPending} title="Edit template name and description" onClick=${() => controller.setSelection({ type: 'template' })}>template settings…</button>
     <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Declare template parameters" onClick=${() => controller.openParamsSettings()}>params…</button>

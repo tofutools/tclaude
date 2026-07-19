@@ -1403,8 +1403,14 @@ export class ProcessTemplateEditor {
       choices,
     });
     if (!choice || externalInteractionPending(this)) return false;
-    this.mutate(() => this.model.deleteItems(items, { rewire: choice === 'rewire' }));
+    // A rejected delete must keep the selection: the rewire rejection tells the
+    // operator to retry with "Delete + drop edges", and clearing here would
+    // force them to find and reselect the nodes first. mutate() returns
+    // undefined only on rejection.
+    const applied = this.mutate(() => this.model.deleteItems(items, { rewire: choice === 'rewire' }));
+    if (applied === undefined) return false;
     this.setSelection(null);
+    return true;
   }
 
   nameSnippetModal({ title, submitLabel, initialName = '' }) {

@@ -12339,7 +12339,18 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 .process-editor-version { font-size: 12px; }
 .process-editor-dirty { color: #e3a341; font-size: 12px; white-space: nowrap; }
 .process-editor-status { color: #8b949e; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
-.process-editor-status.is-error { color: #f85149; }
+/* Error statuses carry recovery instructions, so they take their own full-width
+   wrapping row instead of competing with the toolbar for a truncated slot. No
+   pointer-only affordance (title/tooltip) is involved: the text is simply all
+   there, for keyboard and touch operators too. Error-only, so ordinary
+   one-line statuses keep the existing single-row header. */
+.process-editor-status.is-error {
+  color: #f85149;
+  flex: 1 0 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
 .process-editor-external {
   display: block;
   border-bottom: 1px solid #6e5b22;

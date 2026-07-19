@@ -216,7 +216,7 @@ test('duplicate, paste, and delete-with-rewire name the offending legacy edge an
   }), [
     /Paste cannot re-create the edge end -> ordinary \(outcome "legacy-out"\)/,
     /End nodes cannot have outgoing connections\./,
-    /Copy the selection again without that edge, or delete the edge first\./,
+    /Delete that edge in the source template and copy again, or copy without selecting both of its endpoints\./,
   ]);
   try {
     paste.insertClipboardSelection({
@@ -248,7 +248,7 @@ test('duplicate, paste, and delete-with-rewire name the offending legacy edge an
   rejects(snippet, () => snippet.insertClipboardSelection(snippetPayload, { operation: 'snippet' }), [
     /This snippet cannot be inserted because of the edge end -> ordinary/,
     /End nodes cannot have outgoing connections\./,
-    /Re-save the snippet from a selection that omits that edge\./,
+    /Save a replacement snippet from a corrected selection, then delete or rename the old one\./,
   ]);
   assert.doesNotMatch(
     (() => {

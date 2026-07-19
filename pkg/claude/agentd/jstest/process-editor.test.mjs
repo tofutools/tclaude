@@ -404,7 +404,8 @@ test('pasting a preserved legacy illegal-side edge surfaces the specific recover
   assert.equal(status[1], true, 'the rejection is surfaced as an error status');
   assert.match(status[0], /Paste cannot re-create the edge end -> ordinary \(outcome "legacy-out"\)/);
   assert.match(status[0], /End nodes cannot have outgoing connections\./);
-  assert.match(status[0], /Copy the selection again without that edge, or delete the edge first\./);
+  assert.match(status[0],
+    /Delete that edge in the source template and copy again, or copy without selecting both of its endpoints\./);
   assert.doesNotMatch(status[0], /Clipboard selection could not be pasted/);
 
   assert.deepEqual(model.saveBody(), before, 'the rejected paste mutated nothing');
@@ -446,7 +447,8 @@ test('a custom snippet carrying a legacy illegal-side edge is rejected as a snip
   assert.equal(status[1], true);
   assert.match(status[0], /This snippet cannot be inserted because of the edge end -> ordinary \(outcome "legacy-out"\)/);
   assert.match(status[0], /End nodes cannot have outgoing connections\./);
-  assert.match(status[0], /Re-save the snippet from a selection that omits that edge\./);
+  assert.match(status[0],
+    /Save a replacement snippet from a corrected selection, then delete or rename the old one\./);
   // The operator never pasted and has nothing to re-copy.
   assert.doesNotMatch(status[0], /Paste|Copy the selection again/);
   assert.doesNotMatch(status[0], /The custom snippet could not be inserted/,
@@ -500,6 +502,58 @@ test('duplicate and delete-with-rewire rejections reach the header status line',
   assert.match(statuses.at(-1)[0], /Delete with rewire cannot re-create the edge source -> start/);
   assert.match(statuses.at(-1)[0], /Choose "Delete \+ drop edges" instead/);
   assert.deepEqual(rewireModel.saveBody(), rewireBefore);
+});
+
+test('a rejected delete-with-rewire keeps the selection so the advised drop-edges recovery is reachable', async () => {
+  // Regression: deleteSelection cleared the selection unconditionally after
+  // mutate(), so the rewire rejection told the operator to retry with
+  // "Delete + drop edges" on a selection that no longer existed.
+  const model = new ProcessEditModel({
+    template: { nodes: { source: { type: 'task' }, middle: { type: 'task' }, start: { type: 'start' } } },
+    edges: [
+      { from: 'source', outcome: 'pass', to: 'middle' },
+      { from: 'middle', outcome: 'pass', to: 'start' },
+    ],
+    layout: { nodes: {} },
+  });
+  const before = model.saveBody();
+  const selection = { type: 'node', id: 'middle' };
+  const statuses = [];
+  const selections = [];
+  let choice = 'rewire';
+  const fake = {
+    model, destroyed: false, selection,
+    // The real mutate(): its reject-and-return-undefined contract is exactly
+    // what deleteSelection must now branch on.
+    mutate: ProcessTemplateEditor.prototype.mutate,
+    status: (...args) => { statuses.push(args); },
+    setSelection: (value) => { selections.push(value); fake.selection = value; },
+    refresh() {},
+    choiceModal: async ({ choices }) => {
+      // The rewire branch is only offered for mid-graph nodes, which is also
+      // the only case that can hit this rejection.
+      assert.deepEqual(choices.map((entry) => entry.key), ['rewire', 'drop']);
+      assert.equal(choices.find((entry) => entry.key === 'drop').label, 'Delete + drop edges');
+      return choice;
+    },
+  };
+
+  assert.equal(await ProcessTemplateEditor.prototype.deleteSelection.call(fake), false);
+  assert.equal(statuses.at(-1)[1], true);
+  assert.match(statuses.at(-1)[0], /Delete with rewire cannot re-create the edge source -> start/);
+  // The message names this exact button, so the selection it acts on must survive.
+  assert.match(statuses.at(-1)[0], /Choose "Delete \+ drop edges" instead/);
+  assert.deepEqual(selections, [], 'a rejected delete never touches the selection');
+  assert.equal(fake.selection, selection);
+  assert.deepEqual(model.saveBody(), before, 'the rejected delete mutated nothing');
+  assert.equal(model.canUndo, false);
+
+  // Now actually follow the advertised recovery on the retained selection.
+  choice = 'drop';
+  assert.equal(await ProcessTemplateEditor.prototype.deleteSelection.call(fake), true);
+  assert.equal(model.template.nodes.middle, undefined, 'the advised recovery completes');
+  assert.equal(model.canUndo, true);
+  assert.deepEqual(selections, [null], 'a successful delete still clears the selection');
 });
 
 test('missing keyboard source cancellation clears editor gesture state without commit or status mutation', () => {

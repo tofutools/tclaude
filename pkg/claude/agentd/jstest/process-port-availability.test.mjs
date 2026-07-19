@@ -77,11 +77,12 @@ test('mutation rejections keep the base sentence and add operation-specific reco
   const duplicate = processEdgeMutationMessage('duplicate', edge, base);
   assert.match(duplicate, /Deselect one of its endpoint nodes, or delete the edge first\./);
   assert.doesNotMatch(duplicate, /Deselect (or delete )?that edge/);
-  assert.match(processEdgeMutationMessage('paste', edge, base), /Copy the selection again without that edge/);
+  assert.match(processEdgeMutationMessage('paste', edge, base),
+    /Delete that edge in the source template and copy again, or copy without selecting both of its endpoints\./);
   // Snippet insertion is not a paste: never tell that operator to re-copy.
   const snippet = processEdgeMutationMessage('snippet', edge, base);
   assert.match(snippet, /This snippet cannot be inserted because of the edge/);
-  assert.match(snippet, /Re-save the snippet from a selection that omits that edge\./);
+  assert.match(snippet, /Save a replacement snippet from a corrected selection, then delete or rename the old one\./);
   assert.doesNotMatch(snippet, /Paste|Copy the selection again/);
   // Guidance composes cleanly with an absent cause: no double colon, no double
   // space, no dangling separator where the omitted clause used to sit.

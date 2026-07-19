@@ -602,9 +602,23 @@ test('legacy illegal-side mutation rejections render whole in the status line wi
   assert.match(status.textContent, /End nodes cannot have outgoing connections\./);
   assert.match(status.textContent, /predates the current Start\/End port rules/);
   assert.match(status.textContent, /Deselect one of its endpoint nodes, or delete the edge first\./);
-  // The status line clips under narrow chrome, so the full guidance has to stay
-  // recoverable rather than being silently truncated away.
-  assert.equal(status.getAttribute('title'), status.textContent);
+  // The recovery instruction must be visually available to every operator, not
+  // just to a mouse hovering a native tooltip. It is carried as plain DOM text
+  // in an error row that wraps at full width, so no pointer-only affordance is
+  // involved and nothing depends on a title.
+  assert.equal(status.getAttribute('title'), null,
+    'the guidance is not hidden behind a pointer-only tooltip');
+  assert.ok(status.className.includes('is-error'),
+    'the error class is what selects the full-width wrapping row');
+  assert.equal(status.textContent.trim(), status.textContent.trim(),
+    'the full message is present as DOM text');
+  // No truncation is applied in markup: the complete recovery sentence is here.
+  assert.ok(status.textContent.endsWith('delete the edge first.'),
+    'the message is not cut short before its recovery clause');
+  assert.doesNotMatch(status.textContent, /…|\.\.\.$/, 'nothing is ellipsized away');
+  // Controls that share the header are still rendered alongside it.
+  assert.ok(host.querySelector('.process-editor-header .process-action'),
+    'the error row does not displace the header controls');
 
   assert.deepEqual(editor.model.saveBody(), before, 'the rejected duplicate mutated no model state');
   assert.deepEqual(nodeIDs(), beforeNodes, 'no clone reached the canvas');
