@@ -222,17 +222,17 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 	skipTmux34PaneDeathEvidenceLoss(t)
 	tmux := withIsolatedRealTmux(t)
 	tests := []struct {
-		name       string
-		release    bool
-		signalPane syscall.Signal
-		helperCode int
-		wantCode   *int
-		wantSignal string
+		name        string
+		release     bool
+		signalPane  syscall.Signal
+		helperCode  int
+		wantCode    *int
+		wantSignals []string
 	}{
-		{name: "exit-0", release: true, helperCode: 0, wantCode: intPtr(0)},
-		{name: "exit-9", release: true, helperCode: 9, wantCode: intPtr(9)},
-		{name: "sigterm", signalPane: syscall.SIGTERM, wantSignal: "15"},
-		{name: "sigkill", signalPane: syscall.SIGKILL, wantSignal: "9"},
+		{name: "exit-0", release: true, helperCode: 0, wantCode: intPtr(0), wantSignals: []string{""}},
+		{name: "exit-9", release: true, helperCode: 9, wantCode: intPtr(9), wantSignals: []string{""}},
+		{name: "sigterm", signalPane: syscall.SIGTERM, wantSignals: []string{"15", "TERM"}},
+		{name: "sigkill", signalPane: syscall.SIGKILL, wantSignals: []string{"9", "KILL"}},
 	}
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -278,7 +278,8 @@ func TestRealTmuxPaneDiedEmitsAndPreservesTruthfulBootstrapEvidence(t *testing.T
 				require.NotNil(t, evidence.ExitCode)
 				assert.Equal(t, *tc.wantCode, *evidence.ExitCode)
 			}
-			assert.Equal(t, tc.wantSignal, evidence.Signal)
+			assert.Contains(t, tc.wantSignals, evidence.Signal,
+				"tmux may report signals by number or name depending on platform support")
 			assert.Equal(t, generation, evidence.Generation)
 			require.NoError(t, CleanupDeadTmuxPane(evidence))
 		})
