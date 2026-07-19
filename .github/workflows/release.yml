@@ -50,29 +50,25 @@ jobs:
     if: ${{ inputs.homebrew_only != true }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # Same shard split as PR CI, via the shared test-suite action — one
+        # partition definition for both flows. Unlike PR CI there is no
+        # macOS-jstest exclusion: this post-merge run is where that cell's
+        # cross-OS coverage lives.
+        shard: [agentd, jstest, process, rest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: lts/*
-
-      # Package-level parallelism is left at the default to match ci.yml; see the rationale there.
       # -race is OFF by default, gated behind the RUN_RACE repo variable (see ci.yml
       # for the full rationale). ubuntu+macOS only, so enabling it is race-detector-safe.
-      - name: Run tests
-        run: |
-          export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
-          go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} ./...
+      - name: Test suite (${{ matrix.shard }})
+        uses: ./.github/actions/test-suite
+        with:
+          shard: ${{ matrix.shard }}
+          race: ${{ vars.RUN_RACE }}
 
   # Version generation only computes the next number (read-only); it runs in
   # parallel with test/lint/build. The git tag is pushed later, by the release
