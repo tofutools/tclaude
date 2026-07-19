@@ -12618,45 +12618,38 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   font-size: 13px;
   box-shadow: 0 4px 18px rgba(0, 0, 0, .5);
 }
-/* The connector-label hint. Sits below the label anchor rather than centred on
-   it, so it never covers the label it is explaining, and below the inline
-   editor's z-index so renaming an outcome is never obscured by the note that
-   explains renaming. */
-.process-edge-hint {
+/* The connector pin toggle. Offset below the label anchor so it never covers
+   the key it controls, and below the inline editor's z-index so renaming an
+   outcome is never obscured by the button that hides it. */
+.process-edge-pin {
   position: absolute;
   z-index: 29;
-  transform: translate(-50%, 14px);
+  transform: translate(-50%, 12px);
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  max-width: 280px;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   background: #0d1117;
-  color: #b9c4d0;
   border: 1px solid #30363d;
   border-radius: 6px;
-  padding: 7px 8px 7px 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, .5);
-}
-.process-edge-hint-text {
-  margin: 0;
-  /* Outcome keys are quoted into this text and have no length or charset
-     validation server-side, so a long unbroken key must wrap, not overflow. */
-  overflow-wrap: anywhere;
-}
-.process-edge-hint-pin {
-  flex: none;
-  background: none;
-  border: 0;
-  padding: 0 2px;
   cursor: pointer;
-  font-size: 12px;
-  line-height: 1.45;
-  opacity: .65;
+  font-size: 11px;
+  line-height: 1;
+  /* Unpinned reads as "this label is not being kept": the glyph is dimmed and
+     desaturated rather than swapped, so the control does not jump on toggle. */
+  opacity: .45;
+  filter: grayscale(1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .5);
 }
-.process-edge-hint-pin:hover,
-.process-edge-hint-pin:focus-visible {
+.process-edge-pin.is-pinned {
+  opacity: 1;
+  filter: none;
+  border-color: #58a6ff;
+}
+.process-edge-pin:hover,
+.process-edge-pin:focus-visible {
   opacity: 1;
 }
 .process-editor-band {

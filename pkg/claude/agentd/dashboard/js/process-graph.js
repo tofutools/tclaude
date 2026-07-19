@@ -4,7 +4,7 @@
 // computes run state.
 
 import { layoutProcessGraph, rerouteProcessLayout } from './process-layout.js';
-import { outcomeCarriesInformation } from './process-outcome-vocabulary.js';
+import { edgeLabelVisible } from './process-outcome-vocabulary.js';
 import {
   makeSelection, nodesInMarquee, normalizeMarquee, selectionContains, selectionItems,
 } from './process-selection.js';
@@ -58,9 +58,11 @@ function hook(options, name) {
   return typeof options[name] === 'function' ? options[name] : () => {};
 }
 
-function edgeLabel(edge, siblingCount = 2, nodeType = '') {
+function edgeLabel(edge, siblingCount = 2, nodeType = '', selected = false) {
   const bits = [];
-  if (outcomeCarriesInformation(edge.outcome, siblingCount, nodeType)) bits.push(String(edge.outcome));
+  if (edgeLabelVisible({
+    outcome: edge.outcome, siblingCount, nodeType, pinned: edge.pinned, selected,
+  })) bits.push(String(edge.outcome));
   if (edge.joinOnTarget) bits.push(`join: ${edge.joinOnTarget}`);
   if (!bits.length && edge.back) bits.push('return');
   return bits.join(' · ');
@@ -68,6 +70,31 @@ function edgeLabel(edge, siblingCount = 2, nodeType = '') {
 
 // outgoingCounts tallies edges per source node so edgeLabel can tell a lone
 // exit from a branch. Built once per render rather than rescanned per edge.
+// buildEdgeLabelGroup returns the <g> for a drawn label, or null when the label
+// is hidden. Shared by the initial render and the selection patch below so the
+// two can never build different markup for the same edge.
+function buildEdgeLabelGroup(edge, label) {
+  if (!label) return null;
+  const labelGroup = svgElement('g', { class: 'process-edge-label', transform: `translate(${edge.label.x} ${edge.label.y})`, 'aria-hidden': 'true' });
+  const text = svgElement('text', { 'text-anchor': edge.back ? 'end' : 'middle' });
+  text.textContent = label;
+  labelGroup.append(text);
+  return labelGroup;
+}
+
+// graphEdgeKey pairs (from, outcome) with a NUL separator, which cannot occur in
+// either component, so the key is collision-free without escaping.
+function graphEdgeKey(from, outcome) {
+  return `${from}\u0000${outcome}`;
+}
+
+function symmetricDifference(a, b) {
+  const out = new Set();
+  for (const key of a) if (!b.has(key)) out.add(key);
+  for (const key of b) if (!a.has(key)) out.add(key);
+  return out;
+}
+
 function outgoingCounts(edges) {
   const counts = new Map();
   for (const edge of edges) counts.set(edge.from, (counts.get(edge.from) || 0) + 1);
@@ -594,7 +621,9 @@ export class ProcessGraph {
     // rule can never disagree with what is on screen.
     const counts = outgoingCounts(edges || []);
     this.edgeLayer.replaceChildren(...(edges || []).map(
-      (edge) => this.renderEdge(edge, counts.get(edge.from) || 1, this.nodeTypeOf(edge.from)),
+      (edge) => this.renderEdge(
+        edge, counts.get(edge.from) || 1, this.nodeTypeOf(edge.from), this.edgeSelected(edge),
+      ),
     ));
   }
 
@@ -621,7 +650,14 @@ export class ProcessGraph {
     }
   }
 
-  renderEdge(edge, siblingCount = 2, nodeType = '') {
+  // edgeSelected mirrors applySelection's membership test. A selected connector
+  // always shows its key, so the label decision has to be made at render time
+  // rather than patched on afterwards.
+  edgeSelected(edge) {
+    return selectionContains(this.selected, { type: 'edge', from: edge.from, outcome: edge.outcome });
+  }
+
+  renderEdge(edge, siblingCount = 2, nodeType = '', selected = false) {
     const key = `edge:${edge.id}`;
     const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
@@ -634,7 +670,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge, siblingCount, nodeType) ? `: ${edgeLabel(edge, siblingCount, nodeType)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
+      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge, siblingCount, nodeType, selected) ? `: ${edgeLabel(edge, siblingCount, nodeType, selected)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -642,14 +678,8 @@ export class ProcessGraph {
     });
     const hit = svgElement('path', { class: 'process-edge-hit', d: edge.path, fill: 'none' });
     group.append(visible, hit);
-    const label = edgeLabel(edge, siblingCount, nodeType);
-    if (label) {
-      const labelGroup = svgElement('g', { class: 'process-edge-label', transform: `translate(${edge.label.x} ${edge.label.y})`, 'aria-hidden': 'true' });
-      const text = svgElement('text', { 'text-anchor': edge.back ? 'end' : 'middle' });
-      text.textContent = label;
-      labelGroup.append(text);
-      group.append(labelGroup);
-    }
+    const labelGroup = buildEdgeLabelGroup(edge, edgeLabel(edge, siblingCount, nodeType, selected));
+    if (labelGroup) group.append(labelGroup);
     // Optional badge glyph at the label anchor (validation and future state
     // decorations). Severity is glyph-coded AND class-coded — never color-only.
     if (edge.badge) {
@@ -1830,10 +1860,39 @@ export class ProcessGraph {
   }
 
   select(selection) {
+    const before = this.selectedEdgeKeys();
     this.selected = makeSelection(selectionItems(selection));
     const items = selectionItems(this.selected);
     if (items.length === 1 && items[0].type === 'node') this.raiseNode(items[0].id);
+    // A selected connector always shows its key, so selection is an input to the
+    // label rule. Only the edges whose selected-ness actually changed are
+    // touched: re-rendering the whole edge layer on every click would be O(E)
+    // DOM churn at the 4,096-edge authoring bound, and would drop focus.
+    this.syncEdgeLabels(symmetricDifference(before, this.selectedEdgeKeys()));
     this.applySelection();
+  }
+
+  selectedEdgeKeys() {
+    return new Set(selectionItems(this.selected)
+      .filter((item) => item.type === 'edge')
+      .map((item) => graphEdgeKey(item.from, item.outcome)));
+  }
+
+  syncEdgeLabels(keys) {
+    if (!keys.size) return;
+    const counts = outgoingCounts(this.layout.edges || []);
+    for (const edge of this.layout.edges || []) {
+      if (!keys.has(graphEdgeKey(edge.from, edge.outcome))) continue;
+      const group = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(edge.id))}"]`);
+      if (!group) continue;
+      group.querySelector('.process-edge-label')?.remove();
+      const label = edgeLabel(
+        edge, counts.get(edge.from) || 1, this.nodeTypeOf(edge.from), this.edgeSelected(edge),
+      );
+      const built = buildEdgeLabelGroup(edge, label);
+      // Re-insert before the issue marker so the badge keeps its stacking order.
+      if (built) group.insertBefore(built, group.querySelector('.process-edge-issue-marker'));
+    }
   }
 
   applySelection() {

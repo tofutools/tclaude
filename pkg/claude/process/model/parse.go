@@ -1074,6 +1074,18 @@ func cloneTemplate(tmpl *Template) Template {
 				layout.Nodes[key] = value
 			}
 		}
+		if tmpl.Layout.Edges != nil {
+			// Both levels are copied: sharing the inner maps would let a mutation
+			// through the clone reach the original's pin state.
+			layout.Edges = make(map[string]map[string]LayoutEdge, len(tmpl.Layout.Edges))
+			for from, outcomes := range tmpl.Layout.Edges {
+				copied := make(map[string]LayoutEdge, len(outcomes))
+				for outcome, value := range outcomes {
+					copied[outcome] = value
+				}
+				layout.Edges[from] = copied
+			}
+		}
 		clone.Layout = &layout
 	}
 	return clone
