@@ -66,11 +66,15 @@ var codexApprovalModes = []string{
 // Modes returns a fresh copy so callers cannot mutate the validation source.
 func (codexApproval) Modes() []string { return append([]string(nil), codexApprovalModes...) }
 
+// The "⚠" prefixes the caveat half of the copy, matching the Claude permission
+// modes: the spawn UI collapses mode help behind a [?] but keeps everything
+// from the ⚠ onward visible, so a mode that can strand a detached agent still
+// says so without the operator opening anything. The default carries none.
 var codexApprovalModeHelp = map[string]string{
 	ApprovalNever:     "Never request approval; commands allowed by the sandbox run automatically and failures return to the model. Recommended for detached agents.",
-	ApprovalUntrusted: "Ask before commands outside Codex's trusted set. A detached agent can block waiting for a human unless auto-review is enabled.",
-	ApprovalOnFailure: "Deprecated upstream: run in the sandbox, then ask to retry outside it after failure. A detached agent can block waiting for a human.",
-	ApprovalOnRequest: "Let the model request approval when it wants to run outside the sandbox. A detached agent can block waiting for a human unless auto-review is enabled.",
+	ApprovalUntrusted: "Ask before commands outside Codex's trusted set. ⚠ A detached agent can block waiting for a human unless auto-review is enabled.",
+	ApprovalOnFailure: "Deprecated upstream: run in the sandbox, then ask to retry outside it after failure. ⚠ A detached agent can block waiting for a human.",
+	ApprovalOnRequest: "Let the model request approval when it wants to run outside the sandbox. ⚠ A detached agent can block waiting for a human unless auto-review is enabled.",
 }
 
 func (codexApproval) ModeHelp(policy string) string {

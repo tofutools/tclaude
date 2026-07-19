@@ -671,3 +671,54 @@ test('Preact agent-spawn preserves failed drafts, permission handoff, IME-safe h
   assert.equal(state.dialog.value, null);
   mounted.cleanup();
 });
+
+// Every dropdown whose help is static per-mode documentation collapses behind a
+// [?]; nothing but the name hint (live validation feedback) and a ⚠ caveat is
+// allowed to sit permanently under a control. Regressing any of these back to a
+// paragraph is what padded the dialog in the first place.
+test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ caveats visible', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+
+  // The sandbox-profile field keeps its own stable description id; the rest
+  // take HelpField's `${id}-hint` default.
+  const described = {
+    'agent-spawn-sandbox': 'agent-spawn-sandbox-hint',
+    'agent-spawn-sandbox-profile': 'agent-spawn-sandbox-profile-preview',
+    'agent-spawn-approval': 'agent-spawn-approval-hint',
+    'agent-spawn-approval-reviewer': 'agent-spawn-approval-reviewer-hint',
+    'agent-spawn-ask-timeout': 'agent-spawn-ask-timeout-hint',
+  };
+  for (const [id, descriptionID] of Object.entries(described)) {
+    const row = host.querySelector(`#${id}-row`);
+    assert.ok(row, `${id} renders a row`);
+    assert.ok(row.querySelector('.spawn-field-help-trigger'), `${id} exposes a [?] trigger`);
+    assert.equal(row.querySelector(`#${id}`).getAttribute('aria-describedby'), descriptionID);
+    assert.match(row.querySelector(`#${descriptionID}`).getAttribute('class'), /spawn-field-description/,
+      `${id} help is a collapsed description, not a paragraph`);
+
+    // Pin the row's exact shape. Asserting only that a [?] exists would still
+    // pass if a help paragraph were reintroduced alongside it, which is the
+    // regression this test exists to prevent.
+    assert.deepEqual([...row.querySelector('.cron-create-target').children].map((node) => node.className),
+      ['spawn-field-with-help'], `${id} renders nothing beside the control group`);
+    assert.deepEqual([...row.querySelector('.spawn-field-with-help').children].map((node) => node.tagName),
+      ['SELECT', 'BUTTON', 'SPAN'], `${id} renders only the select, its [?], and the collapsed help`);
+  }
+
+  // The name hint is the sole surviving inline hint: it reports what the name
+  // will be normalized to, which is feedback rather than documentation. Count
+  // the nodes rather than their ids — an id-less paragraph is exactly the shape
+  // this dialog used to render.
+  const persistent = [...host.querySelectorAll('.spawn-field-hint')];
+  assert.equal(persistent.length, 1, 'exactly one persistent hint survives');
+  assert.equal(persistent[0].id, 'agent-spawn-name-hint');
+
+  // Fixture help carries no ⚠, so no caveat line is on screen at all. The
+  // caveat path itself is covered against real harness copy in
+  // help-field.test.mjs.
+  assert.equal(host.querySelector('.spawn-field-caveat'), null);
+  mounted.cleanup();
+});

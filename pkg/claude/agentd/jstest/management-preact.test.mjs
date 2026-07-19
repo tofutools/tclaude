@@ -60,7 +60,14 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   assert.deepEqual([...approval.options].map((option) => option.value), ['never', 'untrusted', 'on-failure', 'on-request']);
   assert.match(approval.options[0].textContent, /Never ask — no approval prompts/);
   assert.match(approval.options[0].textContent, /recommended/, 'empty legacy value displays an explicit effective default');
+  // Mode help is collapsed behind the [?] disclosure, not printed under the
+  // control: the hint id now belongs to the hidden description the button
+  // reveals, and the select carries the same copy as its hover tooltip.
   assert.equal(host.querySelector('#profile-editor-approval-hint').textContent, 'never prompt');
+  assert.match(host.querySelector('#profile-editor-approval-hint').getAttribute('class'), /spawn-field-description/);
+  assert.equal(approval.getAttribute('title'), 'never prompt');
+  assert.equal(host.querySelector('#profile-editor-approval-row .spawn-field-help-trigger').getAttribute('aria-expanded'), 'false');
+  assert.equal(host.querySelector('#profile-editor-approval-caveat'), null, 'help with no ⚠ leaves nothing on screen');
   const initialReviewer = host.querySelector('#profile-editor-approval-reviewer');
   assert.deepEqual([...initialReviewer.options].map((option) => option.value), ['', 'human', 'auto_review']);
   assert.equal(selectedValue(initialReviewer), 'auto_review');

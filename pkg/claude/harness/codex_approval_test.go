@@ -53,6 +53,18 @@ func TestCodexApproval_ModesShareValidationCatalog(t *testing.T) {
 	if ca.ModeHelp("unknown") != "" {
 		t.Fatal("unknown mode must have no help")
 	}
+	// The spawn UI collapses mode help behind a [?] but keeps the text from the
+	// ⚠ onward visible. Any mode that can strand a detached agent must carry the
+	// marker or its warning disappears from the dialog; the recommended default
+	// must not, or every spawn shows a warning that does not apply.
+	if def := ca.DefaultPolicy(); strings.Contains(ca.ModeHelp(def), "⚠") {
+		t.Fatalf("%s (the default) must carry no ⚠ caveat: %q", def, ca.ModeHelp(def))
+	}
+	for _, mode := range []string{ApprovalUntrusted, ApprovalOnFailure, ApprovalOnRequest} {
+		if !strings.Contains(ca.ModeHelp(mode), "⚠") {
+			t.Fatalf("%s can block a detached agent and must flag a ⚠ caveat: %q", mode, ca.ModeHelp(mode))
+		}
+	}
 }
 
 // TestResolveApprovalPolicy covers the daemon spawn-boundary entry point: a
