@@ -113,7 +113,9 @@ func runNewShell(params *NewParams) error {
 		if launchRowCommitted || !launchRowOwned {
 			return
 		}
-		if derr := db.DeleteSession(sessionID); derr != nil {
+		// Generation-conditional for the same reason as runNew: never take a
+		// concurrent same-label winner's row down with this failed launch.
+		if derr := db.DeleteSessionForLaunchGeneration(sessionID, exitGeneration); derr != nil {
 			slog.Warn("shell launch failed; could not remove its session row",
 				"session_id", sessionID, "error", derr)
 		}

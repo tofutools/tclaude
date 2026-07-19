@@ -780,7 +780,10 @@ func runNew(params *NewParams) error {
 		if launchRowCommitted || !launchRowOwned {
 			return
 		}
-		if derr := db.DeleteSession(sessionID); derr != nil {
+		// Generation-conditional: a concurrent same-label launch that re-wrote
+		// the row after us must keep it — only the exact row THIS launch wrote
+		// (still stamped with our exit generation) is rolled back.
+		if derr := db.DeleteSessionForLaunchGeneration(sessionID, exitGeneration); derr != nil {
 			slog.Warn("launch failed; could not remove its session row",
 				"session_id", sessionID, "error", derr)
 		}
@@ -851,15 +854,26 @@ func runNew(params *NewParams) error {
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
 	}
 
-	// Create the detached tmux session running the harness command.
-	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd); err != nil {
+	// Create the detached tmux session running the harness command. The
+	// managed Codex launch-profile path (when any) rides as an inert argv
+	// marker so the approval monitor's startup recovery can match the live
+	// pane to its profile (see CodexProfileMarkerArgs).
+	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
+	}
+	// killLaunchPane tears the just-launched pane down on a late launch
+	// failure. It also reclaims launch-profile removal for the parent defer:
+	// a killed pane's shell never reaches its own cleanup trailer, so leaving
+	// launchProfileOwnedByPane set would strand the profile file on disk.
+	killLaunchPane := func() {
+		launchProfileOwnedByPane = false
+		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
 	}
 	exitGuard.armPaneHook()
 	exitGuard.bind()
 	if proofReadyPath != "" {
 		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
-			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			killLaunchPane()
 			return err
 		}
 	}
@@ -874,7 +888,7 @@ func runNew(params *NewParams) error {
 	}
 	if provenanceErr != nil {
 		if params.ManagedLaunch {
-			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			killLaunchPane()
 			return fmt.Errorf("capture managed launch resume provenance: %w", provenanceErr)
 		}
 		slog.Warn("could not capture resume provenance for direct session; a controlled stop will retry",
@@ -904,7 +918,7 @@ func runNew(params *NewParams) error {
 		// Kill the pane like the sibling failure paths below: leaving it alive
 		// while the launch-row defer rolls the row back would orphan a live
 		// pane tclaude can no longer see.
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		killLaunchPane()
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
 	if resumeProvenance != "" {
@@ -913,7 +927,7 @@ func runNew(params *NewParams) error {
 		// a stale hook cannot resurrect trust after stop invalidates it; the
 		// launch boundary therefore owns this explicit post-upsert write.
 		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
-			_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+			killLaunchPane()
 			return fmt.Errorf("persist managed launch resume provenance: %w", err)
 		}
 	}
@@ -929,7 +943,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if err := exitGuard.release(); err != nil {
-		_ = clcommon.TmuxCommand("kill-session", "-t", clcommon.ExactTarget(tmuxSession)).Run()
+		killLaunchPane()
 		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
 
@@ -1191,10 +1205,27 @@ func tmuxArgvBytes(args []string) int {
 }
 
 // launchScriptStaleAfter is how long an unconsumed launch script may sit in
-// the private launch-scripts dir before the next launch sweeps it. A script
-// normally deletes itself as the pane's first action, so anything older than
-// this belongs to a launch whose pane died before its first line ran.
-const launchScriptStaleAfter = time.Hour
+// the private launch-scripts dir before a sweep removes it. A script normally
+// deletes itself as the pane's first action (seconds after the write), so
+// anything older than this belongs to a launch whose pane died before its
+// first line ran — and since the script carries the exported environment,
+// stale ones should not linger. Kept comfortably above any plausible
+// write-to-pane-start latency; sweeps run at every launch and at daemon
+// startup (SweepStaleLaunchScripts).
+const launchScriptStaleAfter = 15 * time.Minute
+
+// SweepStaleLaunchScripts removes launch bootstrap scripts whose pane never
+// ran its self-delete (killed between write and start, or dead before its
+// first line). Called by agentd at startup so stranded scripts are bounded by
+// daemon lifetime, not by when the next launch happens to run the per-launch
+// sweep. Best-effort; a missing directory is a no-op.
+func SweepStaleLaunchScripts() {
+	base := strings.TrimSpace(config.DataDir())
+	if base == "" {
+		return
+	}
+	cleanupStaleLaunchScripts(filepath.Join(base, "launch-scripts"), time.Now())
+}
 
 // writeLaunchScript persists a pane bootstrap command as a private, one-shot
 // script under DataDir and returns its path plus a remove func for launch
@@ -1256,15 +1287,41 @@ func cleanupStaleLaunchScripts(dir string, now time.Time) {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, entry.Name())); err == nil {
-			slog.Warn("launch: removed stale pane bootstrap script", "script", entry.Name())
+			slog.Debug("launch: removed stale pane bootstrap script", "script", entry.Name())
 		}
 	}
+}
+
+// LaunchDetachedTmuxSession is the exported form of
+// launchDetachedTmuxSession for the conv package's resume paths, so a resume
+// launches through the same script mechanism as a fresh session — same tmux
+// argv O(1) guarantee, same credential hygiene (the env-carrying command
+// never enters `ps`/#{pane_start_command}), same pre-flight error.
+func LaunchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...string) error {
+	return launchDetachedTmuxSession(tmuxSession, cwd, cmd, markerArgs...)
+}
+
+// CodexProfileMarkerArgs returns the extra argv words a launch appends after
+// the script path when the pane runs a managed Codex launch profile: the
+// profile path itself, as an inert positional the script never reads. It is a
+// MARKER, not an input — the codex approval monitor's startup recovery
+// identifies which live pane owns which launch profile by inspecting
+// #{pane_start_command}, and with the bootstrap in a self-deleting script the
+// profile path must ride in the (daemon-controlled, non-secret) argv to stay
+// discoverable. Empty path → no extra words.
+func CodexProfileMarkerArgs(profilePath string) []string {
+	if profilePath == "" {
+		return nil
+	}
+	return []string{profilePath}
 }
 
 // launchDetachedTmuxSession creates the detached tmux session that hosts a
 // launch, wiring the child's stdout/stderr through. cmd is the harness
 // command (claudeSpawner's BuildCommand output) or the plain shell's exec
-// line. Shared by runNew and runNewShell.
+// line. markerArgs are appended to the pane argv after the script path as
+// inert positionals (see CodexProfileMarkerArgs). Shared by runNew,
+// runNewShell and (via LaunchDetachedTmuxSession) the conv resume paths.
 //
 // The command is deliberately NOT passed inline as `sh -c <cmd>`: the tmux
 // client hard-caps the initial command's total argv at ~16KB (see
@@ -1272,10 +1329,16 @@ func cleanupStaleLaunchScripts(dir string, now time.Time) {
 // sandbox rule count, path length and prompt length — a fully-loaded spawn
 // measured ~18.8KB and died with tmux's cryptic "command too long". The
 // bootstrap goes to a private self-deleting script instead and the pane runs
-// `sh <script>`, which keeps the tmux argv O(1) in all of the above. The
-// pre-flight check below can then only trip on a pathological session name /
-// cwd, and fails with an error that names them.
-func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
+// `sh <script> [markers]`, which keeps the tmux argv O(1) in all of the
+// above. The pre-flight check below can then only trip on a pathological
+// session name / cwd, and fails with an error that names them.
+//
+// Known trade-off: tmux respawn-pane / resurrect plugins re-run
+// #{pane_start_command}, and the script has deleted itself by then — the
+// respawned pane exits immediately. Managed panes are relaunched through
+// tclaude (`session new -r` / agent resume), which builds a fresh script, so
+// only manual out-of-band respawns are affected.
+func launchDetachedTmuxSession(tmuxSession, cwd, cmd string, markerArgs ...string) error {
 	// Never launch tmux from a dead working directory. If this process's cwd
 	// has been deleted (e.g. the daemon that forked us was started from a
 	// since-removed dir — Ansible's task tmpdir being the observed case), a
@@ -1297,8 +1360,8 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
 		return err
 	}
 	// Multi-word command → tmux execvp's it directly (spawn.c), no extra
-	// shell join/quoting layer; both words are metacharacter-free.
-	args := []string{"new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", scriptPath}
+	// shell join/quoting layer.
+	args := append([]string{"new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", scriptPath}, markerArgs...)
 	if n := tmuxArgvBytes(args); n > tmuxClientArgvLimit {
 		cleanupScript()
 		return fmt.Errorf("tmux launch argv is %d bytes, over tclaude's %d-byte pre-flight bound "+

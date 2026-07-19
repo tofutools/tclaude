@@ -2253,23 +2253,23 @@ func sortEntriesByModifiedDesc(entries []SessionEntry) {
 // can't be relaunched, so an unknown/unspawnable tag fails with a clear error
 // here rather than silently spawning `claude --resume` against a foreign conv
 // id. An empty tag resolves to the default harness (Claude Code).
-func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) (string, *harness.Harness, error) {
+func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) (string, string, *harness.Harness, error) {
 	h, err := harness.ResolveSpawnable(harnessName)
 	if err != nil {
-		return "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
+		return "", "", nil, fmt.Errorf("cannot resume conversation %s: %w", convID, err)
 	}
 	resumeEnv := map[string]string{"TCLAUDE_SESSION_ID": sessionID}
 	var shellEnvironment map[string]string
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	if err != nil {
-		return "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
+		return "", "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
 	}
 	var readDirs, writeDirs, denyDirs []string
 	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
 		if err != nil {
-			return "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
 		shellEnvironment = make(map[string]string, len(validated.Effective.Environment))
 		for _, entry := range validated.Effective.Environment {
@@ -2279,7 +2279,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		networkAccess = validated.Effective.NetworkAccess
 		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
 		if err != nil {
-			return "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
 		for _, grant := range launchFilesystem {
 			switch grant.Access {
@@ -2299,27 +2299,27 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	if h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
-		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
+		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
-		return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
+		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
 	}
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && sandboxMode != harness.SandboxManagedProfile {
-		return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
+		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	if networkAccess != sandboxpolicy.NetworkAccessInherit {
 		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
-			return "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
 	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
 		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
 		if err != nil {
-			return "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
+			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
 		}
 		writeDirs = append(gitWriteDirs, writeDirs...)
 	}
@@ -2339,19 +2339,19 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyDirs, networkAccess, session.GenerateSessionID())
 		if err != nil {
-			return "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
+			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
 		}
 		spec.SandboxMode = ""
 		spec.PermissionProfile = profileName
 		cleanupPath = profilePath
 	} else if h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
-		return "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
+		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
 	}
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
-	return cmd, h, nil
+	return cmd, cleanupPath, h, nil
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {
@@ -2470,7 +2470,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	// relaunched with `codex resume <id>`, the way the web-dashboard / agentd
 	// resume path already does (JOH-217). Resolution failures (an unspawnable
 	// or unknown harness) surface here rather than spawning a broken command.
-	launchCmd, h, err := resumeLaunchCmd(conv.Harness, sessionID, conv.SessionID, clcommon.ExtractClaudeExtraArgs())
+	launchCmd, profilePath, h, err := resumeLaunchCmd(conv.Harness, sessionID, conv.SessionID, clcommon.ExtractClaudeExtraArgs())
 	if err != nil {
 		return err
 	}
@@ -2479,19 +2479,13 @@ func createSessionForConv(conv *SessionEntry) error {
 		return err
 	}
 
-	tmuxArgs := []string{
-		"new-session", "-d",
-		"-s", tmuxSession,
-		"-c", cwd,
-		"sh", "-c", launchCmd,
-	}
-
-	cmd := clcommon.TmuxCommand(tmuxArgs...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to create tmux session: %w", err)
+	// Launch through the shared script mechanism, not an inline `sh -c`: the
+	// resume command carries the same env exports and sandbox dir lists as a
+	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
+	// ps-visible-credentials exposure the spawn path already fixed.
+	if err := session.LaunchDetachedTmuxSession(tmuxSession, cwd, launchCmd,
+		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
+		return err
 	}
 
 	pid := session.ParsePIDFromTmux(tmuxSession)

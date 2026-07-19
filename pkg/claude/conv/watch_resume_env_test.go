@@ -74,7 +74,7 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 		SandboxMode: harness.ClaudeSandboxOn,
 	}))
 
-	cmd, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	cmd, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	assert.Contains(t, cmd, "LITERAL=")
 	assert.Contains(t, cmd, "$(touch nope)")
@@ -92,7 +92,7 @@ func TestResumeLaunchCmd_AppliesActorSnapshotAndStripsOperatorToken(t *testing.T
 		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
 		SandboxMode: harness.ClaudeSandboxInherit,
 	}))
-	_, _, err = resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	_, _, _, err = resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
 	require.ErrorContains(t, err, "deny rules require sandbox on")
 }
 
@@ -112,14 +112,14 @@ func TestResumeLaunchCmd_CodexFilesystemRequiresManagedProfile(t *testing.T) {
 		SandboxMode: harness.SandboxReadOnly,
 	}))
 
-	_, _, err = resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	_, _, _, err = resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.ErrorContains(t, err, "unsupported_sandbox_profile_filesystem")
 
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
 		SandboxMode: harness.SandboxManagedProfile,
 	}))
-	cmd, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	cmd, _, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	assert.Contains(t, cmd, " -p tclaude-agent-")
 	assert.Contains(t, cmd, " session codex-profile-cleanup --path")
@@ -140,7 +140,7 @@ func TestResumeLaunchCmd_CodexPinsActorEnvironmentForToolCommands(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 
-	cmd, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	cmd, _, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	assert.Contains(t, cmd, "GOBIN="+privateGOBIN, "Codex itself must receive the actor environment")
 	assert.Contains(t, cmd, `shell_environment_policy.set.GOBIN="`+privateGOBIN+`"`,
@@ -165,7 +165,7 @@ func TestResumeLaunchCmd_CodexManagedProfileIncludesGitWorktreeGrants(t *testing
 		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
 		Cwd: repo, SandboxMode: harness.SandboxManagedProfile,
 	}))
-	launch, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	launch, _, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	assert.Contains(t, launch, " -p tclaude-agent-")
 
@@ -197,7 +197,7 @@ func TestResumeLaunchCmd_ClaudeSandboxIncludesGitWorktreeGrants(t *testing.T) {
 		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
 		Cwd: repo, SandboxMode: harness.ClaudeSandboxOn,
 	}))
-	launch, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	launch, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	commonDir, err := harness.GitCommonDir(repo)
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestResumeLaunchCmd_ClaudeSandboxIncludesGitWorktreeGrants(t *testing.T) {
 func TestResumeLaunchCmd_InjectsResumeOverrideForClaude(t *testing.T) {
 	withResumeConfig(t)
 
-	cmd, h, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
+	cmd, _, h, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	require.Equal(t, "claude", h.Name)
 
@@ -225,7 +225,7 @@ func TestResumeLaunchCmd_InjectsResumeOverrideForClaude(t *testing.T) {
 func TestResumeLaunchCmd_NoResumeOverrideForCodex(t *testing.T) {
 	withResumeConfig(t)
 
-	cmd, h, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, nil)
+	cmd, _, h, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	require.Equal(t, "codex", h.Name)
 
@@ -243,7 +243,7 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 	db.ResetForTest()
 	require.NoError(t, config.Save(config.DefaultConfig())) // no claude_resume block
 
-	cmd, _, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
+	cmd, _, _, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 
 	assert.NotContains(t, cmd, "CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=525600000",

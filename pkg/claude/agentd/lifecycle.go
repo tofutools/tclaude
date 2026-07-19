@@ -3683,7 +3683,23 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 	}
 
-	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+	// launchFailed unwinds a spawn whose wrapper reported failure — whether
+	// synchronously (the proof-carrying path waits for the wrapper) or via
+	// the wrapper-failure signal (the fire-and-forget proofless path, whose
+	// reaper goroutine reports a wrapper that died after the fork). Without
+	// the signal path, a proofless wrapper failure left executeSpawn polling
+	// to timeout and returning the preset conv-id as a success, stranding
+	// the pre-fork enrollment as a ghost (cr-1363 finding).
+	//
+	// No session-row cleanup by label here, deliberately. The forked wrapper
+	// deletes its own launch row when it fails after writing it, and
+	// rollbackSpawnEnrollment's DeleteAgentByConvID sweeps any row carrying
+	// the preset conv-id as a backstop. Deleting by label would be UNSAFE:
+	// generateSpawnLabel is 24 random bits with no collision check, and on a
+	// label collision the launch fails against a pre-existing LIVE session
+	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
+	// would then destroy.
+	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
 		if reservedPending {
 			if deleteErr := db.DeletePendingSpawn(label); deleteErr != nil {
 				slog.Warn("spawn: failed to remove reservation after launch failure",
@@ -3695,15 +3711,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			// launch doesn't strand a group member + orphan briefing.
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 		}
-		// The forked wrapper deletes its own launch row when it fails after
-		// writing it; this backstop covers a wrapper killed before that
-		// cleanup ran. Idempotent — a no-op when no row was ever written.
-		if derr := db.DeleteSession(label); derr != nil {
-			slog.Warn("spawn: failed to remove launch session row after launch failure",
-				"label", label, "error", derr)
-		}
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
+	}
+
+	wrapperFailure := registerWrapperFailureSignal(label)
+	defer unregisterWrapperFailureSignal(label)
+	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
+		return launchFailed(err)
 	}
 	agentDirectoriesLaunched = true
 
@@ -3785,6 +3800,15 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	remoteArmed := false
 	pendingLaunchMarked := false
 	for time.Now().Before(deadline) {
+		// A wrapper that died after the fork reports here (the proofless path
+		// is fire-and-forget, so its failure never comes back as a return
+		// value). React exactly like a synchronous launch failure instead of
+		// polling out the budget and mistaking the timeout for a slow pane.
+		select {
+		case werr := <-wrapperFailure:
+			return launchFailed(werr)
+		default:
+		}
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
 			if reservedPending && !pendingLaunchMarked {
@@ -3855,6 +3879,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// rolled back above; a pane that dies at startup leaves an offline member
 	// the operator can retire, exactly like any agent that crashes on boot.
 	if launchEnroll {
+		// Final wrapper-failure check: distinguish "wrapper reported failure
+		// during the poll window" from the genuinely-slow-pane case this
+		// success return is written for. A wrapper that fails after this
+		// point (past the poll budget) is out of signal reach — that residual
+		// keeps the old behavior: an offline member the operator can retire.
+		select {
+		case werr := <-wrapperFailure:
+			return launchFailed(werr)
+		default:
+		}
 		focusSpawn()
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
 		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode,
@@ -5264,6 +5298,46 @@ func appendTrustDirFlag(args []string, trustDir bool) []string {
 	return args
 }
 
+// wrapperFailureSignals routes a detached spawn wrapper's failure back to
+// the executeSpawn that forked it. The proofless launch path is
+// fire-and-forget — liveSpawnNew returns as soon as the wrapper STARTS — so
+// a wrapper that dies after the fork (bad cwd, launch-script write failure,
+// tmux refusal) would otherwise never be distinguishable from a slow pane:
+// executeSpawn polled to timeout and returned the preset conv-id as a
+// success, stranding the pre-fork enrollment as a ghost. Keyed by spawn
+// label; channels are buffered(1) and delivery is non-blocking, so an
+// unregistered/late signal is dropped harmlessly.
+var wrapperFailureSignals sync.Map // label -> chan error
+
+func registerWrapperFailureSignal(label string) chan error {
+	ch := make(chan error, 1)
+	wrapperFailureSignals.Store(label, ch)
+	return ch
+}
+
+func unregisterWrapperFailureSignal(label string) {
+	wrapperFailureSignals.Delete(label)
+}
+
+func signalWrapperFailure(label string, err error) {
+	v, ok := wrapperFailureSignals.Load(label)
+	if !ok {
+		return
+	}
+	select {
+	case v.(chan error) <- err:
+	default:
+	}
+}
+
+// SignalSpawnWrapperFailureForTest lets flow tests exercise the
+// fire-and-forget wrapper-failure path: a fake Spawner returns nil (the
+// wrapper started) and then reports the wrapper's death the way
+// liveSpawnNew's reaper goroutine would.
+func SignalSpawnWrapperFailureForTest(label string, err error) {
+	signalWrapperFailure(label, err)
+}
+
 // liveSpawnNew runs `tclaude session new -d --global --label <label>`
 // as a fully-detached subprocess. Same detachment story as
 // liveSpawnResume — see its doc comment for the full rationale on
@@ -5318,6 +5392,10 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
 				"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
+			// Report the death to the executeSpawn that forked us (if it is
+			// still polling) so the failure surfaces to the caller instead of
+			// timing out into a false success. See wrapperFailureSignals.
+			signalWrapperFailure(label, fmt.Errorf("spawn session wrapper failed: %w: %s", err, stderr.String()))
 		}
 	}()
 	return nil

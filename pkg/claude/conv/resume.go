@@ -184,7 +184,7 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// with `codex resume <id>`, Claude Code with `claude --resume <id>`.
 	// Resolution failures (an unknown / unspawnable harness) surface here
 	// rather than spawning a broken command (JOH-218).
-	launchCmd, h, err := resumeLaunchCmd(rc.Harness, sessionID, rc.ConvID, clcommon.ExtractClaudeExtraArgs())
+	launchCmd, profilePath, h, err := resumeLaunchCmd(rc.Harness, sessionID, rc.ConvID, clcommon.ExtractClaudeExtraArgs())
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
@@ -195,17 +195,12 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		return 1
 	}
 
-	// Create tmux session
-	tmuxArgs := []string{
-		"new-session",
-		"-d",
-		"-s", tmuxSession,
-		"-c", rc.ProjectPath,
-		"sh", "-c", launchCmd,
-	}
-
-	tmuxCmd := clcommon.TmuxCommand(tmuxArgs...)
-	if err := tmuxCmd.Run(); err != nil {
+	// Launch through the shared script mechanism, not an inline `sh -c`: the
+	// resume command carries the same env exports and sandbox dir lists as a
+	// fresh launch, so it has the same tmux ~16KB argv cliff and the same
+	// ps-visible-credentials exposure the spawn path already fixed.
+	if err := session.LaunchDetachedTmuxSession(tmuxSession, rc.ProjectPath, launchCmd,
+		session.CodexProfileMarkerArgs(profilePath)...); err != nil {
 		fmt.Fprintf(stderr, "Failed to create tmux session: %v\n", err)
 		return 1
 	}

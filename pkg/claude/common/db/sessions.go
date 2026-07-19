@@ -186,6 +186,24 @@ func LoadSession(id string) (*SessionRow, error) {
 	return scanSession(row)
 }
 
+// DeleteSessionForLaunchGeneration removes a session row only while it still
+// carries the given exit-launch generation — the atomic form of "delete the
+// row THIS launch wrote". Two concurrent launches of the same label both pass
+// the pre-write liveness guard; whichever writes last owns the row, and the
+// loser's failure cleanup must not take the winner's row with it. The
+// conditional DELETE closes that race without a read-then-delete window.
+func DeleteSessionForLaunchGeneration(id, generation string) error {
+	if generation == "" {
+		return fmt.Errorf("launch generation is required")
+	}
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`DELETE FROM sessions WHERE id = ? AND exit_callback_generation = ?`, id, generation)
+	return err
+}
+
 // DeleteSession removes a session by ID.
 func DeleteSession(id string) error {
 	db, err := Open()
