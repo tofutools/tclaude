@@ -1617,25 +1617,30 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    inherit these from the island. */
 #usage-root { --usage-card-max: 1100px; --usage-card-gap: 14px; }
 .usage-history-error { max-width: var(--usage-card-max); }
-/* Each centred element carries `auto` in its own margin shorthand rather than
-   relying on a shared `margin-inline: auto` rule: a later shorthand elsewhere
-   in this file resets the inline margins it sets, silently un-centring the
-   element (.filter-bar, below, does exactly that to the controls bar). */
-.filter-bar.usage-history-controls { max-width: var(--usage-card-max); margin: 0 auto 12px; }
-.usage-history-controls { flex-wrap: wrap; }
 .usage-control-group { display: inline-flex; align-items: center; gap: 8px; }
 .usage-control-label { color: #8b949e; font-size: 11px; font-weight: 600; }
 .usage-control-divider { width: 1px; height: 20px; margin: 0 3px; background: #30363d; }
+/* A footnote below the grid, deliberately uncapped and left-aligned: it is
+   read once rather than scanned, so it wraps to whatever the tab is wide
+   rather than lining up with the centred rows above it. Unlike those rows it
+   carries no `auto` margin.
+   Cascade hazard if you ever add one: this stylesheet is flat, so a later
+   generic rule beats an earlier specific one at equal specificity, and a
+   `margin` shorthand resets `margin-inline`. Centring must therefore ride in
+   the element's own shorthand (`margin: 0 auto`), not a separate
+   `margin-inline: auto` that something below can silently undo. */
 .usage-history-note {
-  max-width: var(--usage-card-max);
-  margin: 0 auto 14px; padding: 8px 10px;
+  margin: 18px 0 0; padding: 8px 10px;
   color: #8b949e; background: #161b22; border: 1px solid #2a3340;
-  border-radius: 5px; font-size: 12px;
+  border-radius: 5px; font-size: 12px; line-height: 1.5;
 }
+/* Sits inside each card between the chart and the forecast footer, so it is
+   neither capped nor centred. The 10px inline padding matches the footer's
+   (.usage-card-footer.usage-forecast) so the two text blocks stacked under the
+   chart share a left edge. */
 .usage-chart-legend {
-  display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center;
-  max-width: var(--usage-card-max);
-  margin: -4px auto 12px; color: #8b949e; font-size: 11px;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  margin: 8px 0 0; padding: 0 10px; color: #8b949e; font-size: 11px;
 }
 .usage-chart-legend span { display: inline-flex; gap: 6px; align-items: center; }
 .usage-legend-swatch { display: inline-block; width: 18px; height: 0; border-top: 2px solid; }
@@ -1743,7 +1748,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-history-error { margin-bottom: 12px; color: #f85149; }
 @media (max-width: 600px) {
   .usage-series-card { padding: 10px; }
-  .usage-history-controls .muted { display: none; }
   .usage-control-group { flex-basis: 100%; }
   .usage-control-divider { display: none; }
 }
