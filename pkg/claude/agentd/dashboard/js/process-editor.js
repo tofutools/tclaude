@@ -24,7 +24,7 @@
 import { createProcessGraphAdapter } from './process-graph-adapter.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_SNIPPETS,
+  PALETTE_SNIPPETS, UNNAMED_OUTCOME,
 } from './process-edit-model.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
@@ -1056,11 +1056,14 @@ export class ProcessTemplateEditor {
       return;
     }
     const { from, to } = feedback;
-    const outcome = this.model.freeOutcome(from, 'pass');
+    const outcome = this.model.newEdgeOutcome(from);
     const created = this.mutate(() => this.model.addEdge(from, outcome, to));
     if (!created) return;
     this.setSelection({ type: 'edge', from, outcome });
-    this.openInlineOutcomeEdit(from, outcome);
+    // An unnamed edge draws no label, so there is nothing to type over and no
+    // anchor to type into. Popping the inline editor here would ask the author
+    // to name the one edge whose name cannot matter.
+    if (outcome !== UNNAMED_OUTCOME) this.openInlineOutcomeEdit(from, outcome);
   }
 
   openConnectedNodeChooser(source, point, event) {
@@ -1383,7 +1386,18 @@ export class ProcessTemplateEditor {
   }
 
   renameEdgeOutcome(from, oldOutcome, newOutcome) {
-    if (!newOutcome || newOutcome === oldOutcome) return;
+    if (newOutcome === oldOutcome) return;
+    // An emptied field used to be indistinguishable from "unchanged", so the
+    // label silently snapped back and the author had no idea why. Outcomes are
+    // the keys of the node's `next` map — a blank key is rejected by
+    // model.validate and cannot exist in YAML — so say that instead of
+    // pretending nothing was typed.
+    if (!newOutcome) {
+      this.status(this.model.outgoingEdges(from).length > 1
+        ? 'An outcome label is required while this node has more than one outgoing connector: it selects which one the run takes.'
+        : 'An outcome label is required.', true);
+      return;
+    }
     const ok = this.mutate(() => this.model.setEdgeOutcome(from, oldOutcome, newOutcome));
     if (ok) this.setSelection({ type: 'edge', from, outcome: newOutcome });
   }

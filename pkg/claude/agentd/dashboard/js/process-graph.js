@@ -4,6 +4,7 @@
 // computes run state.
 
 import { layoutProcessGraph, rerouteProcessLayout } from './process-layout.js';
+import { outcomeCarriesInformation } from './process-outcome-vocabulary.js';
 import {
   makeSelection, nodesInMarquee, normalizeMarquee, selectionContains, selectionItems,
 } from './process-selection.js';
@@ -57,12 +58,20 @@ function hook(options, name) {
   return typeof options[name] === 'function' ? options[name] : () => {};
 }
 
-function edgeLabel(edge) {
+function edgeLabel(edge, siblingCount = 2) {
   const bits = [];
-  if (edge.outcome) bits.push(String(edge.outcome));
+  if (outcomeCarriesInformation(edge.outcome, siblingCount)) bits.push(String(edge.outcome));
   if (edge.joinOnTarget) bits.push(`join: ${edge.joinOnTarget}`);
   if (!bits.length && edge.back) bits.push('return');
   return bits.join(' · ');
+}
+
+// outgoingCounts tallies edges per source node so edgeLabel can tell a lone
+// exit from a branch. Built once per render rather than rescanned per edge.
+function outgoingCounts(edges) {
+  const counts = new Map();
+  for (const edge of edges) counts.set(edge.from, (counts.get(edge.from) || 0) + 1);
+  return counts;
 }
 
 function overlayText(overlay, issues = []) {
@@ -578,7 +587,10 @@ export class ProcessGraph {
   }
 
   renderEdges(edges) {
-    this.edgeLayer.replaceChildren(...(edges || []).map((edge) => this.renderEdge(edge)));
+    const counts = outgoingCounts(edges || []);
+    this.edgeLayer.replaceChildren(...(edges || []).map(
+      (edge) => this.renderEdge(edge, counts.get(edge.from) || 1),
+    ));
   }
 
   updateEdgeGeometry(edges) {
@@ -597,7 +609,7 @@ export class ProcessGraph {
     }
   }
 
-  renderEdge(edge) {
+  renderEdge(edge, siblingCount = 2) {
     const key = `edge:${edge.id}`;
     const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
@@ -610,7 +622,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge) ? `: ${edgeLabel(edge)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
+      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge, siblingCount) ? `: ${edgeLabel(edge, siblingCount)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -618,7 +630,7 @@ export class ProcessGraph {
     });
     const hit = svgElement('path', { class: 'process-edge-hit', d: edge.path, fill: 'none' });
     group.append(visible, hit);
-    const label = edgeLabel(edge);
+    const label = edgeLabel(edge, siblingCount);
     if (label) {
       const labelGroup = svgElement('g', { class: 'process-edge-label', transform: `translate(${edge.label.x} ${edge.label.y})`, 'aria-hidden': 'true' });
       const text = svgElement('text', { 'text-anchor': edge.back ? 'end' : 'middle' });

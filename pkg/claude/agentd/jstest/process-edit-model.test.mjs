@@ -89,7 +89,9 @@ test('connector-drop node and edge are one atomic positioned undo step in either
 
   const before = new ProcessEditModel(view());
   const prepended = before.addConnectedNode('task', { x: 9, y: 11, connectTo: 'build' });
-  assert.deepEqual(prepended.edge, { from: 'task', outcome: 'pass', to: 'build' });
+  // A brand-new source node has no other way out, so its connector is unnamed
+  // (UNNAMED_OUTCOME) and the editor draws no label over it.
+  assert.deepEqual(prepended.edge, { from: 'task', outcome: 'next', to: 'build' });
   assert.equal(before.undoStack.length, 1);
 });
 
@@ -113,7 +115,7 @@ test('invalid connector-drop origins and locked edges reject before any partial 
 test('addEdge enforces the unique (from, outcome) invariant', () => {
   const model = new ProcessEditModel(view());
   model.addEdge('begin', 'fail', 'ship');
-  assert.throws(() => model.addEdge('begin', 'fail', 'build'), /duplicate edge/);
+  assert.throws(() => model.addEdge('begin', 'fail', 'build'), /already has a connector labelled "fail"/);
   assert.throws(() => model.addEdge('begin', '', 'build'), /outcome is required/);
   assert.throws(() => model.addEdge('nope', 'x', 'ship'), /unknown node/);
 });
@@ -337,7 +339,7 @@ test('setEdgeOutcome renames and blocks collisions', () => {
   assert.ok(model.findEdge('build', 'ok'));
   assert.equal(model.findEdge('build', 'pass'), undefined);
   model.addEdge('build', 'fail', 'ship');
-  assert.throws(() => model.setEdgeOutcome('build', 'fail', 'ok'), /duplicate edge/);
+  assert.throws(() => model.setEdgeOutcome('build', 'fail', 'ok'), /already has a connector labelled "ok"/);
 });
 
 test('deleteNode drops touching edges; rewire redirects incoming to the primary successor', () => {
@@ -868,4 +870,36 @@ test('setStart repoints the start pseudo edge exactly once', () => {
   assert.equal(starts.length, 1);
   assert.equal(starts[0].to, 'build');
   assert.equal(model.template.start, 'build');
+});
+
+test('newEdgeOutcome hides the label only where it cannot route', () => {
+  const model = new ProcessEditModel(view());
+  // 'build' is a task whose only edge is the pass-vocabulary 'pass'. A second
+  // pass-vocabulary name would be resolved away by PASS_OUTCOMES precedence and
+  // left unreachable, so the pair completes with 'fail'.
+  assert.equal(model.newEdgeOutcome('build'), 'fail');
+
+  // A source with no way out yet: the runtime takes a lone edge whatever it is
+  // called, so the outcome is the unnamed default and nothing is drawn.
+  model.addNode('task', { id: 'fresh' });
+  assert.equal(model.newEdgeOutcome('fresh'), 'next');
+
+  // Decision edges are matched against verdicts exactly, so even the first one
+  // is named rather than hidden.
+  model.addNode('decision', { id: 'gate' });
+  assert.equal(model.newEdgeOutcome('gate'), 'pass');
+
+  // Non-task nodes do not get a 'fail' partner: a start node cannot fail.
+  assert.equal(model.newEdgeOutcome('begin'), 'pass-2');
+});
+
+test('an unnamed outcome is a real key, never an empty string', () => {
+  const model = new ProcessEditModel(view());
+  model.addNode('task', { id: 'fresh' });
+  const outcome = model.newEdgeOutcome('fresh');
+  assert.notEqual(outcome, '');
+  model.addEdge('fresh', outcome, 'ship');
+  assert.equal(model.findEdge('fresh', outcome).to, 'ship');
+  // Blank outcomes stay rejected at the model boundary regardless.
+  assert.throws(() => model.addEdge('fresh', '', 'build'), /outcome is required/);
 });

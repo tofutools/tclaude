@@ -20,6 +20,7 @@
 // assume template-only editing beyond the defaults.
 
 import { PROCESS_NODE_TYPES } from './process-node-types.js';
+import { PASS_OUTCOMES, UNNAMED_OUTCOME } from './process-outcome-vocabulary.js';
 import { layoutProcessGraph } from './process-layout.js';
 import {
   processEdgeMutationMessage, processEdgePortAvailability, processNodePortAvailability,
@@ -36,6 +37,8 @@ export const MAX_UNDO = 50;
 // reserved outcome "start" — exactly what model.NormalizeEdges emits and what
 // assembleProcessEditModel reads back into template.start on save.
 export const START_OUTCOME = 'start';
+
+export { PASS_OUTCOMES, UNNAMED_OUTCOME };
 
 export const PALETTE_PRIMITIVES = PROCESS_NODE_TYPES;
 
@@ -263,6 +266,38 @@ export class ProcessEditModel {
     return candidate;
   }
 
+  // newEdgeOutcome names an edge about to be drawn out of `from`, picking the
+  // name whose label carries the most information at that point in authoring:
+  //
+  //   no existing edge  -> UNNAMED_OUTCOME, rendered with no label at all. The
+  //                        runtime takes a lone edge regardless of its name
+  //                        (plan.ResolvePassEdge's single-edge fallback), so
+  //                        the label would be decoration.
+  //   one pass edge     -> 'fail', for a TASK node only. NOT 'pass':
+  //                        validateOutcomeRouting resolves the pass edge by
+  //                        PASS_OUTCOMES precedence, so a task holding both
+  //                        'next' and 'pass' routes to 'pass' and leaves the
+  //                        older edge unreachable with no diagnostic. Pairing
+  //                        the happy path with 'fail' keeps both live and
+  //                        matches the usual intent. Only tasks, because only a
+  //                        task attempt can fail — a second edge out of a start
+  //                        or wait node is not a failure branch.
+  //   anything else     -> the existing pass/pass-2 behaviour.
+  //
+  // Decision nodes are exempt from the unnamed case too: their edges are
+  // matched against verdicts exactly (plan.DecisionEdge), so even a lone
+  // decision edge carries a name worth showing.
+  newEdgeOutcome(from) {
+    const type = this.node(from)?.type;
+    if (type === 'decision') return this.freeOutcome(from, 'pass');
+    const outgoing = this.outgoingEdges(from);
+    if (!outgoing.length) return UNNAMED_OUTCOME;
+    if (type === 'task' && outgoing.length === 1 && PASS_OUTCOMES.includes(outgoing[0].outcome)) {
+      return this.freeOutcome(from, 'fail');
+    }
+    return this.freeOutcome(from, 'pass');
+  }
+
   addNode(type, { x, y, id, name } = {}) {
     this.assertCanInsert();
     const nodeType = NODE_TYPES.has(type) ? type : 'task';
@@ -291,7 +326,7 @@ export class ProcessEditModel {
     const to = connectTo || nodeID;
     const plannedNodes = { ...this.template.nodes, [nodeID]: { type: nodeType } };
     this.assertNewEdgePortsAvailable(from, to, plannedNodes);
-    const outcome = this.freeOutcome(from, 'pass');
+    const outcome = this.newEdgeOutcome(from);
     const edge = { from, outcome, to };
     this.assertEdgeEditable(edge);
 
@@ -584,7 +619,7 @@ export class ProcessEditModel {
     // never hand-drawn), and advisory-save semantics would let the doomed
     // version through silently — refuse at the source.
     if (from === to) throw new Error('self-loop edges are not supported (v1 processes are acyclic)');
-    if (this.findEdge(from, outcome)) throw new Error(`duplicate edge: ${from} already has outcome ${outcome}`);
+    if (this.findEdge(from, outcome)) throw new Error(`${from} already has a connector labelled "${outcome}". Outcome labels are the keys that pick which connector a run takes, so they must be unique per node.`);
     this.assertNewEdgePortsAvailable(from, to);
     const edge = { from, outcome, to };
     this.assertEdgeEditable(edge);
@@ -606,7 +641,7 @@ export class ProcessEditModel {
     if (!edge) throw new Error(`unknown edge ${from} (${oldOutcome})`);
     if (!newOutcome) throw new Error('edge outcome is required');
     if (newOutcome === oldOutcome) return;
-    if (this.findEdge(from, newOutcome)) throw new Error(`duplicate edge: ${from} already has outcome ${newOutcome}`);
+    if (this.findEdge(from, newOutcome)) throw new Error(`${from} already has a connector labelled "${newOutcome}". Outcome labels are the keys that pick which connector a run takes, so they must be unique per node.`);
     this.assertEdgeEditable(edge);
     this.begin();
     edge.outcome = newOutcome;
