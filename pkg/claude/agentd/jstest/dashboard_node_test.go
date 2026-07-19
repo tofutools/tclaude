@@ -28,8 +28,8 @@ var nodeTestInputs embed.FS
 // Dashboard pure-module and Preact component suites run with Node's
 // built-in test runner. Preact suites use the committed test-only LinkeDOM
 // runtime and exact dashboard modules, with no node_modules or install step.
-// Keeping this wrapper in its own Go package lets the standard `go test -p 2
-// ./...` scheduler overlap the JS suite with agentd's serial flow tests.
+// Keeping this wrapper in its own Go package lets the standard `go test ./...`
+// scheduler overlap the JS suite with agentd's serial flow tests.
 //
 // Node availability:
 //   - In CI the Test job runs actions/setup-node, so node is guaranteed.

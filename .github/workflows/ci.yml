@@ -65,8 +65,9 @@ jobs:
       # -p 2 cap existed for output legibility and contention worries, but go test
       # buffers each package's output and prints it atomically when testing
       # multiple packages, and every test runs against its own tempdir HOME, so
-      # neither concern holds; the cap only stretched the wall clock. (No tests
-      # use t.Parallel(), so -parallel is irrelevant here.)
+      # neither concern holds; the cap only stretched the wall clock. (-parallel
+      # is left at its default too; the few packages using t.Parallel() are fine
+      # with it.)
       #
       # The Go race detector is OFF by default and gated behind the RUN_RACE
       # repository variable (Settings -> Secrets and variables -> Actions ->

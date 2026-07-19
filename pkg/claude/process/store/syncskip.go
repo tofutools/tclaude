@@ -17,7 +17,9 @@ import (
 // disk; only crash durability is forfeited, and only in test binaries.
 //
 // TCLAUDE_TEST_KEEP_FSYNC=1 restores production sync behavior for a manual
-// run, e.g. when investigating a durability-adjacent failure.
+// run, e.g. when investigating a durability-adjacent failure. It is read once
+// at package init, so it must be set in the environment of the `go test`
+// invocation — a per-test t.Setenv is too late.
 var skipDurabilitySyncs = testing.Testing() && os.Getenv("TCLAUDE_TEST_KEEP_FSYNC") == ""
 
 // maybeSync is the gate every file/dir Sync in this package goes through; see
