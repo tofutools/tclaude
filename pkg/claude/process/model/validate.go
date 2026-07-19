@@ -1068,5 +1068,25 @@ func validateLayout(tmpl *Template, diagnostics *templateDiagnosticCollector) bo
 			}
 		}
 	}
+	// Per-connector layout entries outlive their edges silently otherwise: the
+	// editor keys them by (from, outcome) and reuses outcome names as soon as
+	// they are free, so an orphan is not merely dead weight -- it is an opinion
+	// waiting to be inherited by an unrelated future connector.
+	for _, from := range sortedKeys(tmpl.Layout.Edges) {
+		node, ok := tmpl.Nodes[from]
+		if !ok {
+			if !diagnostics.Add(diagWarning("stale_layout_edge", "layout.edges."+from, fmt.Sprintf("layout references undeclared node %q", from))) {
+				return false
+			}
+			continue
+		}
+		for _, outcome := range sortedKeys(tmpl.Layout.Edges[from]) {
+			if _, ok := node.Next[outcome]; !ok {
+				if !diagnostics.Add(diagWarning("stale_layout_edge", "layout.edges."+from+"."+outcome, fmt.Sprintf("layout references undeclared outcome %q on node %q", outcome, from))) {
+					return false
+				}
+			}
+		}
+	}
 	return true
 }
