@@ -22,6 +22,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
 
 const artifactRefPrefix = "artifact:sha256:"
@@ -1248,29 +1249,96 @@ func (s *FS) getTemplateSourceUnlocked(ctx context.Context, id, hash, ref string
 	return model.CanonicalYAML(tmpl)
 }
 
-// unfinishedTemplateRunIDs returns the runs referencing id that could still
-// need the stored template. Finished runs are excluded: they keep the snapshot
-// pinned into run.json at instantiation, so their history and verification
-// survive the library entry going away. A run whose record or state cannot be
-// read counts as unfinished — an unreadable run is exactly the case where we
-// must not assume the template is free.
-func (s *FS) unfinishedTemplateRunIDs(ctx context.Context, id string) ([]string, error) {
+// runStatusHeader is the bounded projection of runs/<id>/state.json needed to
+// classify a run for the deletion guard, across BOTH persisted schemas. Legacy
+// checkpoints carry a top-level status; schema-7 (pathv1) checkpoints carry a
+// mutable execution head instead, and an installed schema-7 checkpoint that
+// predates that head is running by definition (mirroring pathv1.CurrentRunStatus).
+type runStatusHeader struct {
+	StateSchemaVersion int    `json:"stateSchemaVersion"`
+	Status             string `json:"status"`
+	Execution          *struct {
+		Status string `json:"status"`
+	} `json:"execution"`
+}
+
+// runIsFinishedUnlocked classifies one run WITHOUT taking that run's view lock.
+//
+// The lock-free read is deliberate and load-bearing: the execution views take
+// the run-view lock and THEN the template lock (WithExecutionView →
+// lockRunView → lockTemplateView, which is the same lock identity as
+// lockTemplate). DeleteTemplate holds the template lock while it scans, so
+// acquiring a run-view lock here would invert that order and deadlock against a
+// concurrent execution-view read.
+//
+// Reading without the lock only ever costs precision, never safety: a status
+// observed mid-transition is stale in the conservative direction (we may refuse
+// a delete that had just become legal), and any read or decode failure is
+// treated as unfinished. The race that MATTERS — a new run pinning this
+// template — is closed by the template lock itself, not by run locks.
+func (s *FS) runIsFinishedUnlocked(runID string) bool {
+	if err := safeSegment(runID); err != nil {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(s.runDir(runID), "state.json"))
+	if err != nil {
+		return false
+	}
+	var header runStatusHeader
+	if err := json.Unmarshal(data, &header); err != nil {
+		return false
+	}
+	if header.StateSchemaVersion == pathv1.CheckpointStateSchemaVersion {
+		if header.Execution == nil {
+			return false
+		}
+		return runStatusIsFinished(state.RunStatus(header.Execution.Status))
+	}
+	return runStatusIsFinished(state.RunStatus(header.Status))
+}
+
+// templateRunGuard is the result of scanning the store for runs that must
+// prevent a template from being deleted. The two categories are reported
+// separately because they call for different operator action: an unfinished run
+// can be finished or cancelled, whereas an unreadable one needs repair.
+type templateRunGuard struct {
+	unfinished []string
+	unreadable []string
+}
+
+func (g templateRunGuard) blocks() bool { return len(g.unfinished) > 0 || len(g.unreadable) > 0 }
+
+// templateRunGuardUnlocked finds every run that must block deleting id.
+//
+// It fails CLOSED. A run whose record could not be decoded surfaces from
+// ListRuns as a bare id with no template ref; we cannot prove such a run does
+// not reference this template, so it blocks. Likewise a run we can read but
+// cannot classify counts as unfinished rather than finished.
+//
+// A finished run is only safe to leave behind if it pinned its own template
+// snapshot at instantiation. Legacy runs recorded before pinning existed have
+// no copy of their own, so deleting the library entry would destroy their only
+// definition — those block too, whatever their status.
+func (s *FS) templateRunGuardUnlocked(ctx context.Context, id string) (templateRunGuard, error) {
 	runs, err := s.ListRuns(ctx)
 	if err != nil {
-		return nil, err
+		return templateRunGuard{}, err
 	}
-	var blocking []string
+	var guard templateRunGuard
 	for _, run := range runs {
-		runID, _, refErr := parseTemplateRef(run.TemplateRef)
-		if refErr != nil || runID != id {
+		runTemplateID, _, refErr := parseTemplateRef(run.TemplateRef)
+		if refErr != nil {
+			guard.unreadable = append(guard.unreadable, run.ID)
 			continue
 		}
-		st, stateErr := s.LoadRunState(ctx, run.ID)
-		if stateErr != nil || st == nil || !runStatusIsFinished(st.Status) {
-			blocking = append(blocking, run.ID)
+		if runTemplateID != id {
+			continue
+		}
+		if !s.runIsFinishedUnlocked(run.ID) || run.Template == nil {
+			guard.unfinished = append(guard.unfinished, run.ID)
 		}
 	}
-	return blocking, nil
+	return guard, nil
 }
 
 // runStatusIsFinished reports whether a run has reached a state it can never
@@ -1287,18 +1355,20 @@ func runStatusIsFinished(status state.RunStatus) bool {
 }
 
 // DeleteTemplate removes a template id and every version stored under it. It
-// refuses while any unfinished run still references the template, so an
-// in-flight process cannot lose the definition it is executing.
+// refuses while any run that still needs the stored template references it, so
+// an in-flight process cannot lose the definition it is executing.
 //
 // Deletion is irreversible: the version history, editor source, and authorship
-// trail for that id all go away. Runs that already completed are unaffected
-// because their template snapshot lives in run.json.
+// trail for that id all go away. A finished run keeps the template snapshot it
+// pinned at instantiation, so its own record stays self-describing — but note
+// that the execution-view and verification surfaces read the template body from
+// the library and will report the run as inconsistent once it is gone.
 func (s *FS) DeleteTemplate(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := safeSegment(id); err != nil {
-		return fmt.Errorf("invalid template id: %w", err)
+	if err := ValidateTemplateID(id); err != nil {
+		return err
 	}
 	unlock, err := s.lockTemplate(ctx, id)
 	if err != nil {
@@ -1317,20 +1387,36 @@ func (s *FS) DeleteTemplate(ctx context.Context, id string) error {
 	} else if statErr != nil {
 		return fmt.Errorf("stat process template: %w", statErr)
 	}
-	// The run scan runs under the template lock so a concurrent instantiate
-	// cannot pin this template between the check and the removal.
-	blocking, err := s.unfinishedTemplateRunIDs(ctx, id)
+	// The scan runs under the template lock so a concurrent instantiate cannot
+	// pin this template between the check and the removal (CreateRun takes the
+	// same lock across its pin and its run write). It deliberately takes no run
+	// locks — see runIsFinishedUnlocked for the lock-ordering reason.
+	guard, err := s.templateRunGuardUnlocked(ctx, id)
 	if err != nil {
 		return err
 	}
-	if len(blocking) > 0 {
-		return &TemplateInUseError{TemplateID: id, RunIDs: blocking}
+	if guard.blocks() {
+		return &TemplateInUseError{TemplateID: id, RunIDs: guard.unfinished, UnreadableRunIDs: guard.unreadable}
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("remove process template: %w", err)
+	// Remove atomically from the reader's point of view: rename the whole tree
+	// aside first so a failure part-way through cannot leave `head` pointing at
+	// an already-deleted version directory, then drop the detached copy. The
+	// rest of this store is scrupulous about atomic writes; deletion matches.
+	// The detached name leads with a dot, which safeSegmentPattern forbids as a
+	// first character, so ListTemplates skips it and it can never collide with a
+	// real template id.
+	detached := filepath.Join(s.root, "templates", ".deleting-"+id)
+	_ = os.RemoveAll(detached)
+	if err := os.Rename(dir, detached); err != nil {
+		return fmt.Errorf("detach process template: %w", err)
 	}
 	if err := syncDir(filepath.Dir(dir)); err != nil {
-		return fmt.Errorf("sync process template removal: %w", err)
+		return fmt.Errorf("sync process template detach: %w", err)
+	}
+	// The rename above is the durability point; dropping the detached copy is
+	// best-effort cleanup that a later delete of the same id also retries.
+	if err := os.RemoveAll(detached); err != nil {
+		return fmt.Errorf("remove process template: %w", err)
 	}
 	return nil
 }
@@ -1430,16 +1516,39 @@ func (s *FS) CreateRun(ctx context.Context, run RunRecord, initial state.State) 
 	if err := validateInitialAdminWrites(initial.AdminRecords); err != nil {
 		return RunRecord{}, err
 	}
-	pinnedTemplate, err := s.GetTemplate(ctx, run.TemplateRef)
-	if err != nil {
-		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
-	}
-	run.Template = pinnedTemplate
 	unlock, err := s.lockRun(ctx, run.ID)
 	if err != nil {
 		return RunRecord{}, err
 	}
 	defer unlock()
+	// Pin the template under its own lock and HOLD that lock until run.json has
+	// landed. DeleteTemplate takes the same lock for its scan-and-remove, so this
+	// is what makes the two mutually exclusive: either this run is durable before
+	// the scan sees it, or the delete completes first and the pin below fails
+	// with ErrNotFound instead of stranding a run on a template that is gone.
+	//
+	// Lock order is run → template throughout the store (the execution views take
+	// lockRunView, the same identity as lockRun, before lockTemplateView, the
+	// same identity as lockTemplate). Acquiring the template lock here, AFTER the
+	// run lock, keeps that order; inverting it would deadlock against a
+	// concurrent execution-view read.
+	templateID, templateHash, err := parseTemplateRef(run.TemplateRef)
+	if err != nil {
+		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
+	}
+	unlockTemplate, err := s.lockTemplate(ctx, templateID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	defer unlockTemplate()
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, templateID); err != nil {
+		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
+	}
+	pinnedTemplate, err := s.getTemplateUnlocked(ctx, templateID, templateHash, run.TemplateRef)
+	if err != nil {
+		return RunRecord{}, fmt.Errorf("pin run template %q: %w", run.TemplateRef, err)
+	}
+	run.Template = pinnedTemplate
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = s.now().UTC()
 	}

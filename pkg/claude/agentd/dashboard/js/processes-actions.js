@@ -476,10 +476,13 @@ export function createProcessesActions({
   // button and the drag-to-bin drop), so the confirm copy, the in-use handling,
   // and the list refresh cannot drift between them.
   //
-  // Deleting drops the whole version history for the id. Runs that already
-  // finished keep the template snapshot pinned into their run record, so their
-  // history stays readable; the daemon refuses outright while any unfinished
-  // run still needs the stored template.
+  // Deleting drops the whole version history for the id. The daemon refuses
+  // outright while any run that still needs the stored template references it.
+  //
+  // The copy deliberately does NOT promise that finished runs stay fully
+  // readable. A finished run keeps the snapshot pinned into its own record, but
+  // the execution-view and verification surfaces resolve the template body from
+  // the library and report the run as inconsistent once it is gone.
   async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {
     if (!id) return false;
     const label = String(name || '').trim() || id;
@@ -488,8 +491,8 @@ export function createProcessesActions({
     const approved = await confirm({
       title: wizard ? 'Unmake this rite?' : 'Delete this process template?',
       body: wizard
-        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail. Quests already ended keep their own bound copy and stay readable. A rite still underway cannot be unmade.`
-        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. Runs that already finished keep their own pinned copy and stay readable. This cannot be undone.`,
+        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail. Quests already ended keep their own bound copy, but their scrying and attestation views will read as broken once the rite is gone. A rite still underway cannot be unmade.`
+        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. Runs that already finished keep their own pinned copy, but their execution and verification views will report as inconsistent once the template is gone. This cannot be undone.`,
       meta: id,
       okLabel: wizard ? 'Unmake rite' : 'Delete template',
     });
@@ -505,11 +508,25 @@ export function createProcessesActions({
       const body = await response.json().catch(() => ({}));
       if (body.code === 'process_template_in_use') {
         const runs = Array.isArray(body.runIds) ? body.runIds : [];
-        const shown = runs.slice(0, 3).join(', ');
-        const rest = runs.length > 3 ? ` and ${runs.length - 3} more` : '';
+        const unreadable = Array.isArray(body.unreadableRunIds) ? body.unreadableRunIds : [];
+        // Bound the list: a store with many blocked runs must not push a wall of
+        // ids into the notice line.
+        const nameRuns = (ids) => {
+          const shown = ids.slice(0, 3).join(', ');
+          return `${shown}${ids.length > 3 ? ` and ${ids.length - 3} more` : ''}`;
+        };
+        // Unreadable runs need repair, not completion, so they get their own
+        // sentence rather than being folded into the "finish or cancel" advice.
+        if (runs.length) {
+          throw new Error(
+            `${runs.length} run${runs.length === 1 ? '' : 's'} still need${runs.length === 1 ? 's' : ''} it (${nameRuns(runs)}). `
+            + 'Finish or cancel them first.'
+            + (unreadable.length ? ` ${unreadable.length} run${unreadable.length === 1 ? '' : 's'} could not be read (${nameRuns(unreadable)}) and must be repaired or removed.` : ''),
+          );
+        }
         throw new Error(
-          `${runs.length} run${runs.length === 1 ? '' : 's'} still need${runs.length === 1 ? 's' : ''} it (${shown}${rest}). `
-          + 'Finish or cancel them first.',
+          `${unreadable.length} run${unreadable.length === 1 ? '' : 's'} could not be read (${nameRuns(unreadable)}), `
+          + 'so it is not safe to say whether this template is still in use. Repair or remove them first.',
         );
       }
       if (response.status === 404) throw new Error('this template no longer exists; refresh Processes');

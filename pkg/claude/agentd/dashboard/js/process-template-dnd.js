@@ -137,7 +137,12 @@ function bindProcessTemplateDnd() {
   // dragend is the guaranteed reset for a CANCELLED or no-target drag (Escape,
   // or a release over nothing). A successful drop tears down in the drop
   // handler before the island re-renders the list.
-  listen(document, 'dragend', endTemplateDrag);
+  //
+  // Self-gate like every other handler here: dragend BUBBLES, so without this
+  // check another module's drag ending (a member row, a group header, a dock
+  // card) would run this teardown and clear the shared #dnd-trash / #dnd-pill
+  // out from under it.
+  listen(document, 'dragend', () => { if (templateDragActive) endTemplateDrag(); });
 
   listen(document, 'dragover', (e) => {
     if (!templateDragActive) return;
@@ -173,7 +178,14 @@ function bindProcessTemplateDnd() {
     if (spec && deleteHandler) void deleteHandler(spec);
   });
 
-  return () => removers.forEach((remove) => remove());
+  // Tear down any drag still in flight BEFORE dropping the listeners: unbinding
+  // mid-gesture would otherwise strand the shared bin with .show +
+  // .dnd-trash-template-mode (so the next agent retire-drag would read
+  // "Delete"/"Unmake") and leak a reference to the detached row.
+  return () => {
+    if (templateDragActive) endTemplateDrag();
+    removers.forEach((remove) => remove());
+  };
 }
 
-export { bindProcessTemplateDnd, TEMPLATE_DRAG_MIME, templateDragActive };
+export { bindProcessTemplateDnd, TEMPLATE_DRAG_MIME };

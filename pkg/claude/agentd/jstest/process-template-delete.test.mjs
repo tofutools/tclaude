@@ -168,6 +168,78 @@ test('dragging a template row to the bin runs the same delete commit', async (t)
   assert.equal(trash.classList.contains('dnd-trash-template-mode'), false);
 });
 
+// Regression: unbinding mid-gesture used to strand the shared bin in template
+// mode, so the NEXT agent retire-drag showed "Delete"/"Unmake".
+test('unbinding mid-drag restores the bin for the other drag modules', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } =
+    await harness.importDashboardModule('js/process-template-dnd.js');
+  const doc = harness.window.document;
+  const trash = doc.createElement('div');
+  trash.id = 'dnd-trash';
+  doc.body.appendChild(trash);
+  const row = doc.createElement('tr');
+  row.setAttribute('data-process-template-drag', 'release');
+  doc.body.appendChild(row);
+
+  setProcessTemplateDeleteHandler(() => {});
+  const unbind = bindProcessTemplateDnd();
+  t.after(() => { setProcessTemplateDeleteHandler(null); trash.remove(); row.remove(); });
+
+  const transfer = { data: {}, setData(type, value) { this.data[type] = value; }, get types() { return Object.keys(this.data); } };
+  harness.fireEvent(row, 'dragstart', { dataTransfer: transfer, target: row });
+  assert.ok(trash.classList.contains('dnd-trash-template-mode'));
+
+  unbind();
+
+  assert.equal(trash.classList.contains('show'), false, 'the bin is hidden again');
+  assert.equal(trash.classList.contains('dnd-trash-template-mode'), false,
+    'the bin returns to the agent label voice');
+});
+
+// Regression: dragend bubbles, so an unguarded document handler would let ANY
+// other module's drag ending clear the shared bin and pill.
+test('another module\'s dragend does not clear the shared bin', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } =
+    await harness.importDashboardModule('js/process-template-dnd.js');
+  const doc = harness.window.document;
+  const trash = doc.createElement('div');
+  trash.id = 'dnd-trash';
+  trash.classList.add('show');
+  doc.body.appendChild(trash);
+  // A foreign drag source — not one of our rows.
+  const foreign = doc.createElement('div');
+  doc.body.appendChild(foreign);
+
+  setProcessTemplateDeleteHandler(() => {});
+  const unbind = bindProcessTemplateDnd();
+  t.after(() => { unbind(); setProcessTemplateDeleteHandler(null); trash.remove(); foreign.remove(); });
+
+  harness.fireEvent(foreign, 'dragend', { target: foreign });
+
+  assert.ok(trash.classList.contains('show'),
+    'a foreign dragend must leave the shared bin alone');
+});
+
+test('a store with unreadable runs explains repair rather than completion', async (t) => {
+  const { harness, mounted, state } = await mountTemplates(t, {
+    deleteResponse: () => ({
+      ok: false, status: 409,
+      json: async () => ({ code: 'process_template_in_use', runIds: [], unreadableRunIds: ['run-corrupt'] }),
+    }),
+  });
+
+  const button = mounted.container.querySelector('[data-process-action="delete"]');
+  await harness.act(() => harness.fireEvent(button, 'click'));
+  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
+
+  const notice = state.view.value.notice;
+  assert.match(notice, /run-corrupt/);
+  assert.match(notice, /Repair or remove them first/);
+  assert.doesNotMatch(notice, /Finish or cancel/, 'an unreadable run is not something you can finish');
+});
+
 test('a cancelled drag tears the bin down without deleting', async (t) => {
   const harness = await createPreactHarness(t);
   const { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } =

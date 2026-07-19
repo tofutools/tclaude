@@ -75,6 +75,13 @@ func TestProcessTemplateDeleteConflictsWithUnfinishedRun(t *testing.T) {
 	assert.Contains(t, listRec.Body.String(), `"release"`)
 }
 
+// A malformed id is a client error, not an apparent store fault.
+func TestProcessTemplateDeleteRejectsInvalidID(t *testing.T) {
+	f, _ := processEngineFlow(t)
+	rec := processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/Not%20An%20Id", nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
 func TestProcessTemplateDelete404WhenFeatureOff(t *testing.T) {
 	f := newFlow(t)
 	rec := processTemplateRequest(t, f, http.MethodDelete, "/v1/process/templates/example", nil)

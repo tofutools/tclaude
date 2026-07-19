@@ -54,6 +54,9 @@ func TestDashboardJS_ProcessTemplateDeleteWired(t *testing.T) {
 			"the Processes island binds the template drag module"},
 		{`registerCleanup(() => { unbindTemplateDnd(); setProcessTemplateDeleteHandler(null); });`,
 			"the island unbinds the drag module and drops the handler on teardown"},
+		// dragend bubbles, so the document handler must self-gate like the rest.
+		{`listen(document, 'dragend', () => { if (templateDragActive) endTemplateDrag(); });`,
+			"the dragend handler self-gates so a foreign drag cannot clear the shared bin"},
 		// processes-actions.js: one shared commit behind both affordances.
 		{`async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {`,
 			"both delete affordances route through one commit"},

@@ -222,6 +222,12 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 		return
 	}
 	id := r.PathValue("id")
+	// Classify a malformed id as client error before it reaches the filesystem,
+	// where it would otherwise surface as an apparent store fault.
+	if err := store.ValidateTemplateID(id); err != nil {
+		writeError(w, http.StatusBadRequest, "process_template_id", err.Error())
+		return
+	}
 	err := fs.DeleteTemplate(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
@@ -230,9 +236,10 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 	var inUse *store.TemplateInUseError
 	if errors.As(err, &inUse) {
 		writeProcessJSON(w, http.StatusConflict, map[string]any{
-			"error":  inUse.Error(),
-			"code":   "process_template_in_use",
-			"runIds": inUse.RunIDs,
+			"error":            inUse.Error(),
+			"code":             "process_template_in_use",
+			"runIds":           inUse.RunIDs,
+			"unreadableRunIds": inUse.UnreadableRunIDs,
 		})
 		return
 	}

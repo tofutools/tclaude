@@ -20,21 +20,6 @@ import (
 
 const maxDriveRounds = 1000
 
-// runTemplate resolves the template a run executes under. CreateRun pins an
-// immutable snapshot into run.json so a run stays executable and auditable when
-// the store-level library entry is unavailable; prefer that snapshot and fall
-// back to the library only for legacy runs recorded before pinning existed.
-//
-// The pinned copy is also the authority for correctness, not just availability:
-// the library head can move to a new version mid-run, and a run must keep
-// executing the definition it was instantiated from.
-func runTemplate(ctx context.Context, st store.Store, run store.RunRecord) (*model.Template, error) {
-	if run.Template != nil {
-		return run.Template, nil
-	}
-	return st.GetTemplate(ctx, run.TemplateRef)
-}
-
 const DefaultReconcileDelay = 30 * time.Second
 
 const maxObservationCASAttempts = 8
@@ -73,7 +58,7 @@ func (e *Executor) Drive(ctx context.Context, runID string) (store.Snapshot, err
 		if err != nil {
 			return store.Snapshot{}, err
 		}
-		tmpl, err := runTemplate(ctx, e.Store, snapshot.Run)
+		tmpl, err := e.Store.GetTemplate(ctx, snapshot.Run.TemplateRef)
 		if err != nil {
 			return store.Snapshot{}, err
 		}
@@ -331,7 +316,7 @@ func (e *Executor) obligationActions(ctx context.Context, command plan.Command, 
 	if err != nil {
 		return nil, fmt.Errorf("load run %q for decision actions: %w", command.RunID, err)
 	}
-	tmpl, err := runTemplate(ctx, e.Store, run)
+	tmpl, err := e.Store.GetTemplate(ctx, run.TemplateRef)
 	if err != nil {
 		return nil, fmt.Errorf("load template %q for decision actions: %w", run.TemplateRef, err)
 	}
@@ -857,7 +842,7 @@ func (e *Executor) appendObservation(ctx context.Context, command plan.Command, 
 }
 
 func validateCurrentPlan(ctx context.Context, st store.Store, snapshot store.Snapshot, command plan.Command) error {
-	tmpl, err := runTemplate(ctx, st, snapshot.Run)
+	tmpl, err := st.GetTemplate(ctx, snapshot.Run.TemplateRef)
 	if err != nil {
 		return err
 	}
