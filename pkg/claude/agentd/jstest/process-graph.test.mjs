@@ -443,9 +443,10 @@ test('normal pointerup cannot be completed twice by synchronous capture loss', (
   assert.equal(fake.pointer, null);
 });
 
-test('canvas pointerdown focuses the graph so editor Delete receives keyboard events', () => {
+test('canvas pointerdown focuses its shortcut target so editor Delete receives keyboard events', () => {
   let focused = 0;
   const fake = {
+    focusCanvas: ProcessGraph.prototype.focusCanvas,
     root: { focus(options) { focused += 1; assert.equal(options.preventScroll, true); } },
     options: {},
     selected: null,
@@ -471,6 +472,7 @@ test('pointer target survives focus-triggered graph refresh', () => {
     const node = { dataset: { nodeId: 'a' } };
     const port = kind === 'port' ? { dataset: { port: 'out' } } : null;
     const fake = {
+      focusCanvas: ProcessGraph.prototype.focusCanvas,
       root: { focus() { targetIsLive = false; } },
       options: {}, selected: null, view: { x: 0, y: 0, k: 1 },
       svg: { setPointerCapture() {} },
@@ -521,6 +523,7 @@ test('captured item click completes on pointerup when refresh prevents a synthet
 
 test('middle pointerdown pans even when it starts over a node', () => {
   const fake = {
+    focusCanvas: ProcessGraph.prototype.focusCanvas,
     root: { focus() {} }, options: { marqueeSelect: true }, selected: null,
     view: { x: 5, y: 6, k: 1 }, svg: { setPointerCapture() {} },
     eventTarget() { return { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }; },
@@ -534,6 +537,7 @@ test('middle pointerdown pans even when it starts over a node', () => {
 
 test('Space-primary drag pans over a node and a second pointer cannot replace it', () => {
   const fake = {
+    focusCanvas: ProcessGraph.prototype.focusCanvas,
     root: { focus() {} }, options: { marqueeSelect: true }, selected: null, spaceHeld: true,
     view: { x: 5, y: 6, k: 1 }, svg: { setPointerCapture() {} },
     eventTarget() { return { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }; },
@@ -560,6 +564,7 @@ test('a pointerdown reusing the armed pointer id cancels the dead gesture instea
   const fake = {
     pointer: { id: 1, button: 0, mode: 'node', nodeID: 'a', nodeIDs: ['a'], lastClientX: 40, lastClientY: 30 },
     dragMoved: true,
+    focusCanvas: ProcessGraph.prototype.focusCanvas,
     root: { focus() {} }, selected: null, spaceHeld: false,
     options: { onNodeDragCancel: (value) => cancels.push(value) },
     view: { x: 0, y: 0, k: 1 },
@@ -791,6 +796,7 @@ test('node pointer samples coalesce into one display frame using the newest posi
 test('touch and pen pan empty canvas but still drag nodes', () => {
   for (const pointerType of ['touch', 'pen']) {
     const fake = {
+      focusCanvas: ProcessGraph.prototype.focusCanvas,
       root: { focus() {} }, options: { marqueeSelect: true }, selected: null,
       view: { x: 0, y: 0, k: 1 }, svg: { setPointerCapture() {} },
       layout: { nodes: [] },

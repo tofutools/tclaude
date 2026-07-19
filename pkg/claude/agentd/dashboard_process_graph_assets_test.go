@@ -53,7 +53,7 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 		"onMarqueeSelect",
 		"this.pendingClickTarget",
 		"this.renderTransientEdges(",
-		"this.root.focus({ preventScroll: true })",
+		"this.focusCanvas()",
 		// A browser-cancelled gesture must never commit: pointercancel routes
 		// to the dedicated cancel path (cancelled: true, no hit-testing), not
 		// the ordinary pointerup handler. TCL-296 review finding.
@@ -81,9 +81,10 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 	mustContain("dashboard.css", css,
 		".process-graph[data-color-scheme=\"light\"]",
 		// Standalone and viewer graphs retain a visible keyboard-focus ring;
-		// the editor has a narrower override because its root is an event sink,
-		// not a selectable graph item.
+		// editor shortcuts use a visually inert descendant and the frame-level
+		// override remains only as a defensive backstop.
 		".process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }",
+		".process-graph-keyboard-sink {",
 		".process-editor-canvas-host .process-graph:focus-visible { box-shadow: none; }",
 		".process-edge-back .process-edge-path",
 		"body.wizard .process-graph",

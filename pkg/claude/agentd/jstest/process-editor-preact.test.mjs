@@ -627,6 +627,19 @@ test('editor chooser and stale controller commits revalidate the shared port aut
   editor.model.layout.nodes.target = { x: 320, y: 260 };
   await harness.act(() => editor.refresh());
 
+  const sourcePort = host.querySelector('[data-node-id="start"] .process-port-out');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(sourcePort, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  sourcePort.focus();
+  assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
+  await Promise.resolve();
+  harness.fireEvent(host.querySelector('.process-node-chooser-input'), 'keydown', { key: 'Escape' });
+  assert.equal(harness.document.activeElement, sourcePort,
+    'chooser dismissal restores its exact visible connector invoker');
+
   assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
   await Promise.resolve();
   let startChoice = host.querySelector('[data-command-id="process.create.start"]');
@@ -1079,6 +1092,49 @@ test('production scribe modal owns focus, inertness, and every close path inside
   assert.equal(await opened.pending, 'Preserve unrelated stages.');
   assert.equal(editorRoot.hasAttribute('inert'), false);
   assert.equal(harness.document.activeElement, invoker, 'Send restores the production invoker');
+  editor.destroy();
+});
+
+test('editor choice dialogs restore the exact prior focus owner or body state', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const open = async () => {
+    let pending;
+    await harness.act(() => {
+      pending = editor.choiceModal({
+        title: 'Confirm editor action?', body: 'Focus must return exactly.',
+        choices: [{ key: 'apply', label: 'Apply', primary: true }],
+      });
+    });
+    return { pending, overlay: host.querySelector('#process-editor-choice-modal') };
+  };
+
+  editor.graph.focus();
+  const sink = host.querySelector('.process-graph-keyboard-sink');
+  assert.equal(harness.document.activeElement, sink);
+  let opened = await open();
+  await harness.act(() => harness.getByRole(opened.overlay, 'button', { name: 'Cancel' }).click());
+  assert.equal(await opened.pending, null);
+  assert.equal(harness.document.activeElement, sink, 'Cancel restores the exact shortcut sink');
+
+  const node = host.querySelector('.process-node[data-node-id="start"]');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(node, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  node.focus();
+  opened = await open();
+  await harness.act(() => harness.getByRole(opened.overlay, 'button', { name: 'Apply' }).click());
+  assert.equal(await opened.pending, 'apply');
+  assert.equal(harness.document.activeElement, node, 'confirmation restores the exact graph item');
+
+  focusElement.call(harness.document.body);
+  assert.equal(harness.document.activeElement, harness.document.body);
+  opened = await open();
+  await harness.act(() => harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' }));
+  assert.equal(await opened.pending, null);
+  assert.equal(harness.document.activeElement, harness.document.body,
+    'an unfocused editor remains unfocused after dialog teardown');
   editor.destroy();
 });
 

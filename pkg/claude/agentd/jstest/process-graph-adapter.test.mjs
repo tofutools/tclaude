@@ -27,35 +27,37 @@ async function mountedAdapter(t, events = {}, options = {}) {
   return { harness, host, adapter };
 }
 
-test('editor canvas root redirects keyboard restoration but accepts pointer shortcut focus', async (t) => {
+test('editor canvas frame is never a focus target and shortcuts use its hidden sink', async (t) => {
   const { harness, adapter, host } = await mountedAdapter(t);
   const root = host.querySelector('.process-graph');
-  const start = host.querySelector('.process-node[data-node-id="start"]');
+  const svg = host.querySelector('.process-graph-svg');
+  const sink = host.querySelector('.process-graph-keyboard-sink');
+  assert.equal(root.hasAttribute('tabindex'), false, 'the frame is not focusable');
+  assert.equal(svg.getAttribute('tabindex'), '-1', 'the SVG viewport is excluded from sequential focus');
+  assert.equal(svg.getAttribute('focusable'), 'false', 'legacy SVG focus engines also skip the viewport');
+  assert.equal(sink.getAttribute('tabindex'), '-1', 'the shortcut sink is programmatic-only');
+
+  adapter.focus();
+  assert.equal(harness.document.activeElement, sink,
+    'empty-canvas shortcuts never require frame focus');
+  assert.notEqual(harness.document.activeElement, root);
+  assert.notEqual(harness.document.activeElement, svg);
+
+  const source = host.querySelector('[data-node-id="start"] .process-port-out');
   const focusElement = harness.window.HTMLElement.prototype.focus;
-  // linkedom does not implement native SVGElement focus; borrow the HTML
-  // implementation so the browser's active-element result is testable.
-  Object.defineProperty(start, 'focus', {
+  Object.defineProperty(source, 'focus', {
     configurable: true,
     value(options) { return focusElement.call(this, options); },
   });
-  assert.equal(root.getAttribute('tabindex'), '-1');
-  adapter.setSelection({ type: 'node', id: 'start' });
-
-  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
-  adapter.focus();
-  assert.equal(harness.document.activeElement?.dataset.nodeId, 'start',
-    'keyboard-origin restoration lands on a visible graph item');
-
-  harness.fireEvent(harness.document, 'pointerdown', { button: 0, pointerType: 'mouse' });
-  adapter.focus();
-  assert.equal(harness.document.activeElement, root,
-    'pointer-origin empty-canvas focus keeps editor shortcuts on the unpainted root');
+  assert.equal(adapter.focusPort('start', 'out'), true);
+  assert.equal(harness.document.activeElement, source,
+    'an anchored chooser can explicitly retain its visible connector invoker');
 });
 
 test('editor interaction layering raises one node without changing semantic layers or keyboard order', async (t) => {
   const { harness, adapter, host } = await mountedAdapter(t, {}, { interactionLayering: true });
-  assert.equal(host.querySelector('.process-graph').getAttribute('tabindex'), '-1',
-    'the editor canvas is a programmatic focus sink, not a sequential keyboard stop');
+  assert.equal(host.querySelector('.process-graph').hasAttribute('tabindex'), false,
+    'the editor frame is absent from sequential keyboard navigation');
   const svg = host.querySelector('.process-graph-svg');
   const viewport = host.querySelector('.process-graph-viewport');
   const nodeLayer = host.querySelector('.process-node-layer');
@@ -277,14 +279,18 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
     portDragStart: (payload) => received.push(['start', payload]),
     portDragEnd: (payload) => received.push(['end', payload]),
   }, { connectionFeedback: feedback });
-  const graph = host.querySelector('.process-graph');
-  const graphFocus = graph.focus.bind(graph);
-  let graphFocusRestorations = 0;
-  Object.defineProperty(graph, 'focus', {
-    configurable: true,
-    value(options) { graphFocusRestorations += 1; return graphFocus(options); },
-  });
   const source = host.querySelector('[data-node-id="start"] .process-port-out');
+  const svgPrototype = Object.getPrototypeOf(source);
+  const priorFocus = Object.getOwnPropertyDescriptor(svgPrototype, 'focus');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(svgPrototype, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  t.after(() => {
+    if (priorFocus) Object.defineProperty(svgPrototype, 'focus', priorFocus);
+    else delete svgPrototype.focus;
+  });
   source.focus();
   harness.fireEvent(source, 'keydown', { key: 'Enter' });
   const active = adapter.interactionSnapshot();
@@ -307,8 +313,10 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: active.generation + 1, active: false,
   }, 'reload freshness sees the completed interaction generation and no active gesture');
-  assert.equal(graphFocusRestorations, 1,
-    'focus falls back to the graph when the focused source disappears');
+  const restored = harness.document.activeElement;
+  assert.equal(restored?.dataset.nodeId, 'end',
+    'keyboard source removal restores a surviving visible graph item');
+  assert.notEqual(restored, host.querySelector('.process-graph-keyboard-sink'));
 
   adapter.setGraph({ nodes: [{ id: 'end', type: 'end', label: 'End' }], edges: [] });
   harness.fireEvent(host.querySelector('.process-graph-svg'), 'keydown', { key: 'Escape' });
@@ -357,8 +365,8 @@ test('undo-style graph removal cancels a missing pointer source exactly once', a
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: active.generation + 1, active: false,
   }, 'reload freshness observes the pointer cancellation generation');
-  assert.equal(harness.document.activeElement, host.querySelector('.process-graph'),
-    'stable graph focus survives removal of the captured connector');
+  assert.equal(harness.document.activeElement, host.querySelector('.process-graph-keyboard-sink'),
+    'stable shortcut focus survives removal without landing on the editor frame');
   assert.equal(host.querySelector('[data-node-id="end"] .process-port-out').getAttribute('r'), '6');
 
   harness.fireEvent(svg, 'pointerup', {

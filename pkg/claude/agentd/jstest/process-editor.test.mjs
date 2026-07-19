@@ -611,6 +611,22 @@ test('connected-node selection preserves direction and opens required configurat
   assert.deepEqual(calls[0], ['add', 'start', { x: -3, y: 7, connectTo: 'existing' }]);
   assert.ok(calls.some((entry) => entry[0] === 'focus' && entry[1] === 'start-id'));
   assert.equal(calls.some((entry) => entry[0] === 'settings'), false);
+
+  calls.length = 0;
+  fake.mutate = () => undefined;
+  fake.graph.focusPort = (nodeId, port) => {
+    calls.push(['focus-port', nodeId, port]);
+    return false;
+  };
+  fake.graph.focusKeyboardTarget = () => calls.push(['focus-visible-fallback']);
+  assert.equal(ProcessTemplateEditor.prototype.addConnectedNodeType.call(
+    fake, 'task', { nodeId: 'origin', port: 'out' }, { x: 1, y: 2 },
+  ), false);
+  await Promise.resolve();
+  assert.deepEqual(calls, [
+    ['focus-port', 'origin', 'out'],
+    ['focus-visible-fallback'],
+  ], 'failed chooser commits restore the source or another visible keyboard target');
 });
 
 test('invalid end-node origin is rejected before the chooser opens', () => {

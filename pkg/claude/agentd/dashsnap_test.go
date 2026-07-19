@@ -1537,6 +1537,36 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "process-editor-browser-focus-contract",
+			Title:   "Process editor — frame skipped + exact dialog focus",
+			Caption: "Real Chrome input: sequential Tab skips the editor frame/SVG/sink, dialog cancel restores the exact graph item, and an editor opened from body focus returns to body.",
+			JS:      processEditorStateJS(`window.__focusEd=ed; await editorPaint();`),
+			Actions: []dashsnap.BrowserAction{
+				{Kind: "eval", JS: `var root=document.querySelector('.process-graph'),svg=root.querySelector('.process-graph-svg'),sink=root.querySelector('.process-graph-keyboard-sink');
+  if(root.hasAttribute('tabindex')) throw new Error('editor frame retained a tabindex');
+  if(svg.getAttribute('tabindex')!=='-1'||svg.getAttribute('focusable')!=='false') throw new Error('SVG viewport is not excluded from traversal');
+  if(!sink||sink.getAttribute('tabindex')!=='-1') throw new Error('programmatic shortcut sink contract missing');
+  var controls=Array.from(document.querySelectorAll('.process-editor-palette button')).filter(function(button){return !button.disabled&&button.offsetParent!==null;});
+  if(!controls.length) throw new Error('no visible palette control before the canvas');
+  controls[controls.length-1].focus();window.__focusFrame={root:root,svg:svg,sink:sink};`},
+				{Kind: "key", Key: "Tab"},
+				{Kind: "eval", JS: `var state=window.__focusFrame,active=document.activeElement;
+  if(active===state.root||active===state.svg||active===state.sink) throw new Error('Tab landed on the editor frame, SVG, or shortcut sink');
+  if(!state.root.contains(active)) throw new Error('Tab did not enter an element inside the graph');
+  var node=document.querySelector('.process-node[data-node-id="begin"]');node.focus();window.__focusInvoker=node;`},
+				{Kind: "key", Key: "Delete"},
+				{Kind: "eval", JS: `if(!document.querySelector('#process-editor-choice-modal')) throw new Error('Delete confirmation did not open');`},
+				{Kind: "key", Key: "Escape"},
+				{Kind: "eval", JS: `if(document.activeElement!==window.__focusInvoker) throw new Error('dialog cancel did not restore the exact graph item');
+  document.activeElement.blur();if(document.activeElement!==document.body) throw new Error('fixture could not establish body focus');
+  window.__bodyFocusChoice=window.__focusEd.choiceModal({title:'Body focus check',body:'Restore no editor focus.',choices:[{key:'apply',label:'Apply',primary:true}]});`},
+				{Kind: "key", Key: "Escape"},
+				{Kind: "eval", JS: `if(document.querySelector('#process-editor-choice-modal')) throw new Error('body-focus dialog did not close');
+  if(document.activeElement!==document.body) throw new Error('dialog teardown invented an editor focus target');`},
+			},
+			SettleMS: 300,
+		},
+		{
 			Key:     "process-editor-browser-copy-paste",
 			Title:   "Process editor — trusted cursor-centered copy/paste",
 			Caption: "TCL-569 real Chrome input in regular and wizard skins: native clipboard ownership survives while cursor paste uses the current pan/zoom, same-target repeats cascade, and pointer exit falls back to canvas center.",
@@ -1839,10 +1869,10 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
-			Key:     "process-editor-legacy-edge-error-row",
-			Title:   "Process editor — legacy edge rejection with a maximal unbroken outcome",
-			Caption: "TCL-583 recovery guidance in real Chrome: an edge outcome may legally be 512 unbroken characters, and the full-width error row must wrap it inside the editor mount so the trailing recovery clause stays visible without any pointer-only tooltip.",
-			JS:      processEditorLegacyEdgeErrorRowJS,
+			Key:      "process-editor-legacy-edge-error-row",
+			Title:    "Process editor — legacy edge rejection with a maximal unbroken outcome",
+			Caption:  "TCL-583 recovery guidance in real Chrome: an edge outcome may legally be 512 unbroken characters, and the full-width error row must wrap it inside the editor mount so the trailing recovery clause stays visible without any pointer-only tooltip.",
+			JS:       processEditorLegacyEdgeErrorRowJS,
 			SettleMS: 1100,
 		},
 		{
