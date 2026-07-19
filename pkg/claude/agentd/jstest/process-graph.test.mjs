@@ -142,6 +142,35 @@ test('edge renderer gives the exact routed path to the auto-oriented SVG marker'
   }
 });
 
+test('live edge reroutes update geometry without replacing interactive edge DOM', () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
+  try {
+    const edge = {
+      id: 'work:pass', inputIndex: 0, from: 'work', to: 'done', outcome: 'pass',
+      path: 'M 10 20 L 30 40', label: { x: 20, y: 22 }, badge: '!',
+    };
+    const fake = {
+      markerID: 'forward-marker', backMarkerID: 'back-marker',
+      edgeLayer: document.createElementNS('http://www.w3.org/2000/svg', 'g'),
+    };
+    const rendered = ProcessGraph.prototype.renderEdge.call(fake, edge);
+    fake.edgeLayer.append(rendered);
+    ProcessGraph.prototype.updateEdgeGeometry.call(fake, [{
+      ...edge, path: 'M 50 60 L 70 80', label: { x: 61, y: 63 },
+    }]);
+    assert.equal(fake.edgeLayer.firstElementChild, rendered,
+      'drag frames retain edge focus, listeners, and selection classes');
+    assert.equal(rendered.querySelector('.process-edge-path').getAttribute('d'), 'M 50 60 L 70 80');
+    assert.equal(rendered.querySelector('.process-edge-hit').getAttribute('d'), 'M 50 60 L 70 80');
+    assert.equal(rendered.querySelector('.process-edge-label').getAttribute('transform'), 'translate(61 63)');
+    assert.equal(rendered.querySelector('.process-edge-issue-marker').getAttribute('transform'), 'translate(61 50)');
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
 test('wheel delta modes normalize to useful pixel-scale zoom input', () => {
   assert.equal(normalizeWheelDelta(120, 0, 900), 120);
   assert.equal(normalizeWheelDelta(3, 1, 900), 72);
@@ -188,6 +217,26 @@ test('editor wheel pans while Ctrl-wheel pinches, and viewer wheel still zooms',
   const viewer = graph({});
   ProcessGraph.prototype.onWheel.call(viewer, event({ deltaX: 0 }));
   assert.ok(viewer.view.k < 1, 'the shared read-only viewer retains wheel zoom');
+});
+
+test('node drags keep their captured view until release or cancellation', () => {
+  const initial = { x: 10, y: 20, k: 1.5 };
+  const fake = {
+    pointer: { mode: 'node' }, view: { ...initial }, options: { wheelPan: true },
+    svg: { getBoundingClientRect() { throw new Error('a node drag must not read or mutate view geometry'); } },
+    applyView() { throw new Error('a node drag must not repaint the viewport'); },
+  };
+  let prevented = 0;
+  ProcessGraph.prototype.onWheel.call(fake, {
+    deltaX: 10, deltaY: 20, deltaMode: 0, clientX: 100, clientY: 100,
+    preventDefault() { prevented += 1; },
+  });
+  assert.equal(ProcessGraph.prototype.setZoom.call(fake, 2), false);
+  assert.equal(ProcessGraph.prototype.fitToView.call(fake), false);
+  assert.equal(ProcessGraph.prototype.centerOn.call(fake, 100, 200), false);
+  assert.equal(prevented, 1, 'wheel input is still claimed while the drag owns the canvas');
+  assert.deepEqual(fake.view, initial,
+    'queued drag coordinates cannot race a wheel, fit, zoom, or center mutation');
 });
 
 test('Space arms panning only outside editable controls and never steals an owned gesture', () => {
@@ -292,6 +341,7 @@ test('pointercancel snaps a node drag home instead of committing it', () => {
     options: {},
     svg: { releasePointerCapture() {} },
     dragMoved: true,
+    cancelNodeDragFrame() {},
     snapNodeHome(id) { snapped.push(id); },
     snapNodesHome(ids) { ids.forEach((id) => this.snapNodeHome(id)); },
     restoreTransientEdges() {},
@@ -383,6 +433,7 @@ test('normal pointerup cannot be completed twice by synchronous capture loss', (
       },
     },
     clientToGraph: () => ({ x: 30, y: 25 }),
+    flushNodeDragFrame() {},
     snapNodesHome() {}, restoreTransientEdges() {},
   };
   ProcessGraph.prototype.onPointerUp.call(fake, {
@@ -452,6 +503,7 @@ test('captured item click completes on pointerup when refresh prevents a synthet
     options: { onNodeClick: ({ node }) => clicked.push(node.id) },
     svg: { releasePointerCapture() {} },
     clientToGraph() { return { x: 0, y: 0 }; },
+    flushNodeDragFrame() {},
     snapNodesHome() {},
     restoreTransientEdges() {},
     select(value) { selected.push(value); },
@@ -516,6 +568,7 @@ test('a pointerdown reusing the armed pointer id cancels the dead gesture instea
     clientToGraph: (x, y) => ({ x, y }),
     layout: { nodes: [{ id: 'a', x: 12, y: 34 }] },
     snapNodesHome(ids) { snapped.push(...ids); },
+    cancelNodeDragFrame() {},
     restoreTransientEdges() {},
     raiseNode() {},
     onPointerCancel: ProcessGraph.prototype.onPointerCancel,
@@ -583,6 +636,7 @@ test('node drag end reports the start positions captured by its own gesture', ()
     options: { onNodeDragEnd: (value) => ends.push(value) },
     svg: { releasePointerCapture() {} },
     clientToGraph: () => ({ x: 40, y: 25 }),
+    flushNodeDragFrame() {},
     snapNodesHome() {}, restoreTransientEdges() {},
   };
   const gestureStarts = fake.pointer.starts;
@@ -610,6 +664,7 @@ test('node drag end commits the last rendered frame when release coordinates lag
     // visibly rendered at nodeDelta, so snapping it to this stale coordinate
     // would make the completed gesture rubber-band back to its start.
     clientToGraph: () => ({ x: 10, y: 10 }),
+    flushNodeDragFrame() {},
     snapNodesHome() {}, restoreTransientEdges() {},
   };
   ProcessGraph.prototype.onPointerUp.call(fake, { pointerId: 4, clientX: 10, clientY: 10 });
@@ -664,15 +719,15 @@ test('dragging an unselected node selects it once when movement crosses the thre
     const fake = {
       pointer: {
         id: 4, mode: 'node', nodeID: 'work', nodeIDs: ['work'],
-        startClientX: 0, startClientY: 0, startPoint: { x: 0, y: 0 }, selectionStarted: false,
+        startClientX: 0, startClientY: 0, startPoint: { x: 0, y: 0 },
+        startView: { x: 0, y: 0, k: 1 }, selectionStarted: false,
       },
       selected: null, dragMoved: false,
       options: { onNodeDragStart: (value) => starts.push(value), onNodeDrag() {} },
       nodeLayer: { querySelector: () => null }, portLayer: { querySelector: () => null },
       layout: { nodes: [] },
-      clientToGraph: () => ({ x: 5, y: 0 }),
       select(value) { this.selected = value; },
-      renderTransientEdges() {}, updatePortHover() {},
+      queueNodeDragFrame() {}, updatePortHover() {},
     };
     const moved = { pointerId: 4, clientX: 5, clientY: 0 };
     ProcessGraph.prototype.onPointerMove.call(fake, moved);
@@ -683,6 +738,53 @@ test('dragging an unselected node selects it once when movement crosses the thre
   } finally {
     if (previousCSS === undefined) delete globalThis.CSS;
     else globalThis.CSS = previousCSS;
+  }
+});
+
+test('node pointer samples coalesce into one display frame using the newest position', () => {
+  const previousCSS = globalThis.CSS;
+  const previousRAF = globalThis.requestAnimationFrame;
+  globalThis.CSS = { escape: (value) => value };
+  const frames = [];
+  globalThis.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+  try {
+    const node = { setAttribute(name, value) { this[name] = value; } };
+    const ports = { setAttribute(name, value) { this[name] = value; } };
+    const rendered = [];
+    const fake = {
+      pointer: {
+        id: 4, mode: 'node', nodeID: 'work', nodeIDs: ['work'],
+        startClientX: 0, startClientY: 0, startPoint: { x: 20, y: 30 },
+        startView: { x: 5, y: 6, k: 2 }, selectionStarted: false,
+      },
+      selected: { type: 'node', id: 'work' }, dragMoved: false, destroyed: false,
+      pendingNodeDrag: null, nodeDragFrame: null, frontNodeID: null,
+      options: { onNodeDrag: ({ delta }) => rendered.push(['hook', delta]) },
+      nodeLayer: { querySelector: () => node }, portLayer: { querySelector: () => ports },
+      layout: { nodes: [{ id: 'work', x: 100, y: 200 }] },
+      updatePortHover() {},
+      queueNodeDragFrame: ProcessGraph.prototype.queueNodeDragFrame,
+      flushNodeDragFrame: ProcessGraph.prototype.flushNodeDragFrame,
+      setNodeTransform: ProcessGraph.prototype.setNodeTransform,
+      renderTransientEdges(ids, delta) { rendered.push(['edges', ids, delta]); },
+    };
+    ProcessGraph.prototype.onPointerMove.call(fake, { pointerId: 4, clientX: 10, clientY: 12 });
+    ProcessGraph.prototype.onPointerMove.call(fake, { pointerId: 4, clientX: 16, clientY: 20 });
+    assert.equal(frames.length, 1, 'many input samples schedule one browser paint');
+    assert.equal(node.transform, undefined, 'DOM work waits for the display frame');
+    frames[0]();
+    assert.equal(node.transform, 'translate(108 210)');
+    assert.equal(ports.transform, 'translate(108 210)');
+    assert.deepEqual(fake.pointer.nodeDelta, { x: 8, y: 10 });
+    assert.deepEqual(rendered, [
+      ['hook', { x: 8, y: 10 }],
+      ['edges', ['work'], { x: 8, y: 10 }],
+    ]);
+  } finally {
+    if (previousCSS === undefined) delete globalThis.CSS;
+    else globalThis.CSS = previousCSS;
+    if (previousRAF === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRAF;
   }
 });
 
