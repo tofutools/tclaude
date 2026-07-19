@@ -370,6 +370,25 @@ func TestRunExitCallback_VerifiesDeadPaneAndRejectsReplay(t *testing.T) {
 	assert.Equal(t, "TERM", rows[0].Signal)
 }
 
+func TestParseDeadTmuxPaneAcceptsPortableSignalRepresentations(t *testing.T) {
+	const generation = "11111111111111111111111111111111"
+	for _, tc := range []struct {
+		name   string
+		signal string
+		want   string
+	}{
+		{name: "number", signal: "15", want: "15"},
+		{name: "name", signal: "term", want: "TERM"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseDeadTmuxPane(
+				"tmux-callback|%9|1||"+tc.signal+"|"+generation, "%9")
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got.Signal)
+		})
+	}
+}
+
 func TestRunExitCallback_RejectsLiveForgedAndMismatchedEvidence(t *testing.T) {
 	fake := &exitCallbackTmux{
 		paneID: "%11", deadOutput: "tmux-real|%11|0|7||22222222222222222222222222222222",
