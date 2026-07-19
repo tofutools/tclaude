@@ -7,6 +7,7 @@ import { WORKLIST_VIEWS, actorLabel, dueBucket, fmtAge, fmtDue, groupWaitingOn, 
 import { registerCommandProvider } from './command-registry.js';
 import { buildProcessEditorCommands } from './process-command-registry.js';
 import { ProcessViewerBoundary } from './process-viewer-island.js';
+import { bindProcessTemplateDnd, setProcessTemplateDeleteHandler } from './process-template-dnd.js';
 
 const html = htm.bind(h);
 const WORKLIST_TITLES = {
@@ -88,6 +89,12 @@ function EditableName({ template, actions, busy }) {
   >${template.name || template.id}</button>`;
 }
 
+// Same 24x24 outline trash used by the group member rows, so the two tabs read
+// as one delete vocabulary. Wizard mode restyles it via body.wizard rules.
+function TrashIcon() {
+  return html`<svg class="trash-ico" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>`;
+}
+
 function Templates({ current, actions }) {
   const rows = current.templates;
   return html`<div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
@@ -95,7 +102,7 @@ function Templates({ current, actions }) {
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}>
       <${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
         ${rows.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>
-          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id}><td><${EditableName} template=${template} actions=${actions} busy=${current.mutation.busy} /><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="rename" data-id=${template.id} type="button" title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button></td></tr>`; })}
+          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id} draggable=${true} data-process-template-drag=${template.id} data-process-template-name=${template.name || ''} data-process-template-versions=${template.versionCount || 0}><td><${EditableName} template=${template} actions=${actions} busy=${current.mutation.busy} /><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="rename" data-id=${template.id} type="button" title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button><button class="process-action process-action-danger process-delete-btn" data-process-action="delete" data-id=${template.id} type="button" disabled=${current.mutation.busy} title="Delete this template and all its versions — refused while an unfinished run still needs it" aria-label=${`Delete ${template.name || template.id}`} onClick=${() => actions.deleteTemplate({ id: template.id, name: template.name || '', versionCount: template.versionCount || 0 })}><${TrashIcon} /></button></td></tr>`; })}
         </tbody></table>`}
       </${RequestBody}>
     </div>
@@ -365,6 +372,12 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
   };
   document.addEventListener('tclaude:restore-location', restore);
   registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
+  // The drag-to-bin delete lives in a document-level module (the overlay bin is
+  // outside this island), so hand it the same commit the row button calls and
+  // bind it for as long as the island is mounted.
+  setProcessTemplateDeleteHandler((spec) => actions.deleteTemplate(spec));
+  const unbindTemplateDnd = bindProcessTemplateDnd();
+  registerCleanup(() => { unbindTemplateDnd(); setProcessTemplateDeleteHandler(null); });
   render(html`<${ProcessesApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   // Rendering null unmounts ProcessEditorBoundary, the sole owner of editor /
   // graph disposal. Do not destroy through state here as well.

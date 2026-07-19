@@ -472,6 +472,90 @@ export function createProcessesActions({
       return false;
     }
   }
+  // deleteTemplate is the shared commit for BOTH delete affordances (the row
+  // button and the drag-to-bin drop), so the confirm copy, the in-use handling,
+  // and the list refresh cannot drift between them.
+  //
+  // Deleting drops the whole version history for the id. The daemon refuses
+  // outright while any run that still needs the stored template references it.
+  //
+  // The copy deliberately does NOT promise that finished runs stay fully
+  // readable. A finished run keeps the snapshot pinned into its own record, but
+  // the execution-view and verification surfaces resolve the template body from
+  // the library and report the run as inconsistent once it is gone.
+  async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {
+    if (!id) return false;
+    const label = String(name || '').trim() || id;
+    const versions = Number(versionCount) || 0;
+    const wizard = document.body?.classList?.contains('wizard');
+    const approved = await confirm({
+      title: wizard ? 'Unmake this rite?' : 'Delete this process template?',
+      body: wizard
+        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail. Quests already ended keep their own bound copy, but their scrying and attestation views will read as broken once the rite is gone. A rite still underway cannot be unmade.`
+        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. Runs that already finished keep their own pinned copy, but their execution and verification views will report as inconsistent once the template is gone. This cannot be undone.`,
+      meta: id,
+      okLabel: wizard ? 'Unmake rite' : 'Delete template',
+    });
+    if (!approved) return false;
+    if (!state.beginMutation()) {
+      state.setNotice('Another process action is still running; retry the delete once it settles.');
+      return false;
+    }
+    try {
+      const response = await fetchImpl(`/v1/process/templates/${encodeURIComponent(id)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (body.code === 'process_template_in_use') {
+        const runs = Array.isArray(body.runIds) ? body.runIds : [];
+        const unreadable = Array.isArray(body.unreadableRunIds) ? body.unreadableRunIds : [];
+        // Bound the list: a store with many blocked runs must not push a wall of
+        // ids into the notice line.
+        const nameRuns = (ids) => {
+          const shown = ids.slice(0, 3).join(', ');
+          return `${shown}${ids.length > 3 ? ` and ${ids.length - 3} more` : ''}`;
+        };
+        // Unreadable runs need repair, not completion, so they get their own
+        // sentence rather than being folded into the "finish or cancel" advice.
+        if (runs.length) {
+          throw new Error(
+            `${runs.length} run${runs.length === 1 ? '' : 's'} still need${runs.length === 1 ? 's' : ''} it (${nameRuns(runs)}). `
+            + 'Finish or cancel them first.'
+            + (unreadable.length ? ` ${unreadable.length} run${unreadable.length === 1 ? '' : 's'} could not be read (${nameRuns(unreadable)}) and must be repaired or removed.` : ''),
+          );
+        }
+        throw new Error(
+          `${unreadable.length} run${unreadable.length === 1 ? '' : 's'} could not be read (${nameRuns(unreadable)}), `
+          + 'so it is not safe to say whether this template is still in use. Repair or remove them first.',
+        );
+      }
+      if (response.status === 404) throw new Error('this template no longer exists; refresh Processes');
+      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+      // An editor still open on the deleted id would keep accepting edits and
+      // then fail confusingly on save, so close it. Deliberately unguarded by
+      // canLeaveEditor: the operator just confirmed the destruction, and the
+      // template those edits target no longer exists to save them against.
+      if (state.currentEditor()?.model?.template?.id === id) {
+        state.setEditor(null);
+        state.setCanvas(null);
+        // The editor owns a URL of its own (/processes/templates/<id>), which
+        // now names a template that does not exist. CORRECT rather than
+        // announce: pushing would leave a Back entry pointing at the deleted
+        // editor, which can only fail to restore.
+        correctLocation();
+      }
+      state.setNotice(`Deleted ${label}.`);
+      notify(`deleted process template ${label}`);
+      void load('templates', { quiet: true });
+      return true;
+    } catch (error) {
+      state.setNotice(`Delete failed: ${error.message}`);
+      notify(`process template delete failed: ${error.message}`, true);
+      return false;
+    } finally {
+      state.endMutation();
+    }
+  }
   function closeInstantiation() {
     if (state.mutation.value.busy) return false;
     state.setInstantiation(null);
@@ -561,7 +645,7 @@ export function createProcessesActions({
     load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
-    openRename, closeRename, submitRename, renameTemplate,
+    openRename, closeRename, submitRename, renameTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });

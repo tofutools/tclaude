@@ -1369,7 +1369,7 @@ func TestRunLockHonorsContextWhileFlockHeld(t *testing.T) {
 	ctx := t.Context()
 	root := t.TempDir()
 	fs, runID := initializedRunAt(t, root)
-	lockPath := filepath.Join(root, ".locks", runID+".lock")
+	lockPath := filepath.Join(root, ".locks", "run-"+runID+".lock")
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1542,7 +1542,7 @@ func TestLoadRunViewRejectsIDsBeforeLockSideEffects(t *testing.T) {
 
 	_, err = fs.LoadRunView(t.Context(), "safe-missing")
 	require.ErrorIs(t, err, store.ErrNotFound)
-	_, statErr = os.Stat(filepath.Join(root, ".locks", "safe-missing.lock"))
+	_, statErr = os.Stat(filepath.Join(root, ".locks", "run-safe-missing.lock"))
 	assert.ErrorIs(t, statErr, os.ErrNotExist, "missing viewer reads must not persist lock files")
 
 	_, err = fs.GetTemplateExact(t.Context(), "../outside@sha256:"+strings.Repeat("a", 64))
@@ -1724,7 +1724,7 @@ func TestViewerDescriptorBoundaries(t *testing.T) {
 			require.NoError(t, os.Symlink(target, filepath.Join(runLogDir, "log.jsonl")))
 		}},
 		{"viewer lock symlink", func(t *testing.T, root string, _ *store.FS, runID string) {
-			path := filepath.Join(root, ".locks", runID+".lock")
+			path := filepath.Join(root, ".locks", "run-"+runID+".lock")
 			require.NoError(t, os.Remove(path))
 			target := filepath.Join(t.TempDir(), "lock-target")
 			require.NoError(t, os.WriteFile(target, nil, 0o600))

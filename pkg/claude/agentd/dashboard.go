@@ -189,6 +189,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/process/template-heads", dashboardProcessRoute(handleProcessTemplateHeads))
 	mux.HandleFunc("GET /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
+	mux.HandleFunc("DELETE /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", dashboardProcessRoute(handleProcessValidate))
 	mux.HandleFunc("GET /v1/process/runs", dashboardProcessRoute(handleProcessRuns))
 	mux.HandleFunc("POST /v1/process/runs", dashboardProcessRoute(handleProcessRunCreate))

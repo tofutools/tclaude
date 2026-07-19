@@ -541,7 +541,13 @@
   <span class="dnd-trash-glyph-wizard" aria-hidden="true">🌀</span>
   <!-- Both label voices always emitted; CSS shows one per theme, the same
        trick as the Summon / Awaken / Slumber buttons. -->
-  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span></span>
+  <!-- The bin is shared with the Processes tab, where the gesture DELETES a
+       process template rather than retiring an agent — a different and
+       irreversible act, so it gets its own label voice. All four are emitted;
+       #dnd-trash.dnd-trash-template-mode (set by process-template-dnd.js for
+       the duration of a template drag) picks the template pair, and body.wizard
+       picks the voice within whichever pair is active. -->
+  <span class="dnd-trash-label"><span class="dnd-trash-label-regular">Retire</span><span class="dnd-trash-label-wizard">Banish</span><span class="dnd-trash-label-template">Delete</span><span class="dnd-trash-label-template-wizard">Unmake</span></span>
 </div>
 <div id="shell-toast-root"></div>
 <!-- The Preact shell owns the command palette overlay. It uses the shared

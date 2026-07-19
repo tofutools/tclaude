@@ -12715,6 +12715,54 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 .process-inspector-hint { color: #8b949e; font-size: 12px; }
 .process-action-danger { color: #f85149; }
 .process-action-danger:hover { border-color: #f85149; }
+
+/* ─── Process template delete (row button + drag-to-bin) ──────────────
+   The row's 🗑 delete button is icon-only, so it overrides the text-shaped
+   padding .process-actions .process-action sets. It sits last in the action
+   row behind a small gap so a mis-aimed click lands on "instantiate" rather
+   than on an irreversible delete. */
+.process-list .process-actions .process-delete-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 4px 7px; margin-left: 2px;
+}
+.process-list .process-actions .process-delete-btn:disabled { opacity: .5; cursor: default; }
+.process-list .process-actions .process-delete-btn:hover:not(:disabled) {
+  background: #2d1618; border-color: #f85149;
+}
+/* Rows are draggable onto the shared bin; dim the source for the gesture the
+   same way group-reorder.js dims a dragged group header. */
+.process-list tr[data-process-template-drag] { cursor: grab; }
+.process-list tr.process-template-drag-source { opacity: .45; }
+
+/* The bin's fourth label voice. The agent pair (Retire/Banish) is the default;
+   a template drag sets .dnd-trash-template-mode to swap in Delete/Unmake.
+   Emitted for both vocab modes, with body.wizard picking within the pair —
+   these must out-specify the generic pair rules earlier in this file, which is
+   why they carry the #dnd-trash id. */
+.dnd-trash-label-template, .dnd-trash-label-template-wizard { display: none; }
+#dnd-trash.dnd-trash-template-mode .dnd-trash-label-regular,
+#dnd-trash.dnd-trash-template-mode .dnd-trash-label-wizard { display: none; }
+#dnd-trash.dnd-trash-template-mode .dnd-trash-label-template { display: inline; }
+body.wizard #dnd-trash.dnd-trash-template-mode .dnd-trash-label-template { display: none; }
+body.wizard #dnd-trash.dnd-trash-template-mode .dnd-trash-label-template-wizard { display: inline; }
+
+/* Wizard: the delete button becomes an unmaking sigil, matching the banishment
+   sigil the group member rows' retire icon wears — tarnished gold at rest,
+   flaring to a crimson-gold halo on reach. Deleting a template is destructive
+   AND irreversible, so it flares crimson rather than the retire icon's gold. */
+body.wizard .process-list .process-actions .process-delete-btn {
+  color: #d9b45a; border-color: #7a5db0;
+}
+body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled),
+body.wizard .process-list .process-actions .process-delete-btn:focus-visible {
+  color: #f3d98a; border-color: #d9b45a;
+  background: linear-gradient(180deg, #3a1826 0%, #241b3d 100%);
+}
+body.wizard .process-list .process-actions .process-delete-btn:hover:not(:disabled) .trash-ico,
+body.wizard .process-list .process-actions .process-delete-btn:focus-visible .trash-ico {
+  filter: drop-shadow(0 0 4px rgba(242, 119, 122, 0.9));
+}
+
 .process-editor-modal .modal-buttons button { min-width: 0; }
 .process-scribe-preview {
   width: min(760px, 94vw);

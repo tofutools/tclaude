@@ -206,10 +206,48 @@ func handleProcessTemplate(w http.ResponseWriter, r *http.Request) {
 		handleProcessTemplateGet(w, r, fs)
 	case http.MethodPost:
 		handleProcessTemplateSave(w, r, fs)
+	case http.MethodDelete:
+		handleProcessTemplateDelete(w, r, fs)
 	default:
-		w.Header().Set("Allow", "GET, POST")
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		writeError(w, http.StatusMethodNotAllowed, "method", "method not allowed")
 	}
+}
+
+// handleProcessTemplateDelete removes a template and its whole version history.
+// The store refuses while unfinished runs still reference it, which surfaces
+// here as 409 plus the blocking run ids so the caller can act on them.
+func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *store.FS) {
+	if _, ok := requirePermission(w, r, PermProcessTemplatesManage); !ok {
+		return
+	}
+	id := r.PathValue("id")
+	// Classify a malformed id as client error before it reaches the filesystem,
+	// where it would otherwise surface as an apparent store fault.
+	if err := store.ValidateTemplateID(id); err != nil {
+		writeError(w, http.StatusBadRequest, "process_template_id", err.Error())
+		return
+	}
+	err := fs.DeleteTemplate(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	var inUse *store.TemplateInUseError
+	if errors.As(err, &inUse) {
+		writeProcessJSON(w, http.StatusConflict, map[string]any{
+			"error":            inUse.Error(),
+			"code":             "process_template_in_use",
+			"runIds":           inUse.RunIDs,
+			"unreadableRunIds": inUse.UnreadableRunIDs,
+		})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_template_delete", err.Error())
+		return
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
 func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.FS) {

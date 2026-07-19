@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
@@ -34,7 +35,46 @@ var (
 	ErrExecutionViewOverBudget = errors.New("execution_view_over_budget")
 	ErrViewerResourceLimit     = errors.New("process viewer resource limit exceeded")
 	ErrWriterInProgress        = errors.New("process store writer is in progress")
+	ErrTemplateInUse           = errors.New("process template is referenced by runs that have not finished")
 )
+
+// TemplateInUseError reports which runs blocked a template deletion. Callers
+// surface the run ids so an operator can act on them instead of guessing what
+// is still holding the template.
+//
+// The two categories are kept apart because they call for different action:
+// RunIDs can be finished or cancelled, whereas UnreadableRunIDs are runs whose
+// record could not be decoded at all. The guard fails closed on those — an
+// unreadable run cannot be shown to be unrelated to this template — so they
+// need repair or removal rather than completion.
+type TemplateInUseError struct {
+	TemplateID       string
+	RunIDs           []string
+	UnreadableRunIDs []string
+}
+
+func (e *TemplateInUseError) Error() string {
+	switch {
+	case len(e.RunIDs) > 0 && len(e.UnreadableRunIDs) > 0:
+		return fmt.Sprintf(
+			"process template %q is referenced by %d unfinished run(s): %s; and %d unreadable run(s) could not be cleared: %s",
+			e.TemplateID, len(e.RunIDs), strings.Join(e.RunIDs, ", "),
+			len(e.UnreadableRunIDs), strings.Join(e.UnreadableRunIDs, ", "),
+		)
+	case len(e.UnreadableRunIDs) > 0:
+		return fmt.Sprintf(
+			"process template %q cannot be deleted while %d unreadable run(s) remain: %s",
+			e.TemplateID, len(e.UnreadableRunIDs), strings.Join(e.UnreadableRunIDs, ", "),
+		)
+	default:
+		return fmt.Sprintf(
+			"process template %q is referenced by %d unfinished run(s): %s",
+			e.TemplateID, len(e.RunIDs), strings.Join(e.RunIDs, ", "),
+		)
+	}
+}
+
+func (e *TemplateInUseError) Unwrap() error { return ErrTemplateInUse }
 
 // ExecutionViewOverBudgetError identifies the exact bounded-read dimension
 // that refused an execution view. It is deliberately distinct from evidence
