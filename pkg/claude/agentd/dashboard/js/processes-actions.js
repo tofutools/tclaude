@@ -182,7 +182,14 @@ export function createProcessesActions({
     const next = String(name ?? '').trim();
     if (!next) return false;
     const spec = state.create.value;
-    if (!spec || !state.beginMutation()) return false;
+    if (!spec) return false;
+    if (spec.attempt?.name === next && spec.attempt.blocked) {
+      const message = 'The earlier create may already have succeeded. Refresh Templates to reconcile it before starting another creation.';
+      state.setCreate({ ...spec, name: next, error: message });
+      state.setNotice(`Template creation paused: ${message}`);
+      return false;
+    }
+    if (!state.beginMutation()) return false;
     const attempt = spec.attempt?.name === next
       ? spec.attempt : { name: next, key: mintAttemptID() };
     state.setCreate({ ...spec, name: next, error: '', attempt });
@@ -199,8 +206,13 @@ export function createProcessesActions({
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        const error = new Error(body?.message || body?.error || `${response.status} ${response.statusText}`);
-        error.definitiveResponse = true;
+        const outcomeUnknown = body?.code === 'idempotency_unknown';
+        const detail = body?.message || body?.error || `${response.status} ${response.statusText}`;
+        const error = new Error(outcomeUnknown
+          ? `${detail} Refresh Templates to reconcile the earlier create before starting another creation.`
+          : detail);
+        error.definitiveResponse = !outcomeUnknown;
+        error.outcomeUnknown = outcomeUnknown;
         throw error;
       }
       if (!body) throw new Error('template creation returned an unreadable response');
@@ -226,7 +238,7 @@ export function createProcessesActions({
       if (state.create.value?.key === spec.key) {
         state.setCreate({
           ...spec, name: next, error: error.message,
-          attempt: error.definitiveResponse ? null : attempt,
+          attempt: error.definitiveResponse ? null : { ...attempt, blocked: !!error.outcomeUnknown },
         });
       }
       state.setNotice(`Template creation failed: ${error.message}`);

@@ -301,9 +301,10 @@ function RenameDialog({ spec, busy, actions }) {
 function CreateDialog({ spec, busy, actions }) {
   const nameRef = useRef(null);
   const [name, setName] = useState(spec.name || '');
+  const outcomeUnknown = !!spec.attempt?.blocked && name.trim() === spec.attempt.name;
   const close = () => { if (!busy) actions.closeCreate(); };
   const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: nameRef, onEscape: close });
-  const submit = (event) => { event?.preventDefault(); if (!busy) void actions.submitCreate(name); };
+  const submit = (event) => { event?.preventDefault(); if (!busy && !outcomeUnknown) void actions.submitCreate(name); };
   return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-create-title" onSubmit=${submit}>
     <h3 id="process-create-title">New process template</h3>
     <div class="field process-editor-field process-rename-field">
@@ -312,7 +313,7 @@ function CreateDialog({ spec, busy, actions }) {
     </div>
     <p class="muted">You can rename this at any time. Creating the template assigns its permanent id automatically.</p>
     ${spec.error && html`<div class="island-error" role="alert">${spec.error}</div>`}
-    <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${close}>Cancel</button><button class="primary" type="submit" disabled=${busy || !name.trim()}>${busy ? 'Creating…' : 'Create'}</button></div>
+    <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${close}>Cancel</button><button class="primary" type="submit" disabled=${busy || !name.trim() || outcomeUnknown}>${busy ? 'Creating…' : 'Create'}</button></div>
   </form></div>`;
 }
 

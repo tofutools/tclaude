@@ -186,6 +186,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	// The Processes tab consumes the same versioned REST surface as other
 	// clients. Dashboard auth wraps it before the dynamic feature gate.
 	mux.HandleFunc("GET /v1/process/templates", dashboardProcessRoute(handleProcessTemplates))
+	mux.HandleFunc("POST /v1/process/templates", dashboardProcessRoute(handleProcessTemplateCreate))
 	mux.HandleFunc("GET /v1/process/template-heads", dashboardProcessRoute(handleProcessTemplateHeads))
 	mux.HandleFunc("GET /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/templates/{id}", dashboardProcessRoute(handleProcessTemplate))
@@ -206,11 +207,16 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 }
 
 func dashboardProcessRoute(next http.HandlerFunc) http.HandlerFunc {
+	// The socket listener applies idempotency outside its process routes. The
+	// dashboard has a separate mux, so apply the same durable boundary here,
+	// after dashboard auth has stamped the request as the human operator. That
+	// peer identity is part of the idempotency fingerprint.
+	guarded := idempotencyRequests(processRoute(next))
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !checkDashboardAuth(w, r) {
 			return
 		}
-		processRoute(next)(w, asDashboardHumanPeer(r))
+		guarded.ServeHTTP(w, asDashboardHumanPeer(r))
 	}
 }
 

@@ -1558,6 +1558,7 @@ test('a router restore-location event opens the editor on the mounted Processes 
   await harness.act(() => Promise.resolve());
   assert.equal(announced.length, settled, 'the restore listener is removed on cleanup');
   host.remove();
+});
 
 test('a failed template creation stays in the dialog and surfaces the backend error', async (t) => {
   const harness = await createPreactHarness(t);
@@ -1583,6 +1584,54 @@ test('a failed template creation stays in the dialog and surfaces the backend er
   assert.match(state.notice.value, /Template creation failed: store unavailable/);
   assert.match(notices.at(-1)[0], /process template creation failed: store unavailable/);
   assert.equal(state.mutation.value.busy, false);
+});
+
+test('an unknown template-create outcome blocks automatic retry until the operator reconciles it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const attemptIDs = [
+    '11111111-2222-4333-8444-555555555555',
+    '22222222-3333-4444-8555-666666666666',
+  ];
+  let calls = 0;
+  let minted = 0;
+  const actions = createProcessesActions({
+    state, notify() {}, mintAttemptID: () => attemptIDs[minted++],
+    fetchImpl: async () => {
+      calls += 1;
+      return calls === 1
+        ? {
+          ok: false, status: 409, statusText: 'Conflict',
+          json: async () => ({
+            code: 'idempotency_unknown',
+            error: 'the previous agentd stopped while this operation was pending; its outcome is unknown',
+          }),
+        }
+        : {
+          ok: false, status: 503, statusText: 'Unavailable',
+          json: async () => ({ error: 'store unavailable' }),
+        };
+    },
+  });
+  actions.openCreate();
+
+  assert.equal(await actions.submitCreate('Release train'), false);
+  assert.equal(state.create.value?.attempt?.key, attemptIDs[0]);
+  assert.equal(state.create.value?.attempt?.blocked, true);
+  assert.match(state.create.value?.error, /Refresh Templates to reconcile/);
+
+  assert.equal(await actions.submitCreate('Release train'), false);
+  assert.equal(calls, 1, 'the same ambiguous mutation is not sent again or silently reminted');
+  assert.equal(minted, 1);
+
+  assert.equal(await actions.submitCreate('Different template'), false,
+    'changing the name is an explicit new logical creation');
+  assert.equal(calls, 2);
+  assert.equal(minted, 2);
+  assert.equal(state.create.value?.attempt, null, 'the definitive new-attempt failure can be retried normally');
 });
 
 test('an ambiguous template-create failure retries with the same durable attempt key', async (t) => {

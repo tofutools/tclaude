@@ -346,8 +346,10 @@ func TestProcessTemplateCreateGeneratesIDAndRejectsCallerSuppliedOnes(t *testing
 	assert.Contains(t, rejectRec.Body.String(), "generated")
 }
 
-func TestProcessTemplateCreateReplaysGeneratedIDForSameBrowserAttempt(t *testing.T) {
-	f, root := processEngineFlow(t)
+func TestDashboardProcessTemplateCreateReplaysGeneratedIDForSameBrowserAttempt(t *testing.T) {
+	_, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
 	scaffold := processRESTTemplate("placeholder", "created from the dashboard", 40)
 	scaffold.ID = ""
 	scaffold.Name = "Release Train"
@@ -362,12 +364,12 @@ func TestProcessTemplateCreateReplaysGeneratedIDForSameBrowserAttempt(t *testing
 		digest := sha256.Sum256([]byte(http.MethodPost + "\x00" + path + "\x00" + string(encoded)))
 		req.Header.Set(agent.IdempotencyKeyHeader, attemptID)
 		req.Header.Set(agent.RequestDigestHeader, fmt.Sprintf("%x", digest))
-		return agentd.AsHumanPeer(req)
+		return req
 	}
 
-	first := testharness.Serve(f.Mux, request())
+	first := testharness.Serve(dash, request())
 	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
-	second := testharness.Serve(f.Mux, request())
+	second := testharness.Serve(dash, request())
 	require.Equal(t, http.StatusCreated, second.Code, second.Body.String())
 	assert.Equal(t, first.Body.String(), second.Body.String(), "a retry replays the original generated id")
 	assert.Equal(t, "true", second.Header().Get("X-Tclaude-Idempotent-Replay"))
