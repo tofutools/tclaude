@@ -201,11 +201,26 @@ func (t *TmuxSim) Command(args ...string) *exec.Cmd {
 	case len(args) >= 3 && args[0] == "set-buffer":
 		t.setBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "paste-buffer":
+		// Real tmux rejects a '='-pinned pane ID here too ("can't find
+		// pane: =%N") — same parity guard as send-keys, so a production
+		// regression that re-mangles pane IDs fails instead of no-oping.
+		if hasExactPinnedPaneTarget(args[1:]) {
+			return exec.Command(falseBin)
+		}
 		t.pasteBuffer(args[1:])
 	case len(args) >= 3 && args[0] == "kill-session" && args[1] == "-t":
+		// Real tmux: "can't find session: %N" — the '=' pin makes the pane
+		// ID parse as an (invalid) exact session name.
+		if strings.HasPrefix(args[2], "=%") {
+			return exec.Command(falseBin)
+		}
 		t.recordMutationTarget("kill-session", args[2])
 		t.killSession(args[2])
 	case len(args) >= 3 && args[0] == "kill-pane" && args[1] == "-t":
+		// Real tmux: "can't find pane: =%N".
+		if strings.HasPrefix(args[2], "=%") {
+			return exec.Command(falseBin)
+		}
 		t.recordMutationTarget("kill-pane", args[2])
 		t.killSession(args[2])
 	case len(args) >= 1 && args[0] == "show-hooks":
@@ -591,6 +606,17 @@ func (t *TmuxSim) routeSendKeys(target, text string) {
 	}
 }
 
+// hasExactPinnedPaneTarget reports whether a flag list carries `-t =%N`,
+// the invalid '='-pinned pane-ID target real tmux rejects.
+func hasExactPinnedPaneTarget(args []string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-t" && strings.HasPrefix(args[i+1], "=%") {
+			return true
+		}
+	}
+	return false
+}
+
 // killSession removes the targeted session from the alive table and tears
 // down its attached pane sim (mirrors tmux dropping the foreground
 // process). Target resolution mirrors real tmux (see resolveTarget).
@@ -750,8 +776,21 @@ func (t *TmuxSim) WaitForSendKeys(target, contains string, timeout time.Duration
 		t.mu.Lock()
 		entries := append([]SentKey(nil), t.sentLog...)
 		t.mu.Unlock()
+		want := t.resolveTarget(target, true)
 		for _, sk := range entries {
-			if strings.Contains(sk.Text, contains) && (sk.Target == target || t.resolveTarget(sk.Target, true) == t.resolveTarget(target, true)) {
+			if !strings.Contains(sk.Text, contains) {
+				continue
+			}
+			// Literal logged-form equality keeps assertions against
+			// already-killed sessions working; resolution-based equality
+			// covers alias forms ("sess" vs "sess:0.0") for live sessions.
+			// Two targets that both fail to resolve must never match each
+			// other: "" == "" would green-light a wait against a target the
+			// production code never touched.
+			if normalizeTarget(sk.Target) == normalizeTarget(target) {
+				return true
+			}
+			if got := t.resolveTarget(sk.Target, true); got != "" && got == want {
 				return true
 			}
 		}

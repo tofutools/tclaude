@@ -1,6 +1,7 @@
 package testharness
 
 import (
+	"time"
 	"strings"
 	"testing"
 
@@ -155,4 +156,56 @@ func TestSession_LivenessProbe_IsExact(t *testing.T) {
 
 	assert.Equal(t, "myrepo", session.UniqueTmuxSessionName("myrepo"),
 		"the freed base is handed back out even while '-N' namesakes live")
+}
+
+// WaitForSendKeys must never treat two unresolvable targets as the same
+// pane. Send-keys deliveries are logged even when the target no longer
+// resolves (the session may legitimately have exited before the
+// assertion runs), and unresolvable targets all resolve to "" — the old
+// comparison matched on "" == "", so a wait against a target production
+// code never touched could pass because SOME other dead target had
+// received the text.
+func TestTmuxSim_WaitForSendKeys_UnresolvedTargetsDoNotCrossMatch(t *testing.T) {
+	sim := newTmuxSim()
+	sim.MarkAlive("live")
+	sim.Command("send-keys", "-t", "gone-a:0.0", "/exit")
+
+	assert.True(t, sim.WaitForSendKeys("gone-a:0.0", "/exit", 100*time.Millisecond),
+		"the literal logged target still matches after its session is gone")
+	assert.False(t, sim.WaitForSendKeys("gone-b:0.0", "/exit", 50*time.Millisecond),
+		"a different unresolvable target must not cross-match on \"\" == \"\"")
+	assert.False(t, sim.WaitForSendKeys("live:0.0", "/exit", 50*time.Millisecond),
+		"a live session that never received the text must not match")
+}
+
+// Parity guard for the remaining '='-pinned pane-ID sinks: real tmux
+// rejects `-t =%N` for kill-pane ("can't find pane"), kill-session
+// ("can't find session") and paste-buffer ("can't find pane") exactly as
+// it does for send-keys, so the sim must fail them too instead of
+// silently no-oping — otherwise a production regression that re-mangles
+// pane IDs (TCL-589) would pass flow tests on those paths. Verified
+// against real tmux 3.7b.
+func TestTmuxSim_ExactPinnedPaneTargetsFailBeyondSendKeys(t *testing.T) {
+	sim := newTmuxSim()
+	sim.MarkAlive("par")
+	sim.SetPaneIdentityForTest("par", "%88", 4242)
+
+	assert.Error(t, sim.Command("kill-pane", "-t", "=%88").Run(),
+		"kill-pane must reject a '='-pinned pane ID like real tmux")
+	assert.Error(t, sim.Command("kill-session", "-t", "=%88").Run(),
+		"kill-session must reject a '='-pinned pane ID like real tmux")
+	sim.Command("set-buffer", "-b", "b1", "hello")
+	assert.Error(t, sim.Command("paste-buffer", "-d", "-p", "-r", "-b", "b1", "-t", "=%88").Run(),
+		"paste-buffer must reject a '='-pinned pane ID like real tmux")
+	assert.True(t, sim.IsAlive("par"), "rejected targets must not tear the session down")
+	for _, sk := range sim.Sent() {
+		assert.NotEqual(t, "hello", sk.Text, "rejected paste must not deliver any bytes")
+	}
+
+	// The plain pane ID keeps working on every path (no aliasing regressed).
+	assert.NoError(t, sim.Command("paste-buffer", "-d", "-p", "-r", "-b", "b1", "-t", "%88").Run())
+	assert.True(t, sim.WaitForSendKeys("%88", "hello", 100*time.Millisecond),
+		"the un-pinned paste reaches the exact pane")
+	assert.NoError(t, sim.Command("kill-pane", "-t", "%88").Run())
+	assert.False(t, sim.IsAlive("par"))
 }
