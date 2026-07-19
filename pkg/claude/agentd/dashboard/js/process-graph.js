@@ -457,6 +457,7 @@ export class ProcessGraph {
     this.connectionEvaluation = null;
     this.keyboardCancellationFocus = null;
     this.keyboardFocusOwned = false;
+    this.keyboardFocusModality = false;
     // Interaction layering is presentation-only. The canonical node/port DOM
     // stays in deterministic semantic order for native keyboard traversal;
     // one aria-hidden paint/hit copy supplies the visual front without an
@@ -467,7 +468,7 @@ export class ProcessGraph {
 
     this.root = htmlElement('div', {
       class: 'process-graph',
-      tabindex: '0',
+      tabindex: options.rootTabIndex ?? '0',
       role: 'application',
       'aria-label': options.ariaLabel || 'Process graph',
       'data-color-scheme': options.colorScheme || 'dark',
@@ -720,6 +721,13 @@ export class ProcessGraph {
 
   bindEvents() {
     const signal = this.abort.signal;
+    document.addEventListener('keydown', () => { this.keyboardFocusModality = true; }, { capture: true, signal });
+    document.addEventListener('pointerdown', () => { this.keyboardFocusModality = false; }, { capture: true, signal });
+    this.root.addEventListener('focus', () => {
+      if (this.options.redirectKeyboardRootFocus && this.keyboardFocusModality) {
+        this.focusKeyboardTarget();
+      }
+    }, { signal });
     this.fitButton.addEventListener('click', () => this.fitToView(), { signal });
     this.svg.addEventListener('wheel', (event) => this.onWheel(event), { passive: false, signal });
     this.svg.addEventListener('pointerenter', (event) => this.observeCanvasPointer(event), { signal });
@@ -1690,6 +1698,32 @@ export class ProcessGraph {
     if (!node) return false;
     node.focus({ preventScroll: true });
     return true;
+  }
+
+  // An editor canvas root is a programmatic shortcut sink, not a visible
+  // selection. When keyboard-origin focus restoration lands there, move focus
+  // synchronously to a real graph item (or its Fit control) so focus remains
+  // visible without painting a ring around the entire canvas.
+  focusKeyboardTarget() {
+    const source = this.keyboardPort || this.connectionSource;
+    const sourcePort = source && this.portElement(source.nodeId, source.port);
+    if (sourcePort) {
+      sourcePort.focus({ preventScroll: true });
+      return true;
+    }
+    for (const item of selectionItems(this.selected)) {
+      const target = item.type === 'node'
+        ? this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(String(item.id))}"]`)
+        : this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(item.id))}"]`);
+      if (target) {
+        target.focus({ preventScroll: true });
+        return true;
+      }
+    }
+    const target = this.nodeLayer.querySelector('.process-node')
+      || this.edgeLayer.querySelector('.process-edge') || this.fitButton;
+    target?.focus({ preventScroll: true });
+    return !!target;
   }
 
   select(selection) {
