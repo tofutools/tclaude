@@ -444,6 +444,8 @@ export class ProcessGraph {
     this.pendingClickTarget = null;
     this.lastClickTarget = null;
     this.transientLayout = null;
+    this.pendingNodeDrag = null;
+    this.nodeDragFrame = null;
     this.dragMoved = false;
     this.suppressClick = false;
     this.keyboardPort = null;
@@ -570,6 +572,22 @@ export class ProcessGraph {
 
   renderEdges(edges) {
     this.edgeLayer.replaceChildren(...(edges || []).map((edge) => this.renderEdge(edge)));
+  }
+
+  updateEdgeGeometry(edges) {
+    const rendered = new Map(Array.from(this.edgeLayer.children || [], (element) => [
+      element.dataset.edgeId, element,
+    ]));
+    for (const edge of edges || []) {
+      const group = rendered.get(String(edge.id));
+      if (!group) continue;
+      group.querySelector('.process-edge-path')?.setAttribute('d', edge.path);
+      group.querySelector('.process-edge-hit')?.setAttribute('d', edge.path);
+      group.querySelector('.process-edge-label')
+        ?.setAttribute('transform', `translate(${edge.label.x} ${edge.label.y})`);
+      group.querySelector('.process-edge-issue-marker')
+        ?.setAttribute('transform', `translate(${edge.label.x} ${edge.label.y - 13})`);
+    }
   }
 
   renderEdge(edge) {
@@ -1177,7 +1195,15 @@ export class ProcessGraph {
         hook(this.options, 'onNodeDragStart')({ nodeId: this.pointer.nodeID, selection, event });
       }
     }
-    const point = this.clientToGraph(event.clientX, event.clientY);
+    // A node gesture owns its captured view until release/cancel (view mutation
+    // entry points park while it is active). Convert client deltas from that
+    // snapshot instead of reading SVG geometry after hover/feedback DOM writes
+    // on every sample; those reads forced synchronous dashboard layout in the
+    // middle of a drag.
+    const point = {
+      x: this.pointer.startPoint.x + dx / this.pointer.startView.k,
+      y: this.pointer.startPoint.y + dy / this.pointer.startView.k,
+    };
     if (this.pointer.mode === 'pan') {
       this.view.x = this.pointer.startView.x + dx;
       this.view.y = this.pointer.startView.y + dy;
@@ -1187,30 +1213,7 @@ export class ProcessGraph {
         x: point.x - this.pointer.startPoint.x,
         y: point.y - this.pointer.startPoint.y,
       };
-      // The terminal pointer sample is not necessarily the frame the user saw
-      // (notably when releasing a fast-moving mouse). Keep the exact delta
-      // rendered by this gesture so pointerup can commit that visible frame.
-      this.pointer.nodeDelta = delta;
-      for (const nodeID of this.pointer.nodeIDs) {
-        const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
-        const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
-        const frontNode = this.frontNodeID === nodeID ? this.frontNodeLayer.querySelector('[data-node-id]') : null;
-        const frontPorts = this.frontNodeID === nodeID ? this.frontPortLayer.querySelector('[data-node-id]') : null;
-        const laid = this.layout.nodes.find((candidate) => candidate.id === nodeID);
-        if (node && laid) {
-          const transform = `translate(${laid.x + delta.x} ${laid.y + delta.y})`;
-          node.setAttribute('transform', transform);
-          ports?.setAttribute('transform', transform);
-          frontNode?.setAttribute('transform', transform);
-          frontPorts?.setAttribute('transform', transform);
-        }
-      }
-      hook(this.options, 'onNodeDrag')({
-        nodeId: this.pointer.nodeID, nodeIds: [...this.pointer.nodeIDs], point,
-        delta: { ...delta },
-        event,
-      });
-      this.renderTransientEdges(this.pointer.nodeIDs, delta);
+      this.queueNodeDragFrame({ pointerId: this.pointer.id, point, delta, event });
     } else if (this.pointer.mode === 'port') {
       hook(this.options, 'onPortDragMove')({ nodeId: this.pointer.nodeID, port: this.pointer.port, point, event });
     } else if (this.pointer.mode === 'marquee') {
@@ -1242,6 +1245,9 @@ export class ProcessGraph {
         event,
       });
     } else if (pointer.mode === 'node') {
+      // Flush the newest queued pointer sample before restoring the transient
+      // DOM. A release can arrive before its requestAnimationFrame callback.
+      this.flushNodeDragFrame();
       // Position ownership stays outside the core. Snap the transient drag back
       // unless the hook's caller supplied a new pinned graph through setGraph.
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
@@ -1326,6 +1332,7 @@ export class ProcessGraph {
         ...(event.cancellation ? { cancellation: event.cancellation } : {}),
       });
     } else if (pointer.mode === 'node') {
+      this.cancelNodeDragFrame();
       this.snapNodesHome(pointer.nodeIDs || [pointer.nodeID]);
       this.restoreTransientEdges();
       hook(this.options, 'onNodeDragCancel')({
@@ -1401,23 +1408,71 @@ export class ProcessGraph {
     return true;
   }
 
-  snapNodeHome(nodeID) {
+  setNodeTransform(nodeID, x, y) {
     const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
     const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
     const frontNode = this.frontNodeID === nodeID ? this.frontNodeLayer.querySelector('[data-node-id]') : null;
     const frontPorts = this.frontNodeID === nodeID ? this.frontPortLayer.querySelector('[data-node-id]') : null;
+    if (!node) return false;
+    const transform = `translate(${x} ${y})`;
+    node.setAttribute('transform', transform);
+    ports?.setAttribute('transform', transform);
+    frontNode?.setAttribute('transform', transform);
+    frontPorts?.setAttribute('transform', transform);
+    return true;
+  }
+
+  snapNodeHome(nodeID) {
     const laid = this.layout.nodes.find((candidate) => candidate.id === nodeID);
-    if (node && laid) {
-      const transform = `translate(${laid.x} ${laid.y})`;
-      node.setAttribute('transform', transform);
-      ports?.setAttribute('transform', transform);
-      frontNode?.setAttribute('transform', transform);
-      frontPorts?.setAttribute('transform', transform);
-    }
+    if (laid) this.setNodeTransform(nodeID, laid.x, laid.y);
   }
 
   snapNodesHome(nodeIDs) {
     for (const nodeID of nodeIDs || []) this.snapNodeHome(nodeID);
+  }
+
+  queueNodeDragFrame(pending) {
+    this.pendingNodeDrag = pending;
+    if (this.nodeDragFrame != null) return;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame : (callback) => setTimeout(callback, 16);
+    const frame = {};
+    this.nodeDragFrame = frame;
+    schedule(() => {
+      if (this.nodeDragFrame !== frame) return;
+      this.nodeDragFrame = null;
+      this.flushNodeDragFrame();
+    });
+  }
+
+  flushNodeDragFrame() {
+    const pending = this.pendingNodeDrag;
+    this.pendingNodeDrag = null;
+    this.nodeDragFrame = null;
+    if (!pending || this.destroyed || this.pointer?.id !== pending.pointerId
+        || this.pointer.mode !== 'node') return false;
+    const { point, delta, event } = pending;
+    // The terminal pointer sample is not necessarily the frame the user saw
+    // (notably when releasing a fast-moving mouse). Keep the exact delta
+    // rendered by this gesture so pointerup can commit that visible frame.
+    this.pointer.nodeDelta = { ...delta };
+    for (const nodeID of this.pointer.nodeIDs) {
+      const laid = this.layout.nodes.find((candidate) => candidate.id === nodeID);
+      if (laid) this.setNodeTransform(nodeID, laid.x + delta.x, laid.y + delta.y);
+    }
+    hook(this.options, 'onNodeDrag')({
+      nodeId: this.pointer.nodeID, nodeIds: [...this.pointer.nodeIDs], point,
+      delta: { ...delta }, event,
+    });
+    this.renderTransientEdges(this.pointer.nodeIDs, delta);
+    return true;
+  }
+
+  cancelNodeDragFrame() {
+    this.pendingNodeDrag = null;
+    // The callback may already be queued. Identity cancellation keeps it inert
+    // in browsers and in the setTimeout fallback used by the DOM unit tests.
+    this.nodeDragFrame = null;
   }
 
   renderTransientEdges(nodeIDs, delta) {
@@ -1427,15 +1482,13 @@ export class ProcessGraph {
       if (laid) positions.set(nodeID, { x: laid.x + delta.x, y: laid.y + delta.y });
     }
     this.transientLayout = rerouteProcessLayout(this.layout, positions, this.options.layout || {});
-    this.renderEdges(this.transientLayout.edges);
-    this.applySelection();
+    this.updateEdgeGeometry(this.transientLayout.edges);
   }
 
   restoreTransientEdges() {
     if (!this.transientLayout) return;
     this.transientLayout = null;
-    this.renderEdges(this.layout.edges);
-    this.applySelection();
+    this.updateEdgeGeometry(this.layout.edges);
   }
 
   onClick(event) {
@@ -1586,6 +1639,7 @@ export class ProcessGraph {
 
   onWheel(event) {
     event.preventDefault();
+    if (this.pointer?.mode === 'node') return;
     const rect = this.svg.getBoundingClientRect();
     if (this.options.wheelPan && !event.ctrlKey) {
       const deltaX = normalizeWheelDelta(event.deltaX, event.deltaMode, rect.width);
@@ -1646,6 +1700,7 @@ export class ProcessGraph {
   }
 
   setZoom(zoom, { clientX, clientY } = {}) {
+    if (this.pointer?.mode === 'node') return false;
     const rect = this.svg.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return false;
     const anchorX = Number.isFinite(clientX) ? clientX - rect.left : rect.width / 2;
@@ -1671,25 +1726,29 @@ export class ProcessGraph {
   }
 
   fitToView(padding = 44) {
+    if (this.pointer?.mode === 'node') return false;
     const rect = this.svg.getBoundingClientRect();
     const bounds = this.layout?.bounds;
-    if (!bounds || rect.width <= 0 || rect.height <= 0 || bounds.width <= 0 || bounds.height <= 0) return;
+    if (!bounds || rect.width <= 0 || rect.height <= 0 || bounds.width <= 0 || bounds.height <= 0) return false;
     const zoom = clamp(Math.min((rect.width - padding * 2) / bounds.width, (rect.height - padding * 2) / bounds.height), MIN_ZOOM, MAX_ZOOM);
     this.view.k = zoom;
     this.view.x = (rect.width - bounds.width * zoom) / 2 - bounds.x * zoom;
     this.view.y = (rect.height - bounds.height * zoom) / 2 - bounds.y * zoom;
     this.applyView();
+    return true;
   }
 
   // centerOn pans the view so graph point (x, y) sits at the viewport center,
   // keeping the current zoom. Used by consumers that jump to a node/edge
   // (e.g. the editor's issues panel).
   centerOn(x, y) {
+    if (this.pointer?.mode === 'node') return false;
     const rect = this.svg.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return;
+    if (rect.width <= 0 || rect.height <= 0) return false;
     this.view.x = rect.width / 2 - x * this.view.k;
     this.view.y = rect.height / 2 - y * this.view.k;
     this.applyView();
+    return true;
   }
 
   focusNode(id) {
@@ -1850,6 +1909,7 @@ export class ProcessGraph {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.cancelNodeDragFrame();
     this.endConnectionFeedback();
     this.abort.abort();
     this.container.replaceChildren();

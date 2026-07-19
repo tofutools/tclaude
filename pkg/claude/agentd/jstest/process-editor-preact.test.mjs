@@ -11,11 +11,15 @@ function deferred() {
 
 async function openBlank(t) {
   const harness = await createPreactHarness(t);
+  const animationFrames = [];
   const previous = {
     raf: globalThis.requestAnimationFrame,
     css: globalThis.CSS,
   };
-  globalThis.requestAnimationFrame = () => 1;
+  globalThis.requestAnimationFrame = (callback) => {
+    animationFrames.push(callback);
+    return animationFrames.length;
+  };
   globalThis.CSS = { escape: (value) => String(value) };
   t.after(() => {
     if (previous.raf === undefined) delete globalThis.requestAnimationFrame;
@@ -37,8 +41,17 @@ async function openBlank(t) {
       },
     });
   });
+  // Preserve this suite's historical fixed 1:1 graph/client coordinate frame:
+  // constructor fit requests remain intentionally inert. Individual tests can
+  // still advance interaction frames scheduled after the editor is open.
+  animationFrames.length = 0;
   t.after(() => editor?.destroy());
-  return { harness, host, editor };
+  return {
+    harness, host, editor,
+    runAnimationFrames() {
+      for (const callback of animationFrames.splice(0)) callback();
+    },
+  };
 }
 
 async function seedConnectedEnd(harness, editor) {
@@ -220,7 +233,7 @@ test('rapid same-node drags always commit the drop, even across a lost terminal 
 });
 
 test('a moving release commits the last node position rendered to the user', async (t) => {
-  const { harness, host, editor } = await openBlank(t);
+  const { harness, host, editor, runAnimationFrames } = await openBlank(t);
   editor.model.template.nodes.build = { type: 'task', name: 'Build' };
   editor.model.layout.nodes.build = { x: 300, y: 200 };
   await harness.act(() => editor.refresh());
@@ -235,6 +248,7 @@ test('a moving release commits the last node position rendered to the user', asy
   harness.fireEvent(svg, 'pointermove', {
     pointerId: 7, pointerType: 'mouse', clientX: 360, clientY: 235,
   });
+  runAnimationFrames();
   assert.equal(build.getAttribute('transform'), 'translate(360 235)',
     'the transient frame follows the live pointer');
   harness.fireEvent(svg, 'pointerup', {
