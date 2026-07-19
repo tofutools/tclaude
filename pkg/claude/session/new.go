@@ -1139,11 +1139,110 @@ func resolveSessionDir(dir string) (string, error) {
 	return cwd, nil
 }
 
+// tmuxClientArgvLimit is a conservative bound on the total byte size of the
+// argv tclaude may hand the tmux client. tmux packs the initial command's
+// whole argv into ONE imsg and refuses anything over MAX_IMSGSIZE (16384)
+// minus a small header with a bare "command too long" + exit 1 (client.c —
+// string and check verified stable from tmux 1.8 through 3.7b). The margin
+// absorbs the header plus any future per-arg framing overhead; tripping the
+// pre-flight a little early is harmless, missing the real limit is not.
+const tmuxClientArgvLimit = 16384 - 256
+
+// tmuxArgvBytes mirrors the tmux client's own size computation for the
+// initial command: sum of strlen(argv[i])+1 over the argv it is handed.
+func tmuxArgvBytes(args []string) int {
+	n := 0
+	for _, a := range args {
+		n += len(a) + 1
+	}
+	return n
+}
+
+// launchScriptStaleAfter is how long an unconsumed launch script may sit in
+// the private launch-scripts dir before the next launch sweeps it. A script
+// normally deletes itself as the pane's first action, so anything older than
+// this belongs to a launch whose pane died before its first line ran.
+const launchScriptStaleAfter = time.Hour
+
+// writeLaunchScript persists a pane bootstrap command as a private, one-shot
+// script under DataDir and returns its path plus a remove func for launch
+// failures. The script's first action is deleting itself: the shell keeps its
+// open fd so execution continues, nothing secret-bearing outlives the launch,
+// and `ps` shows `sh <path>` instead of the full env-carrying command. Panes
+// killed before their first line leave a stale file; each launch sweeps those.
+func writeLaunchScript(cmd string) (string, func(), error) {
+	base := strings.TrimSpace(config.DataDir())
+	if base == "" {
+		return "", func() {}, fmt.Errorf("resolve private launch-script directory")
+	}
+	dir := filepath.Join(base, "launch-scripts")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("create launch-script directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("protect launch-script directory: %w", err)
+	}
+	cleanupStaleLaunchScripts(dir, time.Now())
+	f, err := os.CreateTemp(dir, launchScriptPrefix)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create launch script: %w", err)
+	}
+	path := f.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("protect launch script: %w", err)
+	}
+	content := "# tclaude pane bootstrap — generated per launch, self-deleting.\n" +
+		"rm -f -- \"$0\"\n" + cmd + "\n"
+	if _, err := f.WriteString(content); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("write launch script: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close launch script: %w", err)
+	}
+	return path, cleanup, nil
+}
+
+const launchScriptPrefix = "launch-"
+
+func cleanupStaleLaunchScripts(dir string, now time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), launchScriptPrefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || now.Sub(info.ModTime()) < launchScriptStaleAfter {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err == nil {
+			slog.Warn("launch: removed stale pane bootstrap script", "script", entry.Name())
+		}
+	}
+}
+
 // launchDetachedTmuxSession creates the detached tmux session that hosts a
-// launch — `tmux new-session -d -s <name> -c <cwd> sh -c <cmd>` — wiring the
-// child's stdout/stderr through. cmd is the harness command (claudeSpawner's
-// BuildCommand output) or the plain shell's exec line. Shared by runNew and
-// runNewShell.
+// launch, wiring the child's stdout/stderr through. cmd is the harness
+// command (claudeSpawner's BuildCommand output) or the plain shell's exec
+// line. Shared by runNew and runNewShell.
+//
+// The command is deliberately NOT passed inline as `sh -c <cmd>`: the tmux
+// client hard-caps the initial command's total argv at ~16KB (see
+// tmuxClientArgvLimit) and the inline form scaled with environment size,
+// sandbox rule count, path length and prompt length — a fully-loaded spawn
+// measured ~18.8KB and died with tmux's cryptic "command too long". The
+// bootstrap goes to a private self-deleting script instead and the pane runs
+// `sh <script>`, which keeps the tmux argv O(1) in all of the above. The
+// pre-flight check below can then only trip on a pathological session name /
+// cwd, and fails with an error that names them.
 func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
 	// Never launch tmux from a dead working directory. If this process's cwd
 	// has been deleted (e.g. the daemon that forked us was started from a
@@ -1161,11 +1260,26 @@ func launchDetachedTmuxSession(tmuxSession, cwd, cmd string) error {
 			return fmt.Errorf("process cwd is gone and re-homing to %q failed: %w", cwd, cerr)
 		}
 	}
-	// Use tmux new-session -d to create detached; sh -c carries the env exports.
-	tmuxCmd := clcommon.TmuxCommand("new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", "-c", cmd)
+	scriptPath, cleanupScript, err := writeLaunchScript(cmd)
+	if err != nil {
+		return err
+	}
+	// Multi-word command → tmux execvp's it directly (spawn.c), no extra
+	// shell join/quoting layer; both words are metacharacter-free.
+	args := []string{"new-session", "-d", "-s", tmuxSession, "-c", cwd, "sh", scriptPath}
+	if n := tmuxArgvBytes(args); n > tmuxClientArgvLimit {
+		cleanupScript()
+		return fmt.Errorf("tmux launch argv is %d bytes, over tclaude's %d-byte pre-flight bound "+
+			"(tmux's client rejects ~16KB with an opaque \"command too long\"): "+
+			"session name %d bytes, launch dir %d bytes, script path %d bytes — shorten the launch directory path",
+			n, tmuxClientArgvLimit, len(tmuxSession), len(cwd), len(scriptPath))
+	}
+	tmuxCmd := clcommon.TmuxCommand(args...)
 	tmuxCmd.Stdout = os.Stdout
 	tmuxCmd.Stderr = os.Stderr
 	if err := tmuxCmd.Run(); err != nil {
+		// The pane never ran, so the script's self-delete never did either.
+		cleanupScript()
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 	return nil
