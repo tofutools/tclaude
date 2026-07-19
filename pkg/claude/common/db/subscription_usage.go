@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -52,7 +53,13 @@ type SubscriptionUsageHistoryRow struct {
 	ResetsAt    time.Time
 	ObservedAt  time.Time
 	Source      string
+	Excluded    bool
 }
+
+// ErrSubscriptionUsagePointNotFound means the observation changed or was
+// pruned after the dashboard loaded it. Callers should refresh rather than
+// applying the requested flag to a different point in the same sample bucket.
+var ErrSubscriptionUsagePointNotFound = errors.New("subscription usage point not found")
 
 // SubscriptionUsageHistorySince returns retained observations at or after
 // since, ordered so callers can group and walk each provider/window series.
@@ -64,7 +71,7 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 	bucketCutoff := since.UTC().Truncate(SubscriptionUsageSampleInterval).Format(time.RFC3339Nano)
 	observedCutoff := since.UTC().Format(time.RFC3339Nano)
 	rows, err := d.Query(`SELECT s.provider, w.window_name, w.duration_seconds,
-		w.used_percent, w.resets_at, w.observed_at, w.source
+		w.used_percent, w.resets_at, w.observed_at, w.source, w.excluded
 		FROM subscription_usage_samples s
 		JOIN subscription_usage_windows w ON w.sample_id = s.id
 		WHERE s.sampled_at >= ? AND w.observed_at >= ?
@@ -81,7 +88,7 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 		var durationSeconds int64
 		var resetsAt, observedAt string
 		if err := rows.Scan(&row.Provider, &row.WindowName, &durationSeconds,
-			&row.UsedPercent, &resetsAt, &observedAt, &row.Source); err != nil {
+			&row.UsedPercent, &resetsAt, &observedAt, &row.Source, &row.Excluded); err != nil {
 			return nil, fmt.Errorf("read subscription usage history: scan: %w", err)
 		}
 		row.Duration = time.Duration(durationSeconds) * time.Second
@@ -101,6 +108,37 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 		return nil, fmt.Errorf("read subscription usage history: rows: %w", err)
 	}
 	return out, nil
+}
+
+// SetSubscriptionUsagePointExcluded changes whether one exact retained
+// observation participates in quota calculations. The observed timestamp is
+// deliberately part of the predicate: a newer in-bucket replacement must not
+// inherit a mutation sent by a stale dashboard.
+func SetSubscriptionUsagePointExcluded(provider, windowName string, observedAt time.Time, excluded bool) error {
+	provider = strings.TrimSpace(provider)
+	windowName = strings.TrimSpace(windowName)
+	if provider == "" || windowName == "" || observedAt.IsZero() {
+		return fmt.Errorf("set subscription usage exclusion: provider, window, and observed_at are required")
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	result, err := d.Exec(`UPDATE subscription_usage_windows SET excluded = ?
+		WHERE window_name = ? AND observed_at = ? AND sample_id IN (
+			SELECT id FROM subscription_usage_samples WHERE provider = ?
+		)`, excluded, windowName, observedAt.UTC().Format(time.RFC3339Nano), provider)
+	if err != nil {
+		return fmt.Errorf("set subscription usage exclusion: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set subscription usage exclusion: affected rows: %w", err)
+	}
+	if changed != 1 {
+		return ErrSubscriptionUsagePointNotFound
+	}
+	return nil
 }
 
 // SaveSubscriptionUsageSample stores the newest observation in a provider's
@@ -219,7 +257,8 @@ func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, n
 				used_percent = excluded.used_percent,
 				resets_at = excluded.resets_at,
 				observed_at = excluded.observed_at,
-				source = excluded.source`,
+				source = excluded.source,
+				excluded = 0`,
 			id, w.Name, int64(w.Duration/time.Second), w.UsedPercent, resetsAt,
 			observedAt.Format(time.RFC3339Nano), sample.Source); err != nil {
 			return false, fmt.Errorf("save subscription usage sample: insert window %q: %w", w.Name, err)

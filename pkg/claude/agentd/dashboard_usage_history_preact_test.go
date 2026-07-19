@@ -26,7 +26,9 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 	for _, needle := range []string{
 		"<polyline", "usage-observed-line", "usage-forecast-line", "usage-reset-mark",
 		"usageAxisTicks(start, horizon)", "usage-forecast-hit-target", "usage-scheduled-reset",
-		"usage-marker-hit-target", "usage-chart-tooltip",
+		"usage-marker-hit-target", "usage-chart-tooltip", "point.excluded", "includedPoints",
+		"aria-pressed=${Boolean(point.excluded)}", "togglePoint(nearest.point)",
+		"hideTooltip();", "togglePoint(point);",
 	} {
 		if !strings.Contains(chart, needle) {
 			t.Errorf("Usage line chart missing %q", needle)
@@ -38,6 +40,7 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 	for _, needle := range []string{
 		`data-tab="usage"`, `<div id="usage-root"></div>`, "mountUsageHistoryFeature(),",
 		"name: 'usage'", "/api/usage-history?hours=", "Forecasts are per provider × quota window",
+		"/api/usage-history/point", "click a point to exclude or restore it",
 		"body.hide-usage-tab nav [data-tab=\"usage\"]",
 		"if (name === 'seven_day_sonnet') return '7 day Sonnet';",
 		"sampledPoints(points, 240)",

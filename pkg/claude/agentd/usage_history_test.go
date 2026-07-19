@@ -113,6 +113,42 @@ func TestDownsampleUsageRowsBoundsWireAndPreservesReset(t *testing.T) {
 	assert.True(t, present[rows[resetIndex].ObservedAt], "post-reset minimum retained so the new segment has a baseline")
 }
 
+func TestDownsampleUsageRowsPreservesLatestIncludedPoint(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, make([]float64, 2001)...)
+	for i := range rows {
+		rows[i].UsedPercent = float64(i % 100)
+	}
+	rows[len(rows)-1].Excluded = true
+
+	downsampled := downsampleUsageRows(rows, nil, 1200)
+	present := map[time.Time]bool{}
+	for _, row := range downsampled {
+		present[row.ObservedAt] = true
+	}
+	assert.True(t, present[rows[len(rows)-1].ObservedAt], "excluded latest point remains reversible")
+	assert.True(t, present[rows[len(rows)-2].ObservedAt],
+		"latest included point remains the displayed current value and forecast anchor")
+}
+
+func TestDownsampleUsageRowsPreservesPreviousIncludedPointAtReset(t *testing.T) {
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	rows := usageHistoryRows(base, make([]float64, 2001)...)
+	resetIndex := 1000
+	rows[resetIndex-1].Excluded = true
+	resets := []usageHistoryReset{{
+		At: rows[resetIndex].ObservedAt.Format(time.RFC3339Nano), Pct: rows[resetIndex].UsedPercent,
+	}}
+
+	downsampled := downsampleUsageRows(rows, resets, 1200)
+	present := map[time.Time]bool{}
+	for _, row := range downsampled {
+		present[row.ObservedAt] = true
+	}
+	assert.True(t, present[rows[resetIndex-2].ObservedAt],
+		"pre-reset line retains its true included endpoint when the adjacent point is excluded")
+}
+
 func TestDownsampleUsageResetsBoundsMarkers(t *testing.T) {
 	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
 	resets := make([]usageHistoryReset, 2000)

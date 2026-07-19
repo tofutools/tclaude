@@ -24,5 +24,25 @@ export function createUsageHistoryActions({ state, fetchImpl = globalThis.fetch 
       return false;
     }
   }
-  return Object.freeze({ load });
+  async function setPointExcluded(series, point, excluded) {
+    try {
+      const response = await fetchImpl('/api/usage-history/point', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: series.provider,
+          window_name: series.window_name,
+          at: point.at,
+          excluded: Boolean(excluded),
+        }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      return load();
+    } catch (error) {
+      state.failMutation(error);
+      return false;
+    }
+  }
+  return Object.freeze({ load, setPointExcluded });
 }
