@@ -30,6 +30,19 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead }) {
   </div>`;
 }
 
+// The legend sits under each chart rather than once at the top of the tab: with
+// graphs side by side there is no longer a single line of sight from a shared
+// legend to the chart you are reading. Scoping the label keeps the repeats
+// distinguishable to a screen reader.
+function UsageChartLegend({ scope }) {
+  return html`<div class="usage-chart-legend" aria-label=${`Usage chart legend, ${scope}`}>
+    <span><i class="usage-legend-swatch observed"></i>Observed</span>
+    <span><i class="usage-legend-swatch forecast"></i>Forecast</span>
+    <span><i class="usage-legend-swatch reset"></i>Reset</span>
+    <span><i class="usage-legend-swatch now"></i>Now</span>
+  </div>`;
+}
+
 function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead }) {
   const latest = series.points?.[series.points.length - 1];
   const now = new Date(payload.generated_at).getTime();
@@ -46,6 +59,7 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead }) 
     <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead} />
     <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}
       lookaheadHours=${span.lookaheadHours} />
+    <${UsageChartLegend} scope=${scope} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong>
       ${(forecast.lines || []).map((line) => html`<span class="usage-forecast-line-copy" key=${line}>${line}</span>`)}
@@ -90,19 +104,12 @@ export function UsageHistoryApp({ state, actions }) {
   }, [current.active]);
   const setSpan = (key, hours) => { if (state.setSeriesHours(key, hours)) void actions.load(); };
   const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);
+  // Nothing but load state sits above the graphs: the legend now rides with
+  // each chart and the explanatory note is a footnote below the grid, so the
+  // tab opens on the data rather than on a paragraph about it.
   return html`<div class="usage-history-island">
-    <div class="filter-bar usage-history-controls">
-      <span class="muted">Account-wide provider limits · 15-minute samples · spans persist per graph</span>
-    </div>
     <${AsyncLoadState} label="Usage" request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
-      <p class="usage-history-note">Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.</p>
-      <div class="usage-chart-legend" aria-label="Usage chart legend">
-        <span><i class="usage-legend-swatch observed"></i>Observed</span>
-        <span><i class="usage-legend-swatch forecast"></i>Forecast</span>
-        <span><i class="usage-legend-swatch reset"></i>Reset</span>
-        <span><i class="usage-legend-swatch now"></i>Now</span>
-      </div>
       ${current.series.length
         ? html`<div class="usage-series-grid">${groupSeriesByProvider(current.series).map((row) => html`
             <div class="usage-provider-row" key=${row.provider} style=${`--usage-cols:${row.series.length}`}>
@@ -114,6 +121,7 @@ export function UsageHistoryApp({ state, actions }) {
               })}
             </div>`)}</div>`
         : html`<div class="empty">No subscription usage samples in this range yet.</div>`}
+      <p class="usage-history-note">Account-wide provider limits, sampled every 15 minutes; history and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.</p>
     </${Fragment}>`}
   </div>`;
 }

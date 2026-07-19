@@ -58,13 +58,15 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		// The row-width variables live on the host, so the island-load-failure
 		// banner (rendered into #usage-root, outside the island) inherits them.
 		"#usage-root { --usage-card-max: 1100px; --usage-card-gap: 14px; }",
-		// Centring must ride in each element's own margin shorthand. A shared
+		// Centring must ride in each element's own margin shorthand: a shared
 		// `margin-inline: auto` rule is silently reset by any later shorthand
-		// on the same element -- .filter-bar does that to the controls bar,
-		// hence the two-class selector here.
-		".filter-bar.usage-history-controls { max-width: var(--usage-card-max); margin: 0 auto 12px; }",
-		"margin: 0 auto 14px",
-		"margin: -4px auto 12px",
+		// on the same element.
+		"margin-inline: auto; width: 100%;",
+		// The legend renders per card, under its chart, with a scoped label —
+		// side-by-side graphs have no line of sight to one shared legend.
+		"function UsageChartLegend({ scope })",
+		"`Usage chart legend, ${scope}`",
+		"<${UsageChartLegend} scope=${scope} />",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)
@@ -73,4 +75,37 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 	if strings.Contains(chart, "point.source") {
 		t.Error("Usage point tooltip exposes internal sample source")
 	}
+	// The tab must open on the graphs. Nothing explanatory sits above the grid:
+	// the old top-of-tab controls bar is gone entirely, and the note is a
+	// footnote after the grid rather than a header before it.
+	island := read("js/usage-history-island.js")
+	if strings.Contains(island, "usage-history-controls") {
+		t.Error("Usage tab reintroduced the top-of-tab controls bar above the graphs")
+	}
+	if strings.Index(island, "usage-history-note") < strings.Index(island, "usage-series-grid") {
+		t.Error("Usage explanatory note renders above the graph grid instead of below it")
+	}
+	// The note is a full-width footnote: capping or centring it would line it
+	// up with the rows above, which is what moving it out of the header undid.
+	if noteRule := usageCSSRule(t, read("dashboard.css"), ".usage-history-note"); strings.Contains(noteRule, "max-width") ||
+		strings.Contains(noteRule, "auto") {
+		t.Errorf("Usage note should be uncapped and left-aligned, got rule: %s", noteRule)
+	}
+}
+
+// usageCSSRule returns the declaration block of the first rule whose selector
+// list is exactly `selector`, for asserting on one rule rather than the whole
+// stylesheet.
+func usageCSSRule(t *testing.T, css, selector string) string {
+	t.Helper()
+	start := strings.Index(css, "\n"+selector+" {")
+	if start < 0 {
+		t.Fatalf("no %q rule in dashboard.css", selector)
+	}
+	body := css[start+len("\n"+selector+" {"):]
+	end := strings.Index(body, "}")
+	if end < 0 {
+		t.Fatalf("unterminated %q rule in dashboard.css", selector)
+	}
+	return body[:end]
 }
