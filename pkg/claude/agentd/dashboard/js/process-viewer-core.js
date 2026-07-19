@@ -124,6 +124,12 @@ export function buildViewerGraph(envelope) {
       const targetJoin = joins.get(edge.to)?.policy || exactJoins.get(edge.to);
       return {
         id: edge.id, from: edge.from, outcome: edge.outcome, to: edge.to,
+        // The run viewer draws every outcome. Pinning is an authoring
+        // affordance: this view has no pin button and no layout to read an
+        // author's opinion from, so applying the editor's decluttering default
+        // here would hide a key -- including one the author pinned ON -- with
+        // no way to reveal it.
+        pinned: true,
         ...(targetJoin ? { joinOnTarget: targetJoin } : {}),
         ...(summary ? { badge: summary, badgeSeverity: overlaySeverity(overlays), issues: [summary] } : {}),
       };

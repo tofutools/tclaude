@@ -283,20 +283,39 @@ export class ProcessEditModel {
     return true;
   }
 
+  // pruneEdgePins drops any stored opinion whose (from, outcome) no longer names
+  // a live edge. Called after every structural edge mutation rather than
+  // per-path: the previous per-path cleanup missed deleteItems, which is the
+  // editor's ONLY delete route, so pins outlived their connectors and were
+  // silently inherited by the next edge minted with the same outcome --
+  // freeOutcome reuses a name as soon as it is free. It also covers incoming
+  // edges dropped by a node delete, which no per-path cleanup handled.
+  pruneEdgePins() {
+    if (!this.layout.edges) return;
+    const live = new Set(this.edges.map((edge) => `${edge.from}\u0000${edge.outcome}`));
+    for (const [from, byOutcome] of Object.entries(this.layout.edges)) {
+      for (const outcome of Object.keys(byOutcome)) {
+        if (!live.has(`${from}\u0000${outcome}`)) delete byOutcome[outcome];
+      }
+      if (!Object.keys(byOutcome).length) delete this.layout.edges[from];
+    }
+    if (!Object.keys(this.layout.edges).length) delete this.layout.edges;
+  }
+
   // writeEdgePin is the raw container maintenance, shared with the rename and
   // delete paths, which must move or drop pin state with the edge it describes.
   // It deliberately does not snapshot undo: callers own that gate.
   writeEdgePin(from, outcome, pinned) {
-    if (!this.layout.edges) this.layout.edges = {};
-    const byOutcome = this.layout.edges[from];
     if (pinned === undefined) {
+      const byOutcome = this.layout.edges?.[from];
       if (!byOutcome) return;
       delete byOutcome[outcome];
       if (!Object.keys(byOutcome).length) delete this.layout.edges[from];
       if (!Object.keys(this.layout.edges).length) delete this.layout.edges;
       return;
     }
-    if (!byOutcome) this.layout.edges[from] = {};
+    if (!this.layout.edges) this.layout.edges = {};
+    if (!this.layout.edges[from]) this.layout.edges[from] = {};
     this.layout.edges[from][outcome] = { pinned };
   }
 
@@ -371,19 +390,15 @@ export class ProcessEditModel {
     this.begin();
     delete this.template.nodes[id];
     delete this.layout.nodes[id];
-    // Pin state for edges LEAVING the node goes with it. Edges arriving from
-    // elsewhere are keyed by their own source, and rewiring below keeps them, so
-    // their opinions stay valid.
-    if (this.layout.edges) {
-      delete this.layout.edges[id];
-      if (!Object.keys(this.layout.edges).length) delete this.layout.edges;
-    }
     this.edges = this.edges.filter((edge) => edge.from !== id && edge.to !== id);
     if (rewire && successor && successor !== id) {
       for (const edge of incoming) {
         this.edges.push({ from: edge.from, outcome: edge.outcome, to: successor });
       }
     }
+    // After rewiring, so a bridged edge that kept its (from, outcome) keeps its
+    // pin rather than having it collected.
+    this.pruneEdgePins();
     // A start pseudo edge that pointed at the deleted node is gone with the
     // filter above; the template keeps rendering (start is advisory until save).
   }
@@ -568,6 +583,7 @@ export class ProcessEditModel {
     }
     this.edges = this.edges.filter((edge) => !selectedEdge(edge) && !nodes.has(edge.from) && !nodes.has(edge.to));
     this.edges.push(...bridges);
+    this.pruneEdgePins();
     if (nodes.has(this.template.start)) {
       const start = this.edges.find((edge) => edge.from === '' && edge.outcome === START_OUTCOME);
       this.template.start = start?.to || '';
@@ -650,10 +666,7 @@ export class ProcessEditModel {
     this.assertEdgeEditable(edge);
     this.begin();
     this.edges = this.edges.filter((candidate) => candidate !== edge);
-    // Pin state is keyed by (from, outcome). Leaving it behind would silently
-    // apply this edge's opinion to the next connector minted with the same
-    // outcome -- and freeOutcome reuses names as soon as they are free.
-    this.writeEdgePin(from, outcome, undefined);
+    this.pruneEdgePins();
   }
 
   setEdgeOutcome(from, oldOutcome, newOutcome) {

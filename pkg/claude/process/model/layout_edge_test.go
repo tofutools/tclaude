@@ -92,3 +92,36 @@ func TestLayoutEdgeRejectsUnknownFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, parsed.Diagnostics, "unknown layout edge field should produce a diagnostic")
 }
+
+// An orphaned pin is not merely dead weight: the editor reuses outcome names as
+// soon as they are free, so a stale entry is an opinion waiting to be inherited.
+func TestLayoutEdgeStaleEntriesAreReported(t *testing.T) {
+	ghostNode := strings.Replace(layoutEdgePinnedYAML, "    build:\n      pass:", "    ghost:\n      pass:", 1)
+	parsed, err := Parse([]byte(ghostNode))
+	require.NoError(t, err)
+	assert.True(t, hasRule(parsed.Diagnostics, "stale_layout_edge"),
+		"a pin on an undeclared node should be reported")
+
+	ghostOutcome := strings.Replace(layoutEdgePinnedYAML, "      pass:\n        pinned: true", "      nowhere:\n        pinned: true", 1)
+	parsed, err = Parse([]byte(ghostOutcome))
+	require.NoError(t, err)
+	assert.True(t, hasRule(parsed.Diagnostics, "stale_layout_edge"),
+		"a pin on an outcome the node does not have should be reported")
+
+	// A warning, never an error: a stale pin is cosmetic and must not block a save.
+	assert.Empty(t, parsed.Diagnostics.Errors())
+
+	// And a live pin stays quiet.
+	parsed, err = Parse([]byte(layoutEdgePinnedYAML))
+	require.NoError(t, err)
+	assert.False(t, hasRule(parsed.Diagnostics, "stale_layout_edge"))
+}
+
+func hasRule(diagnostics Diagnostics, code string) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
+}

@@ -49,6 +49,7 @@ export class ProcessGraphAdapter {
       onNodeDblClick: emit('nodeDoubleClick'),
       onEdgeClick: emit('edgeClick'),
       onCanvasClick: emit('canvasClick'),
+      onViewportChange: emit('viewportChange'),
       onMarqueeSelect: emit('marqueeSelection'),
       onNodeDragStart: emit('nodeDragStart'),
       // The widget's pointer state owns the whole gesture, including its

@@ -82,17 +82,26 @@ function buildEdgeLabelGroup(edge, label) {
   return labelGroup;
 }
 
-// graphEdgeKey pairs (from, outcome) with a NUL separator, which cannot occur in
-// either component, so the key is collision-free without escaping.
-function graphEdgeKey(from, outcome) {
-  return `${from}\u0000${outcome}`;
-}
-
 function symmetricDifference(a, b) {
   const out = new Set();
   for (const key of a) if (!b.has(key)) out.add(key);
   for (const key of b) if (!a.has(key)) out.add(key);
   return out;
+}
+
+// edgeAccessibleName always names the outcome, whatever the visual rule decided.
+// Pinning is a decluttering affordance for a canvas a sighted author scans at a
+// glance; a screen-reader user has no such glance, and hiding the key from the
+// accessible name would leave them no way to learn it at all. Deliberately
+// independent of selection, so it never goes stale as selection moves.
+function edgeAccessibleName(edge, issues = []) {
+  const bits = [];
+  if (edge.outcome) bits.push(String(edge.outcome));
+  if (edge.joinOnTarget) bits.push(`join: ${edge.joinOnTarget}`);
+  if (!bits.length && edge.back) bits.push('return');
+  const detail = bits.join(' \u00b7 ');
+  return `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}`
+    + `${detail ? `: ${detail}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`;
 }
 
 function outgoingCounts(edges) {
@@ -451,12 +460,22 @@ function renderPorts(parent, node, feedbackFor) {
 function renderMarkers(defs, markerID, backMarkerID) {
   const marker = svgElement('marker', {
     id: markerID, viewBox: '0 0 10 10', refX: 9, refY: 5,
-    markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse',
+    // userSpaceOnUse, not the strokeWidth default: selection doubles the path's
+    // stroke-width (dashboard.css), and a strokeWidth-scaled marker doubles the
+    // arrowhead with it. 14 = the previous 7 x the base stroke-width of 2, so
+    // the unselected arrowhead is unchanged.
+    markerUnits: 'userSpaceOnUse',
+    markerWidth: 14, markerHeight: 14, orient: 'auto-start-reverse',
   });
   marker.append(svgElement('path', { class: 'process-arrowhead', d: 'M 0 0 L 10 5 L 0 10 z' }));
   const backMarker = svgElement('marker', {
     id: backMarkerID, viewBox: '0 0 10 10', refX: 9, refY: 5,
-    markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse',
+    // userSpaceOnUse, not the strokeWidth default: selection doubles the path's
+    // stroke-width (dashboard.css), and a strokeWidth-scaled marker doubles the
+    // arrowhead with it. 14 = the previous 7 x the base stroke-width of 2, so
+    // the unselected arrowhead is unchanged.
+    markerUnits: 'userSpaceOnUse',
+    markerWidth: 14, markerHeight: 14, orient: 'auto-start-reverse',
   });
   backMarker.append(svgElement('path', { class: 'process-arrowhead process-arrowhead-back', d: 'M 0 0 L 10 5 L 0 10 z' }));
   defs.append(marker, backMarker);
@@ -651,10 +670,17 @@ export class ProcessGraph {
   }
 
   // edgeSelected mirrors applySelection's membership test. A selected connector
-  // always shows its key, so the label decision has to be made at render time
-  // rather than patched on afterwards.
+  // always shows its key, so the label decision is made at render time rather
+  // than patched on afterwards.
+  //
+  // The probe MUST be id-keyed. ProcessGraph.selected only ever holds
+  // {type:'edge', id}: the click handler builds it that way and the editor maps
+  // its semantic selection to ids before calling select(). selectionKey returns
+  // `edge-id:<id>` when id is present and `edge:[from,outcome]` otherwise, so a
+  // from/outcome probe silently never matches -- which left every selected
+  // connector's label hidden and this whole mechanism dead.
   edgeSelected(edge) {
-    return selectionContains(this.selected, { type: 'edge', from: edge.from, outcome: edge.outcome });
+    return selectionContains(this.selected, { type: 'edge', id: edge.id });
   }
 
   renderEdge(edge, siblingCount = 2, nodeType = '', selected = false) {
@@ -670,7 +696,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge, siblingCount, nodeType, selected) ? `: ${edgeLabel(edge, siblingCount, nodeType, selected)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
+      'aria-label': edgeAccessibleName(edge, issues),
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -1751,6 +1777,12 @@ export class ProcessGraph {
 
   applyView() {
     this.viewport.setAttribute('transform', `translate(${this.view.x} ${this.view.y}) scale(${this.view.k})`);
+    // Overlays positioned in HOST pixels (the pin toggle, the inline editor)
+    // are resolved from a graph point at publish time and do not live inside
+    // this transform, so panning or zooming would leave them behind. The pin
+    // persists for as long as a connector stays selected, which is long enough
+    // for the drift to be plainly visible.
+    hook(this.options, 'onViewportChange')({ view: { ...this.view } });
   }
 
   setZoom(zoom, { clientX, clientY } = {}) {
@@ -1874,16 +1906,21 @@ export class ProcessGraph {
 
   selectedEdgeKeys() {
     return new Set(selectionItems(this.selected)
-      .filter((item) => item.type === 'edge')
-      .map((item) => graphEdgeKey(item.from, item.outcome)));
+      .filter((item) => item.type === 'edge' && item.id != null)
+      .map((item) => String(item.id)));
   }
 
   syncEdgeLabels(keys) {
     if (!keys.size) return;
     const counts = outgoingCounts(this.layout.edges || []);
+    // Indexed from the live children, matching updateEdgeGeometry -- edge ids
+    // are author-controlled, and a selector would need escaping to be safe.
+    const rendered = new Map(Array.from(this.edgeLayer.children || [], (element) => [
+      element.dataset.edgeId, element,
+    ]));
     for (const edge of this.layout.edges || []) {
-      if (!keys.has(graphEdgeKey(edge.from, edge.outcome))) continue;
-      const group = this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(edge.id))}"]`);
+      if (!keys.has(String(edge.id))) continue;
+      const group = rendered.get(String(edge.id));
       if (!group) continue;
       group.querySelector('.process-edge-label')?.remove();
       const label = edgeLabel(

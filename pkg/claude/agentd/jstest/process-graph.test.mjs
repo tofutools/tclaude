@@ -855,3 +855,56 @@ test('captured pointer identity selects nodes and edges after click retargets to
   assert.deepEqual(selected, [{ type: 'node', id: 'node-a' }, { type: 'edge', id: 'edge-a' }]);
   assert.deepEqual(clicked, ['node:node-a', 'edge:edge-a']);
 });
+
+// Regression: the label rule consults selection, and ProcessGraph.selected only
+// ever holds id-keyed edge items. A from/outcome membership probe silently never
+// matched, so a decluttered connector could not be revealed by selecting it and
+// the whole selection-reveal mechanism was dead code that still passed review.
+test('selecting a connector reveals a label the pin rule hides', () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
+  try {
+  const edge = {
+    id: 'e1', from: 'build', to: 'ship', outcome: 'pass',
+    path: 'M 0 0 L 10 10', label: { x: 5, y: 5 },
+  };
+  const layout = { nodes: [{ id: 'build', type: 'task' }, { id: 'ship', type: 'end' }], edges: [edge] };
+  const fake = {
+    options: {},
+    markerID: 'forward-marker', backMarkerID: 'back-marker',
+    layout,
+    nodeTypes: new Map([['build', 'task'], ['ship', 'end']]),
+    selected: null,
+    edgeLayer: document.createElementNS('http://www.w3.org/2000/svg', 'g'),
+    nodeTypeOf: ProcessGraph.prototype.nodeTypeOf,
+    edgeSelected: ProcessGraph.prototype.edgeSelected,
+    selectedEdgeKeys: ProcessGraph.prototype.selectedEdgeKeys,
+    syncEdgeLabels: ProcessGraph.prototype.syncEdgeLabels,
+    renderEdge: ProcessGraph.prototype.renderEdge,
+    renderEdges: ProcessGraph.prototype.renderEdges,
+    applySelection() {},
+    raiseNode() {},
+  };
+
+  // A lone 'pass' connector: the default rule declutters it away.
+  fake.renderEdges(layout.edges);
+  const group = fake.edgeLayer.querySelector('.process-edge');
+  assert.equal(group.querySelector('.process-edge-label'), null,
+    'a lone generic outcome starts hidden');
+  // The outcome must stay in the accessible name even while visually hidden.
+  assert.match(group.getAttribute('aria-label'), /pass/,
+    'decluttering is visual only; the key stays in the accessible name');
+
+  // Selecting it must bring the key back — this is the exact call shape the
+  // click handler and the editor adapter both use.
+  ProcessGraph.prototype.select.call(fake, { type: 'edge', id: 'e1' });
+  assert.equal(fake.edgeLayer.querySelector('.process-edge-label')?.textContent, 'pass',
+    'a selected connector always shows its key');
+
+  // And deselecting hides it again.
+  ProcessGraph.prototype.select.call(fake, null);
+  assert.equal(fake.edgeLayer.querySelector('.process-edge-label'), null);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});

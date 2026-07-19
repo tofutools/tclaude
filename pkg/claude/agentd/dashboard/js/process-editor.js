@@ -27,7 +27,7 @@ import {
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
 import { edgePinTitle } from './process-edge-hint.js';
-import { defaultPinned } from './process-outcome-vocabulary.js';
+import { defaultPinned, edgeLabelVisible } from './process-outcome-vocabulary.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
   ProcessClipboardError, createProcessSelectionPayload,
@@ -223,6 +223,9 @@ export class ProcessTemplateEditor {
         nodeDoubleClick: (event) => this.onNodeDblClick(event),
         edgeClick: (event) => this.onEdgeClick(event),
         canvasClick: () => this.setSelection(null),
+        // The pin toggle is an HTML overlay anchored in host pixels, so it has
+        // to be re-resolved whenever the viewport moves under it.
+        viewportChange: () => { if (this.edgePinOpen()) this.publish(); },
         marqueeSelection: (event) => this.setSelection(event.selection),
         nodeDragStart: (event) => this.setSelection(event.selection),
         nodeDragEnd: (event) => this.commitNodeDrag(event),
@@ -1063,12 +1066,17 @@ export class ProcessTemplateEditor {
     const created = this.mutate(() => this.model.addEdge(from, outcome, to));
     if (!created) return;
     this.setSelection({ type: 'edge', from, outcome });
-    // A lone connector's label is hidden, so there is nothing to type over and
-    // no drawn anchor to type into. Popping the inline editor there would ask
-    // the author to name the one edge whose name cannot route.
-    const lone = this.model.outgoingEdges(from).length <= 1
-      && this.model.node(from)?.type !== 'decision';
-    if (!lone) this.openInlineOutcomeEdit(from, outcome);
+    // Open the inline editor only if the new connector's label is actually
+    // drawn; otherwise the author would be asked to type into an invisible
+    // anchor. Routed through edgeLabelVisible rather than re-deriving the rule,
+    // so this cannot drift from what the renderer decided.
+    const drawn = edgeLabelVisible({
+      outcome,
+      siblingCount: this.model.outgoingEdges(from).length,
+      nodeType: this.model.node(from)?.type,
+      pinned: this.model.edgePinned(from, outcome),
+    });
+    if (drawn) this.openInlineOutcomeEdit(from, outcome);
   }
 
   openConnectedNodeChooser(source, point, event) {
@@ -1566,7 +1574,12 @@ export class ProcessTemplateEditor {
   edgePinView() {
     const items = selectionItems(this.selection);
     const item = items.length === 1 && items[0].type === 'edge' ? items[0] : null;
-    if (!item || !this.model.findEdge(item.from, item.outcome)) return { open: false };
+    const edge = item && this.model.findEdge(item.from, item.outcome);
+    if (!edge) return { open: false };
+    // Pinning is layout metadata, but it still writes through the model's undo
+    // gate and save body, so a view that cannot edit this edge must not
+    // advertise a working toggle via aria-pressed and then throw on click.
+    if (this.model.config.edgeEditable && !this.model.config.edgeEditable(edge)) return { open: false };
     const laid = this.laidEdge(item.from, item.outcome);
     if (!laid?.label) return { open: false };
     const pinned = this.edgePinnedEffective(item.from, item.outcome);
@@ -1580,6 +1593,13 @@ export class ProcessTemplateEditor {
       pinned,
       title: edgePinTitle(item.outcome, pinned),
     };
+  }
+
+  // edgePinOpen is the cheap predicate the viewport hook uses: republishing on
+  // every pan frame is only worth it while a pin is actually on screen.
+  edgePinOpen() {
+    const items = selectionItems(this.selection);
+    return items.length === 1 && items[0].type === 'edge';
   }
 
   // edgePinnedEffective resolves the tri-state into the boolean the button

@@ -950,3 +950,32 @@ test('deleting a node takes its outgoing pins with it', () => {
   model.deleteNode('build');
   assert.equal(model.layout.edges?.build, undefined);
 });
+
+test('deleteItems prunes pins: the editor\'s only delete route', () => {
+  // deleteEdge/deleteNode had cleanup and tests, but nothing in the app calls
+  // them -- deleteItems is the sole production delete path, and it kept stale
+  // pins that the next connector with the same outcome silently inherited.
+  const model = new ProcessEditModel(view());
+  model.setEdgePinned('build', 'pass', false);
+  model.deleteItems([{ type: 'edge', from: 'build', outcome: 'pass' }]);
+  assert.equal(model.edgePinned('build', 'pass'), undefined, 'the dead pin must not survive');
+  model.addEdge('build', 'pass', 'ship');
+  assert.equal(model.edgePinned('build', 'pass'), undefined,
+    'a new connector must not inherit a deleted one\'s opinion');
+});
+
+test('deleting a node prunes pins on its incoming edges too', () => {
+  // Outgoing pins were handled; incoming ones are keyed by their own source and
+  // outlived the edges they described.
+  const model = new ProcessEditModel(view());
+  model.setEdgePinned('begin', 'pass', false);
+  model.deleteItems([{ type: 'node', id: 'build' }]);
+  assert.equal(model.edgePinned('begin', 'pass'), undefined);
+});
+
+test('a clearing write never leaves an empty layout.edges container', () => {
+  const model = new ProcessEditModel(view());
+  model.deleteEdge('build', 'pass');
+  assert.equal(model.layout.edges, undefined,
+    'a template with no pins at all must not grow an empty edges block');
+});
