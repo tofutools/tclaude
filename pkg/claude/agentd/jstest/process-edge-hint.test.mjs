@@ -41,6 +41,7 @@ test('dismissal persists and tolerates hostile storage', () => {
   assert.equal(readEdgeHintDismissed(storage), false);
   assert.equal(writeEdgeHintDismissed(storage, true), true);
   assert.equal(store.get(EDGE_HINT_STORAGE_KEY), 'dismissed');
+  assert.match(EDGE_HINT_STORAGE_KEY, /^tclaude\.dash\./);
   assert.equal(readEdgeHintDismissed(storage), true);
   assert.equal(writeEdgeHintDismissed(storage, false), true);
   assert.equal(readEdgeHintDismissed(storage), false);

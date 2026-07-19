@@ -5,7 +5,6 @@
 import {
   processEdgePortAvailability, processNodePortAvailable, processPortUnavailableMessage,
 } from './process-port-availability.js';
-import { PASS_OUTCOMES, UNNAMED_OUTCOME } from './process-outcome-vocabulary.js';
 
 function nodeLabel(model, id) {
   const node = model?.node?.(id);
@@ -44,24 +43,10 @@ export function prepareProcessConnectionFeedback(model) {
     takenByFrom.get(edge.from).add(edge.outcome);
   }
   const freeOutcomeByFrom = new Map();
-  const nodes = model?.template?.nodes || {};
-  for (const from of Object.keys(nodes)) {
+  for (const from of Object.keys(model?.template?.nodes || {})) {
     const taken = takenByFrom.get(from) || new Set();
-    // Mirrors ProcessEditModel.newEdgeOutcome — the drag preview and the
-    // read-only edgeEditable gate must evaluate the same edge the drop will
-    // actually create. See that method for why a lone pass edge pairs with
-    // 'fail' rather than a second pass-vocabulary name.
-    let base = 'pass';
-    const type = nodes[from]?.type;
-    if (type !== 'decision') {
-      if (!taken.size) {
-        freeOutcomeByFrom.set(from, UNNAMED_OUTCOME);
-        continue;
-      }
-      if (type === 'task' && taken.size === 1 && PASS_OUTCOMES.includes([...taken][0])) base = 'fail';
-    }
-    let outcome = base;
-    for (let n = 2; taken.has(outcome); n += 1) outcome = `${base}-${n}`;
+    let outcome = 'pass';
+    for (let n = 2; taken.has(outcome); n += 1) outcome = `pass-${n}`;
     freeOutcomeByFrom.set(from, outcome);
   }
   return Object.freeze({

@@ -24,7 +24,7 @@
 import { createProcessGraphAdapter } from './process-graph-adapter.js';
 import {
   ProcessEditModel, blankEditView,
-  PALETTE_SNIPPETS, UNNAMED_OUTCOME,
+  PALETTE_SNIPPETS,
 } from './process-edit-model.js';
 import {
   edgeHintText, readEdgeHintDismissed, resolveEdgeHint, writeEdgeHintDismissed,
@@ -1065,14 +1065,16 @@ export class ProcessTemplateEditor {
       return;
     }
     const { from, to } = feedback;
-    const outcome = this.model.newEdgeOutcome(from);
+    const outcome = this.model.freeOutcome(from, 'pass');
     const created = this.mutate(() => this.model.addEdge(from, outcome, to));
     if (!created) return;
     this.setSelection({ type: 'edge', from, outcome });
-    // An unnamed edge draws no label, so there is nothing to type over and no
-    // anchor to type into. Popping the inline editor here would ask the author
-    // to name the one edge whose name cannot matter.
-    if (outcome !== UNNAMED_OUTCOME) this.openInlineOutcomeEdit(from, outcome);
+    // A lone connector's label is hidden, so there is nothing to type over and
+    // no drawn anchor to type into. Popping the inline editor there would ask
+    // the author to name the one edge whose name cannot route.
+    const lone = this.model.outgoingEdges(from).length <= 1
+      && this.model.node(from)?.type !== 'decision';
+    if (!lone) this.openInlineOutcomeEdit(from, outcome);
   }
 
   openConnectedNodeChooser(source, point, event) {
@@ -1574,7 +1576,7 @@ export class ProcessTemplateEditor {
       dismissed: this.edgeHintDismissed,
       selected,
       labelled: (item) => !!this.model.findEdge(item.from, item.outcome)
-        && outcomeCarriesInformation(item.outcome, siblings),
+        && outcomeCarriesInformation(item.outcome, siblings, this.model.node(item.from)?.type),
     });
     if (!open) return { open: false };
     const laid = this.laidEdge(edge.from, edge.outcome);

@@ -89,9 +89,7 @@ test('connector-drop node and edge are one atomic positioned undo step in either
 
   const before = new ProcessEditModel(view());
   const prepended = before.addConnectedNode('task', { x: 9, y: 11, connectTo: 'build' });
-  // A brand-new source node has no other way out, so its connector is unnamed
-  // (UNNAMED_OUTCOME) and the editor draws no label over it.
-  assert.deepEqual(prepended.edge, { from: 'task', outcome: 'next', to: 'build' });
+  assert.deepEqual(prepended.edge, { from: 'task', outcome: 'pass', to: 'build' });
   assert.equal(before.undoStack.length, 1);
 });
 
@@ -872,34 +870,30 @@ test('setStart repoints the start pseudo edge exactly once', () => {
   assert.equal(model.template.start, 'build');
 });
 
-test('newEdgeOutcome hides the label only where it cannot route', () => {
+test('a lone connector keeps the precedence-winning pass name', () => {
+  // Hiding the label must not change which edge the runtime picks. 'pass' is
+  // the FIRST entry in model/next.go's passOutcomeLabels, so a sibling added
+  // later can never outrank it and steal the pass routing. Minting 'next' here
+  // -- the LAST alias -- would do exactly that.
   const model = new ProcessEditModel(view());
-  // 'build' is a task whose only edge is the pass-vocabulary 'pass'. A second
-  // pass-vocabulary name would be resolved away by PASS_OUTCOMES precedence and
-  // left unreachable, so the pair completes with 'fail'.
-  assert.equal(model.newEdgeOutcome('build'), 'fail');
+  model.addNode('wait', { id: 'hold' });
+  const first = model.freeOutcome('hold', 'pass');
+  assert.equal(first, 'pass');
+  model.addEdge('hold', first, 'ship');
 
-  // A source with no way out yet: the runtime takes a lone edge whatever it is
-  // called, so the outcome is the unnamed default and nothing is drawn.
-  model.addNode('task', { id: 'fresh' });
-  assert.equal(model.newEdgeOutcome('fresh'), 'next');
-
-  // Decision edges are matched against verdicts exactly, so even the first one
-  // is named rather than hidden.
-  model.addNode('decision', { id: 'gate' });
-  assert.equal(model.newEdgeOutcome('gate'), 'pass');
-
-  // Non-task nodes do not get a 'fail' partner: a start node cannot fail.
-  assert.equal(model.newEdgeOutcome('begin'), 'pass-2');
+  const second = model.freeOutcome('hold', 'pass');
+  model.addEdge('hold', second, 'build');
+  const passVocabulary = ['pass', 'done', 'success', 'next'];
+  const winner = passVocabulary.find((label) => [first, second].includes(label));
+  assert.equal(winner, first, 'the connector drawn first must keep the pass routing');
 });
 
-test('an unnamed outcome is a real key, never an empty string', () => {
+test('outcomes stay real non-empty keys', () => {
   const model = new ProcessEditModel(view());
   model.addNode('task', { id: 'fresh' });
-  const outcome = model.newEdgeOutcome('fresh');
+  const outcome = model.freeOutcome('fresh', 'pass');
   assert.notEqual(outcome, '');
   model.addEdge('fresh', outcome, 'ship');
   assert.equal(model.findEdge('fresh', outcome).to, 'ship');
-  // Blank outcomes stay rejected at the model boundary regardless.
   assert.throws(() => model.addEdge('fresh', '', 'build'), /outcome is required/);
 });

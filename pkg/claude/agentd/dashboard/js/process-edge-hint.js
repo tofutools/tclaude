@@ -17,7 +17,8 @@
 // prefs live in this dashboard. The store is injected rather than imported so
 // this module stays DOM-free and unit testable.
 
-export const EDGE_HINT_STORAGE_KEY = 'tclaude.processEditor.edgeLabelHint';
+// Namespaced under tclaude.dash.* per the convention documented in prefs.js.
+export const EDGE_HINT_STORAGE_KEY = 'tclaude.dash.processEditor.edgeLabelHint';
 const DISMISSED = 'dismissed';
 
 export function edgeHintText(outcome, siblingCount) {

@@ -58,9 +58,9 @@ function hook(options, name) {
   return typeof options[name] === 'function' ? options[name] : () => {};
 }
 
-function edgeLabel(edge, siblingCount = 2) {
+function edgeLabel(edge, siblingCount = 2, nodeType = '') {
   const bits = [];
-  if (outcomeCarriesInformation(edge.outcome, siblingCount)) bits.push(String(edge.outcome));
+  if (outcomeCarriesInformation(edge.outcome, siblingCount, nodeType)) bits.push(String(edge.outcome));
   if (edge.joinOnTarget) bits.push(`join: ${edge.joinOnTarget}`);
   if (!bits.length && edge.back) bits.push('return');
   return bits.join(' · ');
@@ -562,6 +562,9 @@ export class ProcessGraph {
     const focused = this.captureFocus();
     const title = this.svg.querySelector('title');
     title.textContent = this.options.ariaLabel || `Process graph with ${this.layout.nodes.length} nodes`;
+    // Built from the same laid-out projection the edges come from, so edge
+    // labels and node types can never describe different graphs.
+    this.nodeTypes = new Map((this.layout.nodes || []).map((node) => [node.id, node.type]));
     this.renderEdges(this.layout.edges);
     this.nodeLayer.replaceChildren();
     this.portLayer.replaceChildren();
@@ -587,10 +590,19 @@ export class ProcessGraph {
   }
 
   renderEdges(edges) {
+    // Sibling counts come from the SAME projection being drawn, so the label
+    // rule can never disagree with what is on screen.
     const counts = outgoingCounts(edges || []);
     this.edgeLayer.replaceChildren(...(edges || []).map(
-      (edge) => this.renderEdge(edge, counts.get(edge.from) || 1),
+      (edge) => this.renderEdge(edge, counts.get(edge.from) || 1, this.nodeTypeOf(edge.from)),
     ));
+  }
+
+  // nodeTypeOf resolves a source node's type from the rendered projection. A
+  // decision's outcome is exact-matched against a verdict with no lone-edge
+  // fallback, so the renderer must know the type to keep that label visible.
+  nodeTypeOf(id) {
+    return this.nodeTypes?.get(id) || '';
   }
 
   updateEdgeGeometry(edges) {
@@ -609,7 +621,7 @@ export class ProcessGraph {
     }
   }
 
-  renderEdge(edge, siblingCount = 2) {
+  renderEdge(edge, siblingCount = 2, nodeType = '') {
     const key = `edge:${edge.id}`;
     const issues = issueTexts(edge.issues);
     const group = svgElement('g', {
@@ -622,7 +634,7 @@ export class ProcessGraph {
       role: 'button',
       tabindex: '0',
       'aria-pressed': 'false',
-      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge, siblingCount) ? `: ${edgeLabel(edge, siblingCount)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
+      'aria-label': `${edge.back ? 'Return edge' : 'Edge'} from ${edge.from} to ${edge.to}${edgeLabel(edge, siblingCount, nodeType) ? `: ${edgeLabel(edge, siblingCount, nodeType)}` : ''}${issues.length ? `, ${issues.join('; ')}` : ''}`,
     });
     const visible = svgElement('path', {
       class: 'process-edge-path', d: edge.path, fill: 'none',
@@ -630,7 +642,7 @@ export class ProcessGraph {
     });
     const hit = svgElement('path', { class: 'process-edge-hit', d: edge.path, fill: 'none' });
     group.append(visible, hit);
-    const label = edgeLabel(edge, siblingCount);
+    const label = edgeLabel(edge, siblingCount, nodeType);
     if (label) {
       const labelGroup = svgElement('g', { class: 'process-edge-label', transform: `translate(${edge.label.x} ${edge.label.y})`, 'aria-hidden': 'true' });
       const text = svgElement('text', { 'text-anchor': edge.back ? 'end' : 'middle' });

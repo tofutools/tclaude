@@ -252,12 +252,15 @@ function Issues({ controller, issues }) {
 }
 
 // EdgeHint explains that a connector's visible label is the key the run routes
-// on. It is positioned like InlineEditor -- host coordinates resolved from the
-// graph point by the controller -- and is aria-hidden-free so a screen reader
-// reaching the selected edge gets the same explanation sighted authors do.
+// on. Positioned like InlineEditor: host coordinates resolved from the graph
+// point by the controller.
+//
+// role="note" with aria-live="polite" so the explanation is announced when
+// selection brings it up; the selected edge's own aria-label is unchanged, so
+// this is additive rather than a replacement for it.
 function EdgeHint({ controller, hint }) {
   if (!hint?.open) return null;
-  return html`<div class="process-edge-hint" role="note"
+  return html`<div class="process-edge-hint" role="note" aria-live="polite"
     style=${`left:${Math.round(hint.left)}px;top:${Math.round(hint.top)}px`}>
     <p class="process-edge-hint-text">${hint.text}</p>
     <button class="process-edge-hint-pin" type="button"

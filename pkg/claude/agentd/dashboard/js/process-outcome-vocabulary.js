@@ -6,19 +6,23 @@
 // while the editor and the drag preview must agree with the renderer about
 // which outcomes are worth painting.
 
-// UNNAMED_OUTCOME is the outcome given to a connector whose label carries no
-// information: the sole way out of a node. It is a real key, never an empty
-// string — model.validate rejects blank outcomes (validate.go, missing_outcome)
-// and a YAML `next` map cannot hold a blank key. "next" is Go's
-// model.DefaultOutcome, so a lone edge named this way marshals back to the bare
-// shorthand `next: <to>` and routes through the plain-pass vocabulary.
-export const UNNAMED_OUTCOME = 'next';
+// UNNAMED_OUTCOME is the outcome a connector gets when it is a node's only way
+// out. It is 'pass' -- deliberately the FIRST entry in PASS_OUTCOMES, not the
+// tidier-looking model.DefaultOutcome ('next').
+//
+// 'next' is the LAST pass alias in precedence order. A lone edge named 'next'
+// that later gains a 'pass' sibling loses the pass routing TO that sibling
+// (validate.go emits ambiguous_pass_edge), silently re-pointing a run away from
+// the target the author drew first. Naming the lone edge 'pass' keeps it the
+// precedence winner forever, so drawing a second connector cannot disturb the
+// first. It also means this feature changes no stored outcome at all: 'pass' is
+// exactly what the editor already minted. Hiding the label is pure
+// presentation.
+export const UNNAMED_OUTCOME = 'pass';
 
 // PASS_OUTCOMES mirrors passOutcomeLabels in model/next.go, in the precedence
-// order plan.ResolvePassEdge uses. The editor consults it so it cannot hand one
-// node two competing pass edges: validateOutcomeRouting picks the first match
-// in this order and the loser becomes unreachable, with no diagnostic.
-export const PASS_OUTCOMES = ['pass', 'done', 'success', UNNAMED_OUTCOME];
+// order plan.ResolvePassEdge uses.
+export const PASS_OUTCOMES = ['pass', 'done', 'success', 'next'];
 
 // outcomeCarriesInformation reports whether an edge's outcome is worth drawing
 // over the arrow.
@@ -28,17 +32,22 @@ export const PASS_OUTCOMES = ['pass', 'done', 'success', UNNAMED_OUTCOME];
 // regardless of what it is called (plan.ResolvePassEdge's single-edge
 // fallback), so such a label states nothing the arrow does not already show.
 //
-// The whole vocabulary is covered, not just UNNAMED_OUTCOME, because templates
-// authored before unnamed connectors existed spell this exact situation
-// 'pass' — see docs/examples/code-change-with-review.yaml. Hiding only the new
-// default would declutter new work and leave every existing process as noisy as
-// before, which is the complaint this exists to answer.
+// The whole vocabulary is covered, not just UNNAMED_OUTCOME, because a lone
+// exit is spelled 'pass' by the editor and may be spelled 'done' or 'success'
+// by hand-written YAML.
+//
+// DECISION NODES ARE NEVER HIDDEN. plan.DecisionEdge matches a verdict exactly
+// and has NO single-edge fallback, so a decision's outcome is load-bearing even
+// when it is the only one -- hiding it would leave the author unable to see the
+// verdict the run must produce, and validateChoiceOutcomes does not cross-check
+// choices against next keys to catch the mismatch.
 //
 // A name outside the vocabulary is always drawn even on a lone edge: the author
 // typed something specific, so it is documentation rather than filler. And once
 // a sibling exists ANY outcome is the routing decision, and is always drawn.
-export function outcomeCarriesInformation(outcome, siblingCount) {
+export function outcomeCarriesInformation(outcome, siblingCount, nodeType = '') {
   if (!outcome) return false;
+  if (nodeType === 'decision') return true;
   if (siblingCount > 1) return true;
   return !PASS_OUTCOMES.includes(outcome);
 }

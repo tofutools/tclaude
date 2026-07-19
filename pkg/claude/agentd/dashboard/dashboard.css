@@ -12641,6 +12641,9 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 }
 .process-edge-hint-text {
   margin: 0;
+  /* Outcome keys are quoted into this text and have no length or charset
+     validation server-side, so a long unbroken key must wrap, not overflow. */
+  overflow-wrap: anywhere;
 }
 .process-edge-hint-pin {
   flex: none;
