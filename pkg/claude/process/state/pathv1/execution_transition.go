@@ -416,6 +416,7 @@ func ObserveExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, pl
 	command := aggregate.Commands[current.command.ID]
 	command.State = CommandObserved
 	aggregate.Commands[command.ID] = command
+	completeContactsForSettledCommand(&aggregate, command.ID, false, int64(CurrentLastLogSeq(input.checkpoint))+1)
 	activation := aggregate.Routing.Activations[command.Identity.SourceActivationID]
 	source := aggregate.Routing.Paths[activation.OutputPathID]
 	node := input.template.Nodes[current.nodeID]
@@ -865,6 +866,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		effect.State = "failed"
 	}
 	aggregate.SideEffects[effectID] = effect
+	completeContactsForSettledCommand(&aggregate, observedPerform.ID, false, int64(CurrentLastLogSeq(input.checkpoint))+1)
 	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation, terminalParallelFailure); err != nil {
 		return nil, err
 	}
@@ -1207,6 +1209,11 @@ func aggregateLogicalLastSeq(aggregate AggregateCheckpoint) (uint64, error) {
 			return 0, err
 		}
 	}
+	for _, contact := range aggregate.Contacts {
+		if err := add(contact.EventSeq); err != nil {
+			return 0, err
+		}
+	}
 	return uint64(maximum), nil
 }
 
@@ -1309,6 +1316,7 @@ func ObserveExclusiveCompletion(ctx context.Context, input *VerifiedExclusiveInp
 	command := aggregate.Commands[self]
 	command.State = CommandObserved
 	aggregate.Commands[self] = command
+	completeContactsForSettledCommand(&aggregate, self, false, int64(CurrentLastLogSeq(input.checkpoint))+1)
 	next, err := advanceCheckpointV7(input.checkpoint, aggregate, recovery.Result)
 	if err != nil {
 		return nil, err

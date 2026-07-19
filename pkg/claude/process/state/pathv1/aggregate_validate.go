@@ -140,6 +140,7 @@ func ValidateAggregate(view AggregateView) InvariantReport {
 	i.indexCauses()
 	i.indexTerminalAuthority()
 	i.validateCommandsAndAuthority()
+	i.validateContacts()
 	i.validateScopes()
 	i.validatePaths()
 	i.validateActivationsAndReservations()
@@ -391,6 +392,79 @@ func (i *aggregateIndex) validateCommandsAndAuthority() {
 		}
 		if _, ok := i.view.AdminRecords[id]; !ok {
 			i.c.add("admin_resolution_orphan", "adminResolutions."+id, "resolution has no owning admin record")
+		}
+	}
+}
+
+// validateContacts enforces the schedule/marker/command coherence contract:
+// the SideEffectContact marker is the sole lifecycle authority, every record
+// binds to exactly one marker and one perform_attempt_v1 command with the same
+// identity tuple, and settlement flips both sides in one transition. The
+// registry is nillable for pre-contact checkpoints; iteration over nil is
+// naturally empty.
+func (i *aggregateIndex) validateContacts() {
+	type contactSlot struct {
+		activation ActivationID
+		attempt    uint64
+	}
+	seen := map[contactSlot]string{}
+	for _, id := range sortedMapKeys(i.view.Contacts) {
+		record := i.view.Contacts[id]
+		path := "contacts." + id
+		if record.ID != id {
+			i.c.add("contact_key_mismatch", path, "map key differs from contact ID %q", record.ID)
+		}
+		if record.RunID != i.view.RunID {
+			i.c.add("contact_run_mismatch", path, "contact belongs to run %q", record.RunID)
+		}
+		if err := ValidateContactRecord(record); err != nil {
+			i.c.add("contact_invalid", path, "%v", err)
+			continue
+		}
+		slot := contactSlot{record.ActivationID, record.Attempt}
+		if prior, dup := seen[slot]; dup {
+			i.c.add("contact_slot_duplicate", path, "activation attempt already has contact %q", prior)
+		}
+		seen[slot] = id
+		if _, ok := i.view.Routing.Activations[record.ActivationID]; !ok {
+			i.c.add("contact_activation_missing", path, "activation %q is missing", record.ActivationID)
+		}
+		marker, ok := i.view.SideEffects[id]
+		if !ok || marker.Kind != SideEffectContact {
+			i.c.add("contact_marker_missing", path, "contact has no side-effect marker")
+			continue
+		}
+		if marker.RunID != record.RunID || marker.ActivationID != record.ActivationID ||
+			marker.Attempt != record.Attempt || marker.Assignee != record.Assignee {
+			i.c.add("contact_marker_mismatch", path, "marker identity differs from schedule record")
+		}
+		if (record.PauseReason != "") != (marker.State == ContactStatePaused) {
+			i.c.add("contact_pause_reason_incoherent", path, "pause reason presence does not match marker state %q", marker.State)
+		}
+		if marker.State == ContactStateDue && (record.NextContactAt == "" || record.EscalatedAt != "") {
+			i.c.add("contact_due_incoherent", path, "due contact must have a next contact time and no escalation")
+		}
+		command, ok := i.view.Commands[record.SourceCommandID]
+		if !ok {
+			i.c.add("contact_command_missing", path, "source command %q is missing", record.SourceCommandID)
+			continue
+		}
+		identity := command.Identity
+		if identity.Kind != CommandPerformAttempt || identity.RunID != record.RunID ||
+			identity.SourceActivationID != record.ActivationID || identity.Attempt != record.Attempt {
+			i.c.add("contact_command_mismatch", path, "source command %q does not own this contact's activation attempt", record.SourceCommandID)
+		}
+		if ActiveSideEffect(marker) != command.State.Active() {
+			i.c.add("contact_settlement_incoherent", path, "marker state %q does not cohere with source command state %q", marker.State, command.State)
+		}
+	}
+	for _, id := range sortedMapKeys(i.view.SideEffects) {
+		effect := i.view.SideEffects[id]
+		if effect.Kind != SideEffectContact {
+			continue
+		}
+		if _, ok := i.view.Contacts[id]; !ok {
+			i.c.add("contact_record_missing", "sideEffects."+id, "contact marker has no schedule record")
 		}
 	}
 }

@@ -86,7 +86,7 @@ func checkedUsageInt(name string, value uint64) (int, error) {
 // one reference each in addition to the element fields documented below.
 //
 // Records are the ten RoutingState registries plus Commands, SideEffects,
-// AdminRecords, and AdminResolutions. The exact reference table is:
+// Contacts, AdminRecords, and AdminResolutions. The exact reference table is:
 //
 //   - path: ProducedPathIDs and CandidateLineage list entries; ParentPathID,
 //     SourceActivation.ID, TargetReservationID, CandidateID, ScopeID,
@@ -113,6 +113,7 @@ func checkedUsageInt(name string, value uint64) (int, error) {
 //   - command: idempotency key, payload hash, source activation, source path,
 //     target reservation, input digest, cause digest, and plan digest;
 //   - side effect: activation and source command;
+//   - contact: activation and source command;
 //   - admin record: evidence and resolution digest;
 //   - admin resolution: owning admin-record map key, node, and evidence.
 //
@@ -128,8 +129,8 @@ func MeasureAggregate(view AggregateView) (Usage, error) {
 		len(view.Routing.Paths), len(view.Routing.Scopes), len(view.Routing.Reservations),
 		len(view.Routing.Activations), len(view.Routing.CandidateClosures), len(view.Routing.CauseRecords),
 		len(view.Routing.CauseSets), len(view.Routing.DetachmentSets), len(view.Routing.Detachments),
-		len(view.Routing.Propagation), len(view.Commands), len(view.SideEffects), len(view.AdminRecords),
-		len(view.AdminResolutions),
+		len(view.Routing.Propagation), len(view.Commands), len(view.SideEffects), len(view.Contacts),
+		len(view.AdminRecords), len(view.AdminResolutions),
 	)
 	u := usageCounter{paths: uint64(len(view.Routing.Paths)), records: uint64(records)}
 	if records > MaxRoutingRecords {
@@ -321,6 +322,15 @@ func MeasureAggregate(view AggregateView) (Usage, error) {
 	for _, id := range sortedMapKeys(view.SideEffects) {
 		effect := view.SideEffects[id]
 		if err := u.ids(effect.ActivationID, effect.SourceCommandID); err != nil {
+			return Usage{}, err
+		}
+		if u.referencesOverBudget() {
+			return aggregateUsage(u, view.CheckpointBytes)
+		}
+	}
+	for _, id := range sortedMapKeys(view.Contacts) {
+		contact := view.Contacts[id]
+		if err := u.ids(contact.ActivationID, contact.SourceCommandID); err != nil {
 			return Usage{}, err
 		}
 		if u.referencesOverBudget() {
