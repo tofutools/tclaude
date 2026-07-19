@@ -185,14 +185,16 @@ func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
 }
 
 // TestPaneInjectLock_PerTargetIdentity pins the keying: one mutex per
-// pane target (so two agents are NOT serialized against each other), and
-// the same mutex returned for repeat lookups of one target.
+// pane identity (so two agents are NOT serialized against each other),
+// the same mutex for repeat lookups, and — since injection call sites key
+// through injectLockKey — the same mutex for the raw and '='-pinned
+// spellings of one session target.
 func TestPaneInjectLock_PerTargetIdentity(t *testing.T) {
-	a1 := paneInjectLock("pane-a:0.0")
-	a2 := paneInjectLock("pane-a:0.0")
-	b := paneInjectLock("pane-b:0.0")
+	a1 := paneInjectLock(injectLockKey("pane-a:0.0"))
+	a2 := paneInjectLock(injectLockKey("=pane-a:0.0"))
+	b := paneInjectLock(injectLockKey("pane-b:0.0"))
 	if a1 != a2 {
-		t.Fatal("same target must return the same mutex")
+		t.Fatal("raw and '='-pinned spellings of one target must return the same mutex")
 	}
 	if a1 == b {
 		t.Fatal("different targets must return different mutexes (per-pane, not a single global lock)")
@@ -202,7 +204,7 @@ func TestPaneInjectLock_PerTargetIdentity(t *testing.T) {
 func TestInjectTextAndSubmit_TimesOutWaitingForPaneLock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const target = "pane-held:0.0"
-		mu := paneInjectLock(target)
+		mu := paneInjectLock(injectLockKey(target))
 		mu.Lock()
 		t.Cleanup(mu.Unlock)
 

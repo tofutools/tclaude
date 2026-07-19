@@ -1,9 +1,9 @@
 package testharness
 
 import (
-	"time"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
