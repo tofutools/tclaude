@@ -1,5 +1,6 @@
 import { buildWorklistAction, isDestructiveAction, mintUUID, retainedActionKey } from './process-worklist-core.js';
 import { templateHeadSignature } from './process-external-change.js';
+import { idempotentRequestHeaders } from './request-idempotency.js';
 import { dashboardState } from './snapshot-store.js';
 import {
   PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
@@ -182,21 +183,27 @@ export function createProcessesActions({
     if (!next) return false;
     const spec = state.create.value;
     if (!spec || !state.beginMutation()) return false;
+    const attempt = spec.attempt?.name === next
+      ? spec.attempt : { name: next, key: mintAttemptID() };
+    state.setCreate({ ...spec, name: next, error: '', attempt });
     try {
       const { blankEditView } = await import('./process-edit-model.js');
       const scaffold = blankEditView(next);
       const template = { ...scaffold.template };
       delete template.id;
-      const response = await fetchImpl('/v1/process/templates', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({
-          template,
-          edges: scaffold.edges,
-          layout: scaffold.layout,
-        }),
+      const path = '/v1/process/templates';
+      const requestBody = JSON.stringify({ template, edges: scaffold.edges, layout: scaffold.layout });
+      const response = await fetchImpl(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, requestBody, attempt.key),
+        credentials: 'same-origin', body: requestBody,
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const error = new Error(body?.message || body?.error || `${response.status} ${response.statusText}`);
+        error.definitiveResponse = true;
+        throw error;
+      }
+      if (!body) throw new Error('template creation returned an unreadable response');
       const id = String(body.id || '').trim();
       if (!id) throw new Error('template creation returned no id');
       const currentRef = String(body.ref || '').trim();
@@ -216,7 +223,12 @@ export function createProcessesActions({
       void load('templates', { quiet: true });
       return true;
     } catch (error) {
-      if (state.create.value?.key === spec.key) state.setCreate({ ...spec, name: next, error: error.message });
+      if (state.create.value?.key === spec.key) {
+        state.setCreate({
+          ...spec, name: next, error: error.message,
+          attempt: error.definitiveResponse ? null : attempt,
+        });
+      }
       state.setNotice(`Template creation failed: ${error.message}`);
       notify(`process template creation failed: ${error.message}`, true);
       return false;

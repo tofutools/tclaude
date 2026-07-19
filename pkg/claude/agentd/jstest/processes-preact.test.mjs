@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createPreactHarness } from './preact-harness.mjs';
 
 const prefs = () => { const values = new Map(); return { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) }; };
@@ -1377,6 +1378,9 @@ test('creating a template persists the named scaffold and prepopulates the edito
   const create = requests.find((request) => request.options.method === 'POST');
   assert.equal(create.path, '/v1/process/templates');
   assert.equal(create.options.credentials, 'same-origin');
+  assert.match(create.options.headers['Idempotency-Key'], /^[0-9a-f-]{36}$/);
+  assert.equal(create.options.headers['X-Tclaude-Request-Digest'], createHash('sha256')
+    .update(`POST\x00/v1/process/templates\x00${create.options.body}`).digest('hex'));
   const payload = JSON.parse(create.options.body);
   assert.equal(payload.template.name, 'Release train');
   assert.equal(Object.hasOwn(payload.template, 'id'), false, 'the browser never proposes a permanent id');
@@ -1574,8 +1578,57 @@ test('a failed template creation stays in the dialog and surfaces the backend er
   assert.equal(await actions.submitCreate('Release train'), false);
   assert.equal(state.create.value?.name, 'Release train');
   assert.equal(state.create.value?.error, 'store unavailable');
+  assert.equal(state.create.value?.attempt, null, 'a definitive response gets a fresh key on retry');
   assert.equal(state.canvas.value, null, 'a failed create never opens a fictional template id');
   assert.match(state.notice.value, /Template creation failed: store unavailable/);
   assert.match(notices.at(-1)[0], /process template creation failed: store unavailable/);
   assert.equal(state.mutation.value.busy, false);
+});
+
+test('an ambiguous template-create failure retries with the same durable attempt key', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const attemptID = '11111111-2222-4333-8444-555555555555';
+  const generatedID = '9f3c2b1a4d5e6f708192a3b4c5d6e7f8';
+  let minted = 0;
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {}, mintAttemptID: () => { minted += 1; return attemptID; },
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (options.method === 'POST' && requests.filter((request) => request.options.method === 'POST').length === 1) {
+        throw new Error('connection reset after commit');
+      }
+      if (options.method === 'POST') {
+        return {
+          ok: true, status: 201, statusText: 'Created',
+          json: async () => ({
+            id: generatedID, ref: `${generatedID}@sha256:new`,
+            sourceHash: 'source-new', semanticHash: 'semantic-new', diagnostics: [],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ templates: [] }) };
+    },
+  });
+  actions.openCreate();
+
+  assert.equal(await actions.submitCreate('Release train'), false);
+  assert.equal(state.create.value?.attempt?.key, attemptID);
+  assert.match(state.notice.value, /connection reset after commit/);
+  assert.equal(await actions.submitCreate('Release train'), true);
+
+  const posts = requests.filter((request) => request.options.method === 'POST');
+  assert.equal(posts.length, 2);
+  assert.equal(minted, 1, 'one logical create keeps one idempotency key across an ambiguous retry');
+  assert.equal(posts[0].options.body, posts[1].options.body);
+  assert.equal(posts[0].options.headers['Idempotency-Key'], attemptID);
+  assert.equal(posts[1].options.headers['Idempotency-Key'], attemptID);
+  assert.equal(posts[0].options.headers['X-Tclaude-Request-Digest'],
+    posts[1].options.headers['X-Tclaude-Request-Digest']);
+  assert.equal(state.canvas.value?.id, generatedID,
+    'the retry adopts the original backend result instead of minting a second template');
 });
