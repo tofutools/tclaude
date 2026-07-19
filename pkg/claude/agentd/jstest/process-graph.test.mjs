@@ -418,6 +418,63 @@ test('Space-primary drag pans over a node and a second pointer cannot replace it
   assert.equal(fake.pointer.id, 9);
 });
 
+test('a pointerdown reusing the armed pointer id cancels the dead gesture instead of being swallowed', () => {
+  // A pointer cannot physically press twice, so a same-id pointerdown proves
+  // the previous gesture's pointerup/pointercancel never reached the SVG.
+  // Silently ignoring it left an armed ghost gesture that swallowed the next
+  // drag and committed it against a stale start frame.
+  const cancels = [];
+  const snapped = [];
+  const fake = {
+    pointer: { id: 1, mode: 'node', nodeID: 'a', nodeIDs: ['a'], lastClientX: 40, lastClientY: 30 },
+    dragMoved: true,
+    root: { focus() {} }, selected: null, spaceHeld: false,
+    options: { onNodeDragCancel: (value) => cancels.push(value) },
+    view: { x: 0, y: 0, k: 1 },
+    svg: { setPointerCapture() {}, releasePointerCapture() {} },
+    eventTarget() { return { node: { dataset: { nodeId: 'a' } }, edge: null, port: null }; },
+    clientToGraph: (x, y) => ({ x, y }),
+    layout: { nodes: [{ id: 'a', x: 12, y: 34 }] },
+    snapNodesHome(ids) { snapped.push(...ids); },
+    restoreTransientEdges() {},
+    raiseNode() {},
+    onPointerCancel: ProcessGraph.prototype.onPointerCancel,
+  };
+  ProcessGraph.prototype.onPointerDown.call(fake, {
+    button: 0, pointerId: 1, clientX: 40, clientY: 30, preventDefault() {},
+  });
+  assert.equal(cancels.length, 1, 'the dead gesture ends through its cancel hook');
+  assert.deepEqual(snapped, ['a'], 'the dead gesture snaps its nodes home');
+  assert.ok(fake.pointer, 'the new gesture is armed rather than swallowed');
+  assert.equal(fake.pointer.id, 1);
+  assert.equal(fake.pointer.mode, 'node');
+  assert.deepEqual(fake.pointer.starts, [{ id: 'a', x: 12, y: 34 }],
+    'the new gesture snapshots start positions from the live layout');
+});
+
+test('node drag end reports the start positions captured by its own gesture', () => {
+  const ends = [];
+  const fake = {
+    pointer: {
+      id: 4, mode: 'node', nodeID: 'work', nodeIDs: ['work'],
+      startPoint: { x: 10, y: 10 },
+      starts: [{ id: 'work', x: 100, y: 200 }],
+    },
+    dragMoved: true,
+    options: { onNodeDragEnd: (value) => ends.push(value) },
+    svg: { releasePointerCapture() {} },
+    clientToGraph: () => ({ x: 40, y: 25 }),
+    snapNodesHome() {}, restoreTransientEdges() {},
+  };
+  const gestureStarts = fake.pointer.starts;
+  ProcessGraph.prototype.onPointerUp.call(fake, { pointerId: 4, clientX: 40, clientY: 25 });
+  assert.equal(ends.length, 1);
+  assert.deepEqual(ends[0].starts, [{ id: 'work', x: 100, y: 200 }]);
+  assert.deepEqual(ends[0].delta, { x: 30, y: 15 });
+  assert.notEqual(ends[0].starts[0], gestureStarts[0],
+    'consumers receive copies, not the live gesture state');
+});
+
 test('an unmoved pan gesture never falls through to select its underlying node', () => {
   let selected = 0;
   const fake = {

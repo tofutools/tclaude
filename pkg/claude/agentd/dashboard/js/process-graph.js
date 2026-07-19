@@ -1030,7 +1030,20 @@ export class ProcessGraph {
 
   onPointerDown(event) {
     this.observeCanvasPointer?.(event);
-    if (this.pointer) return;
+    if (this.pointer) {
+      // A pointerdown carrying the armed pointer's own id is physical proof
+      // the previous gesture's pointerup/pointercancel never reached this SVG
+      // (a pointer cannot press twice): cancel the dead gesture instead of
+      // letting it swallow this one and replay a stale drag. A different id
+      // (multi-touch second finger) still never hijacks the owned gesture.
+      if (this.pointer.id !== event.pointerId) return;
+      this.onPointerCancel({
+        pointerId: this.pointer.id,
+        clientX: this.pointer.lastClientX,
+        clientY: this.pointer.lastClientY,
+        type: 'stale-gesture',
+      });
+    }
     const middle = event.button === 1;
     if (event.button !== 0 && !middle) return;
     // Resolve the target before focus: focusing the graph blurs an inspector
@@ -1100,11 +1113,19 @@ export class ProcessGraph {
       .map((item) => item.id);
     const nodeIDs = mode === 'node' && selectionContains(this.selected, { type: 'node', id: nodeID })
       ? selectedNodes : nodeID ? [nodeID] : [];
+    // The gesture owns its own start-position snapshot. Committing from state
+    // captured outside the pointer's lifetime (as the adapter once did across
+    // drag callbacks) let a gesture that lost its terminal event poison the
+    // next drag with stale coordinates.
+    const starts = nodeIDs
+      .map((id) => (this.layout?.nodes || []).find((node) => node.id === id))
+      .filter(Boolean)
+      .map(({ id, x, y }) => ({ id, x, y }));
     this.pointer = {
       id: event.pointerId, mode, startClientX: event.clientX, startClientY: event.clientY,
       lastClientX: event.clientX, lastClientY: event.clientY,
       pointerType: event.pointerType || 'mouse',
-      startPoint: point, startView: { ...this.view }, nodeID, nodeIDs,
+      startPoint: point, startView: { ...this.view }, nodeID, nodeIDs, starts,
       edgeID: target.edge?.dataset.edgeId, port: target.port?.dataset.port,
       selectionStarted: false,
     };
@@ -1212,6 +1233,7 @@ export class ProcessGraph {
       this.restoreTransientEdges();
       hook(this.options, 'onNodeDragEnd')({
         nodeId: pointer.nodeID, nodeIds: [...(pointer.nodeIDs || [pointer.nodeID])],
+        starts: (pointer.starts || []).map((start) => ({ ...start })),
         delta: {
           x: point.x - pointer.startPoint.x,
           y: point.y - pointer.startPoint.y,

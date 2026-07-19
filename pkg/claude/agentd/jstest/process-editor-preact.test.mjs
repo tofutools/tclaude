@@ -182,6 +182,39 @@ test('Preact editor layering is transient across focus, read-only selection, and
   editor.destroy();
 });
 
+test('rapid same-node drags always commit the drop, even across a lost terminal event and mid-drag repaints', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.model.template.nodes.build = { type: 'task', name: 'Build' };
+  editor.model.layout.nodes.build = { x: 300, y: 200 };
+  await harness.act(() => editor.refresh());
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture ||= () => {};
+  svg.releasePointerCapture ||= () => {};
+  const buildEl = () => host.querySelector('.process-node-layer [data-node-id="build"]');
+
+  // Drag 1: a clean rapid drag commits exactly at the drop point.
+  harness.fireEvent(buildEl(), 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: 300, clientY: 200 });
+  harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 340, clientY: 230 });
+  harness.fireEvent(svg, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 340, clientY: 230 });
+  assert.deepEqual(editor.model.layout.nodes.build, { x: 340, y: 230 });
+
+  // Drag 2 loses its pointerup entirely (released off-SVG with no delivered
+  // capture). Drag 3 reuses the mouse pointer id: the dead gesture must not
+  // swallow it or replay its stale start frame into the commit.
+  harness.fireEvent(buildEl(), 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: 340, clientY: 230 });
+  harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 400 });
+  harness.fireEvent(buildEl(), 'pointerdown', { button: 0, pointerId: 1, pointerType: 'mouse', clientX: 340, clientY: 230 });
+  harness.fireEvent(svg, 'pointermove', { pointerId: 1, pointerType: 'mouse', clientX: 380, clientY: 260 });
+  // A validation response repaint landing mid-drag must not disturb the commit.
+  await harness.act(() => editor.validation.applyDiagnostics([]));
+  harness.fireEvent(svg, 'pointerup', { pointerId: 1, pointerType: 'mouse', clientX: 380, clientY: 260 });
+  assert.deepEqual(editor.model.layout.nodes.build, { x: 380, y: 260 },
+    'the drop is authoritative: committed from the live gesture against the current model');
+  assert.equal(buildEl().getAttribute('transform'), 'translate(380 260)',
+    'the rendered node settles exactly where it was dropped');
+  editor.destroy();
+});
+
 test('custom snippets create, keyboard-insert, rename, and delete through the Preact palette', async (t) => {
   const previousFetch = globalThis.fetch;
   const id = `psn_${'a'.repeat(32)}`;
