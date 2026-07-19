@@ -50,6 +50,12 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"usage-card-controls",
 		"&spans=",
 		"tclaude.dash.usage.seriesSpans",
+		// A provider's quota windows share one centred row, capped at the
+		// per-card width times that row's card count.
+		"groupSeriesByProvider(current.series)",
+		"usage-provider-row",
+		"--usage-cols:${row.series.length}",
+		"--usage-card-max",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)
