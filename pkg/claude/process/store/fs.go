@@ -1248,6 +1248,93 @@ func (s *FS) getTemplateSourceUnlocked(ctx context.Context, id, hash, ref string
 	return model.CanonicalYAML(tmpl)
 }
 
+// unfinishedTemplateRunIDs returns the runs referencing id that could still
+// need the stored template. Finished runs are excluded: they keep the snapshot
+// pinned into run.json at instantiation, so their history and verification
+// survive the library entry going away. A run whose record or state cannot be
+// read counts as unfinished — an unreadable run is exactly the case where we
+// must not assume the template is free.
+func (s *FS) unfinishedTemplateRunIDs(ctx context.Context, id string) ([]string, error) {
+	runs, err := s.ListRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var blocking []string
+	for _, run := range runs {
+		runID, _, refErr := parseTemplateRef(run.TemplateRef)
+		if refErr != nil || runID != id {
+			continue
+		}
+		st, stateErr := s.LoadRunState(ctx, run.ID)
+		if stateErr != nil || st == nil || !runStatusIsFinished(st.Status) {
+			blocking = append(blocking, run.ID)
+		}
+	}
+	return blocking, nil
+}
+
+// runStatusIsFinished reports whether a run has reached a state it can never
+// leave. It is deliberately narrower than plan.AllowsExecution: a paused,
+// blocked, dirty, or inconsistent run cannot execute right now but may still be
+// resumed or repaired, and both paths need the stored template.
+func runStatusIsFinished(status state.RunStatus) bool {
+	switch status {
+	case state.RunStatusCompleted, state.RunStatusFailed, state.RunStatusCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+// DeleteTemplate removes a template id and every version stored under it. It
+// refuses while any unfinished run still references the template, so an
+// in-flight process cannot lose the definition it is executing.
+//
+// Deletion is irreversible: the version history, editor source, and authorship
+// trail for that id all go away. Runs that already completed are unaffected
+// because their template snapshot lives in run.json.
+func (s *FS) DeleteTemplate(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := safeSegment(id); err != nil {
+		return fmt.Errorf("invalid template id: %w", err)
+	}
+	unlock, err := s.lockTemplate(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	// Settle any half-finished attributed save before removing the tree, so a
+	// concurrent authoring transaction cannot be left pointing at files we are
+	// about to delete.
+	if err := s.recoverAttributedTemplateSaveUnlocked(ctx, id); err != nil {
+		return err
+	}
+	dir := filepath.Join(s.root, "templates", id)
+	if _, statErr := os.Stat(dir); errors.Is(statErr, os.ErrNotExist) {
+		return ErrNotFound
+	} else if statErr != nil {
+		return fmt.Errorf("stat process template: %w", statErr)
+	}
+	// The run scan runs under the template lock so a concurrent instantiate
+	// cannot pin this template between the check and the removal.
+	blocking, err := s.unfinishedTemplateRunIDs(ctx, id)
+	if err != nil {
+		return err
+	}
+	if len(blocking) > 0 {
+		return &TemplateInUseError{TemplateID: id, RunIDs: blocking}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove process template: %w", err)
+	}
+	if err := syncDir(filepath.Dir(dir)); err != nil {
+		return fmt.Errorf("sync process template removal: %w", err)
+	}
+	return nil
+}
+
 func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

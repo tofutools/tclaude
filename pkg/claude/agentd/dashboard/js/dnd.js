@@ -326,6 +326,12 @@ function bindDnd() {
     // move. Bail so this handler doesn't preventDefault + clear the shared pill
     // on a dock drop before the JSON.parse below happened to fail on it.
     if (e.dataTransfer.types.includes('application/x-tclaude-dock-item')) return;
+    // A process-template drag (process-template-dnd.js) targets the shared bin
+    // to delete a template and, like the two above, carries only its own custom
+    // MIME. Bail for the same reason: this handler does not gate on
+    // dndDragActive, so it would otherwise preventDefault + clear the shared
+    // pill on a template drop.
+    if (e.dataTransfer.types.includes('application/x-tclaude-process-template')) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     e.preventDefault();

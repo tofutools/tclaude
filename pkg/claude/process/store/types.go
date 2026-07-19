@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
@@ -34,7 +35,25 @@ var (
 	ErrExecutionViewOverBudget = errors.New("execution_view_over_budget")
 	ErrViewerResourceLimit     = errors.New("process viewer resource limit exceeded")
 	ErrWriterInProgress        = errors.New("process store writer is in progress")
+	ErrTemplateInUse           = errors.New("process template is referenced by runs that have not finished")
 )
+
+// TemplateInUseError reports which runs blocked a template deletion. Callers
+// surface the run ids so an operator can finish or cancel them instead of
+// guessing what is still holding the template.
+type TemplateInUseError struct {
+	TemplateID string
+	RunIDs     []string
+}
+
+func (e *TemplateInUseError) Error() string {
+	return fmt.Sprintf(
+		"process template %q is referenced by %d unfinished run(s): %s",
+		e.TemplateID, len(e.RunIDs), strings.Join(e.RunIDs, ", "),
+	)
+}
+
+func (e *TemplateInUseError) Unwrap() error { return ErrTemplateInUse }
 
 // ExecutionViewOverBudgetError identifies the exact bounded-read dimension
 // that refused an execution view. It is deliberately distinct from evidence

@@ -472,6 +472,60 @@ export function createProcessesActions({
       return false;
     }
   }
+  // deleteTemplate is the shared commit for BOTH delete affordances (the row
+  // button and the drag-to-bin drop), so the confirm copy, the in-use handling,
+  // and the list refresh cannot drift between them.
+  //
+  // Deleting drops the whole version history for the id. Runs that already
+  // finished keep the template snapshot pinned into their run record, so their
+  // history stays readable; the daemon refuses outright while any unfinished
+  // run still needs the stored template.
+  async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {
+    if (!id) return false;
+    const label = String(name || '').trim() || id;
+    const versions = Number(versionCount) || 0;
+    const wizard = document.body?.classList?.contains('wizard');
+    const approved = await confirm({
+      title: wizard ? 'Unmake this rite?' : 'Delete this process template?',
+      body: wizard
+        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail. Quests already ended keep their own bound copy and stay readable. A rite still underway cannot be unmade.`
+        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. Runs that already finished keep their own pinned copy and stay readable. This cannot be undone.`,
+      meta: id,
+      okLabel: wizard ? 'Unmake rite' : 'Delete template',
+    });
+    if (!approved) return false;
+    if (!state.beginMutation()) {
+      state.setNotice('Another process action is still running; retry the delete once it settles.');
+      return false;
+    }
+    try {
+      const response = await fetchImpl(`/v1/process/templates/${encodeURIComponent(id)}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      const body = await response.json().catch(() => ({}));
+      if (body.code === 'process_template_in_use') {
+        const runs = Array.isArray(body.runIds) ? body.runIds : [];
+        const shown = runs.slice(0, 3).join(', ');
+        const rest = runs.length > 3 ? ` and ${runs.length - 3} more` : '';
+        throw new Error(
+          `${runs.length} run${runs.length === 1 ? '' : 's'} still need${runs.length === 1 ? 's' : ''} it (${shown}${rest}). `
+          + 'Finish or cancel them first.',
+        );
+      }
+      if (response.status === 404) throw new Error('this template no longer exists; refresh Processes');
+      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+      state.setNotice(`Deleted ${label}.`);
+      notify(`deleted process template ${label}`);
+      void load('templates', { quiet: true });
+      return true;
+    } catch (error) {
+      state.setNotice(`Delete failed: ${error.message}`);
+      notify(`process template delete failed: ${error.message}`, true);
+      return false;
+    } finally {
+      state.endMutation();
+    }
+  }
   function closeInstantiation() {
     if (state.mutation.value.busy) return false;
     state.setInstantiation(null);
@@ -561,7 +615,7 @@ export function createProcessesActions({
     load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
-    openRename, closeRename, submitRename, renameTemplate,
+    openRename, closeRename, submitRename, renameTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
