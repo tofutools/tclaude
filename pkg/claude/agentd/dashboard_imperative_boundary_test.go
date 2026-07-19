@@ -109,7 +109,7 @@ func TestDashboardOperationExportsHaveDirectProducers(t *testing.T) {
 			t.Errorf("row-actions.js contains %q; it must remain a stateless live-producer binder", forbidden)
 		}
 	}
-	for _, required := range []string{"Object.freeze({ ...source.dataset })", "!source.isConnected", "handleRowAction(actionDescriptor(source))"} {
+	for _, required := range []string{"Object.freeze({ ...source.dataset })", "!source.isConnected", "handleRowAction(actionDescriptor(source, event))"} {
 		if !strings.Contains(row, required) {
 			t.Errorf("row-actions.js missing %q; delegated routing must freeze plain data and reject stale producers", required)
 		}

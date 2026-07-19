@@ -53,6 +53,11 @@ test('tab installers are idempotent and stale cleanup cannot tear down a reinsta
 test('row root delegation installs once, cleans every listener, and survives stale cleanup', async (t) => {
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/dashboard.js', dashboardStub);
+  await harness.replaceDashboardModule('js/row-action-handler.js', `
+    export const handledActions = [];
+    export function handleRowAction(action) { handledActions.push(action); }
+  `);
+  const { handledActions } = await harness.importDashboardModule('js/row-action-handler.js');
   const {
     actionDescriptor, bindRowActions, liveActionSource,
   } = await harness.importDashboardModule('js/row-actions.js');
@@ -65,8 +70,13 @@ test('row root delegation installs once, cleans every listener, and survives sta
   producer.dataset.conv = 'conv-after';
   assert.deepEqual(descriptor, {
     producerId: 'frozen-producer',
+    openInBackground: false,
     data: { act: 'documented-cross-feature-route', conv: 'conv-before' },
   }, 'delegation freezes plain data instead of retaining a live DOM producer');
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    assert.equal(actionDescriptor(producer, { [modifier]: true }).openInBackground, true,
+      `${modifier} marks a delegated click as a background terminal request`);
+  }
   assert.equal(Object.isFrozen(descriptor), true);
   assert.equal(Object.isFrozen(descriptor.data), true);
   producer.remove();
@@ -88,15 +98,44 @@ test('row root delegation installs once, cleans every listener, and survives sta
   const first = bindRowActions();
   assert.equal(bindRowActions(), first);
   assert.equal(added.filter(([type]) => type === 'click').length, 1);
+  assert.equal(added.filter(([type]) => type === 'contextmenu').length, 1);
+  assert.equal(added.filter(([type]) => type === 'mousedown').length, 1);
   assert.equal(added.filter(([type]) => type === 'keydown').length, 1);
   first();
-  for (const [type, listener] of added.slice(0, 2)) {
+  for (const [type, listener] of added) {
     assert.ok(removed.some(([removedType, removedListener]) =>
       removedType === type && removedListener === listener));
   }
 
   const second = bindRowActions();
   first();
+  const terminalAction = harness.document.body.appendChild(harness.document.createElement('button'));
+  terminalAction.dataset.act = 'web-open-window';
+  terminalAction.dataset.agent = 'agt_background';
+  terminalAction.dataset.label = 'background';
+  const macControlClick = harness.fireEvent(terminalAction, 'contextmenu', { ctrlKey: true });
+  assert.equal(macControlClick.defaultPrevented, true,
+    'macOS Control-click context gestures dispatch the terminal action instead of opening a menu');
+  assert.equal(handledActions.length, 1);
+  assert.equal(handledActions[0].openInBackground, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  harness.fireEvent(terminalAction, 'click', { ctrlKey: true });
+  assert.equal(handledActions.length, 1,
+    'WebKit follow-up click stays suppressed across the real mouseup task boundary');
+  harness.fireEvent(terminalAction, 'contextmenu', { ctrlKey: true });
+  assert.equal(handledActions.length, 2);
+  harness.fireEvent(terminalAction, 'mousedown', { ctrlKey: true });
+  harness.fireEvent(terminalAction, 'click', { ctrlKey: true });
+  assert.equal(handledActions.length, 3,
+    'a new mouse gesture clears stale suppression when a browser emitted contextmenu only');
+  const ordinaryContextMenu = harness.fireEvent(terminalAction, 'contextmenu');
+  assert.equal(ordinaryContextMenu.defaultPrevented, false,
+    'ordinary terminal context menus remain available');
+  const unrelated = harness.document.body.appendChild(harness.document.createElement('button'));
+  unrelated.dataset.act = 'documented-cross-feature-route';
+  const unrelatedModifiedMenu = harness.fireEvent(unrelated, 'contextmenu', { ctrlKey: true });
+  assert.equal(unrelatedModifiedMenu.defaultPrevented, false,
+    'modified context gestures do not activate unrelated row actions');
   const chip = harness.document.body.appendChild(harness.document.createElement('span'));
   chip.dataset.act = 'documented-cross-feature-route';
   chip.setAttribute('role', 'button');
