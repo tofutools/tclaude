@@ -67,7 +67,7 @@ import {
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
-import { startSnapshotPoll } from './snapshot-poll.js';
+import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -391,7 +391,7 @@ async function settleInitialLayout() {
   // can remain pending at the network layer; later request generations must
   // still get their 2s retry opportunities instead of bootstrap wedging.
   pageCleanups.push(startSnapshotPoll(refresh, { immediate: false }));
-  await Promise.race([refresh(), firstSnapshot, bootTimedOut]);
+  await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut);
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);
 

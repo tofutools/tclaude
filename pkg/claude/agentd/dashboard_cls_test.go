@@ -29,7 +29,7 @@ func TestDashboardStartupLayoutCurtain(t *testing.T) {
 		{css, `animation: dashboard-boot-failsafe 0s 8s forwards`, "a JS fault must not leave the dashboard permanently hidden"},
 		{css, `animation: dashboard-boot-label-failsafe 0s 8s forwards`, "the CSS failsafe must retire its loading label"},
 		{css, `pointer-events: none`, "the visual loading label must never block recovery interactions"},
-		{boot, `await Promise.race([refresh(), firstSnapshot, bootTimedOut])`, "the first snapshot wait must be bounded while the poll retries"},
+		{boot, `await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut)`, "the first snapshot wait must be bounded while the poll retries"},
 		{boot, `await settleInitialLayout();`, "deferred dock/nav geometry must settle before reveal"},
 		{boot, `document.body.classList.remove('dashboard-booting')`, "successful bootstrap must reveal the dashboard"},
 		{boot, `startSnapshotPoll(refresh, { immediate: false })`, "the scheduler must retry without duplicating the explicit first refresh"},
@@ -40,7 +40,7 @@ func TestDashboardStartupLayoutCurtain(t *testing.T) {
 		}
 	}
 
-	refreshAt := strings.Index(boot, "await Promise.race([refresh(), firstSnapshot, bootTimedOut])")
+	refreshAt := strings.Index(boot, "await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut)")
 	navAt := strings.Index(boot, "initNavHistory();")
 	revealAt := strings.Index(boot, "document.body.classList.remove('dashboard-booting')")
 	pollAt := strings.Index(boot, "startSnapshotPoll(refresh, { immediate: false })")
