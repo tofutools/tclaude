@@ -77,6 +77,107 @@ func TestIdempotencyPendingFromReplacedDaemonReportsUnknown(t *testing.T) {
 	assert.Contains(t, body["error"], "outcome is unknown")
 }
 
+func TestIdempotencyClaimFailureReportsUnknownWithoutRunningHandler(t *testing.T) {
+	setupTestDB(t)
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`DROP TABLE agentd_idempotency`)
+	require.NoError(t, err)
+
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) })
+	rec := httptest.NewRecorder()
+	idempotencyRequestsWithOwner(handler, "daemon-a").ServeHTTP(rec,
+		idempotencyRequest(t, uuid.NewString(), "payload"))
+
+	assert.Zero(t, calls.Load(), "a request without a durable claim must never execute")
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "idempotency_unknown", body["code"])
+	assert.Contains(t, body["error"], "outcome is unknown")
+}
+
+func TestIdempotencyCompletionFailureReportsUnknownAfterHandlerRuns(t *testing.T) {
+	setupTestDB(t)
+	key := uuid.NewString()
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		// Model replay bookkeeping becoming unavailable only after the
+		// endpoint's side effect has committed.
+		d, err := db.Open()
+		require.NoError(t, err)
+		_, err = d.Exec(`DROP TABLE agentd_idempotency`)
+		require.NoError(t, err)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":42}`))
+	})
+
+	rec := httptest.NewRecorder()
+	idempotencyRequestsWithOwner(handler, "daemon-a").ServeHTTP(rec, idempotencyRequest(t, key, "payload"))
+
+	assert.Equal(t, int32(1), calls.Load(), "the mutation ran before replay persistence failed")
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "idempotency_unknown", body["code"])
+	assert.Contains(t, body["error"], "outcome is unknown")
+}
+
+func TestIdempotencyWaitFailureReportsUnknownWhileOriginalIsPending(t *testing.T) {
+	setupTestDB(t)
+	key := uuid.NewString()
+	req := idempotencyRequest(t, key, "payload")
+	now := time.Now()
+	_, claimed, err := db.ClaimAgentdRequest(key, idempotencyFingerprint(req, req.Header.Get(agent.RequestDigestHeader)),
+		"daemon-a", now, now.Add(time.Hour))
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) })
+	middleware := idempotencyRequestsWithOwnerAndWaitHook(handler, "daemon-a", func() {
+		d, openErr := db.Open()
+		require.NoError(t, openErr)
+		_, dropErr := d.Exec(`DROP TABLE agentd_idempotency`)
+		require.NoError(t, dropErr)
+	})
+	rec := httptest.NewRecorder()
+	middleware.ServeHTTP(rec, idempotencyRequest(t, key, "payload"))
+
+	assert.Zero(t, calls.Load(), "the retry must not execute beside an unresolved original")
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "idempotency_unknown", body["code"])
+	assert.Contains(t, body["error"], "outcome is unknown")
+}
+
+func TestIdempotencyReplayDecodeFailureReportsUnknown(t *testing.T) {
+	setupTestDB(t)
+	key := uuid.NewString()
+	req := idempotencyRequest(t, key, "payload")
+	now := time.Now()
+	_, claimed, err := db.ClaimAgentdRequest(key, idempotencyFingerprint(req, req.Header.Get(agent.RequestDigestHeader)),
+		"daemon-a", now, now.Add(time.Hour))
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, db.CompleteAgentdRequest(key, "daemon-a", http.StatusCreated, `{`, []byte(`{"id":42}`)))
+
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls.Add(1) })
+	rec := httptest.NewRecorder()
+	idempotencyRequestsWithOwner(handler, "daemon-b").ServeHTTP(rec, idempotencyRequest(t, key, "payload"))
+
+	assert.Zero(t, calls.Load(), "a corrupt replay must never rerun the completed mutation")
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "idempotency_unknown", body["code"])
+	assert.Contains(t, body["error"], "outcome is unknown")
+}
+
 func TestIdempotency5xxIsReplayedWithoutRerunningMutation(t *testing.T) {
 	setupTestDB(t)
 	key := uuid.NewString()

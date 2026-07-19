@@ -61,7 +61,8 @@ func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, wai
 		now := time.Now()
 		record, claimed, err := db.ClaimAgentdRequest(key, fingerprint, ownerID, now, now.Add(idempotencyTTL))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", "claim idempotent request: "+err.Error())
+			writeIdempotencyUnknown(w,
+				"the request record could not be inspected; the operation's outcome is unknown and the mutation was not retried: "+err.Error())
 			return
 		}
 		if claimed {
@@ -78,7 +79,7 @@ func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, wai
 			return
 		}
 		if record.OwnerID != ownerID {
-			writeError(w, http.StatusConflict, "idempotency_unknown",
+			writeIdempotencyUnknown(w,
 				"the previous agentd stopped while this operation was pending; its outcome is unknown and the mutation was not retried")
 			return
 		}
@@ -93,9 +94,14 @@ func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, wai
 		case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
 			return
 		default:
-			writeError(w, http.StatusInternalServerError, "io", "wait for idempotent request: "+err.Error())
+			writeIdempotencyUnknown(w,
+				"the pending request could not be observed to completion; its outcome is unknown and the mutation was not retried: "+err.Error())
 		}
 	})
+}
+
+func writeIdempotencyUnknown(w http.ResponseWriter, message string) {
+	writeError(w, http.StatusConflict, "idempotency_unknown", message)
 }
 
 func idempotencyFingerprint(r *http.Request, requestDigest string) string {
@@ -112,11 +118,16 @@ func executeIdempotentRequest(w http.ResponseWriter, r *http.Request, h http.Han
 	h.ServeHTTP(rec, r)
 	headersJSON, err := json.Marshal(rec.header)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "encode idempotent response headers: "+err.Error())
+		writeIdempotencyUnknown(w,
+			"the operation ran, but its response could not be encoded; its outcome is unknown and the mutation was not retried: "+err.Error())
 		return
 	}
 	if err := db.CompleteAgentdRequest(key, ownerID, rec.status, string(headersJSON), rec.body.Bytes()); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "record idempotent response: "+err.Error())
+		// The endpoint has already run. If its response cannot be made durable,
+		// callers must not treat this as an ordinary failed request and retry the
+		// mutation under a fresh key: the side effect may have committed.
+		writeIdempotencyUnknown(w,
+			"the operation ran, but its response could not be recorded; its outcome is unknown and the mutation was not retried: "+err.Error())
 		return
 	}
 	writeBufferedResponse(w, rec)
@@ -147,7 +158,8 @@ func waitForIdempotentResponse(ctx context.Context, key, ownerID string) (db.Age
 func replayIdempotentResponse(w http.ResponseWriter, record db.AgentdIdempotencyRecord) {
 	var headers http.Header
 	if err := json.Unmarshal([]byte(record.HeadersJSON), &headers); err != nil {
-		writeError(w, http.StatusInternalServerError, "io", "decode idempotent response headers: "+err.Error())
+		writeIdempotencyUnknown(w,
+			"the completed response could not be reconstructed; the operation's outcome is unknown and the mutation was not retried: "+err.Error())
 		return
 	}
 	for key, values := range headers {
