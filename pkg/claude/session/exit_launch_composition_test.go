@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,4 +84,58 @@ func TestPaneBootstrapLaunchCompositionPreservesHarnessStatus(t *testing.T) {
 	err = exec.Command("sh", "-c", commandWithFileCleanupCommand(codexCmd, "false")).Run()
 	require.True(t, errors.As(err, &exitErr))
 	assert.Equal(t, 37, exitErr.ExitCode(), "managed cleanup failure cannot mask the saved Codex status")
+}
+
+// The gate release must flip "pending" → "go" as ONE observable step. An
+// in-place truncate+write publishes an intermediate EMPTY gate, and the
+// pane's poll loop treats any non-pending read as terminal — a reader
+// catching the intermediate state turns a correct release into a spurious
+// exit-125 launch failure. Whole-file replacement makes intermediate
+// states unobservable: a descriptor opened before publication keeps
+// reading the complete old content, while fresh opens read the complete
+// new content.
+func TestWriteExistingExitLaunchGatePublishesAtomically(t *testing.T) {
+	dir := t.TempDir()
+	gatePath := filepath.Join(dir, exitLaunchArtifactPrefix+"gate")
+	require.NoError(t, os.WriteFile(gatePath, []byte("pending"), 0o600))
+
+	before, err := os.Open(gatePath)
+	require.NoError(t, err)
+	defer func() { _ = before.Close() }()
+
+	require.NoError(t, writeExistingExitLaunchGate(gatePath, "go"))
+
+	old, err := io.ReadAll(before)
+	require.NoError(t, err)
+	assert.Equal(t, "pending", string(old),
+		"a reader that opened the gate before publication must observe the complete old content, never a truncated intermediate")
+	fresh, err := os.ReadFile(gatePath)
+	require.NoError(t, err)
+	assert.Equal(t, "go", string(fresh), "fresh opens read the complete new content")
+}
+
+// "go" is shorter than "pending": any publication path that skips
+// truncation would leave "gonding" behind and permanently wedge the
+// pane's release check. Locks the shorter-replacement semantics, and that
+// publication leaves no temporary sibling behind.
+func TestWriteExistingExitLaunchGateReplacesLongerContent(t *testing.T) {
+	dir := t.TempDir()
+	gatePath := filepath.Join(dir, exitLaunchArtifactPrefix+"gate")
+	require.NoError(t, os.WriteFile(gatePath, []byte("pending"), 0o600))
+	require.NoError(t, writeExistingExitLaunchGate(gatePath, "go"))
+	raw, err := os.ReadFile(gatePath)
+	require.NoError(t, err)
+	assert.Equal(t, "go", string(raw))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "publication must not leak its temporary sibling")
+}
+
+// A gate the pane already consumed or removed must never be recreated by
+// a delayed publication (see also
+// TestExitLaunchGuard_LateReleaseAfterExecutedTimeoutDoesNotResurrectGate).
+func TestWriteExistingExitLaunchGateRefusesMissingGate(t *testing.T) {
+	gatePath := filepath.Join(t.TempDir(), "launch-gate")
+	require.ErrorIs(t, writeExistingExitLaunchGate(gatePath, "go"), os.ErrNotExist)
+	require.NoFileExists(t, gatePath)
 }
