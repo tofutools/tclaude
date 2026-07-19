@@ -340,6 +340,31 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
     return buildProcessEditorCommands({ editor: state.currentEditor(), actions });
   });
   registerCleanup(unregisterCommands);
+
+  // The history router (js/nav-history.js) resolved a Processes location from
+  // the URL — a deep link, a reload, or a browser Back/Forward — and wants this
+  // tab to show it, editor included.
+  //
+  // Registered HERE, synchronously during mount, rather than in a component
+  // effect: dashboard.js awaits this island before calling initNavHistory(), so
+  // attaching the listener on the mount path is what guarantees the router's
+  // one-shot restore event cannot be dispatched into the void. A Preact effect
+  // would only run on the next flush, and a deep link that lost the race would
+  // show the list with the editor's URL in the address bar, permanently.
+  //
+  // applyLocation resolves false when it did not land where it was asked
+  // (a refused discard, or a location this tab cannot show) — correct the URL
+  // so it never describes a view that is not on screen. A rejection is treated
+  // the same way rather than left as an unhandled rejection.
+  const restore = (event) => {
+    const loc = event.detail?.location;
+    if (loc?.tab !== 'processes') return;
+    void Promise.resolve(actions.applyLocation(loc))
+      .catch(() => false)
+      .then((ok) => { if (!ok) actions.correctLocation(); });
+  };
+  document.addEventListener('tclaude:restore-location', restore);
+  registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
   render(html`<${ProcessesApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   // Rendering null unmounts ProcessEditorBoundary, the sole owner of editor /
   // graph disposal. Do not destroy through state here as well.

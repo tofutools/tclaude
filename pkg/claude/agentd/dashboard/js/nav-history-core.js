@@ -52,6 +52,17 @@ export const KNOWN_SUBTABS = {
   processes: new Set(['templates', 'runs', 'worklist']),
 };
 
+// SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
+// SINGLE entity, so a third path segment carries meaning there:
+//   - processes/templates/<template-id> — the template editor is open on it.
+//   - processes/runs/<run-id>           — the run viewer is open on it.
+// Only the templates half is wired end to end today (the editor produces and
+// restores it); the runs half stays modelled-but-unwired, exactly as before.
+// A selection parsed under any other tab/subtab is dropped.
+export const SELECTABLE_SUBTABS = {
+  processes: new Set(['templates', 'runs']),
+};
+
 // defaultLocation returns a fresh copy of the fallback location. Returned as a
 // new object each call so callers can never alias/mutate a shared default.
 export function defaultLocation() {
@@ -69,10 +80,10 @@ export function normalizeLocation(loc) {
   if (loc && loc.subtab && subs && subs.has(loc.subtab)) {
     out.subtab = loc.subtab;
   }
-  // A selection is a free-form entity id (e.g. a Processes run id). It is only
-  // meaningful under a tab/subtab that has a detail view; today that is the
-  // Processes "runs" subtab. Keep it only where it can apply.
-  if (loc && loc.selection && tab === 'processes' && out.subtab === 'runs') {
+  // A selection is a free-form entity id (a Processes template or run id). It
+  // is only meaningful under a tab/subtab that has a detail view — see
+  // SELECTABLE_SUBTABS. Keep it only where it can apply.
+  if (loc && loc.selection && SELECTABLE_SUBTABS[tab]?.has(out.subtab)) {
     out.selection = String(loc.selection);
   }
   return out;
@@ -234,6 +245,22 @@ export function toPath(loc) {
   return '/' + segs.join('/');
 }
 
+// decodeSelection percent-decodes a path segment, tolerating a malformed one.
+// decodeURIComponent THROWS on a broken escape (e.g. /processes/templates/%zz),
+// and fromPath runs inside initNavHistory and the popstate handler — so an
+// uncaught URIError there would take out router boot or wedge browser
+// navigation on a hand-typed or truncated URL. A segment we cannot decode is
+// used verbatim: it simply won't match a real entity, which the caller's
+// stale-target handling already copes with.
+function decodeSelection(segment) {
+  if (segment == null) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 // fromPath parses a dashboard pathname back into a canonical location. Unknown
 // tabs / subtabs / stray trailing segments degrade to the nearest valid view
 // via normalizeLocation, so a stale or hand-typed URL never yields an invalid
@@ -243,11 +270,7 @@ export function fromPath(pathname) {
   const parts = clean.split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
   const [tab, subtab, selection] = parts;
-  return normalizeLocation({
-    tab,
-    subtab,
-    selection: selection != null ? decodeURIComponent(selection) : undefined,
-  });
+  return normalizeLocation({ tab, subtab, selection: decodeSelection(selection) });
 }
 
 // ---- Stale-target resolution --------------------------------------------

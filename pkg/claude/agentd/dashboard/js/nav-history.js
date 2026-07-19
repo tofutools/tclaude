@@ -14,6 +14,7 @@
 // deterministically back onto our stack.
 
 import { $, $$, isModifiedClick } from './helpers.js';
+import { featureState } from './feature-state-registry.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -72,10 +73,31 @@ function activeLocationFromDOM() {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'processes') {
+    // Ask the island directly: an open template editor's id (the
+    // /processes/templates/<id> segment) is state the DOM never spells out, so
+    // a pure DOM read cannot reproduce it. Its `location` signal always yields
+    // at least {tab, subtab}, so the DOM branch below is reached only when the
+    // island is ABSENT (its asset failed to load and the subnav was never
+    // rendered) — where it degrades to exactly the pre-selection behaviour.
+    const island = featureState('processes');
+    if (island) return normalizeLocation(island.location.value);
     const sub = $$('#tab-processes .process-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.processSubtab;
   }
   return normalizeLocation(loc);
+}
+
+// requestProcessesLocation asks the Processes island to show `loc` — including
+// reopening the template editor when the location carries a selection. One-way
+// via a custom event (the mirror of the island's `tclaude:navigated`) so this
+// router never imports the island's module graph. The island answers ONLY when
+// it could not land where it was asked — an unsaved editor the operator kept,
+// or a location it cannot show — and that answer arrives as a correction, which
+// replaces the current entry instead of pushing one.
+function requestProcessesLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
 }
 
 // activate brings `loc` forward in the UI by clicking the matching controls,
@@ -92,8 +114,23 @@ function activate(loc) {
     if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
-    } else if (loc.tab === 'processes' && loc.subtab) {
-      $(`#tab-processes .process-subtab[data-process-subtab="${loc.subtab}"]`)?.click();
+    } else if (loc.tab === 'processes') {
+      // Processes restores through its island rather than a subtab click, for
+      // two reasons. A click can only pick a subtab — it can never reopen the
+      // editor on `loc.selection`. And the subtab handler is ASYNC, so the
+      // navigation event it fires would land after the `applying` window below
+      // has closed and push a bogus entry (one that had already dropped the
+      // selection). The island applies the whole location in one step and
+      // stays silent unless it needs to CORRECT the URL — which travels as
+      // detail.correction, not on `applying`, precisely because that flag is
+      // long gone by the time an async answer arrives.
+      //
+      // Note this guards discarding an unsaved editor only for history
+      // navigation WITHIN Processes. Leaving the tab entirely (Back to /jobs,
+      // or a nav click) does not prompt — the island stays mounted and its
+      // section is merely CSS-hidden, so nothing is lost, and that has always
+      // been true of tab switches here.
+      requestProcessesLocation(loc);
     }
   } finally {
     applying = false;
@@ -134,6 +171,19 @@ function record(loc) {
   history.pushState(serializeStack(stack), '', urlFor(loc));
 }
 
+// correct rewrites the current entry in place, for a location the user did not
+// choose: a view that REFUSED where history sent it (an unsaved editor the
+// operator kept), or one that could only partly honour it (a URL naming a
+// detail view that is not wired). It must never push — the browser has already
+// moved, so a push would truncate the forward tail (destroying entries the user
+// can still reach with Forward) and append a fresh entry on every repeat,
+// growing history without bound while the user is unable to leave.
+function correct(loc) {
+  if (!ROUTABLE_TABS.has(loc.tab)) return;
+  stack = replaceCurrent(stack, loc);
+  history.replaceState(serializeStack(stack), '', urlFor(loc));
+}
+
 // recordCurrentLocation pushes the user's new location. Top-level tab clicks
 // are read from the live DOM after their delegated click handler has run.
 // Subtab activators may instead include detail.location on their navigation
@@ -141,10 +191,19 @@ function record(loc) {
 // so reading the DOM there would record the previously rendered subtab. No-ops
 // until the router is initialised and while WE are programmatically restoring a
 // location, so neither boot nor a popstate activation forges an entry.
+//
+// `detail.correction` marks an announcement that is NOT a user navigation but a
+// view telling us the URL is wrong (see `correct`). It cannot rely on the
+// `applying` guard: that flag is cleared synchronously when activate() returns,
+// while the view's answer arrives from async work long afterwards. So the
+// intent travels on the event instead of being inferred from timing.
 function recordCurrentLocation(event) {
-  if (!ready || applying) return;
+  if (!ready) return;
   const announced = event?.detail?.location;
-  record(announced ? normalizeLocation(announced) : activeLocationFromDOM());
+  const loc = announced ? normalizeLocation(announced) : activeLocationFromDOM();
+  if (event?.detail?.correction) { correct(loc); return; }
+  if (applying) return;
+  record(loc);
 }
 
 // reconcileLocation corrects the URL after an INVOLUNTARY re-location — a tab
@@ -164,10 +223,10 @@ function reconcileLocation() {
   // Terminals tab after the last terminal closed). A drift while the current
   // entry's tab is STILL available is a voluntary navigation that pushes its own
   // entry (it emits tclaude:navigated) — replacing it here would clobber a real
-  // back-entry, and would also strip a /processes/runs/<id> selection that
-  // activeLocationFromDOM can't yet reproduce (a trap for the selection
-  // follow-up: teach activeLocationFromDOM/activate about selection before
-  // loosening this guard).
+  // back-entry. activeLocationFromDOM can now reproduce a
+  // /processes/templates/<id> selection (it reads the island's location
+  // signal), so this guard is no longer also protecting against silently
+  // stripping one; keep it for the back-entry reason alone.
   if (tabAvailable(current(stack).tab)) return;
   stack = replaceCurrent(stack, loc);
   history.replaceState(serializeStack(stack), '', urlFor(loc));
