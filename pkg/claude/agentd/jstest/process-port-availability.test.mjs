@@ -80,8 +80,17 @@ test('mutation rejections keep the base sentence and add operation-specific reco
   assert.match(processEdgeMutationMessage('paste', edge, base), /Copy the selection again without that edge/);
   // Snippet insertion is not a paste: never tell that operator to re-copy.
   const snippet = processEdgeMutationMessage('snippet', edge, base);
+  assert.match(snippet, /This snippet cannot be inserted because of the edge/);
   assert.match(snippet, /Re-save the snippet from a selection that omits that edge\./);
   assert.doesNotMatch(snippet, /Paste|Copy the selection again/);
+  // Guidance composes cleanly with an absent cause: no double colon, no double
+  // space, no dangling separator where the omitted clause used to sit.
+  for (const operation of ['duplicate', 'paste', 'snippet', 'delete-rewire']) {
+    const message = processEdgeMutationMessage(operation, edge, base);
+    assert.doesNotMatch(message, / {2}/, `${operation} has no doubled spaces`);
+    assert.equal(message.split(':').length, 2, `${operation} reads as one colon-introduced clause`);
+    assert.equal(message.trim(), message);
+  }
 
   // Unknown and absent operations fall back to the bare authority sentence, so
   // addEdge/setEdgeTarget/chooser surfaces stay exactly as they were.

@@ -246,7 +246,7 @@ test('duplicate, paste, and delete-with-rewire name the offending legacy edge an
     edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
   };
   rejects(snippet, () => snippet.insertClipboardSelection(snippetPayload, { operation: 'snippet' }), [
-    /This snippet cannot be inserted: it needs the edge end -> ordinary/,
+    /This snippet cannot be inserted because of the edge end -> ordinary/,
     /End nodes cannot have outgoing connections\./,
     /Re-save the snippet from a selection that omits that edge\./,
   ]);

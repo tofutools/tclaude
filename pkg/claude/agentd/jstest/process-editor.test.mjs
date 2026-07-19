@@ -414,6 +414,48 @@ test('pasting a preserved legacy illegal-side edge surfaces the specific recover
     ['prior', 3, { x: 7, y: 8 }], 'paste placement state is untouched by a rejection');
 });
 
+test('a custom snippet carrying a legacy illegal-side edge is rejected as a snippet, not as a paste', () => {
+  // Regression at the call site: insertCustomSnippet shares the clipboard
+  // transaction with paste, so a snippet holding a preserved legacy edge used
+  // to tell an operator who never copied anything to "copy the selection
+  // again". Pinning this here — and not only at the model — is what catches a
+  // future caller that forgets to name its surface.
+  let status = null;
+  const model = new ProcessEditModel({
+    template: { nodes: { kept: { type: 'task' } } }, edges: [], layout: { nodes: {} },
+  });
+  const before = model.saveBody();
+  const payload = {
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'end', node: { type: 'end', result: 'success' }, position: { x: 0, y: 0 } },
+      { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 100 } },
+    ],
+    edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+  };
+  const fake = {
+    model, destroyed: false, selection: null,
+    customSnippet: () => ({ id: 'snip', available: true, payload }),
+    canvasCenterPoint: () => ({ x: 0, y: 0 }),
+    status: (...args) => { status = args; },
+    refresh() { assert.fail('a rejected snippet insert never refreshes'); },
+    setSelection() { assert.fail('a rejected snippet insert never changes the selection'); },
+  };
+
+  assert.equal(ProcessTemplateEditor.prototype.insertCustomSnippet.call(fake, 'snip'), false);
+  assert.equal(status[1], true);
+  assert.match(status[0], /This snippet cannot be inserted because of the edge end -> ordinary \(outcome "legacy-out"\)/);
+  assert.match(status[0], /End nodes cannot have outgoing connections\./);
+  assert.match(status[0], /Re-save the snippet from a selection that omits that edge\./);
+  // The operator never pasted and has nothing to re-copy.
+  assert.doesNotMatch(status[0], /Paste|Copy the selection again/);
+  assert.doesNotMatch(status[0], /The custom snippet could not be inserted/,
+    'the specific guidance is not collapsed into the generic snippet failure');
+
+  assert.deepEqual(model.saveBody(), before, 'the rejected snippet insert mutated nothing');
+  assert.equal(model.canUndo, false);
+});
+
 test('duplicate and delete-with-rewire rejections reach the header status line', () => {
   const legacy = () => new ProcessEditModel({
     template: {

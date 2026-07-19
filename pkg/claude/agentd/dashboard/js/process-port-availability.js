@@ -42,20 +42,22 @@ export function processPortUnavailableMessage(node, port) {
 const PROCESS_EDGE_MUTATION_GUIDANCE = new Map([
   ['duplicate', Object.freeze({
     subject: 'Duplicate cannot copy the edge',
-    cause: 'It predates the current Start/End port rules, so it can be kept but not re-created.',
+    // "That edge", not "It": the preceding sentence's subject is "End nodes",
+    // and a pronoun here would read as if End nodes predate the rules.
+    cause: 'That edge predates the current Start/End port rules, so it can be kept but not re-created.',
     // Duplicate refuses any selection containing an edge, so the blocking edge
     // is implied by both endpoints being selected and cannot itself be
     // deselected. Point at the endpoint nodes, which the operator can act on.
     recovery: 'Deselect one of its endpoint nodes, or delete the edge first.',
   })],
+  // Payloads of unknown provenance carry no `cause`: restating the base
+  // sentence as a rule would add length without adding information.
   ['paste', Object.freeze({
     subject: 'Paste cannot re-create the edge',
-    cause: 'The current Start/End port rules forbid re-creating it.',
     recovery: 'Copy the selection again without that edge, or delete the edge first.',
   })],
   ['snippet', Object.freeze({
-    subject: 'This snippet cannot be inserted: it needs the edge',
-    cause: 'The current Start/End port rules forbid re-creating it.',
+    subject: 'This snippet cannot be inserted because of the edge',
     recovery: 'Re-save the snippet from a selection that omits that edge.',
   })],
   ['delete-rewire', Object.freeze({
@@ -77,7 +79,8 @@ export function describeProcessEdge(edge) {
 export function processEdgeMutationMessage(operation, edge, message) {
   const guidance = PROCESS_EDGE_MUTATION_GUIDANCE.get(operation);
   if (!guidance) return message;
-  return `${guidance.subject} ${describeProcessEdge(edge)}: ${message} ${guidance.cause} ${guidance.recovery}`;
+  return [`${guidance.subject} ${describeProcessEdge(edge)}: ${message}`, guidance.cause, guidance.recovery]
+    .filter(Boolean).join(' ');
 }
 
 export function processEdgePortAvailability(fromNode, toNode) {
