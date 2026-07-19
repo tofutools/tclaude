@@ -18,7 +18,7 @@ func TestEnrollSpawnedConv_InlinedBriefingBornConsumed(t *testing.T) {
 	require.NotNil(t, g)
 	require.Equal(t, groupID, g.ID)
 
-	msgID, fail := enrollSpawnedConv(g, spawnParams{
+	msgID, _, fail := enrollSpawnedConv(g, spawnParams{
 		InitialMessage: "Investigate the flaky deploy and report back.",
 	}, "inlined-conv", true)
 	require.Nil(t, fail)
@@ -57,7 +57,7 @@ func TestEnrollSpawnedConv_PointerBriefingBornUnread(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, g)
 
-	msgID, fail := enrollSpawnedConv(g, spawnParams{
+	msgID, _, fail := enrollSpawnedConv(g, spawnParams{
 		InitialMessage: "Read this briefing from the inbox.",
 	}, "pointer-conv", false)
 	require.Nil(t, fail)

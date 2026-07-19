@@ -3580,6 +3580,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
 	var preConvID string
 	var preMsgID int64
+	var preActorCreated bool
 	// briefingInlined records whether the launch-enrollment prompt baked the
 	// whole briefing inline (short enough to fit) rather than pointing at the
 	// inbox copy. When it did, the inbox copy is inserted already delivered and
@@ -3594,11 +3595,17 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		spawnContextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
 		inlineCap := spawnInlineMaxChars()
 		briefingInlined = spawnContextBody != "" && spawnBriefingFitsLaunch(spawnContextBody, inlineCap)
-		mid, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
+		mid, actorCreated, fail := enrollSpawnedConv(g, p, preConvID, briefingInlined)
 		if fail != nil {
+			// Enrollment can fail with partial state already committed (the
+			// actor row, membership, task-ref). Unwind it: the conv-id was
+			// preset and its pane will never start, so anything left behind is
+			// a ghost the operator would have to clear by hand.
+			rollbackSpawnEnrollment(g, preConvID, mid, actorCreated)
 			return nil, fail
 		}
 		preMsgID = mid
+		preActorCreated = actorCreated
 		spawnArgs.SessionID = preConvID
 		// Match the legacy path's title gate: a name that isn't a valid rename
 		// title is not applied as the launch --name (claude records it as the
@@ -3654,7 +3661,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// DirWriteProofDirs, so human / exempt / no-override spawns are untouched.
 	if fail := reassertDirWriteProof(p.DirWriteProofDirs); fail != nil {
 		if launchEnroll {
-			rollbackSpawnEnrollment(g, preConvID, preMsgID)
+			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 		}
 		return nil, fail
 	}
@@ -3686,7 +3693,14 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if launchEnroll {
 			// The enrollment ran before the fork; roll it back so a failed
 			// launch doesn't strand a group member + orphan briefing.
-			rollbackSpawnEnrollment(g, preConvID, preMsgID)
+			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
+		}
+		// The forked wrapper deletes its own launch row when it fails after
+		// writing it; this backstop covers a wrapper killed before that
+		// cleanup ran. Idempotent — a no-op when no row was ever written.
+		if derr := db.DeleteSession(label); derr != nil {
+			slog.Warn("spawn: failed to remove launch session row after launch failure",
+				"label", label, "error", derr)
 		}
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
@@ -4140,7 +4154,10 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 	contextBody := buildSpawnContextBody(groupName, p.GroupContext, p.InitialMessage, p.Attachments)
 	welcomeInSeed := h.NeedsSpawnSeed() && spawnBriefingFitsLaunch(contextBody, spawnInlineMaxChars())
 	briefingInlined := contextBody != "" && welcomeInSeed
-	spawnContextMsgID, fail := enrollSpawnedConv(g, p, convID, briefingInlined)
+	// actorCreated is deliberately dropped here: this path runs post-connect
+	// against a LIVE conversation, so even a partially-failed enrollment must
+	// never delete the real, running agent's identity.
+	spawnContextMsgID, _, fail := enrollSpawnedConv(g, p, convID, briefingInlined)
 	if fail != nil {
 		return fail
 	}
@@ -4180,24 +4197,28 @@ func finishSpawnEnrollment(g *db.AgentGroup, p spawnParams, convID string) *spaw
 // already (about to be) spawned and grouped. The pending name is stored even
 // when it isn't a valid rename title, so the dashboard can show the intended
 // name during the brief window before the title materialises.
-func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingInlined bool) (int64, *spawnFailure) {
+func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingInlined bool) (int64, bool, *spawnFailure) {
 	// Stable agent-identity (JOH-26): a spawn is the birth of a new actor. Mint
 	// its agent_id BEFORE the group-add so created_via is the precise "spawn"
 	// rather than the "group" tag AddAgentGroupMember's own EnsureAgentForConv
 	// would otherwise stamp (that call is a no-op once this conv is already
-	// linked). Idempotent.
+	// linked). Idempotent. actorCreated reports whether THIS call minted the
+	// actor row — the launch-enrollment caller uses it to delete the actor
+	// again when the fork never starts, so a failed launch cannot strand a
+	// ghost in the dashboard's virtual "Ungrouped" group.
 	var agentID string
+	var actorCreated bool
 	var err error
 	if p.AgentID != "" {
-		agentID, _, err = db.EnsureAgentForConvWithID(convID, p.AgentID, "spawn")
+		agentID, actorCreated, err = db.EnsureAgentForConvWithID(convID, p.AgentID, "spawn")
 	} else {
-		agentID, _, err = db.EnsureAgentForConv(convID, "spawn")
+		agentID, actorCreated, err = db.EnsureAgentForConv(convID, "spawn")
 	}
 	if err != nil {
 		// A reserved id may already have been returned to the caller. Never
 		// continue by minting/substituting another actor through group-add.
 		if p.AgentID != "" {
-			return 0, &spawnFailure{http.StatusInternalServerError, "identity",
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "identity",
 				"failed to bind reserved agent " + p.AgentID + " to spawned conv " + convID + ": " + err.Error()}
 		}
 		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
@@ -4216,7 +4237,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	taskRefBound := false
 	if agentID != "" && p.TaskURL != "" {
 		if _, err := db.SetAgentTaskRef(agentID, p.TaskURL, p.TaskLabel); err != nil {
-			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to record task-reference link: " + err.Error()}
 		}
 		taskRefBound = true
@@ -4232,7 +4253,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 			Role:    p.Role,
 			Descr:   p.Descr,
 		}); err != nil {
-			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
 				"spawned conv " + convID + " but failed to add to group: " + err.Error()}
 		}
 	}
@@ -4261,13 +4282,13 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	}
 	if agentID != "" && p.EffectiveSandbox != nil {
 		if err := db.SetAgentEffectiveSandboxConfig(agentID, p.EffectiveSandbox); err != nil {
-			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to record effective sandbox snapshot: " + err.Error()}
 		}
 	}
 	if agentID != "" && p.ProcessCommandID != "" {
 		if err := db.SetAgentProcessCommand(agentID, p.ProcessCommandID); err != nil {
-			return 0, &spawnFailure{http.StatusConflict, "process_command", "failed to bind spawned agent to process command: " + err.Error()}
+			return 0, actorCreated, &spawnFailure{http.StatusConflict, "process_command", "failed to bind spawned agent to process command: " + err.Error()}
 		}
 	}
 
@@ -4279,7 +4300,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 	// requeued pending row.
 	if !taskRefBound && agentID != "" && p.TaskURL != "" {
 		if _, err := db.SetAgentTaskRef(agentID, p.TaskURL, p.TaskLabel); err != nil {
-			return 0, &spawnFailure{http.StatusInternalServerError, "io",
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to record task-reference link: " + err.Error()}
 		}
 	}
@@ -4379,7 +4400,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 			spawnContextMsgID = mid
 		}
 	}
-	return spawnContextMsgID, nil
+	return spawnContextMsgID, actorCreated, nil
 }
 
 // rollbackSpawnEnrollment undoes enrollSpawnedConv when a launch-enrollment
@@ -4392,9 +4413,7 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 // is returned as a success against the preset id rather than rolled back (see
 // the launch-enrollment branch in executeSpawn). All removals are best-effort
 // — a failure here only leaves a harmless orphan the operator can clear from
-// the dashboard — so they log rather than bubble. The pending-name row is keyed
-// by a conv-id that now never materialises, so it is never read again and is
-// left in place.
+// the dashboard — so they log rather than bubble.
 //
 // It also undoes the birth-time access controls enrollSpawnedConv may have
 // written (the group-owner row + per-slug overrides): both are applied before
@@ -4403,7 +4422,20 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 // warning) and dangling override rows for a conv that never exists. Both calls
 // are no-ops when nothing was written, so this is unconditional — rollback has
 // no spawnParams to consult.
-func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
+//
+// actorCreated: when the enrollment MINTED the actor row (the normal
+// launch-enrollment case — the conv-id is a fresh UUID), the actor itself is
+// deleted too, pending name and task-ref with it. Membership removal alone is
+// not enough: the dashboard's virtual "Ungrouped" group lists EVERY active
+// actor row (dashboardSnapshot.Ungrouped / handlePeers pass 2), so a
+// surviving actor for a conv that will never exist shows up there as a
+// dangling agent the operator has to retire by hand — the observed second bug
+// of the "command too long" incident. DeleteAgentByConvID also clears the
+// conv's inbox rows and any session row carrying the preset conv-id, giving
+// the per-row removals above a second chance if one individually failed.
+// false leaves the actor alone — a reserved or pre-existing identity must
+// never be destroyed by a rollback.
+func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64, actorCreated bool) {
 	if msgID > 0 {
 		if _, err := db.DeleteAgentMessageByID(msgID, convID); err != nil {
 			slog.Warn("spawn: rollback failed to delete orphan briefing",
@@ -4426,6 +4458,12 @@ func rollbackSpawnEnrollment(g *db.AgentGroup, convID string, msgID int64) {
 	}
 	if err := db.ClearAgentProcessCommandForConv(convID); err != nil {
 		slog.Warn("spawn: rollback failed to clear process command metadata", "conv", convID, "error", err)
+	}
+	if actorCreated {
+		if _, err := db.DeleteAgentByConvID(convID); err != nil {
+			slog.Warn("spawn: rollback failed to delete stranded actor",
+				"conv", convID, "error", err)
+		}
 	}
 }
 
