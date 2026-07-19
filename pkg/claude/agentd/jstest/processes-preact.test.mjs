@@ -997,3 +997,94 @@ test('Processes component renders keyed lists, worklist counts, degraded state, 
   assert.equal(current, input); assert.equal(current.value, 'keep this draft'); assert.equal(harness.document.activeElement, current);
   await mounted.unmount();
 });
+
+test('renaming a template round-trips the head edit view and changes only the display name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const head = {
+    template: { id: 'ship it', name: 'Old name', description: 'keep me', nodes: { a: {} } },
+    edges: [{ from: 'a', to: 'b' }], layout: { nodes: { a: { x: 4, y: 9 } } },
+    sourceHash: 'head-source', currentRef: `ship it@sha256:${'a'.repeat(64)}`,
+  };
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{ id: 'ship it', name: 'Old name' }] }) };
+      if (path === '/v1/process/templates/ship%20it' && options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'ship it@sha256:new' }) };
+      if (path === '/v1/process/templates/ship%20it') return { ok: true, json: async () => head };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+
+  const invoker = mounted.container.querySelector('[data-process-action="rename"]');
+  assert.ok(invoker, 'the templates list offers a rename affordance');
+  await harness.act(() => harness.fireEvent(invoker, 'click'));
+  const input = mounted.container.querySelector('[data-process-rename-input]');
+  assert.equal(input.value, 'Old name', 'the dialog opens on the current display name');
+  assert.equal(harness.document.activeElement, input);
+
+  input.value = 'New name';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog'), 'submit'));
+  for (let i = 0; i < 10 && state.rename.value; i++) await harness.act(() => Promise.resolve());
+
+  const post = requests.find((request) => request.options.method === 'POST');
+  assert.equal(post.path, '/v1/process/templates/ship%20it', 'the id is percent-encoded into the save path');
+  const body = JSON.parse(post.options.body);
+  assert.equal(body.template.name, 'New name');
+  assert.equal(body.template.id, 'ship it', 'the immutable id is preserved');
+  assert.equal(body.template.description, 'keep me', 'unrelated semantics survive the rename');
+  assert.deepEqual(body.edges, head.edges, 'edges round-trip untouched');
+  assert.deepEqual(body.layout, head.layout, 'editor layout round-trips untouched');
+  assert.equal(body.sourceHash, 'head-source', 'the rename saves against the head it read');
+  assert.equal(state.rename.value, null, 'a successful rename closes the dialog');
+  await mounted.unmount();
+});
+
+test('a rename losing the CAS race reports the conflict and keeps the dialog open', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const notices = [];
+  const actions = createProcessesActions({
+    state, notify(message) { notices.push(message); },
+    fetchImpl: async (path, options = {}) => {
+      if (options.method === 'POST') return { ok: false, status: 409, json: async () => ({ code: 'process_template_conflict' }) };
+      return { ok: true, json: async () => ({ template: { id: 'racy', name: 'Before' }, sourceHash: 'stale' }) };
+    },
+  });
+  await actions.openRename({ id: 'racy', name: 'Before' });
+  assert.equal(await actions.submitRename('After'), false);
+  assert.match(state.rename.value.error, /changed since the rename dialog opened/);
+  assert.equal(state.rename.value.id, 'racy', 'the dialog stays open on the same template');
+  assert.equal(state.mutation.value.busy, false, 'the mutation gate is released after a conflict');
+  assert.match(notices.at(-1), /rename failed/);
+});
+
+test('renaming to the unchanged current name closes without touching the store', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  let calls = 0;
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async () => { calls += 1; return { ok: true, json: async () => ({}) }; },
+  });
+  await actions.openRename({ id: 'stable', name: 'Same' });
+  assert.equal(await actions.submitRename('  Same  '), true, 'a whitespace-only edit is still a no-op');
+  assert.equal(calls, 0, 'an unchanged name commits no new version');
+  assert.equal(state.rename.value, null);
+});

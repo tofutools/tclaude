@@ -693,6 +693,20 @@ rather than surfacing at runtime. Because these fields are not templatable, a
 Absolute `wait.until` deadlines are trimmed and parsed as RFC3339 timestamps at
 authoring time, matching the executor's timer contract.
 
+A template carries two distinct identifiers. Its `id` is the permanent store
+key: it is chosen once at creation, is part of every `id@sha256:<hash>` ref, and
+is what pinned versions and live runs resolve through, so it is never editable
+afterwards. Its `name` is a free-text display label shown wherever the template
+is listed, and it can be changed at any time. A template with no name falls back
+to showing its id.
+
+Rename a template from the **rename** button on its row in the Templates list,
+or from the display-name field in the editor's **template settings…** inspector.
+Both paths write the name through the ordinary content-addressed save, so a
+rename is a normal new version with the usual conflict check rather than a
+mutation of history; existing runs and pinned refs are unaffected. Renaming
+requires `process.templates.manage`.
+
 The dashboard template editor can declare params and instantiate any clean,
 saved version. Instantiation always sends the exact `id@sha256:<hash>` currently
 shown; a dirty editor requires a successful save first, so a run never captures

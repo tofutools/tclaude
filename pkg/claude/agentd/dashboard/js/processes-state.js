@@ -16,6 +16,7 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
   const runs = signal(null);
   const worklist = signal(null);
   const instantiation = signal(null);
+  const rename = signal(null);
   const worklistView = signal('my-work');
   const drafts = signal({});
   const missingComments = signal(new Set());
@@ -58,6 +59,7 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
   function setEditor(value) { editor = value; }
   function currentEditor() { return editor; }
   function setInstantiation(value) { instantiation.value = value; }
+  function setRename(value) { rename.value = value; }
 
   const view = computed(() => {
     const at = now();
@@ -68,7 +70,7 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
       scribes: processScribeSessions(dashboardState.snapshot.value),
       templates: templates.value?.templates || [], runs: runs.value?.runs || [],
       worklist: work, worklistView: worklistView.value,
-      instantiation: instantiation.value,
+      instantiation: instantiation.value, rename: rename.value,
       worklistRows: viewItems(work.items || [], worklistView.value, at),
       worklistCounts: viewCounts(work.items || [], at), actionable: actionableCount(work.items || []),
       drafts: drafts.value, missingComments: missingComments.value, mutation: mutation.value,
@@ -78,9 +80,9 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
 
   initialize();
   return Object.freeze({
-    subtab, canvas, highlightedRun, notice, templates, runs, worklist, instantiation, worklistView, drafts, missingComments, mutation, view,
+    subtab, canvas, highlightedRun, notice, templates, runs, worklist, instantiation, rename, worklistView, drafts, missingComments, mutation, view,
     templatesRequest, runsRequest, worklistRequest, setSubtab, setCanvas, setNotice, setWorklistView,
-    setDraft, requireComment, pruneWorklistState, beginMutation, endMutation, setEditor, currentEditor, setInstantiation, setHighlightedRun,
+    setDraft, requireComment, pruneWorklistState, beginMutation, endMutation, setEditor, currentEditor, setInstantiation, setRename, setHighlightedRun,
   });
 }
 
