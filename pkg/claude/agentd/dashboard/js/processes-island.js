@@ -91,7 +91,7 @@ function EditableName({ template, actions, busy }) {
 function Templates({ current, actions }) {
   const rows = current.templates;
   return html`<div id="process-panel-templates" class="process-panel active" role="tabpanel" aria-label="Process templates">
-    <div class="filter-bar process-toolbar"><strong>Reusable process graphs</strong><span class="spacer"></span><button id="process-scribe-library" class="process-action" type="button" title="Open a scoped agent that can safely author process templates" onClick=${() => actions.summonScribe({ kind: 'library' })}><span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span></button><button id="process-template-new" class="process-action primary" type="button" onClick=${() => actions.openEditor('new-process', true)}>+ new template</button></div>
+    <div class="filter-bar process-toolbar"><strong>Reusable process graphs</strong><span class="spacer"></span><button id="process-scribe-library" class="process-action" type="button" title="Open a scoped agent that can safely author process templates" onClick=${() => actions.summonScribe({ kind: 'library' })}><span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span></button><button id="process-template-new" class="process-action primary" type="button" onClick=${() => actions.openCreate()}>+ new template</button></div>
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}>
       <${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
         ${rows.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>
@@ -288,6 +288,25 @@ function RenameDialog({ spec, busy, actions }) {
   </form></div>`;
 }
 
+// Creation asks for a name only. The id is minted by the store on first save,
+// so there is nothing here for an operator to get permanently wrong.
+function CreateDialog({ spec, actions }) {
+  const nameRef = useRef(null);
+  const [name, setName] = useState(spec.name || '');
+  const close = () => actions.closeCreate();
+  const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: nameRef, onEscape: close });
+  const submit = (event) => { event?.preventDefault(); void actions.submitCreate(name); };
+  return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-create-title" onSubmit=${submit}>
+    <h3 id="process-create-title">New process template</h3>
+    <div class="field process-editor-field process-rename-field">
+      <label for="process-create-input">Display name</label>
+      <input ref=${nameRef} id="process-create-input" data-process-create-input type="text" autocomplete="off" spellcheck="false" placeholder="e.g. Release train" value=${name} onInput=${(event) => setName(event.currentTarget.value)} onKeyDown=${fieldSubmitHotkey(() => submit())} />
+    </div>
+    <p class="muted">You can rename this at any time. The template gets a permanent id automatically when you first save it.</p>
+    <div class="modal-buttons"><button type="button" onClick=${close}>Cancel</button><button class="primary" type="submit" disabled=${!name.trim()}>Create</button></div>
+  </form></div>`;
+}
+
 export function ProcessesApp({ state, actions, confirmDiscard }) {
   const current = { ...state.view.value, state };
   useEffect(() => { if (current.active) void actions.refreshActive(); }, [current.active]);
@@ -309,6 +328,7 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
     <${ScribeStatus} scribes=${current.scribes || []} actions=${actions} />
     ${spec ? html`<div id=${spec.kind === 'editor' ? 'process-editor-view' : 'process-viewer-view'} class=${`process-canvas-view${spec.kind === 'editor' ? ' process-scroll-surface' : ''}`}><button ref=${spec.kind === 'viewer' ? viewerBackRef : undefined} class="process-action" data-process-close-view type="button" onClick=${actions.closeCanvas}>← ${current.subtab}</button>${spec.kind === 'editor' ? html`<${ProcessEditorBoundary} spec=${spec} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />` : html`<${ProcessViewerBoundary} spec=${spec} actions=${actions} active=${current.active} />`}</div>` : current.subtab === 'templates' ? html`<${Templates} current=${current} actions=${actions} />` : current.subtab === 'runs' ? html`<${Runs} current=${current} actions=${actions} />` : html`<${Worklist} current=${current} actions=${actions} />`}
     ${current.instantiation && html`<${InstantiateDialog} key=${current.instantiation.key} spec=${current.instantiation} busy=${current.mutation.busy} actions=${actions} />`}
+    ${current.create && html`<${CreateDialog} key=${current.create.key} spec=${current.create} actions=${actions} />`}
     ${current.rename && html`<${RenameDialog} key=${current.rename.key} spec=${current.rename} busy=${current.mutation.busy} actions=${actions} />`}
   </div>`;
 }

@@ -138,9 +138,25 @@ export function createProcessesActions({
     if (navigate) dispatchNavigated();
     return true;
   }
-  async function openEditor(id, blank = false) {
-    state.setCanvas({ kind: 'editor', id, blank, key: `${id}:${blank}:${Date.now()}` });
-    state.setNotice(blank ? 'Blank template scaffold ready.' : `Opening ${id}.`);
+  async function openEditor(id, blank = false, name = '') {
+    state.setCanvas({ kind: 'editor', id, blank, name, key: `${id}:${blank}:${Date.now()}` });
+    state.setNotice(blank ? `Blank template “${name}” ready. It gets an id when you first save.` : `Opening ${id}.`);
+  }
+  // Creation collects a NAME, never an id: the store mints the id on first
+  // save. The draft is not persisted until then, so cancelling costs nothing.
+  function openCreate() {
+    state.setCreate({ key: `create:${Date.now()}`, name: '' });
+    return true;
+  }
+  function closeCreate() {
+    state.setCreate(null);
+    return true;
+  }
+  async function submitCreate(name) {
+    const next = String(name ?? '').trim();
+    if (!next) return false;
+    state.setCreate(null);
+    return openEditor('', true, next);
   }
   async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
@@ -491,6 +507,7 @@ export function createProcessesActions({
     load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
     openRename, closeRename, submitRename, renameTemplate,
+    openCreate, closeCreate, submitCreate,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }

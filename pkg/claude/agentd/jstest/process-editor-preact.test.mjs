@@ -73,8 +73,10 @@ test('Preact editor shell keeps one graph host across chrome, selection, and mod
   assert.equal(editor.selection, null);
   assert.equal(editor.model.dirty, false);
   assert.equal(editor.model.canUndo, false);
-  assert.equal(host.querySelector('.process-editor-title')?.textContent, undefined,
-    'a blank template owns an editable id field');
+  assert.ok(host.querySelector('[data-process-title-edit]'),
+    'a blank template still owns a renameable title; only its id is server-assigned');
+  assert.equal(host.querySelector('.process-editor-id-input'), null,
+    'no id field is offered at creation');
 
   await harness.act(() => editor.status('poll updated'));
   assert.equal(host.querySelector('.process-editor-canvas-host'), graphHost);
@@ -1140,6 +1142,12 @@ test('editor choice dialogs restore the exact prior focus owner or body state', 
 
 test('scribe preview backdrop cancels without sending and restores editor interaction', async (t) => {
   const { harness, host, editor } = await openBlank(t);
+  // A scribe needs a stored, clean template to scope to; the blank fixture has
+  // no id until its first save assigns one.
+  editor.model.template.id = 'scribe-preview';
+  editor.model.currentRef = `scribe-preview@sha256:${'a'.repeat(64)}`;
+  editor.model.markSaved({ sourceHash: 'b'.repeat(64) });
+  editor.blank = false;
   const invoker = host.querySelector('.process-scribe-action');
   const editorRoot = host.querySelector('.process-editor');
   let sends = 0;
@@ -1381,17 +1389,19 @@ test('the editor header title renames inline and hides the id behind a tooltip',
   const { harness, host, editor } = await openBlank(t);
   // A saved template: the blank scaffold still owns the id input instead.
   editor.blank = false;
+  editor.model.template.id = 'header-rename';
+  editor.model.template.name = '';
   editor.model.currentRef = `header-rename@sha256:${'0'.repeat(64)}`;
   editor.model.sourceHash = '1'.repeat(64);
   await harness.act(() => editor.status('ready'));
 
   const title = host.querySelector('[data-process-title-edit]');
   assert.ok(title, 'the header title is the rename affordance');
-  assert.equal(title.textContent, editor.model.template.id,
+  assert.equal(title.textContent, 'header-rename',
     'an unnamed template falls back to its id as the label');
   assert.doesNotMatch(title.textContent, /\(/,
     'the id is no longer appended in parentheses beside the name');
-  assert.match(title.getAttribute('title'), new RegExp(`id ${editor.model.template.id}\\b`),
+  assert.match(title.getAttribute('title'), new RegExp(`id ${editor.model.template.id || 'unsaved'}\\b`),
     'the id stays reachable through the tooltip');
 
   await harness.act(() => harness.fireEvent(title, 'click'));

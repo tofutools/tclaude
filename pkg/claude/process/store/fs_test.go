@@ -1052,7 +1052,10 @@ func TestListRunsToleratesBadRunJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 2 || runs[0].ID != "run_bad" || runs[1].ID != "run_good" {
+	// Both entries survive; the unreadable one keeps its directory name as the
+	// id. Ordering is newest-first by CreatedAt, so the record with no readable
+	// timestamp sorts last rather than leading the list.
+	if len(runs) != 2 || runs[0].ID != "run_good" || runs[1].ID != "run_bad" {
 		t.Fatalf("runs = %#v", runs)
 	}
 }

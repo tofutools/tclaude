@@ -1303,3 +1303,50 @@ test('regression: opening the list name editor prefills the current name', async
     'a rename starts from the current name, not an empty box');
   await mounted.unmount();
 });
+
+test('creating a template collects a name and never offers an id', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async () => ({ ok: true, json: async () => ({ templates: [] }) }),
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('#process-template-new'), 'click'));
+  const input = mounted.container.querySelector('[data-process-create-input]');
+  assert.ok(input, 'creation prompts for a display name');
+  assert.equal(mounted.container.querySelector('.process-editor-id-input'), null,
+    'creation never offers an id field');
+
+  input.value = 'Release train';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('.process-rename-dialog'), 'submit'));
+  for (let i = 0; i < 10 && !state.canvas.value; i++) await harness.act(() => Promise.resolve());
+
+  assert.equal(state.canvas.value?.kind, 'editor');
+  assert.equal(state.canvas.value?.blank, true);
+  assert.equal(state.canvas.value?.name, 'Release train', 'the editor opens on the chosen name');
+  assert.equal(state.canvas.value?.id, '', 'no id is invented client-side; the store assigns it on first save');
+  assert.equal(state.create.value, null, 'the prompt closes once the editor opens');
+  await mounted.unmount();
+});
+
+test('an empty creation name cannot be submitted', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const actions = createProcessesActions({ state, notify() {}, fetchImpl: async () => ({ ok: true, json: async () => ({}) }) });
+  await actions.openCreate();
+  assert.equal(await actions.submitCreate('   '), false, 'a whitespace-only name is not a name');
+  assert.ok(state.create.value, 'the prompt stays open');
+  assert.equal(state.canvas.value, null, 'no editor opens without a name');
+});

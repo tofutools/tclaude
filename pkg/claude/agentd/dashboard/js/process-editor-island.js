@@ -2,7 +2,7 @@ import { Fragment, h, render } from 'preact';
 import { signal } from '@preact/signals';
 import { useCallback, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
-import { PALETTE_PRIMITIVES, PALETTE_SNIPPETS, templateIDEditable } from './process-edit-model.js';
+import { PALETTE_PRIMITIVES, PALETTE_SNIPPETS } from './process-edit-model.js';
 import { selectionItems } from './process-selection.js';
 import { severityGlyph } from './process-validation.js';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
@@ -131,15 +131,9 @@ function EditableTitle({ controller, view }) {
 function Header({ controller, view }) {
   const { model, pending } = view;
   const externalPending = pending.externalDecision || pending.externalReload;
-  const showIDInput = templateIDEditable(view.blank, model.sourceHash);
   return html`<div class="process-editor-header">
     <span class="process-editor-identity">
-      ${showIDInput ? html`<${StableField}
-        class="process-editor-id-input" type="text" spellcheck="false"
-        placeholder="template-id" aria-label="Template id"
-        value=${model.id} disabled=${pending.save || externalPending}
-        onCommit=${(value) => controller.setTemplateID(value)}
-      />` : html`<${EditableTitle} controller=${controller} view=${view} />`}
+      <${EditableTitle} controller=${controller} view=${view} />
     </span>
     <span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
       ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}

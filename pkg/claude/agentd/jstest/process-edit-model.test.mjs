@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   ProcessEditModel, blankEditView, graphEdgeID, MAX_UNDO,
   PALETTE_PRIMITIVES, PALETTE_SNIPPETS, processSelectionRenderedCenter,
-  templateIDEditable,
+  templateNeedsCreate,
 } from '../dashboard/js/process-edit-model.js';
 import { layoutProcessGraph } from '../dashboard/js/process-layout.js';
 import { ProcessClipboardError } from '../dashboard/js/process-editor-clipboard.js';
@@ -548,50 +548,50 @@ test('template metadata edits are undoable and preserve the immutable id', () =>
   assert.equal(model.template.doc, undefined);
 });
 
-test('new-template id edits are dirty outside graph history until save pins the identity', () => {
-  const model = new ProcessEditModel(blankEditView('new-process'));
-  assert.equal(model.setTemplateID('release'), true);
-  assert.equal(model.dirty, true, 'navigation sees the id edit and prompts before discard');
-  assert.equal(model.canUndo, false, 'identity is not graph/content undo history');
+test('a blank draft carries no id until a save pins the server-assigned identity', () => {
+  const model = new ProcessEditModel(blankEditView('Release train'));
+  assert.equal(model.template.id, '', 'ids are minted by the store, never guessed client-side');
+  assert.equal(model.template.name, 'Release train', 'creation collects a name instead');
+  assert.equal(templateNeedsCreate(true, model.sourceHash), true);
 
+  // The save path assigns the id the store returned, then marks saved.
+  model.template.id = '9f3c2b1a4d5e6f708192a3b4c5d6e7f8';
   model.markSaved({ sourceHash: 'saved-source' });
   assert.equal(model.dirty, false);
-  assert.equal(model.undo(), false, 'no identity-only snapshot can produce false dirty after save');
-  assert.equal(model.dirty, false);
+  assert.equal(templateNeedsCreate(true, model.sourceHash), false, 'a persisted draft updates in place');
 
   model.addNode('task', { id: 'draft' }); // history snapshot carries the saved id
   assert.equal(model.undo(), true);
-  assert.equal(model.template.id, 'release', 'post-save graph history preserves the pinned store key');
+  assert.equal(model.template.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8',
+    'graph history preserves the pinned store key');
   assert.equal(model.dirty, false);
-  assert.equal(model.undo(), false, 'a second undo cannot reach unchanged-but-dirty identity history');
-  assert.equal(model.dirty, false);
-  assert.equal(model.setTemplateID('copy'), false);
-  assert.equal(model.template.id, 'release');
 });
 
-test('saving a draft id at the payload revision preserves in-flight edit dirtiness', () => {
-  const model = new ProcessEditModel(blankEditView('new-process'));
-  model.setTemplateID('release');
+test('saving a draft at the payload revision preserves in-flight edit dirtiness', () => {
+  const model = new ProcessEditModel(blankEditView('Release train'));
   const savedAtRev = model.rev;
   model.addNode('task', { id: 'in-flight' });
+  model.template.id = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
   model.markSaved({ sourceHash: 'saved-source' }, savedAtRev);
-  assert.equal(model.template.id, 'release');
+  assert.equal(model.template.id, 'a1b2c3d4e5f60718293a4b5c6d7e8f90');
   assert.equal(model.dirty, true, 'the topology edit is newer than the saved payload');
   assert.equal(model.undo(), true);
   assert.equal(model.dirty, false);
 });
 
 test('failed first-save force retry keeps the adopted identity locked and consistent', () => {
-  const model = new ProcessEditModel(blankEditView('collision'));
-  assert.equal(templateIDEditable(true, model.sourceHash), true);
+  const model = new ProcessEditModel(blankEditView('Collision'));
+  assert.equal(templateNeedsCreate(true, model.sourceHash), true);
 
   // resolveConflict(force) adopts the existing head before recursively saving.
   // If that retry fails or re-conflicts, blank remains true but the CAS base
-  // now fixes which store identity the editor owns.
+  // now fixes which store identity the editor owns -- so the next save must
+  // update that key rather than mint a second template.
+  model.template.id = 'adopted0000000000000000000000000';
   model.sourceHash = 'existing-head-source';
-  assert.equal(templateIDEditable(true, model.sourceHash), false);
-  assert.equal(model.setTemplateID('misleading-copy'), false, 'rejected without throwing from the change event');
-  assert.equal(model.template.id, 'collision', 'visible title and model identity stay on the adopted head');
+  assert.equal(templateNeedsCreate(true, model.sourceHash), false);
+  assert.equal(model.template.id, 'adopted0000000000000000000000000',
+    'visible title and model identity stay on the adopted head');
 });
 
 test('regression: markSaved at the payload rev keeps in-flight edits dirty', () => {
@@ -840,9 +840,10 @@ test('editability config guards mutations for the future run-editing surface', (
 });
 
 test('blankEditView scaffolds only the start node and preserves blank-editor state', () => {
-  const blank = blankEditView('fresh');
+  const blank = blankEditView('Fresh process');
   const model = new ProcessEditModel(blank, {});
-  assert.equal(model.template.id, 'fresh');
+  assert.equal(model.template.id, '', 'the store assigns the id at first save');
+  assert.equal(model.template.name, 'Fresh process');
   assert.deepEqual(model.template.nodes, { start: { type: 'start' } });
   assert.deepEqual(model.edges, [{ from: '', outcome: 'start', to: 'start' }]);
   assert.deepEqual(model.layout, { nodes: { start: { x: 120, y: 90 } } });

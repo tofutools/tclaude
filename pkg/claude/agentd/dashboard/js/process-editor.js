@@ -380,16 +380,6 @@ export class ProcessTemplateEditor {
 
   // ---- chrome ------------------------------------------------------------
 
-  setTemplateID(value) {
-    if (this.destroyed) return false;
-    if (this.savePending || externalInteractionPending(this)) return false;
-    if (!this.model.setTemplateID(String(value || '').trim())) {
-      this.status('Template id is fixed once an existing version is selected.', true);
-      return false;
-    }
-    this.updateChrome();
-    return true;
-  }
 
   setTemplateMeta(fields) {
     const clean = Object.fromEntries(Object.entries(fields || {})
@@ -1667,11 +1657,6 @@ export class ProcessTemplateEditor {
 
   async save() {
     if (this.destroyed) return false;
-    const id = (this.model.template.id || '').trim();
-    if (!id) {
-      this.status('Template id is required before saving.', true);
-      return false;
-    }
     if (this.savePending || externalInteractionPending(this)) return false;
     const requestSeq = ++this.saveSeq;
     this.savePending = true;
@@ -1710,9 +1695,12 @@ export class ProcessTemplateEditor {
       } else if (choice === 'discard') {
         let view;
         try {
+          // Declared here deliberately: the later function-scope `id` would
+          // otherwise put this reference in its temporal dead zone.
           const id = (this.model.template.id || '').trim();
           if (originalBlank && !this.model.sourceHash) {
-            view = blankEditView(id);
+            // A never-saved draft is rebuilt from its NAME; it has no id yet.
+            view = blankEditView(this.model.template.name || '');
           } else {
             const guardedModel = this.model;
             const guardedRev = guardedModel.rev;
@@ -1756,6 +1744,13 @@ export class ProcessTemplateEditor {
       }
     }
     const id = (this.model.template.id || '').trim();
+    if (!id) {
+      // A scribe reads and writes a STORED template keyed by id. Before ids
+      // were server-assigned this scoped to the scaffold's placeholder, which
+      // named nothing in the store; now there is simply nothing to scope to.
+      this.status('Save this template once before opening a scribe: a scribe is scoped to a stored template.', true);
+      return false;
+    }
     const anchor = {
       kind: 'template', id,
       currentRef: this.model.currentRef || '', sourceHash: this.model.sourceHash || '',
@@ -1821,17 +1816,28 @@ export class ProcessTemplateEditor {
   async saveRequest(requestSeq) {
     if (requestSeq !== this.saveSeq) return;
     const id = (this.model.template.id || '').trim();
-    const savedID = id;
     // The canvas stays interactive during the POST: capture the rev the
     // payload was built at, so edits made in flight keep the model dirty.
     const savedAtRev = this.model.rev;
     const savedView = this.model.saveBody();
-    const response = await fetch(`/v1/process/templates/${encodeURIComponent(id)}`, {
+    // A draft that has never been persisted has no id yet -- the store mints
+    // one. Everything afterwards updates a known key in place.
+    const creating = !id;
+    const path = creating ? '/v1/process/templates' : `/v1/process/templates/${encodeURIComponent(id)}`;
+    if (creating) {
+      // The collection endpoint rejects a caller-supplied id, and a new
+      // template has no prior version to save against.
+      delete savedView.template.id;
+      delete savedView.sourceHash;
+    }
+    const response = await fetch(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(savedView),
     });
     const body = await response.json().catch(() => ({}));
+    // The store is the authority on identity: adopt the id it minted.
+    const savedID = creating ? (body.id || '') : id;
     // A newer editor request/lifecycle generation owns the model now. Never
     // let this completion overwrite its identity, CAS base, or status.
     if (requestSeq !== this.saveSeq) return;

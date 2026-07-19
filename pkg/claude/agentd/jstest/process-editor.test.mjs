@@ -923,15 +923,16 @@ test('dirty process scribe handoff requires an explicit successful resolution', 
 
   const discarded = {
     blank: true, dirty: true, savePending: false,
-    model: { template: { id: 'new-process' }, sourceHash: '', config: {} },
+    model: { template: { id: '' }, sourceHash: '', config: {} },
     options: { onScribe: async (anchor) => { emitted.push(anchor); return {}; } },
     choiceModal: async () => 'discard', validation: null, refresh() {}, status() {}, selection: null,
     scribePreviewModal: async () => 'Build it.', abort: { signal: { aborted: false } },
   };
-  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(discarded), true);
-  assert.deepEqual(emitted.at(-1), {
-    kind: 'template', id: 'new-process', currentRef: '', sourceHash: '', isNew: true,
-  }, 'explicit discard resets a new draft before handing off its creation identity');
+  // A never-saved draft has no id, and a scribe is scoped to a STORED
+  // template — so there is nothing to hand off until the first save.
+  const before = emitted.length;
+  assert.equal(await ProcessTemplateEditor.prototype.requestScribe.call(discarded), false);
+  assert.equal(emitted.length, before, 'no handoff is emitted for a template the store has never seen');
 });
 
 test('existing-template scribe discard fails closed when the editor changes during reload', async () => {
@@ -1834,8 +1835,7 @@ test('synchronous commands are inert and cannot mutate state after repeated dest
     assert.equal(editor.resetZoom(), false);
     assert.equal(editor.validateNow(), false);
     assert.equal(editor.focusIssue(1), false);
-    assert.equal(editor.setTemplateID('renamed'), false);
-    assert.equal(editor.model.template.id, 'alpha');
+    assert.equal(editor.model.template.id, 'alpha', 'identity is never mutated by an inert editor');
     assert.equal(editor.setTemplateMeta({ name: 'renamed' }), undefined);
     assert.equal(editor.renameNode('b', 'renamed'), undefined);
     assert.equal(editor.mutate(() => editor.model.setTemplateMeta({ doc: 'late' })), undefined);
@@ -2010,6 +2010,67 @@ test('destroy during an in-flight save reports failure and blocks the instantiat
     assert.equal(fetches, 1);
     assert.equal(editor.model.sourceHash, 'source-old', 'the delayed completion cannot adopt a CAS head after destroy');
     assert.equal(editor.savePending, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a never-saved draft creates through the collection endpoint and adopts the minted id', async () => {
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, body: JSON.parse(init.body) });
+    return {
+      ok: true, status: 201, statusText: 'Created',
+      json: async () => ({
+        id: '9f3c2b1a4d5e6f708192a3b4c5d6e7f8',
+        ref: '9f3c2b1a4d5e6f708192a3b4c5d6e7f8@sha256:new',
+        sourceHash: 'source-new', semanticHash: 'semantic-new', diagnostics: [],
+      }),
+    };
+  };
+  try {
+    // A blank draft: named by the operator, but with no id until the store
+    // assigns one.
+    const editor = saveEditor('');
+    editor.model.template.name = 'Release train';
+    editor.blank = true;
+    await ProcessTemplateEditor.prototype.save.call(editor);
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, '/v1/process/templates',
+      'creation posts to the collection, not to a client-chosen key');
+    assert.equal(Object.hasOwn(calls[0].body.template, 'id'), false,
+      'the endpoint rejects a caller-supplied id, so none is sent');
+    assert.equal(Object.hasOwn(calls[0].body, 'sourceHash'), false,
+      'a new template has no prior version to save against');
+    assert.equal(calls[0].body.template.name, 'Release train');
+    assert.equal(editor.model.template.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8',
+      'the editor adopts the identity the store minted');
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+  }
+});
+
+test('a saved template updates in place instead of creating a second one', async () => {
+  const previousFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (path, init) => {
+    calls.push({ path, body: JSON.parse(init.body) });
+    return {
+      ok: true, status: 201, statusText: 'Created',
+      json: async () => ({ ref: 'alpha@sha256:new', sourceHash: 'source-new', semanticHash: 'semantic-new', diagnostics: [] }),
+    };
+  };
+  try {
+    const editor = saveEditor('alpha');
+    editor.model.sourceHash = 'source-old';
+    await ProcessTemplateEditor.prototype.save.call(editor);
+    assert.equal(calls[0].path, '/v1/process/templates/alpha');
+    assert.equal(calls[0].body.template.id, 'alpha', 'an existing key is sent back unchanged');
+    assert.equal(editor.model.template.id, 'alpha');
   } finally {
     if (previousFetch === undefined) delete globalThis.fetch;
     else globalThis.fetch = previousFetch;

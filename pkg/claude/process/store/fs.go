@@ -1583,7 +1583,16 @@ func (s *FS) ListRuns(ctx context.Context) ([]RunRecord, error) {
 		}
 		records = append(records, run)
 	}
+	// Newest first, by creation time rather than by id. Ordering used to be a
+	// side effect of run ids starting with the template id, which silently
+	// coupled the list order to an id FORMAT; a run id whose prefix changes --
+	// or a template renamed between runs -- would otherwise reshuffle history.
+	// Ties fall back to the id so the order stays total and deterministic, and
+	// legacy records with no CreatedAt sort last instead of leading.
 	slices.SortFunc(records, func(a, b RunRecord) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return b.CreatedAt.Compare(a.CreatedAt)
+		}
 		return strings.Compare(a.ID, b.ID)
 	})
 	return records, nil
