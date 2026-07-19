@@ -56,6 +56,14 @@ jobs:
         # dropped from CI only if a named shard's path stops existing — which
         # fails that shard loudly ("no such package") rather than silently.
         shard: [agentd, jstest, process, rest]
+        exclude:
+          # The jstest shard exercises browser-targeted dashboard JS under
+          # Node + the vendored LinkeDOM runtime — nothing in it varies by
+          # runner OS (end-user browsers are a different axis entirely), so
+          # one Linux run is full coverage. The Go shards keep both OSes:
+          # they carry _unix/_darwin build-tagged code and real fs behavior.
+          - os: macos-latest
+            shard: jstest
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
