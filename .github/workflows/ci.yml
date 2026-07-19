@@ -41,8 +41,21 @@ jobs:
     name: Test
     runs-on: ${{ matrix.os }}
     strategy:
+      # One red shard must not cancel its siblings — the point of sharding is
+      # seeing exactly which slice fails.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # The suite is sharded across concurrent runners so the wall clock is
+        # bounded by the slowest single package instead of the sum. The three
+        # named shards are the measured heavyweights (agentd ~2.5min serial,
+        # jstest's 124 Node suites, the process tree's CPU-bound packages);
+        # `rest` is everything else via an exclusion filter in the run step.
+        # That filter must stay in sync with this list: each named shard's
+        # target is excluded by an anchored pattern, so a package can be
+        # dropped from CI only if a named shard's path stops existing — which
+        # fails that shard loudly ("no such package") rather than silently.
+        shard: [agentd, jstest, process, rest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -78,7 +91,24 @@ jobs:
       # on by default.
       # Make the external Node runtime part of jstest's Go test-cache key without
       # disabling useful result caching for every other package.
-      - name: Run tests
+      - name: Run tests (${{ matrix.shard }})
         run: |
           export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
-          go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} ./...
+          case "${{ matrix.shard }}" in
+            agentd)  pkgs="./pkg/claude/agentd" ;;
+            jstest)  pkgs="./pkg/claude/agentd/jstest" ;;
+            process) pkgs="./pkg/claude/process/..." ;;
+            rest)
+              # Everything the named shards don't cover. Patterns are anchored
+              # to exactly the shard targets above: `agentd$`/`jstest$` keep
+              # siblings like agentd/dashsnap here, and the trailing slash on
+              # `process/` keeps processcmd here.
+              pkgs="$(go list ./... | grep -v \
+                -e '/pkg/claude/agentd$' \
+                -e '/pkg/claude/agentd/jstest$' \
+                -e '/pkg/claude/process$' \
+                -e '/pkg/claude/process/')"
+              ;;
+            *) echo "unknown shard: ${{ matrix.shard }}" >&2; exit 1 ;;
+          esac
+          go test ${{ vars.RUN_RACE == 'true' && '-race' || '' }} $pkgs
