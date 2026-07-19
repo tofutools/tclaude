@@ -348,6 +348,9 @@ func (s *FS) syncPathV1AppendDir(dir *os.File) error {
 			return fmt.Errorf("sync path-v1 append directory: %w", err)
 		}
 	}
+	if skipDurabilitySyncs {
+		return nil
+	}
 	if err := unix.Fsync(int(dir.Fd())); err != nil {
 		return fmt.Errorf("sync path-v1 append directory: %w", err)
 	}
