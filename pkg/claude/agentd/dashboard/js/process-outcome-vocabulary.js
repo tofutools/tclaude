@@ -21,13 +21,24 @@ export const UNNAMED_OUTCOME = 'next';
 export const PASS_OUTCOMES = ['pass', 'done', 'success', UNNAMED_OUTCOME];
 
 // outcomeCarriesInformation reports whether an edge's outcome is worth drawing
-// over the arrow. It is not when the edge is the only way out of its node AND
-// carries the unnamed default: the runtime takes a lone edge regardless of its
-// name (plan.ResolvePassEdge's single-edge fallback), so the label would state
-// nothing the arrow does not already show. Once a sibling exists the outcome is
-// the routing decision and is always drawn.
+// over the arrow.
+//
+// It is not, when the edge is the only way out of its node AND its outcome is
+// one of the generic pass-vocabulary names. The runtime takes a lone edge
+// regardless of what it is called (plan.ResolvePassEdge's single-edge
+// fallback), so such a label states nothing the arrow does not already show.
+//
+// The whole vocabulary is covered, not just UNNAMED_OUTCOME, because templates
+// authored before unnamed connectors existed spell this exact situation
+// 'pass' — see docs/examples/code-change-with-review.yaml. Hiding only the new
+// default would declutter new work and leave every existing process as noisy as
+// before, which is the complaint this exists to answer.
+//
+// A name outside the vocabulary is always drawn even on a lone edge: the author
+// typed something specific, so it is documentation rather than filler. And once
+// a sibling exists ANY outcome is the routing decision, and is always drawn.
 export function outcomeCarriesInformation(outcome, siblingCount) {
   if (!outcome) return false;
   if (siblingCount > 1) return true;
-  return outcome !== UNNAMED_OUTCOME;
+  return !PASS_OUTCOMES.includes(outcome);
 }

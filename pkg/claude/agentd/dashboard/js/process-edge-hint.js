@@ -7,11 +7,15 @@
 // process-outcome-vocabulary.js), which means every label still on screen IS
 // load-bearing — and worth explaining once.
 //
-// Pin model: shown without a hover until the author dismisses it, hover-only
-// afterwards. The dismissal is one editor-wide flag in localStorage, not
-// per-edge: the message is identical on every connector, so asking for it to be
-// dismissed once per arrow would be a chore, and it is an author preference
-// rather than template content (it must never reach the saved YAML).
+// Pin model: shown against the selected connector until the author dismisses it
+// with the pin button, then never again. The dismissal is one editor-wide flag,
+// not per-edge: the message is identical on every connector, so dismissing it
+// once per arrow would be a chore.
+//
+// It is an author preference, never template content -- it must never reach the
+// saved YAML -- so it goes through dashPrefs (-> SQLite), which is where editor
+// prefs live in this dashboard. The store is injected rather than imported so
+// this module stays DOM-free and unit testable.
 
 export const EDGE_HINT_STORAGE_KEY = 'tclaude.processEditor.edgeLabelHint';
 const DISMISSED = 'dismissed';
@@ -23,9 +27,9 @@ export function edgeHintText(outcome, siblingCount) {
     : `${quoted} is this connector's outcome key. It is the only way out of this node, so the run takes it either way — but adding a second connector makes the key decide.`;
 }
 
-// readEdgeHintDismissed tolerates a storage object that throws on access:
-// Safari in private mode and embedded webviews both do, and a hint preference
-// is never worth breaking the editor over.
+// Both accessors tolerate a store that throws or is absent. dashPrefs is backed
+// by a network round trip to SQLite, so a failure here is a real possibility --
+// and a hint preference is never worth breaking the editor over.
 export function readEdgeHintDismissed(storage) {
   try {
     return storage?.getItem?.(EDGE_HINT_STORAGE_KEY) === DISMISSED;
@@ -44,29 +48,16 @@ export function writeEdgeHintDismissed(storage, dismissed) {
   }
 }
 
-// resolveEdgeHint decides whether a hint is showing, for which edge, and
-// whether its pin affordance is offered. Pure so the visibility rule is unit
-// testable without a DOM: the interesting cases are "pinned but nothing
-// selected" and "dismissed and merely hovered".
+// resolveEdgeHint decides whether a hint is showing and for which edge. Pure so
+// the rule is unit testable without a DOM.
 //
-//   dismissed=false -> the selected edge shows it; a hovered edge shows it too
-//   dismissed=true  -> only a hovered edge (or the hovered hint itself) shows it
-//
-// At most one hint exists at a time; selection wins over hover so the hint does
-// not jump away while the author moves toward it.
-export function resolveEdgeHint({
-  dismissed = false, selected = null, hovered = null, hintHovered = false, labelled = () => false,
-} = {}) {
-  const pick = (candidate) => (candidate && labelled(candidate) ? candidate : null);
-  const selectedEdge = pick(selected);
-  const hoveredEdge = pick(hovered);
-  if (!dismissed) {
-    const edge = selectedEdge || hoveredEdge;
-    return edge ? { open: true, edge, pinned: true } : { open: false, edge: null, pinned: true };
-  }
-  // Once dismissed the hint is hover-only. hintHovered keeps it alive while the
-  // pointer is over the bubble itself, which otherwise sits off the arrow's hit
-  // path and would dismiss on approach.
-  const edge = hoveredEdge || (hintHovered ? selectedEdge : null);
-  return edge ? { open: true, edge, pinned: false } : { open: false, edge: null, pinned: false };
+// The hint is tied to selection alone: it appears against the selected
+// connector, and only while that connector actually carries a label (an unnamed
+// lone connector has no key to explain and nothing to anchor to). Dismissing it
+// is editor-wide and permanent — the message is identical on every connector,
+// so once it has been read it is noise everywhere.
+export function resolveEdgeHint({ dismissed = false, selected = null, labelled = () => false } = {}) {
+  if (dismissed) return { open: false, edge: null };
+  if (!selected || !labelled(selected)) return { open: false, edge: null };
+  return { open: true, edge: selected };
 }

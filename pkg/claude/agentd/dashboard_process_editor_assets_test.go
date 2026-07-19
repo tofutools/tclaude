@@ -47,7 +47,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		// The unique-(from,outcome) invariant and the start pseudo edge are the
 		// two server contracts the pure model enforces client-side; self-loops
 		// are refused because v1 processes are acyclic and saves are advisory.
-		"duplicate edge",
+		"already has a connector labelled",
 		"outcome: START_OUTCOME",
 		"self-loop edges are not supported",
 		// The phase-4 run-view seam: mode-level insertion permission plus

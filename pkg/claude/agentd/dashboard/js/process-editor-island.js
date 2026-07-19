@@ -251,6 +251,22 @@ function Issues({ controller, issues }) {
   </details>`;
 }
 
+// EdgeHint explains that a connector's visible label is the key the run routes
+// on. It is positioned like InlineEditor -- host coordinates resolved from the
+// graph point by the controller -- and is aria-hidden-free so a screen reader
+// reaching the selected edge gets the same explanation sighted authors do.
+function EdgeHint({ controller, hint }) {
+  if (!hint?.open) return null;
+  return html`<div class="process-edge-hint" role="note"
+    style=${`left:${Math.round(hint.left)}px;top:${Math.round(hint.top)}px`}>
+    <p class="process-edge-hint-text">${hint.text}</p>
+    <button class="process-edge-hint-pin" type="button"
+      title="Stop showing this"
+      aria-label="Stop showing the connector label explanation"
+      onClick=${() => controller.dismissEdgeHint()}>📌</button>
+  </div>`;
+}
+
 function InlineEditor({ controller, inline }) {
   const ref = useRef(null);
   useLayoutEffect(() => {
@@ -411,6 +427,7 @@ export function ProcessEditorApp({ controller }) {
       <div ref=${stageRef} class="process-editor-stage">
         <div ref=${graphRef} class="process-editor-canvas-host"></div>
         <${InlineEditor} controller=${controller} inline=${view.inline} />
+        <${EdgeHint} controller=${controller} hint=${view.edgeHint} />
         <${Issues} controller=${controller} issues=${view.issues} />
       </div>
     </div>
