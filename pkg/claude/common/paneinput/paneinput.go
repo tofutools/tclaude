@@ -85,10 +85,10 @@ func (o Options) resolved() Options {
 // the same pane. fn receives the exact-match tmux pane target.
 func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget string) error) error {
 	opts = opts.resolved()
-	exactTarget := exactInputTarget(tmuxTarget)
+	exactTarget := ExactInputTarget(tmuxTarget)
 	lockTarget := exactTarget
 	if opts.LockID != "" {
-		lockTarget = exactInputTarget(opts.LockID)
+		lockTarget = ExactInputTarget(opts.LockID)
 	}
 	lockPath, err := paneLockPath(lockTarget)
 	if err != nil {
@@ -111,11 +111,14 @@ func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget s
 	return fn(opts.Run, exactTarget)
 }
 
-// exactInputTarget preserves tmux pane IDs, which are already exact targets.
-// Prefixing a pane ID with the session-name exact marker produces the invalid
-// target "=%N" in real tmux. Session-shaped targets still need the marker to
-// avoid tmux's unique-prefix fallback onto a namesake session.
-func exactInputTarget(tmuxTarget string) string {
+// ExactInputTarget canonicalizes an input target to its exact form: tmux
+// pane IDs are already exact targets and pass through (prefixing one with
+// the session-name exact marker produces the invalid target "=%N" in real
+// tmux), while session-shaped targets get the marker to avoid tmux's
+// unique-prefix fallback onto a namesake session. Exported so in-process
+// serialization (agentd's pane-inject mutexes) can key on the very same
+// canonical identity as this package's cross-process advisory file lock.
+func ExactInputTarget(tmuxTarget string) string {
 	target := strings.TrimPrefix(tmuxTarget, "=")
 	if strings.HasPrefix(target, "%") {
 		return target

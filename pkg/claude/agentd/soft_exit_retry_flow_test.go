@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -547,4 +548,67 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 	assert.Equal(t, db.AgentExitActionStop, intent,
 		"a confirmed disappearance must leave the intent for the reaper's attribution")
 	assert.Equal(t, eventID, gotEventID)
+}
+
+// A failed RE-send during the retry window must not erase the delivered
+// first /exit's attribution: the send often fails precisely because that
+// exit is landing. The branch mirrors its unknown-probe sibling — the
+// intent survives through the bounded observer window (for the
+// callback/reaper to claim) and is then cleaned up, never cleared the
+// instant the re-send errors.
+func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testing.T) {
+	const eventID = "evt_888888888888888888888888"
+	f := newFlow(t)
+	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(time.Second))
+	const conv = "sxjn-1111-2222-3333-4444"
+	const sessionID = "spwn-sxjn"
+	const tmuxSes = "tmux-sxjn"
+	f.HaveConvWithTitle(conv, "retry-send-fail")
+	f.HaveAliveSession(conv, sessionID, tmuxSes, f.TestCwd("sxjn"))
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	retryReached := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+		if attempt == 2 {
+			f.World.Tmux.FailNextCommand("send-keys")
+			once.Do(func() { close(retryReached) })
+		}
+	}))
+
+	assert.Equal(t, "soft_stopped",
+		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
+	select {
+	case <-retryReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retry attempt 2 never ran")
+	}
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	readIntent := func() (intent, gotEventID string) {
+		t.Helper()
+		require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id
+			FROM sessions WHERE id = ?`, sessionID).Scan(&intent, &gotEventID))
+		return intent, gotEventID
+	}
+	// The 1s observer window comfortably outlasts this 100ms probe: any
+	// clear observed here is the instant-clear regression, not the bounded
+	// cleanup.
+	assert.Never(t, func() bool {
+		intent, _ := readIntent()
+		return intent == ""
+	}, 100*time.Millisecond, 10*time.Millisecond,
+		"a failed re-send must not instantly clear the delivered exit's intent")
+	intent, gotEventID := readIntent()
+	assert.Equal(t, db.AgentExitActionStop, intent)
+	assert.Equal(t, eventID, gotEventID)
+
+	agentd.WaitForBackgroundForTest()
+	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"),
+		"the failed re-send delivers no bytes and no further retries run")
+	intent, gotEventID = readIntent()
+	assert.Empty(t, intent, "the bounded observer window still cleans up; retention is not a leak")
+	assert.Empty(t, gotEventID)
 }
