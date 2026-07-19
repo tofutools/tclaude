@@ -68,12 +68,14 @@ function UsageChartLegend({ wizard }) {
     <span><i class="usage-legend-swatch forecast"></i>${wizard ? 'Prophecy' : 'Forecast'}</span>
     <span><i class="usage-legend-swatch reset"></i>${wizard ? 'Replenishment' : 'Reset'}</span>
     <span><i class="usage-legend-swatch now"></i>${wizard ? 'This moment' : 'Now'}</span>
+    <span><i class="usage-legend-swatch excluded"></i>${wizard ? 'Veiled' : 'Excluded'}</span>
   </div>`;
 }
 
-function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, wizard }) {
+function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, onTogglePoint, wizard }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
-  const latest = series.points?.[series.points.length - 1];
+  const includedPoints = (series.points || []).filter((point) => !point.excluded);
+  const latest = includedPoints[includedPoints.length - 1];
   const now = new Date(payload.generated_at).getTime();
   const forecast = usageForecastView(series.forecast, now, latest?.at, wizard);
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
@@ -88,7 +90,7 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead, wi
     </div>
     <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead} wizard=${wizard} />
     <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}
-      lookaheadHours=${span.lookaheadHours} wizard=${wizard} />
+      lookaheadHours=${span.lookaheadHours} wizard=${wizard} onTogglePoint=${onTogglePoint} />
     <${UsageChartLegend} wizard=${wizard} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong>
@@ -136,6 +138,7 @@ export function UsageHistoryApp({ state, actions }) {
   }, [current.active]);
   const setSpan = (key, hours) => { if (state.setSeriesHours(key, hours)) void actions.load(); };
   const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);
+  const togglePoint = (series, point) => actions.setPointExcluded(series, point, !point.excluded);
   // Nothing but load state sits above the graphs: the legend now rides with
   // each chart and the explanatory note is a footnote below the grid, so the
   // tab opens on the data rather than on a paragraph about it.
@@ -155,14 +158,15 @@ export function UsageHistoryApp({ state, actions }) {
                 const key = usageSeriesKeyOf(series);
                 return html`<${UsageSeriesCard} key=${key} series=${series} payload=${current.payload}
                   span=${current.spanFor(key)} onSetHours=${(hours) => setSpan(key, hours)}
-                  onSetLookahead=${(hours) => setLookahead(key, hours)} wizard=${wizard} />`;
+                  onSetLookahead=${(hours) => setLookahead(key, hours)}
+                  onTogglePoint=${(point) => togglePoint(series, point)} wizard=${wizard} />`;
               })}
             </div>`)}</div>`
         : html`<div class="empty">${w('No subscription usage samples in this range yet.', 'No mana readings have been taken in this span yet.')}</div>`}
     </${Fragment}>`}
     <p class="usage-history-note">${w(
-      'Account-wide provider limits, sampled every 15 minutes; history and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.',
-      'Account-wide provider wards, scried every 15 minutes; chronicle and scry-ahead spans persist per graph. Prophecies are cast per provider × mana cycle. The providers reveal no trustworthy per-model attribution. A dashed line is the pace of channeling since the last replenishment; downward steps of at least 2 percentage points are read as an unforeseen replenishment.',
+      'Account-wide provider limits, sampled every 15 minutes; click a point to exclude or restore it. Excluded points stay visible but do not affect lines, resets, current values, or predictions. History and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.',
+      'Account-wide provider wards, scried every 15 minutes; click a reading to veil or reveal it. Veiled readings remain visible but do not shape traces, replenishments, current reserves, or prophecies. Chronicle and scry-ahead spans persist per graph. Prophecies are cast per provider × mana cycle. The providers reveal no trustworthy per-model attribution. A dashed line is the pace of channeling since the last replenishment; downward steps of at least 2 percentage points are read as an unforeseen replenishment.',
     )}</p>
   </div>`;
 }

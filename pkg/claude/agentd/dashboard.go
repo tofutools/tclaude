@@ -180,6 +180,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/perf/reset", handleDashboardPerfReset)
 	mux.HandleFunc("/api/costs", handleDashboardCosts)
 	mux.HandleFunc("/api/usage-history", withGzip(handleDashboardUsageHistory))
+	mux.HandleFunc("/api/usage-history/point", handleDashboardUsageHistoryPoint)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.HandleFunc("/api/logs", handleDashboardLogs)
 	// The Processes tab consumes the same versioned REST surface as other

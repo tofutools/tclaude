@@ -26,9 +26,12 @@ function finiteDate(value) {
 
 function sampledPoints(points, maxPoints) {
   if (points.length <= maxPoints) return points;
-  const stride = Math.ceil((points.length - 1) / (maxPoints - 1));
-  const sampled = points.filter((_, index) => index === 0 || index === points.length - 1 || index % stride === 0);
-  return sampled.length <= maxPoints ? sampled : [...sampled.slice(0, maxPoints - 1), points[points.length - 1]];
+  const excluded = points.filter((point) => point.excluded);
+  const included = points.filter((point) => !point.excluded);
+  const budget = Math.max(2, maxPoints - excluded.length);
+  const stride = Math.ceil((included.length - 1) / (budget - 1));
+  const sampled = included.filter((_, index) => index === 0 || index === included.length - 1 || index % stride === 0);
+  return [...sampled.slice(0, budget), ...excluded].sort((a, b) => a.time - b.time);
 }
 
 function chartPointerPosition(svg, event) {
@@ -111,7 +114,7 @@ function resetTimingLabel(resetAt, now, wizard = false) {
     : `Reported quota reset ${formatUsageDuration(delta)} ago`;
 }
 
-export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168, wizard = false }) {
+export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168, wizard = false, onTogglePoint }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const [tooltip, setTooltip] = useState(null);
   const [keyboardPointAt, setKeyboardPointAt] = useState(null);
@@ -139,9 +142,10 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     .map((reset) => ({ ...reset, time: finiteDate(reset.at) }))
     .filter((reset) => reset.time !== null);
   const resetTimes = new Set(resetMarkers.map((reset) => reset.time));
+  const includedPoints = points.filter((point) => !point.excluded);
   const segments = [];
   let current = [];
-  for (const point of points) {
+  for (const point of includedPoints) {
     if (resetTimes.has(point.time) && current.length) {
       segments.push(current);
       current = [];
@@ -149,10 +153,10 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     current.push(point);
   }
   if (current.length) segments.push(current);
-  const latest = points[points.length - 1];
+  const latest = includedPoints[includedPoints.length - 1] || null;
   const forecastAt = Math.min(horizon, hitAt ?? horizon, resetAt ?? horizon);
-  const forecastPct = Math.min(100, latest.pct + rate * Math.max(0, forecastAt - latest.time) / 3600000);
-  const hasForecastLine = projecting && forecastAt > latest.time;
+  const forecastPct = latest ? Math.min(100, latest.pct + rate * Math.max(0, forecastAt - latest.time) / 3600000) : 0;
+  const hasForecastLine = Boolean(latest) && projecting && forecastAt > latest.time;
   const scheduledResetVisible = resetAt !== null && resetAt > now && resetAt <= horizon;
   const pointMarkers = sampledPoints(points, 240);
   const keyboardPointIndex = Number.isInteger(keyboardPointAt) && keyboardPointAt < pointMarkers.length
@@ -178,11 +182,19 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     setTooltip({ x: anchorX, y: anchorY, tone, title, lines, pointAt });
   };
   const hideTooltip = () => setTooltip(null);
+  const togglePoint = (point) => {
+    hideTooltip();
+    onTogglePoint?.(point);
+  };
   const showPointTooltip = (point) => {
     const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time, wizard);
-    showTooltip(x(point.time), y(point.pct), 'observed', w('Sample', 'Reading'), [
+    showTooltip(x(point.time), y(point.pct), point.excluded ? 'excluded' : 'observed',
+      point.excluded ? w('Excluded sample', 'Veiled reading') : w('Sample', 'Reading'), [
       scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
       pointResetLabel,
+      point.excluded
+        ? w('Excluded from calculations · click to include', 'Veiled from reckonings · click to reveal')
+        : w('Click to exclude from calculations', 'Click to veil from reckonings'),
     ], point.time);
   };
   const showResetTooltip = (reset, index, anchorY = y(reset.pct)) => {
@@ -249,6 +261,17 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     } else if (nearest.kind === 'now') {
       showNowTooltip(pointer.y);
     }
+  };
+  const toggleNearestPoint = (event) => {
+    if (typeof onTogglePoint !== 'function') return;
+    const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
+    const pointer = chartPointerPosition(svg, event);
+    if (!pointer) return;
+    const nearest = pointMarkers.reduce((best, point) => {
+      const distance = (x(point.time) - pointer.x) ** 2 + (y(point.pct) - pointer.y) ** 2;
+      return !best || distance < best.distance ? { point, distance } : best;
+    }, null);
+    if (nearest && nearest.distance <= HOVER_DISTANCE ** 2) togglePoint(nearest.point);
   };
   const focusChartItemByKey = (event, index, selector, length) => {
     let target = index;
@@ -322,22 +345,30 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     </g>`}
     ${pointMarkers.map((point, index) => {
       const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time, wizard);
-      return html`<g class=${`usage-point-mark${tooltip?.pointAt === point.time ? ' active' : ''}`} key=${point.at}>
+      const actionLabel = point.excluded ? w('include this sample', 'reveal this reading') : w('exclude this sample', 'veil this reading');
+      return html`<g class=${`usage-point-mark${point.excluded ? ' excluded' : ''}${tooltip?.pointAt === point.time ? ' active' : ''}`} key=${point.at}>
         <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.25" />
         <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
-          tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
-          aria-label=${`${w('Sample', 'Reading')}; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? w('; use left and right arrow keys to explore samples', '; use left and right arrow keys to explore readings') : ''}`}
+          tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="button" aria-pressed=${Boolean(point.excluded)}
+          aria-label=${`${point.excluded ? w('Excluded sample', 'Veiled reading') : w('Sample', 'Reading')}; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}; ${actionLabel}${index === keyboardPointIndex ? w('; use left and right arrow keys to explore samples', '; use left and right arrow keys to explore readings') : ''}`}
           onfocus=${() => {
             setKeyboardPointAt(index);
             showPointTooltip(point);
           }} onblur=${hideTooltip}
-          onkeydown=${(event) => focusChartItemByKey(event, index, '.usage-point-hit-target', pointMarkers.length)} />
+          onkeydown=${(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              togglePoint(point);
+              return;
+            }
+            focusChartItemByKey(event, index, '.usage-point-hit-target', pointMarkers.length);
+          }} />
       </g>`;
     })}
     <rect class="usage-chart-hover-surface" x=${PAD.left} y=${PAD.top}
       width=${W - PAD.left - PAD.right} height=${H - PAD.top - PAD.bottom}
       aria-hidden="true" onmouseenter=${updateChartHover} onmousemove=${updateChartHover}
-      onmouseleave=${hideTooltip} />
+      onmouseleave=${hideTooltip} onclick=${toggleNearestPoint} />
     ${tooltip && html`<g class=${`usage-chart-tooltip ${tooltip.tone}`} transform=${`translate(${tooltipX} ${tooltipY})`}>
       <rect width=${TOOLTIP_WIDTH} height=${tooltipHeight} rx="4" />
       <text x="7" y="12"><tspan class="usage-tooltip-title" x="7">${tooltip.title}</tspan>

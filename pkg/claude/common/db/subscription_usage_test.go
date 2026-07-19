@@ -108,6 +108,62 @@ func TestSubscriptionUsageHistorySinceReturnsChartRows(t *testing.T) {
 	assert.Equal(t, 7*24*time.Hour, rows[0].Duration)
 	assert.Equal(t, "rollout", rows[0].Source)
 	assert.Equal(t, base.Add(6*24*time.Hour), rows[0].ResetsAt)
+	assert.False(t, rows[0].Excluded)
+}
+
+func TestSetSubscriptionUsagePointExcludedPersistsExactObservation(t *testing.T) {
+	setupTestDB(t)
+	base := time.Now().UTC().Truncate(time.Hour)
+	for i, pct := range []float64{10, 20} {
+		stored, err := SaveSubscriptionUsageSample(SubscriptionUsageSample{
+			Provider: SubscriptionProviderOpenAI, ObservedAt: base.Add(time.Duration(i) * 15 * time.Minute),
+			Windows: []SubscriptionUsageWindow{{Name: "five_hour", UsedPercent: pct}},
+		})
+		require.NoError(t, err)
+		assert.True(t, stored)
+	}
+
+	require.NoError(t, SetSubscriptionUsagePointExcluded(
+		SubscriptionProviderOpenAI, "five_hour", base, true))
+	rows, err := SubscriptionUsageHistorySince(base)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	assert.True(t, rows[0].Excluded)
+	assert.False(t, rows[1].Excluded)
+
+	require.NoError(t, SetSubscriptionUsagePointExcluded(
+		SubscriptionProviderOpenAI, "five_hour", base, false))
+	rows, err = SubscriptionUsageHistorySince(base)
+	require.NoError(t, err)
+	assert.False(t, rows[0].Excluded)
+	assert.ErrorIs(t, SetSubscriptionUsagePointExcluded(
+		SubscriptionProviderOpenAI, "five_hour", base.Add(time.Minute), true),
+		ErrSubscriptionUsagePointNotFound)
+}
+
+func TestNewerBucketReplacementDoesNotInheritExclusion(t *testing.T) {
+	setupTestDB(t)
+	base := time.Now().UTC().Truncate(time.Hour)
+	sample := SubscriptionUsageSample{
+		Provider: SubscriptionProviderOpenAI, ObservedAt: base.Add(time.Minute),
+		Windows: []SubscriptionUsageWindow{{Name: "five_hour", UsedPercent: 99}},
+	}
+	stored, err := SaveSubscriptionUsageSample(sample)
+	require.NoError(t, err)
+	assert.True(t, stored)
+	require.NoError(t, SetSubscriptionUsagePointExcluded(
+		SubscriptionProviderOpenAI, "five_hour", sample.ObservedAt, true))
+
+	sample.ObservedAt = base.Add(2 * time.Minute)
+	sample.Windows[0].UsedPercent = 10
+	stored, err = SaveSubscriptionUsageSample(sample)
+	require.NoError(t, err)
+	assert.True(t, stored)
+	rows, err := SubscriptionUsageHistorySince(base)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.False(t, rows[0].Excluded, "a genuinely newer point is included by default")
+	assert.Equal(t, 10.0, rows[0].UsedPercent)
 }
 
 func TestPruneSubscriptionUsageHistoryCascadesWindows(t *testing.T) {

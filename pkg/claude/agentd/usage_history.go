@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -29,6 +31,7 @@ type usageHistoryPoint struct {
 	Pct      float64 `json:"pct"`
 	ResetsAt string  `json:"resets_at,omitempty"`
 	Source   string  `json:"source,omitempty"`
+	Excluded bool    `json:"excluded,omitempty"`
 }
 
 type usageHistoryReset struct {
@@ -109,23 +112,32 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 			Points: make([]usageHistoryPoint, 0), Resets: make([]usageHistoryReset, 0),
 		}
 		visibleRows := make([]db.SubscriptionUsageHistoryRow, 0, len(rows))
+		includedRows := make([]db.SubscriptionUsageHistoryRow, 0, len(rows))
 		for _, row := range rows {
 			if row.Duration > 0 {
 				series.DurationSeconds = int64(row.Duration / time.Second)
 			}
 			if row.ObservedAt.Before(seriesFrom) {
+				if !row.Excluded {
+					includedRows = append(includedRows, row)
+				}
 				continue
 			}
 			visibleRows = append(visibleRows, row)
+			if !row.Excluded {
+				includedRows = append(includedRows, row)
+			}
 		}
-		series.Forecast, series.Resets = forecastUsage(rows, now)
+		// Excluded observations remain display data, but are absent from every
+		// derived value: reset detection, reset timing, pace, and prediction.
+		series.Forecast, series.Resets = forecastUsage(includedRows, now)
 		series.Resets = resetMarkersSince(series.Resets, seriesFrom)
 		series.ResetCount = len(series.Resets)
 		series.Resets = downsampleUsageResets(series.Resets, maxUsageResetMarkers)
 		visibleRows = downsampleUsageRows(visibleRows, series.Resets, maxUsageChartPoints)
 		series.Points = make([]usageHistoryPoint, 0, len(visibleRows))
 		for _, row := range visibleRows {
-			point := usageHistoryPoint{At: row.ObservedAt.UTC().Format(time.RFC3339Nano), Pct: row.UsedPercent, Source: row.Source}
+			point := usageHistoryPoint{At: row.ObservedAt.UTC().Format(time.RFC3339Nano), Pct: row.UsedPercent, Source: row.Source, Excluded: row.Excluded}
 			if !row.ResetsAt.IsZero() {
 				point.ResetsAt = row.ResetsAt.UTC().Format(time.RFC3339Nano)
 			}
@@ -148,24 +160,47 @@ func downsampleUsageResets(resets []usageHistoryReset, max int) []usageHistoryRe
 	return append(out, resets[len(resets)-1])
 }
 
-// downsampleUsageRows bounds the chart wire shape while retaining the first
-// and latest observation plus both sides of every displayed reset. Forecasts
-// are computed from the full rows before this display-only reduction.
+// downsampleUsageRows normally bounds the chart wire shape while retaining
+// the first/latest observation, both sides of every displayed reset, and all
+// explicitly excluded observations so they remain reversible. Forecasts are
+// computed from the full included rows before this display-only reduction.
 func downsampleUsageRows(rows []db.SubscriptionUsageHistoryRow, resets []usageHistoryReset, max int) []db.SubscriptionUsageHistoryRow {
 	if max < 2 || len(rows) <= max {
 		return rows
 	}
 	required := map[int]bool{0: true, len(rows) - 1: true}
+	firstIncluded, lastIncluded := -1, -1
+	for i, row := range rows {
+		if row.Excluded {
+			continue
+		}
+		if firstIncluded < 0 {
+			firstIncluded = i
+		}
+		lastIncluded = i
+	}
+	if firstIncluded >= 0 {
+		required[firstIncluded] = true
+		required[lastIncluded] = true
+	}
 	resetAt := make(map[string]struct{}, len(resets))
 	for _, reset := range resets {
 		resetAt[reset.At] = struct{}{}
 	}
 	for i, row := range rows {
+		if row.Excluded {
+			// Explicitly excluded points must stay on the chart so the operator
+			// can reverse the decision even when ordinary samples are reduced.
+			required[i] = true
+		}
 		at := row.ObservedAt.UTC().Format(time.RFC3339Nano)
 		if _, ok := resetAt[at]; ok {
 			required[i] = true
-			if i > 0 {
-				required[i-1] = true
+			for previous := i - 1; previous >= 0; previous-- {
+				if !rows[previous].Excluded {
+					required[previous] = true
+					break
+				}
 			}
 		}
 	}
@@ -335,4 +370,47 @@ func handleDashboardUsageHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+type usageHistoryExclusionBody struct {
+	Provider   string `json:"provider"`
+	WindowName string `json:"window_name"`
+	At         string `json:"at"`
+	Excluded   *bool  `json:"excluded"`
+}
+
+func handleDashboardUsageHistoryPoint(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var body usageHistoryExclusionBody
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		http.Error(w, "bad exclusion body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Excluded == nil {
+		http.Error(w, "excluded is required", http.StatusBadRequest)
+		return
+	}
+	at, err := time.Parse(time.RFC3339Nano, body.At)
+	if err != nil {
+		http.Error(w, "at must be an RFC3339 timestamp", http.StatusBadRequest)
+		return
+	}
+	if err := db.SetSubscriptionUsagePointExcluded(body.Provider, body.WindowName, at, *body.Excluded); err != nil {
+		if errors.Is(err, db.ErrSubscriptionUsagePointNotFound) {
+			http.Error(w, "usage point changed or no longer exists; refresh and try again", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "set usage exclusion: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"excluded": *body.Excluded})
 }

@@ -12,7 +12,6 @@ import (
 )
 
 func TestMigrateV137AgentExitAudit_Idempotent(t *testing.T) {
-	require.Equal(t, 137, currentVersion, "tripwire: bump this with the next migration")
 	setupTestDB(t)
 	d, err := Open()
 	require.NoError(t, err)
@@ -60,7 +59,7 @@ func TestMigrateV137_FromRealV136FixturePreservesLegacyRowsAndListReads(t *testi
 
 	d, err := Open()
 	require.NoError(t, err)
-	assert.Equal(t, 137, schemaVersion(d))
+	assert.Equal(t, currentVersion, schemaVersion(d))
 	var status, tmux string
 	require.NoError(t, d.QueryRow(`SELECT status, tmux_session FROM sessions WHERE id = 'legacy-session'`).Scan(&status, &tmux))
 	assert.Equal(t, "working", status)

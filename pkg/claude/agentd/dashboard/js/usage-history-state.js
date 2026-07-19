@@ -122,9 +122,14 @@ export function createUsageHistoryState({
     request.value = { phase: 'error', requestId, hasLoaded: false, error: errorMessage(error) };
     return true;
   }
+  function failMutation(error) {
+    request.value = {
+      ...request.value, phase: 'error', hasLoaded: payload.value !== null, error: errorMessage(error),
+    };
+  }
   return Object.freeze({
     seriesSpans, defaultSpan, payload, request, view,
-    initialize, setSeriesHours, setSeriesLookaheadHours, beginRequest, commitRequest, failRequest,
+    initialize, setSeriesHours, setSeriesLookaheadHours, beginRequest, commitRequest, failRequest, failMutation,
   });
 }
 
