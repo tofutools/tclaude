@@ -113,7 +113,7 @@ test('invalid connector-drop origins and locked edges reject before any partial 
 test('addEdge enforces the unique (from, outcome) invariant', () => {
   const model = new ProcessEditModel(view());
   model.addEdge('begin', 'fail', 'ship');
-  assert.throws(() => model.addEdge('begin', 'fail', 'build'), /duplicate edge/);
+  assert.throws(() => model.addEdge('begin', 'fail', 'build'), /already has a connector labelled "fail"/);
   assert.throws(() => model.addEdge('begin', '', 'build'), /outcome is required/);
   assert.throws(() => model.addEdge('nope', 'x', 'ship'), /unknown node/);
 });
@@ -337,7 +337,7 @@ test('setEdgeOutcome renames and blocks collisions', () => {
   assert.ok(model.findEdge('build', 'ok'));
   assert.equal(model.findEdge('build', 'pass'), undefined);
   model.addEdge('build', 'fail', 'ship');
-  assert.throws(() => model.setEdgeOutcome('build', 'fail', 'ok'), /duplicate edge/);
+  assert.throws(() => model.setEdgeOutcome('build', 'fail', 'ok'), /already has a connector labelled "ok"/);
 });
 
 test('deleteNode drops touching edges; rewire redirects incoming to the primary successor', () => {
@@ -868,4 +868,32 @@ test('setStart repoints the start pseudo edge exactly once', () => {
   assert.equal(starts.length, 1);
   assert.equal(starts[0].to, 'build');
   assert.equal(model.template.start, 'build');
+});
+
+test('a lone connector keeps the precedence-winning pass name', () => {
+  // Hiding the label must not change which edge the runtime picks. 'pass' is
+  // the FIRST entry in model/next.go's passOutcomeLabels, so a sibling added
+  // later can never outrank it and steal the pass routing. Minting 'next' here
+  // -- the LAST alias -- would do exactly that.
+  const model = new ProcessEditModel(view());
+  model.addNode('wait', { id: 'hold' });
+  const first = model.freeOutcome('hold', 'pass');
+  assert.equal(first, 'pass');
+  model.addEdge('hold', first, 'ship');
+
+  const second = model.freeOutcome('hold', 'pass');
+  model.addEdge('hold', second, 'build');
+  const passVocabulary = ['pass', 'done', 'success', 'next'];
+  const winner = passVocabulary.find((label) => [first, second].includes(label));
+  assert.equal(winner, first, 'the connector drawn first must keep the pass routing');
+});
+
+test('outcomes stay real non-empty keys', () => {
+  const model = new ProcessEditModel(view());
+  model.addNode('task', { id: 'fresh' });
+  const outcome = model.freeOutcome('fresh', 'pass');
+  assert.notEqual(outcome, '');
+  model.addEdge('fresh', outcome, 'ship');
+  assert.equal(model.findEdge('fresh', outcome).to, 'ship');
+  assert.throws(() => model.addEdge('fresh', '', 'build'), /outcome is required/);
 });

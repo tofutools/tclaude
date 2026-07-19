@@ -584,7 +584,7 @@ export class ProcessEditModel {
     // never hand-drawn), and advisory-save semantics would let the doomed
     // version through silently — refuse at the source.
     if (from === to) throw new Error('self-loop edges are not supported (v1 processes are acyclic)');
-    if (this.findEdge(from, outcome)) throw new Error(`duplicate edge: ${from} already has outcome ${outcome}`);
+    if (this.findEdge(from, outcome)) throw new Error(`${from} already has a connector labelled "${outcome}". Outcome labels are the keys that pick which connector a run takes, so they must be unique per node.`);
     this.assertNewEdgePortsAvailable(from, to);
     const edge = { from, outcome, to };
     this.assertEdgeEditable(edge);
@@ -606,7 +606,7 @@ export class ProcessEditModel {
     if (!edge) throw new Error(`unknown edge ${from} (${oldOutcome})`);
     if (!newOutcome) throw new Error('edge outcome is required');
     if (newOutcome === oldOutcome) return;
-    if (this.findEdge(from, newOutcome)) throw new Error(`duplicate edge: ${from} already has outcome ${newOutcome}`);
+    if (this.findEdge(from, newOutcome)) throw new Error(`${from} already has a connector labelled "${newOutcome}". Outcome labels are the keys that pick which connector a run takes, so they must be unique per node.`);
     this.assertEdgeEditable(edge);
     this.begin();
     edge.outcome = newOutcome;

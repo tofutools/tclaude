@@ -26,6 +26,11 @@ import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
+import {
+  edgeHintText, readEdgeHintDismissed, resolveEdgeHint, writeEdgeHintDismissed,
+} from './process-edge-hint.js';
+import { outcomeCarriesInformation } from './process-outcome-vocabulary.js';
+import { dashPrefs } from './prefs.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
   ProcessClipboardError, createProcessSelectionPayload,
@@ -168,6 +173,9 @@ export class ProcessTemplateEditor {
     this.snippetLoadSeq = 0;
     this.statusState = { message: '', error: false };
     this.inlineState = { open: false, token: 0, left: 0, top: 0, value: '' };
+    // Author preference, never template content: read once so a dismissed hint
+    // does not re-render on every publish.
+    this.edgeHintDismissed = readEdgeHintDismissed(dashPrefs);
     this.inspectorFocusRequest = 0;
     this.modalState = null;
     this.modalGeneration = 0;
@@ -268,6 +276,7 @@ export class ProcessTemplateEditor {
         canSaveSelection: this.canSaveSelectionAsSnippet(),
       },
       inline: { ...this.inlineState },
+      edgeHint: this.edgeHintView(),
       inspectorFocusRequest: this.inspectorFocusRequest,
       external: {
         ...structuredClone(externalChange),
@@ -1060,7 +1069,12 @@ export class ProcessTemplateEditor {
     const created = this.mutate(() => this.model.addEdge(from, outcome, to));
     if (!created) return;
     this.setSelection({ type: 'edge', from, outcome });
-    this.openInlineOutcomeEdit(from, outcome);
+    // A lone connector's label is hidden, so there is nothing to type over and
+    // no drawn anchor to type into. Popping the inline editor there would ask
+    // the author to name the one edge whose name cannot route.
+    const lone = this.model.outgoingEdges(from).length <= 1
+      && this.model.node(from)?.type !== 'decision';
+    if (!lone) this.openInlineOutcomeEdit(from, outcome);
   }
 
   openConnectedNodeChooser(source, point, event) {
@@ -1383,7 +1397,18 @@ export class ProcessTemplateEditor {
   }
 
   renameEdgeOutcome(from, oldOutcome, newOutcome) {
-    if (!newOutcome || newOutcome === oldOutcome) return;
+    if (newOutcome === oldOutcome) return;
+    // An emptied field used to be indistinguishable from "unchanged", so the
+    // label silently snapped back and the author had no idea why. Outcomes are
+    // the keys of the node's `next` map — a blank key is rejected by
+    // model.validate and cannot exist in YAML — so say that instead of
+    // pretending nothing was typed.
+    if (!newOutcome) {
+      this.status(this.model.outgoingEdges(from).length > 1
+        ? 'An outcome label is required while this node has more than one outgoing connector: it selects which one the run takes.'
+        : 'An outcome label is required.', true);
+      return;
+    }
     const ok = this.mutate(() => this.model.setEdgeOutcome(from, oldOutcome, newOutcome));
     if (ok) this.setSelection({ type: 'edge', from, outcome: newOutcome });
   }
@@ -1535,6 +1560,44 @@ export class ProcessTemplateEditor {
     this.status(`Pasted ${ids.length} node${ids.length === 1 ? '' : 's'}.`);
     queueMicrotask(() => this.graph?.focusNode?.(ids[0]));
     return true;
+  }
+
+  // ---- edge outcome hint ---------------------------------------------------------
+
+  // edgeHintView anchors the "this label routes the run" bubble to the selected
+  // connector's label. It resolves to closed for anything that is not exactly
+  // one labelled edge: a multi-selection has no single key to talk about, and an
+  // unnamed lone connector draws no label to point at.
+  edgeHintView() {
+    const items = selectionItems(this.selection);
+    const selected = items.length === 1 && items[0].type === 'edge' ? items[0] : null;
+    const siblings = selected ? this.model.outgoingEdges(selected.from).length : 0;
+    const { open, edge } = resolveEdgeHint({
+      dismissed: this.edgeHintDismissed,
+      selected,
+      labelled: (item) => !!this.model.findEdge(item.from, item.outcome)
+        && outcomeCarriesInformation(item.outcome, siblings, this.model.node(item.from)?.type),
+    });
+    if (!open) return { open: false };
+    const laid = this.laidEdge(edge.from, edge.outcome);
+    if (!laid?.label) return { open: false };
+    const position = this.stagePosition(laid.label.x, laid.label.y);
+    return {
+      open: true,
+      left: position.left,
+      top: position.top,
+      text: edgeHintText(edge.outcome, siblings),
+    };
+  }
+
+  // dismissEdgeHint is the pin button. The write is best-effort: a storage that
+  // refuses still silences the hint for this session rather than leaving a
+  // button that visibly does nothing.
+  dismissEdgeHint() {
+    if (this.destroyed) return;
+    this.edgeHintDismissed = true;
+    writeEdgeHintDismissed(dashPrefs, true);
+    this.publish();
   }
 
   // ---- inline (in-place) label editing ------------------------------------------
