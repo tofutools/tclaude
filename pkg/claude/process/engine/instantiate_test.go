@@ -175,3 +175,56 @@ func TestInstantiateReplayExistingRequiresIdenticalResolvedInputs(t *testing.T) 
 		t.Fatalf("durable runs after retries = %#v", runs)
 	}
 }
+
+func TestDefaultRunIDPrefersDisplayNameAndStaysInGrammar(t *testing.T) {
+	now := time.Date(2026, 7, 19, 22, 10, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		tmpl     *model.Template
+		expected string
+	}{
+		{"display name wins over the generated id", &model.Template{
+			ID: "9f3c2b1a4d5e6f708192a3b4c5d6e7f8", Name: "Release Train",
+		}, "release-train-20260719-221000"},
+		{"no name falls back to the id", &model.Template{ID: "legacy-flow"}, "legacy-flow-20260719-221000"},
+		{"punctuation collapses to single separators", &model.Template{
+			ID: "x", Name: "Ship  it!!  (now)",
+		}, "ship-it-now-20260719-221000"},
+		{"non-ascii collapses rather than vanishing", &model.Template{
+			ID: "x", Name: "Släpp tåget",
+		}, "sl-pp-t-get-20260719-221000"},
+		{"a name with nothing usable falls back to the id", &model.Template{
+			ID: "fallback-id", Name: "!!!",
+		}, "fallback-id-20260719-221000"},
+		{"neither usable falls back to a safe constant", &model.Template{
+			ID: "", Name: "   ",
+		}, "run-20260719-221000"},
+		{"leading punctuation is trimmed so the id starts alphanumeric", &model.Template{
+			ID: "x", Name: "-.-leading",
+		}, "leading-20260719-221000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := defaultRunID(tc.tmpl, now)
+			if got != tc.expected {
+				t.Fatalf("defaultRunID = %q, want %q", got, tc.expected)
+			}
+			if !runIDPattern.MatchString(got) {
+				t.Fatalf("defaultRunID = %q, which violates %s", got, runIDPattern)
+			}
+		})
+	}
+}
+
+func TestRunIDSlugIsBoundedAndStillValid(t *testing.T) {
+	got := defaultRunID(&model.Template{ID: "x", Name: strings.Repeat("long name ", 40)}, time.Unix(0, 0).UTC())
+	prefix, _, ok := strings.Cut(got, "-19700101-")
+	if !ok {
+		t.Fatalf("defaultRunID = %q, expected a trailing timestamp", got)
+	}
+	if len(prefix) > runIDSlugMaxLen {
+		t.Fatalf("slug %q is %d bytes, want <= %d", prefix, len(prefix), runIDSlugMaxLen)
+	}
+	if !runIDPattern.MatchString(got) {
+		t.Fatalf("defaultRunID = %q, which violates %s", got, runIDPattern)
+	}
+}

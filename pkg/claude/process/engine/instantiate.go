@@ -17,6 +17,11 @@ import (
 
 var runIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 
+// runIDSlugMaxLen bounds the name-derived prefix so a long display name cannot
+// push the run id (a directory name) toward filesystem limits once the
+// timestamp and any collision suffix are appended.
+const runIDSlugMaxLen = 48
+
 // InstantiateInputError identifies caller-controlled request failures without
 // forcing HTTP callers to parse error strings (which may contain param names).
 type InstantiateInputError struct{ Err error }
@@ -124,7 +129,7 @@ func prepareInstantiation(tmpl *model.Template, request InstantiateRequest) (map
 		if now.IsZero() {
 			now = time.Now()
 		}
-		runID = defaultRunID(tmpl.ID, now)
+		runID = defaultRunID(tmpl, now)
 	}
 	if !runIDPattern.MatchString(runID) {
 		return nil, "", false, &InstantiateInputError{Err: fmt.Errorf("run id must match %s", runIDPattern.String())}
@@ -194,10 +199,53 @@ func initialState(runID, templateRef string, tmpl *model.Template) state.State {
 	return st
 }
 
-func defaultRunID(templateID string, now time.Time) string {
-	base := strings.TrimSpace(templateID)
+// defaultRunID builds the human-facing id for a run the caller did not name.
+// It prefers the template's display name over its id: ids are generated keys
+// that carry no meaning for a human typing `tclaude process show <run>`,
+// whereas the name is what the operator recognizes. The prefix is decoration
+// only -- a run resolves its template through the pinned TemplateRef -- so a
+// later rename does not invalidate ids already minted under the old name.
+func defaultRunID(tmpl *model.Template, now time.Time) string {
+	base := ""
+	if tmpl != nil {
+		base = runIDSlug(tmpl.Name)
+		if base == "" {
+			base = runIDSlug(tmpl.ID)
+		}
+	}
 	if base == "" {
 		base = "run"
 	}
 	return base + "-" + now.UTC().Format("20060102-150405")
+}
+
+// runIDSlug reduces free text to the run-id grammar (^[a-z0-9][a-z0-9._-]*$).
+// Display names are arbitrary unicode, while run ids are directory names read
+// back out of the filesystem by ListRuns, so anything outside the grammar is
+// folded to '-' and the result is trimmed to start on an alphanumeric. Returns
+// "" when nothing usable survives, leaving the fallback to the caller.
+func runIDSlug(value string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.' || r == '_' || r == '-' || r == ' ':
+			b.WriteByte('-')
+		default:
+			// Non-ASCII and punctuation collapse rather than vanish, so
+			// "Släpp tåget" stays two words instead of becoming "slpptget".
+			b.WriteByte('-')
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
+	// Must begin with an alphanumeric; '.' and '_' are legal only after that.
+	slug = strings.TrimLeft(slug, "._-")
+	if len(slug) > runIDSlugMaxLen {
+		slug = strings.Trim(slug[:runIDSlugMaxLen], "-")
+	}
+	return slug
 }
