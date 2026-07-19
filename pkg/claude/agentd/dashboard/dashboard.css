@@ -5350,8 +5350,13 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-list table { width: 100%; border-collapse: collapse; }
 .process-list th, .process-list td { padding: 9px 10px; border-bottom: 1px solid #21262d; text-align: left; vertical-align: top; }
 .process-list th { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-.process-list .process-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; white-space: nowrap; }
+/* Keep the action cell a real table-cell: `display: flex` on a <td> drops it
+   out of the row's height sync, so on a taller (multi-line) row its bottom
+   border lands above the neighbouring cells' and the row rule looks broken
+   mid-way. Lay the buttons out inline-block instead. */
+.process-list .process-actions { text-align: right; white-space: nowrap; }
+.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; white-space: nowrap; vertical-align: middle; }
+.process-list .process-actions .process-action + .process-action { margin-left: 6px; }
 .process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
 .process-status { display: inline-block; padding: 2px 7px; border-radius: 10px; background: #21262d; color: #c9d1d9; }
@@ -12723,8 +12728,11 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
    than on an irreversible delete. */
 .process-list .process-actions .process-delete-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 4px 7px; margin-left: 2px;
+  padding: 4px 7px;
 }
+/* Sibling-combinator specificity, so this wins over the generic 6px gap the
+   action row gives every other button pair. */
+.process-list .process-actions .process-action + .process-delete-btn { margin-left: 8px; }
 .process-list .process-actions .process-delete-btn:disabled { opacity: .5; cursor: default; }
 .process-list .process-actions .process-delete-btn:hover:not(:disabled) {
   background: #2d1618; border-color: #f85149;
