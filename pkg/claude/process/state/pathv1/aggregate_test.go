@@ -832,11 +832,12 @@ func TestAggregateCompletionRejectsEveryUnsettledOwner(t *testing.T) {
 	})
 	t.Run("active side effects", func(t *testing.T) {
 		tests := []struct {
-			name   string
-			kind   SideEffectKind
-			state  string
-			makeID func(SideEffectIdentity) (string, error)
-			mutate func(*SideEffectIdentity)
+			name    string
+			kind    SideEffectKind
+			state   string
+			makeID  func(SideEffectIdentity) (string, error)
+			mutate  func(*SideEffectIdentity)
+			prepare func(*testing.T, *AggregateView, SideEffectIdentity)
 		}{
 			{name: "attempt", kind: SideEffectAttempt, state: "claimed", makeID: func(e SideEffectIdentity) (string, error) { return AttemptIdentity(e.RunID, e.ActivationID, e.Attempt) }},
 			{name: "wait", kind: SideEffectWait, state: "pending", mutate: func(e *SideEffectIdentity) { e.WaitKind = "human" }, makeID: func(e SideEffectIdentity) (string, error) {
@@ -845,8 +846,24 @@ func TestAggregateCompletionRejectsEveryUnsettledOwner(t *testing.T) {
 			{name: "timer", kind: SideEffectTimer, state: "pending", mutate: func(e *SideEffectIdentity) { e.SourceCommandID = "timer-source" }, makeID: func(e SideEffectIdentity) (string, error) {
 				return TimerIdentity(e.RunID, e.ActivationID, e.Attempt, e.SourceCommandID)
 			}},
-			{name: "contact", kind: SideEffectContact, state: "scheduled", mutate: func(e *SideEffectIdentity) { e.Assignee = "operator" }, makeID: func(e SideEffectIdentity) (string, error) {
+			{name: "contact", kind: SideEffectContact, state: "scheduled", mutate: func(e *SideEffectIdentity) { e.Assignee = "human:operator" }, makeID: func(e SideEffectIdentity) (string, error) {
 				return ContactIdentity(e.RunID, e.ActivationID, e.Attempt, e.Assignee)
+			}, prepare: func(t *testing.T, view *AggregateView, e SideEffectIdentity) {
+				// An active contact marker is only coherent alongside its
+				// schedule record and an active source perform command.
+				command := makeTestCommand(t, CommandIdentity{
+					RunID: view.RunID, Kind: CommandPerformAttempt, PayloadSchema: 1,
+					SourceActivationID: e.ActivationID, SourceGeneration: 1,
+					Attempt: e.Attempt, PlanDigest: "perform",
+				}, CommandIssued)
+				view.Commands[command.ID] = command
+				view.Contacts = map[string]ContactRecordV7{e.ID: {
+					ID: e.ID, RunID: view.RunID, ActivationID: e.ActivationID, Attempt: e.Attempt,
+					SourceCommandID: command.ID, Assignee: e.Assignee, Kind: ContactKindHuman,
+					Provenance: ContactProvenanceDispatch, Cadence: "5m", Budget: 3,
+					EscalationTarget: "human:operator", ScheduledAt: "2026-07-19T12:00:00Z",
+					NextContactAt: "2026-07-19T12:05:00Z", EventSeq: 1,
+				}}
 			}},
 			{name: "obligation", kind: SideEffectObligation, state: "pending", mutate: func(e *SideEffectIdentity) { e.WaitKind, e.Assignee = "approval", "operator" }, makeID: func(e SideEffectIdentity) (string, error) {
 				return ObligationIdentity(e.RunID, e.ActivationID, e.Attempt, e.WaitKind, e.Assignee)
@@ -868,6 +885,9 @@ func TestAggregateCompletionRejectsEveryUnsettledOwner(t *testing.T) {
 					t.Fatal(err)
 				}
 				view.SideEffects[effect.ID] = effect
+				if tc.prepare != nil {
+					tc.prepare(t, &view, effect)
+				}
 				assertAggregateUnsettled(t, view)
 			})
 		}

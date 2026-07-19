@@ -6,6 +6,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
@@ -136,6 +137,32 @@ type RoutingDetailsV2 struct {
 	Causes        RoutingCausePageV2        `json:"causes"`
 	Detachments   RoutingDetachmentPageV2   `json:"detachments"`
 	DetachedSinks RoutingDetachedSinkPageV2 `json:"detachedSinks"`
+	Contacts      RoutingContactPageV2      `json:"contacts"`
+}
+
+type RoutingContactPageV2 struct {
+	Page  RoutingPageV2             `json:"page"`
+	Items []RoutingContactOverlayV2 `json:"items"`
+}
+
+// RoutingContactOverlayV2 mirrors the legacy viewer's Contact projection for
+// schema-7 runs: reminder schedule and budget state only. Assignee and
+// escalation target pass the same provenance funnel; no message bodies,
+// prompts, or command payloads are exposed.
+type RoutingContactOverlayV2 struct {
+	NodeID           string      `json:"nodeId"`
+	Attempt          uint64      `json:"attempt,omitempty"`
+	State            string      `json:"state"`
+	Kind             string      `json:"kind"`
+	Assignee         *Provenance `json:"assignee,omitempty"`
+	Cadence          string      `json:"cadence,omitempty"`
+	LastContactAt    time.Time   `json:"lastContactAt,omitzero"`
+	NextContactAt    time.Time   `json:"nextContactAt,omitzero"`
+	BudgetUsed       int         `json:"budgetUsed"`
+	BudgetMax        int         `json:"budgetMax"`
+	EscalationTarget *Provenance `json:"escalationTarget,omitempty"`
+	EscalatedAt      time.Time   `json:"escalatedAt,omitzero"`
+	Paused           bool        `json:"paused"`
 }
 
 type RoutingGenerationPageV2 struct {
@@ -623,6 +650,11 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 	if !ok {
 		return nil, RoutingUnavailableInconsistent
 	}
+	contacts, ok := projectRoutingContacts(aggregate, request)
+	if !ok {
+		return nil, RoutingUnavailableInconsistent
+	}
+	details.Contacts = contacts
 	overlay.Details = details
 	overlay.StateCounts = projectRoutingStateCounts(routing)
 	overlay.Aggregate = RoutingAggregateOverlayV2{
@@ -645,6 +677,49 @@ func projectRoutingOverlay(aggregate pathv1.AggregateView, semanticHash string, 
 		return nil, RoutingUnavailableOverBudget
 	}
 	return overlay, ""
+}
+
+// projectRoutingContacts renders the schema-7 contact registry. A verified
+// checkpoint cannot carry unresolvable references or noncanonical timestamps,
+// so any such finding marks the overlay inconsistent rather than guessing.
+func projectRoutingContacts(aggregate pathv1.AggregateView, request RoutingPageRequestV2) (RoutingContactPageV2, bool) {
+	items := make([]RoutingContactOverlayV2, 0, len(aggregate.Contacts))
+	for id, record := range aggregate.Contacts {
+		marker, ok := aggregate.SideEffects[id]
+		if !ok || marker.Kind != pathv1.SideEffectContact {
+			return RoutingContactPageV2{}, false
+		}
+		activation, ok := aggregate.Routing.Activations[record.ActivationID]
+		if !ok {
+			return RoutingContactPageV2{}, false
+		}
+		reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
+		if !ok {
+			return RoutingContactPageV2{}, false
+		}
+		last, lastErr := pathv1.ParseCanonicalTimestamp(record.LastContactedAt)
+		next, nextErr := pathv1.ParseCanonicalTimestamp(record.NextContactAt)
+		escalated, escalatedErr := pathv1.ParseCanonicalTimestamp(record.EscalatedAt)
+		if lastErr != nil || nextErr != nil || escalatedErr != nil {
+			return RoutingContactPageV2{}, false
+		}
+		maxInt := uint64(int(^uint(0) >> 1))
+		items = append(items, RoutingContactOverlayV2{
+			NodeID: reservation.NodeID, Attempt: record.Attempt, State: marker.State, Kind: string(record.Kind),
+			Assignee: safeProvenance(record.Assignee), Cadence: safeCadence(record.Cadence),
+			LastContactAt: last, NextContactAt: next,
+			BudgetUsed: int(min(record.Used, maxInt)), BudgetMax: int(min(record.Budget, maxInt)),
+			EscalationTarget: safeProvenance(record.EscalationTarget),
+			EscalatedAt:      escalated, Paused: marker.State == pathv1.ContactStatePaused,
+		})
+	}
+	slices.SortFunc(items, func(a, b RoutingContactOverlayV2) int {
+		if n := cmp.Compare(a.NodeID, b.NodeID); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.Attempt, b.Attempt)
+	})
+	return RoutingContactPageV2{Page: routingPage(len(items), request), Items: routingPageItems(items, request)}, true
 }
 
 func indexRoutingDetachmentsByReservation(detachments map[pathv1.DetachmentKey]pathv1.DetachmentRecord) map[pathv1.ReservationID]int {

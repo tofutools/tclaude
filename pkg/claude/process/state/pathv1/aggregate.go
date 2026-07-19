@@ -18,8 +18,11 @@ type AggregateView struct {
 	Routing            *RoutingState
 	Commands           map[string]CommandRecord
 	SideEffects        map[string]SideEffectIdentity
-	AdminRecords       map[string]PathV1AdminRecord
-	AdminResolutions   map[string]BlockResolution
+	// Contacts may be nil on pre-contact checkpoints; readers treat nil as
+	// empty.
+	Contacts         map[string]ContactRecordV7
+	AdminRecords     map[string]PathV1AdminRecord
+	AdminResolutions map[string]BlockResolution
 	// CheckpointBytes is the encoded post-state checkpoint size when known. A
 	// zero value still validates the encoded routing envelope, which is a lower
 	// bound on the full checkpoint.

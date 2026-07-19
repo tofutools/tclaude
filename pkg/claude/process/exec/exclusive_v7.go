@@ -276,6 +276,15 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 	if err := adapter.Validate(request); err != nil {
 		return nil, false, err
 	}
+	// Preflight the durable contact bounds before ANY side effect: neither
+	// the claim append nor the external dispatch may happen for a performer
+	// whose contact schedule could never seal (eligibility applies the same
+	// authority to raw templates; this catches the executed request shape).
+	if performer := action.plan.Performer(); performer != nil {
+		if err := PreflightSchema7Contact(*performer); err != nil {
+			return nil, false, fmt.Errorf("preflight path-v1 contact for command %q: %w", request.Command.ID, err)
+		}
+	}
 	if !action.recover {
 		appended, err := e.Store.AppendPathV1(ctx, runID, action.transition)
 		if err != nil {
@@ -288,8 +297,12 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 
 	if deferred, ok := adapter.(DeferredAdapter); ok {
 		if !action.recover {
-			if _, err := deferred.Dispatch(ctx, request); err != nil {
+			dispatched, err := deferred.Dispatch(ctx, request)
+			if err != nil {
 				return nil, false, fmt.Errorf("dispatch path-v1 command %q: %w", request.Command.ID, err)
+			}
+			if err := e.scheduleExclusiveContact(ctx, runID, action.plan, dispatched, pathv1.ContactProvenanceDispatch); err != nil {
+				return nil, false, err
 			}
 			return nil, true, nil
 		}
@@ -299,11 +312,18 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 		}
 		switch status {
 		case DeferredMissing:
-			if _, err := deferred.Dispatch(ctx, request); err != nil {
+			dispatched, err := deferred.Dispatch(ctx, request)
+			if err != nil {
 				return nil, false, fmt.Errorf("redispatch path-v1 command %q: %w", request.Command.ID, err)
+			}
+			if err := e.scheduleExclusiveContact(ctx, runID, action.plan, dispatched, pathv1.ContactProvenanceDispatch); err != nil {
+				return nil, false, err
 			}
 			return nil, true, nil
 		case DeferredInFlight:
+			if err := e.serviceExclusiveContact(ctx, runID, action.plan, request, adapter); err != nil {
+				return nil, false, err
+			}
 			return nil, true, nil
 		case DeferredObserved:
 			return e.appendExclusiveObservation(ctx, runID, action.plan, observation, true)

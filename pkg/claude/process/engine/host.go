@@ -456,7 +456,13 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 		}
 		switch node.Type {
 		case model.NodeTypeTask, model.NodeTypeDecision:
-			if node.Performer == nil || node.Performer.Kind == model.PerformerProgram || node.Performer.Contact != nil {
+			if node.Performer == nil || node.Performer.Kind == model.PerformerProgram {
+				return false
+			}
+			// A template whose eventual durable contact fields exceed the
+			// schema-7 bounds must stay on v6: dispatch would otherwise create
+			// external work whose contact schedule can never seal.
+			if processexec.PreflightSchema7Contact(*node.Performer) != nil {
 				return false
 			}
 			if node.Type == model.NodeTypeTask && len(node.Performer.ChoiceOutcomes) != 0 {
@@ -768,8 +774,6 @@ func blockedContactCommandIDs(st *state.State) []string {
 	return ids
 }
 
-const humanPreemptionGrace = 5 * time.Second
-
 func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, commandID string) (string, error) {
 	contact, ok := snapshot.State.Contacts[commandID]
 	if !ok {
@@ -784,42 +788,34 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		return describeContact(contact), nil
 	}
 	now := h.now()
-	since := contact.LastContactedAt
-	if contact.LastRecoveredAt.After(since) {
-		since = contact.LastRecoveredAt
-	}
-	activity, err := contactAdapter.Activity(ctx, request, since)
+	contactSnapshot := legacyContactSnapshot(contact)
+	activity, err := contactAdapter.Activity(ctx, request, contactSnapshot.ActivitySince())
 	if err != nil {
 		return "", err
 	}
+	decision := processexec.DecideContact(contactSnapshot, activity, now)
 	changed := false
-	if activity.Recovered && activity.At.After(contact.LastRecoveredAt) {
+	if decision.Reset {
 		contact.Used = 0
 		contact.EscalatedAt = time.Time{}
-		contact.LastRecoveredAt = activity.At.UTC()
+		contact.LastRecoveredAt = decision.ResetAt
 		clearHumanPreemption(&contact)
 		if cadence, parseErr := time.ParseDuration(contact.Cadence); parseErr == nil {
 			contact.NextContactAt = now.Add(cadence)
 		}
 		changed = true
 	}
-	// A delivery-correlated UserPromptSubmit is our own automation, not human
-	// preemption. It may arrive after an earlier tick tentatively recorded the
-	// same hook as human activity, so clear that latch once delivery metadata
-	// makes the origin unambiguous.
-	if activity.AutomatedDelivery &&
-		(!contact.HumanInteractedAt.IsZero() || contact.PauseReason == "human interaction with live agent session") &&
-		!activity.At.Before(contact.HumanInteractedAt) {
+	if decision.ClearLatch {
 		clearHumanPreemption(&contact)
 		changed = true
 	}
-	if activity.HumanInteracted && activity.At.After(contact.HumanInteractedAt) {
-		contact.HumanInteractedAt = activity.At.UTC()
+	if !decision.LatchAt.IsZero() {
+		contact.HumanInteractedAt = decision.LatchAt
 		changed = true
 	}
-	if !contact.HumanInteractedAt.IsZero() && now.Sub(contact.HumanInteractedAt) >= humanPreemptionGrace && !contact.Paused {
+	if decision.Pause {
 		contact.Paused = true
-		contact.PauseReason = "human interaction with live agent session"
+		contact.PauseReason = processexec.ContactPauseReasonHumanPreemption
 		changed = true
 	}
 	if changed {
@@ -829,10 +825,8 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		}
 		snapshot = updated
 	}
-	if contact.Paused || contact.NextContactAt.IsZero() || now.Before(contact.NextContactAt) {
-		return describeContact(contact), nil
-	}
-	if contact.Used < contact.Budget {
+	switch decision.Send {
+	case processexec.ContactSendNudge:
 		// The external nudge happens before its state append. A crash in that
 		// narrow window can resend one duplicate; escalation is exactly-once
 		// with respect to persisted ContactState, not the external transport.
@@ -849,9 +843,7 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 		if _, err := h.updateContact(ctx, snapshot, contact); err != nil {
 			return "", err
 		}
-		return describeContact(contact), nil
-	}
-	if contact.EscalatedAt.IsZero() {
+	case processexec.ContactSendEscalate:
 		// Same accepted crash window as nudges above: one duplicate external
 		// escalation is possible before EscalatedAt becomes durable.
 		if err := contactAdapter.Contact(ctx, request, true); err != nil {
@@ -866,9 +858,27 @@ func (h *Host) serviceContact(ctx context.Context, snapshot store.Snapshot, comm
 	return describeContact(contact), nil
 }
 
+// legacyContactSnapshot projects durable v6 contact state into the shared
+// decision-core shape. An unparseable cadence maps to zero, which the core
+// treats as "leave the schedule untouched on reset" — the send path still
+// surfaces the typed cadence error exactly as before.
+func legacyContactSnapshot(contact state.ContactState) processexec.ContactSnapshot {
+	cadence, err := time.ParseDuration(contact.Cadence)
+	if err != nil || cadence <= 0 {
+		cadence = 0
+	}
+	return processexec.ContactSnapshot{
+		Cadence: cadence, Budget: contact.Budget, Used: contact.Used,
+		Paused: contact.Paused, PauseReason: contact.PauseReason,
+		NextContactAt: contact.NextContactAt, LastContactedAt: contact.LastContactedAt,
+		LastRecoveredAt: contact.LastRecoveredAt, EscalatedAt: contact.EscalatedAt,
+		HumanInteractedAt: contact.HumanInteractedAt,
+	}
+}
+
 func clearHumanPreemption(contact *state.ContactState) {
 	contact.HumanInteractedAt = time.Time{}
-	if contact.PauseReason == "human interaction with live agent session" {
+	if contact.PauseReason == processexec.ContactPauseReasonHumanPreemption {
 		contact.Paused = false
 		contact.PauseReason = ""
 	}

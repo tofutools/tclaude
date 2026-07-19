@@ -210,7 +210,53 @@ func runShowPathV1(cmd *cobra.Command, fs *store.FS, p *showParams, out io.Write
 	for _, id := range ids {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", id, parsed.Template.Nodes[id].Type, orDash(states[id]))
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(aggregate.Contacts) > 0 {
+		fmt.Fprintln(out, "\nNudges:")
+		cw := newTable(out)
+		fmt.Fprintln(cw, "COMMAND\tASSIGNEE\tLAST\tNEXT\tBUDGET\tESCALATION\tSTATE")
+		contactIDs := make([]string, 0, len(aggregate.Contacts))
+		for id := range aggregate.Contacts {
+			contactIDs = append(contactIDs, id)
+		}
+		sort.Strings(contactIDs)
+		for _, id := range contactIDs {
+			contact := aggregate.Contacts[id]
+			marker := aggregate.SideEffects[id]
+			contactState := "active"
+			switch {
+			case marker.State == pathv1.ContactStatePaused:
+				contactState = "paused: " + contact.PauseReason
+			case contact.EscalatedAt != "":
+				contactState = "escalated"
+			case marker.State == pathv1.ContactStateCompleted, marker.State == pathv1.ContactStateCanceled:
+				contactState = marker.State
+			}
+			command := "cmd_" + contact.SourceCommandID
+			if len(contact.SourceCommandID) >= 24 {
+				command = "cmd_" + contact.SourceCommandID[:24]
+			}
+			fmt.Fprintf(cw, "%s\t%s\t%s\t%s\t%d/%d\t%s\t%s\n", command, contact.Assignee,
+				orDash(pathV1ShowTime(contact.LastContactedAt)), orDash(pathV1ShowTime(contact.NextContactAt)),
+				contact.Used, contact.Budget, contact.EscalationTarget, contactState)
+		}
+		if err := cw.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pathV1ShowTime renders a canonical contact timestamp with the same layout
+// legacy rows use; validated checkpoints cannot carry unparseable values.
+func pathV1ShowTime(value string) string {
+	parsed, err := pathv1.ParseCanonicalTimestamp(value)
+	if err != nil || parsed.IsZero() {
+		return ""
+	}
+	return formatTime(parsed)
 }
 
 func pathV1RoutingStates(aggregate pathv1.AggregateCheckpoint) map[string]string {

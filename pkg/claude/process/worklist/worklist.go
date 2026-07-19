@@ -154,6 +154,12 @@ func DerivePathV1(ctx context.Context, snapshot store.PathV1RunSnapshot, lookup 
 		if buildErr != nil {
 			return nil, buildErr
 		}
+		if nudge := pathV1Nudge(aggregate, command.ID); nudge != nil {
+			item.Nudge = nudge
+			if item.DueAt.IsZero() {
+				item.DueAt = nudge.NextContactAt
+			}
+		}
 		items = append(items, item)
 	}
 	for _, effect := range aggregate.SideEffects {
@@ -276,6 +282,31 @@ func buildPathV1Item(ctx context.Context, runID string, tmpl *model.Template, wo
 		AvailableActions: actions, Links: Links{RunID: runID, NodeID: nodeID},
 		Target: ActionTarget{CommandID: commandID},
 	}, nil
+}
+
+// pathV1Nudge projects the durable schema-7 contact pair for one perform
+// command into the same Nudge DTO legacy items use. The checkpoint was
+// verified before derivation, so timestamps are canonical; parse errors are
+// structurally unreachable and map to zero times.
+func pathV1Nudge(aggregate pathv1.AggregateCheckpoint, sourceCommandID string) *Nudge {
+	for id, record := range aggregate.Contacts {
+		if record.SourceCommandID != sourceCommandID {
+			continue
+		}
+		marker, ok := aggregate.SideEffects[id]
+		if !ok || marker.Kind != pathv1.SideEffectContact {
+			continue
+		}
+		last, _ := pathv1.ParseCanonicalTimestamp(record.LastContactedAt)
+		next, _ := pathv1.ParseCanonicalTimestamp(record.NextContactAt)
+		return &Nudge{
+			LastContactAt: last, NextContactAt: next,
+			BudgetUsed: int(min(record.Used, uint64(int(^uint(0)>>1)))), BudgetMax: int(min(record.Budget, uint64(int(^uint(0)>>1)))),
+			EscalationTarget: record.EscalationTarget,
+			Paused:           marker.State == pathv1.ContactStatePaused,
+		}
+	}
+	return nil
 }
 
 type pathV1WaitPayload struct {

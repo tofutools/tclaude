@@ -68,8 +68,14 @@ type AggregateCheckpoint struct {
 	Routing            RoutingState                  `json:"routing"`
 	Commands           map[string]CommandRecord      `json:"commands"`
 	SideEffects        map[string]SideEffectIdentity `json:"sideEffects"`
-	AdminRecords       map[string]PathV1AdminRecord  `json:"adminRecords"`
-	AdminResolutions   map[string]BlockResolution    `json:"adminResolutions"`
+	// Contacts is the durable reminder/escalation schedule registry paired
+	// with SideEffectContact markers. It is deliberately nillable: checkpoints
+	// sealed before contact parity omit the field and must reseal
+	// byte-identically, so nil and empty are equivalent everywhere and the
+	// aggregate_maps_nil completeness rule does not cover it.
+	Contacts         map[string]ContactRecordV7   `json:"contacts,omitempty"`
+	AdminRecords     map[string]PathV1AdminRecord `json:"adminRecords"`
+	AdminResolutions map[string]BlockResolution   `json:"adminResolutions"`
 }
 
 type AggregateAuthorityCheckpoint struct {
@@ -314,7 +320,7 @@ func (c AggregateCheckpoint) View() AggregateView {
 	return AggregateView{
 		RunID: c.RunID, TemplateRef: c.TemplateRef, TemplateSourceHash: c.TemplateSourceHash,
 		Authority: &authority, Routing: &routing, Commands: c.Commands, SideEffects: c.SideEffects,
-		AdminRecords: c.AdminRecords, AdminResolutions: c.AdminResolutions,
+		Contacts: c.Contacts, AdminRecords: c.AdminRecords, AdminResolutions: c.AdminResolutions,
 	}
 }
 
@@ -400,6 +406,12 @@ func ValidateCheckpointV7(checkpoint *CheckpointV7) error {
 	if view.RunID != event.UpgradeNeeded.RunID || view.TemplateRef != event.TemplateHash ||
 		view.TemplateSourceHash != event.UpgradeNeeded.TemplateSourceHash {
 		return fmt.Errorf("%w: aggregate anchor mismatch", ErrInitializationInvalid)
+	}
+	// The initialization aggregate digest folds paths/reservations/effects
+	// only, so contacts must be structurally impossible at genesis: pristine
+	// legacy runs have none, and a smuggled record would escape that fold.
+	if len(event.Aggregate.Contacts) != 0 {
+		return fmt.Errorf("%w: initialize aggregate cannot contain contacts", ErrInitializationInvalid)
 	}
 	if report := ValidateAggregate(view); !report.Valid() {
 		return fmt.Errorf("%w: aggregate diagnostics=%v (%d suppressed)", ErrInitializationInvalid, report.Diagnostics, report.Suppressed)

@@ -187,19 +187,30 @@ func startProcessEngineSupervisor(
 }
 
 func newProcessEngineHost(root string) (*processengine.Host, error) {
-	fs, err := store.NewFS(root)
+	host, err := newLegacyProcessEngineHost(root)
 	if err != nil {
 		return nil, err
 	}
-	host := processengine.New(fs, processEngineHolder(), map[model.PerformerKind]processexec.Adapter{
-		model.PerformerProgram: processexec.ProgramAdapter{},
-		model.PerformerAgent:   processAgentAdapter{},
-		model.PerformerHuman:   processHumanAdapter{},
-	})
 	if err := host.EnableExclusiveV7(); err != nil {
 		return nil, err
 	}
 	return host, nil
+}
+
+// newLegacyProcessEngineHost builds the production adapter host without the
+// schema-7 release boundary. Production always enables schema 7; tests that
+// pin legacy v6 servicing behavior (still live until the parity migrator
+// retires the v6 executor) use it directly.
+func newLegacyProcessEngineHost(root string) (*processengine.Host, error) {
+	fs, err := store.NewFS(root)
+	if err != nil {
+		return nil, err
+	}
+	return processengine.New(fs, processEngineHolder(), map[model.PerformerKind]processexec.Adapter{
+		model.PerformerProgram: processexec.ProgramAdapter{},
+		model.PerformerAgent:   processAgentAdapter{},
+		model.PerformerHuman:   processHumanAdapter{},
+	}), nil
 }
 
 func processEngineHolder() string {
@@ -759,6 +770,12 @@ func RunProcessEngineTickForTest(ctx context.Context, host *processengine.Host) 
 // choreography while still replacing only tmux and session-new boundaries.
 func NewProcessEngineHostForTest(root string) (*processengine.Host, error) {
 	return newProcessEngineHost(root)
+}
+
+// NewLegacyProcessEngineHostForTest builds the production adapter host with
+// schema 7 disabled, for flow tests that pin v6 legacy servicing contracts.
+func NewLegacyProcessEngineHostForTest(root string) (*processengine.Host, error) {
+	return newLegacyProcessEngineHost(root)
 }
 
 // StartProcessEngineForTest starts the dynamic feature supervisor with a
