@@ -450,7 +450,17 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 			}
 			if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
-				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				// The first /exit was already delivered; a failed RE-send must
+				// not erase that delivery's attribution. Mirror the unknown
+				// branch: a confirmed disappearance is the delivered exit
+				// landing (the send often fails precisely because the pane
+				// just died) — the reaper owns it — and anything else keeps
+				// the intent through the bounded observer window instead of
+				// clearing instantly.
+				if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+					return
+				}
+				scheduleUnknownIntentCleanup(target, intentRef)
 				return
 			}
 			if attempt == softExitMaxAttempts {
