@@ -6781,9 +6781,12 @@ body.wizard .tab-label-wizard {
 }
 /* Keep the title's line box identical in every tab and centre each unchanged
    symbol beside it independently, so emoji/font fallback metrics cannot move
-   the title baseline. The literal inter-span space in the markup remains for
-   textContent consumers; flex layout collapses that whitespace around gap. */
-.tab-label-wizard .tab-title { line-height: 16px; }
+   the title baseline. Inherit the control's normal line height rather than
+   pinning pixels: system-font metrics differ by platform, and the wizard bar
+   must stay exactly as tall as the regular/slop bars. The literal inter-span
+   space in the markup remains for textContent consumers; flex layout collapses
+   that whitespace around gap. */
+.tab-label-wizard .tab-title { line-height: inherit; }
 .tab-label-wizard .tab-icon {
   display: inline-flex; align-items: center; justify-content: center; line-height: 1;
 }
