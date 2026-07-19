@@ -64,8 +64,10 @@ export function createTerminalShellState() {
     return pane;
   }
 
-  function openModal({ wsPath, ws, label = '', hideConv = null } = {}) {
-    const seed = normalizeSeed({ ws: wsPath || ws, label, hideConv: hideConv || null });
+  function openModal({ wsPath, ws, label = '', hideConv = null, initialRetry = false } = {}) {
+    const seed = normalizeSeed({
+      ws: wsPath || ws, label, hideConv: hideConv || null, initialRetry: initialRetry === true,
+    });
     if (!seed) return null;
     modalSequence += 1;
     const descriptor = Object.freeze({

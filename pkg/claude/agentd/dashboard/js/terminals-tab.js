@@ -23,9 +23,10 @@ export function openTermModal(options) {
   const current = controller;
   if (!current) return null;
   if (!normalizeSeed({ ws: options?.wsPath || options?.ws })) return null;
-  if (!prepareRuntime) return current.openModal(options);
+  const descriptor = { ...options, initialRetry: options?.initialRetry !== false };
+  if (!prepareRuntime) return current.openModal(descriptor);
   return prepareRuntime().then(
-    () => controller === current ? current.openModal(options) : null,
+    () => controller === current ? current.openModal(descriptor) : null,
     (error) => {
       console.error('terminal runtime load failed:', error);
       return null;
@@ -35,7 +36,8 @@ export function openTermModal(options) {
 
 export function openTerminalPane(seedOrPromise) {
   return Promise.resolve(seedOrPromise).then((rawSeed) => {
-    const seed = normalizeSeed(rawSeed);
+    const normalized = normalizeSeed(rawSeed);
+    const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const current = controller;
     if (!current) return null;

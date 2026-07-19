@@ -1,4 +1,5 @@
 import { setArcanePaletteEnabled } from './terminal-theme.js';
+import { encodeTerminalOpenHash } from './terminal-handoff.js';
 
 export function createTerminalShellActions({
   state,
@@ -6,6 +7,7 @@ export function createTerminalShellActions({
   fetchImpl = globalThis.fetch,
   windowRef = globalThis.window,
   documentRef = globalThis.document,
+  onReattachPane = null,
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');
   const widgets = new Map();
@@ -44,6 +46,18 @@ export function createTerminalShellActions({
   function openPane(seed) {
     if (disposed) return null;
     return state.openPane(seed);
+  }
+
+  async function receiveHandoffPane(seed) {
+    if (disposed) return null;
+    const key = seed?.key || seed?.ws;
+    if (state.panes.value.some((pane) => pane.key === key)) {
+      // The same terminal may have been reopened in the dashboard while its
+      // pop-out was alive. Replace that widget after the pop-out's detach has
+      // landed so reattach never acknowledges a stale/disconnected instance.
+      await closePane(key, { skipDetach: true });
+    }
+    return openPane(seed);
   }
 
   function activatePane(key) {
@@ -86,16 +100,24 @@ export function createTerminalShellActions({
     let target = null;
     try { target = windowRef.open('about:blank', '_blank'); } catch (_) { target = null; }
     if (!target) return;
-    const payload = encodeURIComponent(JSON.stringify({
+    const seed = {
       ws: pane.seed.ws,
       label: pane.label,
       key: pane.seed.key,
       hideConv: pane.seed.hideConv,
+      agent: pane.seed.agent,
+      initialRetry: true,
       wizard: documentRef.body.classList.contains('wizard'),
-    }));
+    };
     await closePane(key);
-    try { target.location.replace(`/terminals?solo=1#open=${payload}`); }
+    try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }
     catch (_) { /* target closed while detach was landing */ }
+  }
+
+  function reattachPane(key) {
+    if (disposed || typeof onReattachPane !== 'function') return Promise.resolve(false);
+    const pane = state.panes.value.find((candidate) => candidate.key === key);
+    return pane ? Promise.resolve(onReattachPane(pane)) : Promise.resolve(false);
   }
 
   function openModal(descriptor) {
@@ -174,6 +196,7 @@ export function createTerminalShellActions({
       label: descriptor.label,
       hideConv: descriptor.seed.hideConv,
       agent: descriptor.seed.hideConv,
+      initialRetry: descriptor.seed.initialRetry,
     };
     await closeModal(id, { detach: true });
     openPane(seed);
@@ -191,12 +214,14 @@ export function createTerminalShellActions({
     registerWidget,
     widgetFor,
     openPane,
+    receiveHandoffPane,
     activatePane,
     closePane,
     closeForHide,
     closeForAgents,
     focusForSelectors,
     popOutPane,
+    reattachPane,
     openModal,
     closeModal,
     promptModalReconnect,

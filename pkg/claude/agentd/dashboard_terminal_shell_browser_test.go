@@ -57,8 +57,9 @@ const termSmokeMember = "f1000000-0000-4000-8000-000000000001"
 const termSmokeShellCommand = `printf 'SMOKEREADY\nCOPYTOKEN42\n'; exec cat`
 
 // termSmokeExpectedStarts is the exact number of PTYs the state matrix opens:
-// reveal/refocus 1, copy 1, reconnect 2, modal confirm 2, pop-out 2, resize 1.
-const termSmokeExpectedStarts = 9
+// reveal/refocus 1, copy 1, reconnect 2, modal confirm 2, pop-out+reattach 3,
+// resize 1.
+const termSmokeExpectedStarts = 10
 
 // termSmokeCounters is the server-side ledger behind /testhook/term/*: PTY
 // starts, completed teardowns, applied resizes (count + last geometry), and
@@ -203,8 +204,9 @@ func TestDashboardTerminalShellLiveChrome(t *testing.T) {
 		}
 	}
 	if len(failed) != 0 {
-		t.Fatalf("terminal shell live browser smoke failed:\n%s\ncontact sheet: %s",
-			strings.Join(failed, "\n"), filepath.Join(outDir, "index.html"))
+		starts, teardowns := counters.snapshot()
+		t.Fatalf("terminal shell live browser smoke failed:\n%s\nPTY ledger: starts=%d teardowns=%d\ncontact sheet: %s",
+			strings.Join(failed, "\n"), starts, teardowns, filepath.Join(outDir, "index.html"))
 	}
 
 	// Exact-once teardown, end to end: after the browser is gone every PTY the
@@ -527,13 +529,13 @@ return (async function () {
 // terminalLivePopOutState pops the live pane out into the real
 // /terminals?solo=1 window via the ⧉ tab button (a REAL click, so window.open
 // runs with user activation), asserts the solo page connects its own PTY, and
-// closes it — accepting its beforeunload guard — back to a fully torn-down
-// ledger.
+// reattaches it to the exact opener dashboard, and proves the solo page closes
+// without firing a late detach over the replacement client.
 func terminalLivePopOutState() dashsnap.State {
 	return dashsnap.State{
 		Key:     "live-pop-out",
-		Title:   "Live pane: ⧉ pop-out to /terminals?solo=1",
-		Caption: "Popping out closes the dashboard pane, the solo window connects its own live PTY, and closing it tears everything down exactly once.",
+		Title:   "Live pane: ⧉ pop-out and ↩ dashboard reattach",
+		Caption: "Popping out moves the PTY to /terminals?solo=1; reattach returns it to the exact opener, closes the solo tab, and tears each replaced client down once.",
 		JS: `
 return (async function () {
   await __smokeOpenLivePane();
@@ -581,13 +583,22 @@ return (async function () {
     return s.starts - __s0.starts === 2 && s.teardowns - __s0.teardowns === 1;
   });
 })();`},
-			{Kind: "popup-close", Selector: "solo=1"},
+			{Kind: "popup-eval", Selector: "solo=1", JS: `
+var button = document.querySelector('[title="Move this terminal back to its dashboard tab"]');
+if (!button) throw new Error('popup: reattach button missing');
+button.click();`},
 			{Kind: "eval", JS: `
 return (async function () {
-  await __smokePoll('solo window teardown', async function () {
-    var s = await __smokeStats();
-    return s.starts - __s0.starts === 2 && s.teardowns - __s0.teardowns === 2;
+  await __smokePoll('terminal reattached in dashboard', function () {
+    var pane = document.querySelector('.mux-pane.active');
+    var status = pane && pane.querySelector('.mux-pane-status');
+    return status && status.textContent === 'connected';
   });
+  await __smokePoll('pop-out and reattach teardown', async function () {
+    var s = await __smokeStats();
+    return s.starts - __s0.starts === 3 && s.teardowns - __s0.teardowns === 2;
+  });
+  await __smokeCloseAllPanesAndVerify(3);
   __smokeNoPageErrors();
 })();`},
 		},

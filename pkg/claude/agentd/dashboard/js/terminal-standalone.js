@@ -5,14 +5,12 @@
 import { createTerminalShellActions } from './terminal-shell-actions.js';
 import { mountStandaloneTerminalShell } from './terminal-shell-island.js';
 import { createTerminalShellState } from './terminal-shell-state.js';
+import {
+  decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
+} from './terminal-handoff.js';
 import { normalizeSeed } from './terminals-core.js';
 
-export function decodeTerminalOpenHash(hash) {
-  const match = /[#&]open=([^&]+)/.exec(hash || '');
-  if (!match) return null;
-  try { return JSON.parse(decodeURIComponent(match[1])); }
-  catch (_) { return null; }
-}
+export { decodeTerminalOpenHash };
 
 export function createStandaloneTerminalsPage({
   host,
@@ -33,15 +31,43 @@ export function createStandaloneTerminalsPage({
   }
 
   const state = createTerminalShellState();
-  const actions = createTerminalShellActions({
-    state, fetchImpl, windowRef, documentRef,
-  });
   const detachConversations = new Set();
+  let actions = null;
   let mountCleanup = null;
   let prefsReady = false;
   let soloSeed = null;
   let startPromise = null;
   let disposed = false;
+
+  async function reattachPane(pane) {
+    if (disposed || !pane) return false;
+    const seed = {
+      ...pane.seed,
+      label: pane.label,
+      initialRetry: true,
+    };
+    if (seed.hideConv) detachConversations.delete(seed.hideConv);
+    await actions.closePane(pane.key);
+
+    const opener = windowRef.opener;
+    const accepted = await requestTerminalReattach({
+      seed, targetWindow: opener, windowRef, locationRef,
+    });
+    if (accepted) {
+      try { opener.focus(); } catch (_) { /* browser focus is best-effort */ }
+      try { windowRef.close(); } catch (_) { /* fallback below is no longer needed */ }
+      return true;
+    }
+
+    const target = terminalDashboardURL(seed);
+    if (typeof locationRef.replace === 'function') locationRef.replace(target);
+    else locationRef.href = target;
+    return true;
+  }
+
+  actions = createTerminalShellActions({
+    state, fetchImpl, windowRef, documentRef, onReattachPane: reattachPane,
+  });
 
   function consumeHash() {
     if (disposed) return null;

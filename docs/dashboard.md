@@ -707,6 +707,20 @@ rules may suppress it. Browsers supply the confirmation text, so it may refer
 generically to unsaved changes rather than naming the open terminal. Closing
 the last pane removes the guard; an idle dashboard never prompts.
 
+Each terminal pane's **⧉ tab** button moves that terminal into a standalone
+browser tab. The standalone header's **↩ dashboard** button moves it back to
+the exact dashboard tab that opened it, then closes the standalone tab. If the
+original dashboard is no longer available, the standalone tab becomes a full
+dashboard at `/terminals` and reopens the pane there instead. Browser focus is
+best-effort, so a browser that blocks focus-stealing may require selecting the
+dashboard tab manually.
+
+New web-terminal clients use a short, bounded initial retry window. This lets a
+first launch, pop-out, or reattach settle after a freshly-started tmux session
+or a replaced browser client finishes tearing down. Once the connection has
+been stable for a second, later disconnects keep the explicit **Reconnect**
+control; they never enter a permanent automatic retry loop.
+
 In 🧙 wizard mode, the Terminals tab and its popped-out browser terminals use
 the same purple-and-gold portal chrome as the rest of the dashboard. Each pane
 header has an **Arcane palette** checkbox beside **Copy** and **⧉ tab**. It
@@ -1112,8 +1126,8 @@ terminal shells: `TestDashboardTerminalRevealFocusChrome` (tab-reveal keyboard
 focus) and `TestDashboardTerminalShellLiveChrome`, which drives a live
 end-to-end terminal session — browser xterm ↔ WebSocket ↔ a deterministic
 server PTY — across reveal/refocus, typing, copy, kill → reconnect, the
-modal's detach/close confirmation, pop-out to `/terminals?solo=1`, fit/resize,
-and exact-once teardown:
+modal's detach/close confirmation, pop-out to `/terminals?solo=1`, reattach to
+the opener dashboard, fit/resize, and exact-once teardown:
 
 ```bash
 TCLAUDE_DASHSNAP=1 go test ./pkg/claude/agentd/ \

@@ -7,13 +7,15 @@ import { terminalComposeShortcutAction } from './terminal-compose-route.js';
 import { registerTerminalShellController } from './terminals-tab.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
+import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
 
 function composeTarget(pane, actions) {
+  const { initialRetry: _initialRetry, ...seed } = pane.seed;
   return Object.freeze({
-    ...pane.seed,
+    ...seed,
     // activatePane refits and focuses the opaque xterm widget. If this exact
     // pane closed while the composer was open, activation safely returns false.
     restoreFocus: () => actions.activatePane(pane.key),
@@ -69,6 +71,7 @@ function OpaqueTerminalHost({
       onSelectionChange,
       onComposeMessage,
       onDisconnect,
+      initialRetry: descriptor.seed.initialRetry === true,
     });
     widgetRef.current = widget;
     const unregister = actions.registerWidget(runtimeID, widget);
@@ -143,9 +146,11 @@ function TerminalPane({
           />
           <span>Arcane palette</span>
         </label>
-        ${!solo ? html`
+        ${solo ? html`
+          <button type="button" class="mux-btn" title="Move this terminal back to its dashboard tab" onClick=${() => void actions.reattachPane(pane.key)}>↩ dashboard</button>
+        ` : html`
           <button type="button" class="mux-btn" title="Move this terminal to its own browser tab" onClick=${() => void actions.popOutPane(pane.key)}>⧉ tab</button>
-        ` : null}
+        `}
       </div>
       <${OpaqueTerminalHost}
         descriptor=${pane}
@@ -383,11 +388,18 @@ export function mountTerminalShellIsland({
   // before it lets the first pane/modal enter Preact state.
   const runtimeLoader = widgetFactory === mountTerminalWidget ? loadXtermRuntime : null;
   const unregisterController = registerTerminalShellController(actions, runtimeLoader);
+  const unbindHandoff = bindTerminalHandoffReceiver({
+    openSeed: async (seed) => {
+      if (runtimeLoader) await runtimeLoader();
+      return actions.receiveHandoffPane(seed);
+    },
+  });
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
   registerCleanup(() => {
+    unbindHandoff();
     unregisterController();
     render(null, modalHost);
     render(null, badgeHost);

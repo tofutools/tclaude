@@ -92,6 +92,18 @@ test('terminal actions sequence socket disposal, detach, pop-out, and external h
   assert.equal(externalWidget.disposeCount, 1);
   assert.equal(requests.length, 1, 'an external hide never repeats the server detach');
 
+  const stale = actions.openPane({ ws: '/stale', key: 'same', hideConv: 'agt_same' });
+  const staleWidget = fakeWidget();
+  actions.registerWidget(stale.id, staleWidget);
+  const replacement = await actions.receiveHandoffPane({
+    ws: '/replacement', key: 'same', hideConv: 'agt_same', initialRetry: true,
+  });
+  assert.equal(staleWidget.disposeCount, 1, 'a duplicate handoff replaces its stale widget');
+  assert.notEqual(replacement.id, stale.id);
+  assert.equal(replacement.seed.ws, '/replacement');
+  assert.equal(replacement.seed.initialRetry, true);
+  assert.equal(requests.length, 1, 'replacing a handoff duplicate does not detach the session again');
+
   const popped = actions.openPane({ ws: '/pop', key: 'pop', label: 'pop', hideConv: 'agt_pop' });
   const poppedWidget = fakeWidget();
   actions.registerWidget(popped.id, poppedWidget);
