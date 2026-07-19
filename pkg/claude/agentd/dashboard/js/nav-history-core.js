@@ -52,6 +52,17 @@ export const KNOWN_SUBTABS = {
   processes: new Set(['templates', 'runs', 'worklist']),
 };
 
+// SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
+// SINGLE entity, so a third path segment carries meaning there:
+//   - processes/templates/<template-id> — the template editor is open on it.
+//   - processes/runs/<run-id>           — the run viewer is open on it.
+// Only the templates half is wired end to end today (the editor produces and
+// restores it); the runs half stays modelled-but-unwired, exactly as before.
+// A selection parsed under any other tab/subtab is dropped.
+export const SELECTABLE_SUBTABS = {
+  processes: new Set(['templates', 'runs']),
+};
+
 // defaultLocation returns a fresh copy of the fallback location. Returned as a
 // new object each call so callers can never alias/mutate a shared default.
 export function defaultLocation() {
@@ -69,10 +80,10 @@ export function normalizeLocation(loc) {
   if (loc && loc.subtab && subs && subs.has(loc.subtab)) {
     out.subtab = loc.subtab;
   }
-  // A selection is a free-form entity id (e.g. a Processes run id). It is only
-  // meaningful under a tab/subtab that has a detail view; today that is the
-  // Processes "runs" subtab. Keep it only where it can apply.
-  if (loc && loc.selection && tab === 'processes' && out.subtab === 'runs') {
+  // A selection is a free-form entity id (a Processes template or run id). It
+  // is only meaningful under a tab/subtab that has a detail view — see
+  // SELECTABLE_SUBTABS. Keep it only where it can apply.
+  if (loc && loc.selection && SELECTABLE_SUBTABS[tab]?.has(out.subtab)) {
     out.selection = String(loc.selection);
   }
   return out;

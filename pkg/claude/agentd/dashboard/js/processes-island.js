@@ -317,6 +317,20 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
     if (view.subtab === 'templates' || view.canvas?.kind === 'editor') void actions.observeTemplateHeads();
   }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
   useEffect(() => { const reselected = (event) => { if (event.detail?.tab === 'processes' && state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:tab-reselected', reselected); return () => document.removeEventListener('tclaude:tab-reselected', reselected); }, []);
+  // The history router (js/nav-history.js) resolved a Processes location from
+  // the URL — a deep link, a reload, or a browser Back/Forward — and wants the
+  // tab to show it, editor included. If we refuse (an unsaved editor the
+  // operator kept), re-announce where we actually are so the address bar is
+  // corrected instead of lying about the view.
+  useEffect(() => {
+    const restore = (event) => {
+      const loc = event.detail?.location;
+      if (loc?.tab !== 'processes') return;
+      void actions.applyLocation(loc).then((ok) => { if (!ok) actions.announceLocation(); });
+    };
+    document.addEventListener('tclaude:restore-location', restore);
+    return () => document.removeEventListener('tclaude:restore-location', restore);
+  }, []);
   const navigate = async (event, name) => { if (isModifiedClick(event)) return; event.preventDefault(); await actions.activateSubtab(name); };
   const subtabKey = (event) => { if (event.key === ' ' || event.key === 'Spacebar') { event.preventDefault(); event.currentTarget.click(); } };
   const spec = current.canvas;

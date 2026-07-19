@@ -14,6 +14,7 @@
 // deterministically back onto our stack.
 
 import { $, $$, isModifiedClick } from './helpers.js';
+import { featureState } from './feature-state-registry.js';
 import {
   DEFAULT_TAB, normalizeLocation, initialState, current, locEquals,
   push, replaceCurrent, toPath, fromPath, resolvePopstate,
@@ -72,10 +73,29 @@ function activeLocationFromDOM() {
     const sub = $$('#tab-access .access-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.subtab;
   } else if (tab === 'processes') {
+    // Prefer the island's own location signal: an open template editor's id
+    // (the /processes/templates/<id> segment) is state the DOM never spells
+    // out, so a pure DOM read cannot reproduce it. Fall back to the subtab's
+    // active class when the island is absent (asset failed to load), which
+    // degrades to exactly the pre-selection behaviour.
+    const announced = featureState('processes')?.location?.value;
+    if (announced) return normalizeLocation(announced);
     const sub = $$('#tab-processes .process-subtab').find(b => b.classList.contains('active'));
     if (sub) loc.subtab = sub.dataset.processSubtab;
   }
   return normalizeLocation(loc);
+}
+
+// requestProcessesLocation asks the Processes island to show `loc` — including
+// reopening the template editor when the location carries a selection. One-way
+// via a custom event (the mirror of the island's `tclaude:navigated`) so this
+// router never imports the island's module graph. The island answers by
+// re-announcing its real location if it refuses the change, e.g. when the
+// operator declines to discard an unsaved editor on a browser Back.
+function requestProcessesLocation(loc) {
+  document.dispatchEvent(new CustomEvent('tclaude:restore-location', {
+    detail: { location: normalizeLocation(loc) },
+  }));
 }
 
 // activate brings `loc` forward in the UI by clicking the matching controls,
@@ -92,8 +112,15 @@ function activate(loc) {
     if (navBtn && !navBtn.classList.contains('active')) navBtn.click();
     if (loc.tab === 'access' && loc.subtab) {
       $(`#tab-access .access-subtab[data-subtab="${loc.subtab}"]`)?.click();
-    } else if (loc.tab === 'processes' && loc.subtab) {
-      $(`#tab-processes .process-subtab[data-process-subtab="${loc.subtab}"]`)?.click();
+    } else if (loc.tab === 'processes') {
+      // Processes restores through its island rather than a subtab click, for
+      // two reasons. A click can only pick a subtab — it can never reopen the
+      // editor on `loc.selection`. And the subtab handler is ASYNC, so the
+      // navigation event it fires would land after the `applying` window below
+      // has closed and push a bogus entry (one that had already dropped the
+      // selection). The island applies the whole location in one step, with its
+      // unsaved-changes guard intact, and announces nothing back.
+      requestProcessesLocation(loc);
     }
   } finally {
     applying = false;
@@ -164,10 +191,10 @@ function reconcileLocation() {
   // Terminals tab after the last terminal closed). A drift while the current
   // entry's tab is STILL available is a voluntary navigation that pushes its own
   // entry (it emits tclaude:navigated) — replacing it here would clobber a real
-  // back-entry, and would also strip a /processes/runs/<id> selection that
-  // activeLocationFromDOM can't yet reproduce (a trap for the selection
-  // follow-up: teach activeLocationFromDOM/activate about selection before
-  // loosening this guard).
+  // back-entry. activeLocationFromDOM can now reproduce a
+  // /processes/templates/<id> selection (it reads the island's location
+  // signal), so this guard is no longer also protecting against silently
+  // stripping one; keep it for the back-entry reason alone.
   if (tabAvailable(current(stack).tab)) return;
   stack = replaceCurrent(stack, loc);
   history.replaceState(serializeStack(stack), '', urlFor(loc));

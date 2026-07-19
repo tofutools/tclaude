@@ -31,6 +31,8 @@ const jobs = { tab: 'jobs' };
 const config = { tab: 'config' };
 const accessSudo = { tab: 'access', subtab: 'sudo' };
 const run = { tab: 'processes', subtab: 'runs', selection: 'run-42' };
+// The template editor open on `release-train` — /processes/templates/<id>.
+const editingTemplate = { tab: 'processes', subtab: 'templates', selection: 'release-train' };
 
 test('A -> B -> C browser traversal visits B, A, B, C (AC #1)', () => {
   let s = initialState(groups);      // A
@@ -66,6 +68,20 @@ test('duplicate suppression also holds for subtab/selection equality', () => {
   let r = initialState(run);
   const rAfter = push(r, { tab: 'processes', subtab: 'runs', selection: 'run-42' });
   assert.equal(rAfter, r, 'identical selection is a no-op push');
+});
+
+// Opening the template editor and closing it again are two distinct locations,
+// which is what makes browser Back walk back INTO the editor.
+test('opening then closing the template editor is a real back/forward step', () => {
+  const list = { tab: 'processes', subtab: 'templates' };
+  let s = initialState(list);
+  s = push(s, editingTemplate);
+  s = push(s, list); // the "← templates" back button
+  assert.equal(s.entries.length, 3, 'open and close each recorded an entry');
+
+  s = go(s, s.index - 1);
+  assert.ok(locEquals(current(s), editingTemplate), 'Back re-enters the editor');
+  assert.equal(toPath(current(s)), '/processes/templates/release-train');
 });
 
 test('push after Back truncates the forward tail (browser semantics)', () => {
@@ -148,6 +164,26 @@ test('normalizeLocation drops unknown tab / subtab / misplaced selection', () =>
     { tab: 'processes', subtab: 'runs', selection: '7' },
     'selection coerced to string and kept under runs',
   );
+  assert.deepEqual(
+    normalizeLocation({ tab: 'processes', subtab: 'worklist', selection: 'x' }),
+    { tab: 'processes', subtab: 'worklist' },
+    'worklist has no detail view, so a selection is dropped there',
+  );
+});
+
+// The open template editor is addressable as /processes/templates/<id>, so the
+// URL names the template being edited and the view can be deep-linked.
+test('normalizeLocation keeps a template id under the templates subtab', () => {
+  assert.deepEqual(
+    normalizeLocation({ tab: 'processes', subtab: 'templates', selection: 'release-train' }),
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' },
+  );
+  // A selection needs its subtab: without one the location is just the tab.
+  assert.deepEqual(
+    normalizeLocation({ tab: 'processes', selection: 'release-train' }),
+    { tab: 'processes' },
+    'a bare tab cannot carry a selection',
+  );
 });
 
 test('locEquals is structural and normalizes both sides', () => {
@@ -172,8 +208,12 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.deepEqual(fromPath('/processes/runs/run-42'),
     { tab: 'processes', subtab: 'runs', selection: 'run-42' });
 
+  assert.equal(toPath(editingTemplate), '/processes/templates/release-train');
+  assert.deepEqual(fromPath('/processes/templates/release-train'),
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' });
+
   // Round-trip every fixture.
-  for (const loc of [groups, jobs, config, accessSudo, run]) {
+  for (const loc of [groups, jobs, config, accessSudo, run, editingTemplate]) {
     assert.ok(locEquals(fromPath(toPath(loc)), loc), `round-trip ${JSON.stringify(loc)}`);
   }
 });

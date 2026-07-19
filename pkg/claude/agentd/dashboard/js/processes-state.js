@@ -63,6 +63,25 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
   function setRename(value) { rename.value = value; }
   function setCreate(value) { create.value = value; }
 
+  // Exported as `location`: what this tab currently IS, in the history router's
+  // location shape (js/nav-history-core.js) — the single source of truth for
+  // the URL. Both the actions layer (announcing a navigation) and the router
+  // itself (reconciling the address bar) read it, so the two cannot disagree.
+  //
+  // An open template editor contributes the third segment,
+  // /processes/templates/<id>, which makes the editor deep-linkable. A BLANK
+  // scaffold is deliberately excluded: it has no saved id to address yet.
+  //
+  // Named `navLocation` locally so it never shadows `window.location`.
+  const navLocation = computed(() => {
+    const loc = { tab: 'processes', subtab: subtab.value };
+    const open = canvas.value;
+    if (subtab.value === 'templates' && open?.kind === 'editor' && !open.blank && open.id) {
+      loc.selection = String(open.id);
+    }
+    return loc;
+  });
+
   const view = computed(() => {
     const at = now();
     const work = worklist.value || { items: [], degradedRuns: [] };
@@ -82,7 +101,7 @@ export function createProcessesState({ activeTab = dashboardState.activeTab, pre
 
   initialize();
   return Object.freeze({
-    subtab, canvas, highlightedRun, notice, templates, runs, worklist, instantiation, rename, create, worklistView, drafts, missingComments, mutation, view,
+    subtab, canvas, highlightedRun, notice, templates, runs, worklist, instantiation, rename, create, worklistView, drafts, missingComments, mutation, view, location: navLocation,
     templatesRequest, runsRequest, worklistRequest, setSubtab, setCanvas, setNotice, setWorklistView,
     setDraft, requireComment, pruneWorklistState, beginMutation, endMutation, setEditor, currentEditor, setInstantiation, setRename, setCreate, setHighlightedRun,
   });

@@ -1350,3 +1350,107 @@ test('an empty creation name cannot be submitted', async (t) => {
   assert.ok(state.create.value, 'the prompt stays open');
   assert.equal(state.canvas.value, null, 'no editor opens without a name');
 });
+// The browser URL must name the template being edited, so the editor is
+// deep-linkable and browser Back walks in and out of it.
+test('Processes URL location follows the open template editor and restores from it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const fetchImpl = async (path) => ({ ok: true, json: async () => (
+    path.includes('worklist') ? { items: [], degradedRuns: [] }
+      : path.includes('templates') ? { templates: [{ id: 'release-train' }] }
+        : { runs: [] }) });
+  const announced = [];
+  const actions = createProcessesActions({
+    state, fetchImpl, notify() {}, dispatchNavigated: (location) => announced.push(location),
+  });
+
+  // Opening the editor puts the template id in the URL...
+  await actions.openEditor('release-train');
+  assert.deepEqual(announced.at(-1),
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' });
+
+  // ...and the "← templates" back button drops the segment again, so the two
+  // are distinct history entries.
+  assert.equal(await actions.closeCanvas(), true);
+  assert.deepEqual(announced.at(-1), { tab: 'processes', subtab: 'templates' });
+
+  // A blank scaffold has no saved id to address yet — it stays on the list path.
+  await actions.openEditor('new-process', true);
+  assert.deepEqual(announced.at(-1), { tab: 'processes', subtab: 'templates' },
+    'an unsaved blank template is not addressable');
+
+  // A deep link / reload / browser Back drives applyLocation, which reopens the
+  // editor but must NOT announce back — the URL is already where it wants to be.
+  const settled = announced.length;
+  assert.equal(await actions.applyLocation(
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' }), true);
+  assert.equal(state.canvas.value.kind, 'editor');
+  assert.equal(state.canvas.value.id, 'release-train');
+  assert.equal(announced.length, settled, 'a router-driven restore forges no history entry');
+
+  // Re-applying the location already on screen is a no-op.
+  assert.equal(await actions.applyLocation(
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' }), true);
+  assert.equal(state.canvas.value.id, 'release-train');
+
+  // An unsaved editor refuses a Back-driven restore, so the operator keeps
+  // their work; the island then re-asserts the real location.
+  state.setEditor({ dirty: true, model: { dirty: true } });
+  const guarded = createProcessesActions({
+    state, fetchImpl, notify() {}, dispatchNavigated: (location) => announced.push(location),
+    confirmDiscard: async () => false,
+  });
+  assert.equal(await guarded.applyLocation({ tab: 'processes', subtab: 'runs' }), false);
+  assert.equal(state.canvas.value.id, 'release-train', 'the unsaved editor stayed open');
+  guarded.announceLocation();
+  assert.deepEqual(announced.at(-1),
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' },
+    'the URL is corrected back to the view that is actually showing');
+});
+
+// The wiring the history router depends on: it dispatches `tclaude:restore-location`
+// (js/nav-history.js) and the mounted island must act on it — that is what makes
+// a pasted /processes/templates/<id> URL, a reload, or a Back actually land in
+// the editor.
+test('a router restore-location event opens the editor on the mounted Processes island', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const announced = [];
+  const actions = createProcessesActions({
+    state, notify() {}, dispatchNavigated: (location) => announced.push(location),
+    fetchImpl: async (path) => ({ ok: true, json: async () => (
+      path.includes('worklist') ? { items: [], degradedRuns: [] }
+        : path.includes('templates') ? { templates: [{ id: 'release-train' }] }
+          : { runs: [] }) }),
+  });
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'processes', subtab: 'templates', selection: 'release-train' } },
+  }));
+  for (let i = 0; i < 10 && state.canvas.value === null; i++) await harness.act(() => Promise.resolve());
+
+  assert.equal(state.canvas.value?.kind, 'editor');
+  assert.equal(state.canvas.value?.id, 'release-train', 'the URL id selected the template');
+  assert.deepEqual(announced, [], 'restoring from the URL announces nothing back to the router');
+  assert.ok(mounted.container.querySelector('#process-editor-view'), 'the editor view is on screen');
+
+  // A location for a different tab is not ours to act on.
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'groups' } },
+  }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(state.canvas.value?.id, 'release-train', 'another tab’s location is ignored');
+
+  await mounted.unmount();
+});
