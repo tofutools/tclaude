@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
@@ -260,6 +261,98 @@ func handleProcessTemplateGet(w http.ResponseWriter, r *http.Request, fs *store.
 		view.AuthoredAt = exactHead.AuthoredAt
 	}
 	writeProcessJSON(w, http.StatusOK, view)
+}
+
+// handleProcessTemplateCreate mints the id for a brand-new template. Ids are a
+// permanent store key embedded in every id@sha256:<hash> ref, so they are
+// generated here rather than typed by an operator: a hand-picked id is a
+// naming decision that cannot be taken back, and the display name -- which is
+// renameable -- is the thing a human should be choosing. A compact lowercase
+// hex UUID satisfies the existing id grammar with no validation change.
+//
+// The authored YAML/CLI path deliberately keeps supplying its own ids: refs are
+// content-addressed against them and docs/examples rely on stable names. This
+// endpoint is creation-from-the-dashboard only.
+func handleProcessTemplateCreate(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermProcessTemplatesManage)
+	if !ok {
+		return
+	}
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
+		return
+	}
+	body, err := decodeProcessEditView(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "json", err.Error())
+		return
+	}
+	if body.Template == nil {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "template is required")
+		return
+	}
+	if strings.TrimSpace(body.Template.ID) != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"template ids are generated; omit template.id when creating and POST to /v1/process/templates/{id} to update an existing template")
+		return
+	}
+	if body.SourceHash != "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "a new template has no prior version to save against")
+		return
+	}
+	body.Template.ID = newProcessTemplateID()
+	parsed, err := parseProcessEditView(body)
+	if err != nil {
+		writeProcessEditParseError(w, err)
+		return
+	}
+	if model.PreflightNormalizedGraphCardinality(parsed.Template).HasErrors() ||
+		parsed.Diagnostics.HasNormalizedGraphBudgetError() {
+		writeProcessJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":       "process template has validation errors; run process-templates validate and fix them before saving",
+			"code":        "process_template_invalid",
+			"diagnostics": diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+		})
+		return
+	}
+	if err := store.ValidateTemplateID(parsed.Template.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "process_template_invalid_id", err.Error())
+		return
+	}
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "auth", err.Error())
+		return
+	}
+	// An empty expectation means "must not exist", so a generated id that
+	// somehow collided surfaces as a conflict rather than stacking a version
+	// onto an unrelated template.
+	commit, err := fs.PutTemplateEditorSourceAttributed(r.Context(), parsed.Template, "", actor)
+	var conflict *store.TemplateSourceConflictError
+	if errors.As(err, &conflict) {
+		writeError(w, http.StatusConflict, "process_template_conflict", "generated template id already exists; retry")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_template_store", err.Error())
+		return
+	}
+	writeProcessJSON(w, http.StatusCreated, map[string]any{
+		"id":           parsed.Template.ID,
+		"ref":          commit.Ref,
+		"semanticHash": commit.SemanticHash,
+		"sourceHash":   commit.SourceHash,
+		"actor":        commit.Actor,
+		"authoredAt":   commit.AuthoredAt,
+		"diagnostics":  diagnosticsForEditor(parsed.Diagnostics, parsed.Template),
+	})
+}
+
+// newProcessTemplateID returns a compact (dashless) lowercase hex UUID, which
+// is already a valid template id under ^[a-z0-9][a-z0-9._-]*$.
+func newProcessTemplateID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
 func handleProcessTemplateSave(w http.ResponseWriter, r *http.Request, fs *store.FS) {

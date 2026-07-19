@@ -925,6 +925,7 @@ func buildMux() http.Handler {
 	// feature flag per request.
 	mux.HandleFunc("GET /v1/process/templates", processRoute(handleProcessTemplates))
 	mux.HandleFunc("GET /v1/process/template-heads", processRoute(handleProcessTemplateHeads))
+	mux.HandleFunc("POST /v1/process/templates", processRoute(handleProcessTemplateCreate))
 	mux.HandleFunc("GET /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
