@@ -113,6 +113,7 @@ export class ProcessGraphAdapter {
   resetZoom() { return this.disposed ? false : this.widget.resetZoom(); }
   resetInteractionLayering() { if (!this.disposed) this.widget.resetInteractionLayering(); }
   focus() { if (!this.disposed) this.widget.focusCanvas(); }
+  focusKeyboardTarget() { return this.disposed ? false : this.widget.focusKeyboardTarget(); }
   focusPort(nodeId, port) { return this.disposed ? false : !!this.widget.focusPort(nodeId, port); }
   capturePortFocus(nodeId, port) {
     if (this.disposed) return () => {};

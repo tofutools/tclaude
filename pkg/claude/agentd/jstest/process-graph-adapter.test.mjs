@@ -279,14 +279,18 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
     portDragStart: (payload) => received.push(['start', payload]),
     portDragEnd: (payload) => received.push(['end', payload]),
   }, { connectionFeedback: feedback });
-  const sink = host.querySelector('.process-graph-keyboard-sink');
-  const sinkFocus = sink.focus.bind(sink);
-  let sinkFocusRestorations = 0;
-  Object.defineProperty(sink, 'focus', {
-    configurable: true,
-    value(options) { sinkFocusRestorations += 1; return sinkFocus(options); },
-  });
   const source = host.querySelector('[data-node-id="start"] .process-port-out');
+  const svgPrototype = Object.getPrototypeOf(source);
+  const priorFocus = Object.getOwnPropertyDescriptor(svgPrototype, 'focus');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(svgPrototype, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  t.after(() => {
+    if (priorFocus) Object.defineProperty(svgPrototype, 'focus', priorFocus);
+    else delete svgPrototype.focus;
+  });
   source.focus();
   harness.fireEvent(source, 'keydown', { key: 'Enter' });
   const active = adapter.interactionSnapshot();
@@ -309,8 +313,10 @@ test('undo-style graph removal cancels a missing keyboard source exactly once', 
   assert.deepEqual(adapter.interactionSnapshot(), {
     generation: active.generation + 1, active: false,
   }, 'reload freshness sees the completed interaction generation and no active gesture');
-  assert.equal(sinkFocusRestorations, 1,
-    'focus falls back to the non-visible shortcut sink when the focused source disappears');
+  const restored = harness.document.activeElement;
+  assert.equal(restored?.dataset.nodeId, 'end',
+    'keyboard source removal restores a surviving visible graph item');
+  assert.notEqual(restored, host.querySelector('.process-graph-keyboard-sink'));
 
   adapter.setGraph({ nodes: [{ id: 'end', type: 'end', label: 'End' }], edges: [] });
   harness.fireEvent(host.querySelector('.process-graph-svg'), 'keydown', { key: 'Escape' });

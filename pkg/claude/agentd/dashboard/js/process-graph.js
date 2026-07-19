@@ -1720,6 +1720,32 @@ export class ProcessGraph {
     return target;
   }
 
+  // Keyboard-only recovery must remain visible. This is deliberately separate
+  // from focusCanvas(): pointer-origin empty-canvas shortcuts may use the
+  // clipped sink, while a failed/cancelled keyboard action needs an ordinary
+  // graph item (or the Fit control) with normal focus-visible treatment.
+  focusKeyboardTarget() {
+    const source = this.keyboardPort || this.connectionSource;
+    const sourcePort = source && this.portElement(source.nodeId, source.port);
+    if (sourcePort) {
+      sourcePort.focus({ preventScroll: true });
+      return true;
+    }
+    for (const item of selectionItems(this.selected)) {
+      const target = item.type === 'node'
+        ? this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(String(item.id))}"]`)
+        : this.edgeLayer.querySelector(`[data-edge-id="${CSS.escape(String(item.id))}"]`);
+      if (target) {
+        target.focus({ preventScroll: true });
+        return true;
+      }
+    }
+    const target = this.nodeLayer.querySelector('.process-node')
+      || this.edgeLayer.querySelector('.process-edge') || this.fitButton;
+    target?.focus({ preventScroll: true });
+    return !!target;
+  }
+
   select(selection) {
     this.selected = makeSelection(selectionItems(selection));
     const items = selectionItems(this.selected);
@@ -1821,7 +1847,7 @@ export class ProcessGraph {
     const cancelled = this.keyboardCancellationFocus;
     this.keyboardCancellationFocus = null;
     if (!focused) {
-      if (cancelled?.restore) this.focusCanvas();
+      if (cancelled?.restore) this.focusKeyboardTarget();
       return;
     }
     let target;
@@ -1837,7 +1863,7 @@ export class ProcessGraph {
     if (target) target.focus({ preventScroll: true });
     else if (cancelled?.restore && focused.type === 'port'
       && focused.nodeId === cancelled.nodeId && focused.port === cancelled.port) {
-      this.focusCanvas();
+      this.focusKeyboardTarget();
     }
   }
 

@@ -1116,7 +1116,11 @@ export class ProcessTemplateEditor {
       x: point.x, y: point.y, ...connection,
     }));
     if (!created) {
-      queueMicrotask(() => this.graph?.focus());
+      queueMicrotask(() => {
+        if (this.graph && !this.graph.focusPort(source.nodeId, source.port)) {
+          this.graph.focusKeyboardTarget();
+        }
+      });
       return false;
     }
     this.setSelection({ type: 'node', id: created.id });
