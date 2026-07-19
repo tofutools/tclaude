@@ -16,8 +16,9 @@ var (
 	contactFields    = stringSet("cadence", "budget", "escalationTarget")
 	retryFields      = stringSet("maxAttempts", "backoff", "onFail")
 	waitFields       = stringSet("duration", "until", "signal")
-	layoutFields     = stringSet("nodes")
+	layoutFields     = stringSet("nodes", "edges")
 	layoutNodeFields = stringSet("x", "y")
+	layoutEdgeFields = stringSet("pinned")
 )
 
 type schemaID uint8
@@ -31,6 +32,9 @@ const (
 	schemaLayout
 	schemaLayoutNodeMap
 	schemaLayoutNode
+	schemaLayoutEdgeFromMap
+	schemaLayoutEdgeOutcomeMap
+	schemaLayoutEdge
 	schemaStep
 	schemaChecks
 	schemaPerformer
@@ -118,6 +122,10 @@ func (w *schemaWalk) inspect(node *yaml.Node, schema schemaID) Diagnostics {
 		diagnostics = w.inspectMapValues(node, schemaNode)
 	case schemaLayoutNodeMap:
 		diagnostics = w.inspectMapValues(node, schemaLayoutNode)
+	case schemaLayoutEdgeFromMap:
+		diagnostics = w.inspectMapValues(node, schemaLayoutEdgeOutcomeMap)
+	case schemaLayoutEdgeOutcomeMap:
+		diagnostics = w.inspectMapValues(node, schemaLayoutEdge)
 	case schemaChecks:
 		diagnostics = w.inspectSequence(node, schemaStep)
 	case schemaNext:
@@ -285,6 +293,8 @@ func schemaAllowedFields(schema schemaID) map[string]struct{} {
 		return layoutFields
 	case schemaLayoutNode:
 		return layoutNodeFields
+	case schemaLayoutEdge:
+		return layoutEdgeFields
 	case schemaStep:
 		return stepFields
 	case schemaPerformer:
@@ -327,8 +337,11 @@ func schemaChild(schema schemaID, key string) (schemaID, bool) {
 			return schemaNext, true
 		}
 	case schemaLayout:
-		if key == "nodes" {
+		switch key {
+		case "nodes":
 			return schemaLayoutNodeMap, true
+		case "edges":
+			return schemaLayoutEdgeFromMap, true
 		}
 	case schemaStep:
 		switch key {

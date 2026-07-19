@@ -256,6 +256,50 @@ export class ProcessEditModel {
 
   // freeOutcome picks the first outcome name not already used by `from`,
   // honoring the server's unique-(from,outcome) invariant.
+  // ---- connector label pinning ---------------------------------------------------
+  //
+  // Pin state lives in layout.edges (authoring metadata, stripped before the
+  // semantic hash) so decluttering a label travels with the template without
+  // changing what the process means.
+
+  // edgePinned returns true, false, or undefined. Undefined is not the same as
+  // false: it means the author has no opinion and the default rule decides,
+  // whereas false hides a label the default would have drawn.
+  edgePinned(from, outcome) {
+    return this.layout?.edges?.[from]?.[outcome]?.pinned;
+  }
+
+  // setEdgePinned records or clears an author opinion. Passing undefined
+  // returns the edge to the default rule rather than storing a false, and prunes
+  // the empty containers so an untouched template never grows a layout.edges
+  // block it does not need.
+  setEdgePinned(from, outcome, pinned) {
+    const edge = this.findEdge(from, outcome);
+    if (!edge) throw new Error(`unknown edge ${from} -> ${outcome}`);
+    this.assertEdgeEditable(edge);
+    if (this.edgePinned(from, outcome) === pinned) return false;
+    this.begin();
+    this.writeEdgePin(from, outcome, pinned);
+    return true;
+  }
+
+  // writeEdgePin is the raw container maintenance, shared with the rename and
+  // delete paths, which must move or drop pin state with the edge it describes.
+  // It deliberately does not snapshot undo: callers own that gate.
+  writeEdgePin(from, outcome, pinned) {
+    if (!this.layout.edges) this.layout.edges = {};
+    const byOutcome = this.layout.edges[from];
+    if (pinned === undefined) {
+      if (!byOutcome) return;
+      delete byOutcome[outcome];
+      if (!Object.keys(byOutcome).length) delete this.layout.edges[from];
+      if (!Object.keys(this.layout.edges).length) delete this.layout.edges;
+      return;
+    }
+    if (!byOutcome) this.layout.edges[from] = {};
+    this.layout.edges[from][outcome] = { pinned };
+  }
+
   freeOutcome(from, base = 'pass') {
     const taken = new Set(this.outgoingEdges(from).map((edge) => edge.outcome));
     let candidate = base;
@@ -327,6 +371,13 @@ export class ProcessEditModel {
     this.begin();
     delete this.template.nodes[id];
     delete this.layout.nodes[id];
+    // Pin state for edges LEAVING the node goes with it. Edges arriving from
+    // elsewhere are keyed by their own source, and rewiring below keeps them, so
+    // their opinions stay valid.
+    if (this.layout.edges) {
+      delete this.layout.edges[id];
+      if (!Object.keys(this.layout.edges).length) delete this.layout.edges;
+    }
     this.edges = this.edges.filter((edge) => edge.from !== id && edge.to !== id);
     if (rewire && successor && successor !== id) {
       for (const edge of incoming) {
@@ -599,6 +650,10 @@ export class ProcessEditModel {
     this.assertEdgeEditable(edge);
     this.begin();
     this.edges = this.edges.filter((candidate) => candidate !== edge);
+    // Pin state is keyed by (from, outcome). Leaving it behind would silently
+    // apply this edge's opinion to the next connector minted with the same
+    // outcome -- and freeOutcome reuses names as soon as they are free.
+    this.writeEdgePin(from, outcome, undefined);
   }
 
   setEdgeOutcome(from, oldOutcome, newOutcome) {
@@ -609,7 +664,13 @@ export class ProcessEditModel {
     if (this.findEdge(from, newOutcome)) throw new Error(`${from} already has a connector labelled "${newOutcome}". Outcome labels are the keys that pick which connector a run takes, so they must be unique per node.`);
     this.assertEdgeEditable(edge);
     this.begin();
+    const pinned = this.edgePinned(from, oldOutcome);
     edge.outcome = newOutcome;
+    // The opinion belongs to the connector, not to the name it used to have.
+    if (pinned !== undefined) {
+      this.writeEdgePin(from, oldOutcome, undefined);
+      this.writeEdgePin(from, newOutcome, pinned);
+    }
   }
 
   setEdgeTarget(from, outcome, to) {
@@ -738,6 +799,8 @@ export class ProcessEditModel {
         from: edge.from,
         to: edge.to,
         outcome: edge.outcome,
+        // Tri-state: undefined leaves the default label rule in charge.
+        pinned: this.edgePinned(edge.from, edge.outcome),
         joinOnTarget: join && (inCounts.get(edge.to) || 0) > 1 ? join : undefined,
       });
     }

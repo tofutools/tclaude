@@ -897,3 +897,56 @@ test('outcomes stay real non-empty keys', () => {
   assert.equal(model.findEdge('fresh', outcome).to, 'ship');
   assert.throws(() => model.addEdge('fresh', '', 'build'), /outcome is required/);
 });
+
+test('pin state lives in layout and survives save', () => {
+  const model = new ProcessEditModel(view());
+  assert.equal(model.edgePinned('build', 'pass'), undefined, 'no stored opinion by default');
+
+  model.setEdgePinned('build', 'pass', false);
+  assert.equal(model.edgePinned('build', 'pass'), false);
+  assert.equal(model.layout.edges.build.pass.pinned, false);
+  assert.equal(JSON.parse(JSON.stringify(model.saveBody())).layout.edges.build.pass.pinned, false);
+
+  // Clearing returns the edge to the default rule and prunes the containers, so
+  // an untouched template never grows an empty layout.edges block.
+  model.setEdgePinned('build', 'pass', undefined);
+  assert.equal(model.edgePinned('build', 'pass'), undefined);
+  assert.equal(model.layout.edges, undefined);
+});
+
+test('pinning is one undoable edit', () => {
+  const model = new ProcessEditModel(view());
+  const before = model.undoStack.length;
+  model.setEdgePinned('build', 'pass', false);
+  assert.equal(model.undoStack.length, before + 1);
+  assert.equal(model.undo(), true);
+  assert.equal(model.edgePinned('build', 'pass'), undefined);
+  // Setting what is already stored is a no-op, not a wasted undo step.
+  assert.equal(model.setEdgePinned('build', 'pass', undefined), false);
+  assert.equal(model.undoStack.length, before);
+});
+
+test('pin state follows a renamed connector instead of its old name', () => {
+  const model = new ProcessEditModel(view());
+  model.setEdgePinned('build', 'pass', true);
+  model.setEdgeOutcome('build', 'pass', 'shipped');
+  assert.equal(model.edgePinned('build', 'shipped'), true, 'the opinion belongs to the connector');
+  assert.equal(model.edgePinned('build', 'pass'), undefined, 'and must not be left on the old name');
+});
+
+test('a deleted connector does not bequeath its pin to the next one', () => {
+  // freeOutcome reuses a name as soon as it is free, so stale pin state would
+  // silently apply this edge's opinion to an unrelated new connector.
+  const model = new ProcessEditModel(view());
+  model.setEdgePinned('build', 'pass', false);
+  model.deleteEdge('build', 'pass');
+  model.addEdge('build', 'pass', 'ship');
+  assert.equal(model.edgePinned('build', 'pass'), undefined);
+});
+
+test('deleting a node takes its outgoing pins with it', () => {
+  const model = new ProcessEditModel(view());
+  model.setEdgePinned('build', 'pass', true);
+  model.deleteNode('build');
+  assert.equal(model.layout.edges?.build, undefined);
+});

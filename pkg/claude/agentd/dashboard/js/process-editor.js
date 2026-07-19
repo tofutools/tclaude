@@ -26,11 +26,8 @@ import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
-import {
-  edgeHintText, readEdgeHintDismissed, resolveEdgeHint, writeEdgeHintDismissed,
-} from './process-edge-hint.js';
-import { outcomeCarriesInformation } from './process-outcome-vocabulary.js';
-import { dashPrefs } from './prefs.js';
+import { edgePinTitle } from './process-edge-hint.js';
+import { defaultPinned } from './process-outcome-vocabulary.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
   ProcessClipboardError, createProcessSelectionPayload,
@@ -173,9 +170,6 @@ export class ProcessTemplateEditor {
     this.snippetLoadSeq = 0;
     this.statusState = { message: '', error: false };
     this.inlineState = { open: false, token: 0, left: 0, top: 0, value: '' };
-    // Author preference, never template content: read once so a dismissed hint
-    // does not re-render on every publish.
-    this.edgeHintDismissed = readEdgeHintDismissed(dashPrefs);
     this.inspectorFocusRequest = 0;
     this.modalState = null;
     this.modalGeneration = 0;
@@ -276,7 +270,7 @@ export class ProcessTemplateEditor {
         canSaveSelection: this.canSaveSelectionAsSnippet(),
       },
       inline: { ...this.inlineState },
-      edgeHint: this.edgeHintView(),
+      edgePin: this.edgePinView(),
       inspectorFocusRequest: this.inspectorFocusRequest,
       external: {
         ...structuredClone(externalChange),
@@ -1562,42 +1556,45 @@ export class ProcessTemplateEditor {
     return true;
   }
 
-  // ---- edge outcome hint ---------------------------------------------------------
+  // ---- connector label pinning ---------------------------------------------------
 
-  // edgeHintView anchors the "this label routes the run" bubble to the selected
-  // connector's label. It resolves to closed for anything that is not exactly
-  // one labelled edge: a multi-selection has no single key to talk about, and an
-  // unnamed lone connector draws no label to point at.
-  edgeHintView() {
+  // edgePinView anchors the pin toggle to the selected connector's label. The
+  // button exists only while exactly one edge is selected: a multi-selection has
+  // no single label to talk about, and an unselected connector deliberately
+  // offers no affordance -- its label is either pinned on or decluttered away,
+  // and selecting it is how you get the control back.
+  edgePinView() {
     const items = selectionItems(this.selection);
-    const selected = items.length === 1 && items[0].type === 'edge' ? items[0] : null;
-    const siblings = selected ? this.model.outgoingEdges(selected.from).length : 0;
-    const { open, edge } = resolveEdgeHint({
-      dismissed: this.edgeHintDismissed,
-      selected,
-      labelled: (item) => !!this.model.findEdge(item.from, item.outcome)
-        && outcomeCarriesInformation(item.outcome, siblings, this.model.node(item.from)?.type),
-    });
-    if (!open) return { open: false };
-    const laid = this.laidEdge(edge.from, edge.outcome);
+    const item = items.length === 1 && items[0].type === 'edge' ? items[0] : null;
+    if (!item || !this.model.findEdge(item.from, item.outcome)) return { open: false };
+    const laid = this.laidEdge(item.from, item.outcome);
     if (!laid?.label) return { open: false };
+    const pinned = this.edgePinnedEffective(item.from, item.outcome);
     const position = this.stagePosition(laid.label.x, laid.label.y);
     return {
       open: true,
+      from: item.from,
+      outcome: item.outcome,
       left: position.left,
       top: position.top,
-      text: edgeHintText(edge.outcome, siblings),
+      pinned,
+      title: edgePinTitle(item.outcome, pinned),
     };
   }
 
-  // dismissEdgeHint is the pin button. The write is best-effort: a storage that
-  // refuses still silences the hint for this session rather than leaving a
-  // button that visibly does nothing.
-  dismissEdgeHint() {
-    if (this.destroyed) return;
-    this.edgeHintDismissed = true;
-    writeEdgeHintDismissed(dashPrefs, true);
-    this.publish();
+  // edgePinnedEffective resolves the tri-state into the boolean the button
+  // renders and toggles against, so an author with no stored opinion toggles
+  // away from what they can currently see rather than from an invisible default.
+  edgePinnedEffective(from, outcome) {
+    const stored = this.model.edgePinned(from, outcome);
+    if (stored !== undefined) return !!stored;
+    const siblings = this.model.outgoingEdges(from).length;
+    return defaultPinned(outcome, siblings, this.model.node(from)?.type);
+  }
+
+  toggleEdgePin(from, outcome) {
+    const next = !this.edgePinnedEffective(from, outcome);
+    this.mutate(() => this.model.setEdgePinned(from, outcome, next));
   }
 
   // ---- inline (in-place) label editing ------------------------------------------

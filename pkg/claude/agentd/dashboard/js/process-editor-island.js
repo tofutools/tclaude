@@ -300,23 +300,24 @@ function Issues({ controller, issues }) {
   </details>`;
 }
 
-// EdgeHint explains that a connector's visible label is the key the run routes
-// on. Positioned like InlineEditor: host coordinates resolved from the graph
-// point by the controller.
+// EdgePin toggles whether the selected connector's outcome key stays drawn when
+// the connector is not selected. Positioned like InlineEditor: host coordinates
+// resolved from the graph point by the controller, offset below the label so it
+// never covers the key it controls.
 //
-// role="note" with aria-live="polite" so the explanation is announced when
-// selection brings it up; the selected edge's own aria-label is unchanged, so
-// this is additive rather than a replacement for it.
-function EdgeHint({ controller, hint }) {
-  if (!hint?.open) return null;
-  return html`<div class="process-edge-hint" role="note" aria-live="polite"
-    style=${`left:${Math.round(hint.left)}px;top:${Math.round(hint.top)}px`}>
-    <p class="process-edge-hint-text">${hint.text}</p>
-    <button class="process-edge-hint-pin" type="button"
-      title="Stop showing this"
-      aria-label="Stop showing the connector label explanation"
-      onClick=${() => controller.dismissEdgeHint()}>📌</button>
-  </div>`;
+// The explanation lives in the button's title, so it appears on hover of this
+// control alone rather than floating beside every selected connector.
+function EdgePin({ controller, pin }) {
+  if (!pin?.open) return null;
+  const { from, outcome } = pin;
+  return html`<button
+    class=${`process-edge-pin${pin.pinned ? ' is-pinned' : ''}`}
+    type="button"
+    style=${`left:${Math.round(pin.left)}px;top:${Math.round(pin.top)}px`}
+    title=${pin.title}
+    aria-label=${pin.title}
+    aria-pressed=${pin.pinned ? 'true' : 'false'}
+    onClick=${() => controller.toggleEdgePin(from, outcome)}>📌</button>`;
 }
 
 function InlineEditor({ controller, inline }) {
@@ -479,7 +480,7 @@ export function ProcessEditorApp({ controller }) {
       <div ref=${stageRef} class="process-editor-stage">
         <div ref=${graphRef} class="process-editor-canvas-host"></div>
         <${InlineEditor} controller=${controller} inline=${view.inline} />
-        <${EdgeHint} controller=${controller} hint=${view.edgeHint} />
+        <${EdgePin} controller=${controller} pin=${view.edgePin} />
         <${Issues} controller=${controller} issues=${view.issues} />
       </div>
     </div>

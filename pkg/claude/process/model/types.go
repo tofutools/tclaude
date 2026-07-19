@@ -153,11 +153,27 @@ type Metadata map[string]any
 
 type Layout struct {
 	Nodes map[string]LayoutNode `json:"nodes,omitempty" yaml:"nodes,omitempty"`
+	// Edges carries per-connector authoring metadata, keyed by source node id
+	// and then by outcome -- the same (from, outcome) pair that identifies an
+	// edge everywhere else. Nested rather than a composite key so neither node
+	// ids nor outcomes need escaping against a separator.
+	//
+	// Like the rest of Layout this is authoring metadata only: it is stripped
+	// before the semantic hash is taken, so pinning a label can never change
+	// what a process means or invalidate a pinned template ref.
+	Edges map[string]map[string]LayoutEdge `json:"edges,omitempty" yaml:"edges,omitempty"`
 }
 
 type LayoutNode struct {
 	X float64 `json:"x" yaml:"x"`
 	Y float64 `json:"y" yaml:"y"`
+}
+
+type LayoutEdge struct {
+	// Pinned is deliberately tri-state. Absent means "no author opinion", which
+	// leaves the editor's default rule in charge -- distinct from an explicit
+	// false, which hides a label the default would have drawn.
+	Pinned *bool `json:"pinned,omitempty" yaml:"pinned,omitempty"`
 }
 
 type Edge struct {

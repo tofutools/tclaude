@@ -24,8 +24,8 @@ export const UNNAMED_OUTCOME = 'pass';
 // order plan.ResolvePassEdge uses.
 export const PASS_OUTCOMES = ['pass', 'done', 'success', 'next'];
 
-// outcomeCarriesInformation reports whether an edge's outcome is worth drawing
-// over the arrow.
+// defaultPinned is the label-visibility rule for a connector whose author has
+// expressed no opinion. It answers whether the outcome is worth drawing.
 //
 // It is not, when the edge is the only way out of its node AND its outcome is
 // one of the generic pass-vocabulary names. The runtime takes a lone edge
@@ -45,9 +45,27 @@ export const PASS_OUTCOMES = ['pass', 'done', 'success', 'next'];
 // A name outside the vocabulary is always drawn even on a lone edge: the author
 // typed something specific, so it is documentation rather than filler. And once
 // a sibling exists ANY outcome is the routing decision, and is always drawn.
-export function outcomeCarriesInformation(outcome, siblingCount, nodeType = '') {
+export function defaultPinned(outcome, siblingCount, nodeType = '') {
   if (!outcome) return false;
   if (nodeType === 'decision') return true;
   if (siblingCount > 1) return true;
   return !PASS_OUTCOMES.includes(outcome);
+}
+
+// edgeLabelVisible is the single authority on whether a connector's outcome is
+// drawn. Layered so each rule has one place to live:
+//
+//   selected           -> always drawn, alongside the pin button. Selecting a
+//                         connector is how you inspect and change its key, so it
+//                         must be readable even when pinned off.
+//   explicit pin state -> the author's opinion wins over the default.
+//   otherwise          -> defaultPinned decides, so an untouched template
+//                         declutters itself without any per-edge clicking.
+export function edgeLabelVisible({
+  outcome, siblingCount = 2, nodeType = '', pinned, selected = false,
+} = {}) {
+  if (!outcome) return false;
+  if (selected) return true;
+  if (pinned !== undefined) return !!pinned;
+  return defaultPinned(outcome, siblingCount, nodeType);
 }
