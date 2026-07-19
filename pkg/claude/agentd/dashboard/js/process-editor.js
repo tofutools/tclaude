@@ -26,7 +26,7 @@ import {
   ProcessEditModel, blankEditView,
   PALETTE_SNIPPETS,
 } from './process-edit-model.js';
-import { edgePinOffset, edgePinTitle } from './process-edge-hint.js';
+import { edgePinPlacement, edgePinTitle } from './process-edge-hint.js';
 import { defaultPinned, edgeLabelVisible } from './process-outcome-vocabulary.js';
 import { processEdgePortAvailability } from './process-port-availability.js';
 import {
@@ -1583,16 +1583,23 @@ export class ProcessTemplateEditor {
     const laid = this.laidEdge(item.from, item.outcome);
     if (!laid?.label) return { open: false };
     const pinned = this.edgePinnedEffective(item.from, item.outcome);
-    const position = this.stagePosition(laid.label.x, laid.label.y);
-    // The offset is in host pixels, so it scales with the viewport the same way
-    // the label it clears does.
-    const offset = edgePinOffset(item.outcome, laid.label.orientation, this.graph?.view?.k);
+    // Measured, not derived from the layout anchor. graph.setSelection runs
+    // before publish (see setSelection), and a selected connector always draws
+    // its key, so the label is on screen by the time this reads it.
+    const box = this.graph?.edgeLabelHostBox?.(laid.id, this.stage) || null;
+    const placement = edgePinPlacement({
+      anchor: this.stagePosition(laid.label.x, laid.label.y),
+      box,
+      outcome: item.outcome,
+      orientation: laid.label.orientation,
+      zoom: this.graph?.view?.k,
+    });
     return {
       open: true,
       from: item.from,
       outcome: item.outcome,
-      left: position.left + offset.dx,
-      top: position.top + offset.dy,
+      left: placement.left,
+      top: placement.top,
       pinned,
       title: edgePinTitle(item.outcome, pinned),
     };

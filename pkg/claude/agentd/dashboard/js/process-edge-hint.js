@@ -19,26 +19,40 @@ export function edgePinTitle(outcome, pinned) {
   return `${action} The label is this connector's outcome key -- the run takes the connector whose key matches the result -- so hiding it changes nothing, but renaming it changes where the run goes.`;
 }
 
-// Rendered label metrics. The pin is an HTML overlay anchored at the SVG label's
-// centre, so placing it beside the text needs the text's half-width -- and the
-// SVG lives in a different component, so measuring it would mean reaching across
-// at exactly the moment the label may not be rendered yet.
-//
-// Estimating instead keeps this pure, synchronous, and free of a first-frame
-// jump. Being a few pixels out is invisible for a 22px button clearing a short
-// outcome key; being one frame late is not.
-const LABEL_FONT_SIZE = 11; // .process-edge-label text, dashboard.css
-const LABEL_GLYPH_RATIO = 0.6; // average advance for the 650-weight face
-const LABEL_HALO = 2.5; // half of the paint-order stroke that outlines the text
-const PIN_GAP = 7;
+// Placement of the pin relative to the label it controls.
 
-// edgePinOffset returns the host-pixel shift from the label anchor to the pin.
+const PIN_GAP = 7;
+// Fallback half-extents, used only when the label has not been measured (it is
+// rendered before the pin publishes, so this is a defensive path, not the
+// normal one). Mirrors .process-edge-label text in dashboard.css.
+const LABEL_FONT_SIZE = 11;
+const LABEL_GLYPH_RATIO = 0.6;
+
+// edgePinPlacement returns the host-pixel CENTRE for the pin button.
 //
-// A label on a horizontal run hangs its pin BELOW, where the canvas is empty. On
-// a vertical run below is where the next node sits, so the pin goes to the RIGHT
-// of the text, clear of both the arrow and the node it points at.
-export function edgePinOffset(outcome, orientation, zoom = 1) {
-  if (orientation !== 'vertical') return { dx: 0, dy: 12 };
-  const halfText = (String(outcome || '').length * LABEL_FONT_SIZE * LABEL_GLYPH_RATIO) / 2;
-  return { dx: (halfText + LABEL_HALO + PIN_GAP) * (zoom || 1), dy: 0 };
+// A label on a mostly-horizontal edge hangs its pin BELOW, where the canvas is
+// empty. On a mostly-vertical edge below is where the target node sits, so the
+// pin goes to the RIGHT of the text, clear of both the arrow and the node.
+//
+// `box` is the label's measured host-space rectangle. It is what makes the
+// clearance correct: the layout's label anchor is a point on the edge geometry,
+// and the text grows around it differently per edge -- `text-anchor: end` on
+// back edges, `middle` elsewhere -- and scales with the viewport. Offsetting
+// from the anchor instead collides with the label on exactly the edges whose
+// text does not happen to be centred on it.
+export function edgePinPlacement({
+  anchor, box = null, outcome = '', orientation = 'horizontal', zoom = 1, half = 11,
+} = {}) {
+  const vertical = orientation === 'vertical';
+  if (box) {
+    return vertical
+      ? { left: box.left + box.width + PIN_GAP + half, top: box.top + box.height / 2 }
+      : { left: box.left + box.width / 2, top: box.top + box.height + PIN_GAP + half };
+  }
+  // No measurement: approximate the text extent from the key and the zoom.
+  const halfWidth = (String(outcome).length * LABEL_FONT_SIZE * LABEL_GLYPH_RATIO * (zoom || 1)) / 2;
+  const halfHeight = (LABEL_FONT_SIZE * (zoom || 1)) / 2;
+  return vertical
+    ? { left: anchor.left + halfWidth + PIN_GAP + half, top: anchor.top }
+    : { left: anchor.left, top: anchor.top + halfHeight + PIN_GAP + half };
 }
