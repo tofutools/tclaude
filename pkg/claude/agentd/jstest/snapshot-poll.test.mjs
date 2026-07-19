@@ -69,3 +69,31 @@ test('snapshot poll can schedule after an awaited bootstrap refresh', async (t) 
   assert.equal(calls[0].milliseconds, 2000);
   stop();
 });
+
+test('bootstrap waits for published snapshot even when first attempt finishes without one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { waitForInitialSnapshot } =
+    await harness.importDashboardModule('js/snapshot-poll.js');
+  let publishSnapshot;
+  const snapshotReady = new Promise((resolve) => { publishSnapshot = resolve; });
+  const neverTimeout = new Promise(() => {});
+  let attempts = 0;
+  let settled = false;
+
+  const waiting = waitForInitialSnapshot(
+    async () => { attempts += 1; },
+    snapshotReady,
+    neverTimeout,
+  ).then(() => { settled = true; });
+
+  // The first attempt has completed, modelling either a superseded request or
+  // a handled fetch failure. That completion must not release URL restoration.
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(attempts, 1);
+  assert.equal(settled, false);
+
+  publishSnapshot();
+  await waiting;
+  assert.equal(settled, true);
+});

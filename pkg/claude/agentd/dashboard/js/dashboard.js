@@ -67,7 +67,7 @@ import {
 } from './preact-loader.js';
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
-import { startSnapshotPoll } from './snapshot-poll.js';
+import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -364,28 +364,14 @@ async function settleInitialLayout() {
   // drops these query params, so the Messages block below must read them first.
   const dlParams = new URLSearchParams(window.location.search);
 
-  // Back/forward navigation (TCL-317). Initialised LAST, after every tab binder
-  // above is installed: restoring a deep-link URL (e.g. /costs) activates that
-  // tab by clicking it, and the click must find its lazy-loader already wired.
-  // It reads the initial location from the path (honouring the legacy ?tab=
-  // alias) and mirrors navigation through the browser History API.
-  initNavHistory();
-
-  // Deep link: ?tab=messages&access_request=<id> — the target the approval
-  // auto-raise / tray "review" builds. Bring the Messages tab forward on the
-  // access-requests folder; the card highlight applies once the first snapshot
-  // paints the pending request in.
-  if (dlParams.get('tab') === 'messages') {
-    const reqId = dlParams.get('access_request');
-    if (reqId !== null) focusAccessRequest(reqId || undefined);
-    else document.querySelector('nav [data-tab="messages"]')?.click();
-  }
-
   // The static shell deliberately starts paint-curtained: URL theme classes,
   // server-backed dock preferences, and snapshot-owned feature islands all
-  // change geometry during bootstrap. Complete one authoritative refresh after
-  // initial navigation has selected its real tab, then reveal a fully-laid-out
-  // first frame. Two animation-frame turns let Preact/Signals and the
+  // change geometry during bootstrap. Complete one authoritative refresh before
+  // restoring the URL so snapshot-gated tab visibility is known: Processes, for
+  // example, starts CSS-hidden until processes_enabled arrives. Restoring its
+  // route any earlier would mistake that provisional hidden state for a stale link
+  // and rewrite /processes/... to the home screen. Two animation-frame turns
+  // then let Preact/Signals and the
   // ResizeObserver-driven dock/nav geometry settle before visibility changes.
   // dashboard.css carries an eight-second CSS-only failsafe in case the module
   // graph faults before reaching this point.
@@ -405,9 +391,28 @@ async function settleInitialLayout() {
   // can remain pending at the network layer; later request generations must
   // still get their 2s retry opportunities instead of bootstrap wedging.
   pageCleanups.push(startSnapshotPoll(refresh, { immediate: false }));
-  await Promise.race([refresh(), firstSnapshot, bootTimedOut]);
+  await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut);
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);
+
+  // Back/forward navigation (TCL-317). Initialised after every tab binder above
+  // is installed AND after the bounded first snapshot attempt. Restoring a deep
+  // link activates the tab by clicking it, so its lazy-loader must be wired and
+  // conditional visibility must have reached an authoritative state. If the
+  // snapshot attempt failed or timed out, the existing stale-target fallback
+  // still chooses a visible tab instead of revealing a blank section.
+  initNavHistory();
+
+  // Deep link: ?tab=messages&access_request=<id> — the target the approval
+  // auto-raise / tray "review" builds. Bring the Messages tab forward on the
+  // access-requests folder; the card highlight applies once the first snapshot
+  // paints the pending request in.
+  if (dlParams.get('tab') === 'messages') {
+    const reqId = dlParams.get('access_request');
+    if (reqId !== null) focusAccessRequest(reqId || undefined);
+    else document.querySelector('nav [data-tab="messages"]')?.click();
+  }
+
   await settleInitialLayout();
   document.body.classList.remove('dashboard-booting');
 })();
