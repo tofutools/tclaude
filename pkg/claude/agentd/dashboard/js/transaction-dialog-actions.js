@@ -184,9 +184,9 @@ export function createTransactionDialogActions({
       );
       const payload = await responsePayload(response);
       if (!response.ok) throw responseError(response, payload);
-      // stopOneConv reports lifecycle failures inside an HTTP-200 envelope.
-      // Treat that result as a failed transaction so the mounted dialog can
-      // surface it inline and retry the same frozen target and force choice.
+      // Failed stops are non-2xx with an {"error": ...} envelope now, so the
+      // throw above is the primary failure path. Keep the action:"error"
+      // guard as belt-and-braces against an older daemon's HTTP-200 shape.
       if (payload?.action === 'error') throw lifecycleError(response, payload);
       const result = {
         ok: true,

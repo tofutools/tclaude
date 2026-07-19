@@ -1108,8 +1108,26 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 		action = db.AgentExitActionForceStop
 	}
 	out := stopOneConvWithIntent(res.ConvID, body.Force, action, auditRequestEventID(r))
+	// Mirror the v1 route's failure semantics (it advertises matching
+	// soft/force behavior above): a failed stop is a non-2xx response with
+	// the standard error envelope riding along, and the command-audit row
+	// records the failure status plus the bounded detail instead of a
+	// success-shaped 200.
+	resp := struct {
+		memberOpResult
+		Error string `json:"error,omitempty"`
+		Code  string `json:"code,omitempty"`
+	}{memberOpResult: out}
+	status := http.StatusOK
+	if out.Action == "error" {
+		status = http.StatusInternalServerError
+		setAuditDetail(r, out.Detail)
+		resp.Error = "stop failed: " + out.Detail
+		resp.Code = "stop_failed"
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // dashboardCloneAgent is the cookie-auth twin of POST
