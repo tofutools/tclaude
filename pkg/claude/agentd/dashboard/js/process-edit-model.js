@@ -74,13 +74,17 @@ export function graphEdgeID(from, outcome) {
   return `${encodeURIComponent(from)}:${encodeURIComponent(outcome)}`;
 }
 
-export function blankEditView(id) {
+// A blank draft carries NO id: ids are minted by the store when the draft is
+// first saved (POST /v1/process/templates). The old 'new-process' default was
+// a permanent key handed out by accident -- accepting it named the template
+// forever, and the second template created that way collided.
+export function blankEditView(name) {
   return {
     template: {
       apiVersion: 'tclaude.dev/v1alpha1',
       kind: 'ProcessTemplate',
-      id: id || 'new-process',
-      name: '',
+      id: '',
+      name: name || '',
       params: {},
       start: 'start',
       nodes: {
@@ -97,10 +101,13 @@ export function blankEditView(id) {
   };
 }
 
-// A blank shell stops owning its id as soon as conflict resolution adopts an
-// existing head as the CAS base, even if the retry has not saved successfully.
-// Keeping this predicate pure lets the model and rendered control agree.
-export function templateIDEditable(blank, sourceHash) {
+// templateNeedsCreate reports whether a draft has never been persisted, so the
+// next save must mint an id through the collection endpoint rather than PUT
+// itself back over an existing key. A blank shell stops needing creation as
+// soon as conflict resolution adopts an existing head as the CAS base, even if
+// the retry has not saved successfully. Keeping this predicate pure lets the
+// model and the save path agree.
+export function templateNeedsCreate(blank, sourceHash) {
   return !!blank && !sourceHash;
 }
 
@@ -707,13 +714,6 @@ export class ProcessEditModel {
     this.edges = this.edges.filter((edge) => !(edge.from === '' && edge.outcome === START_OUTCOME));
     this.edges.push({ from: '', outcome: START_OUTCOME, to });
     this.template.start = to;
-  }
-
-  setTemplateID(id) {
-    if (this.sourceHash) return false;
-    if (id === this.template.id) return true;
-    this.template.id = id;
-    return true;
   }
 
   setTemplateMeta({ name, description, doc } = {}) {

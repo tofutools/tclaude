@@ -63,7 +63,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	if blankStart < 0 {
 		t.Fatal("process-edit-model.js blankEditView body missing")
 	}
-	blankEnd := strings.Index(editModel[blankStart:], "\n}\n\n// A blank shell")
+	blankEnd := strings.Index(editModel[blankStart:], "\n}\n\n// templateNeedsCreate")
 	if blankEnd < 0 {
 		t.Fatal("process-edit-model.js blankEditView body missing")
 	}
@@ -214,12 +214,13 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"const { review: exactExternalReview, ...externalChange } = this.externalChange",
 		"review: { summary: structuredClone(exactExternalReview.summary) }",
 		"this.refresh();",
-		// IDs are creation-time store keys and mutations cross the semantic
-		// controller boundary rather than reading controls from the DOM.
-		"setTemplateID(value)",
-		"this.model.setTemplateID(String(value || '').trim())",
-		"Template id is fixed once an existing version is selected.",
-		"const savedID = id",
+		// Ids are minted by the store, never chosen in the browser: a
+		// never-saved draft creates through the collection endpoint and adopts
+		// whatever identity comes back.
+		"const creating = !id",
+		"'/v1/process/templates'",
+		"delete savedView.template.id",
+		"const savedID = creating ? (body.id || '') : id",
 		"this.model.template.id = savedID",
 		// Template-level metadata has an explicit editor affordance and travels
 		// through setTemplateMeta, the same dirty/undo gate as graph edits.
@@ -310,7 +311,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"export function mountProcessEditorIsland(",
 		"import { NodeDialog } from './process-node-dialog.js';",
 		"import { ParamsDialog } from './process-params-dialog.js';",
-		"templateIDEditable(view.blank, model.sourceHash)",
+		"<${EditableTitle} controller=${controller} view=${view} />",
 		"controller.setSelection({ type: 'template' })",
 		"controller.setTemplateMeta({ name })",
 		"params…", "instantiate…", "⌘K commands",

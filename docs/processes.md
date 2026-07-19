@@ -694,11 +694,22 @@ Absolute `wait.until` deadlines are trimmed and parsed as RFC3339 timestamps at
 authoring time, matching the executor's timer contract.
 
 A template carries two distinct identifiers. Its `id` is the permanent store
-key: it is chosen once at creation, is part of every `id@sha256:<hash>` ref, and
-is what pinned versions and live runs resolve through, so it is never editable
-afterwards. Its `name` is a free-text display label shown wherever the template
+key: it is part of every `id@sha256:<hash>` ref and is what pinned versions and
+live runs resolve through, so it is never editable. Dashboard-created templates
+never let an operator choose it — `POST /v1/process/templates` mints a compact
+lowercase-hex UUID, and the dashboard's **+ new template** asks only for a
+display name. Templates authored as YAML through the CLI still carry their own
+hand-written ids, which is why `docs/examples/*.yaml` have readable ones. Its `name` is a free-text display label shown wherever the template
 is listed, and it can be changed at any time. A template with no name falls back
 to showing its id.
+
+Generated run ids follow the template's display name rather than its id, so a
+run reads as `release-train-20260719-2210` even when the template is keyed by a
+UUID. The name is slugified into the run-id grammar and falls back to the id,
+then to `run`, when nothing usable survives. The prefix is decoration: a run
+resolves its template through the pinned `templateRef`, so renaming a template
+never invalidates ids already minted under the old name. Runs list newest-first
+by creation time rather than by id.
 
 Rename a template by clicking its name in the Templates list or its title in the
 open editor, and editing in place; Enter commits and Escape abandons. The
