@@ -1123,7 +1123,7 @@ agent skills) via `tclaude setup --install-agent-skills`.
 harness default (Claude Code at its default model/effort). To run scribes on a
 different harness/model — e.g. Codex, or a cheaper model for their light
 editing — set `scribe.profile` in `~/.tclaude/data/config.json` (or pick it from the
-dashboard **Config tab → Scribe defaults**) to the name of a saved [spawn
+dashboard **Config tab → Ask & scribe defaults**) to the name of a saved [spawn
 profile](#roles); each fresh summon adopts that profile's whole launch
 shape, and the harness-matched dir-trust pre-seed follows it automatically.
 Resolved live at summon time — a deleted or renamed profile self-heals to the

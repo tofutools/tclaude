@@ -168,7 +168,7 @@ It's a **host**, not a `host:port` — the port stays `dashboard_port` /
 `--dashboard-port`. `0.0.0.0` (or `::`) exposes every interface; a specific IP
 binds one. agentd logs a loud warning at startup whenever it binds non-loopback.
 
-From the dashboard, set it in the **Config tab → Agent coordination →
+From the dashboard, set it in the **Config tab → agentd daemon & server →
 "Dashboard bind"** field (right below "Dashboard port"). **Don't confuse it with
 the Config tab's separate "Remote access → listen interface" field: that one is
 `remote_access.bind`, the mTLS listener above, not this.**
