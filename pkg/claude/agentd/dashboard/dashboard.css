@@ -12538,6 +12538,13 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 .process-editor-stage { position: relative; flex: 1; min-width: 0; min-height: 0; display: flex; }
 .process-editor-canvas-host { flex: 1; min-width: 0; display: flex; }
 .process-editor-canvas-host .process-graph { flex: 1; border-radius: 0; border: none; }
+/* The editor deliberately focuses its programmatic-only graph root after
+   empty-canvas gestures and when a dialog has no surviving element to
+   restore. That root is only a keyboard-event sink here, not a selectable
+   editor item, so keep its focus from painting a whole-canvas ring. Nodes,
+   edges, ports, and controls retain their own focus-visible treatment;
+   standalone/viewer graphs keep the shared graph-root ring above. */
+.process-editor-canvas-host .process-graph:focus-visible { box-shadow: none; }
 .process-node-chooser {
   position: absolute;
   z-index: 40;

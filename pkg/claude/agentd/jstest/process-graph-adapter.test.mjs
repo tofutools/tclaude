@@ -27,8 +27,35 @@ async function mountedAdapter(t, events = {}, options = {}) {
   return { harness, host, adapter };
 }
 
+test('editor canvas root redirects keyboard restoration but accepts pointer shortcut focus', async (t) => {
+  const { harness, adapter, host } = await mountedAdapter(t);
+  const root = host.querySelector('.process-graph');
+  const start = host.querySelector('.process-node[data-node-id="start"]');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  // linkedom does not implement native SVGElement focus; borrow the HTML
+  // implementation so the browser's active-element result is testable.
+  Object.defineProperty(start, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  assert.equal(root.getAttribute('tabindex'), '-1');
+  adapter.setSelection({ type: 'node', id: 'start' });
+
+  harness.fireEvent(harness.document, 'keydown', { key: 'Escape' });
+  adapter.focus();
+  assert.equal(harness.document.activeElement?.dataset.nodeId, 'start',
+    'keyboard-origin restoration lands on a visible graph item');
+
+  harness.fireEvent(harness.document, 'pointerdown', { button: 0, pointerType: 'mouse' });
+  adapter.focus();
+  assert.equal(harness.document.activeElement, root,
+    'pointer-origin empty-canvas focus keeps editor shortcuts on the unpainted root');
+});
+
 test('editor interaction layering raises one node without changing semantic layers or keyboard order', async (t) => {
   const { harness, adapter, host } = await mountedAdapter(t, {}, { interactionLayering: true });
+  assert.equal(host.querySelector('.process-graph').getAttribute('tabindex'), '-1',
+    'the editor canvas is a programmatic focus sink, not a sequential keyboard stop');
   const svg = host.querySelector('.process-graph-svg');
   const viewport = host.querySelector('.process-graph-viewport');
   const nodeLayer = host.querySelector('.process-node-layer');

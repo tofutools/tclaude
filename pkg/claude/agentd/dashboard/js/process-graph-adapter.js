@@ -30,6 +30,11 @@ export class ProcessGraphAdapter {
     this.widget = new ProcessGraph(host, graph, {
       ariaLabel,
       colorScheme: 'dark',
+      // The editor root receives programmatic focus for canvas shortcuts, but
+      // only its nodes, edges, ports, and controls belong in sequential Tab
+      // navigation. Viewers use ProcessGraph's visible, focusable default.
+      rootTabIndex: -1,
+      redirectKeyboardRootFocus: true,
       connectionFeedback,
       connectionFeedbackPreparation,
       actionFeedbackDelay,

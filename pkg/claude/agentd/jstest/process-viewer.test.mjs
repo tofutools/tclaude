@@ -84,6 +84,12 @@ test('viewer graph renders healthy, failed, and terminal-warning edge classes ho
   envelope.viewerV2.routing.edges.find((edge) => edge.edgeId === 'edge-merge').state = 'failed';
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const widget = new ProcessGraph(host, buildViewerGraph(envelope), { fitOnRender: false });
+  assert.equal(host.querySelector('.process-graph').getAttribute('tabindex'), '0',
+    'the viewer keeps the shared graph root in sequential keyboard navigation');
+  harness.fireEvent(harness.document, 'keydown', { key: 'Tab' });
+  widget.root.focus();
+  assert.equal(harness.document.activeElement, widget.root,
+    'viewer keyboard focus stays on the root that paints the shared focus ring');
   assert.equal(host.querySelectorAll('.process-port').length, 6,
     'viewer graph input omits editor metadata and retains both default ports on every node');
   assert.ok(host.querySelector('[data-node-id="merge"] .process-port-out'),

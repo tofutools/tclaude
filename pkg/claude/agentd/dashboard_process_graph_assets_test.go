@@ -80,6 +80,11 @@ func TestDashboardProcessGraphAssets(t *testing.T) {
 	css := read("dashboard.css")
 	mustContain("dashboard.css", css,
 		".process-graph[data-color-scheme=\"light\"]",
+		// Standalone and viewer graphs retain a visible keyboard-focus ring;
+		// the editor has a narrower override because its root is an event sink,
+		// not a selectable graph item.
+		".process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }",
+		".process-editor-canvas-host .process-graph:focus-visible { box-shadow: none; }",
 		".process-edge-back .process-edge-path",
 		"body.wizard .process-graph",
 		".process-fit-button",
