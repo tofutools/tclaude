@@ -12355,7 +12355,6 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   background: #161b22;
   border-radius: 8px 8px 0 0;
 }
-.process-editor-title { color: #e6edf3; }
 /* Click-to-edit title and list name. Both render as a bare button so the whole
    label is a real keyboard-reachable control, while looking like the static
    text it replaces until hovered. */
@@ -12369,11 +12368,15 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   border: 1px solid transparent;
   border-radius: 6px;
   background: none;
+  /* A button does not inherit colour the way the <strong> these replaced did,
+     so without this it falls back to the UA default (black on dark). */
+  color: inherit;
   font: inherit;
   font-weight: 700;
   text-align: left;
   cursor: text;
 }
+.process-editor-title { color: #e6edf3; }
 .process-editor-title:hover:not(:disabled),
 .process-name-edit:hover:not(:disabled) { border-color: #30363d; background: #0d1117; }
 .process-editor-title:focus-visible,
