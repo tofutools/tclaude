@@ -41,9 +41,18 @@ function EditableName({ template, actions, busy }) {
     // does not); selecting the existing name is a convenience, not a contract.
     input.select?.();
   }, [editing]);
+  // One edit session resolves exactly once -- see EditableTitle for why: Enter
+  // unmounts the input and the trailing blur would otherwise commit an empty
+  // name read from a dead ref, here as a real CAS save.
+  const settled = useRef(false);
+  useLayoutEffect(() => { if (editing) settled.current = false; }, [editing]);
   // Read through the ref, not the event: see EditableTitle.
   const commit = async () => {
-    const next = String(inputRef.current?.value ?? '').trim();
+    if (settled.current) return;
+    const input = inputRef.current;
+    if (!input) return;
+    settled.current = true;
+    const next = String(input.value ?? '').trim();
     setEditing(false);
     if (next === (template.name || '')) return;
     // Commit directly. Routing through openRename would flash the dialog open
@@ -65,7 +74,7 @@ function EditableName({ template, actions, busy }) {
       onKeyDown=${(event) => {
         if (event.isComposing || event.keyCode === 229) return;
         if (event.key === 'Enter') { event.preventDefault(); commit(); }
-        if (event.key === 'Escape') { event.preventDefault(); setEditing(false); }
+        if (event.key === 'Escape') { event.preventDefault(); settled.current = true; setEditing(false); }
       }}
     />`;
   }

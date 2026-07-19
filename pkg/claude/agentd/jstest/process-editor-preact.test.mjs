@@ -1416,3 +1416,46 @@ test('the editor header title renames inline and hides the id behind a tooltip',
   assert.equal(editor.model.template.name, 'Named from the header', 'Escape keeps the previous name');
   editor.destroy();
 });
+
+test('regression: blur after Enter does not wipe the title just committed', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.blank = false;
+  editor.model.currentRef = `blur-wipe@sha256:${'0'.repeat(64)}`;
+  editor.model.sourceHash = '1'.repeat(64);
+  await harness.act(() => editor.status('ready'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-process-title-edit]'), 'click'));
+  const input = host.querySelector('[data-process-title-input]');
+  input.value = 'Committed name';
+  // Enter commits and unmounts the field; the browser then fires blur on the
+  // detached input. Before the latch that second commit read a null ref and
+  // saved '' over the name the operator had just typed.
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  await harness.act(() => harness.fireEvent(input, 'blur'));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+
+  assert.equal(editor.model.template.name, 'Committed name', 'the committed name survives the trailing blur');
+  assert.equal(host.querySelector('[data-process-title-edit]').textContent, 'Committed name');
+  editor.destroy();
+});
+
+test('regression: blur after Escape does not commit the abandoned title', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.blank = false;
+  editor.model.currentRef = `blur-escape@sha256:${'0'.repeat(64)}`;
+  editor.model.sourceHash = '1'.repeat(64);
+  await harness.act(() => editor.controller?.setTemplateMeta?.({ name: 'Original' })
+    || editor.setTemplateMeta({ name: 'Original' }));
+  await harness.act(() => editor.status('ready'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('[data-process-title-edit]'), 'click'));
+  const input = host.querySelector('[data-process-title-input]');
+  input.value = 'Should be discarded';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Escape' }));
+  await harness.act(() => harness.fireEvent(input, 'blur'));
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+
+  assert.equal(editor.model.template.name, 'Original',
+    'the trailing blur must not commit text Escape abandoned');
+  editor.destroy();
+});

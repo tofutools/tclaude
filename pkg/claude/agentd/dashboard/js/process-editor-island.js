@@ -80,12 +80,25 @@ function EditableTitle({ controller, view }) {
     input.select?.();
   }, [editing]);
   useLayoutEffect(() => { if (blocked) setEditing(false); }, [blocked]);
+  // One edit session resolves EXACTLY once. Enter commits and unmounts the
+  // input, which fires blur -- a second commit that would read a detached (or
+  // null) ref and silently save an empty name over the real one. Escape has
+  // the mirror problem: without the latch, the trailing blur would commit the
+  // very text it just abandoned.
+  const settled = useRef(false);
+  useLayoutEffect(() => { if (editing) settled.current = false; }, [editing]);
   // Read through the ref rather than the event: currentTarget is only reliably
   // populated during a real dispatch, and blur/keydown reach here both ways.
   const commit = () => {
-    controller.setTemplateMeta({ name: String(inputRef.current?.value ?? '').trim() });
+    if (settled.current) return;
+    const input = inputRef.current;
+    // No live field means nothing trustworthy to read; never fall back to ''.
+    if (!input) return;
+    settled.current = true;
+    controller.setTemplateMeta({ name: String(input.value ?? '').trim() });
     setEditing(false);
   };
+  const abandon = () => { settled.current = true; setEditing(false); };
   const label = model.name || model.id || 'untitled';
   if (!editing) {
     return html`<button
@@ -105,7 +118,7 @@ function EditableTitle({ controller, view }) {
       if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Enter') { event.preventDefault(); commit(); }
       // Escape abandons the edit; the draft keeps whatever name it already had.
-      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditing(false); }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); abandon(); }
     }}
   />`;
 }
