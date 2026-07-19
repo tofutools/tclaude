@@ -62,6 +62,49 @@ func TestAssessUpgradeNeededClassifiesAndSortsLegacyDrainBlockers(t *testing.T) 
 	}
 }
 
+func TestAssessUpgradeNeededDrainsObservedAttemptUntilDurablySettled(t *testing.T) {
+	ref := "demo@sha256:" + strings.Repeat("a", 64)
+	settledAt := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		status  legacy.CommandStatus
+		kind    legacy.CommandKind
+		attempt *legacy.AttemptState
+		want    UpgradeNeededReason
+	}{
+		{name: "issued", status: legacy.CommandStatusIssued, kind: legacy.CommandKindStartAttempt, attempt: &legacy.AttemptState{Attempt: 1, CommandID: "cmd", SettledAt: settledAt}, want: UpgradeLegacyDrainRequired},
+		{name: "unsettled", status: legacy.CommandStatusObserved, kind: legacy.CommandKindStartAttempt, attempt: &legacy.AttemptState{Attempt: 1, CommandID: "cmd"}, want: UpgradeLegacyDrainRequired},
+		{name: "missing attempt", status: legacy.CommandStatusObserved, kind: legacy.CommandKindStartAttempt, want: UpgradeLegacyDrainRequired},
+		{name: "settled command mismatch", status: legacy.CommandStatusObserved, kind: legacy.CommandKindStartAttempt, attempt: &legacy.AttemptState{Attempt: 1, CommandID: "other", SettledAt: settledAt}, want: UpgradeLegacyDrainRequired},
+		{name: "settled attempt mismatch", status: legacy.CommandStatusObserved, kind: legacy.CommandKindStartAttempt, attempt: &legacy.AttemptState{Attempt: 2, CommandID: "cmd", SettledAt: settledAt}, want: UpgradeLegacyDrainRequired},
+		{name: "observed decision", status: legacy.CommandStatusObserved, kind: legacy.CommandKindRecordDecision, attempt: &legacy.AttemptState{Attempt: 1, CommandID: "cmd", SettledAt: settledAt}, want: UpgradeLegacyDrainRequired},
+		{name: "unknown observed kind", status: legacy.CommandStatusObserved, kind: legacy.CommandKind("future_internal"), attempt: &legacy.AttemptState{Attempt: 1, CommandID: "cmd", SettledAt: settledAt}, want: UpgradeLegacyDrainRequired},
+		{name: "durably settled", status: legacy.CommandStatusObserved, kind: legacy.CommandKindStartAttempt, attempt: &legacy.AttemptState{Attempt: 1, CommandID: "cmd", SettledAt: settledAt}, want: UpgradeMigrationRequired},
+		{name: "applied settle receipt", status: legacy.CommandStatusObserved, kind: legacy.CommandKindSettleAttempt, want: UpgradeMigrationRequired},
+		{name: "applied activation receipt", status: legacy.CommandStatusObserved, kind: legacy.CommandKindActivateNode, want: UpgradeMigrationRequired},
+		{name: "applied completion receipt", status: legacy.CommandStatusObserved, kind: legacy.CommandKindCompleteRun, want: UpgradeMigrationRequired},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			st := legacy.New("run", ref, ref, nil)
+			st.Status = legacy.RunStatusCompleted
+			st.OutstandingCommands = map[string]legacy.OutstandingCommand{
+				"cmd": {ID: "cmd", NodeID: "work", Attempt: 1, Kind: test.kind, Status: test.status},
+			}
+			st.Nodes = map[string]legacy.NodeState{
+				"work": {Status: legacy.NodeStatusCompleted, ActiveAttempt: test.attempt},
+			}
+			needed, err := AssessUpgradeNeeded(t.Context(), []byte(`{"checkpoint":true}`), &st, ref, strings.Repeat("b", 64), nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if needed.Reason != test.want {
+				t.Fatalf("reason = %q, active IDs = %#v, want %q", needed.Reason, needed.ActiveLegacyIDs, test.want)
+			}
+		})
+	}
+}
+
 func TestAssessUpgradeNeededStableCheckpointWaitTimerIdentityCompatibility(t *testing.T) {
 	const checkpoint = `{
   "stateSchemaVersion": 6,

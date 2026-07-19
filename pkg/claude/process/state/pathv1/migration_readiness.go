@@ -357,7 +357,7 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 	}
 
 	for id, command := range st.OutstandingCommands {
-		if !legacyCommandActive(command.Status) {
+		if !legacyCommandActive(st, id, command) {
 			continue
 		}
 		if err := add(LegacyActiveCommand, id); err != nil {
@@ -438,7 +438,7 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 	}
 	for id, contact := range st.Contacts {
 		command, ok := st.OutstandingCommands[id]
-		inactive := contact.Paused && contact.NextContactAt.IsZero() && (!ok || !legacyCommandActive(command.Status))
+		inactive := contact.Paused && contact.NextContactAt.IsZero() && (!ok || !legacyCommandActive(st, id, command))
 		if !inactive {
 			if err := add(LegacyActiveContact, id); err != nil {
 				return nil, err
@@ -478,8 +478,29 @@ func activeLegacyIDs(ctx context.Context, st *legacy.State, admins []CheckpointL
 	return slices.Clip(result), nil
 }
 
-func legacyCommandActive(status legacy.CommandStatus) bool {
-	return status == legacy.CommandStatusIssued || status == legacy.CommandStatusObserved
+func legacyCommandActive(st *legacy.State, id string, command legacy.OutstandingCommand) bool {
+	if command.Status == legacy.CommandStatusIssued {
+		return true
+	}
+	if command.Status != legacy.CommandStatusObserved {
+		return false
+	}
+	// These internal receipts are observed in the same append as their durable
+	// reducer transition, so observed proves that no work remains to drain.
+	// Keep this allowlist exact: future internal kinds may not be atomic.
+	switch command.Kind {
+	case legacy.CommandKindSettleAttempt, legacy.CommandKindActivateNode, legacy.CommandKindCompleteRun:
+		return false
+	case legacy.CommandKindStartAttempt:
+	default:
+		return true
+	}
+	node, ok := st.Nodes[command.NodeID]
+	if !ok || node.ActiveAttempt == nil {
+		return true
+	}
+	attempt := node.ActiveAttempt
+	return attempt.CommandID != id || attempt.Attempt != command.Attempt || attempt.SettledAt.IsZero()
 }
 
 func legacyResolution(source legacy.BlockResolution) (BlockResolution, error) {

@@ -31,17 +31,23 @@ func (releaseGateAdapter) Perform(context.Context, processexec.Request) (process
 	return processexec.Observation{Actor: "agent:agt_release1", Verdict: "pass", EvidenceRef: "artifact:release"}, nil
 }
 
-type releaseGateDeferredAdapter struct{}
+type releaseGateDeferredAdapter struct {
+	reconciliations int
+}
 
-func (releaseGateDeferredAdapter) Validate(processexec.Request) error { return nil }
-func (releaseGateDeferredAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+func (*releaseGateDeferredAdapter) Validate(processexec.Request) error { return nil }
+func (*releaseGateDeferredAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
 	panic("deferred adapter must not perform synchronously")
 }
-func (releaseGateDeferredAdapter) Dispatch(context.Context, processexec.Request) (processexec.DispatchResult, error) {
+func (*releaseGateDeferredAdapter) Dispatch(context.Context, processexec.Request) (processexec.DispatchResult, error) {
 	return processexec.DispatchResult{ExternalRef: "release:in-flight"}, nil
 }
-func (releaseGateDeferredAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
-	return processexec.Observation{}, processexec.DeferredInFlight, nil
+func (a *releaseGateDeferredAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	a.reconciliations++
+	if a.reconciliations == 1 {
+		return processexec.Observation{}, processexec.DeferredInFlight, nil
+	}
+	return processexec.Observation{Actor: "agent:agt_release1", Verdict: "pass", EvidenceRef: "artifact:release"}, processexec.DeferredObserved, nil
 }
 
 func (a *fixedMigrationAuthority) UpgradeNeeded(context.Context, string) (pathv1.UpgradeNeeded, error) {
@@ -436,7 +442,8 @@ func TestEnabledHostDrainsActiveLegacyCommandBeforeMigration(t *testing.T) {
 	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: "run-v6-drain", TemplateRef: record.Ref}, checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	adapters := map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateDeferredAdapter{}}
+	adapter := &releaseGateDeferredAdapter{}
+	adapters := map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter}
 	legacy := New(fs, "test:legacy-dispatch", adapters)
 	results, err := legacy.Tick(t.Context())
 	if err != nil || len(results) != 1 || results[0].Error != "" {
@@ -453,6 +460,52 @@ func TestEnabledHostDrainsActiveLegacyCommandBeforeMigration(t *testing.T) {
 	schema, err := fs.RunStateSchemaVersion(t.Context(), "run-v6-drain")
 	if err != nil || schema != state.StateSchemaVersion {
 		t.Fatalf("active legacy run schema = %d, %v; migrated before drain", schema, err)
+	}
+	if adapter.reconciliations != 1 {
+		t.Fatalf("release drain reconciliations = %d, want first in-flight observation", adapter.reconciliations)
+	}
+
+	results, err = enabled.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("release observation tick = %#v, %v", results, err)
+	}
+	if results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("release observation status = %q, want settled completion", results[0].Status)
+	}
+	schema, err = fs.RunStateSchemaVersion(t.Context(), "run-v6-drain")
+	if err != nil || schema != state.StateSchemaVersion {
+		t.Fatalf("observed legacy run schema = %d, %v; migrated during drain", schema, err)
+	}
+	if adapter.reconciliations != 2 {
+		t.Fatalf("release drain reconciliations = %d, want later observed result", adapter.reconciliations)
+	}
+	// The drain is now complete and future parity migration has exact authority.
+	// Today's initializer deliberately accepts only pristine v6 checkpoints, so
+	// this progressed terminal history must remain v6 without being re-driven.
+	readiness, err := fs.UpgradeNeeded(t.Context(), "run-v6-drain")
+	if err != nil || readiness.Reason != pathv1.UpgradeMigrationRequired || len(readiness.ActiveLegacyIDs) != 0 {
+		t.Fatalf("post-drain readiness = %#v, %v; want quiescent migration authority", readiness, err)
+	}
+
+	results, err = enabled.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("post-drain release tick = %#v, %v", results, err)
+	}
+	schema, err = fs.RunStateSchemaVersion(t.Context(), "run-v6-drain")
+	if err != nil || schema != state.StateSchemaVersion {
+		t.Fatalf("progressed terminal run schema = %d, %v; want intentional v6 fallback", schema, err)
+	}
+	if results[0].Status != state.RunStatusCompleted || adapter.reconciliations != 2 {
+		t.Fatalf("post-drain release tick changed settled result: result = %#v, reconciliations = %d", results[0], adapter.reconciliations)
+	}
+
+	results, err = enabled.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("repeat v6 fallback tick = %#v, %v", results, err)
+	}
+	schema, err = fs.RunStateSchemaVersion(t.Context(), "run-v6-drain")
+	if err != nil || schema != state.StateSchemaVersion || adapter.reconciliations != 2 {
+		t.Fatalf("repeat tick was not idempotent: schema = %d, err = %v, reconciliations = %d", schema, err, adapter.reconciliations)
 	}
 }
 
