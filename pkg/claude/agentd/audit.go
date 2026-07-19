@@ -223,6 +223,11 @@ var auditRoutes = []auditRoute{
 	// Signal satisfaction advances a durable schema-7 wait. Keep the describer
 	// nil so the signal body is never copied into the audit detail.
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "nodes", "{node}", "signal"}, verb: "process.signal"},
+	// Template deletion is the most destructive operation on this surface: it
+	// discards every version, the editor source, and the authorship trail for an
+	// id, irreversibly. No describer is needed — the path already carries the id,
+	// and the request has no body.
+	{method: http.MethodDelete, segs: []string{"process", "templates", "{id}"}, verb: "process.template.delete"},
 
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-

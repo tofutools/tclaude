@@ -1,11 +1,15 @@
 package store_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -335,6 +339,102 @@ func TestDeleteTemplateRacingCreateRunIsConsistent(t *testing.T) {
 	default:
 		t.Fatalf("unexpected delete error: %v", deleteErr)
 	}
+}
+
+// Regression: run and template advisory locks live in one flat .locks dir. Run
+// locks were once bare "<runID>.lock" while template locks were
+// "template-<id>.lock", so a run id of the form "template-<template id>"
+// resolved to the SAME lock file. CreateRun holds the run lock while taking the
+// template lock, so it blocked on itself until the context expired — or forever
+// on a context without a deadline, stranding that run id.
+func TestCreateRunSurvivesTemplateShapedRunID(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	fs := newStore(t)
+	record, err := fs.PutTemplate(ctx, storetest.Template())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "template-demo" // collides with the template lock file for "demo"
+	initial := state.New(runID, record.Ref, record.Ref, []state.NodeInit{{ID: "implement", Type: model.NodeTypeTask}})
+	if _, err := fs.CreateRun(ctx, store.RunRecord{ID: runID, TemplateRef: record.Ref}, initial); err != nil {
+		t.Fatalf("CreateRun deadlocked on its own lock file: %v", err)
+	}
+	// The run must also be visible to the guard under that id.
+	if err := fs.DeleteTemplate(ctx, "demo"); !errors.Is(err, store.ErrTemplateInUse) {
+		t.Fatalf("expected the new run to block deletion, got %v", err)
+	}
+}
+
+// Regression: a crash between the detach rename and the removal leaves a
+// .deleting-<id> tree behind. templates/<id> is already gone at that point, so
+// a later delete used to short-circuit on ErrNotFound and orphan the residue
+// permanently. The reclaim must run before the existence check.
+func TestDeleteTemplateReclaimsResidueFromInterruptedDelete(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	fs := newStoreAt(t, root)
+
+	// Simulate the crash window: a detached tree with no live template.
+	residue := filepath.Join(root, "templates", ".deleting-ghost")
+	if err := os.MkdirAll(filepath.Join(residue, "sha256-"+strings.Repeat("a", 64)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fs.DeleteTemplate(ctx, "ghost"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for a template that is already gone, got %v", err)
+	}
+	if _, err := os.Stat(residue); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("interrupted-delete residue was not reclaimed: %v", err)
+	}
+}
+
+// The load-bearing claim behind the guard's lock-free scan: WithExecutionView
+// holds the RUN lock while it waits for the TEMPLATE lock, so a DeleteTemplate
+// that took run locks would deadlock against it. Park a view in exactly that
+// window and require the delete to run to completion anyway.
+func TestDeleteTemplateDoesNotDeadlockAgainstExecutionView(t *testing.T) {
+	root := t.TempDir()
+	fs, runID := initializedRunAt(t, root)
+
+	runLocked := make(chan struct{})
+	releaseView := make(chan struct{})
+	var once sync.Once
+	restore := fs.SetExecutionViewHooksForTest(
+		// Fires after the run lock is held and before the template lock is
+		// taken — the precise interleaving that would trap a run-locking delete.
+		func() {
+			once.Do(func() {
+				close(runLocked)
+				<-releaseView
+			})
+		}, nil, nil,
+	)
+	defer restore()
+
+	viewDone := make(chan error, 1)
+	go func() {
+		viewDone <- fs.WithExecutionView(context.WithoutCancel(t.Context()), runID, func(store.ExecutionView) error { return nil })
+	}()
+	<-runLocked
+
+	deleteDone := make(chan error, 1)
+	go func() {
+		// The run is unfinished, so this refuses — but refusing REQUIRES
+		// completing the scan, which is what must not block.
+		deleteDone <- fs.DeleteTemplate(context.WithoutCancel(t.Context()), "demo")
+	}()
+	select {
+	case err := <-deleteDone:
+		if !errors.Is(err, store.ErrTemplateInUse) {
+			t.Fatalf("expected the live run to block deletion, got %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		close(releaseView)
+		t.Fatal("DeleteTemplate deadlocked against a parked execution view")
+	}
+	close(releaseView)
+	<-viewDone
 }
 
 func TestDeleteTemplateIgnoresRunsOnOtherTemplates(t *testing.T) {

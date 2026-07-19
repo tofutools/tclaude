@@ -531,6 +531,14 @@ export function createProcessesActions({
       }
       if (response.status === 404) throw new Error('this template no longer exists; refresh Processes');
       if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
+      // An editor still open on the deleted id would keep accepting edits and
+      // then fail confusingly on save, so close it. Deliberately unguarded by
+      // canLeaveEditor: the operator just confirmed the destruction, and the
+      // template those edits target no longer exists to save them against.
+      if (state.currentEditor()?.model?.template?.id === id) {
+        state.setEditor(null);
+        state.setCanvas(null);
+      }
       state.setNotice(`Deleted ${label}.`);
       notify(`deleted process template ${label}`);
       void load('templates', { quiet: true });

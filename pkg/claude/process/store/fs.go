@@ -1280,12 +1280,23 @@ func (s *FS) runIsFinishedUnlocked(runID string) bool {
 	if err := safeSegment(runID); err != nil {
 		return false
 	}
-	data, err := os.ReadFile(filepath.Join(s.runDir(runID), "state.json"))
+	// This runs once per run in the store on every delete, so the read is
+	// bounded by the same per-file ceiling the viewer applies, and refuses
+	// anything that is not a regular file. The status fields sit at the top of
+	// the document but JSON must be decoded whole, so the cap is on file size
+	// rather than a truncating reader — a partial read would fail to parse and
+	// wrongly block every delete on a large-but-healthy run.
+	file, err := os.Open(filepath.Join(s.runDir(runID), "state.json"))
 	if err != nil {
 		return false
 	}
+	defer file.Close()
+	info, statErr := file.Stat()
+	if statErr != nil || !info.Mode().IsRegular() || info.Size() > viewerDefaultMaxFileBytes {
+		return false
+	}
 	var header runStatusHeader
-	if err := json.Unmarshal(data, &header); err != nil {
+	if err := json.NewDecoder(file).Decode(&header); err != nil {
 		return false
 	}
 	if header.StateSchemaVersion == pathv1.CheckpointStateSchemaVersion {
@@ -1382,6 +1393,14 @@ func (s *FS) DeleteTemplate(ctx context.Context, id string) error {
 		return err
 	}
 	dir := filepath.Join(s.root, "templates", id)
+	detached := filepath.Join(s.root, "templates", ".deleting-"+id)
+	// Reclaim any tree left detached by a crash between the rename and the
+	// removal below. This runs BEFORE the existence check on purpose: after such
+	// a crash templates/<id> is already gone, so a later delete would return
+	// ErrNotFound here and the residue would never be collected.
+	if err := os.RemoveAll(detached); err != nil {
+		return fmt.Errorf("reclaim detached process template: %w", err)
+	}
 	if _, statErr := os.Stat(dir); errors.Is(statErr, os.ErrNotExist) {
 		return ErrNotFound
 	} else if statErr != nil {
@@ -1405,16 +1424,15 @@ func (s *FS) DeleteTemplate(ctx context.Context, id string) error {
 	// The detached name leads with a dot, which safeSegmentPattern forbids as a
 	// first character, so ListTemplates skips it and it can never collide with a
 	// real template id.
-	detached := filepath.Join(s.root, "templates", ".deleting-"+id)
-	_ = os.RemoveAll(detached)
 	if err := os.Rename(dir, detached); err != nil {
 		return fmt.Errorf("detach process template: %w", err)
 	}
 	if err := syncDir(filepath.Dir(dir)); err != nil {
 		return fmt.Errorf("sync process template detach: %w", err)
 	}
-	// The rename above is the durability point; dropping the detached copy is
-	// best-effort cleanup that a later delete of the same id also retries.
+	// The rename above is the durability point. If the process dies before this
+	// completes, the reclaim at the top of this function collects the remains on
+	// the next delete of the same id.
 	if err := os.RemoveAll(detached); err != nil {
 		return fmt.Errorf("remove process template: %w", err)
 	}
@@ -2382,7 +2400,7 @@ func (s *FS) lockRun(ctx context.Context, runID string) (func(), error) {
 		localLock.Unlock()
 		return func() {}, fmt.Errorf("create lock dir: %w", err)
 	}
-	fl := flock.New(filepath.Join(lockDir, runID+".lock"))
+	fl := flock.New(filepath.Join(lockDir, runLockFileName(runID)))
 	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {
 		localLock.Unlock()
@@ -2415,7 +2433,7 @@ func (s *FS) lockTemplate(ctx context.Context, id string) (func(), error) {
 		localLock.Unlock()
 		return func() {}, fmt.Errorf("create lock dir: %w", err)
 	}
-	fl := flock.New(filepath.Join(lockDir, "template-"+id+".lock"))
+	fl := flock.New(filepath.Join(lockDir, templateLockFileName(id)))
 	locked, err := fl.TryLockContext(ctx, 10*time.Millisecond)
 	if err != nil {
 		localLock.Unlock()
@@ -2516,6 +2534,24 @@ func validateEntryScope(scope evidence.Scope) error {
 	}
 	return nil
 }
+
+// runLockFileName and templateLockFileName are the ONLY places the advisory
+// lock filenames are constructed. Both the plain and the viewer lock paths
+// (lockRun/lockRunView, lockTemplate/lockTemplateView) route through them,
+// because the two must resolve to the same file to be the same lock — the local
+// semaphore keys already agree, so a filename drift would silently break mutual
+// exclusion rather than fail loudly.
+//
+// Both kinds are prefixed. Run locks were once bare "<runID>.lock" while
+// template locks were "template-<id>.lock", so a run whose id happened to be
+// "template-<some template id>" resolved to the SAME lock file as that
+// template. flock associates locks with the open file description, so two
+// opens in one process conflict: CreateRun, which now holds the run lock while
+// taking the template lock, would block on itself forever. Fixed prefixes on
+// both sides make a collision unrepresentable regardless of id content.
+func runLockFileName(runID string) string { return "run-" + runID + ".lock" }
+
+func templateLockFileName(id string) string { return "template-" + id + ".lock" }
 
 func safeSegment(value string) error {
 	if strings.TrimSpace(value) == "" {

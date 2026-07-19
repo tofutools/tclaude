@@ -85,14 +85,14 @@ func (s *FS) lockRunView(ctx context.Context, runID string) (func(), error) {
 	if err := safeSegment(runID); err != nil {
 		return func() {}, fmt.Errorf("invalid run id: %w", err)
 	}
-	return s.lockView(ctx, s.root+"\x00"+runID, runID+".lock")
+	return s.lockView(ctx, s.root+"\x00"+runID, runLockFileName(runID))
 }
 
 func (s *FS) lockTemplateView(ctx context.Context, id string) (func(), error) {
 	if err := safeSegment(id); err != nil {
 		return func() {}, fmt.Errorf("invalid template id: %w", err)
 	}
-	return s.lockView(ctx, s.root+"\x00template\x00"+id, "template-"+id+".lock")
+	return s.lockView(ctx, s.root+"\x00template\x00"+id, templateLockFileName(id))
 }
 
 func (s *FS) lockView(ctx context.Context, key, name string) (func(), error) {
