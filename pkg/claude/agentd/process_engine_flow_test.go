@@ -277,6 +277,7 @@ func TestProcessRunCreateUsesDedicatedPermission(t *testing.T) {
 
 func TestSchema7SignalPermissionAuditAndReadSurfaces(t *testing.T) {
 	f, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "schema7-signal-api", Start: "wait",
 		Nodes: map[string]model.Node{
@@ -284,15 +285,29 @@ func TestSchema7SignalPermissionAuditAndReadSurfaces(t *testing.T) {
 			"done": {Type: model.NodeTypeEnd, Result: "completed"},
 		},
 	}
-	const runID = "schema7-signal-run"
+	const (
+		runID          = "schema7-signal-run"
+		dashboardRunID = "schema7-dashboard-signal-run"
+	)
 	fs := createEngineRun(t, root, runID, tmpl, false)
-	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	createEngineRun(t, root, dashboardRunID, tmpl, false)
+	for _, id := range []string{runID, dashboardRunID} {
+		schema, err := fs.RunStateSchemaVersion(t.Context(), id)
+		require.NoError(t, err)
+		require.Equal(t, state.StateSchemaVersion, schema, "run must start on legacy schema 6")
+	}
+	host, err := agentd.NewProcessEngineHostForTest(root)
 	require.NoError(t, err)
-	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
-	checkpoint, err := processexec.NewExclusiveV7(fs, nil).Drive(t.Context(), runID)
-	require.NoError(t, err)
-	assert.Equal(t, "running", pathv1.CurrentRunStatus(checkpoint))
+	require.Len(t, results, 2)
+	for _, result := range results {
+		assert.Empty(t, result.Error)
+		assert.Equal(t, state.RunStatusRunning, result.Status)
+		schema, schemaErr := fs.RunStateSchemaVersion(t.Context(), result.RunID)
+		require.NoError(t, schemaErr)
+		assert.Equal(t, pathv1.CheckpointStateSchemaVersion, schema)
+	}
 
 	list := processEngineGet(t, f, "/v1/process/runs")
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
@@ -301,6 +316,16 @@ func TestSchema7SignalPermissionAuditAndReadSurfaces(t *testing.T) {
 	raw := processEngineGet(t, f, "/v1/process/runs/"+runID)
 	require.Equal(t, http.StatusOK, raw.Code, raw.Body.String())
 	assert.Contains(t, raw.Body.String(), `"stateSchemaVersion":7`)
+	v7Run, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	require.NotNil(t, v7Run.Checkpoint.Execution)
+	activeSignalWait := false
+	for _, effect := range v7Run.Checkpoint.Execution.Aggregate.SideEffects {
+		if effect.Kind == pathv1.SideEffectWait && effect.WaitKind == "signal" && effect.State == "pending" {
+			activeSignalWait = true
+		}
+	}
+	assert.True(t, activeSignalWait, "production host tick must activate the schema-7 signal wait")
 	view := processEngineGet(t, f, "/v1/process/runs/"+runID+"/view")
 	require.Equal(t, http.StatusOK, view.Code, view.Body.String())
 	assert.Contains(t, view.Body.String(), `"protocol":"viewer_v2"`)
@@ -330,21 +355,38 @@ func TestSchema7SignalPermissionAuditAndReadSurfaces(t *testing.T) {
 	require.Equal(t, http.StatusOK, accepted.Code, accepted.Body.String())
 	assert.Contains(t, accepted.Body.String(), `"actor":"agent:`)
 
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	dashboardAccepted := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+		"/v1/process/runs/"+dashboardRunID+"/nodes/wait/signal", body))
+	require.Equal(t, http.StatusOK, dashboardAccepted.Code, dashboardAccepted.Body.String())
+	assert.Contains(t, dashboardAccepted.Body.String(), `"actor":"human:operator"`)
+
 	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.signal"})
 	require.NoError(t, err)
-	require.Len(t, rows, 2, "denied and successful signal attempts must both be audited")
+	require.Len(t, rows, 3, "CLI denial, CLI success, and dashboard success must all be audited")
 	statuses := map[int]bool{}
+	dashboardRows := 0
 	for _, row := range rows {
 		statuses[row.Status] = true
 		assert.Equal(t, http.MethodPost, row.Method)
-		assert.Equal(t, "/v1/process/runs/"+runID+"/nodes/wait/signal", row.Path)
 		assert.Empty(t, row.Detail, "signal body must not be buffered into audit detail")
+		if row.Source == db.AuditSourceDashboard {
+			dashboardRows++
+			assert.Equal(t, "/v1/process/runs/"+dashboardRunID+"/nodes/wait/signal", row.Path)
+			assert.Equal(t, db.AuditActorHuman, row.ActorKind)
+			assert.Equal(t, "operator", row.ActorLabel)
+			assert.Equal(t, http.StatusOK, row.Status)
+		} else {
+			assert.Equal(t, db.AuditSourceCLI, row.Source)
+			assert.Equal(t, "/v1/process/runs/"+runID+"/nodes/wait/signal", row.Path)
+		}
 		encoded, marshalErr := json.Marshal(row)
 		require.NoError(t, marshalErr)
 		assert.NotContains(t, string(encoded), "deploy/prod")
 	}
 	assert.True(t, statuses[http.StatusForbidden])
 	assert.True(t, statuses[http.StatusOK])
+	assert.Equal(t, 1, dashboardRows)
 }
 
 func TestProcessRunCreateAskHumanPersistsOnlyRedactedParams(t *testing.T) {
