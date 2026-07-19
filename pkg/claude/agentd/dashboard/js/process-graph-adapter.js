@@ -30,11 +30,14 @@ export class ProcessGraphAdapter {
     this.widget = new ProcessGraph(host, graph, {
       ariaLabel,
       colorScheme: 'dark',
-      // The editor root receives programmatic focus for canvas shortcuts, but
-      // only its nodes, edges, ports, and controls belong in sequential Tab
-      // navigation. Viewers use ProcessGraph's visible, focusable default.
-      rootTabIndex: -1,
-      redirectKeyboardRootFocus: true,
+      // The editor frame never owns focus. A visually inert, non-sequential
+      // descendant receives empty-canvas shortcut events; graph items and
+      // controls remain the only visible keyboard stops. Viewers keep the
+      // shared focusable-root default.
+      rootTabIndex: null,
+      svgTabIndex: -1,
+      svgFocusable: 'false',
+      keyboardSink: true,
       connectionFeedback,
       connectionFeedbackPreparation,
       actionFeedbackDelay,
@@ -109,7 +112,7 @@ export class ProcessGraphAdapter {
   zoomBy(factor) { return this.disposed ? false : this.widget.zoomBy(factor); }
   resetZoom() { return this.disposed ? false : this.widget.resetZoom(); }
   resetInteractionLayering() { if (!this.disposed) this.widget.resetInteractionLayering(); }
-  focus() { if (!this.disposed) this.widget.root.focus({ preventScroll: true }); }
+  focus() { if (!this.disposed) this.widget.focusCanvas(); }
   focusNode(id) { if (!this.disposed) this.widget.focusNode(id); }
 
   clientToGraph(clientX, clientY) {

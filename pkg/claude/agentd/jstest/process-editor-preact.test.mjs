@@ -1068,6 +1068,49 @@ test('production scribe modal owns focus, inertness, and every close path inside
   editor.destroy();
 });
 
+test('editor choice dialogs restore the exact prior focus owner or body state', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  const open = async () => {
+    let pending;
+    await harness.act(() => {
+      pending = editor.choiceModal({
+        title: 'Confirm editor action?', body: 'Focus must return exactly.',
+        choices: [{ key: 'apply', label: 'Apply', primary: true }],
+      });
+    });
+    return { pending, overlay: host.querySelector('#process-editor-choice-modal') };
+  };
+
+  editor.graph.focus();
+  const sink = host.querySelector('.process-graph-keyboard-sink');
+  assert.equal(harness.document.activeElement, sink);
+  let opened = await open();
+  await harness.act(() => harness.getByRole(opened.overlay, 'button', { name: 'Cancel' }).click());
+  assert.equal(await opened.pending, null);
+  assert.equal(harness.document.activeElement, sink, 'Cancel restores the exact shortcut sink');
+
+  const node = host.querySelector('.process-node[data-node-id="start"]');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(node, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  node.focus();
+  opened = await open();
+  await harness.act(() => harness.getByRole(opened.overlay, 'button', { name: 'Apply' }).click());
+  assert.equal(await opened.pending, 'apply');
+  assert.equal(harness.document.activeElement, node, 'confirmation restores the exact graph item');
+
+  focusElement.call(harness.document.body);
+  assert.equal(harness.document.activeElement, harness.document.body);
+  opened = await open();
+  await harness.act(() => harness.fireEvent(harness.document.activeElement, 'keydown', { key: 'Escape' }));
+  assert.equal(await opened.pending, null);
+  assert.equal(harness.document.activeElement, harness.document.body,
+    'an unfocused editor remains unfocused after dialog teardown');
+  editor.destroy();
+});
+
 test('scribe preview backdrop cancels without sending and restores editor interaction', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   const invoker = host.querySelector('.process-scribe-action');
