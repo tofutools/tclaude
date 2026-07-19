@@ -6,6 +6,14 @@ function encodedSeed(seed) {
   return '#open=' + encodeURIComponent(JSON.stringify(seed));
 }
 
+function messageEvent(windowRef, { origin, source, data }) {
+  const event = new windowRef.Event('message');
+  Object.defineProperties(event, {
+    origin: { value: origin }, source: { value: source }, data: { value: data },
+  });
+  return event;
+}
+
 function fakeWidgetFactory(harness) {
   const widgets = [];
   const factory = (options) => {
@@ -138,6 +146,102 @@ test('standalone disposal before preference hydration prevents a late mount', as
   assert.equal(mounts, 0);
 });
 
+test('standalone reattach disarms its beacon, hands off to its exact opener, and closes', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const origin = 'https://dashboard.test';
+  const seed = {
+    ws: '/api/open-window-ws/agt_one', label: 'one', key: 'one',
+    hideConv: 'agt_one', agent: 'agt_one',
+  };
+  const locationRef = {
+    origin, protocol: 'https:', host: 'dashboard.test',
+    pathname: '/terminals', search: '?solo=1', hash: encodedSeed(seed),
+    replace: (url) => assert.fail(`acknowledged handoff must not use fallback ${url}`),
+  };
+  const requests = [];
+  const beacons = [];
+  const posted = [];
+  let focused = 0;
+  let closed = 0;
+  const [{ createStandaloneTerminalsPage }, handoff] = await Promise.all([
+    harness.importDashboardModule('js/terminal-standalone.js'),
+    harness.importDashboardModule('js/terminal-handoff.js'),
+  ]);
+  const opener = {
+    closed: false,
+    focus: () => { focused += 1; },
+    postMessage(data, targetOrigin) {
+      posted.push({ data, targetOrigin });
+      queueMicrotask(() => harness.window.dispatchEvent(messageEvent(harness.window, {
+        origin, source: opener,
+        data: { type: handoff.TERMINAL_REATTACH_ACK, id: data.id, accepted: true },
+      })));
+    },
+  };
+  Object.defineProperty(harness.window, 'opener', { value: opener, configurable: true });
+  harness.window.close = () => { closed += 1; };
+  const page = createStandaloneTerminalsPage({
+    host,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    mountShell: () => () => {},
+    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: (url) => { beacons.push(url); return true; } },
+  });
+  await page.start();
+  const pane = page.state.panes.value[0];
+  assert.equal(await page.actions.reattachPane(pane.key), true);
+  assert.deepEqual(requests, ['/api/hide/agt_one']);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].targetOrigin, origin);
+  assert.equal(posted[0].data.seed.initialRetry, true);
+  assert.equal(focused, 1);
+  assert.equal(closed, 1);
+  assert.equal(page.state.panes.value.length, 0);
+  harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+  assert.deepEqual(beacons, [], 'reattach must not detach the newly-created dashboard client on pagehide');
+  page.dispose();
+});
+
+test('standalone reattach becomes the dashboard when its opener is gone', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const seed = { ws: '/api/term-ws/agt_one', label: 'one', key: 'one' };
+  let replaced = '';
+  const locationRef = {
+    origin: 'https://dashboard.test', pathname: '/terminals', search: '?solo=1',
+    hash: encodedSeed(seed), replace: (url) => { replaced = url; },
+  };
+  Object.defineProperty(harness.window, 'opener', { value: null, configurable: true });
+  const [{ createStandaloneTerminalsPage }, { decodeTerminalOpenHash }] = await Promise.all([
+    harness.importDashboardModule('js/terminal-standalone.js'),
+    harness.importDashboardModule('js/terminal-handoff.js'),
+  ]);
+  const page = createStandaloneTerminalsPage({
+    host,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    mountShell: () => () => {},
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: () => true },
+  });
+  await page.start();
+  await page.actions.reattachPane(page.state.panes.value[0].key);
+  assert.match(replaced, /^\/terminals#open=/);
+  const fallbackSeed = decodeTerminalOpenHash(replaced.slice('/terminals'.length));
+  assert.equal(fallbackSeed.ws, seed.ws);
+  assert.equal(fallbackSeed.initialRetry, true);
+  page.dispose();
+});
+
 test('standalone Preact shell renders solo chrome around an opaque active widget', async (t) => {
   const harness = await createPreactHarness(t);
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -168,6 +272,7 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   });
   assert.equal(host.querySelector('[role="tablist"]'), null);
   assert.equal(host.querySelector('[title="Move this terminal to its own browser tab"]'), null);
+  assert.ok(host.querySelector('[title="Move this terminal back to its dashboard tab"]'));
   assert.equal(host.querySelector('#mux-empty'), null);
   assert.equal(fake.widgets.length, 1);
   assert.equal(fake.widgets[0].child.parentElement.classList.contains('mux-pane-xterm-fit'), true);

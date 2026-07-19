@@ -75,6 +75,7 @@ function widgetFakes(document) {
       sockets.push(this);
     }
     open() { this.readyState = FakeWebSocket.OPEN; this.onopen?.(); }
+    disconnect() { this.readyState = 3; this.onclose?.(); }
     send(value) { this.sent.push(value); }
     close() { this.readyState = 3; this.closeCount += 1; }
   }
@@ -254,4 +255,97 @@ test('reconnect invalidates every handler from the replaced socket', async (t) =
   assert.deepEqual(statuses, beforeLate, 'replaced socket callbacks cannot affect the new generation');
   assert.equal(old.closeCount, 1);
   widget.dispose();
+});
+
+test('initial retry covers failed and briefly unstable sockets, then yields to manual reconnect', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  const statuses = [];
+  const reconnect = [];
+  const timers = [];
+  let clock = 0;
+  let disconnected = 0;
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/open-window-ws/agt_one',
+    authenticate: false,
+    initialRetry: true,
+    initialRetryDelays: [10, 20],
+    initialRetryStabilityMs: 100,
+    setTimeoutImpl(handler, delay) {
+      const timer = { handler, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl(timer) { timer.cleared = true; },
+    now: () => clock,
+    onStatus: (value) => statuses.push(value),
+    onReconnectChange: (value) => reconnect.push(value),
+    onDisconnect: () => { disconnected += 1; },
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+
+  await widget.connect();
+  fakes.sockets[0].disconnect();
+  assert.equal(statuses.at(-1), 'retrying…');
+  assert.equal(timers[0].delay, 10);
+  assert.equal(disconnected, 0, 'an intermediate initial failure is not user-visible disconnect');
+  timers[0].handler();
+  await Promise.resolve();
+  assert.equal(fakes.sockets.length, 2);
+
+  fakes.sockets[1].open();
+  clock = 50;
+  fakes.sockets[1].disconnect();
+  assert.equal(statuses.at(-1), 'retrying…', 'a connection inside the stability window retries');
+  assert.equal(timers[1].delay, 20);
+  timers[1].handler();
+  await Promise.resolve();
+  assert.equal(fakes.sockets.length, 3);
+
+  fakes.sockets[2].open();
+  clock = 200;
+  fakes.sockets[2].disconnect();
+  assert.equal(statuses.at(-1), 'disconnected');
+  assert.equal(disconnected, 1, 'a stable connection returns to ordinary disconnect handling');
+  assert.equal(reconnect.at(-1), true);
+  assert.equal(timers.length, 2, 'the bounded retry budget creates no permanent loop');
+  widget.dispose();
+});
+
+test('disposing an initial retry cancels its timer and prevents a late socket', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { mountTerminalWidget } = await harness.importDashboardModule('js/terminals-core.js');
+  const fakes = widgetFakes(harness.document);
+  let timer;
+  const widget = mountTerminalWidget({
+    host: harness.document.body.appendChild(harness.document.createElement('div')),
+    wsPath: '/api/term-ws/agt_one',
+    authenticate: false,
+    initialRetry: true,
+    initialRetryDelays: [10],
+    setTimeoutImpl(handler) { timer = { handler, cleared: false }; return timer; },
+    clearTimeoutImpl(value) { value.cleared = true; },
+    TerminalCtor: fakes.FakeTerminal,
+    FitAddonCtor: fakes.FakeFitAddon,
+    WebSocketCtor: fakes.FakeWebSocket,
+    ResizeObserverCtor: fakes.FakeResizeObserver,
+    locationRef: { protocol: 'http:', host: 'dashboard.test' },
+    documentRef: harness.document,
+    interactionsFactory: fakes.interactionsFactory,
+  });
+  await widget.connect();
+  fakes.sockets[0].disconnect();
+  widget.dispose();
+  assert.equal(timer.cleared, true);
+  timer.handler();
+  await Promise.resolve();
+  assert.equal(fakes.sockets.length, 1);
 });

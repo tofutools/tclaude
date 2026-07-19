@@ -22,5 +22,8 @@ test('invalid and canceled terminal requests do not prepare the runtime', async 
   await openTerminalPane({ ws: '/terminal', label: 'terminal' });
   assert.equal(prepares, 1);
   assert.equal(opened.length, 1);
+  assert.equal(opened[0].initialRetry, true, 'first web-terminal attaches get bounded retry by default');
+  await openTerminalPane({ ws: '/terminal-no-retry', initialRetry: false });
+  assert.equal(opened.at(-1).initialRetry, false, 'callers can explicitly opt out');
   unregister();
 });

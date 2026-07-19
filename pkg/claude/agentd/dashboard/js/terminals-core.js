@@ -14,6 +14,14 @@
 import { attachTerminalInteractions } from './terminal-interactions.js';
 import { terminalThemeFor } from './terminal-theme.js';
 
+// A newly-created browser terminal can briefly lose an attach race with the
+// client it is replacing (pop-out / reattach), or arrive while a freshly
+// spawned tmux session is still becoming available. Keep this deliberately
+// small and bounded: after the initial stability window, disconnects return to
+// the explicit Reconnect control instead of creating a permanent retry loop.
+export const INITIAL_RETRY_DELAYS_MS = Object.freeze([200, 500, 1000]);
+export const INITIAL_RETRY_STABILITY_MS = 1000;
+
 // departedAgentSelectors returns every stable agent-id / conversation-id that
 // belonged to the previous active roster but not the next one. Keeping this as
 // a roster transition (instead of treating every selector absent from one
@@ -80,6 +88,12 @@ export function mountTerminalWidget({
   onSelectionChange = () => {},
   onComposeMessage = null,
   onDisconnect = () => {},
+  initialRetry = false,
+  initialRetryDelays = INITIAL_RETRY_DELAYS_MS,
+  initialRetryStabilityMs = INITIAL_RETRY_STABILITY_MS,
+  setTimeoutImpl = globalThis.setTimeout,
+  clearTimeoutImpl = globalThis.clearTimeout,
+  now = () => Date.now(),
   fetchImpl = globalThis.fetch,
   TerminalCtor = globalThis.Terminal,
   FitAddonCtor = globalThis.FitAddon && globalThis.FitAddon.FitAddon,
@@ -104,6 +118,8 @@ export function mountTerminalWidget({
   let isActive = !!active;
   let status = 'disconnected';
   let reconnectAvailable = false;
+  let retryIndex = 0;
+  let retryTimer = null;
   const disposables = [];
 
   const term = new TerminalCtor({
@@ -173,7 +189,26 @@ export function mountTerminalWidget({
     authController = null;
   }
 
-  async function connect() {
+  function cancelRetry() {
+    if (retryTimer === null) return;
+    clearTimeoutImpl(retryTimer);
+    retryTimer = null;
+  }
+
+  function scheduleInitialRetry() {
+    if (!initialRetry || retryIndex >= initialRetryDelays.length) return false;
+    const delay = Math.max(0, Number(initialRetryDelays[retryIndex]) || 0);
+    retryIndex += 1;
+    setStatus('retrying…');
+    setReconnectAvailable(false);
+    retryTimer = setTimeoutImpl(() => {
+      retryTimer = null;
+      void dial();
+    }, delay);
+    return true;
+  }
+
+  async function dial() {
     if (disposed) return false;
     generation += 1;
     const mine = generation;
@@ -197,6 +232,7 @@ export function mountTerminalWidget({
         }
       } catch (error) {
         if (disposed || mine !== generation || controller.signal.aborted) return false;
+        if (scheduleInitialRetry()) return false;
         setStatus('disconnected');
         setReconnectAvailable(true);
         return false;
@@ -210,9 +246,11 @@ export function mountTerminalWidget({
     const socket = new WebSocketCtor(proto + '//' + locationRef.host + wsPath);
     socket.binaryType = 'arraybuffer';
     ws = socket;
+    let openedAt = null;
     setStatus('connecting…');
     socket.onopen = () => {
       if (disposed || mine !== generation || ws !== socket) return;
+      openedAt = now();
       setStatus('connected');
       setReconnectAvailable(false);
       if (isActive) fit();
@@ -224,6 +262,8 @@ export function mountTerminalWidget({
     };
     socket.onclose = () => {
       if (disposed || mine !== generation || ws !== socket) return;
+      const unstable = openedAt === null || now() - openedAt < initialRetryStabilityMs;
+      if (unstable && scheduleInitialRetry()) return;
       setStatus('disconnected');
       setReconnectAvailable(true);
       onDisconnect();
@@ -233,6 +273,12 @@ export function mountTerminalWidget({
       try { socket.close(); } catch (_) { /* onclose handles it */ }
     };
     return true;
+  }
+
+  function connect() {
+    cancelRetry();
+    retryIndex = 0;
+    return dial();
   }
 
   const interactions = interactionsFactory({
@@ -279,6 +325,7 @@ export function mountTerminalWidget({
       if (disposed) return;
       disposed = true;
       generation += 1;
+      cancelRetry();
       abortAuth();
       closeSocket();
       documentRef.removeEventListener('tclaude:wizard', syncTheme);
