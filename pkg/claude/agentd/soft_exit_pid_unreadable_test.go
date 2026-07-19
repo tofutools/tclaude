@@ -43,6 +43,11 @@ func (r *pidUnreadableTmux) Command(args ...string) *exec.Cmd {
 }
 
 func (r *pidUnreadableTmux) ListSessions() (map[string]struct{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sessionGone {
+		return map[string]struct{}{"some-other-session": {}}, nil
+	}
 	return map[string]struct{}{r.sessionName: {}}, nil
 }
 
