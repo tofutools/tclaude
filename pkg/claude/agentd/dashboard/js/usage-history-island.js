@@ -54,6 +54,27 @@ function UsageSeriesCard({ series, payload, span, onSetHours, onSetLookahead }) 
   </article>`;
 }
 
+// groupSeriesByProvider splits the flat series list into one row per provider
+// so a provider's quota windows share a line. current.series is sorted by
+// usageSeriesSort (provider label, then window duration) in usage-history-state
+// — note the server sorts by window *name*, so don't read the order off the API
+// — which puts each provider's entries together, so first-seen order preserves
+// both the provider order and the window order within a row.
+function groupSeriesByProvider(series) {
+  const rows = [];
+  const byProvider = new Map();
+  for (const item of series) {
+    let row = byProvider.get(item.provider);
+    if (!row) {
+      row = { provider: item.provider, series: [] };
+      byProvider.set(item.provider, row);
+      rows.push(row);
+    }
+    row.series.push(item);
+  }
+  return rows;
+}
+
 export function UsageHistoryApp({ state, actions }) {
   const current = state.view.value;
   useEffect(() => {
@@ -83,12 +104,15 @@ export function UsageHistoryApp({ state, actions }) {
         <span><i class="usage-legend-swatch now"></i>Now</span>
       </div>
       ${current.series.length
-        ? html`<div class="usage-series-grid">${current.series.map((series) => {
-            const key = usageSeriesKeyOf(series);
-            return html`<${UsageSeriesCard} key=${key} series=${series} payload=${current.payload}
-              span=${current.spanFor(key)} onSetHours=${(hours) => setSpan(key, hours)}
-              onSetLookahead=${(hours) => setLookahead(key, hours)} />`;
-          })}</div>`
+        ? html`<div class="usage-series-grid">${groupSeriesByProvider(current.series).map((row) => html`
+            <div class="usage-provider-row" key=${row.provider} style=${`--usage-cols:${row.series.length}`}>
+              ${row.series.map((series) => {
+                const key = usageSeriesKeyOf(series);
+                return html`<${UsageSeriesCard} key=${key} series=${series} payload=${current.payload}
+                  span=${current.spanFor(key)} onSetHours=${(hours) => setSpan(key, hours)}
+                  onSetLookahead=${(hours) => setLookahead(key, hours)} />`;
+              })}
+            </div>`)}</div>`
         : html`<div class="empty">No subscription usage samples in this range yet.</div>`}
     </${Fragment}>`}
   </div>`;

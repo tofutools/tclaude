@@ -50,6 +50,21 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"usage-card-controls",
 		"&spans=",
 		"tclaude.dash.usage.seriesSpans",
+		// A provider's quota windows share one centred row, capped at the
+		// per-card width times that row's card count.
+		"groupSeriesByProvider(current.series)",
+		"usage-provider-row",
+		"--usage-cols:${row.series.length}",
+		// The row-width variables live on the host, so the island-load-failure
+		// banner (rendered into #usage-root, outside the island) inherits them.
+		"#usage-root { --usage-card-max: 1100px; --usage-card-gap: 14px; }",
+		// Centring must ride in each element's own margin shorthand. A shared
+		// `margin-inline: auto` rule is silently reset by any later shorthand
+		// on the same element -- .filter-bar does that to the controls bar,
+		// hence the two-class selector here.
+		".filter-bar.usage-history-controls { max-width: var(--usage-card-max); margin: 0 auto 12px; }",
+		"margin: 0 auto 14px",
+		"margin: -4px auto 12px",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Usage Preact wiring missing %q", needle)
