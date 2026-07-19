@@ -240,7 +240,7 @@ func writeFileAtomicAt(dir *os.File, name string, data []byte, perm os.FileMode)
 		_ = tmp.Close()
 		return fmt.Errorf("chmod atomic temp file: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := maybeSync(tmp); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("sync atomic temp file: %w", err)
 	}
@@ -258,6 +258,9 @@ func (s *FS) syncPathV1InitializationDir(dir *os.File) error {
 		if err := s.pathV1InitializeDirSync(); err != nil {
 			return fmt.Errorf("sync initialized checkpoint directory: %w", err)
 		}
+	}
+	if skipDurabilitySyncs {
+		return nil
 	}
 	if err := unix.Fsync(int(dir.Fd())); err != nil {
 		return fmt.Errorf("sync initialized checkpoint directory: %w", err)

@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"embed"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	// agentd embeds the production dashboard tree. Keeping that package in this
@@ -26,8 +28,8 @@ var nodeTestInputs embed.FS
 // Dashboard pure-module and Preact component suites run with Node's
 // built-in test runner. Preact suites use the committed test-only LinkeDOM
 // runtime and exact dashboard modules, with no node_modules or install step.
-// Keeping this wrapper in its own Go package lets the standard `go test -p 2
-// ./...` scheduler overlap the JS suite with agentd's serial flow tests.
+// Keeping this wrapper in its own Go package lets the standard `go test ./...`
+// scheduler overlap the JS suite with agentd's serial flow tests.
 //
 // Node availability:
 //   - In CI the Test job runs actions/setup-node, so node is guaranteed.
@@ -68,9 +70,13 @@ func TestDashboardJS(t *testing.T) {
 	args := []string{"--test"}
 	if help, helpErr := exec.Command(node, "--help").Output(); helpErr == nil &&
 		bytes.Contains(help, []byte("--test-concurrency")) {
-		// Keep file-level fan-out serial so this package can overlap agentd
-		// without competing for runner CPUs and stretching both suites.
-		args = append(args, "--test-concurrency=1")
+		// Node runs one process per suite file, so serial execution pays a
+		// full runtime start + module import per file (~90s across the whole
+		// suite). Fan files out across the spare cores, leaving two for the
+		// Go packages (agentd's serial flow tests in particular) that `go
+		// test -p` overlaps with this one.
+		concurrency := max(1, runtime.NumCPU()-2)
+		args = append(args, fmt.Sprintf("--test-concurrency=%d", concurrency))
 	}
 	args = append(args, files...)
 	out, err := exec.Command(node, args...).CombinedOutput()

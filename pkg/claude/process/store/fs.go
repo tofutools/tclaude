@@ -576,7 +576,7 @@ func syncTemplateSaveFile(path string) error {
 		return err
 	}
 	defer f.Close()
-	return f.Sync()
+	return maybeSync(f)
 }
 
 // ListTemplateAuthorship returns authoring events in append order. Legacy
@@ -1831,7 +1831,7 @@ func (s *FS) PutArtifact(ctx context.Context, runID, name string, r io.Reader) (
 		_ = tmp.Close()
 		return ArtifactRecord{}, fmt.Errorf("write artifact: %w", copyErr)
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := maybeSync(tmp); err != nil {
 		_ = tmp.Close()
 		return ArtifactRecord{}, fmt.Errorf("sync artifact: %w", err)
 	}
@@ -2106,7 +2106,7 @@ func appendJSONL(path string, write func(io.Writer) error) error {
 		_ = f.Close()
 		return fmt.Errorf("append jsonl: %w", err)
 	}
-	if err := f.Sync(); err != nil {
+	if err := maybeSync(f); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("sync append file: %w", err)
 	}
@@ -2140,7 +2140,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return fmt.Errorf("chmod temp file: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := maybeSync(tmp); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("sync temp file: %w", err)
 	}
@@ -2160,7 +2160,7 @@ func syncDir(dir string) error {
 		return err
 	}
 	defer d.Close()
-	return d.Sync()
+	return maybeSync(d)
 }
 
 func (s *FS) lockRun(ctx context.Context, runID string) (func(), error) {
