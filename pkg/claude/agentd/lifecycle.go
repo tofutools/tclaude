@@ -402,6 +402,16 @@ func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.Session
 	})
 }
 
+// scheduleUnknownIntentCleanupCurrent is the current-CAS twin of
+// scheduleUnknownIntentCleanup for the pid-keyed retry path, whose intent
+// ref carries no selected-target binding to key the target CAS on.
+func scheduleUnknownIntentCleanupCurrent(intentRef *db.SessionExitIntentRef) {
+	goBackground(func() {
+		time.Sleep(unknownIntentCleanupDelay)
+		clearFailedExitIntent(intentRef)
+	})
+}
+
 var beforeSoftExitTargetRevalidateForTest func()
 var beforeSoftExitTargetRetryProbeForTest func(int)
 var afterSoftExitTargetSendForTest func()
@@ -592,7 +602,15 @@ func scheduleSoftExitRetry(convID, tmuxSession string, panePID int, exitCmd, rea
 			if err := injectTextAndSubmit(target, exitCmd); err != nil {
 				slog.Warn("soft-exit retry inject failed",
 					"error", err, "tmux_session", tmuxSession, "reason", reason)
-				clearFailedExitIntent(intentRef)
+				// The first /exit was already delivered; mirror the
+				// selected-pane watchdog's re-send-failure treatment: a
+				// vanished session leaves attribution to the reaper, anything
+				// else retains the intent through the bounded observer window
+				// instead of instantly erasing a delivered exit's attribution.
+				if alive, known := lifecycleSessionAlive(tmuxSession); known && !alive {
+					return
+				}
+				scheduleUnknownIntentCleanupCurrent(intentRef)
 				return
 			}
 		}

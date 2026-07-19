@@ -559,7 +559,7 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testing.T) {
 	const eventID = "evt_888888888888888888888888"
 	f := newFlow(t)
-	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(300 * time.Millisecond))
+	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(time.Second))
 	const conv = "sxjn-1111-2222-3333-4444"
 	const sessionID = "spwn-sxjn"
 	const tmuxSes = "tmux-sxjn"
@@ -593,7 +593,7 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 			FROM sessions WHERE id = ?`, sessionID).Scan(&intent, &gotEventID))
 		return intent, gotEventID
 	}
-	// The 300ms observer window comfortably outlasts this 100ms probe: any
+	// The 1s observer window comfortably outlasts this 100ms probe: any
 	// clear observed here is the instant-clear regression, not the bounded
 	// cleanup.
 	assert.Never(t, func() bool {
