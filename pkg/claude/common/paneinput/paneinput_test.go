@@ -163,3 +163,20 @@ func TestInjectTextAndSubmitLockIDSerializesPaneIDWithSessionStream(t *testing.T
 	require.NoError(t, InjectTextAndSubmit("%41", "second", released))
 	require.True(t, secondCalled, "second caller never wrote after the lock was released")
 }
+
+// ExactInputTarget is the single canonical identity BOTH serialization
+// layers key on — this package's advisory file lock and agentd's
+// in-process pane-inject mutexes (via injectLockKey). Pin its mapping so
+// an edit that changes it shows up here as the cross-layer contract it is.
+func TestExactInputTargetCanonicalMapping(t *testing.T) {
+	for input, want := range map[string]string{
+		"%5":          "%5",
+		"=%5":         "%5",
+		"sess:0.0":    "=sess:0.0",
+		"=sess:0.0":   "=sess:0.0",
+		"sess":        "=sess",
+		"tcl-590:0.0": "=tcl-590:0.0",
+	} {
+		require.Equal(t, want, ExactInputTarget(input), "input %q", input)
+	}
+}

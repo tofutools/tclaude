@@ -1507,16 +1507,13 @@ func injectTextAndSubmitSerializedBy(lockTarget, tmuxTarget, text string) error 
 	})
 }
 
-// injectLockKey canonicalizes a lock identity the same way paneinput keys
-// its advisory file (pane IDs pass through; session-shaped targets get the
-// exact pin), so "sess:0.0" and "=sess:0.0" spellings share one in-process
-// mutex.
+// injectLockKey canonicalizes a lock identity by delegating to the exact
+// helper paneinput keys its advisory file with, so the in-process mutex
+// and the cross-process file lock can never drift onto different
+// identities for one pane, and "sess:0.0" / "=sess:0.0" spellings share
+// one in-process mutex.
 func injectLockKey(target string) string {
-	trimmed := strings.TrimPrefix(target, "=")
-	if strings.HasPrefix(trimmed, "%") {
-		return trimmed
-	}
-	return "=" + trimmed
+	return paneinput.ExactInputTarget(target)
 }
 
 // injectMenuToggle types a slash command that opens a confirm MENU, submits
