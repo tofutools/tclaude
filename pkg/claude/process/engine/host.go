@@ -456,7 +456,7 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 		}
 		switch node.Type {
 		case model.NodeTypeTask, model.NodeTypeDecision:
-			if node.Performer == nil || node.Performer.Kind == model.PerformerProgram || node.Performer.Contact != nil {
+			if node.Performer == nil || node.Performer.Kind == model.PerformerProgram {
 				return false
 			}
 			if node.Type == model.NodeTypeTask && len(node.Performer.ChoiceOutcomes) != 0 {

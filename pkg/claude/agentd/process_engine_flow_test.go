@@ -1057,7 +1057,11 @@ func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
 		Prompt:  "Implement the requested change",
 		Contact: &model.ContactSchedule{Cadence: "1h", Budget: 2, EscalationTarget: "human:operator"},
 	}), false)
-	host, err := agentd.NewProcessEngineHostForTest(root)
+	// This test pins the LEGACY v6 spawn/report/settle contract, which stays
+	// live until the parity migrator retires the v6 executor. The production
+	// host would migrate this now-eligible explicit-contact template to
+	// schema 7 (covered by the v7 contact flow tests).
+	host, err := agentd.NewLegacyProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
@@ -1093,7 +1097,7 @@ func TestProcessEngineAgentSpawnReportSettleAndResumeSuppression(t *testing.T) {
 
 	// A fresh host rediscovers the metadata-bound actor and leaves it in
 	// flight; it must not dispatch a second agent.
-	restarted, err := agentd.NewProcessEngineHostForTest(root)
+	restarted, err := agentd.NewLegacyProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	results, err = agentd.RunProcessEngineTickForTest(t.Context(), restarted)
 	require.NoError(t, err)
@@ -1166,7 +1170,9 @@ func TestProcessEngineOwnInboxDeliveryDoesNotPreemptAgent(t *testing.T) {
 		Kind: model.PerformerAgent, Profile: "process-preempt", Prompt: "Implement the requested change",
 		Contact: &model.ContactSchedule{Cadence: "1s", Budget: 2, EscalationTarget: "human:operator"},
 	}), false)
-	host, err := agentd.NewProcessEngineHostForTest(root)
+	// Pins the legacy v6 delivery-latch contract; the production host would
+	// migrate this explicit-contact template to schema 7.
+	host, err := agentd.NewLegacyProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
@@ -1212,7 +1218,9 @@ func TestProcessEngineHumanObligationAppearsAndResolvesThroughCLI(t *testing.T) 
 		Kind: model.PerformerHuman, Profile: "operator", Assignee: "johan", Ask: "Approve the release?",
 		Contact: &model.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:operator"},
 	}), false)
-	host, err := agentd.NewProcessEngineHostForTest(root)
+	// Pins the legacy v6 obligation/CLI-resolve contract; the production host
+	// would migrate this explicit-contact template to schema 7.
+	host, err := agentd.NewLegacyProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
@@ -1397,7 +1405,9 @@ func TestProcessWorklistActionUsesObservationFunnelAndIsIdempotent(t *testing.T)
 		Contact: &model.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:oncall"},
 	}
 	fs := createEngineRun(t, root, "worklist-decision-run", decisionTemplate("worklist-decision", performer), false)
-	host, err := agentd.NewProcessEngineHostForTest(root)
+	// Pins the legacy v6 worklist observation funnel; the production host
+	// would migrate this explicit-contact template to schema 7.
+	host, err := agentd.NewLegacyProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)

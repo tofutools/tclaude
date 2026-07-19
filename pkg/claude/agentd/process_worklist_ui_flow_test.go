@@ -46,7 +46,10 @@ func TestProcessWorklistUIActionRoundTripReflectsResolution(t *testing.T) {
 		Contact: &processmodel.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:oncall"},
 	}
 	createEngineRun(t, root, "worklist-ui-run", decisionTemplate("worklist-ui", performer), false)
-	host, err := agentd.NewProcessEngineHostForTest(root)
+	// Pins the legacy v6 worklist UI contract (createdAt/changedAt come from
+	// v6 obligations); the production host would migrate this explicit-contact
+	// template to schema 7, whose worklist surface is covered separately.
+	host, err := agentd.NewLegacyProcessEngineHostForTest(root)
 	require.NoError(t, err)
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
