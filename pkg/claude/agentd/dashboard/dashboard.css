@@ -144,6 +144,7 @@ body.hscroll-overflow.hscroll-follow nav .bar-inner { z-index: 1; }
    the anchor resets (text-decoration/color/font) keep them rendering exactly
    like the former buttons. */
 nav [data-tab] {
+  display: flex; align-items: center;
   background: none; border: none; color: #7d8590; padding: 10px 16px;
   cursor: pointer; font-size: 14px; font-family: inherit; border-bottom: 2px solid transparent;
   text-decoration: none;
@@ -5266,7 +5267,7 @@ body.slop .slop-machine[data-status="exited"] {
    vegas.js owns the lounge-radio <audio> player inside #vegas-player. */
 nav [data-tab="vegas"] { display: none; }
 body.slop nav [data-tab="vegas"],
-body.vegas nav [data-tab="vegas"] { display: block; }
+body.vegas nav [data-tab="vegas"] { display: flex; }
 
 /* Costs-tab auto-hide. body.hide-costs is set by refresh.js when the server's
    cost_tab_visible is false — a subscription account with no real spend that
@@ -6775,10 +6776,20 @@ body.wizard .wizard-pill.wizard-pill-flash { animation: wizard-resolve 1.4s ease
 .tab-label-wizard { display: none; }
 body.wizard .tab-label-vegas,
 body.wizard .tab-label-regular { display: none; }
-body.wizard .tab-label-wizard { display: inline; }
+body.wizard .tab-label-wizard {
+  display: inline-flex; align-items: center; gap: 0.35em;
+}
+/* Keep the title's line box identical in every tab and centre each unchanged
+   symbol beside it independently, so emoji/font fallback metrics cannot move
+   the title baseline. The literal inter-span space in the markup remains for
+   textContent consumers; flex layout collapses that whitespace around gap. */
+.tab-label-wizard .tab-title { line-height: 16px; }
+.tab-label-wizard .tab-icon {
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+}
 
 /* The music tab shows in wizard mode too (like slop / the regular opt-in). */
-body.wizard nav [data-tab="vegas"] { display: block; }
+body.wizard nav [data-tab="vegas"] { display: flex; }
 
 /* Intro + hint copy per theme. Both intros carry .vegas-intro; the wizard
    one is hidden by default and swapped in under body.wizard. */

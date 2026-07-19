@@ -120,27 +120,27 @@
        body.wizard (CSS swap in dashboard.css). Badge spans stay OUTSIDE the
        label pair so they render in both themes; the palette reads the visible
        label span (js/palette.js) so "Scry the {name}" gets the arcane name. -->
-  <a class="active" data-tab="groups" href="/"><span class="tab-label-regular">Groups</span><span class="tab-label-wizard">⚔ Parties</span></a>
+  <a class="active" data-tab="groups" href="/"><span class="tab-label-regular">Groups</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚔</span> <span class="tab-title">Parties</span></span></a>
   <!-- Terminals — the in-SPA multiplexer (js/terminals-tab.js). CSS-hidden via
        body.hide-terminals until "web term" / "web window" opens the first pane;
        the badge counts the live terminals. -->
-  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard">🔮 Scrying</span><span id="terminals-badge-root"></span></a>
-  <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard">⚒ Labours</span><span id="jobs-badge-root"></span></a>
-  <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard">🕸 Rites</span></a>
-  <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard">🔧 Contraptions</span><span id="plugins-badge-root"></span></a>
-  <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard">🛡 Wards</span></a>
-  <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard">🕊 Missives</span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
-  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard">📈 Reserves</span></a>
-  <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard">💰 Coffers</span></a>
-  <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard">📖 Chronicle</span></a>
-  <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard">🕯 Runes</span></a>
-  <a data-tab="debug" href="/debug" title="Debug — daemon self-diagnostics: dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Debug</span><span class="tab-label-wizard">🧪 Alchemy</span></a>
-  <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard">📜 Almanac</span></a>
+  <a data-tab="terminals" href="/terminals" title="Live in-browser terminals — appears while ≥1 web terminal / window is open. Each can be popped out into its own browser window."><span class="tab-label-regular">Terminals</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔮</span> <span class="tab-title">Scrying</span></span><span id="terminals-badge-root"></span></a>
+  <a data-tab="jobs" href="/jobs" title="Jobs — agent export jobs (live progress; finished ones stay until dismissed) and recurring cron schedules"><span class="tab-label-regular">Jobs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">⚒</span> <span class="tab-title">Labours</span></span><span id="jobs-badge-root"></span></a>
+  <a data-tab="processes" href="/processes" title="Processes — reusable graph templates, instantiated runs, and human work"><span class="tab-label-regular">Processes</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕸</span> <span class="tab-title">Rites</span></span></a>
+  <a data-tab="plugins" href="/plugins"><span class="tab-label-regular">Plugins</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🔧</span> <span class="tab-title">Contraptions</span></span><span id="plugins-badge-root"></span></a>
+  <a data-tab="access" href="/access" title="Agent access control — permanent permissions, the slug registry, and time-bounded sudo grants"><span class="tab-label-regular">Access</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🛡</span> <span class="tab-title">Wards</span></span></a>
+  <a data-tab="messages" href="/messages"><span class="tab-label-regular">Messages</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕊</span> <span class="tab-title">Missives</span></span><span class="shell-contents-root" id="shell-messages-badge-root"></span></a>
+  <a data-tab="usage" href="/usage"><span class="tab-label-regular">Usage</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📈</span> <span class="tab-title">Reserves</span></span></a>
+  <a data-tab="costs" href="/costs"><span class="tab-label-regular">Costs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">💰</span> <span class="tab-title">Coffers</span></span></a>
+  <a data-tab="audit" href="/audit" title="Audit log — who ran which tclaude command (spawn, message, lifecycle, permissions…), including denied attempts"><span class="tab-label-regular">Audit</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📖</span> <span class="tab-title">Chronicle</span></span></a>
+  <a data-tab="logs" href="/logs" title="Logs — tclaude's own daemon/CLI log (~/.tclaude/output.log), with level/time filters, search and optional live tail"><span class="tab-label-regular">Logs</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🕯</span> <span class="tab-title">Runes</span></span></a>
+  <a data-tab="debug" href="/debug" title="Debug — daemon self-diagnostics: dashboard poll timing distributions (per-endpoint latency + the snapshot's per-phase breakdown)"><span class="tab-label-regular">Debug</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🧪</span> <span class="tab-title">Alchemy</span></span></a>
+  <a data-tab="config" href="/config"><span class="tab-label-regular">Config</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">📜</span> <span class="tab-title">Almanac</span></span></a>
   <!-- Vegas — the shared soundtrack tab. CSS-hidden unless body.slop,
        body.wizard, or the regular-mode opt-in (body.vegas) is set (see
        dashboard.css); vegas.js owns the player inside it. The label swaps to
        "🍺 The Tavern" in wizard mode (CSS body.wizard). -->
-  <button data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard">🍺 The Tavern</span></button>
+  <button data-tab="vegas"><span class="tab-label-vegas">🎰 Vegas</span><span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span></button>
   </div>
 </nav>
 <main>

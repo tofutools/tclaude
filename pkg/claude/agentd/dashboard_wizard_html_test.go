@@ -138,28 +138,36 @@ func TestDashboardHTML_WizardTabNames(t *testing.T) {
 	// rather than the browser.
 	must(".tab-label-wizard { display: none; }", "the arcane tab label is hidden outside wizard mode")
 	must("body.wizard .tab-label-regular { display: none; }", "wizard mode hides the plain tab names")
-	must("body.wizard .tab-label-wizard { display: inline; }", "wizard mode shows the arcane tab names")
+	must("nav [data-tab] {\n  display: flex; align-items: center;", "each nav control vertically centres its label contents")
+	must("body.wizard .tab-label-wizard {\n  display: inline-flex; align-items: center; gap: 0.35em;", "wizard mode centres each icon beside its title")
+	must(".tab-label-wizard .tab-title { line-height: 16px; }", "wizard titles share one stable line box")
+	must("display: inline-flex; align-items: center; justify-content: center; line-height: 1;", "wizard icons are centred independently")
 
 	// Each tab's plain + arcane span pair. Pinning the full pair (through the
 	// data-tab so it's anchored to the right button) guards both the plain name
 	// staying honest and the arcane name being present.
-	pairs := []struct{ tab, regular, wizard string }{
-		{"groups", "Groups", "⚔ Parties"},
-		{"terminals", "Terminals", "🔮 Scrying"},
-		{"jobs", "Jobs", "⚒ Labours"},
-		{"plugins", "Plugins", "🔧 Contraptions"},
-		{"access", "Access", "🛡 Wards"},
-		{"messages", "Messages", "🕊 Missives"},
-		{"usage", "Usage", "📈 Reserves"},
-		{"costs", "Costs", "💰 Coffers"},
-		{"audit", "Audit", "📖 Chronicle"},
-		{"logs", "Logs", "🕯 Runes"},
-		{"config", "Config", "📜 Almanac"},
+	pairs := []struct{ tab, regular, icon, title string }{
+		{"groups", "Groups", "⚔", "Parties"},
+		{"terminals", "Terminals", "🔮", "Scrying"},
+		{"jobs", "Jobs", "⚒", "Labours"},
+		{"processes", "Processes", "🕸", "Rites"},
+		{"plugins", "Plugins", "🔧", "Contraptions"},
+		{"access", "Access", "🛡", "Wards"},
+		{"messages", "Messages", "🕊", "Missives"},
+		{"usage", "Usage", "📈", "Reserves"},
+		{"costs", "Costs", "💰", "Coffers"},
+		{"audit", "Audit", "📖", "Chronicle"},
+		{"logs", "Logs", "🕯", "Runes"},
+		{"debug", "Debug", "🧪", "Alchemy"},
+		{"config", "Config", "📜", "Almanac"},
 	}
 	for _, p := range pairs {
 		must(`<span class="tab-label-regular">`+p.regular+`</span>`, p.tab+" keeps its plain nav label")
-		must(`<span class="tab-label-wizard">`+p.wizard+`</span>`, p.tab+" gets its arcane nav label")
+		must(`<span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">`+p.icon+`</span> <span class="tab-title">`+p.title+`</span></span>`,
+			p.tab+" keeps its icon separate from its arcane title")
 	}
+	must(`<span class="tab-label-wizard"><span class="tab-icon" aria-hidden="true">🍺</span> <span class="tab-title">The Tavern</span></span>`,
+		"the Tavern keeps its icon separate from its title")
 
 	// The command palette's "Go to …/Scry the …" command reads the VISIBLE
 	// label span (not btn.textContent, which would concatenate both spans and
