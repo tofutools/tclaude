@@ -317,20 +317,6 @@ export function ProcessesApp({ state, actions, confirmDiscard }) {
     if (view.subtab === 'templates' || view.canvas?.kind === 'editor') void actions.observeTemplateHeads();
   }; document.addEventListener('tclaude:snapshot', poll); return () => document.removeEventListener('tclaude:snapshot', poll); }, []);
   useEffect(() => { const reselected = (event) => { if (event.detail?.tab === 'processes' && state.view.value.active) void actions.refreshActive(); }; document.addEventListener('tclaude:tab-reselected', reselected); return () => document.removeEventListener('tclaude:tab-reselected', reselected); }, []);
-  // The history router (js/nav-history.js) resolved a Processes location from
-  // the URL — a deep link, a reload, or a browser Back/Forward — and wants the
-  // tab to show it, editor included. If we refuse (an unsaved editor the
-  // operator kept), re-announce where we actually are so the address bar is
-  // corrected instead of lying about the view.
-  useEffect(() => {
-    const restore = (event) => {
-      const loc = event.detail?.location;
-      if (loc?.tab !== 'processes') return;
-      void actions.applyLocation(loc).then((ok) => { if (!ok) actions.announceLocation(); });
-    };
-    document.addEventListener('tclaude:restore-location', restore);
-    return () => document.removeEventListener('tclaude:restore-location', restore);
-  }, []);
   const navigate = async (event, name) => { if (isModifiedClick(event)) return; event.preventDefault(); await actions.activateSubtab(name); };
   const subtabKey = (event) => { if (event.key === ' ' || event.key === 'Spacebar') { event.preventDefault(); event.currentTarget.click(); } };
   const spec = current.canvas;
@@ -354,6 +340,31 @@ export function mountProcessesIsland({ host, state, actions, confirmDiscard, reg
     return buildProcessEditorCommands({ editor: state.currentEditor(), actions });
   });
   registerCleanup(unregisterCommands);
+
+  // The history router (js/nav-history.js) resolved a Processes location from
+  // the URL — a deep link, a reload, or a browser Back/Forward — and wants this
+  // tab to show it, editor included.
+  //
+  // Registered HERE, synchronously during mount, rather than in a component
+  // effect: dashboard.js awaits this island before calling initNavHistory(), so
+  // attaching the listener on the mount path is what guarantees the router's
+  // one-shot restore event cannot be dispatched into the void. A Preact effect
+  // would only run on the next flush, and a deep link that lost the race would
+  // show the list with the editor's URL in the address bar, permanently.
+  //
+  // applyLocation resolves false when it did not land where it was asked
+  // (a refused discard, or a location this tab cannot show) — correct the URL
+  // so it never describes a view that is not on screen. A rejection is treated
+  // the same way rather than left as an unhandled rejection.
+  const restore = (event) => {
+    const loc = event.detail?.location;
+    if (loc?.tab !== 'processes') return;
+    void Promise.resolve(actions.applyLocation(loc))
+      .catch(() => false)
+      .then((ok) => { if (!ok) actions.correctLocation(); });
+  };
+  document.addEventListener('tclaude:restore-location', restore);
+  registerCleanup(() => document.removeEventListener('tclaude:restore-location', restore));
   render(html`<${ProcessesApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />`, host);
   // Rendering null unmounts ProcessEditorBoundary, the sole owner of editor /
   // graph disposal. Do not destroy through state here as well.

@@ -1363,24 +1363,32 @@ test('Processes URL location follows the open template editor and restores from 
     path.includes('worklist') ? { items: [], degradedRuns: [] }
       : path.includes('templates') ? { templates: [{ id: 'release-train' }] }
         : { runs: [] }) });
+  // Capture the correction flag alongside the location: a correction must
+  // REPLACE the current history entry, so the two are not interchangeable.
   const announced = [];
-  const actions = createProcessesActions({
-    state, fetchImpl, notify() {}, dispatchNavigated: (location) => announced.push(location),
-  });
+  const record = (location, { correction = false } = {}) => announced.push({ location, correction });
+  const actions = createProcessesActions({ state, fetchImpl, notify() {}, dispatchNavigated: record });
+  const lastLocation = () => announced.at(-1)?.location;
 
   // Opening the editor puts the template id in the URL...
   await actions.openEditor('release-train');
-  assert.deepEqual(announced.at(-1),
+  assert.deepEqual(lastLocation(),
     { tab: 'processes', subtab: 'templates', selection: 'release-train' });
+  assert.equal(announced.at(-1).correction, false, 'opening is a real navigation, not a fix-up');
 
   // ...and the "← templates" back button drops the segment again, so the two
   // are distinct history entries.
   assert.equal(await actions.closeCanvas(), true);
-  assert.deepEqual(announced.at(-1), { tab: 'processes', subtab: 'templates' });
+  assert.deepEqual(lastLocation(), { tab: 'processes', subtab: 'templates' });
 
-  // A blank scaffold has no saved id to address yet — it stays on the list path.
+  // A blank scaffold has no saved id to address yet — it stays on the list
+  // path. Assert on the announcement COUNT too: the previous close already left
+  // the bare templates location on the tail, so a deepEqual alone would still
+  // pass if openEditor announced nothing at all.
+  const beforeBlank = announced.length;
   await actions.openEditor('new-process', true);
-  assert.deepEqual(announced.at(-1), { tab: 'processes', subtab: 'templates' },
+  assert.equal(announced.length, beforeBlank + 1, 'opening the scaffold did announce');
+  assert.deepEqual(lastLocation(), { tab: 'processes', subtab: 'templates' },
     'an unsaved blank template is not addressable');
 
   // A deep link / reload / browser Back drives applyLocation, which reopens the
@@ -1397,19 +1405,38 @@ test('Processes URL location follows the open template editor and restores from 
     { tab: 'processes', subtab: 'templates', selection: 'release-train' }), true);
   assert.equal(state.canvas.value.id, 'release-train');
 
+  // A run selection is a modelled-but-unwired detail view. applyLocation must
+  // report that it did NOT honour the URL, so the caller corrects the address
+  // bar — otherwise a bookmarked /processes/runs/<id> would describe a run
+  // detail view that is not on screen, forever, across reloads.
+  assert.equal(await actions.applyLocation(
+    { tab: 'processes', subtab: 'runs', selection: 'run-42' }), false,
+  'an unwired run selection is reported as not applied');
+  assert.equal(state.subtab.value, 'runs', 'the subtab part was still honoured');
+  actions.correctLocation();
+  assert.deepEqual(lastLocation(), { tab: 'processes', subtab: 'runs' },
+    'the correction drops the segment that could not be shown');
+  assert.equal(announced.at(-1).correction, true,
+    'a correction replaces the current entry instead of pushing one');
+
   // An unsaved editor refuses a Back-driven restore, so the operator keeps
-  // their work; the island then re-asserts the real location.
+  // their work. Restore the editor location properly first (openEditor alone
+  // would leave the canvas open under the `runs` subtab — a state the UI cannot
+  // actually produce, and one that would short-circuit the check below).
+  assert.equal(await actions.applyLocation(
+    { tab: 'processes', subtab: 'templates', selection: 'release-train' }), true);
   state.setEditor({ dirty: true, model: { dirty: true } });
   const guarded = createProcessesActions({
-    state, fetchImpl, notify() {}, dispatchNavigated: (location) => announced.push(location),
+    state, fetchImpl, notify() {}, dispatchNavigated: record,
     confirmDiscard: async () => false,
   });
   assert.equal(await guarded.applyLocation({ tab: 'processes', subtab: 'runs' }), false);
   assert.equal(state.canvas.value.id, 'release-train', 'the unsaved editor stayed open');
-  guarded.announceLocation();
-  assert.deepEqual(announced.at(-1),
+  guarded.correctLocation();
+  assert.deepEqual(lastLocation(),
     { tab: 'processes', subtab: 'templates', selection: 'release-train' },
     'the URL is corrected back to the view that is actually showing');
+  assert.equal(announced.at(-1).correction, true, 'and as a replace, not a push');
 });
 
 // The wiring the history router depends on: it dispatches `tclaude:restore-location`
@@ -1418,7 +1445,7 @@ test('Processes URL location follows the open template editor and restores from 
 // the editor.
 test('a router restore-location event opens the editor on the mounted Processes island', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+  const [{ createProcessesState }, { createProcessesActions }, { mountProcessesIsland }] = await Promise.all([
     harness.importDashboardModule('js/processes-state.js'),
     harness.importDashboardModule('js/processes-actions.js'),
     harness.importDashboardModule('js/processes-island.js'),
@@ -1426,13 +1453,22 @@ test('a router restore-location event opens the editor on the mounted Processes 
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   const announced = [];
   const actions = createProcessesActions({
-    state, notify() {}, dispatchNavigated: (location) => announced.push(location),
+    state, notify() {}, dispatchNavigated: (location, { correction = false } = {}) =>
+      announced.push({ location, correction }),
     fetchImpl: async (path) => ({ ok: true, json: async () => (
       path.includes('worklist') ? { items: [], degradedRuns: [] }
         : path.includes('templates') ? { templates: [{ id: 'release-train' }] }
           : { runs: [] }) }),
   });
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  // Go through the real mount path, not just <ProcessesApp>: the restore
+  // listener is registered there precisely so it is attached synchronously,
+  // before the router can dispatch into it.
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const cleanups = [];
+  await harness.act(async () => mountProcessesIsland({
+    host, state, actions, confirmDiscard: async () => true,
+    registerCleanup: (fn) => cleanups.push(fn),
+  }));
   await harness.act(() => Promise.resolve());
 
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
@@ -1443,7 +1479,7 @@ test('a router restore-location event opens the editor on the mounted Processes 
   assert.equal(state.canvas.value?.kind, 'editor');
   assert.equal(state.canvas.value?.id, 'release-train', 'the URL id selected the template');
   assert.deepEqual(announced, [], 'restoring from the URL announces nothing back to the router');
-  assert.ok(mounted.container.querySelector('#process-editor-view'), 'the editor view is on screen');
+  assert.ok(host.querySelector('#process-editor-view'), 'the editor view is on screen');
 
   // A location for a different tab is not ours to act on.
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
@@ -1452,5 +1488,24 @@ test('a router restore-location event opens the editor on the mounted Processes 
   await harness.act(() => Promise.resolve());
   assert.equal(state.canvas.value?.id, 'release-train', 'another tab’s location is ignored');
 
-  await mounted.unmount();
+  // A location the island cannot honour must come back as a CORRECTION, so the
+  // router replaces the entry the browser already committed rather than pushing
+  // a new one (which would truncate the forward tail).
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'processes', subtab: 'runs', selection: 'run-42' } },
+  }));
+  for (let i = 0; i < 10 && announced.length === 0; i++) await harness.act(() => Promise.resolve());
+  assert.deepEqual(announced.at(-1), {
+    location: { tab: 'processes', subtab: 'runs' }, correction: true,
+  }, 'the unwired run selection is corrected out of the URL, as a replace');
+
+  // Cleanup must detach the listener, or a remounted island would double-apply.
+  for (const fn of cleanups.reverse()) fn();
+  const settled = announced.length;
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
+    detail: { location: { tab: 'processes', subtab: 'runs', selection: 'run-42' } },
+  }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(announced.length, settled, 'the restore listener is removed on cleanup');
+  host.remove();
 });

@@ -245,6 +245,22 @@ export function toPath(loc) {
   return '/' + segs.join('/');
 }
 
+// decodeSelection percent-decodes a path segment, tolerating a malformed one.
+// decodeURIComponent THROWS on a broken escape (e.g. /processes/templates/%zz),
+// and fromPath runs inside initNavHistory and the popstate handler — so an
+// uncaught URIError there would take out router boot or wedge browser
+// navigation on a hand-typed or truncated URL. A segment we cannot decode is
+// used verbatim: it simply won't match a real entity, which the caller's
+// stale-target handling already copes with.
+function decodeSelection(segment) {
+  if (segment == null) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 // fromPath parses a dashboard pathname back into a canonical location. Unknown
 // tabs / subtabs / stray trailing segments degrade to the nearest valid view
 // via normalizeLocation, so a stale or hand-typed URL never yields an invalid
@@ -254,11 +270,7 @@ export function fromPath(pathname) {
   const parts = clean.split('/').filter(Boolean);
   if (parts.length === 0 || parts[0] === 'dashboard') return defaultLocation();
   const [tab, subtab, selection] = parts;
-  return normalizeLocation({
-    tab,
-    subtab,
-    selection: selection != null ? decodeURIComponent(selection) : undefined,
-  });
+  return normalizeLocation({ tab, subtab, selection: decodeSelection(selection) });
 }
 
 // ---- Stale-target resolution --------------------------------------------

@@ -44,8 +44,11 @@ export function createProcessesActions({
   // this island is signal-driven, so the event fires before Preact commits the
   // new active class, and an open editor's template id lives in state that the
   // DOM does not spell out at all.
-  dispatchNavigated = (location) => document.dispatchEvent(
-    new CustomEvent('tclaude:navigated', location ? { detail: { location } } : undefined),
+  // `correction: true` marks an announcement that is not a user navigation but
+  // this tab telling the router its URL is wrong, which the router must apply
+  // by REPLACING the current entry rather than pushing a new one.
+  dispatchNavigated = (location, { correction = false } = {}) => document.dispatchEvent(
+    new CustomEvent('tclaude:navigated', location ? { detail: { location, correction } } : undefined),
   ),
   mintAttemptID = mintUUID,
 } = {}) {
@@ -140,9 +143,12 @@ export function createProcessesActions({
   }
   // announceLocation tells the router where this tab ended up, reading the
   // authoritative location off the state (see `location` in processes-state.js).
-  // Used after any change the URL should follow, and to re-assert the truth
-  // when a router-driven restore was refused (see applyLocation).
+  // Used after any change the URL should follow.
   function announceLocation() { dispatchNavigated(state.location.value); }
+  // correctLocation reports the same thing, but as a fix to a URL the router
+  // already committed — so it replaces the current history entry instead of
+  // pushing a new one. See applyLocation for the two cases that need it.
+  function correctLocation() { dispatchNavigated(state.location.value, { correction: true }); }
 
   async function activateSubtab(name, { navigate = true } = {}) {
     if (!(await canLeaveEditor())) return false;
@@ -179,17 +185,28 @@ export function createProcessesActions({
   // paths — so the unsaved-changes guard still runs — but suppresses the
   // outgoing navigation event, because the URL is already where it wants to be.
   //
-  // Returns false when the user refused to discard an unsaved editor; the
-  // caller re-asserts the real location so the URL never lies about the view.
+  // Returns false when it did NOT end up where it was asked to go, which
+  // happens two ways:
+  //   - the operator refused to discard an unsaved editor, so we stayed put;
+  //   - the URL named something this tab cannot show — today a run selection,
+  //     /processes/runs/<id>, which is a modelled but unwired detail view.
+  // Either way the caller corrects the URL, so a bookmarked or hand-typed path
+  // can never leave the address bar permanently describing a view that is not
+  // on screen.
+  //
+  // A template id that no longer exists is deliberately NOT treated this way:
+  // the editor itself reports it, and evicting the id on a transient
+  // template-list failure would break a perfectly good deep link on reload.
   async function applyLocation({ subtab, selection } = {}) {
     const name = ['templates', 'runs', 'worklist'].includes(subtab) ? subtab : 'templates';
-    const target = name === 'templates' ? String(selection || '') : '';
+    const requested = String(selection || '');
+    const target = name === 'templates' ? requested : '';
     // Already showing exactly this? Nothing to do — and nothing to prompt about.
     const showing = state.location.value;
-    if (showing.subtab === name && (showing.selection || '') === target) return true;
+    if (showing.subtab === name && (showing.selection || '') === target) return target === requested;
     if (!(await activateSubtab(name, { navigate: false }))) return false;
     if (target) await openEditor(target, false, '', { navigate: false });
-    return true;
+    return target === requested;
   }
   async function summonScribe(anchor = { kind: 'library' }, handoffOptions = {}) {
     try {
@@ -541,7 +558,7 @@ export function createProcessesActions({
 
   function refreshActive() { return load(state.subtab.value); }
   return Object.freeze({
-    load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation,
+    load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
     openRename, closeRename, submitRename, renameTemplate,
