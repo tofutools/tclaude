@@ -34,16 +34,16 @@ export function openTermModal(options) {
   );
 }
 
-export function openTerminalPane(seedOrPromise) {
+export function openTerminalPane(seedOrPromise, { reveal = true } = {}) {
   return Promise.resolve(seedOrPromise).then((rawSeed) => {
     const normalized = normalizeSeed(rawSeed);
     const seed = normalized && { ...normalized, initialRetry: normalized.initialRetry !== false };
     if (!seed) return null;
     const current = controller;
     if (!current) return null;
-    if (!prepareRuntime) return current.openPane(seed);
+    if (!prepareRuntime) return current.openPane(seed, { reveal });
     return prepareRuntime().then(
-      () => controller === current ? current.openPane(seed) : null,
+      () => controller === current ? current.openPane(seed, { reveal }) : null,
       (error) => {
         console.error('terminal runtime load failed:', error);
         return null;
@@ -52,14 +52,14 @@ export function openTerminalPane(seedOrPromise) {
   });
 }
 
-export function openWebWindowPane(agent, label) {
+export function openWebWindowPane(agent, label, options) {
   openTerminalPane({
     ws: `/api/open-window-ws/${encodeURIComponent(agent)}`,
     label,
     key: `window:${agent}`,
     hideConv: agent,
     agent,
-  });
+  }, options);
 }
 
 export function openWebTermPane(agent, label, whichOrPromise) {
@@ -83,8 +83,8 @@ export function openGroupWebTermPane(group, label) {
   });
 }
 
-export function focusTerminalForConv(selectors) {
-  return controller?.focusForSelectors(selectors) || false;
+export function focusTerminalForConv(selectors, options) {
+  return controller?.focusForSelectors(selectors, options) || false;
 }
 
 export function closeTerminalsForConvs(selectors) {

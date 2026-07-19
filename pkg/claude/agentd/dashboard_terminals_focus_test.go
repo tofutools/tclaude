@@ -31,10 +31,10 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 	// native /api/jump — otherwise it would raise an OS window even when the
 	// live view is the in-browser terminal.
 	rows := readDashboardJS(t, "row-action-handler.js")
-	focusIdx := strings.Index(rows, "focusTerminalForConv([agent])")
+	focusIdx := strings.Index(rows, "focusTerminalForConv([agent], terminalPaneOptions)")
 	jumpIdx := strings.Index(rows, "/api/jump/")
 	if focusIdx < 0 || jumpIdx < 0 || focusIdx > jumpIdx {
-		t.Error("row-action-handler.js 'jump' case must call focusTerminalForConv([agent]) BEFORE POSTing " +
+		t.Error("row-action-handler.js 'jump' case must call focusTerminalForConv([agent], terminalPaneOptions) BEFORE POSTing " +
 			"/api/jump — so an open web pane is preferred over a native window")
 	}
 
@@ -44,6 +44,40 @@ func TestFocusJumpsToOpenPane(t *testing.T) {
 	pJump := strings.Index(pal, "/api/jump/")
 	if pFocus < 0 || pJump < 0 || pFocus > pJump {
 		t.Error("palette.js jumpAgent must call focusTerminalForConv([conv]) BEFORE POSTing /api/jump")
+	}
+}
+
+// TestGroupTerminalActionsSupportBackgroundOpen pins the modifier intent from
+// the delegated click boundary through both Groups-tab launchers and into the
+// terminal shell's reveal option. Ctrl and Cmd deliberately share one boolean
+// so either works regardless of the operator's platform.
+func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
+	rows := readDashboardJS(t, "row-actions.js") + readDashboardJS(t, "row-action-handler.js")
+	for _, needle := range []string{
+		"Boolean(event?.ctrlKey || event?.metaKey)",
+		"openInBackground: Boolean(",
+		"const terminalPaneOptions = { reveal: action.openInBackground !== true }",
+		"focusTerminalForConv([agent], terminalPaneOptions)",
+		"openWebWindowPane(agent, label, terminalPaneOptions)",
+	} {
+		if !strings.Contains(rows, needle) {
+			t.Errorf("Groups terminal background-open wiring missing %q", needle)
+		}
+	}
+
+	shell := readDashboardJS(t, "terminals-tab.js") +
+		readDashboardJS(t, "terminal-shell-actions.js") +
+		readDashboardJS(t, "terminal-shell-state.js")
+	for _, needle := range []string{
+		"openTerminalPane(seedOrPromise, { reveal = true } = {})",
+		"current.openPane(seed, { reveal })",
+		"state.openPane(seed, options)",
+		"if (reveal) requestReveal()",
+		"state.activatePane(key, options)",
+	} {
+		if !strings.Contains(shell, needle) {
+			t.Errorf("terminal shell background-open wiring missing %q", needle)
+		}
 	}
 }
 

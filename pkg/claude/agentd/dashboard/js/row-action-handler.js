@@ -45,6 +45,10 @@ import { lastSnapshot, webTerminalDefault } from './dashboard.js';
 export async function handleRowAction(action) {
   const data = action.data;
   const act = data.act;
+  // Ctrl/Cmd-click on the Groups tab's terminal launchers keeps the current
+  // dashboard tab visible while the pane opens (or becomes active) behind it.
+  // Plain clicks and every non-click caller retain the historical reveal.
+  const terminalPaneOptions = { reveal: action.openInBackground !== true };
   const group = data.group;
   const conv = data.conv;
   // `agent` is the per-agent action SELECTOR: the rotation-immune stable
@@ -226,14 +230,14 @@ export async function handleRowAction(action) {
         // If this agent already has an open web terminal / window pane in the
         // dashboard's Terminals tab, jump to THAT instead of raising a native
         // OS window — the browser terminal is the live view the human means.
-        if (focusTerminalForConv([agent])) { toast(`focused: ${label}`); return; }
+        if (focusTerminalForConv([agent], terminalPaneOptions)) { toast(`focused: ${label}`); return; }
         // With web terminals as the default (config dashboard.default_terminal
         // = "web"), "focus" opens the agent's live session as a browser pane
         // rather than raising a native OS window. openWebWindowPane keys on
         // the agent selector, so this focuses an existing pane rather than
         // duplicating (the focusTerminalForConv check above already handled
         // the common already-open case).
-        if (webTerminalDefault()) { openWebWindowPane(agent, label); toast(`focused: ${label}`); return; }
+        if (webTerminalDefault()) { openWebWindowPane(agent, label, terminalPaneOptions); toast(`focused: ${label}`); return; }
         // Non-destructive; no confirm modal, just fire-and-toast.
         const r = await fetch(`/api/jump/${encodeURIComponent(agent)}`, {
           method: 'POST', credentials: 'same-origin',
@@ -337,7 +341,7 @@ export async function handleRowAction(action) {
         // closing the pane runs the reliable server-side detach. Same helper
         // the "focus" / "open window" actions use when web terminals are the
         // default.
-        openWebWindowPane(agent, label);
+        openWebWindowPane(agent, label, terminalPaneOptions);
         return;
       }
       case 'focus-pending': {

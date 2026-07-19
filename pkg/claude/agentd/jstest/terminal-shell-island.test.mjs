@@ -217,6 +217,51 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(modalHost.childElementCount, 0);
 });
 
+test('background pane open and focus leave the current dashboard tab visible', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host, badgeHost, terminals } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    confirm: async () => true,
+  });
+
+  await harness.act(async () => {
+    controller.openTerminalPane({
+      ws: '/background-one', key: 'background-one', label: 'one', agent: 'agt_one',
+    }, { reveal: false });
+    await Promise.resolve();
+  });
+  assert.equal(terminals.classList.contains('active'), false,
+    'background open leaves Groups visible');
+  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true);
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), false,
+    'the Terminals tab becomes available even though it is not selected');
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 1,
+    'background open still creates a terminal pane');
+  assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '1');
+
+  await harness.act(async () => {
+    controller.openTerminalPane({
+      ws: '/background-two', key: 'background-two', label: 'two', agent: 'agt_two',
+    }, { reveal: false });
+    await Promise.resolve();
+  });
+  assert.equal(terminals.classList.contains('active'), false);
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 2,
+    'several panes can accumulate before visiting Terminals');
+  assert.equal(badgeHost.querySelector('#terminals-badge').textContent, '2');
+
+  await harness.act(() => controller.focusTerminalForConv(['agt_one'], { reveal: false }));
+  assert.equal(terminals.classList.contains('active'), false,
+    'background focus selects an existing pane without revealing Terminals');
+  assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one');
+
+  cleanup();
+});
+
 test('throwaway modal omits Detach, ignores Escape, and confirms backdrop close', async (t) => {
   const harness = await createPreactHarness(t);
   const { modalHost } = installHosts(harness);

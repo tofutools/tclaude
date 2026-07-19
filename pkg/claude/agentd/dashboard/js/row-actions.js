@@ -12,9 +12,10 @@ export function liveActionSource(event, selector = '[data-act]') {
   return document.documentElement.contains(source) ? source : null;
 }
 
-export function actionDescriptor(source) {
+export function actionDescriptor(source, event = null) {
   return Object.freeze({
     producerId: source.id || '',
+    openInBackground: Boolean(event?.ctrlKey || event?.metaKey),
     data: Object.freeze({ ...source.dataset }),
   });
 }
@@ -28,7 +29,7 @@ export function bindRowActions() {
     if (!source) return;
     // data-act controls can live inside <summary>; never also toggle it.
     event.preventDefault();
-    void handleRowAction(actionDescriptor(source));
+    void handleRowAction(actionDescriptor(source, event));
   };
   document.addEventListener('click', onClick);
 

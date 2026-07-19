@@ -22,6 +22,19 @@ test('terminal shell state owns stable pane, active, reveal, and modal descripto
 
   const second = state.openPane({ ws: '/two', key: 'agent:two', label: 'two', agent: 'agt_two' });
   assert.equal(state.activeKey.value, second.key);
+  const revealBeforeBackgroundFocus = state.revealRequest.value;
+  assert.equal(state.openPane({ ws: '/ignored', key: 'agent:one' }, { reveal: false }), first,
+    'a background duplicate selects the existing pane');
+  assert.equal(state.activeKey.value, first.key);
+  assert.equal(state.revealRequest.value, revealBeforeBackgroundFocus,
+    'background duplicate selection does not request a tab reveal');
+  const background = state.openPane({
+    ws: '/background', key: 'agent:background', label: 'background', agent: 'agt_background',
+  }, { reveal: false });
+  assert.equal(state.activeKey.value, background.key);
+  assert.equal(state.view.value.count, 3, 'a background request still creates its pane');
+  assert.equal(state.revealRequest.value, revealBeforeBackgroundFocus,
+    'opening a new background pane does not request a tab reveal');
   assert.equal(state.activatePane(first.key), true);
   assert.equal(state.activeKey.value, first.key);
   assert.equal(state.removePane(first.key), first);

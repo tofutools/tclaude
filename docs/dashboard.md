@@ -679,6 +679,14 @@ open-terminal, and bulk focus from the **🪟 windows…** modal into panes in t
 dashboard's **Terminals** tab. Bulk unfocus still detaches the selected terminal
 clients and closes matching web panes; it never stops the agents.
 
+On the Groups tab, **Ctrl-click** or **Cmd-click** the Remote Access phone
+indicator or **web window** action to open that web terminal in the background.
+The same modifier behavior applies to the per-agent **focus** button when web
+terminals are the default or that agent already has a web pane. The Terminals
+tab appears and collects each pane, but the dashboard stays on Groups so several
+agents can be opened before switching tabs. Either modifier is accepted on
+every supported desktop platform.
+
 An agent terminal pane also has a **✉ Message** button. Pressing
 **Ctrl+M** or **Cmd+M** while that pane has focus opens the same composer with
 the pane's agent locked as recipient. The composer accepts text, files,

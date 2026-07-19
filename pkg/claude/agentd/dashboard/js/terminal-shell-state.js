@@ -24,14 +24,14 @@ export function createTerminalShellState() {
     revealRequest.value += 1;
   }
 
-  function openPane(raw) {
+  function openPane(raw, { reveal = true } = {}) {
     const seed = normalizeSeed(raw);
     if (!seed) return null;
     const key = terminalSeedKey(seed);
     const existing = panes.value.find((pane) => pane.key === key);
     if (existing) {
       activeKey.value = key;
-      requestReveal();
+      if (reveal) requestReveal();
       return existing;
     }
     paneSequence += 1;
@@ -43,7 +43,7 @@ export function createTerminalShellState() {
     });
     panes.value = [...panes.value, pane];
     activeKey.value = key;
-    requestReveal();
+    if (reveal) requestReveal();
     return pane;
   }
 

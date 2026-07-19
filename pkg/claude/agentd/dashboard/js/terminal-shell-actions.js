@@ -43,9 +43,9 @@ export function createTerminalShellActions({
     }
   }
 
-  function openPane(seed) {
+  function openPane(seed, options) {
     if (disposed) return null;
-    return state.openPane(seed);
+    return state.openPane(seed, options);
   }
 
   async function receiveHandoffPane(seed) {
@@ -89,9 +89,9 @@ export function createTerminalShellActions({
     }
   }
 
-  function focusForSelectors(selectors) {
+  function focusForSelectors(selectors, options) {
     const key = state.findPaneKey(selectors);
-    return key ? state.activatePane(key) : false;
+    return key ? state.activatePane(key, options) : false;
   }
 
   async function popOutPane(key) {

@@ -65,8 +65,13 @@ test('row root delegation installs once, cleans every listener, and survives sta
   producer.dataset.conv = 'conv-after';
   assert.deepEqual(descriptor, {
     producerId: 'frozen-producer',
+    openInBackground: false,
     data: { act: 'documented-cross-feature-route', conv: 'conv-before' },
   }, 'delegation freezes plain data instead of retaining a live DOM producer');
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    assert.equal(actionDescriptor(producer, { [modifier]: true }).openInBackground, true,
+      `${modifier} marks a delegated click as a background terminal request`);
+  }
   assert.equal(Object.isFrozen(descriptor), true);
   assert.equal(Object.isFrozen(descriptor.data), true);
   producer.remove();
