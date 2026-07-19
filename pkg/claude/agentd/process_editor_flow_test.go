@@ -216,3 +216,71 @@ func TestProcessEditorBlankFirstSaveUsesEmptyBaseHash(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, dup.Code, dup.Body.String())
 	assert.Contains(t, dup.Body.String(), `"code":"process_template_conflict"`)
 }
+
+// The dashboard's list-row rename dialog does not send the editor's full edit
+// view. It sends exactly the four decodable keys, reusing the head's edges and
+// layout verbatim and changing only the display name. This asserts that shape
+// preserves everything the rename is not supposed to touch — the graph, the
+// declared params, and above all the editor layout, which is authoring state
+// the operator would otherwise silently lose by renaming.
+func TestProcessListRenameDialogBodyPreservesLayoutGraphAndParams(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	seed := processRESTTemplate("rename-preserves", "before rename", 40)
+	seed.Params = map[string]model.Param{
+		"release": {Type: "string", Description: "Release to ship", Required: new(true)},
+	}
+	_, err = fs.PutTemplate(t.Context(), seed)
+	require.NoError(t, err)
+
+	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/rename-preserves", nil)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+	var head processEditResponse
+	testharness.DecodeJSON(t, getRec, &head)
+	require.NotNil(t, head.Layout, "the seeded layout must reach the dialog to be preserved")
+
+	// Exactly the body processes-actions.js submitRename builds.
+	renamed := *head.Template
+	renamed.Name = "Renamed from the list"
+	body := map[string]any{
+		"template": &renamed, "edges": head.Edges, "layout": head.Layout, "sourceHash": head.SourceHash,
+	}
+	saveRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/rename-preserves", body)
+	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
+
+	reloadRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/rename-preserves", nil)
+	require.Equal(t, http.StatusOK, reloadRec.Code, reloadRec.Body.String())
+	var reloaded processEditResponse
+	testharness.DecodeJSON(t, reloadRec, &reloaded)
+
+	assert.Equal(t, "Renamed from the list", reloaded.Template.Name)
+	assert.Equal(t, "rename-preserves", reloaded.Template.ID, "rename never moves the store key")
+	assert.Equal(t, head.Layout, reloaded.Layout, "editor layout survives a rename")
+	assert.Equal(t, head.Edges, reloaded.Edges, "the graph survives a rename")
+	assert.Equal(t, head.Template.Nodes, reloaded.Template.Nodes)
+	assert.Equal(t, head.Template.Params, reloaded.Template.Params, "declared params survive a rename")
+	assert.Equal(t, head.Template.Description, reloaded.Template.Description)
+	assert.Equal(t, head.Template.Doc, reloaded.Template.Doc)
+	assert.Equal(t, head.Template.Start, reloaded.Template.Start)
+
+	// Clearing the name is a real edit, not a no-op, and still keeps the id.
+	cleared := *reloaded.Template
+	cleared.Name = ""
+	clearRec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/rename-preserves", map[string]any{
+		"template": &cleared, "edges": reloaded.Edges, "layout": reloaded.Layout, "sourceHash": reloaded.SourceHash,
+	})
+	require.Equal(t, http.StatusCreated, clearRec.Code, clearRec.Body.String())
+	listRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, listRec.Code, listRec.Body.String())
+	var list struct {
+		Templates []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"templates"`
+	}
+	testharness.DecodeJSON(t, listRec, &list)
+	require.Len(t, list.Templates, 1)
+	assert.Equal(t, "rename-preserves", list.Templates[0].ID)
+	assert.Empty(t, list.Templates[0].Name, "a cleared name falls back to the id in the list")
+}

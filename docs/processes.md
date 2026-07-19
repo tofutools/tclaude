@@ -703,9 +703,12 @@ to showing its id.
 Rename a template from the **rename** button on its row in the Templates list,
 or from the display-name field in the editor's **template settings…** inspector.
 Both paths write the name through the ordinary content-addressed save, so a
-rename is a normal new version with the usual conflict check rather than a
-mutation of history; existing runs and pinned refs are unaffected. Renaming
-requires `process.templates.manage`.
+rename is a normal new version rather than a mutation of history; existing runs
+and pinned refs are unaffected. The list-row dialog saves against the version it
+observed when it opened, so a template edited by an agent or another tab while
+the dialog sat open is reported as a conflict instead of being overwritten.
+The underlying endpoint requires `process.templates.manage`, which the local
+operator dashboard already satisfies.
 
 The dashboard template editor can declare params and instantiate any clean,
 saved version. Instantiation always sends the exact `id@sha256:<hash>` currently

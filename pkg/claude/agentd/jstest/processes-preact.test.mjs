@@ -1006,18 +1006,20 @@ test('renaming a template round-trips the head edit view and changes only the di
   ]);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
   const head = {
-    template: { id: 'ship it', name: 'Old name', description: 'keep me', nodes: { a: {} } },
-    edges: [{ from: 'a', to: 'b' }], layout: { nodes: { a: { x: 4, y: 9 } } },
-    sourceHash: 'head-source', currentRef: `ship it@sha256:${'a'.repeat(64)}`,
+    template: { id: 'ship-it', name: 'Old name', description: 'keep me', nodes: { a: {} } },
+    edges: [{ from: 'a', to: 'b', outcome: '' }], layout: { nodes: { a: { x: 4, y: 9 } } },
+    sourceHash: 'head-source', currentRef: `ship-it@sha256:${'a'.repeat(64)}`,
+    // Read-only view fields the save handler rejects as unknown.
+    semanticHash: 'a'.repeat(64), source: 'id: ship-it\n', diagnostics: [], authorship: [],
   };
   const requests = [];
   const actions = createProcessesActions({
     state, notify() {},
     fetchImpl: async (path, options = {}) => {
       requests.push({ path, options });
-      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{ id: 'ship it', name: 'Old name' }] }) };
-      if (path === '/v1/process/templates/ship%20it' && options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'ship it@sha256:new' }) };
-      if (path === '/v1/process/templates/ship%20it') return { ok: true, json: async () => head };
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{ id: 'ship-it', name: 'Old name', latestVersion: { sourceHash: 'head-source' } }] }) };
+      if (path === '/v1/process/templates/ship-it' && options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'ship-it@sha256:new' }) };
+      if (path === '/v1/process/templates/ship-it') return { ok: true, json: async () => head };
       throw new Error(`unexpected ${path}`);
     },
   });
@@ -1038,14 +1040,18 @@ test('renaming a template round-trips the head edit view and changes only the di
   for (let i = 0; i < 10 && state.rename.value; i++) await harness.act(() => Promise.resolve());
 
   const post = requests.find((request) => request.options.method === 'POST');
-  assert.equal(post.path, '/v1/process/templates/ship%20it', 'the id is percent-encoded into the save path');
+  assert.equal(post.path, '/v1/process/templates/ship-it');
   const body = JSON.parse(post.options.body);
+  // The save handler sets DisallowUnknownFields, so forwarding the whole head
+  // edit view would 400 in production while still satisfying every value
+  // assertion below. Pin the key set so that refactor cannot pass silently.
+  assert.deepEqual(Object.keys(body).sort(), ['edges', 'layout', 'sourceHash', 'template']);
   assert.equal(body.template.name, 'New name');
-  assert.equal(body.template.id, 'ship it', 'the immutable id is preserved');
+  assert.equal(body.template.id, 'ship-it', 'the immutable id is preserved');
   assert.equal(body.template.description, 'keep me', 'unrelated semantics survive the rename');
   assert.deepEqual(body.edges, head.edges, 'edges round-trip untouched');
   assert.deepEqual(body.layout, head.layout, 'editor layout round-trips untouched');
-  assert.equal(body.sourceHash, 'head-source', 'the rename saves against the head it read');
+  assert.equal(body.sourceHash, 'head-source', 'the rename saves against the observed version');
   assert.equal(state.rename.value, null, 'a successful rename closes the dialog');
   await mounted.unmount();
 });
@@ -1087,4 +1093,50 @@ test('renaming to the unchanged current name closes without touching the store',
   assert.equal(await actions.submitRename('  Same  '), true, 'a whitespace-only edit is still a no-op');
   assert.equal(calls, 0, 'an unchanged name commits no new version');
   assert.equal(state.rename.value, null);
+});
+
+test('a rename saves against the version observed when the dialog opened, not the head read at submit', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'drifted@sha256:new' }) };
+      // The head moved while the dialog sat open: a concurrent writer committed
+      // a newer version than the one the operator was looking at.
+      return { ok: true, json: async () => ({ template: { id: 'drifted', name: 'Renamed by an agent' }, sourceHash: 'v2-after-agent-edit' }) };
+    },
+  });
+  await actions.openRename({ id: 'drifted', name: 'What the operator saw', sourceHash: 'v1-when-dialog-opened' });
+  await actions.submitRename('Operator name');
+  const body = JSON.parse(requests.find((request) => request.options.method === 'POST').options.body);
+  assert.equal(body.sourceHash, 'v1-when-dialog-opened',
+    'saving against the submit-time head would silently clobber the concurrent edit instead of conflicting');
+});
+
+test('a rename with no observed version still saves against the head it read', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (options.method === 'POST') return { ok: true, status: 201, json: async () => ({}) };
+      return { ok: true, json: async () => ({ template: { id: 'hashless' }, sourceHash: 'head-only' }) };
+    },
+  });
+  await actions.openRename({ id: 'hashless', name: '' });
+  assert.equal(await actions.submitRename('Named at last'), true);
+  const body = JSON.parse(requests.find((request) => request.options.method === 'POST').options.body);
+  assert.equal(body.sourceHash, 'head-only', 'a list row without a published hash still renames rather than dead-locking');
+  assert.equal(body.template.name, 'Named at last');
 });

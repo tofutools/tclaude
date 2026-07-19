@@ -12929,14 +12929,18 @@ body.wizard .process-unnamed { color: #a99bc0; }
 body.wizard .process-param-row,
 body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }
 body.wizard .process-param-row input[type="text"],
+body.wizard .process-rename-dialog input[type="text"],
 body.wizard .process-instantiate-field input[type="text"],
 body.wizard .process-instantiate-field input[type="number"],
 body.wizard .process-instantiate-field select { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-param-row input:focus,
+body.wizard .process-rename-dialog input:focus,
 body.wizard .process-instantiate-field input:focus,
 body.wizard .process-instantiate-field select:focus { border-color: #d4af37; outline: none; }
 body.wizard .process-param-check,
+body.wizard .process-rename-dialog > label,
 body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean) { color: #f3e6c0; }
+body.wizard .process-rename-dialog code { color: #d4af37; }
 
 /* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======
    One component, two modes: the editor's modal and the viewer's read-only
