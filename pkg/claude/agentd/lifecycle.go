@@ -542,8 +542,17 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 	// it; skip the retry rather than risk re-injecting blind.
 	if panePID > 0 {
 		scheduleSoftExitRetry(convID, sess.TmuxSession, panePID, exitCmd, reason, intentRef)
+	} else if alive, known := lifecycleSessionAlive(sess.TmuxSession); known && !alive {
+		// Confirmed session disappearance: the delivered /exit is landing and
+		// the reaper owns attribution.
 	} else {
-		clearFailedExitIntent(intentRef)
+		// An unreadable pid is not a stop failure — the /exit above WAS
+		// delivered (a responsive pane can even exit synchronously after
+		// Enter, taking its pid with it). Instantly clearing here would erase
+		// that delivered exit's attribution, so mirror the retry engines'
+		// unknown treatment: retain the intent through the bounded observer
+		// window instead.
+		scheduleUnknownIntentCleanupCurrent(intentRef)
 	}
 	return true
 }
