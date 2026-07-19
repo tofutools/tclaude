@@ -430,6 +430,57 @@ test('node dialog traps Tab and restores its invoker on forced teardown', async 
   assert.equal(harness.document.activeElement, invoker, 'forced parent teardown restores the invoker');
 });
 
+test('node dialog opens with the label field focused, falling back when read-only', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openNodeDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-node-dialog.js'),
+  ]);
+  const model = new ProcessEditModel(taskView());
+  const dispose = openNodeDialog({ model, nodeId: 'work' });
+  await settle();
+  const overlay = harness.document.querySelector('.process-node-modal');
+  const label = overlay.querySelector('.process-node-detail > .process-node-section .process-node-input');
+  assert.equal(harness.document.activeElement, label, 'editing a node lands the caret in the label field');
+  dispose(null);
+
+  const viewDispose = openNodeDialog({ model, nodeId: 'work', mode: 'view' });
+  await settle();
+  const readOnly = harness.document.querySelector('.process-node-modal');
+  assert.equal(readOnly.querySelector('.process-node-input').disabled, true, 'view mode disables the label field');
+  assert.equal(
+    harness.document.activeElement,
+    readOnly.querySelector('.process-node-close'),
+    'a disabled label field yields to the first focusable control',
+  );
+  viewDispose(null);
+});
+
+test('focusing the label on open does not make an untouched node dirty', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ ProcessEditModel }, { openNodeDialog }] = await Promise.all([
+    harness.importDashboardModule('js/process-edit-model.js'),
+    harness.importDashboardModule('js/process-node-dialog.js'),
+  ]);
+  // A name the mutators would normalize: flushing the focused field on close
+  // must not rewrite the draft into a false "you have unsaved changes".
+  const source = taskView();
+  source.template.nodes.work.name = 'Work ';
+  const model = new ProcessEditModel(source);
+  let confirmations = 0;
+  const dispose = openNodeDialog({
+    model, nodeId: 'work',
+    confirmDiscard: async () => { confirmations += 1; return true; },
+  });
+  await settle();
+  assert.equal(dispose.isDirty(), false, 'merely opening a node stages no change');
+  await dispose.requestClose();
+  await settle();
+  assert.equal(confirmations, 0, 'closing an untouched node does not prompt to discard');
+  assert.equal(model.undoStack.length, 0);
+  dispose(null);
+});
+
 test('node dialog restores and persists its own resize without bypassing dirty focus lifecycle', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ ProcessEditModel }, { openNodeDialog }, { dashPrefs }] = await Promise.all([

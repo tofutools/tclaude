@@ -23,7 +23,7 @@ function replaceNode(target, source) {
 
 function NodeField({
   fieldKey, label, value = '', apply, readOnly, multiline = false,
-  hint = '', placeholder = '', invalid = false,
+  hint = '', placeholder = '', invalid = false, autofocus = false,
 }) {
   const [raw, setRaw] = useState(String(value ?? ''));
   const input = useRef(null);
@@ -34,6 +34,10 @@ function NodeField({
   const commit = () => {
     if (!apply || readOnly || composing.current) return;
     const current = input.current?.value ?? raw;
+    // A no-op commit is not free: mutators normalize (trim) as they apply, so
+    // re-applying an untouched value can rewrite the draft and read as dirty.
+    // Close paths flush the focused field, so this fires on every dismissal.
+    if (current === String(value ?? '')) return;
     setRaw(current);
     const result = apply(fieldKey, current);
     if (result?.blocked) {
@@ -47,7 +51,7 @@ function NodeField({
     <span class="process-node-field-label">${label}</span>
     <${Tag} ref=${input} class=${multiline ? 'process-node-textarea process-scroll-surface' : 'process-node-input'}
       type=${multiline ? undefined : 'text'} rows=${multiline ? 3 : undefined}
-      spellcheck="false" placeholder=${placeholder} disabled=${readOnly}
+      spellcheck="false" placeholder=${placeholder} disabled=${readOnly} autofocus=${autofocus}
       value=${raw} aria-invalid=${invalid ? 'true' : undefined}
       onCompositionStart=${() => { composing.current = true; }}
       onCompositionEnd=${(event) => { composing.current = false; setRaw(event.currentTarget.value); }}
@@ -147,7 +151,10 @@ export function NodeDetail({ model, nodeId, node, mode = 'edit', commit, invalid
         onMouseDown=${(event) => event.preventDefault()} onClick=${() => { void onClose(); }}>✕</button>`}
     </div>
     <${Section} title=${type === 'start' || type === 'end' ? 'label / doc' : 'node'}>
-      ${field('meta.name', 'label', node.name, (draft, value) => setNodeText(draft, 'name', value))}
+      ${/* Opening a node lands the caret in the field you almost always came to
+           change. Read-only needs no special case: the input is disabled, so it
+           drops out of the dialog's focusable set and focus falls back on its own. */
+        field('meta.name', 'label', node.name, (draft, value) => setNodeText(draft, 'name', value), { autofocus: true })}
       ${type !== 'start' && type !== 'end' && field('meta.description', 'description', node.description, (draft, value) => setNodeText(draft, 'description', value))}
       ${field('meta.doc', 'doc', node.doc, (draft, value) => setNodeText(draft, 'doc', value), { multiline: true })}
     </${Section}>
