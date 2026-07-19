@@ -1,11 +1,11 @@
 import { Fragment, h } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import htm from 'htm';
 import {
   formatUsageAxisTick, usageAxisStart, usageAxisTicks, usageForecastPoint,
 } from './usage-history-axis.js';
 import {
-  formatUsageDuration, usageProviderLabel, usageWindowLabel,
+  formatUsageDuration, usageScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -77,36 +77,53 @@ function nearestCandidate(best, candidate) {
   return best;
 }
 
-function beforeResetLabel(resetAt, time) {
-  if (resetAt === null) return 'reset time unknown';
+// The wizard voice for the chart's own labels — see the vocabulary note in
+// usage-history-model.js for why these are plain strings rather than the
+// two-spans `Words` trick (SVG <text> cannot hold a <span> twin).
+function beforeResetLabel(resetAt, time, wizard = false) {
+  if (resetAt === null) return wizard ? 'hour of replenishment unknown' : 'reset time unknown';
   const delta = resetAt - time;
-  if (Math.abs(delta) <= 60_000) return 'at reset';
+  if (Math.abs(delta) <= 60_000) return wizard ? 'at replenishment' : 'at reset';
+  const word = wizard ? 'replenishment' : 'reset';
   return delta > 0
-    ? `${formatUsageDuration(delta)} before reset`
-    : `${formatUsageDuration(delta)} after reset`;
+    ? `${formatUsageDuration(delta)} before ${word}`
+    : `${formatUsageDuration(delta)} after ${word}`;
 }
 
-function relativeMarkerTime(at, now) {
+function relativeMarkerTime(at, now, wizard = false) {
   const delta = at - now;
   if (Math.abs(delta) <= 60_000) return 'now';
-  return delta > 0 ? `${formatUsageDuration(delta)} remaining` : `${formatUsageDuration(delta)} ago`;
+  if (delta > 0) return wizard ? `${formatUsageDuration(delta)} hence` : `${formatUsageDuration(delta)} remaining`;
+  return `${formatUsageDuration(delta)} ago`;
 }
 
-function resetTimingLabel(resetAt, now) {
-  if (resetAt === null) return 'Reset time unknown';
+function resetTimingLabel(resetAt, now, wizard = false) {
+  if (resetAt === null) return wizard ? 'The hour of replenishment is unknown' : 'Reset time unknown';
   const delta = resetAt - now;
-  if (Math.abs(delta) <= 60_000) return 'Quota resets now';
+  if (Math.abs(delta) <= 60_000) return wizard ? 'The reserves replenish now' : 'Quota resets now';
+  if (wizard) {
+    return delta > 0
+      ? `The reserves replenish in ${formatUsageDuration(delta)}`
+      : `The reserves replenished ${formatUsageDuration(delta)} ago`;
+  }
   return delta > 0
     ? `Quota resets in ${formatUsageDuration(delta)}`
     : `Reported quota reset ${formatUsageDuration(delta)} ago`;
 }
 
-export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168 }) {
+export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 168, wizard = false }) {
+  const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const [tooltip, setTooltip] = useState(null);
   const [keyboardPointAt, setKeyboardPointAt] = useState(null);
   const [keyboardResetAt, setKeyboardResetAt] = useState(null);
+  // A tooltip's strings are baked when it is shown, so an OPEN one (a
+  // keyboard-focused marker holds it open indefinitely) would keep the
+  // previous theme's voice after a flip — the one path the island's repaint
+  // does not reach. Dismiss it instead of trying to rebuild it: the hover or
+  // focus that produced it will produce it again in the new voice.
+  useEffect(() => { setTooltip(null); }, [wizard]);
   const points = (series.points || []).map((point) => ({ ...point, time: finiteDate(point.at) })).filter((point) => point.time !== null);
-  if (!points.length) return html`<div class="usage-chart-empty">No samples in this range.</div>`;
+  if (!points.length) return html`<div class="usage-chart-empty">${w('No samples in this range.', 'No readings in this span of the scrying.')}</div>`;
   const now = finiteDate(generatedAt) ?? points[points.length - 1].time;
   const start = usageAxisStart(finiteDate(from), points[0].time, now);
   const forecast = series.forecast || {};
@@ -145,15 +162,15 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     ? keyboardResetAt
     : resetMarkers.length - 1;
   const xTicks = usageAxisTicks(start, horizon);
-  const scope = `${usageProviderLabel(series.provider)} · ${usageWindowLabel(series.window_name, series.duration_seconds)} window`;
+  const scope = usageScopeLabel(series, wizard, ' · ');
   const showForecastTooltip = (ratio) => {
     const hoverPoint = usageForecastPoint(latest.time, latest.pct, rate, forecastAt, ratio);
     setTooltip({
-      x: x(hoverPoint.time), y: y(hoverPoint.pct), tone: 'forecast', title: 'Prediction',
+      x: x(hoverPoint.time), y: y(hoverPoint.pct), tone: 'forecast', title: w('Prediction', 'Prophecy'),
       lines: [
         scope,
         `${hoverPoint.pct.toFixed(1)}% · ${new Date(hoverPoint.time).toLocaleString()}`,
-        beforeResetLabel(resetAt, hoverPoint.time),
+        beforeResetLabel(resetAt, hoverPoint.time, wizard),
       ],
     });
   };
@@ -162,25 +179,28 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
   };
   const hideTooltip = () => setTooltip(null);
   const showPointTooltip = (point) => {
-    const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
-    showTooltip(x(point.time), y(point.pct), 'observed', 'Sample', [
+    const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time, wizard);
+    showTooltip(x(point.time), y(point.pct), 'observed', w('Sample', 'Reading'), [
       scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
       pointResetLabel,
     ], point.time);
   };
   const showResetTooltip = (reset, index, anchorY = y(reset.pct)) => {
-    const title = index === resetMarkers.length - 1 ? 'Last reset' : 'Previous reset';
+    const title = index === resetMarkers.length - 1
+      ? w('Last reset', 'Last replenishment')
+      : w('Previous reset', 'Earlier replenishment');
     showTooltip(x(reset.time), anchorY, 'reset', title, [
       scope, new Date(reset.time).toLocaleString(),
-      `New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now)}`,
+      w(`New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now)}`,
+        `Reserves refilled to ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now, wizard)}`),
     ]);
   };
   const showScheduledResetTooltip = (anchorY = PAD.top + 18) => showTooltip(
-    x(resetAt), anchorY, 'reset', 'Next reset',
-    [scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now)],
+    x(resetAt), anchorY, 'reset', w('Next reset', 'Next replenishment'),
+    [scope, new Date(resetAt).toLocaleString(), relativeMarkerTime(resetAt, now, wizard)],
   );
-  const showNowTooltip = (anchorY = PAD.top + 18) => showTooltip(x(now), anchorY, 'now', 'Now', [
-    scope, new Date(now).toLocaleString(), resetTimingLabel(resetAt, now),
+  const showNowTooltip = (anchorY = PAD.top + 18) => showTooltip(x(now), anchorY, 'now', w('Now', 'This moment'), [
+    scope, new Date(now).toLocaleString(), resetTimingLabel(resetAt, now, wizard),
   ]);
   const updateChartHover = (event) => {
     const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
@@ -247,7 +267,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
     ? Math.max(4, Math.min(H - tooltipHeight - 4, tooltip.y < tooltipHeight + 8 ? tooltip.y + 10 : tooltip.y - tooltipHeight - 8))
     : 0;
   return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="group"
-    aria-label=${`${series.provider} ${series.window_name} subscription usage history`}>
+    aria-label=${`${series.provider} ${series.window_name} ${w('subscription usage history', 'mana reserve chronicle')}`}>
     ${[0, 50, 100].map((tick) => html`<g class="usage-grid" key=${tick}>
       <line x1=${PAD.left} x2=${W - PAD.right} y1=${y(tick)} y2=${y(tick)} />
       <text x=${PAD.left - 8} y=${y(tick) + 4} text-anchor="end">${tick}%</text>
@@ -263,13 +283,15 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       points=${segment.map((point) => `${x(point.time)},${y(point.pct)}`).join(' ')} />`)}
     ${resetMarkers.map((reset, index) => {
       const at = reset.time;
-      const title = index === resetMarkers.length - 1 ? 'Last reset' : 'Previous reset';
+      const title = index === resetMarkers.length - 1
+        ? w('Last reset', 'Last replenishment')
+        : w('Previous reset', 'Earlier replenishment');
       return html`<g class="usage-reset-mark" key=${reset.at}>
         <line x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom} />
         <circle cx=${x(at)} cy=${y(reset.pct)} r="3" />
         <line class="usage-marker-hit-target" x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom}
           tabIndex=${index === keyboardResetIndex ? '0' : '-1'} role="img"
-          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; new post-reset baseline ${reset.pct.toFixed(1)}%; ${relativeMarkerTime(at, now)}${index === keyboardResetIndex ? '; use left and right arrow keys to explore detected resets' : ''}`}
+          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; ${w(`new post-reset baseline ${reset.pct.toFixed(1)}%`, `reserves refilled to ${reset.pct.toFixed(1)}%`)}; ${relativeMarkerTime(at, now, wizard)}${index === keyboardResetIndex ? w('; use left and right arrow keys to explore detected resets', '; use left and right arrow keys to explore witnessed replenishments') : ''}`}
           onfocus=${() => {
             setKeyboardResetAt(index);
             showResetTooltip(reset, index);
@@ -281,7 +303,7 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
       <line x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <line class="usage-marker-hit-target" x1=${x(resetAt)} x2=${x(resetAt)} y1=${PAD.top} y2=${H - PAD.bottom}
         tabIndex="0" role="img"
-        aria-label=${`Next reset; ${scope}; ${new Date(resetAt).toLocaleString()}; ${relativeMarkerTime(resetAt, now)}`}
+        aria-label=${`${w('Next reset', 'Next replenishment')}; ${scope}; ${new Date(resetAt).toLocaleString()}; ${relativeMarkerTime(resetAt, now, wizard)}`}
         onfocus=${() => showScheduledResetTooltip()} onblur=${hideTooltip} />
     </g>`}
     ${hasForecastLine && html`<${Fragment}>
@@ -289,22 +311,22 @@ export function UsageHistoryChart({ series, from, generatedAt, lookaheadHours = 
         x2=${x(forecastAt)} y2=${y(forecastPct)} />
       <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
         x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
-        aria-label=${`Prediction; ${scope}; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt)}`}
+        aria-label=${`${w('Prediction', 'Prophecy')}; ${scope}; ${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}; ${beforeResetLabel(resetAt, forecastAt, wizard)}`}
         onfocus=${() => showForecastTooltip(1)} onblur=${hideTooltip} />
     </${Fragment}>`}
     ${now > start && now < horizon && html`<g class="usage-now-mark">
       <line x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <line class="usage-marker-hit-target" x1=${x(now)} x2=${x(now)} y1=${PAD.top} y2=${H - PAD.bottom}
-        tabIndex="0" role="img" aria-label=${`Now; ${scope}; ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now)}`}
+        tabIndex="0" role="img" aria-label=${`${w('Now', 'This moment')}; ${scope}; ${new Date(now).toLocaleString()}; ${beforeResetLabel(resetAt, now, wizard)}`}
         onfocus=${() => showNowTooltip()} onblur=${hideTooltip} />
     </g>`}
     ${pointMarkers.map((point, index) => {
-      const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time);
+      const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time, wizard);
       return html`<g class=${`usage-point-mark${tooltip?.pointAt === point.time ? ' active' : ''}`} key=${point.at}>
         <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.25" />
         <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
           tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="img"
-          aria-label=${`Sample; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? '; use left and right arrow keys to explore samples' : ''}`}
+          aria-label=${`${w('Sample', 'Reading')}; ${scope}; ${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}; ${pointResetLabel}${index === keyboardPointIndex ? w('; use left and right arrow keys to explore samples', '; use left and right arrow keys to explore readings') : ''}`}
           onfocus=${() => {
             setKeyboardPointAt(index);
             showPointTooltip(point);

@@ -2038,3 +2038,113 @@ func TestDashboardHTML_TemplatePerAgentWorktreesDefault(t *testing.T) {
 	must(`id="template-deploy-wt-per-agent" type="checkbox"`,
 		"the seeded deploy choice remains an enabled per-run checkbox")
 }
+
+// TestDashboardHTML_WizardUsageTab pins the wizard re-skin of the Usage
+// ("📈 Reserves") tab — the last chart-bearing tab to get one. Unlike the Costs
+// ledger this is not a pure-CSS re-skin: most of the tab's themed copy lives in
+// SVG <text> tooltips and aria-labels, which cannot carry the `Words`
+// two-spans/CSS-reveal twin, so the island repaints on the tclaude:wizard edge
+// and picks its voice at render time. Both halves are pinned here.
+func TestDashboardHTML_WizardUsageTab(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	// The panel and the three chart strokes the legend keys.
+	must("body.wizard .usage-series-card {", "each graph becomes a scrying pool — the violet void in a gilded frame")
+	must("body.wizard .usage-observed-line {", "the channeled trace is re-skinned")
+	must("body.wizard .usage-forecast-line {", "the prophecy is re-skinned")
+	must("body.wizard .usage-reset-mark circle {", "replenishment marks are re-skinned")
+	must("body.wizard .usage-chart-tooltip rect {", "chart tooltips get the arcane slab")
+	must("body.wizard .usage-wizard-title {", "the tab carries its own nameplate, like the Config almanac")
+
+	// The island repaints on the theme edge — without this the SVG tooltips and
+	// aria-labels would keep their default-theme wording until the next 60s
+	// poll, since they are single-valued and cannot use the `Words` twin.
+	must("document.addEventListener('tclaude:wizard', onWizard);", "the Usage island repaints on the wizard edge")
+	must("🔮 The Mana Reserves", "the tab names itself in the wizard's voice")
+
+	// The observed trace deliberately takes the mana-blue of a lit .ctx-mana
+	// crystal segment so the tab's line and the roster's context gauge read as
+	// the same substance. If either hue moves, that cross-surface rhyme breaks
+	// silently — so pin them to the same literal.
+	const manaBlue = "#4dd0e1"
+	for _, rule := range []string{
+		"body.wizard .ctx-mana .ctx-seg.lit-green {",
+		"body.wizard .usage-observed-line {",
+	} {
+		idx := strings.Index(dashboardAssets, rule)
+		if idx < 0 {
+			t.Errorf("missing rule %q", rule)
+			continue
+		}
+		body := dashboardAssets[idx:]
+		if end := strings.Index(body, "}"); end >= 0 {
+			body = body[:end]
+		}
+		if !strings.Contains(body, manaBlue) {
+			t.Errorf("rule %q no longer uses the shared mana blue %s — the ctx-gauge/usage-line rhyme is broken", rule, manaBlue)
+		}
+	}
+}
+
+// TestDashboardCSS_WizardUsageScoped guards that the Usage re-skin stays inside
+// the tab. Its pieces are generic SVG shapes (`line`, `circle`, `text`, `rect`)
+// and a bare `body.wizard svg text { … }`-style rule would repaint the process
+// editor's graph, the cost chart and every other inline SVG on the page.
+func TestDashboardCSS_WizardUsageScoped(t *testing.T) {
+	for _, unscoped := range []string{
+		"body.wizard svg {",
+		"body.wizard svg text {",
+		"body.wizard polyline {",
+		"body.wizard circle {",
+	} {
+		if strings.Contains(dashboardAssets, unscoped) {
+			t.Errorf("wizard Usage re-skin is unscoped (%q) — will repaint every inline SVG on the page", unscoped)
+		}
+	}
+	// Every wizard rule that mentions a usage selector must be anchored on one,
+	// not merely contain it after a broader leading selector. Selector lists are
+	// reassembled across newlines first: checking line-by-line would wave through
+	// a leaky branch that merely happens to sit on a continuation line, e.g.
+	//   body.wizard .usage-card-header,
+	//   body.wizard svg text { … }
+	for _, selector := range wizardUsageSelectorLists(dashboardAssets) {
+		for _, part := range strings.Split(selector, ",") {
+			part = strings.Join(strings.Fields(part), " ")
+			if part == "" || !strings.HasPrefix(part, "body.wizard") {
+				continue
+			}
+			if !strings.HasPrefix(part, "body.wizard .usage-") {
+				t.Errorf("wizard usage rule branch is not anchored on a .usage-* selector: %q (in %q)", part, selector)
+			}
+		}
+	}
+}
+
+// wizardUsageSelectorLists returns each complete selector list (newlines folded
+// out) that both names a .usage-* selector and carries a body.wizard branch.
+func wizardUsageSelectorLists(css string) []string {
+	var lists []string
+	for _, block := range strings.Split(css, "}") {
+		open := strings.LastIndex(block, "{")
+		if open < 0 {
+			continue
+		}
+		selector := block[:open]
+		// Keep only the last rule's selector: everything before the previous
+		// declaration block belongs to earlier rules.
+		if prev := strings.LastIndex(selector, ";"); prev >= 0 {
+			selector = selector[prev+1:]
+		}
+		selector = strings.Join(strings.Fields(selector), " ")
+		if !strings.Contains(selector, ".usage-") || !strings.Contains(selector, "body.wizard") {
+			continue
+		}
+		lists = append(lists, selector)
+	}
+	return lists
+}

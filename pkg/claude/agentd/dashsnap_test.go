@@ -871,6 +871,17 @@ func baseStates() []dashsnap.State {
   var cardStyle = getComputedStyle(card);
   var lineStyle = getComputedStyle(line);
   var titleStyle = getComputedStyle(title);
+  // The invisible 14px keyboard hit targets must stay invisible in BOTH
+  // themes. They are plain <line>s inside the marker groups, so a wizard rule
+  // written as '.usage-reset-mark line' outspecifies the transparent hit-target
+  // rule and paints an opaque band across the data. Checked by computed style
+  // because that is the only way to see the cascade actually resolve.
+  document.querySelectorAll('.usage-marker-hit-target, .usage-point-hit-target, .usage-forecast-hit-target').forEach(function(target){
+    var stroke = getComputedStyle(target).stroke;
+    if (stroke !== 'rgba(0, 0, 0, 0)' && stroke !== 'transparent' && stroke !== 'none') {
+      throw new Error('usage-mana: hit target became visible (stroke ' + stroke + ') — a marker rule is outspecifying the transparent hit-target rule');
+    }
+  });
   if (wizard) {
     if (titleStyle.display === 'none') throw new Error('debug-alchemy: wizard title is hidden');
     if (!cardStyle.backgroundImage.includes('gradient')) throw new Error('debug-alchemy: wizard card lacks gradient chrome');
@@ -882,6 +893,40 @@ func baseStates() []dashsnap.State {
   }
 })();`,
 			SettleMS: 300,
+		},
+		{
+			Key:     "usage-mana",
+			Title:   "Usage / mana reserves",
+			Caption: "The quota graphs keep their readable default skin while wizard mode adds The Mana Reserves nameplate, violet scrying pools, a mana-blue channeled trace and the replenishment/prophecy vocabulary.",
+			// Reuses the shared bounded-tab setup/settle rather than re-rolling the
+			// usage_tab_visible + click + ready-poll dance, then asserts on top of it.
+			JS: `return (async function(){
+  await (async function(){ ` + boundedTabJS("usage", ".usage-series-card") + ` })();
+  var card = document.querySelector('.usage-series-card');
+  var line = document.querySelector('.usage-observed-line');
+  var title = document.querySelector('.usage-wizard-title');
+  var legend = document.querySelector('.usage-chart-legend');
+  if (!card || !line || !title || !legend) throw new Error('usage-mana: reserve chrome did not render');
+  var wizard = document.body.classList.contains('wizard');
+  var cardStyle = getComputedStyle(card);
+  var lineStyle = getComputedStyle(line);
+  var titleStyle = getComputedStyle(title);
+  if (wizard) {
+    if (titleStyle.display === 'none') throw new Error('usage-mana: wizard nameplate is hidden');
+    if (!cardStyle.backgroundImage.includes('gradient')) throw new Error('usage-mana: wizard card lacks scrying-pool chrome');
+    // The channeled trace must be the same mana blue as a lit .ctx-mana segment.
+    if (lineStyle.stroke !== 'rgb(77, 208, 225)') throw new Error('usage-mana: channeled trace is not mana blue');
+    if (!legend.textContent.includes('Channeled')) throw new Error('usage-mana: legend did not take the wizard voice');
+    if (legend.textContent.includes('Observed')) throw new Error('usage-mana: plain legend copy survived the theme flip');
+  } else {
+    if (titleStyle.display !== 'none') throw new Error('usage-mana: wizard nameplate leaked into plain mode');
+    if (cardStyle.backgroundImage !== 'none') throw new Error('usage-mana: wizard card chrome leaked into plain mode');
+    if (lineStyle.stroke !== 'rgb(88, 166, 255)') throw new Error('usage-mana: plain observed line changed colour');
+    if (!legend.textContent.includes('Observed')) throw new Error('usage-mana: plain legend copy changed');
+    if (legend.textContent.includes('Channeled')) throw new Error('usage-mana: wizard copy leaked into plain mode');
+  }
+})();`,
+			SettleMS: 400,
 		},
 		{
 			Key:     "links-management",

@@ -41,11 +41,13 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		"body.hide-usage-tab nav [data-tab=\"usage\"]",
 		"if (name === 'seven_day_sonnet') return '7 day Sonnet';",
 		"sampledPoints(points, 240)",
-		"headline: 'Prediction paused'",
+		"w('Prediction paused',",
 		"USAGE_LOOKAHEAD_SPANS",
 		"Look ahead",
-		"`History range, ${scope}`",
-		"`Forecast lookahead, ${scope}`",
+		// Still pins the plain-theme label word, which the bare "range, ${scope}`"
+		// form would not: deleting or renaming 'History' must keep failing here.
+		"'History'} range, ${scope}`",
+		"'Forecast'} lookahead, ${scope}`",
 		"aria-pressed=",
 		"usage-card-controls",
 		"&spans=",
@@ -66,7 +68,7 @@ func TestDashboardUsageHistoryPreactBoundary(t *testing.T) {
 		// have no line of sight to one shared legend. It is aria-hidden: a
 		// visual key to SVG stroke styles is meaningless to a screen reader,
 		// and the chart itself carries the accessible name.
-		"function UsageChartLegend()",
+		"function UsageChartLegend(",
 		`<div class="usage-chart-legend" aria-hidden="true">`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
