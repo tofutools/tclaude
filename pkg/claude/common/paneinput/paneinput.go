@@ -39,6 +39,13 @@ type Options struct {
 	SettleDelaySet bool
 	LockTimeout    time.Duration
 	LockRetry      time.Duration
+	// LockID overrides the serialization identity the advisory file lock is
+	// keyed on (the send target still routes the tmux commands). A caller
+	// that types into an exact pane ID but knows the pane's session must pass
+	// the session-shaped target here: pane-ID and session spellings of the
+	// same pane otherwise hash to different lock files, so the two input
+	// streams would not single-file. Empty = derive from the send target.
+	LockID string
 }
 
 var ErrLockTimeout = errors.New("pane input lock timeout")
@@ -79,7 +86,11 @@ func (o Options) resolved() Options {
 func WithLock(tmuxTarget string, opts Options, fn func(run Runner, exactTarget string) error) error {
 	opts = opts.resolved()
 	exactTarget := exactInputTarget(tmuxTarget)
-	lockPath, err := paneLockPath(exactTarget)
+	lockTarget := exactTarget
+	if opts.LockID != "" {
+		lockTarget = exactInputTarget(opts.LockID)
+	}
+	lockPath, err := paneLockPath(lockTarget)
 	if err != nil {
 		return err
 	}
