@@ -61,6 +61,55 @@ function StableField({
   />`;
 }
 
+// Click-to-edit title. The id is deliberately not shown here: it is a permanent
+// store key, not something an operator reads at a glance, so it stays in the
+// tooltip and the template inspector. Editing commits to the draft through
+// setTemplateMeta, so it is undoable and saved with the rest of the template --
+// unlike the Templates list, where a rename is an immediate CAS save.
+function EditableTitle({ controller, view }) {
+  const { model, pending } = view;
+  const [editing, setEditing] = useState(false);
+  const inputRef = useRef(null);
+  const blocked = pending.externalDecision || pending.externalReload || pending.save;
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const input = inputRef.current;
+    if (!input) return;
+    input.focus();
+    // See the list's EditableName: select() is optional in some DOMs.
+    input.select?.();
+  }, [editing]);
+  useLayoutEffect(() => { if (blocked) setEditing(false); }, [blocked]);
+  // Read through the ref rather than the event: currentTarget is only reliably
+  // populated during a real dispatch, and blur/keydown reach here both ways.
+  const commit = () => {
+    controller.setTemplateMeta({ name: String(inputRef.current?.value ?? '').trim() });
+    setEditing(false);
+  };
+  const label = model.name || model.id || 'untitled';
+  if (!editing) {
+    return html`<button
+      class=${`process-editor-title${model.name ? '' : ' process-unnamed'}`}
+      type="button" data-process-title-edit disabled=${blocked}
+      title=${`${model.name ? `${model.name} — ` : ''}id ${model.id || 'unsaved'}. Click to rename.`}
+      aria-label=${`Template name: ${label}. Click to rename.`}
+      onClick=${() => setEditing(true)}
+    >${label}</button>`;
+  }
+  return html`<input
+    ref=${inputRef} class="process-editor-title-input" type="text" spellcheck="false"
+    placeholder="display name" aria-label="Template display name" data-process-title-input
+    defaultValue=${model.name || ''}
+    onBlur=${() => commit()}
+    onKeyDown=${(event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Enter') { event.preventDefault(); commit(); }
+      // Escape abandons the edit; the draft keeps whatever name it already had.
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setEditing(false); }
+    }}
+  />`;
+}
+
 function Header({ controller, view }) {
   const { model, pending } = view;
   const externalPending = pending.externalDecision || pending.externalReload;
@@ -72,7 +121,7 @@ function Header({ controller, view }) {
         placeholder="template-id" aria-label="Template id"
         value=${model.id} disabled=${pending.save || externalPending}
         onCommit=${(value) => controller.setTemplateID(value)}
-      />` : html`<strong class="process-editor-title">${model.name ? `${model.name} (${model.id})` : model.id || 'untitled'}</strong>`}
+      />` : html`<${EditableTitle} controller=${controller} view=${view} />`}
     </span>
     <span class="process-hash process-editor-version" title=${model.semanticHash || 'This template has never been saved'}>
       ${model.semanticHash ? `v ${shortHash(model.semanticHash)}` : 'unsaved'}

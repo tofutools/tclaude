@@ -12356,6 +12356,43 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   border-radius: 8px 8px 0 0;
 }
 .process-editor-title { color: #e6edf3; }
+/* Click-to-edit title and list name. Both render as a bare button so the whole
+   label is a real keyboard-reachable control, while looking like the static
+   text it replaces until hovered. */
+.process-editor-title,
+.process-name-edit {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: text;
+}
+.process-editor-title:hover:not(:disabled),
+.process-name-edit:hover:not(:disabled) { border-color: #30363d; background: #0d1117; }
+.process-editor-title:focus-visible,
+.process-name-edit:focus-visible { border-color: #58a6ff; outline: none; }
+.process-editor-title:disabled { cursor: default; }
+.process-editor-title-input,
+.process-name-input {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid #58a6ff;
+  border-radius: 6px;
+  color: #e6edf3;
+  background: #0d1117;
+  font: inherit;
+  font-weight: 700;
+}
+.process-editor-title-input:focus,
+.process-name-input:focus { outline: none; }
 .process-editor-identity { display: inline-flex; align-items: center; min-width: 0; }
 .process-editor .process-action:disabled { opacity: .45; cursor: default; }
 .process-editor-version { font-size: 12px; }
@@ -12920,6 +12957,12 @@ body.wizard .process-editor-modal .modal-buttons button.primary {
 body.wizard .process-param-dialog,
 body.wizard .process-instantiate-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-unnamed { color: #a99bc0; }
+body.wizard .process-editor-title,
+body.wizard .process-name-edit { color: #f3e6c0; }
+body.wizard .process-editor-title:hover:not(:disabled),
+body.wizard .process-name-edit:hover:not(:disabled) { background: #181226; border-color: #6d5695; }
+body.wizard .process-editor-title-input,
+body.wizard .process-name-input { color: #f3e6c0; background: #181226; border-color: #d4af37; }
 body.wizard .process-param-row,
 body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }
 body.wizard .process-param-row input[type="text"],
