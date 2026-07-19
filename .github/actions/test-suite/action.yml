@@ -1,0 +1,85 @@
+# Shared test-suite runner for PR CI and both release workflows, all using
+# the same shard split. The partition lives here and nowhere else, so the
+# flows cannot drift apart, and future re-splits (e.g. dividing agentd)
+# apply to every flow at once. `shard: all` remains available as the literal
+# `go test ./...` a contributor runs locally.
+#
+# Callers must check out the repo before using this action (a local action
+# cannot be resolved earlier); Go and Node toolchains are set up here.
+name: Run test suite
+description: Set up Go + Node and run the Go test suite, whole or as one shard.
+
+inputs:
+  shard:
+    description: >-
+      Which slice to run: all | agentd | jstest | process | rest. The named
+      shards are the measured heavyweights (agentd's ~2.5min serial binary,
+      jstest's 124 Node suites, the process tree's CPU-bound packages);
+      `rest` is derived by subtracting the named shards' own `go list`
+      output from the full package list, so the partition is exact by
+      construction and a removed/renamed shard target fails loudly.
+    default: all
+  race:
+    description: Set to 'true' to run with -race (roughly triples wall time).
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: go.mod
+
+    # The dashboard's JS is unit-tested with Node's built-in test runner,
+    # invoked from pkg/claude/agentd/jstest/dashboard_node_test.go so it runs
+    # under plain `go test`. Pin node so that wrapper actually runs in CI
+    # rather than silently skipping — see its CI guard.
+    - name: Set up Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      with:
+        node-version: lts/*
+
+    # Package-level parallelism is left at the go test default (GOMAXPROCS):
+    # go test buffers each package's output and prints it atomically, and
+    # every test runs against its own tempdir HOME, so neither legibility nor
+    # contention argues for a cap. (-parallel is left at its default too; the
+    # few packages using t.Parallel() are fine with it.)
+    #
+    # TCLAUDE_NODE_TEST_CACHE_KEY makes the external Node runtime part of
+    # jstest's Go test-cache key without disabling useful result caching for
+    # every other package.
+    - name: Run tests (${{ inputs.shard }})
+      shell: bash
+      run: |
+        export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
+        case "${{ inputs.shard }}" in
+          all) pkgs="./..." ;;
+          agentd)  pkgs="./pkg/claude/agentd" ;;
+          jstest)
+            pkgs="./pkg/claude/agentd/jstest"
+            # This shard owns its runner, so let Node use every core; the
+            # in-test default (NumCPU-2, sized for sharing a runner with the
+            # Go packages) would leave the 3-core macOS runner near-serial.
+            # Assign before export: `export VAR=$(cmd)` discards cmd's exit
+            # status, and a silently empty value would fall back to the
+            # near-serial default — the regression this variable prevents.
+            cores="$(getconf _NPROCESSORS_ONLN)"
+            export TCLAUDE_JS_TEST_CONCURRENCY="$cores"
+            ;;
+          process) pkgs="./pkg/claude/process/..." ;;
+          rest)
+            # Everything the named shards don't cover, derived by literally
+            # subtracting the named shards' `go list` output from the full
+            # package list — the partition cannot drift from the shard
+            # definitions, and a removed/renamed shard target fails here
+            # loudly instead of silently dropping packages.
+            pkgs="$(comm -23 \
+              <(go list ./... | sort) \
+              <(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... | sort))"
+            ;;
+          *) echo "unknown shard: ${{ inputs.shard }}" >&2; exit 1 ;;
+        esac
+        race=""
+        if [ "${{ inputs.race }}" = "true" ]; then race="-race"; fi
+        go test $race $pkgs

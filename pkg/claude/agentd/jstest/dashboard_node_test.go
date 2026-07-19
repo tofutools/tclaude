@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	// agentd embeds the production dashboard tree. Keeping that package in this
@@ -67,15 +68,27 @@ func TestDashboardJS(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatal("no *.test.mjs files found")
 	}
+	// Node runs one process per suite file, so serial execution pays a
+	// full runtime start + module import per file (~90s across the whole
+	// suite). Default to fanning files out across the spare cores, leaving
+	// two for the Go packages (agentd's serial flow tests in particular)
+	// that `go test -p` overlaps with this one. When this package has a
+	// runner to itself — CI's jstest shard — that reservation would leave
+	// the 3-core macOS runner effectively serial, so the shard overrides
+	// with the full core count via TCLAUDE_JS_TEST_CONCURRENCY. Validated
+	// here, before the flag-support probe, so a malformed value fails even
+	// on a Node without --test-concurrency.
+	concurrency := max(1, runtime.NumCPU()-2)
+	if env := os.Getenv("TCLAUDE_JS_TEST_CONCURRENCY"); env != "" {
+		parsed, parseErr := strconv.Atoi(env)
+		if parseErr != nil || parsed < 1 {
+			t.Fatalf("invalid TCLAUDE_JS_TEST_CONCURRENCY %q (want a positive integer)", env)
+		}
+		concurrency = parsed
+	}
 	args := []string{"--test"}
 	if help, helpErr := exec.Command(node, "--help").Output(); helpErr == nil &&
 		bytes.Contains(help, []byte("--test-concurrency")) {
-		// Node runs one process per suite file, so serial execution pays a
-		// full runtime start + module import per file (~90s across the whole
-		// suite). Fan files out across the spare cores, leaving two for the
-		// Go packages (agentd's serial flow tests in particular) that `go
-		// test -p` overlaps with this one.
-		concurrency := max(1, runtime.NumCPU()-2)
 		args = append(args, fmt.Sprintf("--test-concurrency=%d", concurrency))
 	}
 	args = append(args, files...)
