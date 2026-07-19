@@ -538,6 +538,11 @@ export function createProcessesActions({
       if (state.currentEditor()?.model?.template?.id === id) {
         state.setEditor(null);
         state.setCanvas(null);
+        // The editor owns a URL of its own (/processes/templates/<id>), which
+        // now names a template that does not exist. CORRECT rather than
+        // announce: pushing would leave a Back entry pointing at the deleted
+        // editor, which can only fail to restore.
+        correctLocation();
       }
       state.setNotice(`Deleted ${label}.`);
       notify(`deleted process template ${label}`);

@@ -73,6 +73,69 @@ test('the row delete button confirms, DELETEs the template, and refreshes the li
   assert.match(state.view.value.notice, /Deleted Release train/);
 });
 
+// The editor owns a URL of its own (/processes/templates/<id>). Deleting the
+// template it has open must close it AND fix the address bar, as a correction
+// rather than a push — a Back entry pointing at a deleted editor can only fail
+// to restore.
+test('deleting the open template closes its editor and corrects the URL', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const navigations = [];
+  const actions = createProcessesActions({
+    state, notify() {}, confirm: async () => true,
+    dispatchNavigated: (location, options = {}) => navigations.push({ location, ...options }),
+    fetchImpl: async (path, options = {}) => {
+      if (options.method === 'DELETE') return { ok: true, status: 200, json: async () => ({ deleted: 'release' }) };
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [] }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+
+  state.setCanvas({ kind: 'editor', id: 'release', key: 'release:1' });
+  state.setEditor({ model: { template: { id: 'release' }, dirty: false } });
+
+  await actions.deleteTemplate({ id: 'release', name: 'Release train', versionCount: 1 });
+
+  assert.equal(state.currentEditor(), null, 'the editor for the deleted template is closed');
+  assert.equal(state.canvas.value, null);
+  const correction = navigations.at(-1);
+  assert.ok(correction, 'the router is told the URL changed');
+  assert.equal(correction.correction, true, 'it replaces rather than pushes');
+  assert.equal(correction.location?.templateId ?? '', '', 'the URL no longer names the deleted template');
+});
+
+// Deleting some OTHER template must leave an open editor alone.
+test('deleting a different template leaves the open editor untouched', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'),
+    harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const navigations = [];
+  const actions = createProcessesActions({
+    state, notify() {}, confirm: async () => true,
+    dispatchNavigated: (location, options = {}) => navigations.push({ location, ...options }),
+    fetchImpl: async (path, options = {}) => {
+      if (options.method === 'DELETE') return { ok: true, status: 200, json: async () => ({ deleted: 'other' }) };
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [] }) };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+
+  state.setCanvas({ kind: 'editor', id: 'release', key: 'release:1' });
+  state.setEditor({ model: { template: { id: 'release' }, dirty: false } });
+
+  await actions.deleteTemplate({ id: 'other', name: 'Other', versionCount: 1 });
+
+  assert.ok(state.currentEditor(), 'an unrelated delete must not close the editor');
+  assert.equal(navigations.length, 0, 'and must not touch the URL');
+});
+
 test('declining the confirm sends no request at all', async (t) => {
   const { harness, mounted, requests } = await mountTemplates(t, {
     deleteResponse: () => { throw new Error('must not reach the network'); },
