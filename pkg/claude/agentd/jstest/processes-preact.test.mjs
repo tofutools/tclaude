@@ -1140,3 +1140,38 @@ test('a rename with no observed version still saves against the head it read', a
   assert.equal(body.sourceHash, 'head-only', 'a list row without a published hash still renames rather than dead-locking');
   assert.equal(body.template.name, 'Named at last');
 });
+
+test('Ctrl/Cmd+Enter confirms the rename dialog and plain Enter is left to the form', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const submitted = [];
+  const actions = {
+    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
+    closeRename() { state.setRename(null); }, submitRename(name) { submitted.push(name); },
+  };
+  state.setRename({ key: 'hotkey-1', id: 'hotkey', name: 'Before', sourceHash: 'v1', error: '' });
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  const input = mounted.container.querySelector('[data-process-rename-input]');
+  input.value = 'After';
+  await harness.act(() => harness.fireEvent(input, 'input'));
+
+  // A bare Enter must not be intercepted: the browser's native form submission
+  // already handles it, and swallowing it here would double-submit.
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.deepEqual(submitted, [], 'plain Enter is left to native form submission');
+
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', metaKey: true }));
+  assert.deepEqual(submitted, ['After'], 'Cmd+Enter confirms with the current draft');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', ctrlKey: true }));
+  assert.deepEqual(submitted, ['After', 'After'], 'Ctrl+Enter confirms on non-mac keyboards too');
+
+  // An IME candidate commit also arrives as Enter; submitting there would eat
+  // the composition instead of confirming it.
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', metaKey: true, isComposing: true }));
+  assert.equal(submitted.length, 2, 'an IME composition commit is not a confirm');
+  await mounted.unmount();
+});

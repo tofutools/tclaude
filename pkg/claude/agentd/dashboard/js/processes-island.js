@@ -125,6 +125,24 @@ export function ProcessEditorBoundary({ spec, state, actions, confirmDiscard, op
   return html`<div id="process-editor-canvas" ref=${mountRef} class="process-canvas-mount" data-process-mount="editor">${error && html`<div class="process-placeholder" role="alert">Could not open editor: ${error}</div>`}</div>`;
 }
 
+// Ctrl/Cmd+Enter is the dashboard-wide confirm hotkey (helpers.js
+// bindModalSubmitHotkey for imperative modals, fieldSubmit in the Preact
+// dialogs). Both modifiers are accepted on every platform so no OS sniffing is
+// needed, and IME composition is excluded so committing a candidate never
+// submits the form. Plain Enter is left to the browser's native form handling.
+//
+// Bound per field rather than on the form, matching fieldSubmit: a keydown
+// handler on an ancestor makes Preact register its shared event proxy for a
+// type the descendants never registered, which the linkedom test DOM then
+// dispatches against the wrong element.
+export function fieldSubmitHotkey(submit) {
+  return (event) => {
+    if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey) || event.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    submit();
+  };
+}
+
 function paramDefaultText(value) {
   if (value === undefined) return '';
   if (typeof value === 'string') return value;
@@ -159,7 +177,7 @@ function InstantiateDialog({ spec, busy, actions }) {
   }, [spec.phase, spec.ref, spec.template]);
   const change = (name, value) => setValues((current) => ({ ...current, [name]: value }));
   const submit = (event) => {
-    event.preventDefault();
+    event?.preventDefault();
     const resolved = {};
     for (const [name, param] of params) {
       const value = values[name] ?? '';
@@ -191,10 +209,16 @@ function RenameDialog({ spec, busy, actions }) {
   const [name, setName] = useState(spec.name || '');
   const close = () => { if (!busy) actions.closeRename(); };
   const { dialogRef } = useDialogFocus({ open: true, initialFocusRef: nameRef, onEscape: close });
-  const submit = (event) => { event.preventDefault(); void actions.submitRename(name); };
-  return html`<div class="modal-overlay show process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-rename-title" onSubmit=${submit}>
+  const submit = (event) => { event?.preventDefault(); void actions.submitRename(name); };
+  // process-editor-modal is the editor's shared modal skin contract: it carries
+  // the --process-control-* variables and the wizard button/field treatment, so
+  // this dialog matches its siblings instead of needing its own theme rules.
+  return html`<div class="modal-overlay show process-editor-modal process-rename-modal" onClick=${(event) => { if (event.target === event.currentTarget) close(); }}><form ref=${dialogRef} class="modal process-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="process-rename-title" onSubmit=${submit}>
     <h3 id="process-rename-title">Rename template</h3>
-    <label><span>Display name</span><input ref=${nameRef} data-process-rename-input type="text" spellcheck="false" placeholder="display name" value=${name} onInput=${(event) => setName(event.currentTarget.value)} /></label>
+    <div class="field process-editor-field process-rename-field">
+      <label for="process-rename-input">Display name</label>
+      <input ref=${nameRef} id="process-rename-input" data-process-rename-input type="text" autocomplete="off" spellcheck="false" placeholder="display name" value=${name} data-select-on-focus onInput=${(event) => setName(event.currentTarget.value)} onKeyDown=${fieldSubmitHotkey(() => { if (!busy) submit(); })} />
+    </div>
     <p class="muted">Shown wherever this template is listed. Leave it empty to fall back to the id. The id <code>${spec.id}</code> is permanent and keeps existing runs and pinned versions working.</p>
     ${spec.error && html`<div class="island-error" role="alert">${spec.error}</div>`}
     <div class="modal-buttons"><button type="button" disabled=${busy} onClick=${close}>Cancel</button><button class="primary" type="submit" disabled=${busy}>${busy ? 'Saving…' : 'Save name'}</button></div>
