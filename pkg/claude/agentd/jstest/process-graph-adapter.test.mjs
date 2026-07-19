@@ -42,6 +42,16 @@ test('editor canvas frame is never a focus target and shortcuts use its hidden s
     'empty-canvas shortcuts never require frame focus');
   assert.notEqual(harness.document.activeElement, root);
   assert.notEqual(harness.document.activeElement, svg);
+
+  const source = host.querySelector('[data-node-id="start"] .process-port-out');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(source, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  assert.equal(adapter.focusPort('start', 'out'), true);
+  assert.equal(harness.document.activeElement, source,
+    'an anchored chooser can explicitly retain its visible connector invoker');
 });
 
 test('editor interaction layering raises one node without changing semantic layers or keyboard order', async (t) => {

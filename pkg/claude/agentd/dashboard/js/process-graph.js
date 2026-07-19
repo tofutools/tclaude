@@ -1705,6 +1705,21 @@ export class ProcessGraph {
     target.focus({ preventScroll: true });
   }
 
+  focusPort(nodeId, port) {
+    let target = this.portElement(nodeId, port);
+    if (!target) return null;
+    target.focus({ preventScroll: true });
+    // Focusing can blur-commit an inspector input and synchronously rerender
+    // the graph. Preserve focus on the canonical replacement when that occurs.
+    const live = this.portElement(nodeId, port);
+    if (!live) return null;
+    if (live !== target) {
+      live.focus({ preventScroll: true });
+      target = this.portElement(nodeId, port);
+    }
+    return target;
+  }
+
   select(selection) {
     this.selected = makeSelection(selectionItems(selection));
     const items = selectionItems(this.selected);

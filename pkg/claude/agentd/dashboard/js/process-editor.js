@@ -1081,10 +1081,14 @@ export class ProcessTemplateEditor {
       ? this.graph.clientPointToHost({ clientX: event.clientX, clientY: event.clientY }, this.stage)
       : this.graph.graphPointToHost(point, this.stage);
     const dropPoint = { x: point.x, y: point.y };
+    // The source connector is this anchored dialog's visible invoker. Give it
+    // ownership before opening, then restore that exact element on dismissal.
+    // If it disappears while the chooser is open, do not invent a fallback.
+    const restoreInvoker = this.graph.capturePortFocus(source.nodeId, source.port);
     const dispose = openProcessNodeTypeChooser({
       host: this.stage,
       anchor: { x: anchor.left, y: anchor.top },
-      restoreFocus: () => this.graph.focus(),
+      restoreFocus: restoreInvoker,
       availability: (type) => {
         const candidate = { type };
         const endpoints = source.port === 'in'

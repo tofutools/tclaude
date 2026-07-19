@@ -613,6 +613,19 @@ test('editor chooser and stale controller commits revalidate the shared port aut
   editor.model.layout.nodes.target = { x: 320, y: 260 };
   await harness.act(() => editor.refresh());
 
+  const sourcePort = host.querySelector('[data-node-id="start"] .process-port-out');
+  const focusElement = harness.window.HTMLElement.prototype.focus;
+  Object.defineProperty(sourcePort, 'focus', {
+    configurable: true,
+    value(options) { return focusElement.call(this, options); },
+  });
+  sourcePort.focus();
+  assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
+  await Promise.resolve();
+  harness.fireEvent(host.querySelector('.process-node-chooser-input'), 'keydown', { key: 'Escape' });
+  assert.equal(harness.document.activeElement, sourcePort,
+    'chooser dismissal restores its exact visible connector invoker');
+
   assert.equal(editor.openConnectedNodeChooser({ nodeId: 'start', port: 'out' }, { x: 20, y: 30 }), true);
   await Promise.resolve();
   let startChoice = host.querySelector('[data-command-id="process.create.start"]');
