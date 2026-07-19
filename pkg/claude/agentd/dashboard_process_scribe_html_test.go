@@ -110,6 +110,10 @@ func TestDashboardProcessScribeAssets(t *testing.T) {
 		"body.wizard #tab-processes .process-scribe-plain { display: none; }",
 		"body.wizard #tab-processes .process-scribe-wizard { display: inline; }",
 		"body.wizard .process-editor-modal .modal h3 { color: #f3e6c0; }",
+		// The click-to-edit name/title are <button>s, which do NOT inherit
+		// colour the way the <strong> they replaced did. Without this they
+		// render in the UA default (black on dark). Regression guard.
+		"  color: inherit;",
 		".process-scribe-context-preview",
 		"body.wizard .process-scribe-preview",
 	)

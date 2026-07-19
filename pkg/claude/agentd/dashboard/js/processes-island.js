@@ -46,8 +46,15 @@ function EditableName({ template, actions, busy }) {
     const next = String(inputRef.current?.value ?? '').trim();
     setEditing(false);
     if (next === (template.name || '')) return;
-    await actions.openRename({ id: template.id, name: template.name || '', sourceHash: template.latestVersion?.sourceHash || '' });
-    await actions.submitRename(next);
+    // Commit directly. Routing through openRename would flash the dialog open
+    // and immediately shut it again.
+    try {
+      await actions.renameTemplate({
+        id: template.id, name: template.name || '', sourceHash: template.latestVersion?.sourceHash || '',
+      }, next);
+    } catch {
+      // renameTemplate already surfaced the failure through the notice line.
+    }
   };
   if (editing) {
     return html`<input

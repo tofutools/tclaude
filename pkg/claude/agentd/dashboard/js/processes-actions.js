@@ -347,18 +347,20 @@ export function createProcessesActions({
     state.setRename(null);
     return true;
   }
-  async function submitRename(name) {
-    const spec = state.rename.value;
-    if (!spec?.id) return false;
-    const next = String(name ?? '').trim();
-    if (next === String(spec.name || '').trim()) { state.setRename(null); return true; }
+  // renameTemplate is the shared commit. It takes its target explicitly rather
+  // than reading dialog state, so the inline list editor can rename WITHOUT
+  // opening (and instantly closing) the dialog.
+  async function renameTemplate({ id, name = '', sourceHash = '' } = {}, value) {
+    if (!id) return false;
+    const next = String(value ?? '').trim();
+    if (next === String(name || '').trim()) return true;
     if (!state.beginMutation()) { state.setNotice('Another process action is still running; retry the rename once it settles.'); return false; }
-    const path = `/v1/process/templates/${encodeURIComponent(spec.id)}`;
+    const path = `/v1/process/templates/${encodeURIComponent(id)}`;
     try {
       // Round-trip the head's full edit view so layout and edges survive the
       // rename untouched; only the display name differs from what we read. The
-      // save is expressed against the hash observed when the dialog opened, so
-      // a head that moved in the meantime is rejected rather than overwritten.
+      // save is expressed against the hash observed when the edit STARTED, so a
+      // head that moved in the meantime is rejected rather than overwritten.
       const head = await processJSON(path, fetchImpl);
       if (!head.template) throw new Error('template head returned no editable model');
       const response = await fetchImpl(path, {
@@ -367,29 +369,41 @@ export function createProcessesActions({
         // fields, so read-only view fields must not be forwarded.
         body: JSON.stringify({
           template: { ...head.template, name: next },
-          edges: head.edges, layout: head.layout, sourceHash: spec.sourceHash || head.sourceHash,
+          edges: head.edges, layout: head.layout, sourceHash: sourceHash || head.sourceHash,
         }),
       });
       const body = await response.json().catch(() => ({}));
       if (response.status === 409 || body.code === 'process_template_conflict') {
-        throw new Error('this template changed since the rename dialog opened; reopen it and try again');
+        throw new Error('this template changed while you were renaming it; reload and try again');
       }
       if (body.code === 'process_template_invalid') {
         throw new Error('this template no longer passes validation, so it cannot be saved under a new name until the graph is fixed in the editor');
       }
       if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
-      if (state.rename.value?.key !== spec.key) return true;
-      state.setRename(null);
-      state.setNotice(next ? `Renamed ${spec.id} to ${next}.` : `Cleared the display name for ${spec.id}.`);
+      state.setNotice(next ? `Renamed ${id} to ${next}.` : `Cleared the display name for ${id}.`);
       void load('templates', { quiet: true });
       return true;
     } catch (error) {
-      if (state.rename.value?.key === spec.key) state.setRename({ ...spec, error: error.message });
       state.setNotice(`Rename failed: ${error.message}`);
       notify(`process template rename failed: ${error.message}`, true);
-      return false;
+      throw error;
     } finally {
       state.endMutation();
+    }
+  }
+  // submitRename is the DIALOG wrapper: it owns dialog lifecycle (close on
+  // success, keep open and show the error on failure) around the shared commit.
+  async function submitRename(name) {
+    const spec = state.rename.value;
+    if (!spec?.id) return false;
+    try {
+      const ok = await renameTemplate(spec, name);
+      if (!ok) return false;
+      if (state.rename.value?.key === spec.key) state.setRename(null);
+      return true;
+    } catch (error) {
+      if (state.rename.value?.key === spec.key) state.setRename({ ...spec, error: error.message });
+      return false;
     }
   }
   function closeInstantiation() {
@@ -476,7 +490,7 @@ export function createProcessesActions({
   return Object.freeze({
     load, observeTemplateHeads, activateSubtab, openEditor, summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
-    openRename, closeRename, submitRename,
+    openRename, closeRename, submitRename, renameTemplate,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
   });
 }

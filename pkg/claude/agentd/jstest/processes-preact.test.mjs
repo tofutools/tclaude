@@ -1072,7 +1072,7 @@ test('a rename losing the CAS race reports the conflict and keeps the dialog ope
   });
   await actions.openRename({ id: 'racy', name: 'Before' });
   assert.equal(await actions.submitRename('After'), false);
-  assert.match(state.rename.value.error, /changed since the rename dialog opened/);
+  assert.match(state.rename.value.error, /changed while you were renaming it/);
   assert.equal(state.rename.value.id, 'racy', 'the dialog stays open on the same template');
   assert.equal(state.mutation.value.busy, false, 'the mutation gate is released after a conflict');
   assert.match(notices.at(-1), /rename failed/);
@@ -1243,5 +1243,42 @@ test('Escape abandons an inline list rename without saving', async (t) => {
   for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
   assert.equal(posts, 0, 'Escape commits nothing');
   assert.equal(mounted.container.querySelector('[data-process-name-edit="escaped"]').textContent, 'Keep me');
+  await mounted.unmount();
+});
+
+test('regression: an inline list rename never flashes the rename dialog open', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{
+        id: 'noflash', name: 'Before', latestVersion: { sourceHash: 'v1' },
+      }] }) };
+      if (options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'noflash@sha256:new' }) };
+      return { ok: true, json: async () => ({ template: { id: 'noflash', name: 'Before' }, sourceHash: 'v1' }) };
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-edit="noflash"]'), 'click'));
+
+  // Watch dialog state across the whole commit: the bug was openRename setting
+  // it just long enough to render before submitRename cleared it again.
+  const seen = [];
+  const stop = state.rename.subscribe((value) => seen.push(value));
+  const input = mounted.container.querySelector('[data-process-name-input="noflash"]');
+  input.value = 'After';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
+  stop();
+
+  assert.deepEqual(seen.filter(Boolean), [], 'the dialog is never opened by an inline rename');
+  assert.equal(mounted.container.querySelector('.process-rename-dialog'), null);
   await mounted.unmount();
 });
