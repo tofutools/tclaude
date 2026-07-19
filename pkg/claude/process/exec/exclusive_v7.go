@@ -276,6 +276,15 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 	if err := adapter.Validate(request); err != nil {
 		return nil, false, err
 	}
+	// Preflight the durable contact bounds before ANY side effect: neither
+	// the claim append nor the external dispatch may happen for a performer
+	// whose contact schedule could never seal (eligibility applies the same
+	// authority to raw templates; this catches the executed request shape).
+	if performer := action.plan.Performer(); performer != nil {
+		if err := PreflightSchema7Contact(*performer); err != nil {
+			return nil, false, fmt.Errorf("preflight path-v1 contact for command %q: %w", request.Command.ID, err)
+		}
+	}
 	if !action.recover {
 		appended, err := e.Store.AppendPathV1(ctx, runID, action.transition)
 		if err != nil {

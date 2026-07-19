@@ -3,6 +3,7 @@ package processexec
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -323,6 +324,51 @@ func TestExclusiveV7ContactSendCrashResendsFromDurableDue(t *testing.T) {
 	assert.Equal(t, uint64(1), record.Used)
 	nudges, _ := adapter.sends()
 	assert.Equal(t, 1, nudges)
+}
+
+// TestExclusiveV7PreflightRefusesBeforeAnySideEffect is the P1 focused test:
+// a claimed-eligible run whose performer's contact fields exceed the durable
+// bounds must fail closed BEFORE the claim append and BEFORE any external
+// dispatch — never after creating work it cannot seal a contact for.
+func TestExclusiveV7PreflightRefusesBeforeAnySideEffect(t *testing.T) {
+	adapter := &contactDeferredAdapter{assignee: "agent:agt_worker"}
+	fs, runID := exclusiveV7RunAt(t, t.TempDir(), &model.Performer{
+		Kind: model.PerformerAgent, Prompt: "work",
+		Contact: &model.ContactSchedule{Cadence: "5m", Budget: 2, EscalationTarget: "human:" + strings.Repeat("x", 300)},
+	}, nil)
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	_, err := executor.Drive(t.Context(), runID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "preflight path-v1 contact")
+	adapter.mu.Lock()
+	dispatches := adapter.dispatches
+	adapter.mu.Unlock()
+	assert.Zero(t, dispatches, "no external dispatch may precede contact preflight")
+	snapshot, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
+	require.NoError(t, err)
+	for _, command := range aggregate.Commands {
+		assert.NotEqual(t, pathv1.CommandPerformAttempt, command.Identity.Kind,
+			"no attempt claim may be appended for an unpreflightable performer")
+	}
+}
+
+func TestPreflightSchema7ContactBounds(t *testing.T) {
+	base := model.Performer{Kind: model.PerformerAgent, Prompt: "work"}
+	require.NoError(t, PreflightSchema7Contact(base))
+	human := model.Performer{Kind: model.PerformerHuman, Ask: "review"}
+	require.NoError(t, PreflightSchema7Contact(human))
+	longTarget := base
+	longTarget.Contact = &model.ContactSchedule{Cadence: "5m", Budget: 1, EscalationTarget: "human:" + strings.Repeat("x", 300)}
+	require.Error(t, PreflightSchema7Contact(longTarget))
+	longHuman := human
+	longHuman.Assignee = strings.Repeat("y", 300)
+	require.Error(t, PreflightSchema7Contact(longHuman))
+	badCadence := base
+	badCadence.Contact = &model.ContactSchedule{Cadence: "-1s", Budget: 1, EscalationTarget: "human:operator"}
+	require.Error(t, PreflightSchema7Contact(badCadence))
 }
 
 // bareDeferredAdapter proves adapters without the contact surface no-op

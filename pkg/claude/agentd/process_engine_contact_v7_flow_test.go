@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +135,51 @@ func TestProcessEngineSchema7NilContactGetsEngineDefaults(t *testing.T) {
 	_, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
 	require.NoError(t, err)
 	assert.Equal(t, 1, adapter.nudges, "default schedule must nudge a stalled v7 performer")
+}
+
+// TestProcessEngineSchema7OverBoundContactFieldsStayOnV6 is the P1
+// regression: templates whose eventual durable contact fields exceed the
+// schema-7 bounds must not migrate — no v7 claim, no v7 dispatch, no wedge —
+// and legacy v6 servicing must continue to own them.
+func TestProcessEngineSchema7OverBoundContactFieldsStayOnV6(t *testing.T) {
+	longTarget := "human:" + strings.Repeat("x", 300)
+	longAssignee := strings.Repeat("y", 300)
+	cases := []struct {
+		name      string
+		performer model.Performer
+	}{
+		{name: "explicit escalation target over bound", performer: model.Performer{
+			Kind: model.PerformerAgent, Profile: "fake", Prompt: "work",
+			Contact: &model.ContactSchedule{Cadence: "1s", Budget: 1, EscalationTarget: longTarget},
+		}},
+		{name: "derived human assignee over bound", performer: model.Performer{
+			Kind: model.PerformerHuman, Assignee: longAssignee, Ask: "review",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, root := processEngineFlow(t)
+			adapter := &deferredContactAdapter{}
+			runID := "overbound-" + strings.ReplaceAll(tc.name, " ", "-")
+			fs := createEngineRun(t, root, runID, programTemplate("overbound", tc.performer), false)
+			now := time.Date(2026, 7, 10, 11, 0, 0, 0, time.UTC)
+			host := processengine.New(fs, "agentd:overbound", map[model.PerformerKind]processexec.Adapter{
+				model.PerformerAgent: adapter, model.PerformerHuman: adapter,
+			})
+			require.NoError(t, host.EnableExclusiveV7())
+			host.Now = func() time.Time { return now }
+			results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			assert.Empty(t, results[0].Error, "over-bound contact fields must not wedge the run")
+			schema, err := fs.RunStateSchemaVersion(t.Context(), runID)
+			require.NoError(t, err)
+			assert.Equal(t, state.StateSchemaVersion, schema, "run must remain on legacy schema 6")
+			snapshot, err := fs.LoadRun(t.Context(), runID)
+			require.NoError(t, err)
+			require.Len(t, snapshot.State.Contacts, 1, "legacy servicing must keep contact authority")
+		})
+	}
 }
 
 // TestProcessEngineSchema7ContactSurfacesWorklistAndViewer proves the read

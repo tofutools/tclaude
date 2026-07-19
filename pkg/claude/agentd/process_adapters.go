@@ -14,6 +14,7 @@ import (
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
 
 var processCommandIDPattern = regexp.MustCompile(`^cmd_[a-f0-9]{24}$`)
@@ -93,9 +94,22 @@ func processAgentSpawnParams(request processexec.Request) (spawnParams, error) {
 }
 
 func agentDispatchResult(agentID string, request processexec.Request) processexec.DispatchResult {
+	// Generated agent identities are fixed-length ("agt_" + 32 hex), so the
+	// durable contact assignee "agent:agt_..." is bounded by construction and
+	// far inside the schema-7 contact field limit. The invariant guards the
+	// construction, not user input: a malformed store identity must fail
+	// here, before it becomes an unsealable contact, and the executor's
+	// unresolvable-assignee path retries without external effect.
+	assignee := "agent:" + agentID
+	if len(assignee) > pathv1.MaxContactFieldBytes {
+		return processexec.DispatchResult{
+			ExternalRef: agentID,
+			Summary:     "Agent work for " + request.Input.NodeID,
+		}
+	}
 	return processexec.DispatchResult{
 		ExternalRef:      agentID,
-		Assignee:         "agent:" + agentID,
+		Assignee:         assignee,
 		Summary:          "Agent work for " + request.Input.NodeID,
 		AvailableActions: []string{"pass", "fail", "ask-changes"},
 		CreateObligation: true,
@@ -323,15 +337,7 @@ func (a processHumanAdapter) Dispatch(_ context.Context, request processexec.Req
 	if err := a.Validate(request); err != nil {
 		return processexec.DispatchResult{}, err
 	}
-	assignee := strings.TrimSpace(request.Performer.Assignee)
-	if assignee == "" {
-		assignee = strings.TrimSpace(request.Performer.Profile)
-	}
-	if assignee == "" {
-		assignee = "human:operator"
-	} else if !strings.HasPrefix(assignee, "human:") && !strings.HasPrefix(assignee, "role:") {
-		assignee = "human:" + assignee
-	}
+	assignee := processexec.HumanContactAssignee(request.Performer)
 	summary := strings.TrimSpace(request.Performer.Ask)
 	if summary == "" {
 		summary = strings.TrimSpace(request.Performer.Prompt)

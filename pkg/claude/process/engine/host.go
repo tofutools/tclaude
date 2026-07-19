@@ -459,6 +459,12 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			if node.Performer == nil || node.Performer.Kind == model.PerformerProgram {
 				return false
 			}
+			// A template whose eventual durable contact fields exceed the
+			// schema-7 bounds must stay on v6: dispatch would otherwise create
+			// external work whose contact schedule can never seal.
+			if processexec.PreflightSchema7Contact(*node.Performer) != nil {
+				return false
+			}
 			if node.Type == model.NodeTypeTask && len(node.Performer.ChoiceOutcomes) != 0 {
 				return false
 			}
