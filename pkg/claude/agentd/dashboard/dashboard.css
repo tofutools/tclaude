@@ -13138,3 +13138,121 @@ body.wizard #spawn-harness-policy-modal .modal-buttons button.primary:hover:not(
   box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
 }
 .danger-text { color: var(--danger, #c33); }
+
+/* ═══ Wizard Usage tab — "🔮 The Mana Reserves" ═══════════════════════
+   The last chart-bearing tab to be re-skinned, and the one whose metaphor
+   was already written: the dashboard calls a context window an agent's
+   mana reserve (the .ctx-mana crystal gauge and its 🔮 tooltip), and the
+   nav tab has read "📈 Reserves" since wizard mode landed. A provider
+   quota is the same substance at account scale, so the graphs become a
+   scrying of mana: what has been CHANNELED, what a PROPHECY foresees, and
+   when the reserves REPLENISH.
+
+   Colour assignment differs deliberately from the Costs ledger next door.
+   There gold = real coin and violet = seer's estimate. Here the observed
+   trace takes the mana-blue of the lit .ctx-mana crystal segments (#4dd0e1)
+   so the tab's line and the roster's gauge read as the SAME substance —
+   that cross-surface rhyme is worth more than matching Costs' gold. Violet
+   dashes stay the prophecy (same convention as Costs' projected columns),
+   and gold is freed up to mark replenishment, the moment the reserves are
+   refilled. Rising-is-worse is preserved: the line still climbs toward a
+   drained reserve, exactly as in the default theme.
+
+   Copy is swapped in JS rather than by the `Words` two-spans trick — SVG
+   <text> cannot hold a <span> twin — so the island repaints on the wizard
+   edge (useWizardTheme in usage-history-island.js). CSS here is purely the
+   palette, and every rule is scoped to a .usage-* selector so it vanishes
+   the instant the 🧙 theme flips off. */
+
+/* The tab's own nameplate, in the Papyrus voice the other named tabs use.
+   Always in the markup, revealed only here — same two-state twin as the Debug
+   observatory's and the Config almanac's headings. */
+.usage-wizard-title { display: none; }
+body.wizard .usage-wizard-title {
+  display: block;
+  margin: 0 0 10px; text-align: center;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  font-size: 20px; font-weight: 700; color: #f0d066;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6);
+}
+/* Each graph is a scrying pool: the violet void inside a gilded frame, with
+   the same mystic glow spilling from the top edge as the Costs panel. */
+body.wizard .usage-series-card {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(122, 93, 176, 0.16), transparent 68%),
+    linear-gradient(180deg, #1a1233 0%, #140f28 100%);
+  border-color: #7a5db0;
+  box-shadow: inset 0 0 18px rgba(169, 123, 214, 0.18);
+}
+body.wizard .usage-provider { color: #b39ddb; }
+body.wizard .usage-series-card h3 { color: #f3e6c0; }
+body.wizard .usage-current strong {
+  color: #f0d066; text-shadow: 0 0 6px rgba(240, 208, 102, 0.35);
+}
+body.wizard .usage-current span { color: #9a86c4; }
+/* Span controls: muted violet labels, gold on the chosen span. */
+body.wizard .usage-control-label { color: #b39ddb; }
+body.wizard .usage-control-divider { background: rgba(122, 93, 176, 0.5); }
+body.wizard .usage-card-controls button.tool.active {
+  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+}
+/* Gridlines + axis ticks go arcane: faint violet rules, gilded % labels. */
+body.wizard .usage-grid line { stroke: rgba(122, 93, 176, 0.22); }
+body.wizard .usage-x-tick line { stroke: rgba(122, 93, 176, 0.12); }
+body.wizard .usage-grid text,
+body.wizard .usage-x-tick text { fill: #9a86c4; }
+/* The channeled trace — mana-blue, the exact hue of a lit .ctx-mana segment,
+   with a faint arcane glow so it reads as flowing energy rather than ink. */
+body.wizard .usage-observed-line {
+  stroke: #4dd0e1;
+  filter: drop-shadow(0 0 3px rgba(77, 208, 225, 0.55));
+}
+body.wizard .usage-point { fill: #7fe3f0; stroke: #140f28; }
+body.wizard .usage-point-mark:hover .usage-point,
+body.wizard .usage-point-mark.active .usage-point,
+body.wizard .usage-point-mark:focus-within .usage-point { fill: #d6f7fc; }
+/* The prophecy — ethereal violet dashes, so a foretelling never reads as a
+   reading actually taken. Matches Costs' projected columns. */
+body.wizard .usage-forecast-line {
+  stroke: #a97bd6;
+  filter: drop-shadow(0 0 4px rgba(169, 123, 214, 0.5));
+}
+body.wizard .usage-forecast-hit-target:focus { stroke: rgb(169 123 214 / 22%); }
+/* Replenishments — tarnished gold, the hour the reserves are refilled. */
+body.wizard .usage-reset-mark line,
+body.wizard .usage-scheduled-reset line { stroke: #d9b45a; }
+body.wizard .usage-reset-mark circle {
+  fill: #f0d066; filter: drop-shadow(0 0 4px rgba(240, 208, 102, 0.6));
+}
+body.wizard .usage-scheduled-reset line.usage-marker-hit-target:focus,
+body.wizard .usage-reset-mark line.usage-marker-hit-target:focus,
+body.wizard .usage-now-mark line.usage-marker-hit-target:focus { stroke: rgb(217 180 90 / 22%); }
+body.wizard .usage-now-mark line { stroke: #8f7bb5; }
+/* Hover tooltip → a small arcane slab, edged in the tone it describes. */
+body.wizard .usage-chart-tooltip rect {
+  fill: #241b3d; stroke: #a97bd6;
+}
+body.wizard .usage-chart-tooltip.observed rect { stroke: #4dd0e1; }
+body.wizard .usage-chart-tooltip.reset rect { stroke: #d9b45a; }
+body.wizard .usage-chart-tooltip.now rect { stroke: #8f7bb5; }
+body.wizard .usage-chart-tooltip text { fill: #e7d9f5; }
+body.wizard .usage-chart-tooltip .usage-tooltip-title { fill: #f3e6c0; }
+body.wizard .usage-chart-empty { color: #8f7bb5; }
+/* Legend swatches track the strokes they key. */
+body.wizard .usage-chart-legend { color: #b39ddb; }
+body.wizard .usage-legend-swatch.observed { border-color: #4dd0e1; }
+body.wizard .usage-legend-swatch.forecast { border-color: #a97bd6; }
+body.wizard .usage-legend-swatch.reset { border-color: #d9b45a; }
+body.wizard .usage-legend-swatch.now { border-color: #8f7bb5; }
+/* The prophecy footer keeps its honest traffic-light urgency — a drained
+   reserve is still bad news — just re-skinned into the arcane palette. */
+body.wizard .usage-card-footer.usage-forecast strong { color: #f3e6c0; }
+body.wizard .usage-card-footer.usage-forecast span { color: #9a86c4; }
+body.wizard .usage-card-footer.usage-forecast.good strong { color: #7bd88f; }
+body.wizard .usage-card-footer.usage-forecast.warn strong { color: #e6c07b; }
+body.wizard .usage-card-footer.usage-forecast.danger strong { color: #f0a3bf; }
+/* The footnote → a scrap of parchment pinned below the pools. */
+body.wizard .usage-history-note {
+  background: #1c1436; border-color: rgba(122, 93, 176, 0.4); color: #b39ddb;
+}
+body.wizard .usage-history-error { color: #f0a3bf; }

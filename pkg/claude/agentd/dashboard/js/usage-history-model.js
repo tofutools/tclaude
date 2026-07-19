@@ -57,20 +57,40 @@ export function formatUsageDuration(milliseconds) {
   return [days && `${days}d`, hours && `${hours}h`, mins && `${mins}m`].filter(Boolean).join(' ');
 }
 
-export function formatUsageResetCountdown(value, now = Date.now()) {
+// The wizard voice for this tab. The dashboard already calls a context window
+// an agent's "mana reserve" (the .ctx-mana crystal gauge and its 🔮 tooltip in
+// groups-member-table.js), and the nav tab is already "📈 Reserves" — so a
+// provider quota is mana too, spending it is *channeling*, a quota reset is a
+// *replenishment*, and a forecast is a *prophecy*. Nothing here invents a new
+// metaphor; it finishes one the rest of the dashboard already speaks.
+//
+// Unlike most wizard copy this is NOT the two-spans/CSS-reveal `Words` trick:
+// most of these strings end up inside SVG <text> tooltips, where a <span> twin
+// is invalid markup. The island subscribes to the tclaude:wizard edge and
+// repaints instead (see useWizardTheme in usage-history-island.js), which keeps
+// the instant-swap property the `Words` pattern exists to provide, so plain
+// strings are safe for the whole tab and one mechanism covers it.
+export function formatUsageResetCountdown(value, now = Date.now(), wizard = false) {
   const at = new Date(value).getTime();
-  if (!Number.isFinite(at)) return 'reset unknown';
+  if (!Number.isFinite(at)) return wizard ? 'replenishment unknown' : 'reset unknown';
   const delta = at - now;
-  if (Math.abs(delta) <= 60_000) return 'resets now';
+  if (Math.abs(delta) <= 60_000) return wizard ? 'replenishing now' : 'resets now';
+  if (wizard) {
+    return delta > 0
+      ? `replenishes in ${formatUsageDuration(delta)}`
+      : `replenished ${formatUsageDuration(delta)} ago`;
+  }
   return delta > 0
     ? `resets in ${formatUsageDuration(delta)}`
     : `reset ${formatUsageDuration(delta)} ago`;
 }
 
-export function usageForecastView(forecast, now = Date.now(), latestAt = '') {
-  if (!forecast) return { tone: 'muted', headline: 'Prediction unavailable', lines: [] };
+export function usageForecastView(forecast, now = Date.now(), latestAt = '', wizard = false) {
+  const w = (plain, wizardly) => (wizard ? wizardly : plain);
+  if (!forecast) return { tone: 'muted', headline: w('Prediction unavailable', 'No prophecy to be had'), lines: [] };
   const rate = forecast.rate_pct_per_hour
-    ? `Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`
+    ? w(`Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`,
+      `Channeling rate: ${forecast.rate_pct_per_hour.toFixed(1)} motes of mana per hour`)
     : '';
   const hitAt = new Date(forecast.hits_limit_at).getTime();
   const resetAt = new Date(forecast.reset_at).getTime();
@@ -80,28 +100,44 @@ export function usageForecastView(forecast, now = Date.now(), latestAt = '') {
   if (forecast.status === 'stale') {
     const resetPassed = forecast.reset_at && new Date(forecast.reset_at).getTime() <= now;
     return {
-      tone: 'muted', headline: 'Prediction paused',
-      lines: [resetPassed ? `Reported reset ${formatUsageTime(forecast.reset_at, now)}` : `Last sample ${formatUsageTime(latestAt, now)}`],
+      tone: 'muted', headline: w('Prediction paused', 'The vision has clouded over'),
+      lines: [resetPassed
+        ? w(`Reported reset ${formatUsageTime(forecast.reset_at, now)}`, `Replenishment reported ${formatUsageTime(forecast.reset_at, now)}`)
+        : w(`Last sample ${formatUsageTime(latestAt, now)}`, `Last reading ${formatUsageTime(latestAt, now)}`)],
     };
   }
-  if (forecast.status === 'limit') return { tone: 'danger', headline: 'Prediction: limit reached', lines: [] };
+  if (forecast.status === 'limit') return { tone: 'danger', headline: w('Prediction: limit reached', 'The reserves are spent'), lines: [] };
   if (forecast.status === 'before_reset') return {
     tone: 'danger',
-    headline: `Prediction: limit hit ${formatUsageTime(forecast.hits_limit_at, now)}${beforeReset ? ` (${beforeReset} before reset)` : ''}`,
-    lines: [beforeReset && `Predicted time without quota access: ${beforeReset}`, rate].filter(Boolean),
+    headline: w(
+      `Prediction: limit hit ${formatUsageTime(forecast.hits_limit_at, now)}${beforeReset ? ` (${beforeReset} before reset)` : ''}`,
+      `Prophecy: reserves run dry ${formatUsageTime(forecast.hits_limit_at, now)}${beforeReset ? ` (${beforeReset} before replenishment)` : ''}`,
+    ),
+    lines: [beforeReset && w(`Predicted time without quota access: ${beforeReset}`, `Foretold time without mana: ${beforeReset}`), rate].filter(Boolean),
   };
   if (forecast.status === 'after_reset') return {
-    tone: 'good', headline: `Prediction: reset ${formatUsageTime(forecast.reset_at, now)} (before limit)`,
-    lines: [`At this rate, limit would be hit ${formatUsageTime(forecast.hits_limit_at, now)}`, rate].filter(Boolean),
+    tone: 'good',
+    headline: w(`Prediction: reset ${formatUsageTime(forecast.reset_at, now)} (before limit)`,
+      `Prophecy: replenishment ${formatUsageTime(forecast.reset_at, now)} (the reserves hold)`),
+    lines: [w(`At this rate, limit would be hit ${formatUsageTime(forecast.hits_limit_at, now)}`,
+      `At this rate the reserves would run dry ${formatUsageTime(forecast.hits_limit_at, now)}`), rate].filter(Boolean),
   };
   if (forecast.status === 'projected') return {
-    tone: 'warn', headline: `Prediction: limit hit ${formatUsageTime(forecast.hits_limit_at, now)}`,
-    lines: ['Reset time unavailable', rate].filter(Boolean),
+    tone: 'warn',
+    headline: w(`Prediction: limit hit ${formatUsageTime(forecast.hits_limit_at, now)}`,
+      `Prophecy: reserves run dry ${formatUsageTime(forecast.hits_limit_at, now)}`),
+    lines: [w('Reset time unavailable', 'The hour of replenishment is unknown'), rate].filter(Boolean),
   };
-  if (forecast.status === 'flat') return { tone: 'good', headline: 'Prediction: no limit crossing', lines: ['Usage is flat'] };
+  if (forecast.status === 'flat') return {
+    tone: 'good', headline: w('Prediction: no limit crossing', 'Prophecy: the reserves hold'),
+    lines: [w('Usage is flat', 'No mana is being channeled')],
+  };
   return {
-    tone: 'muted', headline: 'Prediction warming up',
-    lines: [`${forecast.sample_count || 0} post-reset sample${forecast.sample_count === 1 ? '' : 's'} · needs 3 over 30m`],
+    tone: 'muted', headline: w('Prediction warming up', 'The vision is still forming'),
+    lines: [w(
+      `${forecast.sample_count || 0} post-reset sample${forecast.sample_count === 1 ? '' : 's'} · needs 3 over 30m`,
+      `${forecast.sample_count || 0} reading${forecast.sample_count === 1 ? '' : 's'} since replenishment · needs 3 over 30m`,
+    )],
   };
 }
 

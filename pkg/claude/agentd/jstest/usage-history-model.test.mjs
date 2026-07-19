@@ -27,3 +27,40 @@ test('usage prediction copy states lockout duration and unambiguous average rate
     'Average usage rate: 1.9 percentage points/hour',
   ]);
 });
+
+// The wizard voice is a parameter, not a separate code path: the same forecast
+// must produce the same tone and the same numbers in either theme, so a theme
+// flip can never change what the graph claims — only how it says it.
+test('usage copy speaks the wizard voice without changing the reading', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { formatUsageResetCountdown, usageForecastView } =
+    await harness.importDashboardModule('js/usage-history-model.js');
+  const now = Date.UTC(2026, 6, 18, 12);
+  const hour = 60 * 60_000;
+  const input = {
+    status: 'before_reset',
+    rate_pct_per_hour: 1.875,
+    hits_limit_at: new Date(now + 47 * hour).toISOString(),
+    reset_at: new Date(now + 7 * 24 * hour).toISOString(),
+  };
+  const plain = usageForecastView(input, now, '', false);
+  const wizard = usageForecastView(input, now, '', true);
+
+  assert.equal(
+    formatUsageResetCountdown(new Date(now + 3 * hour).toISOString(), now, true),
+    'replenishes in 3h',
+  );
+  assert.equal(formatUsageResetCountdown(new Date(now - 60_001).toISOString(), now, true), 'replenished 1m ago');
+  assert.equal(wizard.headline, 'Prophecy: reserves run dry in 47h (5d 1h before replenishment)');
+  assert.deepEqual(wizard.lines, [
+    'Foretold time without mana: 5d 1h',
+    'Channeling rate: 1.9 motes of mana per hour',
+  ]);
+  // Same urgency, same figures — only the wording differs.
+  assert.equal(wizard.tone, plain.tone);
+  assert.notEqual(wizard.headline, plain.headline);
+  for (const needle of ['47h', '5d 1h', '1.9']) {
+    assert.ok(wizard.headline.includes(needle) || wizard.lines.join(' ').includes(needle),
+      `wizard copy dropped the figure ${needle}`);
+  }
+});

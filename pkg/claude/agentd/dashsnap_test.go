@@ -884,6 +884,47 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "usage-mana",
+			Title:   "Usage / mana reserves",
+			Caption: "The quota graphs keep their readable default skin while wizard mode adds The Mana Reserves nameplate, violet scrying pools, a mana-blue channeled trace and the replenishment/prophecy vocabulary.",
+			JS: `return (async function(){
+  var modules = await Promise.all([import('/static/js/snapshot-store.js')]);
+  var store = modules[0];
+  store.dashboardState.snapshot.value = Object.assign({}, store.dashboardState.snapshot.value, {
+    usage_tab_visible: true
+  });
+  await Promise.resolve();
+  document.querySelector('nav [data-tab="usage"]').click();
+  for (var i = 0; i < 80 && !document.querySelector('.usage-series-card'); i++) {
+    await new Promise(function(resolve){ setTimeout(resolve, 50); });
+  }
+  var card = document.querySelector('.usage-series-card');
+  var line = document.querySelector('.usage-observed-line');
+  var title = document.querySelector('.usage-wizard-title');
+  var legend = document.querySelector('.usage-chart-legend');
+  if (!card || !line || !title || !legend) throw new Error('usage-mana: reserve chrome did not render');
+  var wizard = document.body.classList.contains('wizard');
+  var cardStyle = getComputedStyle(card);
+  var lineStyle = getComputedStyle(line);
+  var titleStyle = getComputedStyle(title);
+  if (wizard) {
+    if (titleStyle.display === 'none') throw new Error('usage-mana: wizard nameplate is hidden');
+    if (!cardStyle.backgroundImage.includes('gradient')) throw new Error('usage-mana: wizard card lacks scrying-pool chrome');
+    // The channeled trace must be the same mana blue as a lit .ctx-mana segment.
+    if (lineStyle.stroke !== 'rgb(77, 208, 225)') throw new Error('usage-mana: channeled trace is not mana blue');
+    if (!legend.textContent.includes('Channeled')) throw new Error('usage-mana: legend did not take the wizard voice');
+    if (legend.textContent.includes('Observed')) throw new Error('usage-mana: plain legend copy survived the theme flip');
+  } else {
+    if (titleStyle.display !== 'none') throw new Error('usage-mana: wizard nameplate leaked into plain mode');
+    if (cardStyle.backgroundImage !== 'none') throw new Error('usage-mana: wizard card chrome leaked into plain mode');
+    if (lineStyle.stroke !== 'rgb(88, 166, 255)') throw new Error('usage-mana: plain observed line changed colour');
+    if (!legend.textContent.includes('Observed')) throw new Error('usage-mana: plain legend copy changed');
+    if (legend.textContent.includes('Channeled')) throw new Error('usage-mana: wizard copy leaked into plain mode');
+  }
+})();`,
+			SettleMS: 400,
+		},
+		{
 			Key:     "links-management",
 			Title:   "Preact links / arcane channels manager",
 			Caption: "The bounded Links controls and keyed list retain the regular management vocabulary while wizard mode exposes channel, weave, rebind and sever copy.",
