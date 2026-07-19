@@ -368,6 +368,194 @@ test('drop commit reuses connection feedback preflight for direction and invalid
   assert.deepEqual(statuses.at(-1), ['End nodes cannot have outgoing connections.', true]);
 });
 
+test('pasting a preserved legacy illegal-side edge surfaces the specific recovery guidance', () => {
+  // Regression: the paste handler narrows to ProcessClipboardError, so a plain
+  // port rejection used to be swallowed into the generic clipboard failure and
+  // the operator never learned which edge blocked the paste.
+  let prevented = 0;
+  let status = null;
+  const model = new ProcessEditModel({
+    template: { nodes: { kept: { type: 'task' } } }, edges: [], layout: { nodes: {} },
+  });
+  const selection = { type: 'node', id: 'kept' };
+  const fake = {
+    model, selection, modalDispose: null,
+    pasteFingerprint: 'prior', pasteRepeat: 3, pasteAnchor: { x: 7, y: 8 },
+    status: (...args) => { status = args; },
+    pasteTargetPoint: () => ({ x: 0, y: 0 }),
+    refresh() { assert.fail('a rejected paste never refreshes the canvas'); },
+    setSelection() { assert.fail('a rejected paste never changes the selection'); },
+  };
+  const before = model.saveBody();
+  const payload = `tclaude-process-selection:v1\n${JSON.stringify({
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'end', node: { type: 'end', result: 'success' }, position: { x: 0, y: 0 } },
+      { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 100 } },
+    ],
+    edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+  })}`;
+
+  assert.equal(ProcessTemplateEditor.prototype.onEditorPaste.call(fake, {
+    target: { tagName: 'DIV' }, clipboardData: { getData: () => payload },
+    preventDefault() { prevented += 1; },
+  }), true);
+  assert.equal(prevented, 1);
+  assert.equal(status[1], true, 'the rejection is surfaced as an error status');
+  assert.match(status[0], /Paste cannot re-create the edge end -> ordinary \(outcome "legacy-out"\)/);
+  assert.match(status[0], /End nodes cannot have outgoing connections\./);
+  assert.match(status[0],
+    /Delete that edge in the source template and copy again, or copy without selecting both of its endpoints\./);
+  assert.doesNotMatch(status[0], /Clipboard selection could not be pasted/);
+
+  assert.deepEqual(model.saveBody(), before, 'the rejected paste mutated nothing');
+  assert.equal(model.canUndo, false);
+  assert.equal(fake.selection, selection, 'selection survives the rejection');
+  assert.deepEqual([fake.pasteFingerprint, fake.pasteRepeat, fake.pasteAnchor],
+    ['prior', 3, { x: 7, y: 8 }], 'paste placement state is untouched by a rejection');
+});
+
+test('a custom snippet carrying a legacy illegal-side edge is rejected as a snippet, not as a paste', () => {
+  // Regression at the call site: insertCustomSnippet shares the clipboard
+  // transaction with paste, so a snippet holding a preserved legacy edge used
+  // to tell an operator who never copied anything to "copy the selection
+  // again". Pinning this here — and not only at the model — is what catches a
+  // future caller that forgets to name its surface.
+  let status = null;
+  const model = new ProcessEditModel({
+    template: { nodes: { kept: { type: 'task' } } }, edges: [], layout: { nodes: {} },
+  });
+  const before = model.saveBody();
+  const payload = {
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'end', node: { type: 'end', result: 'success' }, position: { x: 0, y: 0 } },
+      { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 100 } },
+    ],
+    edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+  };
+  const fake = {
+    model, destroyed: false, selection: null,
+    customSnippet: () => ({ id: 'snip', available: true, payload }),
+    canvasCenterPoint: () => ({ x: 0, y: 0 }),
+    status: (...args) => { status = args; },
+    refresh() { assert.fail('a rejected snippet insert never refreshes'); },
+    setSelection() { assert.fail('a rejected snippet insert never changes the selection'); },
+  };
+
+  assert.equal(ProcessTemplateEditor.prototype.insertCustomSnippet.call(fake, 'snip'), false);
+  assert.equal(status[1], true);
+  assert.match(status[0], /This snippet cannot be inserted because of the edge end -> ordinary \(outcome "legacy-out"\)/);
+  assert.match(status[0], /End nodes cannot have outgoing connections\./);
+  assert.match(status[0],
+    /Save a replacement snippet from a corrected selection, then delete or rename the old one\./);
+  // The operator never pasted and has nothing to re-copy.
+  assert.doesNotMatch(status[0], /Paste|Copy the selection again/);
+  assert.doesNotMatch(status[0], /The custom snippet could not be inserted/,
+    'the specific guidance is not collapsed into the generic snippet failure');
+
+  assert.deepEqual(model.saveBody(), before, 'the rejected snippet insert mutated nothing');
+  assert.equal(model.canUndo, false);
+});
+
+test('duplicate and delete-with-rewire rejections reach the header status line', () => {
+  const legacy = () => new ProcessEditModel({
+    template: {
+      nodes: { start: { type: 'start' }, ordinary: { type: 'task' }, end: { type: 'end' } },
+    },
+    edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+    layout: { nodes: { ordinary: { x: 0, y: 0 }, end: { x: 0, y: 100 } } },
+  });
+
+  const statuses = [];
+  const model = legacy();
+  const before = model.saveBody();
+  const fake = {
+    model, destroyed: false,
+    status: (...args) => { statuses.push(args); },
+    refresh() { assert.fail('a rejected mutation never refreshes'); },
+  };
+  assert.equal(ProcessTemplateEditor.prototype.mutate.call(fake,
+    () => model.duplicateNodes(['end', 'ordinary'])), undefined);
+  assert.equal(statuses.at(-1)[1], true);
+  assert.match(statuses.at(-1)[0], /Duplicate cannot copy the edge end -> ordinary/);
+  assert.match(statuses.at(-1)[0], /Deselect one of its endpoint nodes, or delete the edge first\./);
+  assert.deepEqual(model.saveBody(), before);
+
+  const rewireModel = new ProcessEditModel({
+    template: { nodes: { source: { type: 'task' }, middle: { type: 'task' }, start: { type: 'start' } } },
+    edges: [
+      { from: 'source', outcome: 'pass', to: 'middle' },
+      { from: 'middle', outcome: 'pass', to: 'start' },
+    ],
+    layout: { nodes: {} },
+  });
+  const rewireBefore = rewireModel.saveBody();
+  const rewireFake = {
+    model: rewireModel, destroyed: false,
+    status: (...args) => { statuses.push(args); },
+    refresh() { assert.fail('a rejected mutation never refreshes'); },
+  };
+  assert.equal(ProcessTemplateEditor.prototype.mutate.call(rewireFake,
+    () => rewireModel.deleteItems([{ type: 'node', id: 'middle' }], { rewire: true })), undefined);
+  assert.equal(statuses.at(-1)[1], true);
+  assert.match(statuses.at(-1)[0], /Delete with rewire cannot re-create the edge source -> start/);
+  assert.match(statuses.at(-1)[0], /Choose "Delete \+ drop edges" instead/);
+  assert.deepEqual(rewireModel.saveBody(), rewireBefore);
+});
+
+test('a rejected delete-with-rewire keeps the selection so the advised drop-edges recovery is reachable', async () => {
+  // Regression: deleteSelection cleared the selection unconditionally after
+  // mutate(), so the rewire rejection told the operator to retry with
+  // "Delete + drop edges" on a selection that no longer existed.
+  const model = new ProcessEditModel({
+    template: { nodes: { source: { type: 'task' }, middle: { type: 'task' }, start: { type: 'start' } } },
+    edges: [
+      { from: 'source', outcome: 'pass', to: 'middle' },
+      { from: 'middle', outcome: 'pass', to: 'start' },
+    ],
+    layout: { nodes: {} },
+  });
+  const before = model.saveBody();
+  const selection = { type: 'node', id: 'middle' };
+  const statuses = [];
+  const selections = [];
+  let choice = 'rewire';
+  const fake = {
+    model, destroyed: false, selection,
+    // The real mutate(): its reject-and-return-undefined contract is exactly
+    // what deleteSelection must now branch on.
+    mutate: ProcessTemplateEditor.prototype.mutate,
+    status: (...args) => { statuses.push(args); },
+    setSelection: (value) => { selections.push(value); fake.selection = value; },
+    refresh() {},
+    choiceModal: async ({ choices }) => {
+      // The rewire branch is only offered for mid-graph nodes, which is also
+      // the only case that can hit this rejection.
+      assert.deepEqual(choices.map((entry) => entry.key), ['rewire', 'drop']);
+      assert.equal(choices.find((entry) => entry.key === 'drop').label, 'Delete + drop edges');
+      return choice;
+    },
+  };
+
+  assert.equal(await ProcessTemplateEditor.prototype.deleteSelection.call(fake), false);
+  assert.equal(statuses.at(-1)[1], true);
+  assert.match(statuses.at(-1)[0], /Delete with rewire cannot re-create the edge source -> start/);
+  // The message names this exact button, so the selection it acts on must survive.
+  assert.match(statuses.at(-1)[0], /Choose "Delete \+ drop edges" instead/);
+  assert.deepEqual(selections, [], 'a rejected delete never touches the selection');
+  assert.equal(fake.selection, selection);
+  assert.deepEqual(model.saveBody(), before, 'the rejected delete mutated nothing');
+  assert.equal(model.canUndo, false);
+
+  // Now actually follow the advertised recovery on the retained selection.
+  choice = 'drop';
+  assert.equal(await ProcessTemplateEditor.prototype.deleteSelection.call(fake), true);
+  assert.equal(model.template.nodes.middle, undefined, 'the advised recovery completes');
+  assert.equal(model.canUndo, true);
+  assert.deepEqual(selections, [null], 'a successful delete still clears the selection');
+});
+
 test('missing keyboard source cancellation clears editor gesture state without commit or status mutation', () => {
   const model = new ProcessEditModel({
     template: { nodes: { build: { type: 'task' } } }, edges: [], layout: { nodes: {} },

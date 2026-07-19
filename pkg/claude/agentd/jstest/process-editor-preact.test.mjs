@@ -569,6 +569,95 @@ test('editor chooser and stale controller commits revalidate the shared port aut
   editor.destroy();
 });
 
+test('legacy illegal-side mutation rejections render whole in the status line without mutating the canvas', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  // A loaded legacy shape: End -> ordinary survives from before Start/End
+  // became single-sided, so it renders but may not be copied.
+  editor.model.template.nodes.ordinary = { type: 'task' };
+  editor.model.template.nodes.end = { type: 'end', result: 'success' };
+  editor.model.edges.push({ from: 'end', outcome: 'legacy-out', to: 'ordinary' });
+  editor.model.layout.nodes.ordinary = { x: 120, y: 320 };
+  editor.model.layout.nodes.end = { x: 120, y: 200 };
+  await harness.act(() => editor.refresh({ fit: true }));
+
+  const nodeIDs = () => [...host.querySelectorAll('.process-node')].map((node) => node.dataset.nodeId).sort();
+  const edgeCount = () => host.querySelectorAll('.process-edge').length;
+  const before = editor.model.saveBody();
+  const beforeNodes = nodeIDs();
+  const beforeEdges = edgeCount();
+  assert.ok(beforeEdges > 0, 'the preserved legacy edge still renders');
+
+  await harness.act(() => editor.setSelection(
+    { type: 'multi', items: [{ type: 'node', id: 'end' }, { type: 'node', id: 'ordinary' }] },
+  ));
+  const selectionBefore = editor.selection;
+  await harness.act(() => editor.duplicateSelection());
+
+  const status = host.querySelector('.process-editor-status');
+  assert.ok(status.className.includes('is-error'), 'the rejection renders in the error skin');
+  assert.equal(status.getAttribute('role'), 'status', 'the guidance is announced to assistive tech');
+  // The whole message survives projection — operators need the edge name and
+  // the way out, not just the leading sentence.
+  assert.match(status.textContent, /Duplicate cannot copy the edge end -> ordinary \(outcome "legacy-out"\)/);
+  assert.match(status.textContent, /End nodes cannot have outgoing connections\./);
+  assert.match(status.textContent, /predates the current Start\/End port rules/);
+  assert.match(status.textContent, /Deselect one of its endpoint nodes, or delete the edge first\./);
+  // The recovery instruction must be visually available to every operator, not
+  // just to a mouse hovering a native tooltip. It is carried as plain DOM text
+  // in an error row that wraps at full width, so no pointer-only affordance is
+  // involved and nothing depends on a title.
+  assert.equal(status.getAttribute('title'), null,
+    'the guidance is not hidden behind a pointer-only tooltip');
+  assert.ok(status.className.includes('is-error'),
+    'the error class is what selects the full-width wrapping row');
+  assert.equal(status.textContent.trim(), status.textContent.trim(),
+    'the full message is present as DOM text');
+  // No truncation is applied in markup: the complete recovery sentence is here.
+  assert.ok(status.textContent.endsWith('delete the edge first.'),
+    'the message is not cut short before its recovery clause');
+  assert.doesNotMatch(status.textContent, /…|\.\.\.$/, 'nothing is ellipsized away');
+  // Controls that share the header are still rendered alongside it.
+  assert.ok(host.querySelector('.process-editor-header .process-action'),
+    'the error row does not displace the header controls');
+
+  assert.deepEqual(editor.model.saveBody(), before, 'the rejected duplicate mutated no model state');
+  assert.deepEqual(nodeIDs(), beforeNodes, 'no clone reached the canvas');
+  assert.equal(edgeCount(), beforeEdges);
+  assert.equal(editor.model.canUndo, false, 'a rejection opens no undo step');
+  assert.deepEqual(editor.selection, selectionBefore, 'selection survives so the operator can act on it');
+
+  // The advertised recovery actually works: drop the edge, duplicate again.
+  await harness.act(() => editor.mutate(() => editor.model.deleteEdge('end', 'legacy-out')));
+  await harness.act(() => editor.duplicateSelection());
+  assert.equal(host.querySelector('.process-editor-status').className.includes('is-error'), false,
+    'following the guidance clears the error state');
+  assert.ok(editor.model.node('end-2') || editor.model.node('ordinary-2'),
+    'the duplicate succeeds once the legacy edge is gone');
+
+  // An outcome may legally be 512 unbroken characters, which is quoted verbatim
+  // into the message. LinkeDOM does no layout, so this pins content integrity
+  // only — that the maximal token survives projection whole and the recovery
+  // clause still trails it. The geometry (that it wraps inside the clipping
+  // mount instead of overflowing) is pinned by the real-Chrome dashsnap case
+  // process-editor-legacy-edge-error-row, in both skins.
+  const maximal = 'x'.repeat(512);
+  editor.model.edges.push({ from: 'end', outcome: maximal, to: 'ordinary' });
+  await harness.act(() => editor.refresh());
+  await harness.act(() => editor.setSelection(
+    { type: 'multi', items: [{ type: 'node', id: 'end' }, { type: 'node', id: 'ordinary' }] },
+  ));
+  await harness.act(() => editor.duplicateSelection());
+  const maximalStatus = host.querySelector('.process-editor-status');
+  assert.ok(maximalStatus.className.includes('is-error'));
+  assert.ok(maximalStatus.textContent.includes(maximal),
+    'the maximal unbroken outcome reaches the row verbatim, untruncated');
+  assert.ok(maximalStatus.textContent.endsWith('delete the edge first.'),
+    'the recovery clause still trails a maximal outcome');
+  assert.equal(maximalStatus.getAttribute('title'), null);
+
+  editor.destroy();
+});
+
 test('Preact editor reveals only diagnostic-bearing node overlays without moving ports or changing selection semantics', async (t) => {
   const { harness, host, editor } = await openBlank(t);
   await seedConnectedEnd(harness, editor);

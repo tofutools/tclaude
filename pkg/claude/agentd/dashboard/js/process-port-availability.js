@@ -30,6 +30,66 @@ export function processPortUnavailableMessage(node, port) {
   return 'This connector is not available.';
 }
 
+// Mutations that copy or synthesize an edge need more than the bare port
+// sentence. Templates authored before Start/End became single-sided still load
+// with edges like `ordinary -> Start`; those render, save, and delete fine, but
+// no mutation may re-create one. Naming the offending edge and the way out
+// keeps the (correct) wholesale rejection from reading as a dead end.
+// Only `duplicate` may call the edge legacy: it demonstrably exists in the
+// loaded template. A pasted or snippet payload has unknown provenance, and a
+// rewire bridge is synthesized fresh -- neither can be described as preserved
+// topology without asserting something the code cannot know.
+const PROCESS_EDGE_MUTATION_GUIDANCE = new Map([
+  ['duplicate', Object.freeze({
+    subject: 'Duplicate cannot copy the edge',
+    // "That edge", not "It": the preceding sentence's subject is "End nodes",
+    // and a pronoun here would read as if End nodes predate the rules.
+    cause: 'That edge predates the current Start/End port rules, so it can be kept but not re-created.',
+    // Duplicate refuses any selection containing an edge, so the blocking edge
+    // is implied by both endpoints being selected and cannot itself be
+    // deselected. Point at the endpoint nodes, which the operator can act on.
+    recovery: 'Deselect one of its endpoint nodes, or delete the edge first.',
+  })],
+  // Payloads of unknown provenance carry no `cause`: restating the base
+  // sentence as a rule would add length without adding information.
+  // Copy always includes every edge whose endpoints are both selected, so
+  // "copy without that edge" is only reachable by changing the source first or
+  // by not selecting both endpoints -- and deleting the edge after copying does
+  // not change what is already on the clipboard. Say the sequence, not a choice.
+  ['paste', Object.freeze({
+    subject: 'Paste cannot re-create the edge',
+    recovery: 'Delete that edge in the source template and copy again, or copy without selecting both of its endpoints.',
+  })],
+  // Stored snippet payloads are immutable: the API creates, renames, and
+  // deletes, but never updates. "Re-save" would name an operation that does not
+  // exist, and creating under the same name conflicts.
+  ['snippet', Object.freeze({
+    subject: 'This snippet cannot be inserted because of the edge',
+    recovery: 'Save a replacement snippet from a corrected selection, then delete or rename the old one.',
+  })],
+  ['delete-rewire', Object.freeze({
+    subject: 'Delete with rewire cannot re-create the edge',
+    cause: 'Rewiring has to build that connection anew, which the current Start/End port rules forbid.',
+    // Matches the delete dialog's own choice label.
+    recovery: 'Choose "Delete + drop edges" instead, then reconnect the remaining nodes by hand.',
+  })],
+]);
+
+export function describeProcessEdge(edge) {
+  const label = `${edge?.from || '?'} -> ${edge?.to || '?'}`;
+  return edge?.outcome ? `${label} (outcome "${edge.outcome}")` : label;
+}
+
+// processEdgeMutationMessage wraps a port-availability rejection in
+// operation-specific recovery guidance. Unknown operations fall back to the
+// bare sentence, so callers that have nothing better to say stay unchanged.
+export function processEdgeMutationMessage(operation, edge, message) {
+  const guidance = PROCESS_EDGE_MUTATION_GUIDANCE.get(operation);
+  if (!guidance) return message;
+  return [`${guidance.subject} ${describeProcessEdge(edge)}: ${message}`, guidance.cause, guidance.recovery]
+    .filter(Boolean).join(' ');
+}
+
 export function processEdgePortAvailability(fromNode, toNode) {
   if (!processNodePortAvailable(fromNode, PROCESS_PORT_OUT)) {
     return Object.freeze({

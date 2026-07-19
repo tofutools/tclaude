@@ -503,6 +503,20 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("dashboard.css", css,
 		".process-editor-header",
 		".process-editor-external",
+		// TCL-583: actionable error statuses carry recovery instructions, so
+		// they take a full-width wrapping row rather than a truncated slot in
+		// the toolbar. Neither skin overrides .is-error layout, so the same
+		// rule serves the default and wizard chrome; the markup must not fall
+		// back to a pointer-only title.
+		".process-editor-status.is-error {",
+		"flex: 1 0 100%",
+		"white-space: normal",
+		// An edge outcome may legally be 512 unbroken characters
+		// (PROCESS_CLIPBOARD_MAX_OUTCOME) and is quoted verbatim in the
+		// message, so the row needs explicit break-anywhere containment or it
+		// overflows the clipping editor mount and loses the recovery clause.
+		"min-width: 0",
+		"overflow-wrap: anywhere",
 		"body.wizard .process-editor-external",
 		".process-external-review",
 		"body.wizard .process-external-source-summary",

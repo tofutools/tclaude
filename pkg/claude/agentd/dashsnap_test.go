@@ -1839,6 +1839,21 @@ func baseStates() []dashsnap.State {
 			SettleMS: 300,
 		},
 		{
+			Key:     "process-editor-legacy-edge-error-row",
+			Title:   "Process editor — legacy edge rejection with a maximal unbroken outcome",
+			Caption: "TCL-583 recovery guidance in real Chrome: an edge outcome may legally be 512 unbroken characters, and the full-width error row must wrap it inside the editor mount so the trailing recovery clause stays visible without any pointer-only tooltip.",
+			JS:      processEditorLegacyEdgeErrorRowJS,
+			SettleMS: 1100,
+		},
+		{
+			Key:      "process-editor-legacy-edge-error-row-wizard",
+			Title:    "Process editor — legacy edge rejection error row (wizard)",
+			Caption:  "The same TCL-583 error row under the wizard skin, which restyles the header but must not override the error row's containment.",
+			Wizard:   true,
+			JS:       processEditorLegacyEdgeErrorRowJS,
+			SettleMS: 1100,
+		},
+		{
 			Key:     "process-editor-marquee-multi",
 			Title:   "Process editor — marquee multi-selection",
 			Caption: "A left-drag marquee selects several nodes at once; every selected node has an accent outline and the inspector summarizes the current set.",
@@ -2910,6 +2925,46 @@ func processConnectionFeedbackState(key, title, sourceSelector, targetSelector, 
 // editor (Processes tab → Templates → open) and waits for the lazily imported
 // editor to mount its canvas, then runs extraJS with `ed` bound to the editor
 // instance (its dashsnap/test handle) to drive selection/dirty states.
+// processEditorLegacyEdgeErrorRowJS drives a real duplicate rejection whose
+// offending edge carries a maximal 512-character unbroken outcome — legal per
+// PROCESS_CLIPBOARD_MAX_OUTCOME — and then measures the rendered result. A
+// static DOM test cannot catch this: `white-space: normal` alone will not break
+// an unbroken token, so the row would silently overflow the editor mount, which
+// clips it, and the trailing recovery clause would be lost with no tooltip to
+// fall back on. Asserting real geometry is the only way to pin that.
+var processEditorLegacyEdgeErrorRowJS = processEditorStateJS(`var outcome='x'.repeat(512);
+  ed.model.template.nodes.ordinary={type:'task'};
+  ed.model.template.nodes.legacyEnd={type:'end',result:'success'};
+  ed.model.edges.push({from:'legacyEnd',outcome:outcome,to:'ordinary'});
+  ed.model.layout.nodes.ordinary={x:180,y:300};
+  ed.model.layout.nodes.legacyEnd={x:180,y:180};
+  ed.refresh({fit:true});
+  await editorPaint();
+  ed.setSelection({type:'multi',items:[{type:'node',id:'legacyEnd'},{type:'node',id:'ordinary'}]});
+  ed.duplicateSelection();
+  await editorPaint();
+  var status=document.querySelector('.process-editor-status');
+  if(!status||!status.classList.contains('is-error')) throw new Error('the legacy duplicate rejection did not render an error status');
+  if(status.textContent.indexOf(outcome)===-1) throw new Error('the maximal outcome is not present verbatim in the message');
+  if(!/Deselect one of its endpoint nodes, or delete the edge first\./.test(status.textContent)) throw new Error('the trailing recovery clause is missing from the message');
+  if(status.getAttribute('title')) throw new Error('recovery text must not depend on a pointer-only tooltip');
+  var mount=document.querySelector('#process-editor-canvas.process-editor-mount');
+  if(!mount) throw new Error('editor mount missing');
+  var rowRect=status.getBoundingClientRect(),mountRect=mount.getBoundingClientRect();
+  // The row itself must stay inside the clipping mount horizontally.
+  if(rowRect.right>mountRect.right+1||rowRect.left<mountRect.left-1) throw new Error('the error row overflows the clipping editor mount: '+JSON.stringify({row:rowRect.toJSON(),mount:mountRect.toJSON()}));
+  // And the text must actually wrap rather than run off the row: an unwrapped
+  // 512-character token would make scrollWidth far exceed the client width.
+  if(status.scrollWidth>status.clientWidth+1) throw new Error('the maximal unbroken outcome did not wrap inside the error row: '+JSON.stringify({scrollWidth:status.scrollWidth,clientWidth:status.clientWidth}));
+  // The wrapped row must be genuinely multi-line, and every line of it visible.
+  if(rowRect.height<=24) throw new Error('the error row did not grow to fit the wrapped message: '+rowRect.height);
+  if(rowRect.bottom>mountRect.bottom+1) throw new Error('the wrapped error row is clipped vertically by the editor mount');
+  // Header controls must remain present and reachable beside the error row.
+  var action=document.querySelector('.process-editor-header .process-action');
+  if(!action) throw new Error('header controls disappeared behind the error row');
+  var actionRect=action.getBoundingClientRect();
+  if(actionRect.width<=0||actionRect.height<=0||actionRect.right>mountRect.right+1) throw new Error('header controls were pushed out of the editor mount');`)
+
 func processEditorStateJS(extraJS string) string {
 	return fmt.Sprintf(`return (async function(){
   var nav = document.querySelector('nav [data-tab="processes"]');
