@@ -21,6 +21,7 @@ import (
 type pidUnreadableTmux struct {
 	mu          sync.Mutex
 	sessionName string
+	sessionGone bool // list-sessions omits sessionName (confirmed disappearance)
 	sendsSeen   int
 }
 
@@ -31,6 +32,9 @@ func (r *pidUnreadableTmux) Command(args ...string) *exec.Cmd {
 	case "display-message":
 		return exec.Command("false")
 	case "list-sessions":
+		if r.sessionGone {
+			return exec.Command("echo", "some-other-session")
+		}
 		return exec.Command("echo", r.sessionName)
 	case "send-keys":
 		r.sendsSeen++
@@ -95,4 +99,47 @@ func TestInjectSoftExit_PidUnreadableRetainsDeliveredIntentThroughWindow(t *test
 	WaitForBackgroundForTest()
 	assert.Empty(t, readIntent(),
 		"the bounded observer window still cleans up; retention is not a leak")
+}
+
+// When the pid is unreadable AND list-sessions confirms the session is gone,
+// the delivered /exit is landing: the intent must be left untouched — no
+// instant clear, and no observer-window cleanup either — because the reaper
+// owns attribution of the disappearance (mirrors injectSoftExitTarget's
+// confirmed-disappearance branch).
+func TestInjectSoftExit_PidUnreadableSessionGoneLeavesIntentToReaper(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(SetInjectSettleDelayForTest(0))
+	t.Cleanup(SetUnknownIntentCleanupDelayForTest(time.Second))
+
+	const (
+		conv      = "pid-gone-conv"
+		sessionID = "spwn-pid-gone"
+		tmuxSes   = "tmux-pid-gone"
+	)
+	rt := &pidUnreadableTmux{sessionName: tmuxSes, sessionGone: true}
+	prev := clcommon.Default
+	clcommon.Default = rt
+	t.Cleanup(func() { clcommon.Default = prev })
+
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, TmuxSession: tmuxSes, ConvID: conv,
+		Status: session.StatusWorking, CreatedAt: time.Now(),
+	}))
+	ref, err := db.SetSessionExitIntent(sessionID, db.AgentExitActionReincarnate, "", time.Now())
+	require.NoError(t, err)
+
+	require.True(t, injectSoftExit(conv, "/exit", "test-pid-gone", &ref),
+		"the first injection succeeded, so injectSoftExit reports delivery")
+
+	// If the wrong branch scheduled the observer-window cleanup, this drain
+	// would run it (1s window) and empty the intent; the confirmed-disappearance
+	// branch schedules nothing and leaves attribution to the reaper.
+	WaitForBackgroundForTest()
+	d, err := db.Open()
+	require.NoError(t, err)
+	var intent string
+	require.NoError(t, d.QueryRow(`SELECT exit_intent FROM sessions WHERE id = ?`,
+		sessionID).Scan(&intent))
+	assert.Equal(t, db.AgentExitActionReincarnate, intent,
+		"a confirmed session disappearance must leave the delivered exit's intent for the reaper")
 }
