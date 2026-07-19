@@ -1175,6 +1175,14 @@ export class ProcessGraph {
       this.view.y = this.pointer.startView.y + dy;
       this.applyView();
     } else if (this.pointer.mode === 'node') {
+      const delta = {
+        x: point.x - this.pointer.startPoint.x,
+        y: point.y - this.pointer.startPoint.y,
+      };
+      // The terminal pointer sample is not necessarily the frame the user saw
+      // (notably when releasing a fast-moving mouse). Keep the exact delta
+      // rendered by this gesture so pointerup can commit that visible frame.
+      this.pointer.nodeDelta = delta;
       for (const nodeID of this.pointer.nodeIDs) {
         const node = this.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
         const ports = this.portLayer.querySelector(`[data-node-id="${CSS.escape(nodeID)}"]`);
@@ -1182,7 +1190,7 @@ export class ProcessGraph {
         const frontPorts = this.frontNodeID === nodeID ? this.frontPortLayer.querySelector('[data-node-id]') : null;
         const laid = this.layout.nodes.find((candidate) => candidate.id === nodeID);
         if (node && laid) {
-          const transform = `translate(${laid.x + (point.x - this.pointer.startPoint.x)} ${laid.y + (point.y - this.pointer.startPoint.y)})`;
+          const transform = `translate(${laid.x + delta.x} ${laid.y + delta.y})`;
           node.setAttribute('transform', transform);
           ports?.setAttribute('transform', transform);
           frontNode?.setAttribute('transform', transform);
@@ -1191,13 +1199,10 @@ export class ProcessGraph {
       }
       hook(this.options, 'onNodeDrag')({
         nodeId: this.pointer.nodeID, nodeIds: [...this.pointer.nodeIDs], point,
-        delta: { x: point.x - this.pointer.startPoint.x, y: point.y - this.pointer.startPoint.y },
+        delta: { ...delta },
         event,
       });
-      this.renderTransientEdges(this.pointer.nodeIDs, {
-        x: point.x - this.pointer.startPoint.x,
-        y: point.y - this.pointer.startPoint.y,
-      });
+      this.renderTransientEdges(this.pointer.nodeIDs, delta);
     } else if (this.pointer.mode === 'port') {
       hook(this.options, 'onPortDragMove')({ nodeId: this.pointer.nodeID, port: this.pointer.port, point, event });
     } else if (this.pointer.mode === 'marquee') {
@@ -1236,10 +1241,14 @@ export class ProcessGraph {
       hook(this.options, 'onNodeDragEnd')({
         nodeId: pointer.nodeID, nodeIds: [...(pointer.nodeIDs || [pointer.nodeID])],
         starts: (pointer.starts || []).map((start) => ({ ...start })),
-        delta: {
+        // Commit the last frame actually rendered during the gesture. A
+        // release delivered while the device is still moving can carry a
+        // terminal coordinate behind that frame; using it makes the node snap
+        // home even though the user visibly dragged beyond the start.
+        delta: { ...(pointer.nodeDelta || {
           x: point.x - pointer.startPoint.x,
           y: point.y - pointer.startPoint.y,
-        },
+        }) },
         moved: this.dragMoved, event,
       });
     } else if (pointer.mode === 'marquee') {
