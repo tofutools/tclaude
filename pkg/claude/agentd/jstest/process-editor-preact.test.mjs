@@ -219,6 +219,35 @@ test('rapid same-node drags always commit the drop, even across a lost terminal 
   editor.destroy();
 });
 
+test('a moving release commits the last node position rendered to the user', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.model.template.nodes.build = { type: 'task', name: 'Build' };
+  editor.model.layout.nodes.build = { x: 300, y: 200 };
+  await harness.act(() => editor.refresh());
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture ||= () => {};
+  svg.releasePointerCapture ||= () => {};
+  const build = host.querySelector('.process-node-layer [data-node-id="build"]');
+
+  harness.fireEvent(build, 'pointerdown', {
+    button: 0, pointerId: 7, pointerType: 'mouse', clientX: 300, clientY: 200,
+  });
+  harness.fireEvent(svg, 'pointermove', {
+    pointerId: 7, pointerType: 'mouse', clientX: 360, clientY: 235,
+  });
+  assert.equal(build.getAttribute('transform'), 'translate(360 235)',
+    'the transient frame follows the live pointer');
+  harness.fireEvent(svg, 'pointerup', {
+    pointerId: 7, pointerType: 'mouse', clientX: 300, clientY: 200,
+  });
+
+  assert.deepEqual(editor.model.layout.nodes.build, { x: 360, y: 235 },
+    'release commits the position that was visibly rendered, not a lagging terminal sample');
+  assert.equal(host.querySelector('.process-node-layer [data-node-id="build"]').getAttribute('transform'),
+    'translate(360 235)');
+  editor.destroy();
+});
+
 test('custom snippets create, keyboard-insert, rename, and delete through the Preact palette', async (t) => {
   const previousFetch = globalThis.fetch;
   const id = `psn_${'a'.repeat(32)}`;

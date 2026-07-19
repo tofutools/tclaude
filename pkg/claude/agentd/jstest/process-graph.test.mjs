@@ -515,6 +515,28 @@ test('node drag end reports the start positions captured by its own gesture', ()
     'consumers receive copies, not the live gesture state');
 });
 
+test('node drag end commits the last rendered frame when release coordinates lag behind it', () => {
+  const ends = [];
+  const fake = {
+    pointer: {
+      id: 4, mode: 'node', nodeID: 'work', nodeIDs: ['work'],
+      startPoint: { x: 10, y: 10 },
+      starts: [{ id: 'work', x: 100, y: 200 }],
+      nodeDelta: { x: 30, y: 15 },
+    },
+    dragMoved: true,
+    options: { onNodeDragEnd: (value) => ends.push(value) },
+    svg: { releasePointerCapture() {} },
+    // A terminal sample may lag a fast-moving pointer stream. The node was
+    // visibly rendered at nodeDelta, so snapping it to this stale coordinate
+    // would make the completed gesture rubber-band back to its start.
+    clientToGraph: () => ({ x: 10, y: 10 }),
+    snapNodesHome() {}, restoreTransientEdges() {},
+  };
+  ProcessGraph.prototype.onPointerUp.call(fake, { pointerId: 4, clientX: 10, clientY: 10 });
+  assert.deepEqual(ends[0].delta, { x: 30, y: 15 });
+});
+
 test('an unmoved pan gesture never falls through to select its underlying node', () => {
   let selected = 0;
   const fake = {
