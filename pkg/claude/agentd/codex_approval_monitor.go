@@ -197,6 +197,14 @@ func codexApprovalProfileOwnedByLivePane(path string, paneStarts []string) bool 
 	profileArg := " -p " + profile
 	cleanup := "rm -f -- " + clcommon.ShellQuoteArg(path)
 	for _, rendered := range paneStarts {
+		// Script-launch shape (current): `sh <launch-script> <profile-path>`.
+		// The profile path rides the pane argv as an inert marker precisely so
+		// this recovery can match it (session.CodexProfileMarkerArgs).
+		if codexApprovalScriptPaneOwnsProfile(rendered, path) {
+			return true
+		}
+		// Inline `sh -c "…"` shape: panes launched by a pre-script tclaude
+		// that are still alive across this daemon restart.
 		command, ok := codexApprovalRawShellCommand(rendered)
 		if !ok {
 			continue
@@ -212,6 +220,89 @@ func codexApprovalProfileOwnedByLivePane(path string, paneStarts []string) bool 
 		}
 	}
 	return false
+}
+
+// codexApprovalScriptPaneOwnsProfile matches the script-launch pane shape —
+// `sh <launch-script> <profile-path>` — against one rendered
+// #{pane_start_command}. The argv is daemon-built and carries no prompt or
+// other user text (the whole bootstrap lives in the script file), so an
+// exact decoded-word match is sound where the inline shape needed the
+// codex-segment/cleanup-tail heuristics. Word 1 must look like a tclaude
+// launch script so arbitrary `sh <something> <path>` panes cannot claim a
+// profile.
+func codexApprovalScriptPaneOwnsProfile(rendered, profilePath string) bool {
+	words, ok := codexApprovalRenderedWords(rendered)
+	if !ok || len(words) < 3 || words[0] != "sh" || !codexApprovalLaunchScriptWord(words[1]) {
+		return false
+	}
+	for _, word := range words[2:] {
+		if word == profilePath {
+			return true
+		}
+	}
+	return false
+}
+
+func codexApprovalLaunchScriptWord(word string) bool {
+	return filepath.Base(filepath.Dir(word)) == "launch-scripts" &&
+		strings.HasPrefix(filepath.Base(word), "launch-")
+}
+
+// codexApprovalRenderedWords splits a tmux #{pane_start_command} into decoded
+// argv words, reversing tmux's per-word args_escape rendering: words are
+// whitespace-separated at top level; a double-quoted word drops the quotes
+// and unescapes tmux's dquote set (backslash before \ " $ or backtick); a
+// single-quoted word drops the quotes verbatim; a backslash outside quotes
+// escapes the next byte. Unterminated quoting fails the whole parse.
+func codexApprovalRenderedWords(rendered string) ([]string, bool) {
+	var words []string
+	var cur strings.Builder
+	inWord := false
+	flush := func() {
+		if inWord {
+			words = append(words, cur.String())
+			cur.Reset()
+			inWord = false
+		}
+	}
+	for i := 0; i < len(rendered); i++ {
+		switch c := rendered[i]; c {
+		case ' ', '\t':
+			flush()
+		case '"':
+			inWord = true
+			i++
+			for ; i < len(rendered) && rendered[i] != '"'; i++ {
+				if rendered[i] == '\\' && i+1 < len(rendered) && strings.ContainsRune(`\"$`+"`", rune(rendered[i+1])) {
+					i++
+				}
+				cur.WriteByte(rendered[i])
+			}
+			if i >= len(rendered) {
+				return nil, false
+			}
+		case '\'':
+			inWord = true
+			i++
+			for ; i < len(rendered) && rendered[i] != '\''; i++ {
+				cur.WriteByte(rendered[i])
+			}
+			if i >= len(rendered) {
+				return nil, false
+			}
+		case '\\':
+			inWord = true
+			if i+1 < len(rendered) {
+				i++
+				cur.WriteByte(rendered[i])
+			}
+		default:
+			inWord = true
+			cur.WriteByte(c)
+		}
+	}
+	flush()
+	return words, true
 }
 
 func codexApprovalHasProfileArg(command, profileArg string) bool {

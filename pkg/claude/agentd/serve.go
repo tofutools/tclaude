@@ -24,6 +24,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -457,6 +458,13 @@ func runServe(p *serveParams) error {
 	// explicit choices into the persistent Codex config. The pane cleanup path
 	// performs the same reconciliation once more before deleting the profile.
 	startCodexApprovalMonitor(cronStop)
+
+	// Launch bootstrap scripts self-delete as their pane's first action; a
+	// pane killed before that leaves a stale script carrying the exported
+	// environment. Each launch sweeps too, but a startup sweep bounds a
+	// stranded script's lifetime by daemon restarts rather than by whenever
+	// the next launch happens to run.
+	session.SweepStaleLaunchScripts()
 
 	// Online conversations are enrolled as agents by the session reaper's
 	// continuous liveness sweep (its first tick fires immediately at

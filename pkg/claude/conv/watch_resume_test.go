@@ -25,7 +25,7 @@ const (
 // the Claude `--resume` flag — the exact regression JOH-217 fixes.
 func TestResumeLaunchCmd_Codex(t *testing.T) {
 	setupTestDB(t)
-	cmd, h, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, nil)
+	cmd, _, h, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
 
@@ -43,7 +43,7 @@ func TestResumeLaunchCmd_PreservesRecordedApprovalPosture(t *testing.T) {
 		ApprovalPolicy: harness.ApprovalOnRequest, ApprovalAutoReview: true,
 	}))
 
-	cmd, h, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	cmd, _, h, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	assert.Contains(t, cmd, "--ask-for-approval on-request")
 	assert.Contains(t, cmd, `approvals_reviewer="auto_review"`)
@@ -57,7 +57,7 @@ func TestResumeLaunchCmd_PreservesRecordedApprovalPosture(t *testing.T) {
 // A Claude conv keeps its existing `claude --resume <id>` launch unchanged.
 func TestResumeLaunchCmd_Claude(t *testing.T) {
 	setupTestDB(t)
-	cmd, h, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
+	cmd, _, h, err := resumeLaunchCmd("claude", resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
 
@@ -72,7 +72,7 @@ func TestResumeLaunchCmd_Claude(t *testing.T) {
 // working exactly as before.
 func TestResumeLaunchCmd_EmptyHarnessDefaultsToClaude(t *testing.T) {
 	setupTestDB(t)
-	cmd, h, err := resumeLaunchCmd("", resumeConvClaude[:8], resumeConvClaude, nil)
+	cmd, _, h, err := resumeLaunchCmd("", resumeConvClaude[:8], resumeConvClaude, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
 
@@ -84,7 +84,7 @@ func TestResumeLaunchCmd_EmptyHarnessDefaultsToClaude(t *testing.T) {
 // silently spawning a broken `claude --resume` against a foreign conv id.
 func TestResumeLaunchCmd_UnknownHarnessErrors(t *testing.T) {
 	setupTestDB(t)
-	cmd, h, err := resumeLaunchCmd("nope", resumeConvCodex[:8], resumeConvCodex, nil)
+	cmd, _, h, err := resumeLaunchCmd("nope", resumeConvCodex[:8], resumeConvCodex, nil)
 	require.Error(t, err)
 	assert.Nil(t, h)
 	assert.Empty(t, cmd)
@@ -96,7 +96,7 @@ func TestResumeLaunchCmd_UnknownHarnessErrors(t *testing.T) {
 // after the `resume <id>` subcommand.
 func TestResumeLaunchCmd_ExtraArgsPassthrough(t *testing.T) {
 	setupTestDB(t)
-	cmd, _, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, []string{"--foo", "a b"})
+	cmd, _, _, err := resumeLaunchCmd("codex", resumeConvCodex[:8], resumeConvCodex, []string{"--foo", "a b"})
 	require.NoError(t, err)
 
 	assert.Contains(t, cmd, "codex resume "+resumeConvCodex)

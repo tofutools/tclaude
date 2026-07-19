@@ -110,3 +110,48 @@ func TestCodexApprovalMonitor_StartupReconcilesOnlyLivePaneProfile(t *testing.T)
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "linear.stale_issue")
 }
+
+// Script-launch pane shape (`sh <launch-script> <profile-path>`): the whole
+// bootstrap lives in a self-deleting script, so the profile path rides the
+// pane argv as an inert marker (session.CodexProfileMarkerArgs) and startup
+// recovery must match it there. The inline `sh -c "…"` shape above remains
+// recognized for panes launched by a pre-script tclaude.
+func TestCodexApprovalProfileOwnership_ScriptLaunchShape(t *testing.T) {
+	dir := "/Users/u/.codex"
+	profile := filepath.Join(dir, "tclaude-agent-1111111111111111.config.toml")
+	script := "/Users/u/.tclaude/data/launch-scripts/launch-123456789"
+
+	assert.True(t, codexApprovalProfileOwnedByLivePane(profile,
+		[]string{"sh " + script + " " + profile}),
+		"plain script-launch argv must claim its profile")
+
+	// tmux double-quotes argv words containing specials (args_escape), with
+	// backslash escapes for \ " $ and backtick — a CODEX_HOME with a space.
+	spaceyProfile := "/Users/u/My Codex/tclaude-agent-2222222222222222.config.toml"
+	assert.True(t, codexApprovalProfileOwnedByLivePane(spaceyProfile,
+		[]string{`sh ` + script + ` "/Users/u/My Codex/tclaude-agent-2222222222222222.config.toml"`}),
+		"a tmux-quoted profile word must decode and match")
+
+	assert.False(t, codexApprovalProfileOwnedByLivePane(profile,
+		[]string{"sh " + script + " " + filepath.Join(dir, "tclaude-agent-3333333333333333.config.toml")}),
+		"a different profile's marker must not claim this one")
+
+	assert.False(t, codexApprovalProfileOwnedByLivePane(profile,
+		[]string{"sh /tmp/evil-script " + profile}),
+		"only a tclaude launch-script word may carry a claim")
+
+	assert.False(t, codexApprovalProfileOwnedByLivePane(profile,
+		[]string{"bash " + script + " " + profile}),
+		"a non-sh word 0 must not match")
+
+	assert.False(t, codexApprovalProfileOwnedByLivePane(profile,
+		[]string{"sh " + script}),
+		"a script launch without a marker claims nothing")
+
+	// A mixed fleet: one legacy inline pane, one script pane — each shape
+	// claims exactly its own profile.
+	legacy := renderTmuxPaneStart(`codex -p tclaude-agent-1111111111111111; tclaude_launch_status=$?; rm -f -- ` +
+		clcommon.ShellQuoteArg(profile) + `; exit $tclaude_launch_status`)
+	assert.True(t, codexApprovalProfileOwnedByLivePane(profile, []string{legacy, "sh " + script}),
+		"legacy inline shape must still be recognized alongside script panes")
+}
