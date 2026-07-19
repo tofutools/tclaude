@@ -99,9 +99,10 @@ test('row root delegation installs once, cleans every listener, and survives sta
   assert.equal(bindRowActions(), first);
   assert.equal(added.filter(([type]) => type === 'click').length, 1);
   assert.equal(added.filter(([type]) => type === 'contextmenu').length, 1);
+  assert.equal(added.filter(([type]) => type === 'mousedown').length, 1);
   assert.equal(added.filter(([type]) => type === 'keydown').length, 1);
   first();
-  for (const [type, listener] of added.slice(0, 3)) {
+  for (const [type, listener] of added) {
     assert.ok(removed.some(([removedType, removedListener]) =>
       removedType === type && removedListener === listener));
   }
@@ -117,9 +118,16 @@ test('row root delegation installs once, cleans every listener, and survives sta
     'macOS Control-click context gestures dispatch the terminal action instead of opening a menu');
   assert.equal(handledActions.length, 1);
   assert.equal(handledActions[0].openInBackground, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
   harness.fireEvent(terminalAction, 'click', { ctrlKey: true });
   assert.equal(handledActions.length, 1,
-    'WebKit follow-up click is suppressed after the context gesture dispatches the action');
+    'WebKit follow-up click stays suppressed across the real mouseup task boundary');
+  harness.fireEvent(terminalAction, 'contextmenu', { ctrlKey: true });
+  assert.equal(handledActions.length, 2);
+  harness.fireEvent(terminalAction, 'mousedown', { ctrlKey: true });
+  harness.fireEvent(terminalAction, 'click', { ctrlKey: true });
+  assert.equal(handledActions.length, 3,
+    'a new mouse gesture clears stale suppression when a browser emitted contextmenu only');
   const ordinaryContextMenu = harness.fireEvent(terminalAction, 'contextmenu');
   assert.equal(ordinaryContextMenu.defaultPrevented, false,
     'ordinary terminal context menus remain available');

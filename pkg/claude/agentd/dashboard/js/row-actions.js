@@ -27,12 +27,14 @@ export function bindRowActions() {
   if (rowActionsCleanup) return rowActionsCleanup;
 
   let contextActivatedSource = null;
-  let contextActivationTimer = null;
   const clearContextActivation = () => {
-    if (contextActivationTimer !== null) clearTimeout(contextActivationTimer);
-    contextActivationTimer = null;
     contextActivatedSource = null;
   };
+
+  // A fresh mouse gesture makes an unmatched context-only activation stale.
+  // The original gesture's mousedown precedes contextmenu, so this does not
+  // clear the source before WebKit's follow-up click can consume it.
+  document.addEventListener('mousedown', clearContextActivation);
 
   const onClick = (event) => {
     const source = liveActionSource(event);
@@ -62,9 +64,7 @@ export function bindRowActions() {
     const action = actionDescriptor(source, event);
     if (!BACKGROUND_CONTEXT_ACTIONS.has(action.data.act)) return;
     event.preventDefault();
-    clearContextActivation();
     contextActivatedSource = source;
-    contextActivationTimer = setTimeout(clearContextActivation, 0);
     void handleRowAction(action);
   };
   document.addEventListener('contextmenu', onContextMenu);
@@ -84,6 +84,7 @@ export function bindRowActions() {
   const cleanup = () => {
     document.removeEventListener('click', onClick);
     document.removeEventListener('contextmenu', onContextMenu);
+    document.removeEventListener('mousedown', clearContextActivation);
     document.removeEventListener('keydown', onChipKeyDown);
     clearContextActivation();
     if (rowActionsCleanup === cleanup) rowActionsCleanup = null;

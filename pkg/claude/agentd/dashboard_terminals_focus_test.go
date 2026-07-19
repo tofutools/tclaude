@@ -58,6 +58,7 @@ func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
 		"openInBackground: Boolean(",
 		"BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window'])",
 		"document.addEventListener('contextmenu', onContextMenu)",
+		"document.addEventListener('mousedown', clearContextActivation)",
 		"if (source === contextActivatedSource)",
 		"const terminalPaneOptions = { reveal: action.openInBackground !== true }",
 		"focusTerminalForConv([agent], terminalPaneOptions)",
