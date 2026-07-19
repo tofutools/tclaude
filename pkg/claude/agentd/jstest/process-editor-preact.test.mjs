@@ -633,6 +633,28 @@ test('legacy illegal-side mutation rejections render whole in the status line wi
     'following the guidance clears the error state');
   assert.ok(editor.model.node('end-2') || editor.model.node('ordinary-2'),
     'the duplicate succeeds once the legacy edge is gone');
+
+  // An outcome may legally be 512 unbroken characters, which is quoted verbatim
+  // into the message. LinkeDOM does no layout, so this pins content integrity
+  // only — that the maximal token survives projection whole and the recovery
+  // clause still trails it. The geometry (that it wraps inside the clipping
+  // mount instead of overflowing) is pinned by the real-Chrome dashsnap case
+  // process-editor-legacy-edge-error-row, in both skins.
+  const maximal = 'x'.repeat(512);
+  editor.model.edges.push({ from: 'end', outcome: maximal, to: 'ordinary' });
+  await harness.act(() => editor.refresh());
+  await harness.act(() => editor.setSelection(
+    { type: 'multi', items: [{ type: 'node', id: 'end' }, { type: 'node', id: 'ordinary' }] },
+  ));
+  await harness.act(() => editor.duplicateSelection());
+  const maximalStatus = host.querySelector('.process-editor-status');
+  assert.ok(maximalStatus.className.includes('is-error'));
+  assert.ok(maximalStatus.textContent.includes(maximal),
+    'the maximal unbroken outcome reaches the row verbatim, untruncated');
+  assert.ok(maximalStatus.textContent.endsWith('delete the edge first.'),
+    'the recovery clause still trails a maximal outcome');
+  assert.equal(maximalStatus.getAttribute('title'), null);
+
   editor.destroy();
 });
 

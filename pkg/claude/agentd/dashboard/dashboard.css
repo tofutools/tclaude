@@ -12350,6 +12350,12 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
+  /* Edge outcomes are quoted verbatim and may legally be 512 unbroken
+     characters, which white-space:normal alone cannot break: the row would
+     spill past the editor mount, which clips it. min-width:0 stops the flex
+     min-content floor from re-widening the row past its 100% basis. */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .process-editor-external {
   display: block;

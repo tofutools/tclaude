@@ -511,6 +511,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-editor-status.is-error {",
 		"flex: 1 0 100%",
 		"white-space: normal",
+		// An edge outcome may legally be 512 unbroken characters
+		// (PROCESS_CLIPBOARD_MAX_OUTCOME) and is quoted verbatim in the
+		// message, so the row needs explicit break-anywhere containment or it
+		// overflows the clipping editor mount and loses the recovery clause.
+		"min-width: 0",
+		"overflow-wrap: anywhere",
 		"body.wizard .process-editor-external",
 		".process-external-review",
 		"body.wizard .process-external-source-summary",
