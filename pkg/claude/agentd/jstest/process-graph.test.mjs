@@ -313,6 +313,85 @@ test('pointercancel for a foreign pointer id leaves the drag alone', () => {
   assert.ok(fake.pointer, 'the in-flight drag survives');
 });
 
+test('released lost capture completes every graph gesture through pointerup', () => {
+  for (const mode of ['node', 'port', 'marquee', 'pan']) {
+    const completed = [];
+    const cancelled = [];
+    const fake = {
+      pointer: {
+        id: 31, mode, button: 0, pointerType: 'mouse',
+        lastClientX: 120, lastClientY: 85,
+      },
+      onPointerUp(event, options) {
+        completed.push({ event, options });
+        this.pointer = null;
+      },
+      onPointerCancel(event) {
+        cancelled.push(event);
+        this.pointer = null;
+      },
+    };
+    ProcessGraph.prototype.onLostPointerCapture.call(fake, {
+      type: 'lostpointercapture', pointerId: 31, buttons: 0,
+    });
+    assert.equal(completed.length, 1, `${mode} completes instead of cancelling`);
+    assert.equal(cancelled.length, 0);
+    assert.deepEqual({
+      pointerId: completed[0].event.pointerId,
+      clientX: completed[0].event.clientX,
+      clientY: completed[0].event.clientY,
+      buttons: completed[0].event.buttons,
+      captureAlreadyLost: completed[0].options.captureAlreadyLost,
+    }, {
+      pointerId: 31, clientX: 120, clientY: 85,
+      buttons: 0, captureAlreadyLost: true,
+    });
+  }
+});
+
+test('lost capture while a button remains pressed still cancels', () => {
+  const cancelled = [];
+  const fake = {
+    pointer: {
+      id: 32, mode: 'node', button: 0, pointerType: 'mouse',
+      lastClientX: 44, lastClientY: 55,
+    },
+    onPointerUp() { throw new Error('capture loss mid-press must not complete'); },
+    onPointerCancel(event) { cancelled.push(event); this.pointer = null; },
+  };
+  ProcessGraph.prototype.onLostPointerCapture.call(fake, {
+    type: 'lostpointercapture', pointerId: 32, buttons: 1,
+  });
+  assert.deepEqual(cancelled, [{
+    type: 'lostpointercapture', pointerId: 32, clientX: 44, clientY: 55,
+  }]);
+});
+
+test('normal pointerup cannot be completed twice by synchronous capture loss', () => {
+  const completed = [];
+  const fake = {
+    pointer: {
+      id: 33, mode: 'node', nodeID: 'work', nodeIDs: ['work'],
+      startPoint: { x: 10, y: 10 }, starts: [{ id: 'work', x: 100, y: 200 }],
+      nodeDelta: { x: 20, y: 15 },
+    },
+    dragMoved: true,
+    options: { onNodeDragEnd: (event) => completed.push(event) },
+    svg: {
+      releasePointerCapture(pointerId) {
+        ProcessGraph.prototype.onLostPointerCapture.call(fake, { pointerId, buttons: 0 });
+      },
+    },
+    clientToGraph: () => ({ x: 30, y: 25 }),
+    snapNodesHome() {}, restoreTransientEdges() {},
+  };
+  ProcessGraph.prototype.onPointerUp.call(fake, {
+    type: 'pointerup', pointerId: 33, clientX: 30, clientY: 25,
+  });
+  assert.equal(completed.length, 1);
+  assert.equal(fake.pointer, null);
+});
+
 test('canvas pointerdown focuses the graph so editor Delete receives keyboard events', () => {
   let focused = 0;
   const fake = {

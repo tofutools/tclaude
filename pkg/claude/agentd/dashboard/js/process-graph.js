@@ -1214,7 +1214,7 @@ export class ProcessGraph {
     }
   }
 
-  onPointerUp(event) {
+  onPointerUp(event, { captureAlreadyLost = false } = {}) {
     if (!this.pointer || this.pointer.id !== event.pointerId) return;
     const pointer = this.pointer;
     const point = this.clientToGraph(event.clientX, event.clientY);
@@ -1272,8 +1272,11 @@ export class ProcessGraph {
       mode: pointer.mode, nodeID: pointer.nodeID || null,
       edgeID: pointer.edgeID || null, port: pointer.port || null,
     };
-    this.svg.releasePointerCapture?.(event.pointerId);
     this.pointer = null;
+    // Clear ownership before an explicit release: a browser is allowed to
+    // dispatch lostpointercapture immediately, and that terminal notification
+    // must not re-enter this already-completed pointerup path.
+    if (!captureAlreadyLost) this.svg.releasePointerCapture?.(event.pointerId);
     hook(this.options, 'onInteractionEnd')({ mode: pointer.mode, pointerId: event.pointerId, cancelled: false, event });
     // Focusing the graph on pointerdown can synchronously commit an inspector
     // field and replace the SVG child under the pointer. Chrome then omits the
@@ -1339,10 +1342,28 @@ export class ProcessGraph {
 
   onLostPointerCapture(event) {
     if (!this.pointer || this.pointer.id !== event.pointerId) return;
+    const pointer = this.pointer;
+    // A browser can omit pointerup when the pointer is released while still
+    // moving, then report only lostpointercapture. buttons=0 distinguishes
+    // that completed release from capture loss while the button is held. Route
+    // every graph mode through its normal pointerup semantics: node commit,
+    // connector drop, marquee selection, or completed pan.
+    if (event.buttons === 0) {
+      this.onPointerUp({
+        pointerId: pointer.id,
+        pointerType: pointer.pointerType,
+        button: pointer.button,
+        buttons: 0,
+        clientX: pointer.lastClientX,
+        clientY: pointer.lastClientY,
+        type: 'lostpointercapture-release',
+      }, { captureAlreadyLost: true });
+      return;
+    }
     this.onPointerCancel({
       pointerId: event.pointerId,
-      clientX: this.pointer.lastClientX,
-      clientY: this.pointer.lastClientY,
+      clientX: pointer.lastClientX,
+      clientY: pointer.lastClientY,
       type: 'lostpointercapture',
     });
   }

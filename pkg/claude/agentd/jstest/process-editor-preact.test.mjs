@@ -248,6 +248,33 @@ test('a moving release commits the last node position rendered to the user', asy
   editor.destroy();
 });
 
+test('a moving release delivered only as lost capture still commits the node', async (t) => {
+  const { harness, host, editor } = await openBlank(t);
+  editor.model.template.nodes.build = { type: 'task', name: 'Build' };
+  editor.model.layout.nodes.build = { x: 300, y: 200 };
+  await harness.act(() => editor.refresh());
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture ||= () => {};
+  svg.releasePointerCapture = () => { throw new Error('capture is already lost'); };
+  const build = host.querySelector('.process-node-layer [data-node-id="build"]');
+
+  harness.fireEvent(build, 'pointerdown', {
+    button: 0, buttons: 1, pointerId: 8, pointerType: 'mouse', clientX: 300, clientY: 200,
+  });
+  harness.fireEvent(svg, 'pointermove', {
+    buttons: 1, pointerId: 8, pointerType: 'mouse', clientX: 360, clientY: 235,
+  });
+  harness.fireEvent(svg, 'lostpointercapture', {
+    buttons: 0, pointerId: 8, pointerType: 'mouse',
+  });
+
+  assert.deepEqual(editor.model.layout.nodes.build, { x: 360, y: 235 });
+  assert.equal(host.querySelector('.process-node-layer [data-node-id="build"]').getAttribute('transform'),
+    'translate(360 235)');
+  assert.equal(editor.graph.interactionSnapshot().active, false);
+  editor.destroy();
+});
+
 test('custom snippets create, keyboard-insert, rename, and delete through the Preact palette', async (t) => {
   const previousFetch = globalThis.fetch;
   const id = `psn_${'a'.repeat(32)}`;

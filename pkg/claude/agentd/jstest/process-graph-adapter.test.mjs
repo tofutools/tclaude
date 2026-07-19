@@ -764,6 +764,39 @@ test('lost capture and window blur cancel active adapter gestures exactly once',
   assert.equal(cancelled.length, 2);
 });
 
+test('released lost capture completes a connector drop through the normal terminal path', async (t) => {
+  const ended = [];
+  const { harness, host, adapter } = await mountedAdapter(t, {
+    portDragEnd: (payload) => ended.push(payload),
+  });
+  const svg = host.querySelector('.process-graph-svg');
+  svg.setPointerCapture = () => {};
+  svg.releasePointerCapture = () => { throw new Error('capture is already lost'); };
+  const source = host.querySelector('[data-node-id="start"] [data-port="out"]');
+  const target = host.querySelector('[data-node-id="end"] [data-port="in"]');
+  const originalHitTest = harness.document.elementFromPoint;
+  harness.document.elementFromPoint = () => target;
+  t.after(() => { harness.document.elementFromPoint = originalHitTest; });
+
+  harness.fireEvent(source, 'pointerdown', {
+    button: 0, buttons: 1, pointerId: 71, pointerType: 'mouse', clientX: 10, clientY: 20,
+  });
+  harness.fireEvent(svg, 'pointermove', {
+    buttons: 1, pointerId: 71, pointerType: 'mouse', clientX: 80, clientY: 90,
+  });
+  harness.fireEvent(svg, 'lostpointercapture', {
+    buttons: 0, pointerId: 71, pointerType: 'mouse',
+  });
+
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].cancelled, undefined);
+  assert.equal(ended[0].targetNodeId, 'end');
+  assert.equal(ended[0].targetPort, 'in');
+  assert.deepEqual(ended[0].point, adapter.clientToGraph(80, 90));
+  assert.equal(adapter.hasActiveInteraction(), false);
+  assert.equal(host.querySelector('.process-editor-band'), null);
+});
+
 test('a drag whose terminal event was lost cannot poison the next drag commit', async (t) => {
   const ends = [];
   const cancels = [];
