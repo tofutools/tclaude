@@ -92,6 +92,9 @@ jobs:
       # Make the external Node runtime part of jstest's Go test-cache key without
       # disabling useful result caching for every other package.
       - name: Run tests (${{ matrix.shard }})
+        # Explicit bash so pipefail covers the `go list | ...` pipeline in the
+        # rest shard (the implicit default is `bash -e` without pipefail).
+        shell: bash
         run: |
           export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
           case "${{ matrix.shard }}" in
@@ -101,19 +104,22 @@ jobs:
               # This shard owns its runner, so let Node use every core; the
               # in-test default (NumCPU-2, sized for sharing a runner with the
               # Go packages) would leave the 3-core macOS runner near-serial.
-              export TCLAUDE_JS_TEST_CONCURRENCY="$(getconf _NPROCESSORS_ONLN)"
+              # Assign before export: `export VAR=$(cmd)` discards cmd's exit
+              # status, and a silently empty value would fall back to the
+              # near-serial default — the regression this variable prevents.
+              cores="$(getconf _NPROCESSORS_ONLN)"
+              export TCLAUDE_JS_TEST_CONCURRENCY="$cores"
               ;;
             process) pkgs="./pkg/claude/process/..." ;;
             rest)
-              # Everything the named shards don't cover. Patterns are anchored
-              # to exactly the shard targets above: `agentd$`/`jstest$` keep
-              # siblings like agentd/dashsnap here, and the trailing slash on
-              # `process/` keeps processcmd here.
-              pkgs="$(go list ./... | grep -v \
-                -e '/pkg/claude/agentd$' \
-                -e '/pkg/claude/agentd/jstest$' \
-                -e '/pkg/claude/process$' \
-                -e '/pkg/claude/process/')"
+              # Everything the named shards don't cover, derived by literally
+              # subtracting the named shards' `go list` output from the full
+              # package list — the partition cannot drift from the shard
+              # definitions above, and a removed/renamed shard target fails
+              # here loudly instead of silently dropping packages.
+              pkgs="$(comm -23 \
+                <(go list ./... | sort) \
+                <(go list ./pkg/claude/agentd ./pkg/claude/agentd/jstest ./pkg/claude/process/... | sort))"
               ;;
             *) echo "unknown shard: ${{ matrix.shard }}" >&2; exit 1 ;;
           esac
