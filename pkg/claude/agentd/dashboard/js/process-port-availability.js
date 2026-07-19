@@ -35,21 +35,34 @@ export function processPortUnavailableMessage(node, port) {
 // with edges like `ordinary -> Start`; those render, save, and delete fine, but
 // no mutation may re-create one. Naming the offending edge and the way out
 // keeps the (correct) wholesale rejection from reading as a dead end.
+// Only `duplicate` may call the edge legacy: it demonstrably exists in the
+// loaded template. A pasted or snippet payload has unknown provenance, and a
+// rewire bridge is synthesized fresh -- neither can be described as preserved
+// topology without asserting something the code cannot know.
 const PROCESS_EDGE_MUTATION_GUIDANCE = new Map([
   ['duplicate', Object.freeze({
     subject: 'Duplicate cannot copy the edge',
-    cause: 'That edge predates the current Start/End port rules, so it can be kept but not re-created.',
-    recovery: 'Deselect or delete that edge, then duplicate the remaining nodes.',
+    cause: 'It predates the current Start/End port rules, so it can be kept but not re-created.',
+    // Duplicate refuses any selection containing an edge, so the blocking edge
+    // is implied by both endpoints being selected and cannot itself be
+    // deselected. Point at the endpoint nodes, which the operator can act on.
+    recovery: 'Deselect one of its endpoint nodes, or delete the edge first.',
   })],
   ['paste', Object.freeze({
     subject: 'Paste cannot re-create the edge',
-    cause: 'That edge predates the current Start/End port rules, so it can be kept but not re-created.',
+    cause: 'The current Start/End port rules forbid re-creating it.',
     recovery: 'Copy the selection again without that edge, or delete the edge first.',
+  })],
+  ['snippet', Object.freeze({
+    subject: 'This snippet cannot be inserted: it needs the edge',
+    cause: 'The current Start/End port rules forbid re-creating it.',
+    recovery: 'Re-save the snippet from a selection that omits that edge.',
   })],
   ['delete-rewire', Object.freeze({
     subject: 'Delete with rewire cannot re-create the edge',
     cause: 'Rewiring has to build that connection anew, which the current Start/End port rules forbid.',
-    recovery: 'Delete without rewiring instead, then reconnect the remaining nodes by hand.',
+    // Matches the delete dialog's own choice label.
+    recovery: 'Choose "Delete + drop edges" instead, then reconnect the remaining nodes by hand.',
   })],
 ]);
 

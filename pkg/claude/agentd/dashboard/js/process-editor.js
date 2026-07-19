@@ -595,7 +595,8 @@ export class ProcessTemplateEditor {
     let idMap;
     try {
       payload = validateProcessSelectionPayload(snippet.payload);
-      idMap = this.model.insertClipboardSelection(payload, { center: point, offset: { x: 0, y: 0 } });
+      idMap = this.model.insertClipboardSelection(payload,
+        { center: point, offset: { x: 0, y: 0 }, operation: 'snippet' });
     } catch (error) {
       this.status(error.message || 'The custom snippet could not be inserted.', true);
       return false;

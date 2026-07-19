@@ -51,7 +51,7 @@ test('mutation rejections keep the base sentence and add operation-specific reco
   const base = 'End nodes cannot have outgoing connections.';
   const edge = { from: 'end', outcome: 'legacy-out', to: 'ordinary' };
 
-  for (const operation of ['duplicate', 'paste', 'delete-rewire']) {
+  for (const operation of ['duplicate', 'paste', 'snippet', 'delete-rewire']) {
     const message = processEdgeMutationMessage(operation, edge, base);
     assert.ok(message.includes(base), `${operation} preserves the base authority sentence`);
     assert.ok(message.includes('end -> ordinary (outcome "legacy-out")'),
@@ -59,19 +59,29 @@ test('mutation rejections keep the base sentence and add operation-specific reco
     assert.notEqual(message, base);
   }
 
-  // duplicate/paste blame an edge that already exists, so they may call it
-  // legacy; a rewire bridge is synthesized fresh and must not be mislabelled.
-  for (const operation of ['duplicate', 'paste']) {
-    const message = processEdgeMutationMessage(operation, edge, base);
-    assert.match(message, /predates the current Start\/End port rules/);
-    assert.doesNotMatch(message, /Rewiring/);
+  // Only duplicate may claim the edge is preserved legacy topology: it
+  // demonstrably exists in the loaded template. A pasted or snippet payload has
+  // unknown provenance and a rewire bridge is brand new, so neither may say so.
+  assert.match(processEdgeMutationMessage('duplicate', edge, base),
+    /predates the current Start\/End port rules/);
+  for (const operation of ['paste', 'snippet', 'delete-rewire']) {
+    assert.doesNotMatch(processEdgeMutationMessage(operation, edge, base), /predates/,
+      `${operation} must not assert provenance it cannot know`);
   }
   const rewire = processEdgeMutationMessage('delete-rewire', edge, base);
   assert.match(rewire, /Rewiring has to build that connection anew/);
-  assert.doesNotMatch(rewire, /predates/);
-  assert.match(rewire, /Delete without rewiring instead/);
-  assert.match(processEdgeMutationMessage('duplicate', edge, base), /Deselect or delete that edge/);
+  // The recovery names the delete dialog's own choice label verbatim.
+  assert.match(rewire, /Choose "Delete \+ drop edges" instead/);
+  // Duplicate refuses selections containing edges, so the guidance must point
+  // at the endpoint nodes rather than at deselecting the edge itself.
+  const duplicate = processEdgeMutationMessage('duplicate', edge, base);
+  assert.match(duplicate, /Deselect one of its endpoint nodes, or delete the edge first\./);
+  assert.doesNotMatch(duplicate, /Deselect (or delete )?that edge/);
   assert.match(processEdgeMutationMessage('paste', edge, base), /Copy the selection again without that edge/);
+  // Snippet insertion is not a paste: never tell that operator to re-copy.
+  const snippet = processEdgeMutationMessage('snippet', edge, base);
+  assert.match(snippet, /Re-save the snippet from a selection that omits that edge\./);
+  assert.doesNotMatch(snippet, /Paste|Copy the selection again/);
 
   // Unknown and absent operations fall back to the bare authority sentence, so
   // addEdge/setEdgeTarget/chooser surfaces stay exactly as they were.

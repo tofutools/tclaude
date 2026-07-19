@@ -196,7 +196,7 @@ test('duplicate, paste, and delete-with-rewire name the offending legacy edge an
     /Duplicate cannot copy the edge end -> ordinary \(outcome "legacy-out"\)/,
     /End nodes cannot have outgoing connections\./,
     /predates the current Start\/End port rules/,
-    /Deselect or delete that edge, then duplicate the remaining nodes\./,
+    /Deselect one of its endpoint nodes, or delete the edge first\./,
   ]);
   assert.doesNotMatch(
     (() => { try { duplicate.duplicateNodes(['end', 'ordinary']); return ''; } catch (e) { return e.message; } })(),
@@ -233,6 +233,30 @@ test('duplicate, paste, and delete-with-rewire name the offending legacy edge an
     assert.equal(error.code, 'port');
   }
 
+  // The custom-snippet palette shares this transaction with paste, so it must
+  // not tell an operator who never copied anything to "copy the selection
+  // again". Same rejection, surface-appropriate recovery.
+  const snippet = new ProcessEditModel(legacyView());
+  const snippetPayload = {
+    kind: 'tclaude/process-selection', version: 1,
+    nodes: [
+      { id: 'end', node: { type: 'end', result: 'success' }, position: { x: 0, y: 0 } },
+      { id: 'ordinary', node: { type: 'task' }, position: { x: 0, y: 100 } },
+    ],
+    edges: [{ from: 'end', outcome: 'legacy-out', to: 'ordinary' }],
+  };
+  rejects(snippet, () => snippet.insertClipboardSelection(snippetPayload, { operation: 'snippet' }), [
+    /This snippet cannot be inserted: it needs the edge end -> ordinary/,
+    /End nodes cannot have outgoing connections\./,
+    /Re-save the snippet from a selection that omits that edge\./,
+  ]);
+  assert.doesNotMatch(
+    (() => {
+      try { snippet.insertClipboardSelection(snippetPayload, { operation: 'snippet' }); return ''; } catch (e) { return e.message; }
+    })(),
+    /Paste|Copy the selection again/, 'snippet insertion is never described as a paste',
+  );
+
   // Delete-with-rewire describes the bridge it would have to build, and must
   // not call that synthesized edge legacy. Plain delete stays the way out.
   const rewireView = {
@@ -248,11 +272,11 @@ test('duplicate, paste, and delete-with-rewire name the offending legacy edge an
     /Delete with rewire cannot re-create the edge source -> start \(outcome "pass"\)/,
     /Start nodes cannot have incoming connections\./,
     /Rewiring has to build that connection anew/,
-    /Delete without rewiring instead/,
+    /Choose "Delete \+ drop edges" instead/,
   ]);
   rejects(rewire, () => rewire.deleteNode('middle', { rewire: true }), [
     /Delete with rewire cannot re-create the edge source -> start/,
-    /Delete without rewiring instead/,
+    /Choose "Delete \+ drop edges" instead/,
   ]);
   assert.doesNotMatch(
     (() => { try { rewire.deleteNode('middle', { rewire: true }); return ''; } catch (e) { return e.message; } })(),

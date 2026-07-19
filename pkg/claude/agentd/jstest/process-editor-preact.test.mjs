@@ -601,7 +601,10 @@ test('legacy illegal-side mutation rejections render whole in the status line wi
   assert.match(status.textContent, /Duplicate cannot copy the edge end -> ordinary \(outcome "legacy-out"\)/);
   assert.match(status.textContent, /End nodes cannot have outgoing connections\./);
   assert.match(status.textContent, /predates the current Start\/End port rules/);
-  assert.match(status.textContent, /Deselect or delete that edge, then duplicate the remaining nodes\./);
+  assert.match(status.textContent, /Deselect one of its endpoint nodes, or delete the edge first\./);
+  // The status line clips under narrow chrome, so the full guidance has to stay
+  // recoverable rather than being silently truncated away.
+  assert.equal(status.getAttribute('title'), status.textContent);
 
   assert.deepEqual(editor.model.saveBody(), before, 'the rejected duplicate mutated no model state');
   assert.deepEqual(nodeIDs(), beforeNodes, 'no clone reached the canvas');

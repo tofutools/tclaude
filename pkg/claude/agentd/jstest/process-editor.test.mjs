@@ -435,7 +435,7 @@ test('duplicate and delete-with-rewire rejections reach the header status line',
     () => model.duplicateNodes(['end', 'ordinary'])), undefined);
   assert.equal(statuses.at(-1)[1], true);
   assert.match(statuses.at(-1)[0], /Duplicate cannot copy the edge end -> ordinary/);
-  assert.match(statuses.at(-1)[0], /Deselect or delete that edge/);
+  assert.match(statuses.at(-1)[0], /Deselect one of its endpoint nodes, or delete the edge first\./);
   assert.deepEqual(model.saveBody(), before);
 
   const rewireModel = new ProcessEditModel({
@@ -456,7 +456,7 @@ test('duplicate and delete-with-rewire rejections reach the header status line',
     () => rewireModel.deleteItems([{ type: 'node', id: 'middle' }], { rewire: true })), undefined);
   assert.equal(statuses.at(-1)[1], true);
   assert.match(statuses.at(-1)[0], /Delete with rewire cannot re-create the edge source -> start/);
-  assert.match(statuses.at(-1)[0], /Delete without rewiring instead/);
+  assert.match(statuses.at(-1)[0], /Choose "Delete \+ drop edges" instead/);
   assert.deepEqual(rewireModel.saveBody(), rewireBefore);
 });
 

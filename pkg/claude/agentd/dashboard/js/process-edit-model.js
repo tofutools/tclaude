@@ -216,7 +216,10 @@ export class ProcessEditModel {
     const availability = processEdgePortAvailability(nodes?.[from], nodes?.[to]);
     if (availability.enabled) return '';
     if (!context) return availability.message;
-    return processEdgeMutationMessage(context.operation, context.edge || { from, to }, availability.message);
+    // Never let composition empty the message: this gate rejects on a non-empty
+    // string, so it must not depend on guidance copy being present.
+    return processEdgeMutationMessage(context.operation, context.edge || { from, to }, availability.message)
+      || availability.message;
   }
 
   assertNewEdgePortsAvailable(from, to, nodes = this.template.nodes, context = null) {
@@ -399,7 +402,10 @@ export class ProcessEditModel {
   // a single undoable transaction. Validation, capacity, deterministic ids,
   // remapped edges, and every destination coordinate are planned before
   // begin(), so a stale or hostile payload can never partially mutate state.
-  insertClipboardSelection(payload, { center = { x: 0, y: 0 }, offset = { x: 0, y: 0 } } = {}) {
+  // `operation` names the surface for rejection messages: the custom-snippet
+  // palette shares this transaction with paste, and telling a snippet user to
+  // "copy the selection again" would point at an action they never took.
+  insertClipboardSelection(payload, { center = { x: 0, y: 0 }, offset = { x: 0, y: 0 }, operation = 'paste' } = {}) {
     const selection = validateProcessSelectionPayload(payload);
     this.assertCanInsert();
     if (Object.keys(this.template.nodes).length + selection.nodes.length > PROCESS_CLIPBOARD_MAX_NODES
@@ -444,7 +450,7 @@ export class ProcessEditModel {
     // this instead of collapsing it to the generic clipboard failure.
     for (let index = 0; index < edges.length; index += 1) {
       const rejection = this.edgePortRejection(edges[index].from, edges[index].to, plannedNodes,
-        { operation: 'paste', edge: selection.edges[index] });
+        { operation, edge: selection.edges[index] });
       if (rejection) throw new ProcessClipboardError('port', rejection);
     }
 
