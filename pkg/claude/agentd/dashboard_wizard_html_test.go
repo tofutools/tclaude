@@ -140,7 +140,7 @@ func TestDashboardHTML_WizardTabNames(t *testing.T) {
 	must("body.wizard .tab-label-regular { display: none; }", "wizard mode hides the plain tab names")
 	must("nav [data-tab] {\n  display: flex; align-items: center;", "each nav control vertically centres its label contents")
 	must("body.wizard .tab-label-wizard {\n  display: inline-flex; align-items: center; gap: 0.35em;", "wizard mode centres each icon beside its title")
-	must(".tab-label-wizard .tab-title { line-height: 16px; }", "wizard titles share one stable line box")
+	must(".tab-label-wizard .tab-title { line-height: inherit; }", "wizard titles share the other themes' platform-native line height")
 	must("display: inline-flex; align-items: center; justify-content: center; line-height: 1;", "wizard icons are centred independently")
 
 	// Each tab's plain + arcane span pair. Pinning the full pair (through the
