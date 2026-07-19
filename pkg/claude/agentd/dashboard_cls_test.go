@@ -41,9 +41,10 @@ func TestDashboardStartupLayoutCurtain(t *testing.T) {
 	}
 
 	refreshAt := strings.Index(boot, "await Promise.race([refresh(), firstSnapshot, bootTimedOut])")
+	navAt := strings.Index(boot, "initNavHistory();")
 	revealAt := strings.Index(boot, "document.body.classList.remove('dashboard-booting')")
 	pollAt := strings.Index(boot, "startSnapshotPoll(refresh, { immediate: false })")
-	if pollAt < 0 || refreshAt < pollAt || revealAt < refreshAt {
-		t.Errorf("startup order must be recurring poll -> bounded initial refresh -> reveal (indexes %d, %d, %d)", pollAt, refreshAt, revealAt)
+	if pollAt < 0 || refreshAt < pollAt || navAt < refreshAt || revealAt < navAt {
+		t.Errorf("startup order must be recurring poll -> bounded initial refresh -> URL restore -> reveal (indexes %d, %d, %d, %d)", pollAt, refreshAt, navAt, revealAt)
 	}
 }

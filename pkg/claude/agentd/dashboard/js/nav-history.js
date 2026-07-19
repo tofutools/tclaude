@@ -201,9 +201,10 @@ function onPopstate(e) {
 }
 
 // initNavHistory boots the router. Call it LATE in dashboard.js boot — after
-// every tab binder/island (bindTabs, the Costs and Audit islands, …) is installed —
-// because restoring a deep-link URL clicks that tab, and the click must find
-// its lazy-loader already wired.
+// every tab binder/island (bindTabs, the Costs and Audit islands, …) is installed
+// AND after the bounded first snapshot attempt. Restoring a deep-link URL clicks
+// that tab, so its lazy-loader must already be wired and snapshot-gated
+// visibility (notably Processes) must no longer be provisional.
 export function initNavHistory() {
   const urlLoc = fromPath(window.location.pathname);
   // On a RELOAD, history.state still holds the stack we persisted for this
