@@ -15,7 +15,10 @@ func TestDashboardAssets_AskDefaultsWired(t *testing.T) {
 	for _, needle := range []string{
 		// HTML: the section heading + the select anchors (incl. the
 		// harness-independent Profile selector, JOH-252).
-		"<h3>Ask defaults</h3>",
+		// Ask and Scribe defaults share one section; the labels carry the
+		// "Ask" qualifier that the old dedicated heading used to.
+		"<h3>Ask &amp; scribe defaults</h3>",
+		`<span class="cfg-label">Ask — profile</span>`,
 		`id="ask-profile"`,
 		`id="ask-model"`,
 		`id="ask-effort"`,

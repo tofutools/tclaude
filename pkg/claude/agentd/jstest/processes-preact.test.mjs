@@ -150,7 +150,7 @@ test('process scribe actions send bounded structured scope, exact grants, and re
   });
   assert.equal(await failed.summonScribe({ kind: 'library' }), null);
   assert.match(state.notice.value, /Process scribe unavailable: spawn binary missing/);
-  assert.match(notices.at(-1)[0], /Check the agent daemon and Scribe defaults, then retry/);
+  assert.match(notices.at(-1)[0], /Check the agent daemon and Ask & scribe defaults, then retry/);
   assert.equal(notices.at(-1)[1], true);
 
   const existingAgent = `agt_${'c'.repeat(32)}`;

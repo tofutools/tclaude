@@ -225,8 +225,9 @@ even while its pane is still running.
 
 Retired conversations are kept **forever** by default — retire is the
 non-destructive half of cleanup. If you'd rather reclaim the long tail
-automatically, the Config tab's **Retired-agent cleanup** toggle opts into
-a periodic sweep (every 30 min, and at `agentd serve` startup) that
+automatically, the Config tab's **Retention & cleanup → Retired-agent auto-cleanup**
+toggle opts into a periodic sweep (every 30 min, and at `agentd serve`
+startup) that
 *permanently deletes* anything retired longer than a window you set
 (default ≈ 1 year). It's off until you enable it, and deleting a
 conversation never loses its recorded cost — spend totals survive.
@@ -415,7 +416,7 @@ and **⭐ starters** (see [Starter task forces](#starter-task-forces)).
 > `templates.manage` can author and edit templates by conversation — no
 > dashboard needed. Reads stay open, so any agent can discover and inspect
 > circles. See [Agentic template editing](agent.md#templates) for the grant
-> bundle and the bundled `agent-circles` skill. The **Config tab → Scribe
+> bundle and the bundled `agent-circles` skill. The **Config tab → Ask & scribe
 > defaults** selector picks which saved spawn profile a freshly summoned scribe
 > launches with (harness / model / effort) — e.g. to run scribes on Codex; it
 > applies to each fresh summon and is stored as `scribe.profile` in
@@ -663,7 +664,8 @@ build of tclaude recognises. Edits are staged in the form until you press
 settings apply on next use; a few resolved at `agentd` startup (spawn
 rate-limit, clone cooldown) take effect only after an agentd restart.
 
-The **Usage readout** section controls the top-bar Claude subscription bars.
+The **Usage, costs & rate limits** section controls the top-bar Claude
+subscription bars.
 By default agentd does **not** periodically call Anthropic's usage API; it uses
 Claude Code's statusline callback when sessions run and otherwise shows the
 last cached reading for `usage.idle_timeout` (default `72h`). Enable
