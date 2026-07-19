@@ -345,7 +345,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd, reason string, inten
 		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 		return false
 	}
-	if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+	if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
@@ -424,23 +424,31 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, exitCmd, reason string
 			}
 			probe, err := probeLifecyclePane(target.tmuxSession)
 			if err != nil || probe.state == paneProbeUnknown {
-				if err == nil {
-					err = errors.New("pane revalidation unavailable")
+				// The first /exit was already delivered (the stop reported
+				// soft_stopped), so this is not a stop failure to log: the
+				// watchdog mirrors the synchronous unknown branch. A confirmed
+				// disappearance is the delivered exit landing — the reaper
+				// owns attribution — and anything else keeps the intent
+				// through the bounded observer window. An instant clear here
+				// would erase a delivered exit's attribution on a transient
+				// probe failure.
+				if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+					return
 				}
-				logLifecycleStopFailure("revalidate", target.paneID, target.sessionID, err)
-				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				scheduleUnknownIntentCleanup(target, intentRef)
 				return
 			}
 			if probe.state == paneProbeDead {
 				return
 			}
 			if !lifecycleProbeMatchesTarget(probe, target) {
-				logLifecycleStopFailure("revalidate", target.paneID, target.sessionID,
-					errors.New("selected pane identity changed"))
-				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+				// Delivered plus a post-send identity change means the
+				// predecessor transitioned; preserve intent for
+				// callback/reaper attribution and never retry against a
+				// successor (mirrors injectSoftExitTarget).
 				return
 			}
-			if err := injectTextAndSubmit(target.paneID, exitCmd); err != nil {
+			if err := injectTextAndSubmitSerializedBy(target.tmuxSession+":0.0", target.paneID, exitCmd); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				clearFailedExitIntentTarget(intentRef, target.tmuxSession)
 				return
@@ -1646,6 +1654,12 @@ func handleAgentStop(w http.ResponseWriter, r *http.Request, targetConv string) 
 	if res.Action == "error" {
 		status = http.StatusInternalServerError
 		setAuditDetail(r, res.Detail)
+		// The standard {"error": ...} envelope rides along with the
+		// lifecycle result fields so DaemonError.Msg carries the bounded
+		// failure detail — without it the CLI can only print the bare
+		// "agentd returned 500" status line.
+		resp["error"] = "stop failed: " + res.Detail
+		resp["code"] = "stop_failed"
 	}
 	writeJSON(w, status, resp)
 }

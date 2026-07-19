@@ -462,3 +462,89 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 		})
 	}
 }
+
+// A pane whose identity drifts DURING the retry window (not immediately
+// post-send) has still been delivered a real /exit. The watchdog must
+// mirror the synchronous post-send drift branch: stop retrying against
+// the successor AND preserve the delivered exit's intent so the
+// callback/reaper can attribute the predecessor's exit. Clearing here
+// loses observer attribution for an exit that actually happened.
+func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
+	const (
+		generation      = "44444444444444444444444444444444"
+		otherGeneration = "55555555555555555555555555555555"
+		eventID         = "evt_666666666666666666666666"
+	)
+	f := newFlow(t)
+	const conv = "sxjl-1111-2222-3333-4444"
+	const sessionID = "spwn-sxjl"
+	const tmuxSes = "tmux-sxjl"
+	f.HaveConvWithTitle(conv, "retry-drift")
+	f.HaveAliveSession(conv, sessionID, tmuxSes, f.TestCwd("sxjl"))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	f.World.Tmux.SetPaneExitGeneration(tmuxSes, generation)
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	t.Cleanup(agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+		if attempt == 2 {
+			f.World.Tmux.SetPaneExitGeneration(tmuxSes, otherGeneration)
+		}
+	}))
+
+	assert.Equal(t, "soft_stopped",
+		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
+	agentd.WaitForBackgroundForTest()
+
+	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"),
+		"no retry may be typed once the pane identity drifted")
+	d, err := db.Open()
+	require.NoError(t, err)
+	var intent, gotEventID, intentGeneration string
+	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id,
+		exit_intent_generation FROM sessions WHERE id = ?`, sessionID).Scan(
+		&intent, &gotEventID, &intentGeneration))
+	assert.Equal(t, db.AgentExitActionStop, intent,
+		"identity drift during the retry window must preserve the delivered exit's intent")
+	assert.Equal(t, eventID, gotEventID)
+	assert.Equal(t, generation, intentGeneration)
+}
+
+// The retry probe erroring because the whole session is GONE is the
+// delivered /exit landing, not a failure to clean up after: the reaper
+// owns attribution of the confirmed disappearance and needs the intent to
+// do it. The watchdog must mirror the synchronous unknown branch's
+// confirmed-disappearance case instead of instantly clearing.
+func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *testing.T) {
+	const eventID = "evt_777777777777777777777777"
+	f := newFlow(t)
+	const conv = "sxjm-1111-2222-3333-4444"
+	const sessionID = "spwn-sxjm"
+	const tmuxSes = "tmux-sxjm"
+	f.HaveConvWithTitle(conv, "retry-gone")
+	f.HaveAliveSession(conv, sessionID, tmuxSes, f.TestCwd("sxjm"))
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	cc.OnInput("/exit", func(*testharness.CCSim, string) bool { return true })
+	t.Cleanup(agentd.SetBeforeSoftExitTargetRetryProbeForTest(func(attempt int) {
+		if attempt == 2 {
+			// The delivered /exit has taken effect between retries: the
+			// session is gone, so the probe errors.
+			_ = f.World.Tmux.Command("kill-session", "-t", "="+tmuxSes).Run()
+		}
+	}))
+
+	assert.Equal(t, "soft_stopped",
+		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
+	agentd.WaitForBackgroundForTest()
+
+	assert.Equal(t, 1, countExitSends(f, tmuxSes+":0.0", "/exit"))
+	d, err := db.Open()
+	require.NoError(t, err)
+	var intent, gotEventID string
+	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id
+		FROM sessions WHERE id = ?`, sessionID).Scan(&intent, &gotEventID))
+	assert.Equal(t, db.AgentExitActionStop, intent,
+		"a confirmed disappearance must leave the intent for the reaper's attribution")
+	assert.Equal(t, eventID, gotEventID)
+}
