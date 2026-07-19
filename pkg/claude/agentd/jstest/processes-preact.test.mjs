@@ -868,10 +868,12 @@ test('imperative editor boundary mounts once, survives parent updates, updates b
     mounts += 1; received = options;
     return { model: { dirty: false }, destroy() { destroys += 1; } };
   };
-  const first = { id: 'a', blank: false, key: 'a:1' };
+  const first = { id: 'a', name: 'Template A', blank: false, key: 'a:1' };
   const mounted = await harness.mount(harness.html`<${ProcessEditorBoundary} spec=${first} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openEditor=${openEditor} />`);
   assert.equal(mounts, 1);
   assert.equal(received.id, 'a');
+  assert.equal(received.name, 'Template A', 'the creation/list handoff preserves the display name');
+  assert.equal(received.view, undefined);
   assert.equal(received.blank, false);
   assert.equal(received.config.confirmDiscard, confirmDiscard, 'the shared discard dialog reaches node editor transactions');
   assert.deepEqual(await received.config.onScribe({ kind: 'library' }), { ok: true });
@@ -1304,16 +1306,39 @@ test('regression: opening the list name editor prefills the current name', async
   await mounted.unmount();
 });
 
-test('creating a template collects a name and never offers an id', async (t) => {
+test('creating a template persists the named scaffold and prepopulates the editor with its generated id', async (t) => {
   const harness = await createPreactHarness(t);
+  const previous = { raf: globalThis.requestAnimationFrame, css: globalThis.CSS };
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.CSS = { escape: (value) => String(value) };
+  t.after(() => {
+    if (previous.raf === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previous.raf;
+    if (previous.css === undefined) delete globalThis.CSS;
+    else globalThis.CSS = previous.css;
+  });
   const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
     harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
     harness.importDashboardModule('js/processes-island.js'),
   ]);
   const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
   const actions = createProcessesActions({
     state, notify() {},
-    fetchImpl: async () => ({ ok: true, json: async () => ({ templates: [] }) }),
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path === '/v1/process/templates' && options.method === 'POST') {
+        return {
+          ok: true, status: 201, statusText: 'Created',
+          json: async () => ({
+            id: '9f3c2b1a4d5e6f708192a3b4c5d6e7f8',
+            ref: '9f3c2b1a4d5e6f708192a3b4c5d6e7f8@sha256:new',
+            sourceHash: 'source-new', semanticHash: 'semantic-new', diagnostics: [],
+          }),
+        };
+      }
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ templates: [] }) };
+    },
   });
   await actions.load('templates');
   const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
@@ -1331,10 +1356,31 @@ test('creating a template collects a name and never offers an id', async (t) => 
   for (let i = 0; i < 10 && !state.canvas.value; i++) await harness.act(() => Promise.resolve());
 
   assert.equal(state.canvas.value?.kind, 'editor');
-  assert.equal(state.canvas.value?.blank, true);
+  assert.equal(state.canvas.value?.blank, false, 'the editor opens the persisted backend generation');
   assert.equal(state.canvas.value?.name, 'Release train', 'the editor opens on the chosen name');
-  assert.equal(state.canvas.value?.id, '', 'no id is invented client-side; the store assigns it on first save');
+  assert.equal(state.canvas.value?.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8',
+    'the editor uses the id assigned by the backend');
+  assert.equal(state.canvas.value?.view?.template.name, 'Release train');
+  assert.equal(state.canvas.value?.view?.template.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8');
+  assert.equal(state.canvas.value?.view?.currentRef, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8@sha256:new');
+  assert.equal(state.canvas.value?.view?.sourceHash, 'source-new');
   assert.equal(state.create.value, null, 'the prompt closes once the editor opens');
+  for (let i = 0; i < 20 && !state.currentEditor(); i++) {
+    await harness.act(() => new Promise((resolve) => setTimeout(resolve, 5)));
+  }
+  assert.equal(state.currentEditor()?.model?.template?.id, '9f3c2b1a4d5e6f708192a3b4c5d6e7f8');
+  assert.equal(state.currentEditor()?.model?.template?.name, 'Release train');
+  assert.equal(state.currentEditor()?.model?.sourceHash, 'source-new',
+    'the created editor starts on the backend-confirmed CAS generation');
+  assert.equal(mounted.container.querySelector('[data-process-title-edit]')?.textContent, 'Release train',
+    'the rendered editor title is prepopulated from the creation dialog');
+  const create = requests.find((request) => request.options.method === 'POST');
+  assert.equal(create.path, '/v1/process/templates');
+  assert.equal(create.options.credentials, 'same-origin');
+  const payload = JSON.parse(create.options.body);
+  assert.equal(payload.template.name, 'Release train');
+  assert.equal(Object.hasOwn(payload.template, 'id'), false, 'the browser never proposes a permanent id');
+  assert.equal(Object.hasOwn(payload, 'sourceHash'), false, 'creation has no prior CAS generation');
   await mounted.unmount();
 });
 
@@ -1508,4 +1554,28 @@ test('a router restore-location event opens the editor on the mounted Processes 
   await harness.act(() => Promise.resolve());
   assert.equal(announced.length, settled, 'the restore listener is removed on cleanup');
   host.remove();
+
+test('a failed template creation stays in the dialog and surfaces the backend error', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const notices = [];
+  const actions = createProcessesActions({
+    state, notify: (...args) => notices.push(args),
+    fetchImpl: async () => ({
+      ok: false, status: 503, statusText: 'Unavailable',
+      json: async () => ({ message: 'store unavailable' }),
+    }),
+  });
+  actions.openCreate();
+
+  assert.equal(await actions.submitCreate('Release train'), false);
+  assert.equal(state.create.value?.name, 'Release train');
+  assert.equal(state.create.value?.error, 'store unavailable');
+  assert.equal(state.canvas.value, null, 'a failed create never opens a fictional template id');
+  assert.match(state.notice.value, /Template creation failed: store unavailable/);
+  assert.match(notices.at(-1)[0], /process template creation failed: store unavailable/);
+  assert.equal(state.mutation.value.busy, false);
 });
