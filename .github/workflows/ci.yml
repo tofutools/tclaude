@@ -96,7 +96,13 @@ jobs:
           export TCLAUDE_NODE_TEST_CACHE_KEY="$(node -p 'process.execPath + ":" + process.version')"
           case "${{ matrix.shard }}" in
             agentd)  pkgs="./pkg/claude/agentd" ;;
-            jstest)  pkgs="./pkg/claude/agentd/jstest" ;;
+            jstest)
+              pkgs="./pkg/claude/agentd/jstest"
+              # This shard owns its runner, so let Node use every core; the
+              # in-test default (NumCPU-2, sized for sharing a runner with the
+              # Go packages) would leave the 3-core macOS runner near-serial.
+              export TCLAUDE_JS_TEST_CONCURRENCY="$(getconf _NPROCESSORS_ONLN)"
+              ;;
             process) pkgs="./pkg/claude/process/..." ;;
             rest)
               # Everything the named shards don't cover. Patterns are anchored
