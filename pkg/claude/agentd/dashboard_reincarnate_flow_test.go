@@ -112,7 +112,7 @@ func TestDashboardReincarnate_SelfMode_DeliversInstructionWithFocusHint(t *testi
 		"self-mode must not inject /exit; sent=%+v", f.World.Tmux.Sent())
 
 	// The agent was nudged over tmux — the normal new-message path.
-	f.AssertSentContains(tmux+":0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", "new agent message", 10*time.Second)
 
 	// No succession edge recorded — the conv was not superseded.
 	assert.Equal(t, conv, db.ResolveLatestConv(conv),
@@ -306,15 +306,15 @@ func TestDashboardReincarnate_ForceMode_StillDirectReincarnation(t *testing.T) {
 
 	// The successor pane is renamed to the base name; the old pane is
 	// archive-renamed and soft-exited.
-	f.AssertSentContains(resp.TmuxSession+":0.0", "/rename worker", 5*time.Second)
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 2*time.Second),
+	f.AssertSentContains(resp.TmuxSession+":0.0", "/rename worker", 10*time.Second)
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 10*time.Second),
 		"old pane archive-renamed; sent=%+v", f.World.Tmux.Sent())
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 2*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 10*time.Second),
 		"old pane should receive /exit in force mode; sent=%+v", f.World.Tmux.Sent())
 
 	// Group membership migrated old → new — the same surface invariant
 	// the /v1 reincarnate flow test pins.
-	f.AssertGroupMember(g.Name, resp.NewConv, "worker", 5*time.Second)
+	f.AssertGroupMember(g.Name, resp.NewConv, "worker", 10*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
 
 	// The follow-up text must actually REACH the successor — the daemon

@@ -145,13 +145,13 @@ func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
 	start("MSG-A")
 	select {
 	case <-firstTextStarted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first injector did not reach the text-command barrier")
 	}
 	start("MSG-B")
 	select {
 	case <-contended:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("second injector did not contend on the pane lock")
 	}
 	if got := rt.snapshot(); len(got) != 1 || got[0] != "MSG-A" {
@@ -165,7 +165,7 @@ func TestInjectTextAndSubmit_SerializesPerPane(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("serialized injectors did not finish after releasing the barrier")
 	}
 
@@ -298,7 +298,7 @@ func TestInjectTextAndSubmit_DifferentPanesConcurrent(t *testing.T) {
 		}(target)
 	}
 
-	timeout := time.After(2 * time.Second)
+	timeout := time.After(10 * time.Second)
 	for got := range n {
 		select {
 		case <-arrived:

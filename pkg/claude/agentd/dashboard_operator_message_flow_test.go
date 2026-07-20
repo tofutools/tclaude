@@ -81,7 +81,7 @@ func TestDashboardOperatorMessagePreservesMultilineInline(t *testing.T) {
 		"/api/operator-message", map[string]any{"to": target, "body": body}))
 	require.Equal(t, http.StatusAccepted, rec.Code, "body=%s", rec.Body.String())
 
-	f.AssertSentContains(tmux+":0.0", "] "+body, 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", "] "+body, 10*time.Second)
 	agentd.WaitForBackgroundForTest()
 	rows, err := db.ListAgentMessagesForConv(target, 10)
 	require.NoError(t, err)

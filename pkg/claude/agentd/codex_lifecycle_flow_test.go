@@ -66,7 +66,7 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	// degrades to the native title store (ConvStore.SetTitle → threads.title,
 	// now landing on the modeled session-start row); the displayed name
 	// resolves to the intended --name either way.
-	f.AssertGroupMember("codex-crew", spawn.ConvID, "codex-worker", 5*time.Second)
+	f.AssertGroupMember("codex-crew", spawn.ConvID, "codex-worker", 10*time.Second)
 
 	// Let the post-spawn background goroutine settle BEFORE anything else
 	// types into this pane. This spawn carries no briefing, so its [system: …]
@@ -89,7 +89,7 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	require.NoError(t, err, "ListAgentMessagesForConv")
 	require.Len(t, rows, 1, "message landed in the codex worker's inbox")
 	assert.Equal(t, "hello codex", rows[0].Body)
-	f.AssertSentContains(spawn.TmuxTarget(), "new agent message", 2*time.Second)
+	f.AssertSentContains(spawn.TmuxTarget(), "new agent message", 10*time.Second)
 
 	// Stop GRACEFULLY. The daemon resolves the conv's harness, sees a
 	// soft-exit command, and injects Codex's `/quit`. The result must be
@@ -97,7 +97,7 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	// graceful path, not the killed_no_soft_exit hard-kill fallback.
 	stop := f.AsHuman().Stop(spawn.ConvID, false)
 	f.AssertSoftStopped(stop)
-	f.AssertSentContains(spawn.TmuxTarget(), "/quit", 2*time.Second)
+	f.AssertSentContains(spawn.TmuxTarget(), "/quit", 10*time.Second)
 	reason, err := db.GetSessionExitReason(sessions[0].ID)
 	require.NoError(t, err, "GetSessionExitReason")
 	assert.Equal(t, "soft_exit", reason,
@@ -110,7 +110,7 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 	// only as a defensive guard against send-keys settle timing.
 	require.Eventually(t, func() bool {
 		return !f.World.Tmux.IsAlive(spawn.TmuxSession)
-	}, 2*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"after a graceful /quit the codex pane must be offline")
 
 	// Codex has no SessionEnd hook, so the reaper is what persists

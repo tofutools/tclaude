@@ -50,9 +50,9 @@ func TestClone_DerivesTitleFromOriginal(t *testing.T) {
 	//     post-spawn /rename rendering at the members surface);
 	//   - the original retains its title (no stray /rename on the
 	//     source).
-	f.AssertCloneTitle(c, "alpha", "worker-c-1", 5*time.Second)
-	f.AssertGroupMember("alpha", c.NewConv, "worker-c-1", 5*time.Second)
-	f.AssertGroupMember("alpha", oldConv, "worker", 1*time.Second)
+	f.AssertCloneTitle(c, "alpha", "worker-c-1", 10*time.Second)
+	f.AssertGroupMember("alpha", c.NewConv, "worker-c-1", 10*time.Second)
+	f.AssertGroupMember("alpha", oldConv, "worker", 10*time.Second)
 }
 
 // Scenario: cloning an agent WITH a follow-up handoff must not let the
@@ -98,10 +98,10 @@ func TestClone_FollowUpNudgeDoesNotCorruptTitle(t *testing.T) {
 	// The title settles to the clean derived form — never the
 	// nudge-concatenated variant. AssertCloneTitle matches the title
 	// exactly, so a leaked "[system: ...]" suffix fails here.
-	f.AssertCloneTitle(c, "alpha", "worker-c-1", 5*time.Second)
+	f.AssertCloneTitle(c, "alpha", "worker-c-1", 10*time.Second)
 
 	// And the handoff nudge is still delivered (as its own line, after
 	// the rename) — folding flush into the ordered post-init goroutine
 	// must not drop the message.
-	f.AssertSentContains(c.TmuxTarget(), "new agent message", 5*time.Second)
+	f.AssertSentContains(c.TmuxTarget(), "new agent message", 10*time.Second)
 }

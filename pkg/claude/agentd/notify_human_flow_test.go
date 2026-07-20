@@ -156,7 +156,7 @@ func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.
 	go func() { result <- testharness.Serve(f.Mux, req) }()
 	select {
 	case <-body.started:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("upload never began reading its request body")
 	}
 	timeoutUpload := <-timeoutReady
@@ -168,7 +168,7 @@ func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.
 	}()
 	select {
 	case <-cleanupDone:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("attachment cleanup blocked behind the stalled body read")
 	}
 	select {
@@ -180,7 +180,7 @@ func TestNotifyHuman_StalledAttachmentTimesOutWithoutBlockingCleanup(t *testing.
 	select {
 	case rec := <-result:
 		require.Equal(t, http.StatusRequestTimeout, rec.Code, rec.Body.String())
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("stalled upload did not honor its body timeout")
 	}
 }

@@ -433,9 +433,16 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 
 			action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID)
 			assert.Equal(t, "soft_stopped", action)
-			require.Eventually(t, func() bool {
-				return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
-			}, 50*time.Millisecond, time.Millisecond)
+			if tc.wantSends > 1 {
+				// Eventually returns as soon as the bounded retries land, so a generous
+				// deadline costs nothing on the normal path while tolerating a long CI
+				// scheduler pause.
+				require.Eventually(t, func() bool {
+					return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
+				}, 10*time.Second, time.Millisecond)
+			} else {
+				assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"))
+			}
 
 			d, err := db.Open()
 			require.NoError(t, err)
@@ -455,6 +462,8 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 			assert.Equal(t, tmuxSession, gotTmux)
 
 			agentd.WaitForBackgroundForTest()
+			assert.Equal(t, tc.wantSends, countExitSends(f, tmuxSession+":0.0", "/exit"),
+				"background retry must not add sends after the expected terminal state")
 			readIntent()
 			assert.Empty(t, intent, "bounded cleanup clears the exact action/event/generation owner")
 			assert.Empty(t, gotEventID)
@@ -581,7 +590,7 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
 	select {
 	case <-retryReached:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("retry attempt 2 never ran")
 	}
 

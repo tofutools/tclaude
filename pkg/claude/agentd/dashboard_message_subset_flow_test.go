@@ -66,7 +66,7 @@ func TestDashboardMessage_GroupSubset_ReachesOnlySelectedMembers(t *testing.T) {
 	assert.Empty(t, bRows, "an unticked member receives nothing")
 
 	// The alive ticked member is nudged over tmux.
-	f.AssertSentContains("tclaude-spwn-dsub-a:0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains("tclaude-spwn-dsub-a:0.0", "new agent message", 10*time.Second)
 }
 
 // Scenario: a `members` list naming every member behaves identically

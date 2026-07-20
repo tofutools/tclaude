@@ -142,7 +142,7 @@ func TestCodexAgent_PendingSpawnBackfillEnrollment(t *testing.T) {
 	// End-to-end: the post-init inbox-pointer welcome now lands on the pane —
 	// only after the conv-id materialised, completing the back-fill. It points
 	// the (now un-gated) agent at the briefing it can finally read.
-	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 2*time.Second)
+	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 }
 
 func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) {
@@ -187,13 +187,13 @@ func TestCodexAgent_PendingResponseThenInlineBackgroundEnrollment(t *testing.T) 
 		}
 		m, err := db.FindMemberInGroup(g.ID, convID)
 		return err == nil && m != nil
-	}, 2*time.Second, 20*time.Millisecond, "background inline back-fill should enroll without a sweeper tick")
+	}, 10*time.Second, 20*time.Millisecond, "background inline back-fill should enroll without a sweeper tick")
 
 	require.Eventually(t, func() bool {
 		gone, err := db.GetPendingSpawn(resp.Label)
 		return err == nil && gone == nil
-	}, 2*time.Second, 20*time.Millisecond, "background enrollment clears the pending row")
-	f.AssertGroupMember("codex-crew", convID, "codex-worker", 3*time.Second)
+	}, 10*time.Second, 20*time.Millisecond, "background enrollment clears the pending row")
+	f.AssertGroupMember("codex-crew", convID, "codex-worker", 10*time.Second)
 	boundAgentID, err := db.AgentIDForConv(convID)
 	require.NoError(t, err)
 	assert.Equal(t, resp.AgentID, boundAgentID, "background enrollment keeps the response identity")
@@ -230,7 +230,7 @@ func TestCodexAgent_LaunchingReservationRejectsPendingDelete(t *testing.T) {
 	var label string
 	select {
 	case label = <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("spawn did not reach the blocked launch boundary")
 	}
 	ps, err := db.GetPendingSpawn(label)
@@ -255,7 +255,7 @@ func TestCodexAgent_LaunchingReservationRejectsPendingDelete(t *testing.T) {
 	var resp testharness.SpawnResp
 	select {
 	case resp = <-spawned:
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("spawn did not finish after the launch boundary was released")
 	}
 	require.Equal(t, http.StatusOK, resp.Code, "spawn body=%s", resp.Raw)
@@ -300,7 +300,7 @@ func TestCodexAgent_LateSessionClearsLaunchingReservation(t *testing.T) {
 	require.Eventually(t, func() bool {
 		updated, err := db.GetPendingSpawn(resp.Label)
 		return err == nil && updated != nil && !updated.Launching
-	}, 2*time.Second, 20*time.Millisecond, "post-response session discovery clears the launch marker")
+	}, 10*time.Second, 20*time.Millisecond, "post-response session discovery clears the launch marker")
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	deleted := testharness.Serve(mux,

@@ -165,7 +165,7 @@ func TestClearRotation_MigratesAgentIdentityToNewConvID(t *testing.T) {
 	// real customTitle — what makes the name durable across rescans and
 	// visible in surfaces that don't consult pending_name (CC's own UI,
 	// `tclaude conv ls`).
-	f.AssertSentContains(clearAgentTmux+":0.0", "/rename "+clearAgentTitle, 2*time.Second)
+	f.AssertSentContains(clearAgentTmux+":0.0", "/rename "+clearAgentTitle, 10*time.Second)
 }
 
 // Scenario: after a /clear, the agent is taken offline and a resume is

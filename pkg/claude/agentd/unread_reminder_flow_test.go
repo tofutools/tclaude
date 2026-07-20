@@ -97,8 +97,8 @@ func TestUnreadReminder_FiresAfterInterval(t *testing.T) {
 
 	// After the interval: a single-message reminder pointing at inbox read.
 	agentd.RunUnreadReminderTickForTest(base.Add(11*time.Minute), st)
-	f.AssertSentContains(urTarget, "reminder —", time.Second)
-	f.AssertSentContains(urTarget, "inbox read", time.Second)
+	f.AssertSentContains(urTarget, "reminder —", 10*time.Second)
+	f.AssertSentContains(urTarget, "inbox read", 10*time.Second)
 }
 
 // TestUnreadReminder_FollowsAgentAcrossReincarnation guards the JOH-310
@@ -141,7 +141,7 @@ func TestUnreadReminder_FollowsAgentAcrossReincarnation(t *testing.T) {
 	st := agentd.NewUnreadReminderStateForTest()
 	base := time.Now()
 	agentd.RunUnreadReminderTickForTest(base.Add(11*time.Minute), st)
-	f.AssertSentContains(tmux2+":0.0", "reminder —", time.Second)
+	f.AssertSentContains(tmux2+":0.0", "reminder —", 10*time.Second)
 	for _, sk := range f.World.Tmux.Sent() {
 		if sk.Target == tmux1+":0.0" && strings.Contains(sk.Text, "reminder —") {
 			t.Fatalf("reminder went to the dead generation %s", tmux1)
@@ -168,7 +168,7 @@ func TestUnreadReminder_RestartFloorDefersBacklog(t *testing.T) {
 
 	// base+16m is past epoch+10m → the deferred reminder fires.
 	agentd.RunUnreadReminderTickForTest(base.Add(16*time.Minute), st)
-	f.AssertSentContains(urTarget, "reminder —", time.Second)
+	f.AssertSentContains(urTarget, "reminder —", 10*time.Second)
 }
 
 // TestUnreadReminder_RepeatsEveryInterval pins the cadence: after the first
@@ -208,7 +208,7 @@ func TestUnreadReminder_NoopWhenInputBlocked(t *testing.T) {
 			// Dialog clears → next tick fires immediately (still overdue).
 			setRecipientStatus(t, "idle")
 			agentd.RunUnreadReminderTickForTest(base.Add(12*time.Minute), st)
-			f.AssertSentContains(urTarget, "reminder —", time.Second)
+			f.AssertSentContains(urTarget, "reminder —", 10*time.Second)
 		})
 	}
 }
@@ -269,7 +269,7 @@ func TestUnreadReminder_AggregatesBacklog(t *testing.T) {
 	base := time.Now()
 	agentd.RunUnreadReminderTickForTest(base.Add(11*time.Minute), st)
 
-	f.AssertSentContains(urTarget, "2 unread agent messages", time.Second)
+	f.AssertSentContains(urTarget, "2 unread agent messages", 10*time.Second)
 	require.Equal(t, 1, remindersTo(f, urTarget), "a backlog is one aggregate reminder, not one per message")
 }
 

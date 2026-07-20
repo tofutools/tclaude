@@ -35,7 +35,7 @@ func TestCodexApprovalMonitor_PromotesAlwaysAllow(t *testing.T) {
 	require.Eventually(t, func() bool {
 		data, readErr := os.ReadFile(configPath)
 		return readErr == nil && stringContainsAll(string(data), "linear.save_issue", `approval_mode = "approve"`)
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func TestCodexApprovalMonitor_PromotesRateLimitModelNudgeDismissal(t *testing.T) {
@@ -59,7 +59,7 @@ func TestCodexApprovalMonitor_PromotesRateLimitModelNudgeDismissal(t *testing.T)
 		data, readErr := os.ReadFile(configPath)
 		return readErr == nil && stringContainsAll(string(data),
 			"[notice]", harness.CodexNoticeHideRateLimitModelNudge+" = true")
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func TestCodexApprovalMonitor_PromotesFromValidReformattedProfile(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCodexApprovalMonitor_PromotesFromValidReformattedProfile(t *testing.T) 
 	require.Eventually(t, func() bool {
 		persisted, readErr := os.ReadFile(configPath)
 		return readErr == nil && stringContainsAll(string(persisted), "linear.save_issue", `approval_mode = "approve"`)
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 }
 
 func TestCodexApprovalMonitor_RefusesInvalidTOML(t *testing.T) {

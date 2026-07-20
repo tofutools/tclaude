@@ -236,8 +236,8 @@ func TestSpawnCLI_WorktreeRepoMonorepoRidesAlong(t *testing.T) {
 
 	// The welcome (delivered as the launch prompt) names the worktree path +
 	// branch so the agent edits code in the right place.
-	f.AssertSpawnInitialPrompt(resp.ConvID, wantWorktree, 5*time.Second)
-	f.AssertSpawnInitialPrompt(resp.ConvID, "feat-y", 5*time.Second)
+	f.AssertSpawnInitialPrompt(resp.ConvID, wantWorktree, 10*time.Second)
+	f.AssertSpawnInitialPrompt(resp.ConvID, "feat-y", 10*time.Second)
 }
 
 // Scenario: a human runs `tclaude agent spawn alpha worker

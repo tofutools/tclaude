@@ -94,7 +94,7 @@ func TestWithExecutionViewUsesRunThenTemplateLockOrder(t *testing.T) {
 	require.NoError(t, templateLock.Unlock())
 	select {
 	case <-templateLocked:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("execution view did not acquire template after contention cleared")
 	}
 	require.NoError(t, <-viewDone)

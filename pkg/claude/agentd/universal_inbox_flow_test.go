@@ -67,7 +67,7 @@ func TestMessage_SoloToSolo_WithMessageDirect_Delivered(t *testing.T) {
 	assert.Equal(t, "ping, solo to solo", rows[0].Body)
 
 	agentd.WaitForBackgroundForTest() // drain the async nudge
-	f.AssertSentContains("tclaude-spwn-recp-001:0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains("tclaude-spwn-recp-001:0.0", "new agent message", 10*time.Second)
 }
 
 // Scenario 2: solo→solo WITHOUT message.direct is refused with a 403

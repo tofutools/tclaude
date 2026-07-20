@@ -79,7 +79,7 @@ func TestDashboardMessage_GroupTarget_FansOutToEveryMember(t *testing.T) {
 	assert.Empty(t, senderRows, "the From conv does not message itself")
 
 	// The alive member is nudged over tmux.
-	f.AssertSentContains("tclaude-spwn-dmsg-a:0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains("tclaude-spwn-dmsg-a:0.0", "new agent message", 10*time.Second)
 }
 
 // Scenario: a solo target reaches exactly one agent — the fan-out

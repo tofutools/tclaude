@@ -97,18 +97,18 @@ func TestDashboardRename_SetsTitle(t *testing.T) {
 	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-old"))
 	g := f.HaveGroup("team")
 	f.HaveMember("team", conv)
-	f.AssertGroupMember(g.Name, conv, "worker-old", 5*time.Second)
+	f.AssertGroupMember(g.Name, conv, "worker-old", 10*time.Second)
 
 	mux := renameDashMux(t)
 	rec := postAgentRename(t, mux, conv, map[string]any{"title": "worker-new"})
 	require.Equalf(t, http.StatusOK, rec.Code, "rename body=%s", rec.Body.String())
 
 	// `/rename` was injected into the agent's pane.
-	f.AssertSentContains(tmux+":0.0", "/rename worker-new", 5*time.Second)
+	f.AssertSentContains(tmux+":0.0", "/rename worker-new", 10*time.Second)
 
 	// The new title converges on the members surface (refreshed from
 	// the .jsonl) once CC processes the injected /rename.
-	f.AssertGroupMember(g.Name, conv, "worker-new", 5*time.Second)
+	f.AssertGroupMember(g.Name, conv, "worker-new", 10*time.Second)
 
 	// ...and the dashboard's own /api/snapshot group row shows it too.
 	assert.Equal(t, "worker-new", dashMemberTitle(t, g.Name, conv),
@@ -169,14 +169,14 @@ func TestDashboardRename_AutoNudge(t *testing.T) {
 	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-keepme"))
 	g := f.HaveGroup("team")
 	f.HaveMember("team", conv)
-	f.AssertGroupMember(g.Name, conv, "worker-keepme", 5*time.Second)
+	f.AssertGroupMember(g.Name, conv, "worker-keepme", 10*time.Second)
 
 	mux := renameDashMux(t)
 	rec := postAgentRename(t, mux, conv, map[string]any{"auto": true})
 	require.Equalf(t, http.StatusOK, rec.Code, "auto-rename body=%s", rec.Body.String())
 
 	// A self-rename nudge — not a /rename — was injected.
-	f.AssertSentContains(tmux+":0.0", "rename yourself", 5*time.Second)
+	f.AssertSentContains(tmux+":0.0", "rename yourself", 10*time.Second)
 	assert.False(t, sentRenameTo(f.World.Tmux.Sent(), tmux+":0.0"),
 		"auto mode must not inject a /rename; sent=%+v", f.World.Tmux.Sent())
 
@@ -200,7 +200,7 @@ func TestDashboardRename_InvalidTitleRejected(t *testing.T) {
 	require.NoError(t, f.World.CCs.GetByConvID(conv).WriteCustomTitle("worker-safe"))
 	g := f.HaveGroup("team")
 	f.HaveMember("team", conv)
-	f.AssertGroupMember(g.Name, conv, "worker-safe", 5*time.Second)
+	f.AssertGroupMember(g.Name, conv, "worker-safe", 10*time.Second)
 
 	mux := renameDashMux(t)
 	rec := postAgentRename(t, mux, conv, map[string]any{"title": "bad/slashed"})

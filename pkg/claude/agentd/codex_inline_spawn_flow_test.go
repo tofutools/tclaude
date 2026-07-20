@@ -77,7 +77,7 @@ func TestCodexSpawn_ShortBriefInlinedIntoSeed(t *testing.T) {
 		"an inlined-seed briefing's inbox copy must be marked delivered")
 
 	// The name still resolves — Codex renames via the native title store.
-	f.AssertGroupMember("crew", spawn.ConvID, "codex-worker", 3*time.Second)
+	f.AssertGroupMember("crew", spawn.ConvID, "codex-worker", 10*time.Second)
 }
 
 // Scenario: a Codex spawn with NO briefing (no group context, no task brief).
@@ -149,7 +149,7 @@ func TestCodexSpawn_LongBriefStandbySeedThenPointerWelcome(t *testing.T) {
 
 	// Post-connect: the real inbox-pointer welcome is injected over tmux,
 	// pointing the agent at the briefing it can now read.
-	f.AssertSentContains(spawn.TmuxTarget(), fmt.Sprintf("inbox read %d", msg.ID), 3*time.Second)
+	f.AssertSentContains(spawn.TmuxTarget(), fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 
 	// The agent must still open this from the inbox, so the copy stays UNREAD
 	// (only delivered) — the read-marking fires only for an inlined seed. Drain

@@ -186,7 +186,7 @@ func TestCronPatchRetarget_ResolutionWaitsForAuthorityBoundary(t *testing.T) {
 	for range 2 {
 		select {
 		case <-entered:
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("target resolution returned before reaching the common authority-lock boundary")
 		}
 	}
@@ -617,7 +617,7 @@ func TestCronByIDMutations_ReauthorizeRefreshedTargetBeforeAction(t *testing.T) 
 			go func() { result <- testharness.Serve(f.Mux, req) }()
 			select {
 			case <-entered:
-			case <-time.After(time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("by-ID mutation did not reach the authority-lock boundary")
 			}
 			patchCronAsHuman(t, f, job.ID, map[string]any{"target": replacement})

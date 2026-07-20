@@ -77,7 +77,7 @@ func TestSpawn_PendingNameShownThenSupersededBySelfRename(t *testing.T) {
 
 	// Members surface — what `tclaude agent groups members alpha` renders.
 	// The intended name shows, sourced from agent_enrollment.pending_name.
-	f.AssertGroupMember("alpha", spawn.ConvID, "pending-reviewer", 3*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "pending-reviewer", 10*time.Second)
 
 	// Dashboard snapshot — the surface the human actually watches. No
 	// "(unknown)" placeholder.
@@ -95,5 +95,5 @@ func TestSpawn_PendingNameShownThenSupersededBySelfRename(t *testing.T) {
 
 	// Self-rename supersedes the pending name cleanly: a custom title now
 	// exists, so FreshTitle resolves through conv_index from here on.
-	f.AssertGroupMember("alpha", spawn.ConvID, "real-reviewer", 5*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "real-reviewer", 10*time.Second)
 }

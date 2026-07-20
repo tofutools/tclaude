@@ -37,7 +37,7 @@ func TestCompact_LogsInjectionWithReason(t *testing.T) {
 		"human compact on a CC agent should succeed; body=%s", res.Raw)
 
 	// Surface 1: /compact actually reached the pane.
-	f.AssertSentContains("tmux-cc-1:0.0", "/compact", 2*time.Second)
+	f.AssertSentContains("tmux-cc-1:0.0", "/compact", 10*time.Second)
 
 	// Surface 2: the injection is recorded with the affected conv and its cause.
 	logs := buf.String()

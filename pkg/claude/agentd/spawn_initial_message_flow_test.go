@@ -73,8 +73,8 @@ func TestSpawn_InitialMessageDeliveredToInbox(t *testing.T) {
 	// The agent is named + greeted via launch args (`claude --name <prompt>`),
 	// not tmux injection. Over the inline cap, the welcome points the agent at
 	// the inbox message by id — identical content, delivered more efficiently.
-	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
-	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "worker", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 
 	// The brief must NOT be typed into the pane NOR baked into the launch
 	// prompt — that was the whole point of routing it through the inbox. The

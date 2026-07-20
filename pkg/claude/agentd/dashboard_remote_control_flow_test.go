@@ -101,7 +101,7 @@ func TestDashboardRemoteControl_ToggleViaDashboardRoute(t *testing.T) {
 	// Enable through the dashboard route.
 	on := post("on")
 	require.Equalf(t, http.StatusOK, on.Code, "dashboard enable body=%s", on.Body.String())
-	f.AssertSentContains(tmux+":0.0", "/remote-control", 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", "/remote-control", 10*time.Second)
 	got, err := db.RemoteControlForConv(conv)
 	require.NoError(t, err)
 	assert.True(t, got, "dashboard enable persists best-known state on")

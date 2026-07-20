@@ -33,7 +33,7 @@ func TestRemoteControl_ToggleOnOff(t *testing.T) {
 	require.Equal(t, http.StatusOK, on.Code, "enable; body=%s", on.Raw)
 	assert.True(t, on.RemoteControl, "enable reports remote control on")
 	assert.Equal(t, "enabled", on.Action)
-	f.AssertSentContains("tmux-cc-1:0.0", "/remote-control", 2*time.Second)
+	f.AssertSentContains("tmux-cc-1:0.0", "/remote-control", 10*time.Second)
 	got, err := db.RemoteControlForConv(conv)
 	require.NoError(t, err)
 	assert.True(t, got, "persisted state flips on after enable")

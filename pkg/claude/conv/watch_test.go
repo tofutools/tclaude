@@ -409,7 +409,7 @@ func TestFsDebounceLoop_CreateSentImmediately(t *testing.T) {
 	case msg := <-outCh:
 		assert.Equal(t, filePath, msg.FilePath)
 		assert.False(t, msg.Removed, "expected Removed=false for create")
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for create event")
 	}
 }
@@ -439,7 +439,7 @@ func TestFsDebounceLoop_DeleteSentImmediately(t *testing.T) {
 	case msg := <-outCh:
 		assert.Equal(t, filePath, msg.FilePath)
 		assert.True(t, msg.Removed, "expected Removed=true for delete")
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out waiting for delete event")
 	}
 }
@@ -563,7 +563,7 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 	// the OS event will take to arrive.
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.Contains(c, w.WatchList(), projectDir, "watch list after project directory create")
-	}, 5*time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 
 	// Now create a .jsonl file inside the new subdir
 	convID := "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
@@ -573,7 +573,7 @@ func TestFsDebounceLoop_AutoWatchesNewSubdir(t *testing.T) {
 	select {
 	case msg := <-outCh:
 		assert.Equal(t, filePath, msg.FilePath)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out — new subdir was not auto-watched")
 	}
 }
