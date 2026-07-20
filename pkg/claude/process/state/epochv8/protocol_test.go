@@ -398,6 +398,54 @@ func TestDuplicateDirectivesDoNotSuppressDependentBlockers(t *testing.T) {
 	}
 }
 
+func TestSourceBlockersDoNotConsumeDuplicateDependentBudget(t *testing.T) {
+	seeds := make([]AuthoritySeed, 0, MaxBlockers+1)
+	seeds = append(seeds, AuthoritySeed{
+		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	})
+	for i := 0; i < MaxBlockers-1; i++ {
+		seeds = append(seeds, AuthoritySeed{
+			LocalID: fmt.Sprintf("command-%04d", i), ReservationID: fmt.Sprintf("command-r-%04d", i), NodeID: "work",
+			Kind: AuthorityCommand, State: AuthorityActive, DependencyLocalIDs: []string{"frontier"},
+		})
+	}
+	seeds = append(seeds, AuthoritySeed{
+		LocalID: "wait", ReservationID: "wait-r", NodeID: "work",
+		Kind: AuthorityWait, State: AuthorityActive, DependencyLocalIDs: []string{"frontier"},
+	})
+	checkpoint := testCheckpoint(t, "overlapping-blocker-budget", seeds)
+	directives := make([]HandoffDirective, 0, len(seeds))
+	for _, authority := range checkpoint.wire.Authorities {
+		if authority.Kind == AuthorityWait {
+			directives = append(directives, HandoffDirective{Source: authority.Identity, Action: HandoffRetain})
+			continue
+		}
+		directives = append(directives, HandoffDirective{
+			Source: authority.Identity, Action: HandoffTransfer,
+			TargetLocalID:       "next-" + authority.LocalID,
+			TargetReservationID: "next-" + authority.ReservationID,
+			TargetNodeID:        "work",
+		})
+	}
+	preview, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "overlapping-blocker-budget-next"), Handoffs: directives,
+	})
+	if err != nil || preview.Plan != nil || len(preview.Blockers) != MaxBlockers || !hasBlocker(preview.Blockers, BlockerActiveWait) {
+		t.Fatalf("cross-phase duplicates suppressed distinct blocker: blockers=%d activeWait=%t err=%v",
+			len(preview.Blockers), hasBlocker(preview.Blockers, BlockerActiveWait), err)
+	}
+	activeCommands := 0
+	for _, blocker := range preview.Blockers {
+		if blocker.Code == BlockerActiveCommand {
+			activeCommands++
+		}
+	}
+	if activeCommands != MaxBlockers-1 {
+		t.Fatalf("active command blockers=%d, want %d", activeCommands, MaxBlockers-1)
+	}
+}
+
 func TestTransferRejectsHistoricalMaterializationReuse(t *testing.T) {
 	checkpoint := testCheckpoint(t, "reuse-epoch-zero", []AuthoritySeed{{
 		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
@@ -891,8 +939,10 @@ func TestDependencyIndexHighCardinalityWorkIsNearLinear(t *testing.T) {
 		}
 		sources[authority.Identity] = struct{}{}
 	}
-	if blockers := index.activeDependentBlockers(sources, MaxBlockers); len(blockers) != 0 {
-		t.Fatalf("independent frontiers have dependent blockers: %+v", blockers)
+	blockers := newBlockerAccumulator(MaxBlockers)
+	index.addActiveDependentBlockers(sources, blockers)
+	if got := blockers.canonical(); len(got) != 0 {
+		t.Fatalf("independent frontiers have dependent blockers: %+v", got)
 	}
 	if index.buildAuthorityVisits != authoritiesCount || index.buildDependencyVisits != 0 || index.descendantVisits != 0 {
 		t.Fatalf("dependency work is not linear for independent authorities: authorities=%d dependencies=%d descendants=%d",

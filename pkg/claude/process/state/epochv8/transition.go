@@ -427,18 +427,18 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 		protectedByID[authority.Identity] = authority
 	}
 	directiveByID := make(map[OwnerIdentity]HandoffDirective, len(directives))
-	blockers := make([]Blocker, 0)
+	blockers := newBlockerAccumulator(MaxBlockers)
 	for _, directive := range directives {
 		if !canonicalDigest(string(directive.Source)) {
 			return nil, nil, fmt.Errorf("%w: handoff source identity is not canonical", ErrInvalid)
 		}
 		if _, duplicate := directiveByID[directive.Source]; duplicate {
-			blockers = append(blockers, Blocker{Code: BlockerHandoffDuplicate, AuthorityID: directive.Source})
+			blockers.add(Blocker{Code: BlockerHandoffDuplicate, AuthorityID: directive.Source})
 			continue
 		}
 		directiveByID[directive.Source] = directive
 		if _, ok := protectedByID[directive.Source]; !ok {
-			blockers = append(blockers, Blocker{Code: BlockerHandoffUnknown, AuthorityID: directive.Source})
+			blockers.add(Blocker{Code: BlockerHandoffUnknown, AuthorityID: directive.Source})
 		}
 	}
 	nodeSet := epochNodeSet(epoch)
@@ -450,7 +450,7 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 	for _, authority := range protected {
 		directive, ok := directiveByID[authority.Identity]
 		if !ok {
-			blockers = append(blockers, Blocker{Code: BlockerHandoffMissing, AuthorityID: authority.Identity})
+			blockers.add(Blocker{Code: BlockerHandoffMissing, AuthorityID: authority.Identity})
 			continue
 		}
 		switch directive.Action {
@@ -467,7 +467,7 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 			handoffs = append(handoffs, handoff)
 		case HandoffTransfer:
 			if blocker, blocked := transferSourceBlocker(authority); blocked {
-				blockers = append(blockers, blocker)
+				blockers.add(blocker)
 			}
 			transferSources[authority.Identity] = struct{}{}
 			if !validIdentifier(directive.TargetLocalID) || !validIdentifier(directive.TargetReservationID) || !validIdentifier(directive.TargetNodeID) {
@@ -500,7 +500,7 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 			}
 			frontierKey := frontierMaterializationKey{target.LocalID, target.NodeID}
 			if _, exists := targetFrontiers[frontierKey]; exists {
-				blockers = append(blockers, Blocker{Code: BlockerHandoffDuplicate, AuthorityID: authority.Identity})
+				blockers.add(Blocker{Code: BlockerHandoffDuplicate, AuthorityID: authority.Identity})
 			} else {
 				targetFrontiers[frontierKey] = authority.Identity
 			}
@@ -519,17 +519,9 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 			return nil, nil, fmt.Errorf("%w: handoff action %q is invalid", ErrInvalid, directive.Action)
 		}
 	}
-	blockers = canonicalBlockers(blockers)
-	if len(blockers) > MaxBlockers {
-		blockers = blockers[:MaxBlockers]
-	}
-	blockers = append(blockers, dependencies.activeDependentBlockers(transferSources, MaxBlockers-len(blockers))...)
+	dependencies.addActiveDependentBlockers(transferSources, blockers)
 	slices.SortFunc(handoffs, func(a, b Handoff) int { return cmp.Compare(a.Source, b.Source) })
-	blockers = canonicalBlockers(blockers)
-	if len(blockers) > MaxBlockers {
-		blockers = blockers[:MaxBlockers]
-	}
-	return handoffs, blockers, nil
+	return handoffs, blockers.canonical(), nil
 }
 
 func transferSourceBlocker(source AuthorityRecord) (Blocker, bool) {
@@ -587,6 +579,46 @@ func canonicalBlockers(blockers []Blocker) []Blocker {
 		return cmp.Compare(a.AuthorityID, b.AuthorityID)
 	})
 	return slices.Compact(blockers)
+}
+
+// blockerAccumulator applies the preview budget to the globally unique stable
+// blocker set, so a blocker rediscovered in a later classification phase does
+// not hide a distinct blocker that still fits within MaxBlockers.
+type blockerAccumulator struct {
+	limit    int
+	blockers map[Blocker]struct{}
+}
+
+func newBlockerAccumulator(limit int) *blockerAccumulator {
+	return &blockerAccumulator{limit: limit, blockers: make(map[Blocker]struct{}, limit)}
+}
+
+func (a *blockerAccumulator) add(blocker Blocker) {
+	if a == nil {
+		return
+	}
+	if _, exists := a.blockers[blocker]; exists {
+		return
+	}
+	if len(a.blockers) >= a.limit {
+		return
+	}
+	a.blockers[blocker] = struct{}{}
+}
+
+func (a *blockerAccumulator) full() bool {
+	return a == nil || len(a.blockers) >= a.limit
+}
+
+func (a *blockerAccumulator) canonical() []Blocker {
+	if a == nil {
+		return nil
+	}
+	result := make([]Blocker, 0, len(a.blockers))
+	for blocker := range a.blockers {
+		result = append(result, blocker)
+	}
+	return canonicalBlockers(result)
 }
 
 func protectedClosure(authorities []AuthorityRecord) ([]AuthorityRecord, error) {
@@ -729,9 +761,9 @@ func (index *authorityDependencyIndex) logicalFrontierAvailable(source OwnerIden
 	return direct
 }
 
-func (index *authorityDependencyIndex) activeDependentBlockers(sources map[OwnerIdentity]struct{}, limit int) []Blocker {
-	if index == nil || limit <= 0 || len(sources) == 0 {
-		return nil
+func (index *authorityDependencyIndex) addActiveDependentBlockers(sources map[OwnerIdentity]struct{}, blockers *blockerAccumulator) {
+	if index == nil || blockers.full() || len(sources) == 0 {
+		return
 	}
 	queue := make([]OwnerIdentity, 0, len(sources))
 	seen := make(map[OwnerIdentity]struct{}, len(sources))
@@ -740,16 +772,12 @@ func (index *authorityDependencyIndex) activeDependentBlockers(sources map[Owner
 		seen[source] = struct{}{}
 	}
 	slices.Sort(queue)
-	result := make([]Blocker, 0)
-	reported := make(map[OwnerIdentity]struct{})
-	for cursor := 0; cursor < len(queue) && len(result) < limit; cursor++ {
+	for cursor := 0; cursor < len(queue) && !blockers.full(); cursor++ {
 		for _, id := range index.reverse[queue[cursor]] {
 			authority := index.byID[id]
-			_, alreadyReported := reported[id]
-			if authority.State.active() && !alreadyReported {
-				result = append(result, Blocker{Code: blockerForKind(authority.Kind), AuthorityID: authority.Identity})
-				reported[id] = struct{}{}
-				if len(result) == limit {
+			if authority.State.active() {
+				blockers.add(Blocker{Code: blockerForKind(authority.Kind), AuthorityID: authority.Identity})
+				if blockers.full() {
 					break
 				}
 			}
@@ -761,7 +789,6 @@ func (index *authorityDependencyIndex) activeDependentBlockers(sources map[Owner
 			queue = append(queue, id)
 		}
 	}
-	return canonicalBlockers(result)
 }
 
 func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff, dependencies *authorityDependencyIndex) ([]AuthorityRecord, error) {
