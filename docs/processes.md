@@ -478,6 +478,16 @@ available at `POST /v1/process/runs/{id}/nodes/{node}/signal`, requires the
 the signal body into audit detail. Exact observation and signal retries after
 an ambiguous commit are idempotent; a changed command, node, actor, outcome, or
 evidence binding is rejected.
+
+For a serial task without an authored failure edge, schema 7 matches the
+legacy terminal contract: task action aliases are normalized first, pass
+outcomes succeed, and every other non-empty result consumes the retry budget.
+An exhausted result becomes a `failed` / `performer_failed` terminal path and
+fails the run without inventing an edge or end-node activation. Decision
+labels remain exact, and templates with explicit failure edges retain their
+existing routing behavior. Failed performed work is observed and completes
+its contact schedule; it is not represented as command cancellation.
+
 Obligations and blocked nodes include only their recorded wait/contact state;
 missing legacy timestamps and schedules remain absent rather than being
 reconstructed. A conversation reference contains only the durable agent ID
@@ -537,11 +547,12 @@ Production rejects incoherent capability combinations and parallel templates
 outside the released executor subset before creating a run. The supported
 subset includes direct task/decision performers (agent or human) with their
 contact schedules (explicit or engine defaults), exact waits, retries,
-start/end routing, nested forks that the reducer can poison safely, complete
-innermost-scope reductions, terminal cause propagation, all joins, and any
-joins with winner/detachment semantics. Compound nodes, program performers,
-and unsafe nested-fork shapes remain outside that parallel subset and are
-rejected rather than silently falling back.
+start/end routing, serial terminal failure without an authored failure edge,
+nested forks that the reducer can poison safely, complete innermost-scope
+reductions, terminal cause propagation, all joins, and any joins with
+winner/detachment semantics. Compound nodes, program performers, and unsafe
+nested-fork shapes remain outside that parallel subset and are rejected rather
+than silently falling back.
 
 Schema-7 contact state (reminders and escalation for deferred agent/human
 performers) lives in the checkpoint's `contacts` registry beside its

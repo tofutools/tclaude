@@ -1558,6 +1558,117 @@ func TestSchema7WorklistTaskAliasExactRetryAndDrift(t *testing.T) {
 	assert.Equal(t, "failed", pathv1.CurrentRunStatus(v7.Checkpoint))
 }
 
+func TestSchema7NoFailTaskRetriesThenProjectsTerminalFailure(t *testing.T) {
+	f, root := processEngineFlow(t)
+	const runID = "v7-no-fail-terminal"
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: runID, Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {
+				Type: model.NodeTypeTask,
+				Performer: &model.Performer{
+					Kind: model.PerformerHuman, Profile: "operator", Ask: "Review the change",
+				},
+				Retry: &model.RetryPolicy{MaxAttempts: 2},
+				Next:  model.Next{"pass": "done"},
+			},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+	fs := createEngineRun(t, root, runID, tmpl, false)
+	host, err := agentd.NewProcessEngineHostForTest(root)
+	require.NoError(t, err)
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusRunning, results[0].Status)
+	schema, err := fs.RunStateSchemaVersion(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, pathv1.CheckpointStateSchemaVersion, schema)
+
+	var firstPending struct {
+		Items []worklist.Item `json:"items"`
+	}
+	rec := processEngineGet(t, f, "/v1/process/worklist?run="+runID+"&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	testharness.DecodeJSON(t, rec, &firstPending)
+	require.Len(t, firstPending.Items, 1)
+	assert.Equal(t, 1, firstPending.Items[0].Attempt)
+	firstAction := humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+firstPending.Items[0].ID+"/action", map[string]string{
+		"action": "ask-changes", "comment": "retry once", "idempotencyKey": "no-fail-1",
+	})
+	require.Equal(t, http.StatusOK, firstAction.Code, firstAction.Body.String())
+
+	results, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusRunning, results[0].Status, "first non-pass must consume retry budget without terminalizing")
+	var secondPending struct {
+		Items []worklist.Item `json:"items"`
+	}
+	rec = processEngineGet(t, f, "/v1/process/worklist?run="+runID+"&status=pending")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	testharness.DecodeJSON(t, rec, &secondPending)
+	require.Len(t, secondPending.Items, 1)
+	assert.Equal(t, 2, secondPending.Items[0].Attempt)
+	assert.NotEqual(t, firstPending.Items[0].ID, secondPending.Items[0].ID)
+	secondAction := humanReq(t, f, http.MethodPost, "/v1/process/worklist/"+secondPending.Items[0].ID+"/action", map[string]string{
+		"action": "ask-changes", "comment": "terminal failure", "idempotencyKey": "no-fail-2",
+	})
+	require.Equal(t, http.StatusOK, secondAction.Code, secondAction.Body.String())
+
+	results, err = agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, state.RunStatusFailed, results[0].Status)
+	v7, err := fs.LoadPathV1RunView(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(v7.Checkpoint))
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(v7.Checkpoint)
+	require.NoError(t, err)
+	completedContacts := 0
+	for id := range aggregate.Contacts {
+		if aggregate.SideEffects[id].State == pathv1.ContactStateCompleted {
+			completedContacts++
+		}
+	}
+	assert.Equal(t, 2, completedContacts, "each observed attempt must complete its contact atomically")
+
+	list := processEngineGet(t, f, "/v1/process/runs")
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	assert.Contains(t, list.Body.String(), `"id":"`+runID+`"`)
+	assert.Contains(t, list.Body.String(), `"status":"failed"`)
+	raw := processEngineGet(t, f, "/v1/process/runs/"+runID)
+	require.Equal(t, http.StatusOK, raw.Code, raw.Body.String())
+	assert.Contains(t, raw.Body.String(), `"stateSchemaVersion":7`)
+	assert.Contains(t, raw.Body.String(), `"effectiveStatus":"failed"`)
+
+	view := processEngineGet(t, f, "/v1/process/runs/"+runID+"/view")
+	require.Equal(t, http.StatusOK, view.Code, view.Body.String())
+	var envelope processview.Envelope
+	testharness.DecodeJSON(t, view, &envelope)
+	assert.Equal(t, state.RunStatusFailed, envelope.Run.StoredStatus)
+	assert.Equal(t, state.RunStatusFailed, envelope.Run.EffectiveStatus)
+	require.True(t, envelope.ViewerV2.RoutingAvailable, "viewer reason=%s", envelope.ViewerV2.RoutingUnavailableReason)
+	require.NotNil(t, envelope.ViewerV2.Routing)
+	assert.True(t, envelope.ViewerV2.Routing.Aggregate.Settled)
+	assert.Equal(t, "failed", envelope.ViewerV2.Routing.Aggregate.Result)
+	failedCount := 0
+	for _, count := range envelope.ViewerV2.Routing.StateCounts.Paths {
+		if count.State == string(pathv1.PathFailed) {
+			failedCount += count.Count
+		}
+	}
+	assert.Equal(t, 1, failedCount)
+	require.Len(t, envelope.ViewerV2.Routing.Details.Causes.Items, 1)
+	assert.Equal(t, pathv1.TerminalFailed, envelope.ViewerV2.Routing.Details.Causes.Items[0].TerminalKind)
+	assert.Equal(t, "performer_failed", envelope.ViewerV2.Routing.Details.Causes.Items[0].DispositionReason)
+	require.Len(t, envelope.ViewerV2.Routing.Details.Contacts.Items, 2)
+	for _, contact := range envelope.ViewerV2.Routing.Details.Contacts.Items {
+		assert.Equal(t, pathv1.ContactStateCompleted, contact.State)
+	}
+}
+
 func TestProcessWorklistRejectsAgentObligationActionWithoutEvidence(t *testing.T) {
 	f, root := processEngineFlow(t)
 	_, err := db.CreateSpawnProfile(&db.SpawnProfile{Name: "worklist-agent", Harness: "claude"})

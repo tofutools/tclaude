@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	legacy "github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
 var (
@@ -234,7 +235,7 @@ func ClassifyExclusiveObservation(ctx context.Context, input *VerifiedExclusiveI
 	if err != nil {
 		return "", err
 	}
-	return classifyExclusiveObservation(current.View(), input.template, observation)
+	return classifyExclusiveObservation(current.View(), input.template, observation, input.parallel != nil)
 }
 
 // ReduceExclusiveRoute is the sole apply path for a planned exclusive route.
@@ -526,11 +527,14 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	if !ok {
 		return exclusiveRouteDraft{}, fmt.Errorf("%w: source node is absent from exact template", ErrExclusiveInputInvalid)
 	}
-	observation.Outcome, err = canonicalExclusiveOutcome(node, observation.Outcome)
+	observation.Outcome, err = canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, observation.Outcome))
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
-	disposition, err := classifyExclusiveObservation(view, input.template, observation)
+	if exclusiveTaskUnhandledFailureTerminal(node, observation.Outcome, observation.Attempt, observation.ResolutionDigest, input.parallel != nil) {
+		return exclusiveRouteDraft{}, fmt.Errorf("%w: terminal task failure requires settle-owned terminalization", ErrExclusiveNotRoutable)
+	}
+	disposition, err := classifyExclusiveObservation(view, input.template, observation, input.parallel != nil)
 	if err != nil {
 		return exclusiveRouteDraft{}, err
 	}
@@ -1397,7 +1401,7 @@ func buildExclusiveCompletionView(ctx context.Context, input *VerifiedExclusiveI
 	return view, nil
 }
 
-func classifyExclusiveObservation(view AggregateView, tmpl *model.Template, observation ExclusiveObservation) (ExclusiveDisposition, error) {
+func classifyExclusiveObservation(view AggregateView, tmpl *model.Template, observation ExclusiveObservation, parallel bool) (ExclusiveDisposition, error) {
 	if tmpl == nil || observation.SourcePathID == "" || observation.Attempt == 0 || strings.TrimSpace(observation.Outcome) == "" {
 		return "", fmt.Errorf("%w: incomplete exclusive observation", ErrMutationInvalid)
 	}
@@ -1416,6 +1420,10 @@ func classifyExclusiveObservation(view AggregateView, tmpl *model.Template, obse
 	node, ok := tmpl.Nodes[reservation.NodeID]
 	if !ok {
 		return "", fmt.Errorf("%w: source node is absent from exact template", ErrExclusiveInputInvalid)
+	}
+	normalizedOutcome, err := canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, observation.Outcome))
+	if err != nil {
+		return "", err
 	}
 	if observation.ResolutionDigest != "" {
 		var matched *BlockResolution
@@ -1454,13 +1462,48 @@ func classifyExclusiveObservation(view AggregateView, tmpl *model.Template, obse
 			return ExclusiveResolvedCancel, nil
 		}
 	}
-	if node.Type == model.NodeTypeWait && strings.ToLower(strings.TrimSpace(observation.Outcome)) != "satisfied" {
+	if node.Type == model.NodeTypeWait && strings.ToLower(strings.TrimSpace(normalizedOutcome)) != "satisfied" {
 		return "", fmt.Errorf("%w: wait observation is not satisfied", ErrExclusiveNotRoutable)
 	}
-	if node.Type == model.NodeTypeTask && isFailOutcome(strings.ToLower(strings.TrimSpace(observation.Outcome))) && observation.Attempt < uint64(model.RetryBudget(node.Retry)) {
+	if exclusiveTaskOutcomeFails(node, normalizedOutcome, parallel) && observation.Attempt < uint64(model.RetryBudget(node.Retry)) {
 		return ExclusiveRetryPending, nil
 	}
 	return ExclusiveRouteReady, nil
+}
+
+// exclusiveTaskOutcomeFails preserves the released explicit-edge and parallel
+// fail vocabulary while matching legacy settlement only for the newly admitted
+// non-parallel task-without-fail-target slice. Legacy treats every non-pass
+// task result as failure; widening the shared path-v1 vocabulary would change
+// decision routing and already-sealed parallel identities.
+func exclusiveTaskOutcomeFails(node model.Node, normalizedOutcome string, parallel bool) bool {
+	if node.Type != model.NodeTypeTask || normalizedOutcome == "" {
+		return false
+	}
+	if !parallel && model.FailTarget(node.Next) == "" {
+		return !legacy.IsPassOutcome(normalizedOutcome)
+	}
+	return isFailOutcome(normalizedOutcome)
+}
+
+func exclusiveTaskUnhandledFailureTerminal(node model.Node, normalizedOutcome string, attempt uint64, resolutionDigest string, parallel bool) bool {
+	return node.Type == model.NodeTypeTask && model.FailTarget(node.Next) == "" &&
+		exclusiveTaskOutcomeFails(node, normalizedOutcome, parallel) &&
+		attempt >= uint64(model.RetryBudget(node.Retry)) && strings.TrimSpace(resolutionDigest) == ""
+}
+
+func normalizeExclusiveTaskAction(node model.Node, outcome string) string {
+	if node.Type != model.NodeTypeTask {
+		return outcome
+	}
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "approve":
+		return "pass"
+	case "reject", "ask-changes":
+		return "fail"
+	default:
+		return outcome
+	}
 }
 
 func resolveExclusiveEdge(node model.Node, outcome string, outgoing []EdgeKey) (int, error) {
@@ -1911,7 +1954,7 @@ func checkpointAggregate(view AggregateView) (AggregateCheckpoint, error) {
 			Genesis: view.Authority.Genesis, Scopes: cloneMap(view.Authority.Scopes), Reservations: cloneMap(view.Authority.Reservations),
 		},
 		Routing: Clone(*view.Routing), Commands: cloneCommands(view.Commands), SideEffects: cloneMap(view.SideEffects),
-		Contacts: cloneMap(view.Contacts),
+		Contacts:     cloneMap(view.Contacts),
 		AdminRecords: cloneMap(view.AdminRecords), AdminResolutions: cloneMap(view.AdminResolutions),
 	}
 	return cloneAggregateCheckpoint(value)

@@ -172,6 +172,38 @@ func TestExclusiveV7DriveClaimsPerformsObservesRoutesAndCompletes(t *testing.T) 
 	}
 }
 
+func TestExclusiveV7NoFailTargetRetriesNonPassThenFails(t *testing.T) {
+	fs, runID := exclusiveV7NoFailRun(t, &model.RetryPolicy{MaxAttempts: 2})
+	adapter := &exclusiveV7Adapter{results: []Observation{
+		{Actor: "agent:agt_test1", Verdict: "needs-work", EvidenceRef: "artifact:first"},
+		{Actor: "agent:agt_test1", Verdict: "needs-work", EvidenceRef: "artifact:second"},
+	}}
+	executor := NewExclusiveV7(fs, map[model.PerformerKind]Adapter{model.PerformerAgent: adapter})
+
+	checkpoint, err := executor.Drive(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", pathv1.CurrentRunStatus(checkpoint))
+	assert.Equal(t, 2, adapter.count())
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
+	require.NoError(t, err)
+	completion, err := pathv1.AssessAggregateCompletion(aggregate.View())
+	require.NoError(t, err)
+	assert.Equal(t, "failed", completion.Result)
+	failedPaths := 0
+	for _, path := range aggregate.Routing.Paths {
+		if path.Kind != pathv1.PathActivationOutput || path.State != pathv1.PathFailed {
+			continue
+		}
+		failedPaths++
+		require.NotNil(t, path.Disposition)
+		assert.Equal(t, "performer_failed", path.Disposition.ReasonCode)
+		cause := aggregate.Routing.CauseRecords[path.TerminalCauseID]
+		assert.Equal(t, pathv1.TerminalFailed, cause.TerminalKind)
+		assert.Equal(t, "performer_failed", cause.DispositionReason)
+	}
+	assert.Equal(t, 1, failedPaths)
+}
+
 func TestExclusiveV7DriveParallelAllClaimsEveryBranchAndCompletes(t *testing.T) {
 	fs, runID := parallelAllV7Run(t)
 	adapter := &exclusiveV7Adapter{}
@@ -941,6 +973,35 @@ func TestExclusiveV7TerminalRetryReconfirmsDirectoryDurability(t *testing.T) {
 
 func exclusiveV7Run(t *testing.T) (*store.FS, string) {
 	return exclusiveV7RunFixture(t, nil)
+}
+
+func exclusiveV7NoFailRun(t *testing.T, retry *model.RetryPolicy) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "exclusive-v7-no-fail", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Retry: retry, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	runID := "run-exclusive-v7-no-fail"
+	st := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	st.Status = state.RunStatusRunning
+	_, err = fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, st)
+	require.NoError(t, err)
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	require.NoError(t, err)
+	result, err := fs.InitializePathV1(t.Context(), runID, proof)
+	require.NoError(t, err)
+	require.Equal(t, pathv1.InitializationApplied, result.Disposition)
+	return fs, runID
 }
 
 func parallelAllV7Run(t *testing.T) (*store.FS, string) {

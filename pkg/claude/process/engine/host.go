@@ -468,9 +468,6 @@ func exclusiveV7Eligible(tmpl *model.Template) bool {
 			if node.Type == model.NodeTypeTask && len(node.Performer.ChoiceOutcomes) != 0 {
 				return false
 			}
-			if node.Type == model.NodeTypeTask && model.FailTarget(node.Next) == "" && !hasParallel {
-				return false
-			}
 		case model.NodeTypeEnd:
 			if nodeID == tmpl.Start {
 				return false

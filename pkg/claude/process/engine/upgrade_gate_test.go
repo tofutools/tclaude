@@ -678,13 +678,13 @@ func TestExclusiveV7EligibilityRejectsInvalidWaitAuthority(t *testing.T) {
 	}
 }
 
-func TestExclusiveV7EligibilityKeepsUnsupportedTerminalShapesOnV6(t *testing.T) {
+func TestExclusiveV7EligibilityAdmitsNoFailTaskButKeepsEndOnlyOnV6(t *testing.T) {
 	passOnlyTask := &model.Template{Start: "work", Nodes: map[string]model.Node{
 		"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
 		"done": {Type: model.NodeTypeEnd, Result: "completed"},
 	}}
-	if exclusiveV7Eligible(passOnlyTask) {
-		t.Fatal("task without a failure edge must remain on v6 until terminal-failure parity is supported")
+	if !exclusiveV7Eligible(passOnlyTask) {
+		t.Fatal("exclusive task without a failure edge must use schema-7 terminal-failure parity")
 	}
 	endOnly := &model.Template{Start: "done", Nodes: map[string]model.Node{
 		"done": {Type: model.NodeTypeEnd, Result: "completed"},

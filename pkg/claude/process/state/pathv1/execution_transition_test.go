@@ -3,9 +3,11 @@ package pathv1
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
@@ -124,6 +126,162 @@ nodes:
 				t.Fatalf("canonical settlement route replay failed: %v", err)
 			}
 		})
+	}
+}
+
+func TestExclusiveNoFailTargetNonPassRetriesThenTerminalizesWithContact(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: no-fail-terminal-parity
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    retry: {maxAttempts: 2}
+    next: {pass: done}
+  done: {type: end}
+`)
+	sealed := initializedExclusiveCheckpoint(t, source)
+	apply := func(build func(*VerifiedExclusiveInput) (*ExecutionTransition, error)) {
+		t.Helper()
+		input, err := VerifyExclusiveInput(t.Context(), sealed, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		transition, err := build(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, next, _, err := ValidateExecutionTransitionForAppend(t.Context(), sealed, source, transition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed = next
+	}
+	current := func() AggregateCheckpoint {
+		t.Helper()
+		checkpoint, err := DecodeCheckpointV7(sealed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		aggregate, err := CurrentAggregateCheckpoint(checkpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return aggregate
+	}
+	contactFor := func(aggregate AggregateCheckpoint, commandID string) (ContactRecordV7, SideEffectIdentity) {
+		t.Helper()
+		for id, contact := range aggregate.Contacts {
+			if contact.SourceCommandID == commandID {
+				return contact, aggregate.SideEffects[id]
+			}
+		}
+		t.Fatalf("contact for command %q is absent", commandID)
+		return ContactRecordV7{}, SideEffectIdentity{}
+	}
+
+	pathID := current().Authority.Genesis.OutputPathID
+	claimAttempt := func(attempt uint64) string {
+		t.Helper()
+		var commandID string
+		apply(func(input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+			plan, err := PlanExclusiveAttempt(t.Context(), input, pathID, attempt, nil)
+			if err != nil {
+				return nil, err
+			}
+			commandID = plan.Command().ID
+			return ClaimExclusiveAttempt(t.Context(), input, plan)
+		})
+		apply(func(input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+			return ScheduleExclusiveContact(t.Context(), input, testContactSchedule(commandID), contactTestBase().Add(time.Duration(attempt)*time.Minute))
+		})
+		return commandID
+	}
+	observe := func(outcome string) {
+		t.Helper()
+		apply(func(input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+			plan, found, err := RecoverExclusiveAttempt(t.Context(), input)
+			if err != nil || !found {
+				return nil, fmt.Errorf("recover attempt: found=%v: %w", found, err)
+			}
+			return ObserveExclusiveAttempt(t.Context(), input, plan, ExclusiveObservation{Outcome: outcome, Actor: "human:operator"}, false)
+		})
+	}
+
+	firstCommandID := claimAttempt(1)
+	observe("needs-work")
+	first := current()
+	if first.Routing.Paths[pathID].State != PathLive || len(first.Routing.CauseRecords) != 0 {
+		t.Fatalf("attempt 1 terminalized: path=%q causes=%d", first.Routing.Paths[pathID].State, len(first.Routing.CauseRecords))
+	}
+	if first.Commands[firstCommandID].State != CommandObserved {
+		t.Fatalf("attempt 1 command state = %q", first.Commands[firstCommandID].State)
+	}
+	_, firstMarker := contactFor(first, firstCommandID)
+	if firstMarker.State != ContactStateCompleted {
+		t.Fatalf("attempt 1 contact state = %q", firstMarker.State)
+	}
+	input, err := VerifyExclusiveInput(t.Context(), sealed, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending, found, err := PendingExclusiveObservation(t.Context(), input); err != nil || found {
+		t.Fatalf("attempt 1 pending route = %#v, found=%v err=%v", pending, found, err)
+	}
+
+	secondCommandID := claimAttempt(2)
+	observe("needs-work")
+	final := current()
+	failedPath := final.Routing.Paths[pathID]
+	if failedPath.State != PathFailed || failedPath.Disposition == nil || failedPath.Disposition.ReasonCode != "performer_failed" {
+		t.Fatalf("attempt 2 path = %#v", failedPath)
+	}
+	if final.Commands[secondCommandID].State != CommandObserved {
+		t.Fatalf("attempt 2 command state = %q", final.Commands[secondCommandID].State)
+	}
+	effectID, err := AttemptIdentity(final.RunID, failedPath.SourceActivation.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.SideEffects[effectID].State != "failed" {
+		t.Fatalf("attempt 2 side effect state = %q", final.SideEffects[effectID].State)
+	}
+	settle := final.Commands[failedPath.Disposition.CommandID]
+	if settle.Identity.Kind != CommandSettleAttempt || settle.Identity.InputDigest != secondCommandID || settle.Identity.ResultCode != "failed" {
+		t.Fatalf("terminal settle command = %#v", settle)
+	}
+	cause := final.Routing.CauseRecords[failedPath.TerminalCauseID]
+	if cause.TerminalKind != TerminalFailed || cause.DispositionReason != "performer_failed" || cause.SourceCommandID != settle.ID {
+		t.Fatalf("terminal cause = %#v", cause)
+	}
+	for _, command := range final.Commands {
+		if command.Identity.Kind == CommandRoutePaths && command.Identity.InputDigest == settle.ID {
+			t.Fatalf("terminal failure invented route command %q", command.ID)
+		}
+	}
+	secondContact, secondMarker := contactFor(final, secondCommandID)
+	if secondMarker.State != ContactStateCompleted || secondContact.EventSeq != failedPath.Disposition.EventSeq {
+		t.Fatalf("atomic terminal contact = %#v marker=%q pathSeq=%d", secondContact, secondMarker.State, failedPath.Disposition.EventSeq)
+	}
+	completion, err := AssessAggregateCompletion(final.View())
+	if err != nil || completion.Result != "failed" {
+		t.Fatalf("aggregate completion = %#v, %v", completion, err)
+	}
+
+	apply(func(input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+		return ClaimExclusiveCompletion(t.Context(), input)
+	})
+	apply(func(input *VerifiedExclusiveInput) (*ExecutionTransition, error) {
+		return ObserveExclusiveCompletion(t.Context(), input)
+	})
+	checkpoint, err := DecodeCheckpointV7(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if CurrentRunStatus(checkpoint) != "failed" {
+		t.Fatalf("terminal run status = %q", CurrentRunStatus(checkpoint))
 	}
 }
 

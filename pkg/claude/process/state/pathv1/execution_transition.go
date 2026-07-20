@@ -801,7 +801,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	activation := view.Routing.Activations[plan.command.Identity.SourceActivationID]
 	source := view.Routing.Paths[activation.OutputPathID]
 	node := input.template.Nodes[plan.nodeID]
-	normalizedOutcome, _, terminalParallelFailure, err := normalizeExclusiveObservationResult(node, observation.Outcome, plan.command.Identity.Attempt, observation.ResolutionDigest, input.parallel != nil)
+	normalizedOutcome, _, terminalUnhandledFailure, err := normalizeExclusiveObservationResult(node, observation.Outcome, plan.command.Identity.Attempt, observation.ResolutionDigest, input.parallel != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -809,11 +809,11 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	outcome := observation.Outcome
 	observation.SourcePathID = source.ID
 	observation.Attempt = plan.command.Identity.Attempt
-	disposition, err := classifyExclusiveObservation(view, input.template, observation)
+	disposition, err := classifyExclusiveObservation(view, input.template, observation, input.parallel != nil)
 	if err != nil {
 		return nil, err
 	}
-	if disposition == ExclusiveRouteReady && !terminalParallelFailure {
+	if disposition == ExclusiveRouteReady && !terminalUnhandledFailure {
 		outgoing, err := exactOutgoingEdges(view.TemplateRef, plan.nodeID, node.Next)
 		if err != nil {
 			return nil, err
@@ -838,7 +838,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 		Actor: observation.Actor, EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash,
 		ResolutionDigest: observation.ResolutionDigest, ExternalRef: observation.ExternalRef, Feedback: observation.Feedback,
 	}
-	if terminalParallelFailure {
+	if terminalUnhandledFailure {
 		settlePayloadValue.ReasonCode = "performer_failed"
 	}
 	settlePayload, err := json.Marshal(settlePayloadValue)
@@ -862,15 +862,15 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	}
 	effect := aggregate.SideEffects[effectID]
 	effect.State = "observed"
-	if terminalParallelFailure {
+	if terminalUnhandledFailure {
 		effect.State = "failed"
 	}
 	aggregate.SideEffects[effectID] = effect
 	completeContactsForSettledCommand(&aggregate, observedPerform.ID, false, int64(CurrentLastLogSeq(input.checkpoint))+1)
-	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation, terminalParallelFailure); err != nil {
+	if _, _, _, err := observedAttemptCommands(aggregate.View(), plan.nodeID, input.template.Nodes[plan.nodeID], source, observation, terminalUnhandledFailure); err != nil {
 		return nil, err
 	}
-	if terminalParallelFailure {
+	if terminalUnhandledFailure {
 		eventSeq := int64(CurrentLastLogSeq(input.checkpoint) + 1)
 		failed := aggregate.Routing.Paths[source.ID]
 		failed, _, err = inheritPathDetachments(&aggregate.Routing, failed)
@@ -980,28 +980,13 @@ func ExactExclusiveAttemptObserved(ctx context.Context, input *VerifiedExclusive
 	return matched, matched.ID != "", nil
 }
 
-func normalizeExclusiveTaskAction(node model.Node, outcome string) string {
-	if node.Type != model.NodeTypeTask {
-		return outcome
-	}
-	switch strings.ToLower(strings.TrimSpace(outcome)) {
-	case "approve":
-		return "pass"
-	case "reject", "ask-changes":
-		return "fail"
-	default:
-		return outcome
-	}
-}
-
-func normalizeExclusiveObservationResult(node model.Node, outcome string, attempt uint64, resolutionDigest string, parallel bool) (result, reason string, terminalParallelFailure bool, err error) {
+func normalizeExclusiveObservationResult(node model.Node, outcome string, attempt uint64, resolutionDigest string, parallel bool) (result, reason string, terminalUnhandledFailure bool, err error) {
 	result, err = canonicalExclusiveOutcome(node, normalizeExclusiveTaskAction(node, outcome))
 	if err != nil {
 		return "", "", false, err
 	}
-	terminalParallelFailure = parallel && node.Type == model.NodeTypeTask && isFailOutcome(result) && model.FailTarget(node.Next) == "" &&
-		attempt >= uint64(model.RetryBudget(node.Retry)) && strings.TrimSpace(resolutionDigest) == ""
-	if terminalParallelFailure {
+	terminalUnhandledFailure = exclusiveTaskUnhandledFailureTerminal(node, result, attempt, resolutionDigest, parallel)
+	if terminalUnhandledFailure {
 		return "failed", "performer_failed", true, nil
 	}
 	return result, "", false, nil
@@ -1056,7 +1041,7 @@ func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveIn
 			Actor: payload.Actor, EvidenceRef: payload.EvidenceRef, EvidenceHash: payload.EvidenceHash,
 			ResolutionDigest: payload.ResolutionDigest, ExternalRef: payload.ExternalRef, Feedback: payload.Feedback,
 		}
-		disposition, err := classifyExclusiveObservation(aggregate.View(), input.template, candidate)
+		disposition, err := classifyExclusiveObservation(aggregate.View(), input.template, candidate, input.parallel != nil)
 		if err != nil {
 			return ExclusiveObservation{}, false, err
 		}
