@@ -180,10 +180,17 @@ func BuildProgressedInitialization(ctx context.Context, input LegacyProjectionIn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := validateProjectionInput(ctx, input); err != nil {
+	if input.Template == nil || input.LegacyState == nil || len(input.LegacyCheckpointJSON) == 0 {
+		return nil, fmt.Errorf("%w: complete legacy projection input is required", ErrInitializationInvalid)
+	}
+	entries, err := orderedLegacyEntries(ctx, input.Manifest, input.NodeLogs)
+	if err != nil {
 		return nil, err
 	}
-	entries, err := orderedLegacyEntries(input.Manifest, input.NodeLogs)
+	if err := validateProjectionInput(ctx, input, entries); err != nil {
+		return nil, err
+	}
+	index, err := indexLegacyProjectionEvidence(ctx, entries)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +199,7 @@ func BuildProgressedInitialization(ctx context.Context, input LegacyProjectionIn
 		return nil, err
 	}
 	projector := legacyProjector{
-		ctx: ctx, tmpl: input.Template, legacy: input.LegacyState, entries: entries,
+		ctx: ctx, tmpl: input.Template, legacy: input.LegacyState, index: index,
 		eventSeq: checkpoint.Initialize.EventSeq, checkpoint: checkpoint,
 	}
 	aggregate, err := projector.project()
@@ -242,7 +249,7 @@ func BuildProgressedInitialization(ctx context.Context, input LegacyProjectionIn
 	return checkpoint, nil
 }
 
-func validateProjectionInput(ctx context.Context, input LegacyProjectionInput) error {
+func validateProjectionInput(ctx context.Context, input LegacyProjectionInput, entries []evidence.LogEntry) error {
 	if input.Template == nil || input.LegacyState == nil || len(input.LegacyCheckpointJSON) == 0 {
 		return fmt.Errorf("%w: complete legacy projection input is required", ErrInitializationInvalid)
 	}
@@ -276,12 +283,14 @@ func validateProjectionInput(ctx context.Context, input LegacyProjectionInput) e
 	if err != nil || digest != input.UpgradeNeeded.Checkpoint.Digest {
 		return fmt.Errorf("%w: legacy checkpoint digest differs from upgrade proof", ErrInitializationInconsistent)
 	}
-	_, replayedJSON, replayErr := ReplayLegacyProjectionEvidence(ctx, st.RunID, st.OriginalTemplateRef, st.CurrentTemplateRef, input.Template, input.Manifest, input.NodeLogs)
+	_, replayedJSON, replayErr := replayLegacyProjectionEntries(
+		ctx, st.RunID, st.OriginalTemplateRef, st.CurrentTemplateRef, input.Template, input.Manifest, entries,
+	)
 	if replayErr != nil {
 		return replayErr
 	}
 	if !bytes.Equal(replayedJSON, encoded) {
-		return refuseProjection(ProjectionRefusalStateMismatch, "verified evidence does not reconstruct the retained checkpoint")
+		return fmt.Errorf("%w: verified evidence does not reconstruct the retained checkpoint", ErrInitializationInconsistent)
 	}
 	if err := validateProjectionTopology(input.Template, st); err != nil {
 		return err
@@ -302,10 +311,20 @@ func ReplayLegacyProjectionEvidence(
 	if tmpl == nil || runID == "" || originalTemplateRef == "" || currentTemplateRef == "" {
 		return legacy.State{}, nil, fmt.Errorf("%w: legacy evidence replay lacks its exact run/template binding", ErrInitializationInvalid)
 	}
-	entries, err := orderedLegacyEntries(manifest, logs)
+	entries, err := orderedLegacyEntries(ctx, manifest, logs)
 	if err != nil {
 		return legacy.State{}, nil, err
 	}
+	return replayLegacyProjectionEntries(ctx, runID, originalTemplateRef, currentTemplateRef, tmpl, manifest, entries)
+}
+
+func replayLegacyProjectionEntries(
+	ctx context.Context,
+	runID, originalTemplateRef, currentTemplateRef string,
+	tmpl *model.Template,
+	manifest []evidence.ManifestEntry,
+	entries []evidence.LogEntry,
+) (legacy.State, []byte, error) {
 	nodeIDs := make([]string, 0, len(tmpl.Nodes))
 	for id := range tmpl.Nodes {
 		nodeIDs = append(nodeIDs, id)
@@ -335,10 +354,11 @@ func ReplayLegacyProjectionEvidence(
 			event.Seq = entry.Seq
 			event.At = entry.At
 			event.LogChecksum = manifestEntry.Checksum
-			replayed, err = legacy.Apply(replayed, event)
-			if err != nil {
-				return legacy.State{}, nil, fmt.Errorf("%w: replay legacy evidence seq %d: %v", ErrInitializationInconsistent, entry.Seq, err)
+			next, applyErr := legacy.Apply(replayed, event)
+			if applyErr != nil {
+				return legacy.State{}, nil, fmt.Errorf("%w: replay legacy evidence seq %d: %v", ErrInitializationInconsistent, entry.Seq, applyErr)
 			}
+			replayed = next
 		} else {
 			replayed.LastLogSeq = entry.Seq
 			replayed.LogChecksum = manifestEntry.Checksum
@@ -388,18 +408,40 @@ func VerifyMigratedLegacyEvidence(
 	return &replayed, nil
 }
 
-func orderedLegacyEntries(manifest []evidence.ManifestEntry, logs []evidence.NodeLog) ([]evidence.LogEntry, error) {
+func orderedLegacyEntries(ctx context.Context, manifest []evidence.ManifestEntry, logs []evidence.NodeLog) ([]evidence.LogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(manifest) > MaxRoutingLogEntries {
+		return nil, &OverBudgetError{Limit: "log_entries", Value: len(manifest), Maximum: MaxRoutingLogEntries}
+	}
+	logEntries := 0
+	for _, log := range logs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		logEntries += len(log.Entries)
+		if logEntries > MaxRoutingLogEntries {
+			return nil, &OverBudgetError{Limit: "log_entries", Value: logEntries, Maximum: MaxRoutingLogEntries}
+		}
+	}
 	if diagnostics := evidence.VerifySequence(manifest, logs); diagnostics.HasErrors() {
 		return nil, fmt.Errorf("%w: legacy evidence diagnostics=%v", ErrInitializationInconsistent, diagnostics.Errors())
 	}
 	bySeq := make(map[int64]evidence.LogEntry, len(manifest))
 	for _, log := range logs {
 		for _, entry := range log.Entries {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			bySeq[entry.Seq] = entry
 		}
 	}
 	entries := make([]evidence.LogEntry, 0, len(manifest))
 	for _, item := range manifest {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		entry, ok := bySeq[item.Seq]
 		if !ok {
 			return nil, fmt.Errorf("%w: manifest seq %d lacks a log entry", ErrInitializationInconsistent, item.Seq)
@@ -407,6 +449,59 @@ func orderedLegacyEntries(manifest []evidence.ManifestEntry, logs []evidence.Nod
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+type scheduledLegacyContact struct {
+	state legacy.ContactState
+	at    time.Time
+}
+
+type legacyEvidenceIndex struct {
+	issued     map[string]legacy.OutstandingCommand
+	observed   map[string]legacy.Event
+	nodeEvents map[string][]evidence.LogEntry
+	commands   map[string][]string
+	contacts   map[string][]scheduledLegacyContact
+}
+
+func indexLegacyProjectionEvidence(ctx context.Context, entries []evidence.LogEntry) (*legacyEvidenceIndex, error) {
+	if len(entries) > MaxRoutingLogEntries {
+		return nil, &OverBudgetError{Limit: "log_entries", Value: len(entries), Maximum: MaxRoutingLogEntries}
+	}
+	index := &legacyEvidenceIndex{
+		issued: map[string]legacy.OutstandingCommand{}, observed: map[string]legacy.Event{},
+		nodeEvents: map[string][]evidence.LogEntry{}, commands: map[string][]string{}, contacts: map[string][]scheduledLegacyContact{},
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		event := entry.Event
+		if event == nil {
+			continue
+		}
+		nodeID := event.NodeID
+		if nodeID == "" && entry.Scope.Kind == evidence.ScopeNode {
+			nodeID = entry.Scope.ID
+		}
+		if nodeID != "" {
+			index.nodeEvents[nodeID] = append(index.nodeEvents[nodeID], entry)
+		}
+		switch event.Type {
+		case legacy.EventCommandIssued:
+			if event.Command != nil {
+				index.issued[event.Command.ID] = *event.Command
+				index.commands[event.Command.NodeID] = append(index.commands[event.Command.NodeID], event.Command.ID)
+			}
+		case legacy.EventCommandObserved:
+			index.observed[event.CommandID] = *event
+		case legacy.EventContactScheduled:
+			if event.Contact != nil {
+				index.contacts[event.Contact.CommandID] = append(index.contacts[event.Contact.CommandID], scheduledLegacyContact{state: *event.Contact, at: entry.At})
+			}
+		}
+	}
+	return index, nil
 }
 
 func validateProjectionTopology(tmpl *model.Template, st *legacy.State) error {
@@ -452,7 +547,7 @@ type legacyProjector struct {
 	ctx        context.Context
 	tmpl       *model.Template
 	legacy     *legacy.State
-	entries    []evidence.LogEntry
+	index      *legacyEvidenceIndex
 	eventSeq   int64
 	checkpoint *CheckpointV7
 }
@@ -592,26 +687,18 @@ func (p *legacyProjector) performerEvidence(nodeID string) ([]legacyAttemptEvide
 	starts := map[int]legacy.Event{}
 	settles := map[int]legacy.Event{}
 	settleSources := map[int]string{}
-	issued := map[string]legacy.OutstandingCommand{}
-	observed := map[string]legacy.Event{}
 	var pendingSettles []plan.Command
-	contacts := map[string][]struct {
-		state legacy.ContactState
-		at    time.Time
-	}{}
-	for _, entry := range p.entries {
+	for _, entry := range p.index.nodeEvents[nodeID] {
+		if err := p.ctx.Err(); err != nil {
+			return nil, err
+		}
 		event := entry.Event
 		if event == nil {
 			continue
 		}
 		switch event.Type {
-		case legacy.EventCommandIssued:
-			if event.Command != nil {
-				issued[event.Command.ID] = *event.Command
-			}
 		case legacy.EventCommandObserved:
-			observed[event.CommandID] = *event
-			if command, ok := issued[event.CommandID]; ok && command.Kind == legacy.CommandKindSettleAttempt {
+			if command, ok := p.index.issued[event.CommandID]; ok && command.Kind == legacy.CommandKindSettleAttempt {
 				var planned plan.Command
 				if err := json.Unmarshal(command.Payload, &planned); err != nil || planned.ID != command.ID ||
 					planned.Kind != plan.CommandKindSettleAttempt || planned.NodeID != command.NodeID || planned.Attempt <= 0 || planned.SourceCommandID == "" {
@@ -643,17 +730,10 @@ func (p *legacyProjector) performerEvidence(nodeID string) ([]legacyAttemptEvide
 				}
 				settles[attempt] = *event
 			}
-		case legacy.EventContactScheduled:
-			if event.Contact != nil {
-				contacts[event.Contact.CommandID] = append(contacts[event.Contact.CommandID], struct {
-					state legacy.ContactState
-					at    time.Time
-				}{*event.Contact, entry.At})
-			}
 		}
 	}
 	if p.tmpl.Nodes[nodeID].Type == model.NodeTypeDecision {
-		return p.decisionEvidence(nodeID, issued, observed, contacts)
+		return p.decisionEvidence(nodeID)
 	}
 	attemptNumbers := make([]int, 0, len(settles))
 	for attempt := range settles {
@@ -672,7 +752,7 @@ func (p *legacyProjector) performerEvidence(nodeID string) ([]legacyAttemptEvide
 		if sourceID := settleSources[attempt]; sourceID != "" && sourceID != start.CommandID {
 			return nil, refuseProjection(ProjectionRefusalAuthority, "node %q attempt %d settlement names source command %q, want %q", nodeID, attempt, sourceID, start.CommandID)
 		}
-		command, ok := issued[start.CommandID]
+		command, ok := p.index.issued[start.CommandID]
 		if !ok || command.Kind != legacy.CommandKindStartAttempt || len(command.Payload) == 0 {
 			return nil, refuseProjection(ProjectionRefusalAuthority, "node %q attempt %d lacks issued command payload", nodeID, attempt)
 		}
@@ -680,7 +760,7 @@ func (p *legacyProjector) performerEvidence(nodeID string) ([]legacyAttemptEvide
 		if err := json.Unmarshal(command.Payload, &planned); err != nil || planned.ID != command.ID || planned.NodeID != nodeID || planned.Attempt != attempt {
 			return nil, refuseProjection(ProjectionRefusalAuthority, "node %q attempt %d command payload is inconsistent", nodeID, attempt)
 		}
-		observationEvent, ok := observed[command.ID]
+		observationEvent, ok := p.index.observed[command.ID]
 		settled := settles[attempt]
 		if !ok || strings.TrimSpace(observationEvent.Outcome) == "" || settled.Outcome != observationEvent.Outcome || settled.Actor != observationEvent.Actor || settled.EvidenceRef != observationEvent.EvidenceRef || settled.EvidenceHash != observationEvent.EvidenceHash {
 			return nil, refuseProjection(ProjectionRefusalAuthority, "node %q attempt %d observation/settlement authority differs", nodeID, attempt)
@@ -690,7 +770,7 @@ func (p *legacyProjector) performerEvidence(nodeID string) ([]legacyAttemptEvide
 			observation: ExclusiveObservation{SourcePathID: "", Attempt: uint64(attempt), Outcome: settled.Outcome, Actor: string(settled.Actor), EvidenceRef: settled.EvidenceRef, EvidenceHash: settled.EvidenceHash, ExternalRef: observationEvent.ExternalRef, Feedback: settled.Feedback},
 		}
 		if current, ok := p.legacy.Contacts[command.ID]; ok {
-			schedules := contacts[command.ID]
+			schedules := p.index.contacts[command.ID]
 			if len(schedules) != 1 {
 				return nil, refuseProjection(ProjectionRefusalContactHistory, "contact %q has %d schedule events", command.ID, len(schedules))
 			}
@@ -702,12 +782,12 @@ func (p *legacyProjector) performerEvidence(nodeID string) ([]legacyAttemptEvide
 	return result, nil
 }
 
-func (p *legacyProjector) decisionEvidence(nodeID string, issued map[string]legacy.OutstandingCommand, observed map[string]legacy.Event, contacts map[string][]struct {
-	state legacy.ContactState
-	at    time.Time
-}) ([]legacyAttemptEvidence, error) {
+func (p *legacyProjector) decisionEvidence(nodeID string) ([]legacyAttemptEvidence, error) {
 	var decision *legacy.Event
-	for _, entry := range p.entries {
+	for _, entry := range p.index.nodeEvents[nodeID] {
+		if err := p.ctx.Err(); err != nil {
+			return nil, err
+		}
 		if entry.Event != nil && entry.Event.Type == legacy.EventDecisionRecorded && entry.Event.NodeID == nodeID {
 			if decision != nil {
 				return nil, refuseProjection(ProjectionRefusalHistory, "decision %q has duplicate verdict evidence", nodeID)
@@ -721,7 +801,11 @@ func (p *legacyProjector) decisionEvidence(nodeID string, issued map[string]lega
 	}
 	var source legacy.OutstandingCommand
 	var sourceObservation legacy.Event
-	for id, command := range issued {
+	for _, id := range p.index.commands[nodeID] {
+		if err := p.ctx.Err(); err != nil {
+			return nil, err
+		}
+		command := p.index.issued[id]
 		if command.NodeID != nodeID || command.Kind != legacy.CommandKindRecordDecision {
 			continue
 		}
@@ -729,7 +813,7 @@ func (p *legacyProjector) decisionEvidence(nodeID string, issued map[string]lega
 			return nil, refuseProjection(ProjectionRefusalAuthority, "decision %q has duplicate commands", nodeID)
 		}
 		source = command
-		sourceObservation = observed[id]
+		sourceObservation = p.index.observed[id]
 	}
 	if source.ID == "" || sourceObservation.CommandID == "" || sourceObservation.Outcome != decision.Outcome || len(source.Payload) == 0 {
 		return nil, refuseProjection(ProjectionRefusalAuthority, "decision %q lacks exact command observation", nodeID)
@@ -743,7 +827,7 @@ func (p *legacyProjector) decisionEvidence(nodeID string, issued map[string]lega
 		observation: ExclusiveObservation{Attempt: 1, Outcome: decision.Outcome, Actor: string(decision.Actor), EvidenceRef: decision.EvidenceRef, EvidenceHash: sourceObservation.EvidenceHash, ExternalRef: sourceObservation.ExternalRef},
 	}
 	if current, ok := p.legacy.Contacts[source.ID]; ok {
-		schedules := contacts[source.ID]
+		schedules := p.index.contacts[source.ID]
 		if len(schedules) != 1 {
 			return nil, refuseProjection(ProjectionRefusalContactHistory, "contact %q has %d schedule events", source.ID, len(schedules))
 		}
@@ -755,8 +839,11 @@ func (p *legacyProjector) decisionEvidence(nodeID string, issued map[string]lega
 
 func (p *legacyProjector) projectWaitNode(aggregate AggregateCheckpoint, nodeID string, sourcePath PathID) (ExclusiveObservation, AggregateCheckpoint, error) {
 	var created, satisfied *evidence.LogEntry
-	for index := range p.entries {
-		entry := &p.entries[index]
+	for index := range p.index.nodeEvents[nodeID] {
+		if err := p.ctx.Err(); err != nil {
+			return ExclusiveObservation{}, AggregateCheckpoint{}, err
+		}
+		entry := &p.index.nodeEvents[nodeID][index]
 		if entry.Event == nil || entry.Event.NodeID != nodeID {
 			continue
 		}
@@ -775,6 +862,56 @@ func (p *legacyProjector) projectWaitNode(aggregate AggregateCheckpoint, nodeID 
 	}
 	if created == nil || satisfied == nil {
 		return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalHistory, "wait %q lacks complete satisfied evidence", nodeID)
+	}
+	node := p.tmpl.Nodes[nodeID]
+	waitKind := exactWaitKind(node.Wait)
+	expectedCommandKind := legacy.CommandKindSetTimer
+	if waitKind == "signal" {
+		expectedCommandKind = legacy.CommandKindWaitSignal
+	}
+	var authority legacy.OutstandingCommand
+	var legacyPlan plan.Command
+	for _, commandID := range p.index.commands[nodeID] {
+		if err := p.ctx.Err(); err != nil {
+			return ExclusiveObservation{}, AggregateCheckpoint{}, err
+		}
+		command := p.index.issued[commandID]
+		if command.Kind != expectedCommandKind {
+			continue
+		}
+		if authority.ID != "" {
+			return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q has duplicate issued command authority", nodeID)
+		}
+		if len(command.Payload) == 0 || json.Unmarshal(command.Payload, &legacyPlan) != nil || legacyPlan.ID != command.ID ||
+			legacyPlan.NodeID != nodeID || legacyPlan.Kind != expectedCommandKind || legacyPlan.WaitID == "" {
+			return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q issued command payload is inconsistent", nodeID)
+		}
+		authority = command
+	}
+	if authority.ID == "" {
+		return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q lacks issued command authority", nodeID)
+	}
+	observed, ok := p.index.observed[authority.ID]
+	if !ok || observed.NodeID != nodeID {
+		return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q lacks observed command authority", nodeID)
+	}
+	switch waitKind {
+	case "signal":
+		if created.Event.Type != legacy.EventWaitCreated || satisfied.Event.Type != legacy.EventWaitSatisfied ||
+			created.Event.Wait == nil || created.Event.Wait.ID != legacyPlan.WaitID || created.Event.Wait.CommandID != authority.ID ||
+			created.Event.Wait.Kind != legacy.WaitKindSignal || satisfied.Event.WaitID != legacyPlan.WaitID ||
+			strings.TrimSpace(legacyPlan.Signal) != strings.TrimSpace(node.Wait.Signal) || legacyPlan.Duration != "" || legacyPlan.Until != "" {
+			return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q signal evidence differs from exact command/template authority", nodeID)
+		}
+	case "duration", "until":
+		if created.Event.Type != legacy.EventTimerCreated || satisfied.Event.Type != legacy.EventTimerSatisfied ||
+			created.Event.Timer == nil || created.Event.Timer.ID != legacyPlan.WaitID || satisfied.Event.TimerID != legacyPlan.WaitID ||
+			legacyPlan.WaitKind != legacy.WaitKindTimer || strings.TrimSpace(legacyPlan.Duration) != strings.TrimSpace(node.Wait.Duration) ||
+			strings.TrimSpace(legacyPlan.Until) != strings.TrimSpace(node.Wait.Until) || strings.TrimSpace(legacyPlan.Signal) != "" {
+			return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q timer evidence differs from exact command/template authority", nodeID)
+		}
+	default:
+		return ExclusiveObservation{}, AggregateCheckpoint{}, refuseProjection(ProjectionRefusalAuthority, "wait %q has unsupported exact template kind", nodeID)
 	}
 	input := p.projectedInput(aggregate)
 	planned, err := PlanExclusiveWait(p.ctx, input, sourcePath, created.At)
@@ -816,7 +953,11 @@ func projectLegacyContact(aggregate *AggregateCheckpoint, perform CommandRecord,
 		EscalatedAt: CanonicalTimestamp(source.EscalatedAt), LegacyPauseReason: source.PauseReason,
 		HumanInteractedAt: CanonicalTimestamp(source.HumanInteractedAt), EventSeq: eventSeq,
 	}
-	record.ID, _ = ContactIdentity(record.RunID, record.ActivationID, record.Attempt, record.Assignee)
+	var err error
+	record.ID, err = ContactIdentity(record.RunID, record.ActivationID, record.Attempt, record.Assignee)
+	if err != nil {
+		return fmt.Errorf("%w: projected contact identity: %v", ErrInitializationInconsistent, err)
+	}
 	if err := ValidateContactRecord(record); err != nil {
 		return refuseProjection(ProjectionRefusalContactHistory, "%v", err)
 	}
@@ -844,7 +985,10 @@ func liveProjectedNode(aggregate AggregateCheckpoint) (string, PathID, error) {
 			return "", "", fmt.Errorf("%w: live path lacks activation", ErrInitializationInconsistent)
 		}
 		reservation, ok := aggregate.Routing.Reservations[activation.ReservationID]
-		if !ok || nodeID != "" {
+		if !ok {
+			return "", "", fmt.Errorf("%w: live activation lacks reservation", ErrInitializationInconsistent)
+		}
+		if nodeID != "" {
 			return "", "", refuseProjection(ProjectionRefusalFrontier, "projected aggregate has an ambiguous live frontier")
 		}
 		nodeID, pathID = reservation.NodeID, id

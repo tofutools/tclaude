@@ -2,6 +2,7 @@ package pathv1
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -105,6 +106,27 @@ func TestBuildProgressedInitializationTypedRefusalForDuplicateContactSchedule(t 
 	}
 }
 
+func TestLiveProjectedNodeTreatsMissingReservationAsHardInconsistency(t *testing.T) {
+	fixture := progressedProjectionFixture(t, false)
+	checkpoint, err := BuildProgressedInitialization(t.Context(), fixture.input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate := checkpoint.Execution.Aggregate
+	for _, path := range aggregate.Routing.Paths {
+		if path.Kind != PathActivationOutput || path.State != PathLive {
+			continue
+		}
+		activation := aggregate.Routing.Activations[path.SourceActivation.ID]
+		delete(aggregate.Routing.Reservations, activation.ReservationID)
+		break
+	}
+	_, _, err = liveProjectedNode(aggregate)
+	if !errors.Is(err, ErrInitializationInconsistent) || errors.Is(err, ErrInitializationAmbiguous) {
+		t.Fatalf("missing live-frontier reservation error = %v", err)
+	}
+}
+
 func TestBuildProgressedInitializationTreatsTamperedEvidenceAsCorruption(t *testing.T) {
 	fixture := progressedProjectionFixture(t, false)
 	fixture.input.Manifest[len(fixture.input.Manifest)-1].Checksum = "sha256:" + strings.Repeat("0", 64)
@@ -122,8 +144,38 @@ func TestBuildProgressedInitializationTreatsTamperedEvidenceAsCorruption(t *test
 	}
 }
 
+func TestBuildProgressedInitializationTreatsRetainedFrontierEvidenceMismatchAsCorruption(t *testing.T) {
+	fixture := progressedProjectionFixture(t, false)
+	forged := fixture.state
+	forged.Nodes = make(map[string]legacy.NodeState, len(fixture.state.Nodes))
+	for id, node := range fixture.state.Nodes {
+		forged.Nodes[id] = node
+	}
+	recoverNode := forged.Nodes["recover"]
+	recoverNode.Status = legacy.NodeStatusPending
+	forged.Nodes["recover"] = recoverNode
+	doneNode := forged.Nodes["done"]
+	doneNode.Status = legacy.NodeStatusReady
+	forged.Nodes["done"] = doneNode
+	forgedJSON, err := legacy.Encode(&forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	needed, err := AssessUpgradeNeeded(t.Context(), forgedJSON, &forged, fixture.input.UpgradeNeeded.TemplateRef, fixture.input.UpgradeNeeded.TemplateSourceHash, nil, nil)
+	if err != nil || needed.Reason != UpgradeMigrationRequired {
+		t.Fatalf("forged frontier proof = %#v, err=%v", needed, err)
+	}
+	fixture.input.LegacyState = &forged
+	fixture.input.LegacyCheckpointJSON = forgedJSON
+	fixture.input.UpgradeNeeded = needed
+	_, err = BuildProgressedInitialization(t.Context(), fixture.input)
+	if !errors.Is(err, ErrInitializationInconsistent) || errors.Is(err, ErrInitializationAmbiguous) {
+		t.Fatalf("retained frontier mismatch error = %v", err)
+	}
+}
+
 func TestBuildProgressedInitializationDeterministicallyProjectsSatisfiedTimerToNextFrontier(t *testing.T) {
-	input := progressedWaitProjectionFixture(t)
+	input := progressedWaitProjectionFixture(t, "duration")
 	first, err := BuildProgressedInitialization(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +213,55 @@ func TestBuildProgressedInitializationDeterministicallyProjectsSatisfiedTimerToN
 	}
 	if waits != 1 {
 		t.Fatalf("projected timer effect count = %d", waits)
+	}
+}
+
+func TestBuildProgressedInitializationProjectsExactUntilAndSignalWaitAuthority(t *testing.T) {
+	for _, kind := range []string{"until", "signal"} {
+		t.Run(kind, func(t *testing.T) {
+			checkpoint, err := BuildProgressedInitialization(t.Context(), progressedWaitProjectionFixture(t, kind))
+			if err != nil {
+				t.Fatal(err)
+			}
+			frontier, _, err := liveProjectedNode(checkpoint.Execution.Aggregate)
+			if err != nil || frontier != "work" {
+				t.Fatalf("%s wait frontier = %q, err=%v", kind, frontier, err)
+			}
+			found := false
+			for _, effect := range checkpoint.Execution.Aggregate.SideEffects {
+				if effect.Kind == SideEffectWait && effect.State == "satisfied" && effect.WaitKind == kind {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("%s wait side effect missing: %#v", kind, checkpoint.Execution.Aggregate.SideEffects)
+			}
+		})
+	}
+}
+
+func TestBuildProgressedInitializationSoftRefusesWaitScheduleAuthorityMismatch(t *testing.T) {
+	_, err := BuildProgressedInitialization(t.Context(), progressedWaitProjectionFixtureWithDue(t, "duration", 6*time.Minute))
+	var refusal *ProjectionRefusal
+	if !errors.Is(err, ErrInitializationAmbiguous) || !errors.As(err, &refusal) || refusal.Code != ProjectionRefusalAuthority {
+		t.Fatalf("wait schedule mismatch error = %#v, %v", refusal, err)
+	}
+}
+
+func TestBuildProgressedInitializationBoundsAndCancelsEvidenceIndexing(t *testing.T) {
+	fixture := progressedProjectionFixture(t, false)
+	over := fixture.input
+	over.Manifest = make([]evidence.ManifestEntry, MaxRoutingLogEntries+1)
+	_, err := BuildProgressedInitialization(t.Context(), over)
+	var overBudget *OverBudgetError
+	if !errors.As(err, &overBudget) || overBudget.Limit != "log_entries" {
+		t.Fatalf("oversized projection evidence error = %#v, %v", overBudget, err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = indexLegacyProjectionEvidence(ctx, make([]evidence.LogEntry, MaxRoutingLogEntries))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled projection index error = %v", err)
 	}
 }
 
@@ -316,23 +417,34 @@ nodes:
 	}
 }
 
-func progressedWaitProjectionFixture(t *testing.T) LegacyProjectionInput {
+func progressedWaitProjectionFixture(t *testing.T, waitKind string) LegacyProjectionInput {
+	return progressedWaitProjectionFixtureWithDue(t, waitKind, 5*time.Minute)
+}
+
+func progressedWaitProjectionFixtureWithDue(t *testing.T, waitKind string, dueAfter time.Duration) LegacyProjectionInput {
 	t.Helper()
-	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+	waitSource := "duration: 5m"
+	switch waitKind {
+	case "until":
+		waitSource = `until: "2026-07-20T09:05:00Z"`
+	case "signal":
+		waitSource = "signal: deploy/prod"
+	}
+	source := []byte(strings.Replace(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: progressed-wait-projection
 start: wait
 nodes:
   wait:
     type: wait
-    wait: {duration: 5m}
+    wait: {WAIT_SOURCE}
     next: work
   work:
     type: task
     performer: {kind: agent, prompt: continue}
     next: done
   done: {type: end, result: completed}
-`)
+`, "WAIT_SOURCE", waitSource, 1))
 	parsed, err := model.ParseExactSource(source)
 	if err != nil || parsed.Diagnostics.HasErrors() {
 		t.Fatalf("parse wait fixture: %v %#v", err, parsed.Diagnostics)
@@ -345,14 +457,30 @@ nodes:
 	st.Status = legacy.RunStatusRunning
 	builder := legacyProjectionEvidenceBuilder{t: t, state: st, logs: map[string][]evidence.LogEntry{}}
 	createdAt := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
-	dueAt := createdAt.Add(5 * time.Minute)
-	builder.append("wait", evidence.EntryKindGate, legacy.Event{
-		Type:  legacy.EventTimerCreated,
-		Timer: &legacy.TimerRecord{ID: "timer_wait", NodeID: "wait", CreatedAt: createdAt, DueAt: dueAt},
-	}, createdAt)
-	builder.append("wait", evidence.EntryKindGate, legacy.Event{
-		Type: legacy.EventTimerSatisfied, TimerID: "timer_wait", NodeStatus: legacy.NodeStatusCompleted,
-	}, dueAt)
+	dueAt := createdAt.Add(dueAfter)
+	waitCommandKind := plan.CommandKindSetTimer
+	if waitKind == "signal" {
+		waitCommandKind = plan.CommandKindWaitSignal
+	}
+	waitCommand := plannedLegacyCommand(t, &builder.state, parsed.Template, waitCommandKind, "wait")
+	waitOutstanding, err := waitCommand.OutstandingCommand(createdAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventCommandIssued, Command: &waitOutstanding}, createdAt)
+	if waitKind == "signal" {
+		builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventWaitCreated, Wait: &legacy.WaitRecord{
+			ID: waitCommand.WaitID, NodeID: "wait", Kind: legacy.WaitKindSignal, CommandID: waitCommand.ID, CreatedAt: createdAt,
+		}}, createdAt)
+		builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventCommandObserved, CommandID: waitCommand.ID}, createdAt)
+		builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventWaitSatisfied, WaitID: waitCommand.WaitID, NodeStatus: legacy.NodeStatusCompleted}, dueAt)
+	} else {
+		builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventTimerCreated, Timer: &legacy.TimerRecord{
+			ID: waitCommand.WaitID, NodeID: "wait", CreatedAt: createdAt, DueAt: dueAt,
+		}}, createdAt)
+		builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventCommandObserved, CommandID: waitCommand.ID}, createdAt)
+		builder.append("wait", evidence.EntryKindGate, legacy.Event{Type: legacy.EventTimerSatisfied, TimerID: waitCommand.WaitID, NodeStatus: legacy.NodeStatusCompleted}, dueAt)
+	}
 	activate := plannedLegacyCommand(t, &builder.state, parsed.Template, plan.CommandKindActivateNode, "wait")
 	outstanding, err := activate.OutstandingCommand(dueAt)
 	if err != nil {
@@ -369,6 +497,9 @@ nodes:
 	needed, err := AssessUpgradeNeeded(t.Context(), checkpointJSON, &builder.state, parsed.Ref, parsed.SourceHash, nil, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if needed.Reason != UpgradeMigrationRequired {
+		t.Fatalf("settled %s wait upgrade proof = %#v state=%#v", waitKind, needed, builder.state)
 	}
 	logs := make([]evidence.NodeLog, 0, len(builder.logs))
 	for nodeID, entries := range builder.logs {

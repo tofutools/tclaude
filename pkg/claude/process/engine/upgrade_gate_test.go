@@ -46,6 +46,18 @@ type progressedMigrationAdapter struct {
 	nudges          int
 }
 
+type countingReleaseAdapter struct{ calls int }
+
+func (a *countingReleaseAdapter) Validate(processexec.Request) error {
+	a.calls++
+	return nil
+}
+
+func (a *countingReleaseAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	a.calls++
+	return processexec.Observation{Actor: "agent:agt_release1", Verdict: "pass"}, nil
+}
+
 func (*releaseGateDeferredAdapter) Validate(processexec.Request) error { return nil }
 func (*releaseGateDeferredAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
 	panic("deferred adapter must not perform synchronously")
@@ -648,6 +660,42 @@ func TestEnabledHostDrainsMigratesAndResumesProgressedLegacyRun(t *testing.T) {
 	}
 	recoverLogBefore, err := os.ReadFile(filepath.Join(root, "runs", runID, "nodes", "recover", "log.jsonl"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	forged, err := state.Decode(stateBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgedRecover := forged.Nodes["recover"]
+	forgedRecover.Status = state.NodeStatusPending
+	forged.Nodes["recover"] = forgedRecover
+	forgedFailed := forged.Nodes["failed"]
+	forgedFailed.Status = state.NodeStatusReady
+	forged.Nodes["failed"] = forgedFailed
+	forgedBytes, err := state.Encode(forged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), forgedBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	forgedProof, err := fs.UpgradeNeeded(t.Context(), runID)
+	if err != nil || forgedProof.Reason != pathv1.UpgradeMigrationRequired {
+		t.Fatalf("structurally valid forged frontier proof = %#v, err=%v", forgedProof, err)
+	}
+	countingAdapter := &countingReleaseAdapter{}
+	forgedHost := New(fs, "test:forged-progressed-v7", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: countingAdapter})
+	if err := forgedHost.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	forgedResults, forgedErr := forgedHost.Tick(t.Context())
+	if forgedErr == nil && len(forgedResults) == 1 && forgedResults[0].Error == "" {
+		t.Fatalf("forged retained frontier was acknowledged: %#v", forgedResults)
+	}
+	if countingAdapter.calls != 0 {
+		t.Fatalf("forged retained frontier invoked adapter %d time(s)", countingAdapter.calls)
+	}
+	if err := os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), stateBefore, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

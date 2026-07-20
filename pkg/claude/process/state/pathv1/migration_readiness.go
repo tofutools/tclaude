@@ -2,6 +2,7 @@ package pathv1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -491,6 +492,19 @@ func legacyCommandActive(st *legacy.State, id string, command legacy.Outstanding
 	switch command.Kind {
 	case legacy.CommandKindSettleAttempt, legacy.CommandKindActivateNode, legacy.CommandKindCompleteRun:
 		return false
+	case legacy.CommandKindSetTimer, legacy.CommandKindWaitSignal:
+		var planned struct {
+			WaitID string `json:"waitId"`
+		}
+		if json.Unmarshal(command.Payload, &planned) != nil || planned.WaitID == "" {
+			return true
+		}
+		if command.Kind == legacy.CommandKindSetTimer {
+			timer, ok := st.Timers[planned.WaitID]
+			return !ok || timer.NodeID != command.NodeID || timer.Status != legacy.WaitStatusSatisfied
+		}
+		wait, ok := st.Waits[planned.WaitID]
+		return !ok || wait.NodeID != command.NodeID || wait.Status != legacy.WaitStatusSatisfied
 	case legacy.CommandKindStartAttempt:
 	default:
 		return true
