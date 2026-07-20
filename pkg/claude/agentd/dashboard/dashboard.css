@@ -5355,7 +5355,11 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
    border lands above the neighbouring cells' and the row rule looks broken
    mid-way. Lay the buttons out inline-block instead. */
 .process-list .process-actions { text-align: right; white-space: nowrap; }
-.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; white-space: nowrap; vertical-align: middle; }
+/* The explicit line-height pins the text buttons to a known 26px border box
+   (16 + 4px padding x2 + 1px border x2). The icon-only delete button matches
+   it with `min-height` rather than inheriting a stretched flex height — keep
+   the two numbers in sync. */
+.process-list .process-actions .process-action { padding: 4px 8px; font-size: 12px; line-height: 16px; white-space: nowrap; vertical-align: middle; }
 .process-list .process-actions .process-action + .process-action { margin-left: 6px; }
 .process-hash { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #79c0ff; }
 .process-description, .process-secondary { color: #8b949e; font-size: 12px; }
@@ -12729,9 +12733,13 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 .process-list .process-actions .process-delete-btn {
   display: inline-flex; align-items: center; justify-content: center;
   padding: 4px 7px;
+  /* Matches the text buttons' 26px border box: the 13px icon alone would
+     leave this one ~3px short, and it is no longer a flex item that gets
+     stretched to its siblings' height for free. */
+  min-height: 26px;
 }
-/* Sibling-combinator specificity, so this wins over the generic 6px gap the
-   action row gives every other button pair. */
+/* Same (0,4,0) specificity as the generic 6px gap rule up at .process-actions,
+   so this wins on source order alone — it must stay below that rule. */
 .process-list .process-actions .process-action + .process-delete-btn { margin-left: 8px; }
 .process-list .process-actions .process-delete-btn:disabled { opacity: .5; cursor: default; }
 .process-list .process-actions .process-delete-btn:hover:not(:disabled) {
