@@ -310,6 +310,136 @@ nodes:
 	}
 }
 
+func TestPureExclusiveNoFailTargetUsesLegacyNonPassRetryBoundary(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: exclusive-nonpass-retry
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    retry: {maxAttempts: 2}
+    next: {pass: done}
+  done: {type: end}
+`)
+	input, err := VerifyExclusiveInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathID := input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	pending := ExclusiveObservation{SourcePathID: pathID, Attempt: 1, Outcome: "needs-work"}
+	if got, err := ClassifyExclusiveObservation(t.Context(), input, pending); err != nil || got != ExclusiveRetryPending {
+		t.Fatalf("non-pass pending retry = %q, %v", got, err)
+	}
+	final := pending
+	final.Attempt = 2
+	if got, err := ClassifyExclusiveObservation(t.Context(), input, final); err != nil || got != ExclusiveRouteReady {
+		t.Fatalf("non-pass final disposition = %q, %v", got, err)
+	}
+	if _, err := PlanExclusiveRoute(t.Context(), input, final); !errors.Is(err, ErrExclusiveNotRoutable) {
+		t.Fatalf("terminal failure route error = %v", err)
+	}
+}
+
+func TestPureExclusiveExplicitFailEdgeKeepsReleasedNonPassRouting(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: explicit-fail-edge-nonpass
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    retry: {maxAttempts: 2}
+    next: {pass: done, fail: failed}
+  done: {type: end}
+  failed: {type: end, result: failed}
+`)
+	input, err := VerifyExclusiveInput(t.Context(), initializedExclusiveCheckpoint(t, source), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := ExclusiveObservation{
+		SourcePathID: input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID,
+		Attempt:      1, Outcome: "needs-work",
+	}
+	if got, err := ClassifyExclusiveObservation(t.Context(), input, observation); err != nil || got != ExclusiveRouteReady {
+		t.Fatalf("explicit-edge disposition changed = %q, %v", got, err)
+	}
+	command, err := PlanExclusiveRoute(t.Context(), input, observation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload mutationPayload[RoutePathsPlan]
+	if err := decodeExactPayload(command.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	selectedDone := false
+	for _, producedPathID := range payload.Plan.ProducedPathIDs {
+		mutation, ok := findMutation(payload.Plan.Batch, MutationPath, producedPathID)
+		if !ok {
+			continue
+		}
+		var path PathRecord
+		if err := decodeExactPayload(mutation.After, &path); err != nil {
+			t.Fatal(err)
+		}
+		if path.Edge != nil && path.Edge.ToNodeID == "done" && path.State != PathImpossible {
+			selectedDone = true
+		}
+	}
+	if !selectedDone {
+		t.Fatal("released explicit-edge pass fallback changed")
+	}
+}
+
+func TestPureExclusiveDecisionKeepsExactNeedsWorkEdgeAuthority(t *testing.T) {
+	withEdge := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: exact-needs-work-decision
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: Choose}
+    next: {needs-work: revise, approve: done}
+  revise: {type: end}
+  done: {type: end}
+`)
+	input, err := VerifyExclusiveInput(t.Context(), initializedExclusiveCheckpoint(t, withEdge), withEdge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := ExclusiveObservation{
+		SourcePathID: input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID,
+		Attempt:      1, Outcome: "needs-work",
+	}
+	if _, err := PlanExclusiveRoute(t.Context(), input, observation); err != nil {
+		t.Fatalf("exact decision edge rejected: %v", err)
+	}
+
+	withoutEdge := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: missing-needs-work-decision
+start: choose
+nodes:
+  choose:
+    type: decision
+    performer: {kind: human, ask: Choose}
+    next: {approve: done}
+  done: {type: end}
+`)
+	input, err = VerifyExclusiveInput(t.Context(), initializedExclusiveCheckpoint(t, withoutEdge), withoutEdge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation.SourcePathID = input.checkpoint.Initialize.Aggregate.Authority.Genesis.OutputPathID
+	if _, err := PlanExclusiveRoute(t.Context(), input, observation); !errors.Is(err, ErrExclusiveUnsupported) {
+		t.Fatalf("missing exact decision edge error = %v", err)
+	}
+}
+
 func TestPureExclusiveAuditedBlockResolutionIsGenerationBound(t *testing.T) {
 	source := []byte(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate

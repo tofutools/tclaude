@@ -344,7 +344,7 @@ func AdvanceParallelDetachedSink(ctx context.Context, input *VerifiedExclusiveIn
 	if err != nil {
 		return nil, err
 	}
-	if disposition, classifyErr := classifyExclusiveObservation(view, input.template, observation); classifyErr != nil || disposition != ExclusiveRouteReady {
+	if disposition, classifyErr := classifyExclusiveObservation(view, input.template, observation, true); classifyErr != nil || disposition != ExclusiveRouteReady {
 		if classifyErr != nil {
 			return nil, classifyErr
 		}
