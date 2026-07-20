@@ -485,6 +485,8 @@ type EpochV8PublicationResult struct {
 }
 
 type EpochV8GCResult struct {
-	Scanned int
-	Removed int
+	Scanned    int
+	Removed    int
+	NextCursor string
+	Complete   bool
 }

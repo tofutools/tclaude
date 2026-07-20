@@ -129,6 +129,16 @@ func Instantiate(ctx context.Context, st store.Store, request InstantiateRequest
 			if err == nil && initialized.Disposition == store.EpochV8InitializationAlreadyApplied && generatedID {
 				continue
 			}
+			if err == nil {
+				return created, nil
+			}
+			if generatedID && errors.Is(err, store.ErrRunExists) {
+				continue
+			}
+			// InitializeEpochV8Run is the sole replay authority for an eligible
+			// schema-8 run. Never replace its checkpoint/artifact refusal with
+			// the generic run.json-only replay used by the legacy route.
+			return store.RunRecord{}, err
 		} else {
 			created, err = st.CreateRun(ctx, store.RunRecord{
 				ID: candidate, TemplateRef: templateRef, Params: params,

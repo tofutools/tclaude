@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
@@ -138,6 +140,119 @@ func TestEpochV8InitializationCrashBoundariesReplayDurability(t *testing.T) {
 	})
 }
 
+func TestEpochV8InitializationReplayRequiresExactInitialAuthority(t *testing.T) {
+	t.Run("nil and empty params are equivalent", func(t *testing.T) {
+		fs, err := store.NewFS(t.TempDir())
+		require.NoError(t, err)
+		record, source := putEpochV8Template(t, fs, "epoch-init-empty-params", "initial")
+		_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "empty-params", TemplateRef: record.Ref}, source)
+		require.NoError(t, err)
+		replayed, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{
+			ID: "empty-params", TemplateRef: record.Ref, Params: map[string]string{},
+		}, source)
+		require.NoError(t, err)
+		assert.Equal(t, store.EpochV8InitializationAlreadyApplied, replayed.Disposition)
+	})
+
+	legacyState := func(runID, ref string) state.State {
+		checkpoint := state.New(runID, ref, ref, []state.NodeInit{
+			{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+			{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		})
+		checkpoint.Status = state.RunStatusRunning
+		return checkpoint
+	}
+	t.Run("same run record with legacy state", func(t *testing.T) {
+		fs, err := store.NewFS(t.TempDir())
+		require.NoError(t, err)
+		record, source := putEpochV8Template(t, fs, "epoch-init-legacy", "initial")
+		run := store.RunRecord{ID: "legacy-collision", TemplateRef: record.Ref}
+		_, err = fs.CreateRun(t.Context(), run, legacyState(run.ID, record.Ref))
+		require.NoError(t, err)
+		_, err = fs.InitializeEpochV8Run(t.Context(), run, source)
+		assert.ErrorIs(t, err, store.ErrRunExists)
+	})
+	t.Run("same run record with schema-7 state", func(t *testing.T) {
+		fs, err := store.NewFS(t.TempDir())
+		require.NoError(t, err)
+		record, source := putEpochV8Template(t, fs, "epoch-init-v7", "initial")
+		run := store.RunRecord{ID: "v7-collision", TemplateRef: record.Ref}
+		_, err = fs.CreateRun(t.Context(), run, legacyState(run.ID, record.Ref))
+		require.NoError(t, err)
+		proof, err := fs.UpgradeNeeded(t.Context(), run.ID)
+		require.NoError(t, err)
+		_, err = fs.InitializePathV1(t.Context(), run.ID, proof)
+		require.NoError(t, err)
+		_, err = fs.InitializeEpochV8Run(t.Context(), run, source)
+		assert.ErrorIs(t, err, store.ErrRunExists)
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, string, string, []byte)
+	}{
+		{name: "tampered checkpoint", mutate: func(t *testing.T, root, runID string, _ []byte) {
+			path := filepath.Join(root, "runs", runID, "state.json")
+			data, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, append(data, ' '), 0o644))
+		}},
+		{name: "tampered source artifact", mutate: func(t *testing.T, root, runID string, source []byte) {
+			classification, err := epochv8.ClassifyTemplateSource(source)
+			require.NoError(t, err)
+			checkpoint, err := epochv8.Initialize(runID, classification.Candidate(), []epochv8.AuthoritySeed{{
+				LocalID: store.EpochV8InitialFrontierLocalID, ReservationID: store.EpochV8InitialFrontierReservationID,
+				NodeID: "work", Kind: epochv8.AuthorityFrontier, State: epochv8.AuthorityVerifiedUnclaimed,
+			}})
+			require.NoError(t, err)
+			epochID := checkpoint.View().OriginalEpoch
+			require.NoError(t, os.WriteFile(filepath.Join(root, "runs", runID, "epochs", string(epochID), "source.yaml"), append(source, '\n'), 0o644))
+		}},
+		{name: "alternate valid initial authority", mutate: func(t *testing.T, root, runID string, source []byte) {
+			classification, err := epochv8.ClassifyTemplateSource(source)
+			require.NoError(t, err)
+			checkpoint, err := epochv8.Initialize(runID, classification.Candidate(), []epochv8.AuthoritySeed{{
+				LocalID: "alternate-frontier", ReservationID: "alternate-reservation", NodeID: "work",
+				Kind: epochv8.AuthorityFrontier, State: epochv8.AuthorityVerifiedUnclaimed,
+			}})
+			require.NoError(t, err)
+			encoded, err := epochv8.EncodeCheckpointV8(checkpoint)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), encoded, 0o644))
+		}},
+		{name: "valid one-epoch finish history", mutate: func(t *testing.T, root, runID string, source []byte) {
+			classification, err := epochv8.ClassifyTemplateSource(source)
+			require.NoError(t, err)
+			checkpoint, err := epochv8.Initialize(runID, classification.Candidate(), []epochv8.AuthoritySeed{{
+				LocalID: store.EpochV8InitialFrontierLocalID, ReservationID: store.EpochV8InitialFrontierReservationID,
+				NodeID: "work", Kind: epochv8.AuthorityFrontier, State: epochv8.AuthorityClaimed,
+			}})
+			require.NoError(t, err)
+			finished, err := epochv8.FinishClaimed(checkpoint, epochv8.FinishClaim{
+				BaseBinding: checkpoint.Binding(), Identity: checkpoint.View().Authorities[0].Identity,
+				Result: epochv8.FinishCompleted, EvidenceDigest: digestText("finished"),
+			})
+			require.NoError(t, err)
+			encoded, err := epochv8.EncodeCheckpointV8(finished.Checkpoint)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "runs", runID, "state.json"), encoded, 0o644))
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, err := store.NewFS(root)
+			require.NoError(t, err)
+			record, source := putEpochV8Template(t, fs, "epoch-init-adversarial", "initial")
+			run := store.RunRecord{ID: "adversarial-replay", TemplateRef: record.Ref}
+			_, err = fs.InitializeEpochV8Run(t.Context(), run, source)
+			require.NoError(t, err)
+			test.mutate(t, root, run.ID, source)
+			_, err = fs.InitializeEpochV8Run(t.Context(), run, source)
+			assert.ErrorIs(t, err, store.ErrRunExists)
+		})
+	}
+}
+
 func TestEpochV8PublicationCrashBeforeCheckpointRetriesExactAndStaleNeverPublishes(t *testing.T) {
 	root := t.TempDir()
 	fs, checkpoint, runID := initializedEpochV8Run(t, root)
@@ -213,6 +328,69 @@ func TestEpochV8CoherentReadUsesOneCumulativeBudget(t *testing.T) {
 	assert.ErrorIs(t, err, store.ErrExecutionViewOverBudget)
 }
 
+func TestEpochV8PublicationProspectiveCoherentReadBudget(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		limitOffset int64
+		wantError   bool
+	}{
+		{name: "exact boundary remains loadable"},
+		{name: "one byte over budget is not published", limitOffset: -1, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			fs, checkpoint, runID := initializedEpochV8Run(t, root)
+			_, nextSource := putEpochV8Template(t, fs, "epoch-budget-next", "next")
+			reason := []byte("bounded reason")
+			plan := previewEpochV8Apply(t, checkpoint, nextSource, digestBytesForTest(reason))
+			transition, err := epochv8.Apply(checkpoint, plan)
+			require.NoError(t, err)
+			nextCheckpointJSON, err := epochv8.EncodeCheckpointV8(transition.Checkpoint)
+			require.NoError(t, err)
+			diffJSON, _, err := epochv8.EncodeAppliedEpochDiff(transition.Checkpoint, plan.CandidateEpoch().ID)
+			require.NoError(t, err)
+
+			initialEpochID := checkpoint.View().OriginalEpoch
+			var currentTotal int64
+			for _, path := range []string{
+				filepath.Join(root, "runs", runID, "run.json"),
+				filepath.Join(root, "runs", runID, "state.json"),
+				filepath.Join(root, "runs", runID, "epochs", string(initialEpochID), "source.yaml"),
+			} {
+				info, err := os.Stat(path)
+				require.NoError(t, err)
+				currentTotal += info.Size()
+			}
+			oldCheckpointInfo, err := os.Stat(filepath.Join(root, "runs", runID, "state.json"))
+			require.NoError(t, err)
+			prospectiveTotal := currentTotal - oldCheckpointInfo.Size() + int64(len(nextCheckpointJSON)) +
+				int64(len(nextSource)) + int64(len(diffJSON)) + int64(len(reason))
+			limit := prospectiveTotal + test.limitOffset
+			restore := fs.SetViewerResourceLimitsForTest(16<<20, limit, 100_000, 4_096)
+			defer restore()
+			lease, err := fs.AcquireMaintenanceLease(t.Context(), runID, "maintainer", time.Minute)
+			require.NoError(t, err)
+			published, err := fs.PublishEpochV8(t.Context(), lease, plan, nextSource, reason)
+			if test.wantError {
+				assert.ErrorIs(t, err, store.ErrExecutionViewOverBudget)
+				assert.Nil(t, published.Checkpoint)
+				_, statErr := os.Stat(filepath.Join(root, "runs", runID, "epochs", string(plan.CandidateEpoch().ID)))
+				assert.ErrorIs(t, statErr, os.ErrNotExist)
+				loaded, loadErr := fs.LoadEpochV8RunView(t.Context(), runID)
+				require.NoError(t, loadErr)
+				assert.Len(t, loaded.Checkpoint.View().Epochs, 1)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, published.Checkpoint)
+			loaded, err := fs.LoadEpochV8RunView(t.Context(), runID)
+			require.NoError(t, err)
+			assert.Equal(t, published.Binding, loaded.Checkpoint.Binding())
+			assert.Len(t, loaded.Checkpoint.View().Epochs, 2)
+		})
+	}
+}
+
 func TestEpochV8ReasonBoundsAndMaintenanceTokenChecks(t *testing.T) {
 	root := t.TempDir()
 	fs, checkpoint, runID := initializedEpochV8Run(t, root)
@@ -281,11 +459,29 @@ func TestEpochV8GarbageCollectionIsLeaseBoundedAndPreservesReferences(t *testing
 		require.NoError(t, os.Mkdir(path, 0o755))
 		require.NoError(t, os.Chtimes(path, old, old))
 	}
-	result, err := fs.CollectEpochV8Garbage(t.Context(), lease)
-	require.NoError(t, err)
-	assert.Equal(t, store.EpochV8GCMaxEntries, result.Scanned)
-	assert.Equal(t, store.EpochV8GCMaxEntries, result.Removed)
+	youngPath := filepath.Join(epochsDir, ".epochv8-young-orphan")
+	require.NoError(t, os.Mkdir(youngPath, 0o755))
+	forged := lease
+	forged.Token = strings.Repeat("f", len(lease.Token))
+	_, err = fs.CollectEpochV8Garbage(t.Context(), forged, "")
+	assert.ErrorIs(t, err, store.ErrLeaseHeld)
+	removed := 0
+	cursor := ""
+	for calls := 0; calls < 10; calls++ {
+		result, err := fs.CollectEpochV8Garbage(t.Context(), lease, cursor)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, result.Scanned, store.EpochV8GCMaxEntries)
+		assert.LessOrEqual(t, result.Removed, result.Scanned)
+		removed += result.Removed
+		if result.Complete {
+			break
+		}
+		require.NotEmpty(t, result.NextCursor)
+		cursor = result.NextCursor
+	}
+	assert.Equal(t, store.EpochV8GCMaxEntries+5, removed)
 	assert.DirExists(t, filepath.Join(epochsDir, string(checkpoint.View().OriginalEpoch)))
+	assert.DirExists(t, youngPath)
 }
 
 func TestEpochV8TemplateDeletionTracksEveryEpochAndTamperingBlocksGlobally(t *testing.T) {
@@ -344,13 +540,7 @@ func initializedEpochV8Run(t *testing.T, root string) (*store.FS, *epochv8.Check
 
 func putEpochV8Template(t *testing.T, fs *store.FS, id, prompt string) (store.TemplateRecord, []byte) {
 	t.Helper()
-	tmpl := &model.Template{
-		APIVersion: model.APIVersion, Kind: model.Kind, ID: id, Start: "work",
-		Nodes: map[string]model.Node{
-			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: prompt}, Next: model.Next{"pass": "done"}},
-			"done": {Type: model.NodeTypeEnd, Result: "completed"},
-		},
-	}
+	tmpl := epochV8Template(id, prompt)
 	record, err := fs.PutTemplate(t.Context(), tmpl)
 	require.NoError(t, err)
 	source, err := fs.GetTemplateSource(t.Context(), record.Ref)
@@ -361,17 +551,49 @@ func putEpochV8Template(t *testing.T, fs *store.FS, id, prompt string) (store.Te
 	return record, source
 }
 
+func epochV8Template(id, prompt string) *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: id, Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: prompt}, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+}
+
 func previewEpochV8Apply(t *testing.T, checkpoint *epochv8.CheckpointV8, source []byte, reasonDigest string) *epochv8.ApplyPlan {
 	t.Helper()
 	classification, err := epochv8.ClassifyTemplateSource(source)
 	require.NoError(t, err)
-	frontier := checkpoint.View().Authorities[0]
+	view := checkpoint.View()
+	var frontier epochv8.AuthorityRecord
+	for _, authority := range view.ProtectedAuthorities {
+		if authority.State == epochv8.AuthorityVerifiedUnclaimed {
+			frontier = authority
+		}
+	}
+	require.NotEmpty(t, frontier.Identity)
+	targetLocalID := "next-frontier"
+	targetReservationID := "next-reservation"
+	if len(view.Epochs) > 1 {
+		suffix := "-" + strconv.Itoa(len(view.Epochs))
+		targetLocalID += suffix
+		targetReservationID += suffix
+	}
+	handoffs := make([]epochv8.HandoffDirective, 0, len(view.ProtectedAuthorities))
+	for _, authority := range view.ProtectedAuthorities {
+		directive := epochv8.HandoffDirective{Source: authority.Identity, Action: epochv8.HandoffRetain}
+		if authority.Identity == frontier.Identity {
+			directive = epochv8.HandoffDirective{
+				Source: authority.Identity, Action: epochv8.HandoffTransfer,
+				TargetLocalID: targetLocalID, TargetReservationID: targetReservationID, TargetNodeID: "work",
+			}
+		}
+		handoffs = append(handoffs, directive)
+	}
 	preview, err := epochv8.PreviewApply(checkpoint, epochv8.ApplyDraft{
 		BaseBinding: checkpoint.Binding(), Candidate: classification.Candidate(), ReasonDigest: reasonDigest,
-		Handoffs: []epochv8.HandoffDirective{{
-			Source: frontier.Identity, Action: epochv8.HandoffTransfer,
-			TargetLocalID: "next-frontier", TargetReservationID: "next-reservation", TargetNodeID: "work",
-		}},
+		Handoffs: handoffs,
 	})
 	require.NoError(t, err)
 	require.Empty(t, preview.Blockers)

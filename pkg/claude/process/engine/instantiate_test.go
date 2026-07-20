@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -181,7 +182,8 @@ func TestInstantiateReplayExistingRequiresIdenticalResolvedInputs(t *testing.T) 
 }
 
 func TestInstantiateRoutesEligibleTemplateDirectlyToSchema8(t *testing.T) {
-	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	root := filepath.Join(t.TempDir(), "store")
+	fs, err := store.NewFS(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,6 +216,19 @@ func TestInstantiateRoutesEligibleTemplateDirectlyToSchema8(t *testing.T) {
 	replayed, err := Instantiate(t.Context(), fs, InstantiateRequest{TemplateRef: record.Ref, RunID: run.ID, ReplayExisting: true})
 	if err != nil || !replayed.CreatedAt.Equal(run.CreatedAt) {
 		t.Fatalf("exact replay = %#v, %v", replayed, err)
+	}
+	statePath := filepath.Join(root, "runs", run.ID, "state.json")
+	stateJSON, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, append(stateJSON, ' '), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Instantiate(t.Context(), fs, InstantiateRequest{
+		TemplateRef: record.Ref, RunID: run.ID, ReplayExisting: true,
+	}); !errors.Is(err, store.ErrRunExists) {
+		t.Fatalf("tampered schema-8 replay = %v, want ErrRunExists", err)
 	}
 }
 

@@ -7,15 +7,17 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"reflect"
-	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -69,6 +71,17 @@ func (s *FS) InitializeEpochV8Run(ctx context.Context, run RunRecord, source []b
 		return EpochV8InitializationResult{}, fmt.Errorf("%w: exact source differs from stored template", ErrContentMismatch)
 	}
 	run.Template = pinned
+	checkpoint, err := epochv8.Initialize(run.ID, candidate, []epochv8.AuthoritySeed{{
+		LocalID: EpochV8InitialFrontierLocalID, ReservationID: EpochV8InitialFrontierReservationID,
+		NodeID: parsed.Template.Start, Kind: epochv8.AuthorityFrontier, State: epochv8.AuthorityVerifiedUnclaimed,
+	}})
+	if err != nil {
+		return EpochV8InitializationResult{}, err
+	}
+	checkpointJSON, err := epochv8.EncodeCheckpointV8(checkpoint)
+	if err != nil {
+		return EpochV8InitializationResult{}, err
+	}
 
 	if _, statErr := os.Lstat(s.runDir(run.ID)); statErr == nil {
 		budget := s.newEpochV8Budget(ctx)
@@ -78,8 +91,9 @@ func (s *FS) InitializeEpochV8Run(ctx context.Context, run RunRecord, source []b
 		}
 		view := snapshot.Checkpoint.View()
 		if snapshot.Run.ID != run.ID || snapshot.Run.TemplateRef != run.TemplateRef ||
-			!reflect.DeepEqual(snapshot.Run.Params, run.Params) || snapshot.Run.AllowPrograms != run.AllowPrograms ||
-			len(view.Epochs) != 1 || !bytes.Equal(snapshot.EpochSources[view.OriginalEpoch], source) {
+			!maps.Equal(snapshot.Run.Params, run.Params) || snapshot.Run.AllowPrograms != run.AllowPrograms ||
+			!templateMatchesRef(snapshot.Run.Template, run.TemplateRef) || len(view.Epochs) != 1 ||
+			!bytes.Equal(snapshot.CheckpointJSON, checkpointJSON) || !bytes.Equal(snapshot.EpochSources[view.OriginalEpoch], source) {
 			return EpochV8InitializationResult{}, fmt.Errorf("%w: existing schema-8 initialization differs", ErrRunExists)
 		}
 		if err := syncDir(s.runDir(run.ID)); err != nil {
@@ -93,17 +107,6 @@ func (s *FS) InitializeEpochV8Run(ctx context.Context, run RunRecord, source []b
 		return EpochV8InitializationResult{}, statErr
 	}
 
-	checkpoint, err := epochv8.Initialize(run.ID, candidate, []epochv8.AuthoritySeed{{
-		LocalID: EpochV8InitialFrontierLocalID, ReservationID: EpochV8InitialFrontierReservationID,
-		NodeID: parsed.Template.Start, Kind: epochv8.AuthorityFrontier, State: epochv8.AuthorityVerifiedUnclaimed,
-	}})
-	if err != nil {
-		return EpochV8InitializationResult{}, err
-	}
-	checkpointJSON, err := epochv8.EncodeCheckpointV8(checkpoint)
-	if err != nil {
-		return EpochV8InitializationResult{}, err
-	}
 	if run.CreatedAt.IsZero() {
 		run.CreatedAt = s.now().UTC()
 	}
@@ -350,7 +353,8 @@ func (s *FS) PublishEpochV8(ctx context.Context, lease MaintenanceLease, plan *e
 	if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
 		return EpochV8PublicationResult{}, err
 	}
-	snapshot, err := s.loadEpochV8RunViewUnlocked(ctx, lease.RunID, s.newEpochV8Budget(ctx))
+	budget := s.newEpochV8Budget(ctx)
+	snapshot, err := s.loadEpochV8RunViewUnlocked(ctx, lease.RunID, budget)
 	if err != nil {
 		return EpochV8PublicationResult{}, err
 	}
@@ -387,6 +391,14 @@ func (s *FS) PublishEpochV8(ctx context.Context, lease MaintenanceLease, plan *e
 	nextJSON, err := epochv8.EncodeCheckpointV8(transition.Checkpoint)
 	if err != nil {
 		return EpochV8PublicationResult{}, err
+	}
+	prospectiveBytes := budget.bytes - int64(len(snapshot.CheckpointJSON)) + int64(len(nextJSON)) +
+		int64(len(source)) + int64(len(diff)) + int64(len(reason))
+	if prospectiveBytes > budget.maxTotal {
+		return EpochV8PublicationResult{}, &ExecutionViewOverBudgetError{
+			Limit: "total_bytes", Component: "published schema-8 coherent view",
+			Value: prospectiveBytes, Maximum: budget.maxTotal,
+		}
 	}
 	if s.epochV8PublishBeforeEpoch != nil {
 		if err := s.epochV8PublishBeforeEpoch(); err != nil {
@@ -517,7 +529,7 @@ func (s *FS) verifyEpochV8ArtifactDirUnlocked(ctx context.Context, runID string,
 	return nil
 }
 
-func (s *FS) CollectEpochV8Garbage(ctx context.Context, lease MaintenanceLease) (EpochV8GCResult, error) {
+func (s *FS) CollectEpochV8Garbage(ctx context.Context, lease MaintenanceLease, cursor string) (EpochV8GCResult, error) {
 	if err := validateMaintenanceLeaseInput(lease); err != nil {
 		return EpochV8GCResult{}, err
 	}
@@ -537,41 +549,165 @@ func (s *FS) CollectEpochV8Garbage(ctx context.Context, lease MaintenanceLease) 
 	for _, epoch := range snapshot.Checkpoint.View().Epochs {
 		referenced[string(epoch.ID)] = struct{}{}
 	}
-	dir := filepath.Join(s.runDir(lease.RunID), "epochs")
-	entries, err := os.ReadDir(dir)
+	dirPath := filepath.Join(s.runDir(lease.RunID), "epochs")
+	return collectEpochV8GarbageBatch(ctx, dirPath, referenced, s.now().UTC(), cursor, func() error {
+		_, err := s.requireMaintenanceLeaseUnlocked(lease)
+		return err
+	})
+}
+
+func collectEpochV8GarbageBatch(
+	ctx context.Context,
+	dirPath string,
+	referenced map[string]struct{},
+	now time.Time,
+	cursor string,
+	requireLease func() error,
+) (EpochV8GCResult, error) {
+	if requireLease == nil {
+		return EpochV8GCResult{}, fmt.Errorf("schema-8 GC lease authority is required")
+	}
+	dir, err := openViewDir(dirPath)
 	if err != nil {
 		return EpochV8GCResult{}, err
 	}
-	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
-	result := EpochV8GCResult{}
-	cutoff := s.now().UTC().Add(-EpochV8GCMinOrphanAge)
-	for _, entry := range entries {
-		if result.Scanned == EpochV8GCMaxEntries {
-			break
+	defer dir.Close()
+	names, nextCursor, complete, err := readEpochV8GCBatch(ctx, dir, cursor, EpochV8GCMaxEntries)
+	if err != nil {
+		return EpochV8GCResult{}, err
+	}
+	result := EpochV8GCResult{Scanned: len(names), NextCursor: nextCursor, Complete: complete}
+	cutoff := now.UTC().Add(-EpochV8GCMinOrphanAge)
+	for _, name := range names {
+		safeName := name
+		if strings.HasPrefix(name, ".epochv8-") {
+			safeName = strings.TrimPrefix(name, ".")
 		}
-		result.Scanned++
-		if _, ok := referenced[entry.Name()]; ok || !entry.IsDir() {
+		if safeSegment(safeName) != nil {
 			continue
 		}
-		if !strings.HasPrefix(entry.Name(), ".epochv8-") && !isHexSHA256(entry.Name()) {
+		if _, ok := referenced[name]; ok {
 			continue
 		}
-		info, err := entry.Info()
+		if !strings.HasPrefix(name, ".epochv8-") && !isHexSHA256(name) {
+			continue
+		}
+		entry, openErr := openViewDirAt(dir, name)
+		if openErr != nil {
+			continue
+		}
+		info, err := entry.Stat()
+		entry.Close()
 		if err != nil || info.ModTime().After(cutoff) {
 			continue
 		}
-		if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
+		if err := requireLease(); err != nil {
 			return result, err
 		}
-		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+		if err := os.RemoveAll(filepath.Join(dirPath, name)); err != nil {
 			return result, err
 		}
 		result.Removed++
 	}
 	if result.Removed > 0 {
-		if err := syncDir(dir); err != nil {
+		if err := syncDir(dirPath); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
+}
+
+const (
+	epochV8GCDirentBufferBytes = 4 << 10
+	epochV8GCCursorMaxBytes    = 16 << 10
+)
+
+type epochV8GCCursor struct {
+	Version int    `json:"version"`
+	Offset  int64  `json:"offset"`
+	Pending []byte `json:"pending,omitempty"`
+}
+
+func readEpochV8GCBatch(ctx context.Context, dir *os.File, encoded string, maximum int) ([]string, string, bool, error) {
+	if dir == nil || maximum <= 0 {
+		return nil, "", false, fmt.Errorf("invalid schema-8 GC traversal")
+	}
+	cursor, err := decodeEpochV8GCCursor(encoded)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if cursor.Offset > 0 {
+		if _, err := unix.Seek(int(dir.Fd()), cursor.Offset, 0); err != nil {
+			return nil, "", false, fmt.Errorf("seek schema-8 GC cursor: %w", err)
+		}
+	}
+	names := make([]string, 0, maximum)
+	pending := cursor.Pending
+	for len(names) < maximum {
+		if err := ctx.Err(); err != nil {
+			return nil, "", false, err
+		}
+		if len(pending) == 0 {
+			buffer := make([]byte, epochV8GCDirentBufferBytes)
+			n, readErr := unix.ReadDirent(int(dir.Fd()), buffer)
+			if readErr != nil {
+				return nil, "", false, fmt.Errorf("read schema-8 GC directory: %w", readErr)
+			}
+			if n == 0 {
+				return names, "", true, nil
+			}
+			pending = buffer[:n]
+			cursor.Offset, err = unix.Seek(int(dir.Fd()), 0, 1)
+			if err != nil {
+				return nil, "", false, fmt.Errorf("record schema-8 GC cursor: %w", err)
+			}
+		}
+		consumed, _, parsed := unix.ParseDirent(pending, maximum-len(names), names)
+		if consumed <= 0 {
+			return nil, "", false, fmt.Errorf("decode schema-8 GC directory entry")
+		}
+		names = parsed
+		pending = pending[consumed:]
+	}
+	cursor.Pending = bytes.Clone(pending)
+	next, err := encodeEpochV8GCCursor(cursor)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return names, next, false, nil
+}
+
+func encodeEpochV8GCCursor(cursor epochV8GCCursor) (string, error) {
+	cursor.Version = 1
+	data, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	if len(data) > epochV8GCCursorMaxBytes {
+		return "", fmt.Errorf("schema-8 GC cursor is over budget")
+	}
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func decodeEpochV8GCCursor(encoded string) (epochV8GCCursor, error) {
+	if encoded == "" {
+		return epochV8GCCursor{Version: 1}, nil
+	}
+	if len(encoded) > base64.RawURLEncoding.EncodedLen(epochV8GCCursorMaxBytes) {
+		return epochV8GCCursor{}, fmt.Errorf("schema-8 GC cursor is over budget")
+	}
+	data, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return epochV8GCCursor{}, fmt.Errorf("decode schema-8 GC cursor: %w", err)
+	}
+	var cursor epochV8GCCursor
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cursor); err != nil || cursor.Version != 1 || cursor.Offset < 0 || len(cursor.Pending) > epochV8GCDirentBufferBytes {
+		return epochV8GCCursor{}, fmt.Errorf("schema-8 GC cursor is invalid")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return epochV8GCCursor{}, fmt.Errorf("schema-8 GC cursor is invalid")
+	}
+	return cursor, nil
 }
