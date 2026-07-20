@@ -517,6 +517,7 @@ func validateApplyCoreStatic(runID string, core applyCore) error {
 	}
 	targets := map[OwnerIdentity]struct{}{}
 	reservations := map[string]struct{}{}
+	frontiers := map[frontierMaterializationKey]struct{}{}
 	dependencies, err := newAuthorityDependencyIndex(core.Protected)
 	if err != nil {
 		return err
@@ -574,8 +575,13 @@ func validateApplyCoreStatic(runID string, core applyCore) error {
 			if !dependencies.logicalFrontierAvailable(source.Identity, target.LocalID, target.NodeID) {
 				return fmt.Errorf("%w: transfer successor re-enters a historical logical frontier", ErrInvalid)
 			}
+			frontierKey := frontierMaterializationKey{target.LocalID, target.NodeID}
+			if _, exists := frontiers[frontierKey]; exists {
+				return fmt.Errorf("%w: transfer successors duplicate a logical frontier", ErrInvalid)
+			}
 			targets[target.Identity] = struct{}{}
 			reservations[target.ReservationID] = struct{}{}
+			frontiers[frontierKey] = struct{}{}
 		default:
 			return fmt.Errorf("%w: handoff action is invalid", ErrInvalid)
 		}

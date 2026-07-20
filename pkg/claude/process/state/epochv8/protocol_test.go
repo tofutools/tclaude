@@ -316,6 +316,88 @@ func TestTransferConservationRejectsSuccessorReservationReuse(t *testing.T) {
 	}
 }
 
+func TestPreviewRejectsDuplicateProposedLogicalFrontier(t *testing.T) {
+	checkpoint := testCheckpoint(t, "duplicate-target-frontier", []AuthoritySeed{
+		{LocalID: "a", ReservationID: "a-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed},
+		{LocalID: "b", ReservationID: "b-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed},
+	})
+	directives := make([]HandoffDirective, 0, 2)
+	for i, authority := range checkpoint.wire.Authorities {
+		directives = append(directives, HandoffDirective{
+			Source: authority.Identity, Action: HandoffTransfer,
+			TargetLocalID: "shared", TargetReservationID: fmt.Sprintf("shared-r-%d", i), TargetNodeID: "work",
+		})
+	}
+	draft := ApplyDraft{BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "duplicate-target-next"), Handoffs: directives}
+	forward, err := PreviewApply(checkpoint, draft)
+	if err != nil || forward.Plan != nil || len(forward.Blockers) != 1 || forward.Blockers[0].Code != BlockerHandoffDuplicate {
+		t.Fatalf("duplicate proposed logical frontier: preview=%+v err=%v", forward, err)
+	}
+	slices.Reverse(draft.Handoffs)
+	reverse, err := PreviewApply(checkpoint, draft)
+	if err != nil || reverse.Plan != nil || !reflect.DeepEqual(reverse.Blockers, forward.Blockers) {
+		t.Fatalf("duplicate target blocker is unstable: forward=%+v reverse=%+v err=%v", forward.Blockers, reverse.Blockers, err)
+	}
+
+	validDirectives := slices.Clone(directives)
+	for i := range validDirectives {
+		validDirectives[i].TargetLocalID = fmt.Sprintf("shared-%d", i)
+	}
+	valid, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "duplicate-target-defense"), Handoffs: validDirectives,
+	})
+	if err != nil || valid.Plan == nil {
+		t.Fatalf("build defense plan: preview=%+v err=%v", valid, err)
+	}
+	forged := cloneApplyCore(valid.Plan.core)
+	firstTarget := forged.HandoffSet[0].Target
+	second := &forged.HandoffSet[1]
+	second.Target.LocalID = firstTarget.LocalID
+	second.Target.NodeID = firstTarget.NodeID
+	second.Target.Identity, _ = authorityIdentity(forged.RunID, *second.Target)
+	basis, _ := applyHandoffBasis(forged)
+	second.ID, _ = handoffIdentity(second.Source, second.Action, second.Target, basis)
+	forged.HandoffSetDigest, _ = handoffSetDigest(forged.HandoffSet)
+	forged.ProposalDigest, _ = proposalDigest(forged)
+	if err := validateApplyCoreStatic(forged.RunID, forged); err == nil || !strings.Contains(err.Error(), "duplicate a logical frontier") {
+		t.Fatalf("static validation accepted duplicate proposed logical frontier: %v", err)
+	}
+	dependencies, _ := newAuthorityDependencyIndex(checkpoint.wire.Authorities)
+	if _, err := applyHandoffSet(forged.RunID, checkpoint.wire.Authorities, forged.HandoffSet, dependencies); err == nil ||
+		!strings.Contains(err.Error(), "duplicate a logical frontier") {
+		t.Fatalf("apply defense accepted duplicate proposed logical frontier: %v", err)
+	}
+}
+
+func TestDuplicateDirectivesDoNotSuppressDependentBlockers(t *testing.T) {
+	checkpoint := testCheckpoint(t, "duplicate-budget", []AuthoritySeed{
+		{LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed},
+		{LocalID: "command", ReservationID: "command-r", NodeID: "work", Kind: AuthorityCommand, State: AuthorityActive, DependencyLocalIDs: []string{"frontier"}},
+	})
+	frontier := findAuthority(t, checkpoint.wire.Authorities, func(authority AuthorityRecord) bool {
+		return authority.Kind == AuthorityFrontier
+	})
+	command := findAuthority(t, checkpoint.wire.Authorities, func(authority AuthorityRecord) bool {
+		return authority.Kind == AuthorityCommand
+	})
+	transfer := HandoffDirective{
+		Source: frontier.Identity, Action: HandoffTransfer,
+		TargetLocalID: "next", TargetReservationID: "next-r", TargetNodeID: "work",
+	}
+	directives := make([]HandoffDirective, MaxBlockers+2)
+	for i := 0; i <= MaxBlockers; i++ {
+		directives[i] = transfer
+	}
+	directives[len(directives)-1] = HandoffDirective{Source: command.Identity, Action: HandoffRetain}
+	preview, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "duplicate-budget-next"), Handoffs: directives,
+	})
+	if err != nil || preview.Plan != nil || len(preview.Blockers) != 2 ||
+		!hasBlocker(preview.Blockers, BlockerHandoffDuplicate) || !hasBlocker(preview.Blockers, BlockerActiveCommand) {
+		t.Fatalf("duplicate directives suppressed unique blockers: preview=%+v err=%v", preview, err)
+	}
+}
+
 func TestTransferRejectsHistoricalMaterializationReuse(t *testing.T) {
 	checkpoint := testCheckpoint(t, "reuse-epoch-zero", []AuthoritySeed{{
 		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,

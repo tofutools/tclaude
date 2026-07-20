@@ -444,6 +444,7 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 	nodeSet := epochNodeSet(epoch)
 	targetIDs := make(map[OwnerIdentity]struct{})
 	targetReservations := make(map[string]struct{})
+	targetFrontiers := make(map[frontierMaterializationKey]OwnerIdentity)
 	transferSources := make(map[OwnerIdentity]struct{})
 	handoffs := make([]Handoff, 0, len(protected))
 	for _, authority := range protected {
@@ -497,6 +498,12 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 			if !dependencies.logicalFrontierAvailable(authority.Identity, target.LocalID, target.NodeID) {
 				return nil, nil, fmt.Errorf("%w: transfer successor re-enters a historical logical frontier", ErrInvalid)
 			}
+			frontierKey := frontierMaterializationKey{target.LocalID, target.NodeID}
+			if _, exists := targetFrontiers[frontierKey]; exists {
+				blockers = append(blockers, Blocker{Code: BlockerHandoffDuplicate, AuthorityID: authority.Identity})
+			} else {
+				targetFrontiers[frontierKey] = authority.Identity
+			}
 			if _, exists := dependencies.byID[target.Identity]; exists {
 				return nil, nil, fmt.Errorf("%w: transfer successor resurrects an existing identity", ErrInvalid)
 			}
@@ -511,6 +518,10 @@ func planHandoffs(runID string, dependencies *authorityDependencyIndex, protecte
 		default:
 			return nil, nil, fmt.Errorf("%w: handoff action %q is invalid", ErrInvalid, directive.Action)
 		}
+	}
+	blockers = canonicalBlockers(blockers)
+	if len(blockers) > MaxBlockers {
+		blockers = blockers[:MaxBlockers]
 	}
 	blockers = append(blockers, dependencies.activeDependentBlockers(transferSources, MaxBlockers-len(blockers))...)
 	slices.SortFunc(handoffs, func(a, b Handoff) int { return cmp.Compare(a.Source, b.Source) })
@@ -756,6 +767,7 @@ func (index *authorityDependencyIndex) activeDependentBlockers(sources map[Owner
 func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff, dependencies *authorityDependencyIndex) ([]AuthorityRecord, error) {
 	result := cloneAuthorities(current)
 	index := make(map[OwnerIdentity]int, len(result))
+	targetFrontiers := make(map[frontierMaterializationKey]struct{})
 	for i, authority := range result {
 		index[authority.Identity] = i
 	}
@@ -787,6 +799,11 @@ func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff
 		if !dependencies.logicalFrontierAvailable(handoff.Source, target.LocalID, target.NodeID) {
 			return nil, fmt.Errorf("%w: handoff successor re-enters a historical logical frontier", ErrInvalid)
 		}
+		frontierKey := frontierMaterializationKey{target.LocalID, target.NodeID}
+		if _, exists := targetFrontiers[frontierKey]; exists {
+			return nil, fmt.Errorf("%w: handoff successors duplicate a logical frontier", ErrInvalid)
+		}
+		targetFrontiers[frontierKey] = struct{}{}
 		result[i].State = AuthorityHandedOff
 		result[i].Successor = target.Identity
 		result[i].TerminalRecordID = handoff.ID
