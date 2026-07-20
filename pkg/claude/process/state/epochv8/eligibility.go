@@ -122,12 +122,16 @@ func ClassifyTemplateSource(source []byte) (TemplateClassification, error) {
 
 func classifyProductionPathV1(tmpl *model.Template) EligibilityReason {
 	hasParallel := false
-	for _, node := range tmpl.Nodes {
+	nodeIDs := make([]string, 0, len(tmpl.Nodes))
+	for nodeID, node := range tmpl.Nodes {
+		nodeIDs = append(nodeIDs, nodeID)
 		if node.Type == model.NodeTypeParallel {
 			hasParallel = true
 		}
 	}
-	for nodeID, node := range tmpl.Nodes {
+	slices.Sort(nodeIDs)
+	for _, nodeID := range nodeIDs {
+		node := tmpl.Nodes[nodeID]
 		if node.IsCompound() {
 			return EligibilityReasonCompound
 		}

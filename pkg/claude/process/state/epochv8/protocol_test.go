@@ -356,6 +356,28 @@ nodes:
 	}
 }
 
+func TestFrozenEligibilityReasonUsesSortedNodePrecedence(t *testing.T) {
+	template := &model.Template{
+		Start: "z-wait",
+		Nodes: map[string]model.Node{
+			"a-program": {
+				Type: model.NodeTypeTask,
+				Performer: &model.Performer{
+					Kind: model.PerformerProgram,
+				},
+			},
+			"z-wait": {
+				Type: model.NodeTypeWait,
+			},
+		},
+	}
+	for range 100 {
+		if got := classifyProductionPathV1(template); got != EligibilityReasonProgram {
+			t.Fatalf("classification reason = %q, want sorted-node reason %q", got, EligibilityReasonProgram)
+		}
+	}
+}
+
 func TestStrictCanonicalCheckpointAndPlanInputs(t *testing.T) {
 	checkpoint := testCheckpoint(t, "json", []AuthoritySeed{{
 		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
