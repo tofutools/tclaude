@@ -101,6 +101,21 @@ func TestSpawnHelp_DefaultResolutionDocumented(t *testing.T) {
 	assert.Contains(t, long, "never silently narrowed")
 }
 
+// The spawn command's long help must lead with the profile-first guidance —
+// spawning with an operator-preconfigured spawn profile is the primary path,
+// and the --profile flag help must say so too.
+func TestSpawnHelp_ProfileFirstDocumented(t *testing.T) {
+	cmd := spawnCmd()
+	assert.True(t, strings.HasPrefix(cmd.Long, "Prefer a spawn profile"),
+		"the profile-first guidance must open the long help, not trail it")
+	assert.Contains(t, cmd.Long, "preconfigured by the operator")
+
+	profileFlag := cmd.Flags().Lookup("profile")
+	require.NotNil(t, profileFlag)
+	assert.Contains(t, profileFlag.Usage, "RECOMMENDED")
+	assert.Contains(t, profileFlag.Usage, "preconfigured by the operator")
+}
+
 // formatResolvedField renders "value (source)" for a pinned field and a bare
 // "(harness default)" for an unpinned one.
 func TestFormatResolvedField(t *testing.T) {
