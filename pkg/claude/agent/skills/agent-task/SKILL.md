@@ -94,6 +94,10 @@ pointed at its own Linear issue, and watch them in the dashboard with a
 clickable link next to every one. The same http(s) validation applies —
 a bad URL fails the spawn with a 400 rather than being silently dropped.
 
+As with any spawn, prefer an operator-preconfigured spawn profile
+(`--profile <name>`, or the group/global default) over hand-picking
+launch flags — see the **`agent-coord`** skill's spawning section.
+
 ## Manager pattern: set ANOTHER agent's link
 
 `tclaude agent task set|clear` accept an optional `--target <selector>`

@@ -231,6 +231,13 @@ one.
 
 ## Spawning workers — default resolution
 
+**Prefer an operator-preconfigured spawn profile.** With `--profile <name>`
+(see `tclaude agent profiles ls`) or a group/global default profile, usually
+no other launch flags are needed — just the group, `--name`, and a task brief.
+Hand-picking `--model`/`--effort`/`--sandbox`/`--ask-for-approval` is the
+exception, for when no suitable profile exists or the task pins a specific
+vendor/model (see the policy-bound warning below).
+
 When you delegate work by spawning a fresh agent
 (`tclaude agent spawn <group> …`, needs `groups.spawn`), the launch shape is
 **not** simply "the flags you passed, else the harness default". Each launch

@@ -446,7 +446,7 @@ type SpawnParams struct {
 	// short is pinned so boa's short-flag enricher doesn't hand `-p` elsewhere.
 	// Precedence: explicit flags override the profile, which overrides the
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
-	Profile        string `long:"profile" short:"p" optional:"true" help:"Pre-fill spawn fields from a saved spawn profile (see 'tclaude agent profiles ls'). Explicit flags override the profile; the profile overrides group/global/harness defaults. remote_control is NOT taken from the profile — use --remote-control"`
+	Profile        string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
 	SandboxProfile string `long:"sandbox-profile" optional:"true" help:"Human-only filesystem/environment sandbox profile for this spawn"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
@@ -529,7 +529,11 @@ func spawnCmd() *cobra.Command {
 	return boa.CmdT[SpawnParams]{
 		Use:   "spawn",
 		Short: "Spawn a fresh CC session and add it to an existing group",
-		Long: "Launches `tclaude session new -d --global` with a generated label, " +
+		Long: "Prefer a spawn profile preconfigured by the operator: with --profile <name> " +
+			"(see `tclaude agent profiles ls`) or a group/global default profile, usually " +
+			"no other launch flags are needed. " +
+			"\n\n" +
+			"Launches `tclaude session new -d --global` with a generated label, " +
 			"waits for the new conv-id to materialise, and adds the new conv to <group> " +
 			"with the given role/descr. --name becomes the new agent's conversation " +
 			"title (injected as /rename on its pane). Prints the attach command for the " +

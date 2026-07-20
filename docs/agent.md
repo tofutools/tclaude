@@ -508,7 +508,7 @@ preview the result and explicitly save it through the ordinary editor.
 ### spawn
 
 ```bash
-tclaude agent spawn <group> [--name N --role R --descr T --cwd DIR]
+tclaude agent spawn <group> [--profile P] [--name N --role R --descr T --cwd DIR]
                             [--initial-message MSG | --file PATH] [--reply-to SEL]
                             [--worktree BRANCH [--worktree-base B] [--worktree-repo DIR]]
                             [--auto-focus] [--no-group-context] [--timeout DUR]
@@ -519,6 +519,12 @@ materialise, and adds it to `<group>`. The new session lands in
 `--cwd` (defaults to the caller's cwd, or the group's
 [default dir](#groups)). Requires the `groups.spawn` permission
 (human-only by default).
+
+**Prefer a spawn profile.** With `--profile <name>` (an operator-preconfigured
+[spawn profile](#spawn-profiles)) or a group/global default profile, usually no
+other launch flags are needed. Explicit harness/model/effort/sandbox/approval
+flags are for when no suitable profile exists or a policy pins a specific
+vendor/model; see the default-resolution chain in `tclaude agent spawn --help`.
 
 `--initial-message` (or `--file PATH` / `--file -` for stdin) delivers
 the new agent a task brief in its inbox; `--reply-to` routes its reply
