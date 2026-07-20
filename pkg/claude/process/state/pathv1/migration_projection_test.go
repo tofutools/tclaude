@@ -248,18 +248,10 @@ func TestBuildProgressedInitializationSoftRefusesWaitScheduleAuthorityMismatch(t
 	}
 }
 
-func TestBuildProgressedInitializationBoundsAndCancelsEvidenceIndexing(t *testing.T) {
-	fixture := progressedProjectionFixture(t, false)
-	over := fixture.input
-	over.Manifest = make([]evidence.ManifestEntry, MaxRoutingLogEntries+1)
-	_, err := BuildProgressedInitialization(t.Context(), over)
-	var overBudget *OverBudgetError
-	if !errors.As(err, &overBudget) || overBudget.Limit != "log_entries" {
-		t.Fatalf("oversized projection evidence error = %#v, %v", overBudget, err)
-	}
+func TestBuildProgressedInitializationCancelsEvidenceIndexing(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = indexLegacyProjectionEvidence(ctx, make([]evidence.LogEntry, MaxRoutingLogEntries))
+	_, err := indexLegacyProjectionEvidence(ctx, make([]evidence.LogEntry, MaxRoutingLogEntries))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled projection index error = %v", err)
 	}

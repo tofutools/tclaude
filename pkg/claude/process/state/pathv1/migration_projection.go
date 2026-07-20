@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	LegacyProjectionVersion   = 1
-	LegacyProjectionAdminType = "progressed_history_projected"
+	LegacyProjectionVersion    = 1
+	LegacyProjectionAdminType  = "progressed_history_projected"
+	maxLegacyProjectionEntries = 100_000
 )
 
 type ProjectionRefusalCode string
@@ -33,6 +34,7 @@ const (
 	ProjectionRefusalFrontier       ProjectionRefusalCode = "frontier"
 	ProjectionRefusalStateMismatch  ProjectionRefusalCode = "state_mismatch"
 	ProjectionRefusalContactHistory ProjectionRefusalCode = "contact_history"
+	ProjectionRefusalResourceLimit  ProjectionRefusalCode = "resource_limit"
 )
 
 // ProjectionRefusal is a safe compatibility refusal, not corruption. Its
@@ -189,6 +191,13 @@ func BuildProgressedInitialization(ctx context.Context, input LegacyProjectionIn
 	}
 	if err := validateProjectionInput(ctx, input, entries); err != nil {
 		return nil, err
+	}
+	if len(entries) > MaxRoutingLogEntries {
+		return nil, refuseProjection(
+			ProjectionRefusalResourceLimit,
+			"progressed history has %d records, projection limit is %d",
+			len(entries), MaxRoutingLogEntries,
+		)
 	}
 	index, err := indexLegacyProjectionEvidence(ctx, entries)
 	if err != nil {
@@ -412,8 +421,8 @@ func orderedLegacyEntries(ctx context.Context, manifest []evidence.ManifestEntry
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(manifest) > MaxRoutingLogEntries {
-		return nil, &OverBudgetError{Limit: "log_entries", Value: len(manifest), Maximum: MaxRoutingLogEntries}
+	if len(manifest) > maxLegacyProjectionEntries {
+		return nil, &OverBudgetError{Limit: "log_entries", Value: len(manifest), Maximum: maxLegacyProjectionEntries}
 	}
 	logEntries := 0
 	for _, log := range logs {
@@ -421,8 +430,8 @@ func orderedLegacyEntries(ctx context.Context, manifest []evidence.ManifestEntry
 			return nil, err
 		}
 		logEntries += len(log.Entries)
-		if logEntries > MaxRoutingLogEntries {
-			return nil, &OverBudgetError{Limit: "log_entries", Value: logEntries, Maximum: MaxRoutingLogEntries}
+		if logEntries > maxLegacyProjectionEntries {
+			return nil, &OverBudgetError{Limit: "log_entries", Value: logEntries, Maximum: maxLegacyProjectionEntries}
 		}
 	}
 	if diagnostics := evidence.VerifySequence(manifest, logs); diagnostics.HasErrors() {

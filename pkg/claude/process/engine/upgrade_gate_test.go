@@ -983,6 +983,66 @@ func TestEnabledHostFallsBackToLegacyForProgressedQuiescentRun(t *testing.T) {
 	}
 }
 
+func TestEnabledHostFallsBackToLegacyAboveProgressedProjectionEvidenceLimit(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-projection-limit", Start: "work",
+		Nodes: map[string]model.Node{
+			"work":   {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":   {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed": {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run-v6-projection-limit"
+	checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]evidence.LogEntry, pathv1.MaxRoutingLogEntries+1)
+	for i := range entries {
+		entries[i] = evidence.LogEntry{
+			At:    time.Date(2026, 7, 20, 10, 0, 0, i, time.UTC),
+			Scope: evidence.Scope{Kind: evidence.ScopeNode, ID: "work"},
+			Kind:  evidence.EntryKindStatus,
+		}
+	}
+	if _, err := fs.Append(t.Context(), runID, 0, entries); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	if err != nil || proof.Reason != pathv1.UpgradeMigrationRequired {
+		t.Fatalf("over-cap progressed proof = %#v, err=%v", proof, err)
+	}
+	adapter := &countingReleaseAdapter{}
+	host := New(fs, "test:release-projection-limit", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter})
+	if err := host.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("over-cap legacy fallback tick = %#v, err=%v", results, err)
+	}
+	if adapter.calls == 0 {
+		t.Fatal("over-cap legacy fallback did not invoke legacy adapter planning")
+	}
+	if schema, err := fs.RunStateSchemaVersion(t.Context(), runID); err != nil || schema != state.StateSchemaVersion {
+		t.Fatalf("over-cap fallback schema = %d, err=%v", schema, err)
+	}
+}
+
 func TestEnabledHostKeepsUnsupportedCanceledEndOnLegacySchema(t *testing.T) {
 	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
 	if err != nil {
