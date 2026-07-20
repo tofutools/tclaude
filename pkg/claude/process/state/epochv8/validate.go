@@ -17,6 +17,9 @@ func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
 		return fmt.Errorf("%w: checkpoint is nil", ErrInvalid)
 	}
 	wire := checkpoint.wire
+	if err := ensureCheckpointWireBudget(wire); err != nil {
+		return err
+	}
 	if wire.StateSchemaVersion != StateSchemaVersion || wire.Protocol != Protocol || wire.Encoding != Encoding {
 		return fmt.Errorf("%w: checkpoint protocol envelope is invalid", ErrInvalid)
 	}
@@ -110,7 +113,11 @@ func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
 				seenApplySource[handoff.Source] = struct{}{}
 				seenApplyTarget[handoff.Target.Identity] = struct{}{}
 			}
-			nextAuthorities, applyErr := applyHandoffSet(wire.Anchor.RunID, prefix.Authorities, event.Apply.HandoffSet)
+			dependencies, dependencyErr := newAuthorityDependencyIndex(prefix.Authorities)
+			if dependencyErr != nil {
+				return dependencyErr
+			}
+			nextAuthorities, applyErr := applyHandoffSet(wire.Anchor.RunID, prefix.Authorities, event.Apply.HandoffSet, dependencies)
 			if applyErr != nil {
 				return applyErr
 			}
@@ -136,7 +143,11 @@ func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
 			if !ok || authority.Kind != AuthorityFrontier || authority.State != AuthorityClaimed || authority.EpochID != receipt.OwnerEpochID {
 				return fmt.Errorf("%w: finish receipt does not settle claimed owner epoch", ErrInvalid)
 			}
-			if len(activeDependents(prefix.Authorities, authority.Identity)) != 0 {
+			dependencies, dependencyErr := newAuthorityDependencyIndex(prefix.Authorities)
+			if dependencyErr != nil {
+				return dependencyErr
+			}
+			if dependencies.hasActiveDependent(authority.Identity) {
 				return fmt.Errorf("%w: finish receipt bypasses active dependent authority", ErrInvalid)
 			}
 			for j := range prefix.Authorities {
@@ -332,7 +343,11 @@ func validateAuthorities(runID string, epochs []TemplateEpoch, authorities []Aut
 	}
 	byID := make(map[OwnerIdentity]AuthorityRecord, len(authorities))
 	links := 0
+	// Reservation IDs are run-wide frontier materialization keys. Historical
+	// handed-off and finished authorities remain in this set permanently. A
+	// LocalID+NodeID may recur only along its exact atomic successor chain.
 	frontierReservations := make(map[string]OwnerIdentity)
+	frontierMaterializations := make(map[frontierMaterializationKey][]AuthorityRecord)
 	for i, authority := range authorities {
 		if i > 0 && authorities[i-1].Identity == authority.Identity {
 			return fmt.Errorf("%w: authority identity is duplicated", ErrInvalid)
@@ -371,12 +386,13 @@ func validateAuthorities(runID string, epochs []TemplateEpoch, authorities []Aut
 		} else if authority.Successor != "" || authority.TerminalRecordID != "" {
 			return fmt.Errorf("%w: active authority carries terminal fields", ErrInvalid)
 		}
-		if authority.Kind == AuthorityFrontier && authority.State != AuthorityHandedOff {
-			key := string(authority.EpochID) + "\x00" + authority.ReservationID
-			if owner, exists := frontierReservations[key]; exists && owner != authority.Identity {
+		if authority.Kind == AuthorityFrontier {
+			if owner, exists := frontierReservations[authority.ReservationID]; exists && owner != authority.Identity {
 				return fmt.Errorf("%w: materialized frontier reservation is reused", ErrInvalid)
 			}
-			frontierReservations[key] = authority.Identity
+			frontierReservations[authority.ReservationID] = authority.Identity
+			key := frontierMaterializationKey{authority.LocalID, authority.NodeID}
+			frontierMaterializations[key] = append(frontierMaterializations[key], authority)
 		}
 		byID[authority.Identity] = authority
 	}
@@ -396,6 +412,22 @@ func validateAuthorities(runID string, epochs []TemplateEpoch, authorities []Aut
 	if authorityDependencyCycle(parents) {
 		return fmt.Errorf("%w: authority dependency graph contains a cycle", ErrInvalid)
 	}
+	for _, materializations := range frontierMaterializations {
+		slices.SortFunc(materializations, func(a, b AuthorityRecord) int {
+			if order := cmp.Compare(epochOrdinal[a.EpochID], epochOrdinal[b.EpochID]); order != 0 {
+				return order
+			}
+			return cmp.Compare(a.Identity, b.Identity)
+		})
+		for i := 1; i < len(materializations); i++ {
+			previous, current := materializations[i-1], materializations[i]
+			if previous.State != AuthorityHandedOff || previous.Successor != current.Identity ||
+				epochOrdinal[previous.EpochID] >= epochOrdinal[current.EpochID] ||
+				!slices.Contains(current.DependsOn, previous.Identity) {
+				return fmt.Errorf("%w: historical logical frontier re-enters outside its atomic handoff", ErrInvalid)
+			}
+		}
+	}
 	for _, authority := range authorities {
 		if authority.State != AuthorityHandedOff {
 			continue
@@ -410,6 +442,9 @@ func validateAuthorities(runID string, epochs []TemplateEpoch, authorities []Aut
 }
 
 func validateApplyCoreStatic(runID string, core applyCore) error {
+	if err := ensureApplyCoreWireBudget(core); err != nil {
+		return err
+	}
 	if core.RunID != runID || !validIdentifier(core.RunID) {
 		return fmt.Errorf("%w: apply run binding is invalid", ErrInvalid)
 	}
@@ -482,6 +517,10 @@ func validateApplyCoreStatic(runID string, core applyCore) error {
 	}
 	targets := map[OwnerIdentity]struct{}{}
 	reservations := map[string]struct{}{}
+	dependencies, err := newAuthorityDependencyIndex(core.Protected)
+	if err != nil {
+		return err
+	}
 	candidateNodes := epochNodeSet(core.CandidateEpoch)
 	for i, handoff := range core.HandoffSet {
 		if i > 0 && core.HandoffSet[i-1].Source == handoff.Source {
@@ -504,7 +543,8 @@ func validateApplyCoreStatic(runID string, core applyCore) error {
 				return fmt.Errorf("%w: retained handoff has target", ErrInvalid)
 			}
 		case HandoffTransfer:
-			if handoff.Target == nil || len(transferBlockers(core.Protected, source)) != 0 {
+			if handoff.Target == nil || source.State != AuthorityVerifiedUnclaimed || source.Kind != AuthorityFrontier ||
+				dependencies.hasActiveDependent(source.Identity) {
 				return fmt.Errorf("%w: transfer bypasses protected authority", ErrInvalid)
 			}
 			target := *handoff.Target
@@ -527,6 +567,12 @@ func validateApplyCoreStatic(runID string, core applyCore) error {
 			}
 			if _, exists := reservations[target.ReservationID]; exists {
 				return fmt.Errorf("%w: transfer successor reservation is reused", ErrInvalid)
+			}
+			if dependencies.reservationUsed(target.ReservationID) {
+				return fmt.Errorf("%w: transfer successor resurrects a historical reservation", ErrInvalid)
+			}
+			if !dependencies.logicalFrontierAvailable(source.Identity, target.LocalID, target.NodeID) {
+				return fmt.Errorf("%w: transfer successor re-enters a historical logical frontier", ErrInvalid)
 			}
 			targets[target.Identity] = struct{}{}
 			reservations[target.ReservationID] = struct{}{}

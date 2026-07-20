@@ -316,6 +316,109 @@ func TestTransferConservationRejectsSuccessorReservationReuse(t *testing.T) {
 	}
 }
 
+func TestTransferRejectsHistoricalMaterializationReuse(t *testing.T) {
+	checkpoint := testCheckpoint(t, "reuse-epoch-zero", []AuthoritySeed{{
+		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	frontier := checkpoint.View().Authorities[0]
+	legalRebind, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "reuse-legal-rebind"),
+		Handoffs: []HandoffDirective{{
+			Source: frontier.Identity, Action: HandoffTransfer,
+			TargetLocalID: frontier.LocalID, TargetReservationID: "frontier-r-fresh", TargetNodeID: frontier.NodeID,
+		}},
+	})
+	if err != nil || legalRebind.Plan == nil || len(legalRebind.Blockers) != 0 {
+		t.Fatalf("atomic logical-frontier rebind with fresh reservation: preview=%+v err=%v", legalRebind, err)
+	}
+	legalApplied, err := Apply(checkpoint, legalRebind.Plan)
+	if err != nil || legalApplied.Disposition != DispositionApplied {
+		t.Fatalf("apply atomic logical-frontier rebind: result=%+v err=%v", legalApplied, err)
+	}
+
+	directReuse, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "reuse-direct"),
+		Handoffs: []HandoffDirective{{
+			Source: frontier.Identity, Action: HandoffTransfer,
+			TargetLocalID: frontier.LocalID, TargetReservationID: frontier.ReservationID, TargetNodeID: frontier.NodeID,
+		}},
+	})
+	if err == nil || directReuse.Plan != nil || !strings.Contains(err.Error(), "historical reservation") {
+		t.Fatalf("epoch-zero materialization reuse was accepted: preview=%+v err=%v", directReuse, err)
+	}
+
+	first, err := Apply(checkpoint, testPlan(t, checkpoint, "reuse-one", frontier.Identity, "frontier-1", "frontier-r-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontierOne := findAuthority(t, first.Checkpoint.View().Authorities, func(authority AuthorityRecord) bool {
+		return authority.State == AuthorityVerifiedUnclaimed
+	})
+	second, err := Apply(first.Checkpoint, testPlan(t, first.Checkpoint, "reuse-two", frontierOne.Identity, "frontier-2", "frontier-r-2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontierTwo := findAuthority(t, second.Checkpoint.View().Authorities, func(authority AuthorityRecord) bool {
+		return authority.State == AuthorityVerifiedUnclaimed
+	})
+	afterInterveningReservation, err := PreviewApply(second.Checkpoint, ApplyDraft{
+		BaseBinding: second.Binding, Candidate: supportedCandidate(t, "reuse-three-reservation"),
+		Handoffs: []HandoffDirective{{
+			Source: frontierTwo.Identity, Action: HandoffTransfer,
+			TargetLocalID: "frontier-3", TargetReservationID: frontier.ReservationID, TargetNodeID: "work",
+		}},
+	})
+	if err == nil || afterInterveningReservation.Plan != nil || !strings.Contains(err.Error(), "historical reservation") {
+		t.Fatalf("intervening-epoch reservation reuse was accepted: preview=%+v err=%v", afterInterveningReservation, err)
+	}
+	afterIntervening, err := PreviewApply(second.Checkpoint, ApplyDraft{
+		BaseBinding: second.Binding, Candidate: supportedCandidate(t, "reuse-three"),
+		Handoffs: []HandoffDirective{{
+			Source: frontierTwo.Identity, Action: HandoffTransfer,
+			TargetLocalID: frontier.LocalID, TargetReservationID: "frontier-r-3", TargetNodeID: frontier.NodeID,
+		}},
+	})
+	if err == nil || afterIntervening.Plan != nil || !strings.Contains(err.Error(), "historical logical frontier") {
+		t.Fatalf("intervening-epoch logical-frontier reentry was accepted: preview=%+v err=%v", afterIntervening, err)
+	}
+}
+
+func TestVerifierRejectsRehashedHistoricalMaterializationReuse(t *testing.T) {
+	checkpoint := testCheckpoint(t, "reuse-replay-zero", []AuthoritySeed{{
+		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	source := checkpoint.View().Authorities[0]
+	applied, err := Apply(checkpoint, testPlan(t, checkpoint, "reuse-replay-one", source.Identity, "next", "next-r"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	forged := cloneWire(applied.Checkpoint.wire)
+	record := forged.History[0].Apply
+	handoff := &record.HandoffSet[0]
+	target := cloneAuthority(*handoff.Target)
+	target.LocalID = source.LocalID
+	target.ReservationID = source.ReservationID
+	target.NodeID = source.NodeID
+	target.Identity, _ = authorityIdentity(forged.Anchor.RunID, target)
+	handoff.Target = &target
+	basis, _ := applyHandoffBasis(record.applyCore)
+	handoff.ID, _ = handoffIdentity(handoff.Source, handoff.Action, handoff.Target, basis)
+	record.HandoffSetDigest, _ = handoffSetDigest(record.HandoffSet)
+	record.ProposalDigest, _ = proposalDigest(record.applyCore)
+	record.RecordDigest, _ = applyRecordDigest(*record)
+	forged.History[0].Digest, _ = historyEventDigest(forged.History[0])
+	source.State = AuthorityHandedOff
+	source.Successor = target.Identity
+	source.TerminalRecordID = handoff.ID
+	forged.Authorities = []AuthorityRecord{source, target}
+	sortAuthorities(forged.Authorities)
+	forged.Digest, _ = checkpointDigest(forged)
+	if err := VerifyCheckpointV8(&CheckpointV8{wire: forged}); err == nil || !strings.Contains(err.Error(), "historical reservation") {
+		t.Fatalf("rehashed historical materialization reuse was accepted: %v", err)
+	}
+}
+
 func TestFrozenEligibilityClassifier(t *testing.T) {
 	supported, err := ClassifyTemplateSource(testTemplateSource("supported"))
 	if err != nil || supported.MatrixVersion != EligibilityMatrixVersion || supported.Status != EligibilitySupported || supported.Reason != EligibilityReasonSupported || supported.Candidate() == nil {
@@ -614,6 +717,121 @@ func TestRepeatedEpochTransferProperty(t *testing.T) {
 	}
 }
 
+func TestPublicOutputsEnforceCanonicalWireBudgets(t *testing.T) {
+	candidate := supportedCandidate(t, "wire-budget")
+
+	t.Run("initialize", func(t *testing.T) {
+		if _, err := Initialize("wire-initialize", candidate, authoritySeeds(30_000, false)); !errors.Is(err, ErrOverBudget) {
+			t.Fatalf("oversized initialization checkpoint: %v", err)
+		}
+	})
+
+	t.Run("preview", func(t *testing.T) {
+		checkpoint, err := Initialize("wire-preview", candidate, authoritySeeds(25_000, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		directives := make([]HandoffDirective, 0, len(checkpoint.wire.Authorities))
+		for i, authority := range checkpoint.wire.Authorities {
+			directives = append(directives, HandoffDirective{
+				Source: authority.Identity, Action: HandoffTransfer,
+				TargetLocalID: fmt.Sprintf("next-%05d", i), TargetReservationID: fmt.Sprintf("next-r-%05d", i), TargetNodeID: "work",
+			})
+		}
+		preview, err := PreviewApply(checkpoint, ApplyDraft{
+			BaseBinding: checkpoint.Binding(), Candidate: candidate, Handoffs: directives,
+		})
+		if !errors.Is(err, ErrOverBudget) || preview.Plan != nil {
+			t.Fatalf("oversized apply plan: preview=%+v err=%v", preview, err)
+		}
+	})
+
+	t.Run("apply", func(t *testing.T) {
+		checkpoint, err := Initialize("wire-apply", candidate, authoritySeeds(20_000, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		preview, err := PreviewApply(checkpoint, ApplyDraft{
+			BaseBinding: checkpoint.Binding(), Candidate: candidate,
+			Handoffs: retainAll(checkpoint.wire.Authorities),
+		})
+		if err != nil || preview.Plan == nil {
+			t.Fatalf("bounded apply plan: preview=%+v err=%v", preview, err)
+		}
+		if _, err := EncodeApplyPlan(preview.Plan); err != nil {
+			t.Fatalf("preview returned an unencodable plan: %v", err)
+		}
+		result, err := Apply(checkpoint, preview.Plan)
+		if !errors.Is(err, ErrOverBudget) || result.Checkpoint != nil {
+			t.Fatalf("oversized applied checkpoint: result=%+v err=%v", result, err)
+		}
+	})
+
+	t.Run("finish_exact_boundary", func(t *testing.T) {
+		// These fixed cardinalities deliberately pin the canonical encoding
+		// boundary. Any wire-shape change must make the budget decision explicit.
+		boundary, err := Initialize("r"+strings.Repeat("x", 152), candidate, authoritySeeds(29_848, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := EncodeCheckpointV8(boundary)
+		if err != nil || len(encoded) != MaxCheckpointBytes {
+			t.Fatalf("checkpoint boundary bytes=%d err=%v, want %d", len(encoded), err, MaxCheckpointBytes)
+		}
+		claimed := findAuthority(t, boundary.wire.Authorities, func(authority AuthorityRecord) bool {
+			return authority.LocalID == "a-00000"
+		})
+		result, err := FinishClaimed(boundary, FinishClaim{
+			BaseBinding: boundary.Binding(), Identity: claimed.Identity,
+			Result: FinishCompleted, EvidenceDigest: testDigest("wire-finish"),
+		})
+		if !errors.Is(err, ErrOverBudget) || result.Checkpoint != nil {
+			t.Fatalf("finish crossed checkpoint wire boundary: result=%+v err=%v", result, err)
+		}
+	})
+}
+
+func TestDependencyIndexHighCardinalityWorkIsNearLinear(t *testing.T) {
+	const authoritiesCount = 5_000
+	checkpoint, err := Initialize("dependency-work", supportedCandidate(t, "dependency-work"), authoritySeeds(authoritiesCount, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorities := checkpoint.wire.Authorities
+	index, err := newAuthorityDependencyIndex(authorities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := make(map[OwnerIdentity]struct{}, len(authorities))
+	for _, authority := range authorities {
+		if blocker, blocked := transferSourceBlocker(authority); blocked {
+			t.Fatalf("independent frontier unexpectedly blocked: %+v", blocker)
+		}
+		sources[authority.Identity] = struct{}{}
+	}
+	if blockers := index.activeDependentBlockers(sources, MaxBlockers); len(blockers) != 0 {
+		t.Fatalf("independent frontiers have dependent blockers: %+v", blockers)
+	}
+	if index.buildAuthorityVisits != authoritiesCount || index.buildDependencyVisits != 0 || index.descendantVisits != 0 {
+		t.Fatalf("dependency work is not linear for independent authorities: authorities=%d dependencies=%d descendants=%d",
+			index.buildAuthorityVisits, index.buildDependencyVisits, index.descendantVisits)
+	}
+
+	directives := make([]HandoffDirective, 0, len(authorities))
+	for i, authority := range authorities {
+		directives = append(directives, HandoffDirective{
+			Source: authority.Identity, Action: HandoffTransfer,
+			TargetLocalID: fmt.Sprintf("next-%04d", i), TargetReservationID: fmt.Sprintf("next-r-%04d", i), TargetNodeID: "work",
+		})
+	}
+	preview, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "dependency-work-next"), Handoffs: directives,
+	})
+	if err != nil || preview.Plan == nil || len(preview.Blockers) != 0 {
+		t.Fatalf("high-cardinality preview: blockers=%+v err=%v", preview.Blockers, err)
+	}
+}
+
 func testCheckpoint(t *testing.T, prompt string, seeds []AuthoritySeed) *CheckpointV8 {
 	t.Helper()
 	checkpoint, err := Initialize("run", supportedCandidate(t, prompt), seeds)
@@ -719,4 +937,19 @@ func differentHex(value byte) byte {
 		return '1'
 	}
 	return '0'
+}
+
+func authoritySeeds(count int, claimedFirst bool) []AuthoritySeed {
+	seeds := make([]AuthoritySeed, count)
+	for i := range seeds {
+		state := AuthorityVerifiedUnclaimed
+		if claimedFirst && i == 0 {
+			state = AuthorityClaimed
+		}
+		seeds[i] = AuthoritySeed{
+			LocalID: fmt.Sprintf("a-%05d", i), ReservationID: fmt.Sprintf("r-%05d", i),
+			NodeID: "work", Kind: AuthorityFrontier, State: state,
+		}
+	}
+	return seeds
 }

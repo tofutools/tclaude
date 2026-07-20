@@ -12,15 +12,7 @@ func EncodeCheckpointV8(checkpoint *CheckpointV8) ([]byte, error) {
 	if err := VerifyCheckpointV8(checkpoint); err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(checkpoint.wire)
-	if err != nil {
-		return nil, err
-	}
-	encoded = append(encoded, '\n')
-	if len(encoded) > MaxCheckpointBytes {
-		return nil, &OverBudgetError{Limit: "checkpoint_bytes", Value: len(encoded), Maximum: MaxCheckpointBytes}
-	}
-	return encoded, nil
+	return marshalCheckpointWire(checkpoint.wire)
 }
 
 func DecodeCheckpointV8(data []byte) (*CheckpointV8, error) {
@@ -52,15 +44,7 @@ func EncodeApplyPlan(plan *ApplyPlan) ([]byte, error) {
 	if err := validateApplyCoreStatic(plan.core.RunID, plan.core); err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(plan.core)
-	if err != nil {
-		return nil, err
-	}
-	encoded = append(encoded, '\n')
-	if len(encoded) > MaxApplyPlanBytes {
-		return nil, &OverBudgetError{Limit: "apply_plan_bytes", Value: len(encoded), Maximum: MaxApplyPlanBytes}
-	}
-	return encoded, nil
+	return marshalApplyCore(plan.core)
 }
 
 func DecodeApplyPlan(data []byte) (*ApplyPlan, error) {
@@ -97,6 +81,47 @@ func decodeStrictJSON(data []byte, target any) error {
 			return err
 		}
 		return fmt.Errorf("multiple JSON values")
+	}
+	return nil
+}
+
+func marshalCheckpointWire(wire checkpointWire) ([]byte, error) {
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return nil, err
+	}
+	encoded = append(encoded, '\n')
+	if err := checkWireBudget("checkpoint_bytes", len(encoded), MaxCheckpointBytes); err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func marshalApplyCore(core applyCore) ([]byte, error) {
+	encoded, err := json.Marshal(core)
+	if err != nil {
+		return nil, err
+	}
+	encoded = append(encoded, '\n')
+	if err := checkWireBudget("apply_plan_bytes", len(encoded), MaxApplyPlanBytes); err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func ensureCheckpointWireBudget(wire checkpointWire) error {
+	_, err := marshalCheckpointWire(wire)
+	return err
+}
+
+func ensureApplyCoreWireBudget(core applyCore) error {
+	_, err := marshalApplyCore(core)
+	return err
+}
+
+func checkWireBudget(limit string, value, maximum int) error {
+	if value > maximum {
+		return &OverBudgetError{Limit: limit, Value: value, Maximum: maximum}
 	}
 	return nil
 }

@@ -188,7 +188,11 @@ func PreviewApply(checkpoint *CheckpointV8, draft ApplyDraft) (PreviewResult, er
 	if err != nil {
 		return PreviewResult{}, err
 	}
-	handoffs, blockers, err := planHandoffs(checkpoint.wire.Anchor.RunID, checkpoint.wire.Authorities, protected, epoch, basis, draft.Handoffs)
+	dependencies, err := newAuthorityDependencyIndex(checkpoint.wire.Authorities)
+	if err != nil {
+		return PreviewResult{}, err
+	}
+	handoffs, blockers, err := planHandoffs(checkpoint.wire.Anchor.RunID, dependencies, protected, epoch, basis, draft.Handoffs)
 	if err != nil {
 		return PreviewResult{}, err
 	}
@@ -247,7 +251,11 @@ func Apply(checkpoint *CheckpointV8, plan *ApplyPlan) (TransitionResult, error) 
 		core.CandidateEpoch.Ordinal != uint64(len(checkpoint.wire.Epochs)) {
 		return TransitionResult{}, fmt.Errorf("%w: apply plan no longer matches protected authority", ErrInvalid)
 	}
-	authorities, err := applyHandoffSet(checkpoint.wire.Anchor.RunID, checkpoint.wire.Authorities, core.HandoffSet)
+	dependencies, err := newAuthorityDependencyIndex(checkpoint.wire.Authorities)
+	if err != nil {
+		return TransitionResult{}, err
+	}
+	authorities, err := applyHandoffSet(checkpoint.wire.Anchor.RunID, checkpoint.wire.Authorities, core.HandoffSet, dependencies)
 	if err != nil {
 		return TransitionResult{}, err
 	}
@@ -319,8 +327,12 @@ func FinishClaimed(checkpoint *CheckpointV8, claim FinishClaim) (TransitionResul
 		}
 		return TransitionResult{}, fmt.Errorf("%w: owner identity is not claimed work", ErrInvalid)
 	}
-	if dependents := activeDependents(checkpoint.wire.Authorities, authority.Identity); len(dependents) != 0 {
-		return TransitionResult{}, fmt.Errorf("%w: %d dependent authorities", ErrProtectedAuthority, len(dependents))
+	dependencies, err := newAuthorityDependencyIndex(checkpoint.wire.Authorities)
+	if err != nil {
+		return TransitionResult{}, err
+	}
+	if dependencies.hasActiveDependent(authority.Identity) {
+		return TransitionResult{}, ErrProtectedAuthority
 	}
 	if len(checkpoint.wire.History) >= MaxHistoryEvents {
 		return TransitionResult{}, &OverBudgetError{Limit: "history_events", Value: len(checkpoint.wire.History) + 1, Maximum: MaxHistoryEvents}
@@ -406,7 +418,7 @@ func computeDiff(before, after TemplateEpoch) (Diff, error) {
 	return diff, err
 }
 
-func planHandoffs(runID string, current, protected []AuthorityRecord, epoch TemplateEpoch, basis string, directives []HandoffDirective) ([]Handoff, []Blocker, error) {
+func planHandoffs(runID string, dependencies *authorityDependencyIndex, protected []AuthorityRecord, epoch TemplateEpoch, basis string, directives []HandoffDirective) ([]Handoff, []Blocker, error) {
 	if len(directives) > MaxHandoffEntries {
 		return nil, nil, &OverBudgetError{Limit: "handoff_entries", Value: len(directives), Maximum: MaxHandoffEntries}
 	}
@@ -432,6 +444,7 @@ func planHandoffs(runID string, current, protected []AuthorityRecord, epoch Temp
 	nodeSet := epochNodeSet(epoch)
 	targetIDs := make(map[OwnerIdentity]struct{})
 	targetReservations := make(map[string]struct{})
+	transferSources := make(map[OwnerIdentity]struct{})
 	handoffs := make([]Handoff, 0, len(protected))
 	for _, authority := range protected {
 		directive, ok := directiveByID[authority.Identity]
@@ -452,7 +465,10 @@ func planHandoffs(runID string, current, protected []AuthorityRecord, epoch Temp
 			}
 			handoffs = append(handoffs, handoff)
 		case HandoffTransfer:
-			blockers = append(blockers, transferBlockers(current, authority)...)
+			if blocker, blocked := transferSourceBlocker(authority); blocked {
+				blockers = append(blockers, blocker)
+			}
+			transferSources[authority.Identity] = struct{}{}
 			if !validIdentifier(directive.TargetLocalID) || !validIdentifier(directive.TargetReservationID) || !validIdentifier(directive.TargetNodeID) {
 				return nil, nil, fmt.Errorf("%w: transfer target fields are invalid", ErrInvalid)
 			}
@@ -475,7 +491,13 @@ func planHandoffs(runID string, current, protected []AuthorityRecord, epoch Temp
 			if _, exists := targetReservations[target.ReservationID]; exists {
 				return nil, nil, fmt.Errorf("%w: transfer successor reservation is reused", ErrInvalid)
 			}
-			if _, exists := authorityByID(current, target.Identity); exists {
+			if dependencies.reservationUsed(target.ReservationID) {
+				return nil, nil, fmt.Errorf("%w: transfer successor resurrects a historical reservation", ErrInvalid)
+			}
+			if !dependencies.logicalFrontierAvailable(authority.Identity, target.LocalID, target.NodeID) {
+				return nil, nil, fmt.Errorf("%w: transfer successor re-enters a historical logical frontier", ErrInvalid)
+			}
+			if _, exists := dependencies.byID[target.Identity]; exists {
 				return nil, nil, fmt.Errorf("%w: transfer successor resurrects an existing identity", ErrInvalid)
 			}
 			targetIDs[target.Identity] = struct{}{}
@@ -490,6 +512,7 @@ func planHandoffs(runID string, current, protected []AuthorityRecord, epoch Temp
 			return nil, nil, fmt.Errorf("%w: handoff action %q is invalid", ErrInvalid, directive.Action)
 		}
 	}
+	blockers = append(blockers, dependencies.activeDependentBlockers(transferSources, MaxBlockers-len(blockers))...)
 	slices.SortFunc(handoffs, func(a, b Handoff) int { return cmp.Compare(a.Source, b.Source) })
 	blockers = canonicalBlockers(blockers)
 	if len(blockers) > MaxBlockers {
@@ -498,8 +521,7 @@ func planHandoffs(runID string, current, protected []AuthorityRecord, epoch Temp
 	return handoffs, blockers, nil
 }
 
-func transferBlockers(authorities []AuthorityRecord, source AuthorityRecord) []Blocker {
-	var result []Blocker
+func transferSourceBlocker(source AuthorityRecord) (Blocker, bool) {
 	if source.State != AuthorityVerifiedUnclaimed || source.Kind != AuthorityFrontier {
 		code := BlockerNotTransferable
 		switch source.State {
@@ -508,13 +530,9 @@ func transferBlockers(authorities []AuthorityRecord, source AuthorityRecord) []B
 		case AuthorityActive:
 			code = blockerForKind(source.Kind)
 		}
-		result = append(result, Blocker{Code: code, AuthorityID: source.Identity})
+		return Blocker{Code: code, AuthorityID: source.Identity}, true
 	}
-	dependents := activeDependents(authorities, source.Identity)
-	for _, dependent := range dependents {
-		result = append(result, Blocker{Code: blockerForKind(dependent.Kind), AuthorityID: dependent.Identity})
-	}
-	return result
+	return Blocker{}, false
 }
 
 func blockerForKind(kind AuthorityKind) BlockerCode {
@@ -593,43 +611,149 @@ func protectedClosure(authorities []AuthorityRecord) ([]AuthorityRecord, error) 
 	return result, nil
 }
 
-func activeDependents(authorities []AuthorityRecord, source OwnerIdentity) []AuthorityRecord {
-	byID := make(map[OwnerIdentity]AuthorityRecord, len(authorities))
-	for _, authority := range authorities {
-		byID[authority.Identity] = authority
+// authorityDependencyIndex is built once for an authority snapshot. It keeps
+// transfer and finish classification linear in the snapshot plus the bounded
+// descendants actually reported, rather than rebuilding and rescanning the
+// whole authority graph for every handoff.
+type authorityDependencyIndex struct {
+	byID                     map[OwnerIdentity]AuthorityRecord
+	reverse                  map[OwnerIdentity][]OwnerIdentity
+	activeDependent          map[OwnerIdentity]bool
+	materializedReservations map[string]OwnerIdentity
+	materializedFrontiers    map[frontierMaterializationKey]map[OwnerIdentity]struct{}
+	buildAuthorityVisits     int
+	buildDependencyVisits    int
+	descendantVisits         int
+}
+
+type frontierMaterializationKey struct {
+	localID string
+	nodeID  string
+}
+
+func newAuthorityDependencyIndex(authorities []AuthorityRecord) (*authorityDependencyIndex, error) {
+	index := &authorityDependencyIndex{
+		byID:                     make(map[OwnerIdentity]AuthorityRecord, len(authorities)),
+		reverse:                  make(map[OwnerIdentity][]OwnerIdentity, len(authorities)),
+		activeDependent:          make(map[OwnerIdentity]bool, len(authorities)),
+		materializedReservations: make(map[string]OwnerIdentity, len(authorities)),
+		materializedFrontiers:    make(map[frontierMaterializationKey]map[OwnerIdentity]struct{}, len(authorities)),
 	}
-	var result []AuthorityRecord
 	for _, authority := range authorities {
-		if authority.Identity == source || !authority.State.active() {
-			continue
-		}
-		seen := map[OwnerIdentity]struct{}{}
-		stack := slices.Clone(authority.DependsOn)
-		depends := false
-		for len(stack) > 0 && !depends {
-			id := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			if id == source {
-				depends = true
-				break
+		index.buildAuthorityVisits++
+		index.byID[authority.Identity] = authority
+		if authority.Kind == AuthorityFrontier {
+			if owner, exists := index.materializedReservations[authority.ReservationID]; exists && owner != authority.Identity {
+				return nil, fmt.Errorf("%w: materialized frontier reservation is reused", ErrInvalid)
 			}
-			if _, ok := seen[id]; ok {
+			index.materializedReservations[authority.ReservationID] = authority.Identity
+			key := frontierMaterializationKey{authority.LocalID, authority.NodeID}
+			if index.materializedFrontiers[key] == nil {
+				index.materializedFrontiers[key] = make(map[OwnerIdentity]struct{})
+			}
+			index.materializedFrontiers[key][authority.Identity] = struct{}{}
+		}
+	}
+	for _, authority := range authorities {
+		for _, dependency := range authority.DependsOn {
+			index.buildDependencyVisits++
+			if _, ok := index.byID[dependency]; !ok {
+				return nil, fmt.Errorf("%w: authority dependency is absent", ErrInvalid)
+			}
+			index.reverse[dependency] = append(index.reverse[dependency], authority.Identity)
+		}
+	}
+	for dependency := range index.reverse {
+		slices.Sort(index.reverse[dependency])
+	}
+
+	// Propagate the existence of active descendants toward their dependencies.
+	// Each reachable authority and dependency link is visited at most once.
+	reachable := make(map[OwnerIdentity]struct{}, len(authorities))
+	queue := make([]OwnerIdentity, 0, len(authorities))
+	for _, authority := range authorities {
+		if authority.State.active() {
+			reachable[authority.Identity] = struct{}{}
+			queue = append(queue, authority.Identity)
+		}
+	}
+	for cursor := 0; cursor < len(queue); cursor++ {
+		authority := index.byID[queue[cursor]]
+		for _, dependency := range authority.DependsOn {
+			index.activeDependent[dependency] = true
+			if _, seen := reachable[dependency]; seen {
+				continue
+			}
+			reachable[dependency] = struct{}{}
+			queue = append(queue, dependency)
+		}
+	}
+	return index, nil
+}
+
+func (index *authorityDependencyIndex) hasActiveDependent(source OwnerIdentity) bool {
+	return index != nil && index.activeDependent[source]
+}
+
+func (index *authorityDependencyIndex) reservationUsed(reservationID string) bool {
+	if index == nil {
+		return false
+	}
+	_, exists := index.materializedReservations[reservationID]
+	return exists
+}
+
+// logicalFrontierAvailable permits the sole historical-key exception: an
+// atomic one-to-one handoff may preserve its source LocalID+NodeID under a
+// fresh reservation. Any other return to an older logical frontier is reentry.
+func (index *authorityDependencyIndex) logicalFrontierAvailable(source OwnerIdentity, localID, nodeID string) bool {
+	if index == nil {
+		return true
+	}
+	owners := index.materializedFrontiers[frontierMaterializationKey{localID, nodeID}]
+	if len(owners) == 0 {
+		return true
+	}
+	_, direct := owners[source]
+	return direct
+}
+
+func (index *authorityDependencyIndex) activeDependentBlockers(sources map[OwnerIdentity]struct{}, limit int) []Blocker {
+	if index == nil || limit <= 0 || len(sources) == 0 {
+		return nil
+	}
+	queue := make([]OwnerIdentity, 0, len(sources))
+	seen := make(map[OwnerIdentity]struct{}, len(sources))
+	for source := range sources {
+		queue = append(queue, source)
+		seen[source] = struct{}{}
+	}
+	slices.Sort(queue)
+	result := make([]Blocker, 0)
+	reported := make(map[OwnerIdentity]struct{})
+	for cursor := 0; cursor < len(queue) && len(result) < limit; cursor++ {
+		for _, id := range index.reverse[queue[cursor]] {
+			authority := index.byID[id]
+			_, alreadyReported := reported[id]
+			if authority.State.active() && !alreadyReported {
+				result = append(result, Blocker{Code: blockerForKind(authority.Kind), AuthorityID: authority.Identity})
+				reported[id] = struct{}{}
+				if len(result) == limit {
+					break
+				}
+			}
+			if _, exists := seen[id]; exists {
 				continue
 			}
 			seen[id] = struct{}{}
-			if record, ok := byID[id]; ok {
-				stack = append(stack, record.DependsOn...)
-			}
-		}
-		if depends {
-			result = append(result, authority)
+			index.descendantVisits++
+			queue = append(queue, id)
 		}
 	}
-	sortAuthorities(result)
-	return result
+	return canonicalBlockers(result)
 }
 
-func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff) ([]AuthorityRecord, error) {
+func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff, dependencies *authorityDependencyIndex) ([]AuthorityRecord, error) {
 	result := cloneAuthorities(current)
 	index := make(map[OwnerIdentity]int, len(result))
 	for i, authority := range result {
@@ -646,7 +770,7 @@ func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff
 		if handoff.Action != HandoffTransfer || handoff.Target == nil || result[i].State != AuthorityVerifiedUnclaimed || result[i].Kind != AuthorityFrontier {
 			return nil, fmt.Errorf("%w: handoff transfer is invalid", ErrInvalid)
 		}
-		if len(activeDependents(current, handoff.Source)) != 0 {
+		if dependencies.hasActiveDependent(handoff.Source) {
 			return nil, ErrProtectedAuthority
 		}
 		target := cloneAuthority(*handoff.Target)
@@ -656,6 +780,12 @@ func applyHandoffSet(runID string, current []AuthorityRecord, handoffs []Handoff
 		}
 		if _, exists := index[target.Identity]; exists {
 			return nil, fmt.Errorf("%w: handoff successor already exists", ErrInvalid)
+		}
+		if dependencies.reservationUsed(target.ReservationID) {
+			return nil, fmt.Errorf("%w: handoff successor resurrects a historical reservation", ErrInvalid)
+		}
+		if !dependencies.logicalFrontierAvailable(handoff.Source, target.LocalID, target.NodeID) {
+			return nil, fmt.Errorf("%w: handoff successor re-enters a historical logical frontier", ErrInvalid)
 		}
 		result[i].State = AuthorityHandedOff
 		result[i].Successor = target.Identity
