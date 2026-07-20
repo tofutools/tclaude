@@ -1952,14 +1952,14 @@ export class ProcessTemplateEditor {
 // openTemplateEditor mounts the editor into `mount` for a template id (or a
 // blank scaffold). Returns the editor instance; throws on fetch errors so the
 // caller can render its own error state.
-export async function openTemplateEditor(mount, { id, blank = false, version, config = {} } = {}) {
+export async function openTemplateEditor(mount, { id, name = '', blank = false, version, view = null, config = {} } = {}) {
   // Destroy the previous instance BEFORE fetching: on a fetch failure the
   // caller renders an error into the mount, and a live ghost editor handle
   // must not keep gating navigation with its stale dirty state.
   mount.__processEditor?.destroy?.();
-  const view = blank ? blankEditView(id) : await fetchEditView(id, version);
+  const editView = view || (blank ? blankEditView(name || id) : await fetchEditView(id, version));
   const ui = await import('./process-editor-island.js');
-  return new ProcessTemplateEditor(mount, view, {
+  return new ProcessTemplateEditor(mount, editView, {
     ...config, blank,
     ui: { createPublisher: ui.createProcessEditorPublisher, mount: ui.mountProcessEditorIsland },
   });

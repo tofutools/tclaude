@@ -9,12 +9,18 @@ package agentd_test
 // feeds the editor's explicit conflict dialog.
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -338,4 +344,39 @@ func TestProcessTemplateCreateGeneratesIDAndRejectsCallerSuppliedOnes(t *testing
 	})
 	assert.Equal(t, http.StatusBadRequest, rejectRec.Code, rejectRec.Body.String())
 	assert.Contains(t, rejectRec.Body.String(), "generated")
+}
+
+func TestDashboardProcessTemplateCreateReplaysGeneratedIDForSameBrowserAttempt(t *testing.T) {
+	_, root := processEngineFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	scaffold := processRESTTemplate("placeholder", "created from the dashboard", 40)
+	scaffold.ID = ""
+	scaffold.Name = "Release Train"
+	body := map[string]any{"template": scaffold, "layout": scaffold.Layout}
+	const path = "/v1/process/templates"
+	const attemptID = "11111111-2222-4333-8444-555555555555"
+	request := func() *http.Request {
+		req := testharness.JSONRequest(t, http.MethodPost, path, body)
+		encoded, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		req.Body = io.NopCloser(bytes.NewReader(encoded))
+		digest := sha256.Sum256([]byte(http.MethodPost + "\x00" + path + "\x00" + string(encoded)))
+		req.Header.Set(agent.IdempotencyKeyHeader, attemptID)
+		req.Header.Set(agent.RequestDigestHeader, fmt.Sprintf("%x", digest))
+		return req
+	}
+
+	first := testharness.Serve(dash, request())
+	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+	second := testharness.Serve(dash, request())
+	require.Equal(t, http.StatusCreated, second.Code, second.Body.String())
+	assert.Equal(t, first.Body.String(), second.Body.String(), "a retry replays the original generated id")
+	assert.Equal(t, "true", second.Header().Get("X-Tclaude-Idempotent-Replay"))
+
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	records, err := fs.ListTemplates(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, records, 1, "one logical browser create persists one generated template")
 }

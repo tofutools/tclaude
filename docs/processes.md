@@ -698,10 +698,12 @@ key: it is part of every `id@sha256:<hash>` ref and is what pinned versions and
 live runs resolve through, so it is never editable. Dashboard-created templates
 never let an operator choose it — `POST /v1/process/templates` mints a compact
 lowercase-hex UUID, and the dashboard's **+ new template** asks only for a
-display name. Templates authored as YAML through the CLI still carry their own
-hand-written ids, which is why `docs/examples/*.yaml` have readable ones. Its `name` is a free-text display label shown wherever the template
-is listed, and it can be changed at any time. A template with no name falls back
-to showing its id.
+display name. Submitting that dialog persists the named scaffold, then opens
+the stored template by the id returned from the backend. Templates authored as
+YAML through the CLI still carry their own hand-written ids, which is why
+`docs/examples/*.yaml` have readable ones. Its `name` is a free-text display
+label shown wherever the template is listed, and it can be changed at any time.
+A template with no name falls back to showing its id.
 
 Generated run ids follow the template's display name rather than its id, so a
 run reads as `release-train-20260719-2210` even when the template is keyed by a

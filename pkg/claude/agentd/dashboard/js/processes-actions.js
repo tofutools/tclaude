@@ -1,5 +1,6 @@
 import { buildWorklistAction, isDestructiveAction, mintUUID, retainedActionKey } from './process-worklist-core.js';
 import { templateHeadSignature } from './process-external-change.js';
+import { idempotentRequestHeaders } from './request-idempotency.js';
 import { dashboardState } from './snapshot-store.js';
 import {
   PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
@@ -157,28 +158,95 @@ export function createProcessesActions({
     if (navigate) announceLocation();
     return true;
   }
-  async function openEditor(id, blank = false, name = '', { navigate = true } = {}) {
-    state.setCanvas({ kind: 'editor', id, blank, name, key: `${id}:${blank}:${Date.now()}` });
-    state.setNotice(blank ? `Blank template “${name}” ready. It gets an id when you first save.` : `Opening ${id}.`);
+  async function openEditor(id, blank = false, name = '', { navigate = true, view = null } = {}) {
+    state.setCanvas({ kind: 'editor', id, blank, name, view, key: `${id}:${blank}:${Date.now()}` });
+    state.setNotice(blank ? `Blank template “${name}” ready.` : `Opening ${name || id}.`);
     // `navigate: false` is the router restoring this location FROM the URL —
     // pushing it back would forge a duplicate history entry.
     if (navigate) announceLocation();
   }
-  // Creation collects a NAME, never an id: the store mints the id on first
-  // save. The draft is not persisted until then, so cancelling costs nothing.
+  // Creation collects a NAME, never an id. Submitting the dialog persists the
+  // named scaffold through the collection endpoint, which mints the permanent
+  // id; only then do we open the normal stored-template editor. That keeps the
+  // editor's identity, name, and CAS base in one backend-confirmed generation.
   function openCreate() {
     state.setCreate({ key: `create:${Date.now()}`, name: '' });
     return true;
   }
   function closeCreate() {
+    if (state.mutation.value.busy) return false;
     state.setCreate(null);
     return true;
   }
   async function submitCreate(name) {
     const next = String(name ?? '').trim();
     if (!next) return false;
-    state.setCreate(null);
-    return openEditor('', true, next);
+    const spec = state.create.value;
+    if (!spec) return false;
+    if (spec.attempt?.name === next && spec.attempt.blocked) {
+      const message = 'The earlier create may already have succeeded. Refresh Templates to reconcile it before starting another creation.';
+      state.setCreate({ ...spec, name: next, error: message });
+      state.setNotice(`Template creation paused: ${message}`);
+      return false;
+    }
+    if (!state.beginMutation()) return false;
+    const attempt = spec.attempt?.name === next
+      ? spec.attempt : { name: next, key: mintAttemptID() };
+    state.setCreate({ ...spec, name: next, error: '', attempt });
+    try {
+      const { blankEditView } = await import('./process-edit-model.js');
+      const scaffold = blankEditView(next);
+      const template = { ...scaffold.template };
+      delete template.id;
+      const path = '/v1/process/templates';
+      const requestBody = JSON.stringify({ template, edges: scaffold.edges, layout: scaffold.layout });
+      const response = await fetchImpl(path, {
+        method: 'POST', headers: idempotentRequestHeaders('POST', path, requestBody, attempt.key),
+        credentials: 'same-origin', body: requestBody,
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        const outcomeUnknown = body?.code === 'idempotency_unknown';
+        const detail = body?.message || body?.error || `${response.status} ${response.statusText}`;
+        const error = new Error(outcomeUnknown
+          ? `${detail} Refresh Templates to reconcile the earlier create before starting another creation.`
+          : detail);
+        error.definitiveResponse = !outcomeUnknown;
+        error.outcomeUnknown = outcomeUnknown;
+        throw error;
+      }
+      if (!body) throw new Error('template creation returned an unreadable response');
+      const id = String(body.id || '').trim();
+      if (!id) throw new Error('template creation returned no id');
+      const currentRef = String(body.ref || '').trim();
+      const sourceHash = String(body.sourceHash || '').trim();
+      const semanticHash = String(body.semanticHash || '').trim();
+      if (!currentRef || !sourceHash || !semanticHash) throw new Error('template creation returned incomplete version metadata');
+      const createdView = {
+        ...scaffold,
+        template: { ...template, id },
+        currentRef, sourceHash, semanticHash,
+        diagnostics: body.diagnostics || [],
+        ...(body.actor ? { actor: body.actor } : {}),
+        ...(body.authoredAt ? { authoredAt: body.authoredAt } : {}),
+      };
+      if (state.create.value?.key === spec.key) state.setCreate(null);
+      await openEditor(id, false, next, { view: createdView });
+      void load('templates', { quiet: true });
+      return true;
+    } catch (error) {
+      if (state.create.value?.key === spec.key) {
+        state.setCreate({
+          ...spec, name: next, error: error.message,
+          attempt: error.definitiveResponse ? null : { ...attempt, blocked: !!error.outcomeUnknown },
+        });
+      }
+      state.setNotice(`Template creation failed: ${error.message}`);
+      notify(`process template creation failed: ${error.message}`, true);
+      return false;
+    } finally {
+      state.endMutation();
+    }
   }
   // applyLocation drives the tab from a location the ROUTER resolved (a deep
   // link, a reload, or a browser Back/Forward). It reuses the ordinary open
