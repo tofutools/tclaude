@@ -76,7 +76,7 @@ function edgeLabel(edge, siblingCount = 2, nodeType = '', selected = false) {
 function buildEdgeLabelGroup(edge, label) {
   if (!label) return null;
   const labelGroup = svgElement('g', { class: 'process-edge-label', transform: `translate(${edge.label.x} ${edge.label.y})`, 'aria-hidden': 'true' });
-  const text = svgElement('text', { 'text-anchor': edge.back ? 'end' : 'middle' });
+  const text = svgElement('text', { 'text-anchor': 'middle', 'dominant-baseline': 'middle' });
   text.textContent = label;
   labelGroup.append(text);
   return labelGroup;
@@ -716,7 +716,7 @@ export class ProcessGraph {
       });
       const badge = svgElement('text', {
         class: `process-edge-badge process-edge-badge-${edge.badgeSeverity || 'error'}`,
-        x: 0, y: 0, 'text-anchor': edge.back ? 'end' : 'middle',
+        x: 0, y: 0, 'text-anchor': 'middle',
       });
       badge.textContent = String(edge.badge);
       marker.append(badge);

@@ -519,10 +519,10 @@ function edgeOrientation(from, to) {
   return Math.abs(to.y - from.y) > Math.abs(to.x - from.x) ? 'vertical' : 'horizontal';
 }
 
-function routeLabel(points) {
+function polylineMidpoint(points) {
   const segments = points.slice(1).map((point, index) => ({
     from: points[index], to: point,
-    length: Math.abs(point.x - points[index].x) + Math.abs(point.y - points[index].y),
+    length: Math.hypot(point.x - points[index].x, point.y - points[index].y),
   }));
   const total = segments.reduce((sum, segment) => sum + segment.length, 0);
   let remaining = total / 2;
@@ -530,14 +530,71 @@ function routeLabel(points) {
     if (remaining <= segment.length) {
       const ratio = segment.length ? remaining / segment.length : 0;
       return {
-        x: segment.from.x + (segment.to.x - segment.from.x) * ratio + 7,
-        y: segment.from.y + (segment.to.y - segment.from.y) * ratio - 7,
+        x: segment.from.x + (segment.to.x - segment.from.x) * ratio,
+        y: segment.from.y + (segment.to.y - segment.from.y) * ratio,
         orientation: edgeOrientation(points[0], points[points.length - 1]),
       };
     }
     remaining -= segment.length;
   }
   return { ...points[Math.floor(points.length / 2)] };
+}
+
+function cubicPoint([start, control1, control2, end], ratio) {
+  const inverse = 1 - ratio;
+  const inverseSquared = inverse * inverse;
+  const ratioSquared = ratio * ratio;
+  return {
+    x: inverseSquared * inverse * start.x + 3 * inverseSquared * ratio * control1.x
+      + 3 * inverse * ratioSquared * control2.x + ratioSquared * ratio * end.x,
+    y: inverseSquared * inverse * start.y + 3 * inverseSquared * ratio * control1.y
+      + 3 * inverse * ratioSquared * control2.y + ratioSquared * ratio * end.y,
+  };
+}
+
+function cubicPathMidpoint(points) {
+  // Cubic paths are stored as [P0, P1, P2, P3, P4, P5, P6, ...], with each
+  // command after the first sharing the preceding command's endpoint. Flatten
+  // them deterministically so the label follows half the visible path length,
+  // rather than t=0.5 (which is not the distance midpoint on asymmetric curves).
+  const samples = [];
+  // 24 chords balance reroute cost with around-pixel midpoint accuracy even on
+  // broad curves; practical templates are far smaller than the authoring bound.
+  const steps = 24;
+  for (let offset = 0; offset + 3 < points.length; offset += 3) {
+    const curve = points.slice(offset, offset + 4);
+    for (let step = 0; step <= steps; step += 1) {
+      const ratio = step / steps;
+      samples.push({ point: cubicPoint(curve, ratio), offset, ratio });
+    }
+  }
+  let total = 0;
+  for (let index = 1; index < samples.length; index += 1) {
+    const before = samples[index - 1].point;
+    const after = samples[index].point;
+    samples[index].length = Math.hypot(after.x - before.x, after.y - before.y);
+    total += samples[index].length;
+  }
+  let remaining = total / 2;
+  for (let index = 1; index < samples.length; index += 1) {
+    // Adjacent cubics both emit their shared endpoint. Skip that zero-length
+    // boundary so an exact half at the join cannot borrow the next curve's
+    // offset while retaining the preceding curve's ratio.
+    if (!samples[index].length) continue;
+    if (remaining <= samples[index].length) {
+      const before = samples[index - 1];
+      const after = samples[index];
+      const within = after.length ? remaining / after.length : 0;
+      const ratio = before.ratio + (after.ratio - before.ratio) * within;
+      const curveOffset = after.offset;
+      return {
+        ...cubicPoint(points.slice(curveOffset, curveOffset + 4), ratio),
+        orientation: edgeOrientation(points[0], points[points.length - 1]),
+      };
+    }
+    remaining -= samples[index].length;
+  }
+  return { ...points.at(-1), orientation: edgeOrientation(points[0], points.at(-1)) };
 }
 
 function routeForward(edge, from, to, lane, nodes, edgeSep) {
@@ -548,7 +605,7 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
     return {
       path: points.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '),
       points,
-      label: routeLabel(points),
+      label: polylineMidpoint(points),
     };
   }
   if (to.layer - from.layer > 1) {
@@ -560,7 +617,7 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
     return {
       path,
       points,
-      label: routeLabel(points),
+      label: polylineMidpoint(points),
     };
   }
   const laneOffset = ((lane % 3) - 1) * edgeSep;
@@ -573,7 +630,7 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
     return {
       path,
       points,
-      label: { x: (start.x + end.x) / 2, y: midY - 8, orientation: edgeOrientation(start, end) },
+      label: cubicPathMidpoint(points),
     };
   }
 
@@ -600,7 +657,7 @@ function routeForward(edge, from, to, lane, nodes, edgeSep) {
   return {
     path,
     points,
-    label: { x: midpoint.x, y: midpoint.y - 8, orientation: edgeOrientation(start, end) },
+    label: cubicPathMidpoint(points),
   };
 }
 
@@ -611,17 +668,19 @@ function routeBack(edge, from, to, lane, bounds) {
     const end = { x: from.x + from.width / 2, y: from.y + 10 };
     const outsideX = from.x + radius;
     const path = `M ${start.x} ${start.y} C ${outsideX} ${from.y - radius}, ${outsideX} ${from.y + radius}, ${end.x} ${end.y}`;
+    const points = [start, { x: outsideX, y: from.y - radius }, { x: outsideX, y: from.y + radius }, end];
     return {
       path,
-      points: [start, { x: outsideX, y: from.y - radius }, { x: outsideX, y: from.y + radius }, end],
-      label: { x: outsideX - 7, y: from.y, orientation: 'vertical' },
+      points,
+      label: cubicPathMidpoint(points),
     };
   }
   const start = { x: from.x + from.width / 2, y: from.y };
   const end = { x: to.x + to.width / 2, y: to.y };
   const outsideX = bounds.maxX + 44 + lane;
   const path = `M ${start.x} ${start.y} C ${outsideX} ${start.y}, ${outsideX} ${end.y}, ${end.x} ${end.y}`;
-  return { path, points: [start, { x: outsideX, y: start.y }, { x: outsideX, y: end.y }, end], label: { x: outsideX - 7, y: (start.y + end.y) / 2, orientation: 'vertical' } };
+  const points = [start, { x: outsideX, y: start.y }, { x: outsideX, y: end.y }, end];
+  return { path, points, label: cubicPathMidpoint(points) };
 }
 
 function graphBounds(nodes, marginX, marginY) {

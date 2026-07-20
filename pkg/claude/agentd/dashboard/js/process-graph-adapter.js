@@ -154,10 +154,9 @@ export class ProcessGraphAdapter {
   // host space graphPointToHost produces, or null when the label is not drawn.
   //
   // Decorations anchored to a label must use its real box, not the layout's
-  // anchor point: the anchor is a point on the edge geometry, while the text
-  // grows around it differently per edge (text-anchor is `end` on back edges and
-  // `middle` elsewhere) and scales with the viewport. Deriving a clearance from
-  // the anchor alone therefore collides with the very label it is avoiding.
+  // anchor point: the anchor is a point on the edge geometry, while the text's
+  // rendered extent scales with the viewport. Deriving a clearance from the
+  // anchor alone therefore collides with the very label it is avoiding.
   edgeLabelHostBox(edgeID, host = this.host) {
     if (this.disposed || !host) return null;
     const group = Array.from(this.widget.edgeLayer?.children || [])
