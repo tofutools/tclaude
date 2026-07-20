@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -51,6 +52,13 @@ type FS struct {
 	pathV1AppendBeforeCommit      func() error
 	pathV1AppendAfterCommit       func() error
 	pathV1AppendDirSync           func() error
+	epochV8PublishBeforeEpoch     func() error
+	epochV8PublishAfterEpoch      func() error
+	epochV8PublishBeforeState     func() error
+	epochV8PublishAfterState      func() error
+	epochV8InitializeBeforeCommit func() error
+	epochV8InitializeAfterCommit  func() error
+	epochV8InitializeDirSync      func() error
 }
 
 var processLocks sync.Map
@@ -156,6 +164,33 @@ func (s *FS) SetPathV1AppendDirSyncHookForTest(hook func() error) func() {
 	old := s.pathV1AppendDirSync
 	s.pathV1AppendDirSync = hook
 	return func() { s.pathV1AppendDirSync = old }
+}
+
+// SetEpochV8PublishHooksForTest installs deterministic crash boundaries around
+// immutable epoch publication and checkpoint replacement.
+func (s *FS) SetEpochV8PublishHooksForTest(beforeEpoch, afterEpoch, beforeState, afterState func() error) func() {
+	oldBeforeEpoch, oldAfterEpoch := s.epochV8PublishBeforeEpoch, s.epochV8PublishAfterEpoch
+	oldBeforeState, oldAfterState := s.epochV8PublishBeforeState, s.epochV8PublishAfterState
+	s.epochV8PublishBeforeEpoch, s.epochV8PublishAfterEpoch = beforeEpoch, afterEpoch
+	s.epochV8PublishBeforeState, s.epochV8PublishAfterState = beforeState, afterState
+	return func() {
+		s.epochV8PublishBeforeEpoch, s.epochV8PublishAfterEpoch = oldBeforeEpoch, oldAfterEpoch
+		s.epochV8PublishBeforeState, s.epochV8PublishAfterState = oldBeforeState, oldAfterState
+	}
+}
+
+func (s *FS) SetEpochV8InitializeHooksForTest(beforeCommit, afterCommit func() error) func() {
+	oldBefore, oldAfter := s.epochV8InitializeBeforeCommit, s.epochV8InitializeAfterCommit
+	s.epochV8InitializeBeforeCommit, s.epochV8InitializeAfterCommit = beforeCommit, afterCommit
+	return func() {
+		s.epochV8InitializeBeforeCommit, s.epochV8InitializeAfterCommit = oldBefore, oldAfter
+	}
+}
+
+func (s *FS) SetEpochV8InitializeDirSyncHookForTest(hook func() error) func() {
+	old := s.epochV8InitializeDirSync
+	s.epochV8InitializeDirSync = hook
+	return func() { s.epochV8InitializeDirSync = old }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
@@ -1331,6 +1366,13 @@ func (g templateRunGuard) blocks() bool { return len(g.unfinished) > 0 || len(g.
 // no copy of their own, so deleting the library entry would destroy their only
 // definition — those block too, whatever their status.
 func (s *FS) templateRunGuardUnlocked(ctx context.Context, id string) (templateRunGuard, error) {
+	runEntries, readDirErr := os.ReadDir(filepath.Join(s.root, "runs"))
+	if readDirErr != nil && !errors.Is(readDirErr, os.ErrNotExist) {
+		return templateRunGuard{}, readDirErr
+	}
+	if len(runEntries) > viewerDefaultMaxDirectoryEntries {
+		return templateRunGuard{}, fmt.Errorf("%w: template deletion run scan exceeded %d entries", ErrViewerResourceLimit, viewerDefaultMaxDirectoryEntries)
+	}
 	runs, err := s.ListRuns(ctx)
 	if err != nil {
 		return templateRunGuard{}, err
@@ -1342,14 +1384,67 @@ func (s *FS) templateRunGuardUnlocked(ctx context.Context, id string) (templateR
 			guard.unreadable = append(guard.unreadable, run.ID)
 			continue
 		}
-		if runTemplateID != id {
+		version, versionErr := s.runStateSchemaVersionUnlocked(run.ID)
+		if versionErr != nil {
+			guard.unreadable = append(guard.unreadable, run.ID)
 			continue
 		}
-		if !s.runIsFinishedUnlocked(run.ID) || run.Template == nil {
-			guard.unfinished = append(guard.unfinished, run.ID)
+		kind, classErr := ClassifyRunStateSchema(version)
+		if classErr != nil {
+			guard.unreadable = append(guard.unreadable, run.ID)
+			continue
+		}
+		switch kind {
+		case RunSchemaEpochV8:
+			snapshot, viewErr := s.loadEpochV8RunViewUnlocked(ctx, run.ID, s.newEpochV8Budget(ctx))
+			if viewErr != nil {
+				guard.unreadable = append(guard.unreadable, run.ID)
+				continue
+			}
+			for _, epoch := range snapshot.Checkpoint.View().Epochs {
+				epochTemplateID, _, epochRefErr := parseTemplateRef(epoch.TemplateRef)
+				if epochRefErr != nil {
+					guard.unreadable = append(guard.unreadable, run.ID)
+					break
+				}
+				if epochTemplateID == id {
+					guard.unfinished = append(guard.unfinished, run.ID)
+					break
+				}
+			}
+		case RunSchemaResetRequired:
+			if runTemplateID == id {
+				guard.unfinished = append(guard.unfinished, run.ID)
+			}
+		case RunSchemaLegacy:
+			if runTemplateID == id && (!s.runIsFinishedUnlocked(run.ID) || run.Template == nil) {
+				guard.unfinished = append(guard.unfinished, run.ID)
+			}
 		}
 	}
 	return guard, nil
+}
+
+func (s *FS) runStateSchemaVersionUnlocked(runID string) (int, error) {
+	if err := safeSegment(runID); err != nil {
+		return 0, err
+	}
+	file, err := os.Open(filepath.Join(s.runDir(runID), "state.json"))
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > viewerDefaultMaxFileBytes {
+		return 0, fmt.Errorf("invalid bounded state file")
+	}
+	var header struct {
+		StateSchemaVersion int `json:"stateSchemaVersion"`
+	}
+	if err := json.NewDecoder(file).Decode(&header); err != nil {
+		return 0, err
+	}
+	return header.StateSchemaVersion, nil
 }
 
 // runStatusIsFinished reports whether a run has reached a state it can never
@@ -2152,11 +2247,8 @@ func (s *FS) AcquireRunLease(ctx context.Context, runID, holder string, ttl time
 	if _, err := s.readRun(runID); err != nil {
 		return LeaseRecord{}, err
 	}
-	if strings.TrimSpace(holder) == "" {
-		return LeaseRecord{}, fmt.Errorf("lease holder is required")
-	}
-	if ttl <= 0 {
-		return LeaseRecord{}, fmt.Errorf("lease ttl must be positive")
+	if err := validateLeaseRequest(holder, ttl); err != nil {
+		return LeaseRecord{}, err
 	}
 	unlock, err := s.lockRun(ctx, runID)
 	if err != nil {
@@ -2169,10 +2261,10 @@ func (s *FS) AcquireRunLease(ctx context.Context, runID, holder string, ttl time
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return LeaseRecord{}, err
 	}
-	if err == nil && lease.Holder != holder && lease.ExpiresAt.After(now) {
+	if err == nil && lease.ExpiresAt.After(now) && (lease.normalizedKind() != LeaseKindEngine || lease.Holder != holder) {
 		return LeaseRecord{}, fmt.Errorf("%w: run %q held by %q until %s", ErrLeaseHeld, runID, lease.Holder, lease.ExpiresAt.Format(time.RFC3339Nano))
 	}
-	next := LeaseRecord{RunID: runID, Holder: holder, ExpiresAt: now.Add(ttl), UpdatedAt: now}
+	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindEngine, ExpiresAt: now.Add(ttl), UpdatedAt: now}
 	data, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return LeaseRecord{}, fmt.Errorf("encode lease: %w", err)
@@ -2200,7 +2292,7 @@ func (s *FS) ReleaseRunLease(ctx context.Context, runID, holder string) error {
 	if err != nil {
 		return err
 	}
-	if lease.Holder != holder {
+	if lease.normalizedKind() != LeaseKindEngine || lease.Holder != holder {
 		return fmt.Errorf("%w: run %q held by %q", ErrLeaseHeld, runID, lease.Holder)
 	}
 	if err := os.Remove(filepath.Join(s.runDir(runID), "lease.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -2208,6 +2300,138 @@ func (s *FS) ReleaseRunLease(ctx context.Context, runID, holder string) error {
 	}
 	_ = syncDir(s.runDir(runID))
 	return nil
+}
+
+func validateLeaseRequest(holder string, ttl time.Duration) error {
+	if strings.TrimSpace(holder) == "" || len(holder) > MaxLeaseHolderBytes {
+		return fmt.Errorf("lease holder must contain 1..%d bytes", MaxLeaseHolderBytes)
+	}
+	if ttl <= 0 || ttl > MaxLeaseTTL {
+		return fmt.Errorf("lease ttl must be positive and at most %s", MaxLeaseTTL)
+	}
+	return nil
+}
+
+func (lease LeaseRecord) normalizedKind() LeaseKind {
+	if lease.Kind == "" {
+		return LeaseKindEngine
+	}
+	return lease.Kind
+}
+
+func (s *FS) AcquireMaintenanceLease(ctx context.Context, runID, holder string, ttl time.Duration) (MaintenanceLease, error) {
+	if err := ctx.Err(); err != nil {
+		return MaintenanceLease{}, err
+	}
+	if err := validateLeaseRequest(holder, ttl); err != nil {
+		return MaintenanceLease{}, err
+	}
+	if _, err := s.readRun(runID); err != nil {
+		return MaintenanceLease{}, err
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return MaintenanceLease{}, fmt.Errorf("generate maintenance lease token: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+	unlock, err := s.lockRun(ctx, runID)
+	if err != nil {
+		return MaintenanceLease{}, err
+	}
+	defer unlock()
+	now := s.now().UTC()
+	current, readErr := s.readLease(runID)
+	if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+		return MaintenanceLease{}, readErr
+	}
+	if readErr == nil && current.ExpiresAt.After(now) {
+		return MaintenanceLease{}, fmt.Errorf("%w: run %q held by %q until %s", ErrLeaseHeld, runID, current.Holder, current.ExpiresAt.Format(time.RFC3339Nano))
+	}
+	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindMaintenance, Token: token, ExpiresAt: now.Add(ttl), UpdatedAt: now}
+	if err := s.writeLease(next); err != nil {
+		return MaintenanceLease{}, err
+	}
+	return maintenanceLeaseFromRecord(next), nil
+}
+
+func (s *FS) RenewMaintenanceLease(ctx context.Context, lease MaintenanceLease, ttl time.Duration) (MaintenanceLease, error) {
+	if err := ctx.Err(); err != nil {
+		return MaintenanceLease{}, err
+	}
+	if err := validateMaintenanceLeaseInput(lease); err != nil {
+		return MaintenanceLease{}, err
+	}
+	if err := validateLeaseRequest(lease.Holder, ttl); err != nil {
+		return MaintenanceLease{}, err
+	}
+	unlock, err := s.lockRun(ctx, lease.RunID)
+	if err != nil {
+		return MaintenanceLease{}, err
+	}
+	defer unlock()
+	current, err := s.requireMaintenanceLeaseUnlocked(lease)
+	if err != nil {
+		return MaintenanceLease{}, err
+	}
+	now := s.now().UTC()
+	current.ExpiresAt = now.Add(ttl)
+	current.UpdatedAt = now
+	if err := s.writeLease(current); err != nil {
+		return MaintenanceLease{}, err
+	}
+	return maintenanceLeaseFromRecord(current), nil
+}
+
+func (s *FS) ReleaseMaintenanceLease(ctx context.Context, lease MaintenanceLease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateMaintenanceLeaseInput(lease); err != nil {
+		return err
+	}
+	unlock, err := s.lockRun(ctx, lease.RunID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(s.runDir(lease.RunID), "lease.json")); err != nil {
+		return fmt.Errorf("remove maintenance lease: %w", err)
+	}
+	return syncDir(s.runDir(lease.RunID))
+}
+
+func validateMaintenanceLeaseInput(lease MaintenanceLease) error {
+	if safeSegment(lease.RunID) != nil || strings.TrimSpace(lease.Holder) == "" || len(lease.Holder) > MaxLeaseHolderBytes || len(lease.Token) != 64 || !isHexSHA256(lease.Token) {
+		return fmt.Errorf("invalid maintenance lease")
+	}
+	return nil
+}
+
+func (s *FS) requireMaintenanceLeaseUnlocked(lease MaintenanceLease) (LeaseRecord, error) {
+	current, err := s.readLease(lease.RunID)
+	if err != nil {
+		return LeaseRecord{}, err
+	}
+	if current.normalizedKind() != LeaseKindMaintenance || current.Holder != lease.Holder || current.Token != lease.Token || !current.ExpiresAt.After(s.now().UTC()) {
+		return LeaseRecord{}, fmt.Errorf("%w: maintenance lease is absent, expired, or has a different token", ErrLeaseHeld)
+	}
+	return current, nil
+}
+
+func maintenanceLeaseFromRecord(record LeaseRecord) MaintenanceLease {
+	return MaintenanceLease{RunID: record.RunID, Holder: record.Holder, Token: record.Token, ExpiresAt: record.ExpiresAt}
+}
+
+func (s *FS) writeLease(lease LeaseRecord) error {
+	data, err := json.MarshalIndent(lease, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode lease: %w", err)
+	}
+	data = append(data, '\n')
+	return writeFileAtomic(filepath.Join(s.runDir(lease.RunID), "lease.json"), data, 0o644)
 }
 
 func (s *FS) readRun(runID string) (RunRecord, error) {

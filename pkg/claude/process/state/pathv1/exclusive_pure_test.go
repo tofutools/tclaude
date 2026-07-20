@@ -787,11 +787,11 @@ nodes:
 
 func TestReleasedPathV1HostPreservesLegacyStateIsolation(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
-	// The daemon host must opt into the schema-7 executor; generic library
-	// hosts remain legacy-safe by default.
+	// Schema 7 remains readable only as reset-required state. The production
+	// host classifies it centrally and carries no migration/execution seam.
 	required := map[string][]string{
-		"engine/host.go":              {"func (h *Host) EnableExclusiveV7()", "processexec.NewExclusiveV7"},
-		"../agentd/process_engine.go": {"host.EnableExclusiveV7()", "LoadPathV1RunView"},
+		"engine/host.go":              {"RunStateSchemaKind", "store.ErrRunResetRequired"},
+		"../agentd/process_engine.go": {"return newLegacyProcessEngineHost(root)"},
 	}
 	for name, fragments := range required {
 		data, err := os.ReadFile(filepath.Join(root, name))
@@ -802,6 +802,24 @@ func TestReleasedPathV1HostPreservesLegacyStateIsolation(t *testing.T) {
 			if !bytes.Contains(data, []byte(fragment)) {
 				t.Errorf("release wiring %s is missing %q", name, fragment)
 			}
+		}
+	}
+	hostSource, err := os.ReadFile(filepath.Join(root, "engine", "host.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"processexec.NewExclusiveV7", "InitializePathV1", "tickPathV1Run"} {
+		if bytes.Contains(hostSource, []byte(forbidden)) {
+			t.Errorf("schema-7 execution seam remains reachable through host.go: %q", forbidden)
+		}
+	}
+	daemonSource, err := os.ReadFile(filepath.Join(root, "..", "agentd", "process_engine.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"EnableExclusiveV7", "NewExclusiveV7", "LoadPathV1RunView", "InitializePathV1"} {
+		if bytes.Contains(daemonSource, []byte(forbidden)) {
+			t.Errorf("schema-7 execution seam remains reachable through agentd: %q", forbidden)
 		}
 	}
 

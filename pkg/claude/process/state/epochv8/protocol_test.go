@@ -1,8 +1,10 @@
 package epochv8
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -12,6 +14,77 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
+
+func TestEncodeAppliedEpochDiffIsCheckpointBound(t *testing.T) {
+	checkpoint := testCheckpoint(t, "diff-zero", []AuthoritySeed{{
+		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	frontier := checkpoint.View().Authorities[0]
+	reasonDigest := testDigest("stored reason")
+	preview, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "diff-one"), ReasonDigest: reasonDigest,
+		Handoffs: []HandoffDirective{{
+			Source: frontier.Identity, Action: HandoffTransfer,
+			TargetLocalID: "next", TargetReservationID: "next-r", TargetNodeID: "work",
+		}},
+	})
+	if err != nil || preview.Plan == nil {
+		t.Fatalf("preview: plan=%v err=%v", preview.Plan != nil, err)
+	}
+	applied, err := Apply(checkpoint, preview.Plan)
+	if err != nil || applied.Disposition != DispositionApplied {
+		t.Fatalf("apply: disposition=%q err=%v", applied.Disposition, err)
+	}
+
+	want, err := json.Marshal(preview.Diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = append(want, '\n')
+	epochID := preview.Plan.CandidateEpoch().ID
+	got, gotReason, err := EncodeAppliedEpochDiff(applied.Checkpoint, epochID)
+	if err != nil || !bytes.Equal(got, want) || gotReason != reasonDigest || len(got) == 0 || got[len(got)-1] != '\n' {
+		t.Fatalf("applied encoding: got=%q want=%q reason=%q err=%v", got, want, gotReason, err)
+	}
+	replayed, err := Apply(applied.Checkpoint, preview.Plan)
+	if err != nil || replayed.Disposition != DispositionReplayed {
+		t.Fatalf("replay: disposition=%q err=%v", replayed.Disposition, err)
+	}
+	replayBytes, replayReason, err := EncodeAppliedEpochDiff(replayed.Checkpoint, epochID)
+	if err != nil || !bytes.Equal(replayBytes, got) || replayReason != gotReason {
+		t.Fatalf("replay encoding differs: bytes=%q reason=%q err=%v", replayBytes, replayReason, err)
+	}
+
+	if _, _, err := EncodeAppliedEpochDiff(applied.Checkpoint, applied.Checkpoint.View().OriginalEpoch); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("epoch zero accepted: %v", err)
+	}
+	if _, _, err := EncodeAppliedEpochDiff(applied.Checkpoint, EpochID(testDigest("unknown"))); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("unknown epoch accepted: %v", err)
+	}
+
+	finishOnly := testCheckpoint(t, "finish-only", []AuthoritySeed{{
+		LocalID: "claimed", ReservationID: "claimed-r", NodeID: "work",
+		Kind: AuthorityFrontier, State: AuthorityClaimed,
+	}})
+	claimed := finishOnly.View().Authorities[0]
+	finished, err := FinishClaimed(finishOnly, FinishClaim{
+		BaseBinding: finishOnly.Binding(), Identity: claimed.Identity,
+		Result: FinishCompleted, EvidenceDigest: testDigest("evidence"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := EncodeAppliedEpochDiff(finished.Checkpoint, EpochID(testDigest("finish-only"))); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("finish-only history accepted: %v", err)
+	}
+
+	forged := &CheckpointV8{wire: cloneWire(applied.Checkpoint.wire)}
+	forged.wire.History[0].Apply.Diff.AddedNodes = append(forged.wire.History[0].Apply.Diff.AddedNodes, "tampered")
+	if _, _, err := EncodeAppliedEpochDiff(forged, epochID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("tampered checkpoint accepted: %v", err)
+	}
+}
 
 func TestEpochZeroToOneToTwoReplayAndFinishClaimed(t *testing.T) {
 	checkpoint := testCheckpoint(t, "zero", []AuthoritySeed{

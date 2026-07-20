@@ -41,6 +41,7 @@ func v7Contact(t *testing.T, fs *store.FS, runID string) (pathv1.ContactRecordV7
 // gate), nudges on cadence, escalates exactly once, persists used budget
 // across a host restart, and resets on observed recovery.
 func TestProcessEngineSchema7ExplicitContactMigratesNudgesEscalatesAndSurvivesRestart(t *testing.T) {
+	t.Skip("automatic v6-to-v7 migration was removed by the schema-8 S2 release")
 	_, root := processEngineFlow(t)
 	adapter := &deferredContactAdapter{}
 	fs := createEngineRun(t, root, "nudge-v7-run", programTemplate("nudge-v7", model.Performer{
@@ -110,6 +111,7 @@ func TestProcessEngineSchema7ExplicitContactMigratesNudgesEscalatesAndSurvivesRe
 // TCL-529 gap: a migrated run whose performer declares NO contact still
 // receives the engine default schedule instead of silently losing nudges.
 func TestProcessEngineSchema7NilContactGetsEngineDefaults(t *testing.T) {
+	t.Skip("automatic v6-to-v7 migration was removed by the schema-8 S2 release")
 	_, root := processEngineFlow(t)
 	adapter := &deferredContactAdapter{}
 	fs := createEngineRun(t, root, "default-contact-v7-run", programTemplate("default-contact-v7", model.Performer{
@@ -187,6 +189,7 @@ func TestProcessEngineSchema7OverBoundContactFieldsStayOnV6(t *testing.T) {
 // item, and the viewer projects contact state through the provenance funnel
 // (no raw escalation target strings).
 func TestProcessEngineSchema7ContactSurfacesWorklistAndViewer(t *testing.T) {
+	t.Skip("automatic v6-to-v7 migration was removed by the schema-8 S2 release")
 	f, root := processEngineFlow(t)
 	adapter := &deferredContactAdapter{}
 	fs := createEngineRun(t, root, "surface-contact-v7-run", programTemplate("surface-contact-v7", model.Performer{

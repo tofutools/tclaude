@@ -11,7 +11,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -55,24 +54,25 @@ func runVerify(ctx context.Context, p *verifyParams, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	schema, err := fs.RunStateSchemaVersion(ctx, p.RunID)
+	kind, err := fs.RunStateSchemaKind(ctx, p.RunID)
 	if err != nil {
 		report := processverify.LoadError(p.RunID, err)
 		renderReport(out, report)
 		return fmt.Errorf("process run %q failed verification", p.RunID)
 	}
 	var report processverify.Report
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		snapshot, loadErr := fs.LoadPathV1RunHistoryView(ctx, p.RunID)
-		if loadErr != nil {
+	switch kind {
+	case store.RunSchemaResetRequired:
+		return fmt.Errorf("%w: process run %q", store.ErrRunResetRequired, p.RunID)
+	case store.RunSchemaEpochV8:
+		if _, loadErr := fs.LoadEpochV8RunView(ctx, p.RunID); loadErr != nil {
 			report = processverify.LoadError(p.RunID, loadErr)
 		} else {
-			report, _, _ = processverify.PathV1History(ctx, snapshot)
+			fmt.Fprintf(out, "Run: %s\nEffective status: epoch_v8\n", p.RunID)
+			return nil
 		}
-	} else if schema > 0 && schema <= pathv1.LegacyMaxSchemaVersion {
+	case store.RunSchemaLegacy:
 		report = processverify.StoreRun(ctx, fs, p.RunID)
-	} else {
-		return fmt.Errorf("process run %q uses unsupported state schema %d", p.RunID, schema)
 	}
 	renderReport(out, report)
 	if report.HasErrors() {

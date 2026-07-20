@@ -60,6 +60,16 @@ func (s *FS) RunStateSchemaVersion(ctx context.Context, runID string) (int, erro
 	return header.StateSchemaVersion, nil
 }
 
+// RunStateSchemaKind reads and exhaustively classifies the persisted state
+// header under the same run lock used by all execution/view routes.
+func (s *FS) RunStateSchemaKind(ctx context.Context, runID string) (RunSchemaKind, error) {
+	version, err := s.RunStateSchemaVersion(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+	return ClassifyRunStateSchema(version)
+}
+
 // LoadPathV1RunView returns a fully verified, detached schema-7 checkpoint and
 // exact template source. Evidence is intentionally not an input.
 func (s *FS) LoadPathV1RunView(ctx context.Context, runID string) (PathV1RunSnapshot, error) {

@@ -69,6 +69,43 @@ func DecodeApplyPlan(data []byte) (*ApplyPlan, error) {
 	return plan, nil
 }
 
+// EncodeAppliedEpochDiff returns the canonical persisted diff and reason
+// digest for an epoch that was introduced by a verified apply record. Epoch
+// zero and epochs without a unique apply record are not publication records.
+func EncodeAppliedEpochDiff(checkpoint *CheckpointV8, epochID EpochID) ([]byte, string, error) {
+	if err := VerifyCheckpointV8(checkpoint); err != nil {
+		return nil, "", err
+	}
+	if epochID == "" || epochID == checkpoint.wire.Anchor.OriginalEpoch.ID {
+		return nil, "", fmt.Errorf("%w: epoch is not an applied epoch", ErrInvalid)
+	}
+
+	var record *ApplyRecord
+	for i := range checkpoint.wire.History {
+		event := &checkpoint.wire.History[i]
+		if event.Kind != HistoryApply || event.Apply == nil || event.Apply.CandidateEpoch.ID != epochID {
+			continue
+		}
+		if record != nil {
+			return nil, "", fmt.Errorf("%w: applied epoch record is ambiguous", ErrInvalid)
+		}
+		record = event.Apply
+	}
+	if record == nil {
+		return nil, "", fmt.Errorf("%w: applied epoch record is absent", ErrInvalid)
+	}
+
+	encoded, err := json.Marshal(record.Diff)
+	if err != nil {
+		return nil, "", err
+	}
+	encoded = append(encoded, '\n')
+	if err := checkWireBudget("apply_diff_bytes", len(encoded), MaxApplyPlanBytes); err != nil {
+		return nil, "", err
+	}
+	return encoded, record.ReasonDigest, nil
+}
+
 func decodeStrictJSON(data []byte, target any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

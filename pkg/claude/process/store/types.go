@@ -11,6 +11,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -36,7 +37,32 @@ var (
 	ErrViewerResourceLimit     = errors.New("process viewer resource limit exceeded")
 	ErrWriterInProgress        = errors.New("process store writer is in progress")
 	ErrTemplateInUse           = errors.New("process template is referenced by runs that have not finished")
+	ErrRunResetRequired        = errors.New("process run schema 7 requires reset")
+	ErrUnsupportedRunSchema    = errors.New("process run state schema is unsupported")
 )
+
+type RunSchemaKind string
+
+const (
+	RunSchemaLegacy        RunSchemaKind = "legacy"
+	RunSchemaResetRequired RunSchemaKind = "reset_required"
+	RunSchemaEpochV8       RunSchemaKind = "epoch_v8"
+)
+
+// ClassifyRunStateSchema is the exhaustive authority for persisted process
+// state routing. Callers must not decode a newer schema with a legacy decoder.
+func ClassifyRunStateSchema(version int) (RunSchemaKind, error) {
+	switch {
+	case version >= 1 && version <= state.StateSchemaVersion:
+		return RunSchemaLegacy, nil
+	case version == pathv1.CheckpointStateSchemaVersion:
+		return RunSchemaResetRequired, nil
+	case version == epochv8.StateSchemaVersion:
+		return RunSchemaEpochV8, nil
+	default:
+		return "", fmt.Errorf("%w: %d", ErrUnsupportedRunSchema, version)
+	}
+}
 
 // TemplateInUseError reports which runs blocked a template deletion. Callers
 // surface the run ids so an operator can act on them instead of guessing what
@@ -378,8 +404,89 @@ type ArtifactRecord struct {
 }
 
 type LeaseRecord struct {
-	RunID     string    `json:"runId"`
-	Holder    string    `json:"holder"`
+	RunID  string `json:"runId"`
+	Holder string `json:"holder"`
+	// Kind is omitted by legacy engine leases. An empty persisted kind is
+	// therefore interpreted as LeaseKindEngine, never as an untyped domain.
+	Kind      LeaseKind `json:"kind,omitempty"`
+	Token     string    `json:"token,omitempty"`
 	ExpiresAt time.Time `json:"expiresAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type LeaseKind string
+
+const (
+	LeaseKindEngine      LeaseKind = "engine"
+	LeaseKindMaintenance LeaseKind = "maintenance"
+
+	MaxLeaseHolderBytes = 256
+	MaxLeaseTTL         = time.Hour
+)
+
+type MaintenanceLease struct {
+	RunID     string
+	Holder    string
+	Token     string
+	ExpiresAt time.Time
+}
+
+const (
+	EpochV8MaxSourceBytes    = model.MaxProcessTemplateSourceBytes
+	EpochV8MaxReasonBytes    = 64 << 10
+	EpochV8MaxTotalReadBytes = 64 << 20
+	EpochV8GCMaxEntries      = 128
+	EpochV8GCMinOrphanAge    = time.Hour
+
+	EpochV8InitialFrontierLocalID       = "initial-frontier"
+	EpochV8InitialFrontierReservationID = "initial-reservation"
+)
+
+type EpochV8InitializationDisposition string
+
+const (
+	EpochV8InitializationApplied        EpochV8InitializationDisposition = "applied"
+	EpochV8InitializationAlreadyApplied EpochV8InitializationDisposition = "already_applied"
+)
+
+type EpochV8InitializationResult struct {
+	Disposition EpochV8InitializationDisposition
+	Run         RunRecord
+	Checkpoint  *epochv8.CheckpointV8
+}
+
+type EpochV8RunSnapshot struct {
+	Run            RunRecord
+	CheckpointJSON []byte
+	Checkpoint     *epochv8.CheckpointV8
+	EpochSources   map[epochv8.EpochID][]byte
+}
+
+func (snapshot EpochV8RunSnapshot) SourceForOwner(owner epochv8.OwnerIdentity) ([]byte, error) {
+	if snapshot.Checkpoint == nil {
+		return nil, fmt.Errorf("%w: schema-8 checkpoint is absent", ErrRunInconsistent)
+	}
+	for _, authority := range snapshot.Checkpoint.View().Authorities {
+		if authority.Identity == owner {
+			source, ok := snapshot.EpochSources[authority.EpochID]
+			if !ok {
+				return nil, fmt.Errorf("%w: owner epoch source is absent", ErrRunInconsistent)
+			}
+			return append([]byte(nil), source...), nil
+		}
+	}
+	return nil, fmt.Errorf("%w: owner identity is absent", ErrRunInconsistent)
+}
+
+type EpochV8PublicationResult struct {
+	Disposition epochv8.Disposition
+	Binding     epochv8.Binding
+	Checkpoint  *epochv8.CheckpointV8
+}
+
+type EpochV8GCResult struct {
+	Scanned    int
+	Removed    int
+	NextCursor string
+	Complete   bool
 }

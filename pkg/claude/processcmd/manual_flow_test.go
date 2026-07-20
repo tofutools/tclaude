@@ -178,6 +178,8 @@ nodes:
     performer:
       kind: human
       ask: Implement the change
+      choices: [pass, fail]
+      choiceOutcomes: {pass: pass, fail: fail}
     retry:
       maxAttempts: 2
     next:

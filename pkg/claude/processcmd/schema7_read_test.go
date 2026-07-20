@@ -10,11 +10,10 @@ import (
 	processengine "github.com/tofutools/tclaude/pkg/claude/process/engine"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
-func TestSchema7CLIReadSurfacesAfterAutomaticMigration(t *testing.T) {
+func TestEpochV8CLIReadSurfacesWithoutScheduling(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "store")
 	templatePath := writeTemplate(t, `apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
@@ -56,24 +55,16 @@ nodes:
 	if err := runShow(cmd, &showParams{RunID: "schema7-cli-reads", StoreRoot: root}, &out); err != nil {
 		t.Fatalf("show schema 7: %v\n%s", err, out.String())
 	}
-	for _, want := range []string{"Run: schema7-cli-reads", "Status: running", "State schema: 7", "approve", "activated"} {
+	for _, want := range []string{"Run: schema7-cli-reads", "State schema: 8", "Epochs: 1", "Authorities: 1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("schema-7 show output missing %q:\n%s", want, out.String())
 		}
 	}
 	out.Reset()
-	if err := runShow(cmd, &showParams{RunID: "schema7-cli-reads", StoreRoot: root, Mermaid: true}, &out); err != nil {
-		t.Fatalf("show schema-7 mermaid: %v", err)
-	}
-	if !strings.Contains(out.String(), "graph TD") {
-		t.Fatalf("schema-7 mermaid output missing graph:\n%s", out.String())
-	}
-
-	out.Reset()
 	if err := runVerify(t.Context(), &verifyParams{RunID: "schema7-cli-reads", StoreRoot: root}, &out); err != nil {
 		t.Fatalf("verify schema 7: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "Effective status: running") || !strings.Contains(out.String(), "Diagnostics: none") {
+	if !strings.Contains(out.String(), "Effective status: epoch_v8") {
 		t.Fatalf("schema-7 verify output is not healthy:\n%s", out.String())
 	}
 
@@ -81,7 +72,7 @@ nodes:
 	if err := runRunsLs(cmd, &runsLsParams{StoreRoot: root}, &out); err != nil {
 		t.Fatalf("runs ls schema 7: %v", err)
 	}
-	if !strings.Contains(out.String(), "schema7-cli-reads") || !strings.Contains(out.String(), "running") || strings.Contains(out.String(), "load_error") {
+	if !strings.Contains(out.String(), "schema7-cli-reads") || !strings.Contains(out.String(), "epoch_v8") || strings.Contains(out.String(), "load_error") {
 		t.Fatalf("schema-7 runs listing is not live:\n%s", out.String())
 	}
 
@@ -89,10 +80,8 @@ nodes:
 	if err := runWorklist(cmd, &worklistParams{StoreRoot: root, Run: "schema7-cli-reads", Status: "pending"}, &out); err != nil {
 		t.Fatalf("worklist schema 7: %v", err)
 	}
-	for _, want := range []string{"schema7-cli-reads", "approve", "human-wait", "human:johan", "pending", "Approve migrated release?"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("schema-7 worklist output missing %q:\n%s", want, out.String())
-		}
+	if !strings.Contains(out.String(), "skipped process run schema7-cli-reads: epoch_v8") {
+		t.Fatalf("schema-8 worklist did not refuse unreleased scheduling:\n%s", out.String())
 	}
 }
 
@@ -143,7 +132,7 @@ nodes:
 		t.Fatalf("show post-split parallel checkpoint: %v", err)
 	}
 	out.Reset()
-	if err := runVerify(t.Context(), &verifyParams{RunID: "schema7-parallel-reads", StoreRoot: root}, &out); err != nil || !strings.Contains(out.String(), "Diagnostics: none") {
+	if err := runVerify(t.Context(), &verifyParams{RunID: "schema7-parallel-reads", StoreRoot: root}, &out); err != nil || !strings.Contains(out.String(), "Effective status: epoch_v8") {
 		t.Fatalf("verify post-split parallel checkpoint: %v\n%s", err, out.String())
 	}
 	out.Reset()
@@ -153,17 +142,5 @@ nodes:
 	out.Reset()
 	if err := runWorklist(cmd, &worklistParams{StoreRoot: root, Run: "schema7-parallel-reads"}, &out); err != nil {
 		t.Fatalf("worklist post-split parallel checkpoint: %v", err)
-	}
-}
-
-func TestPathV1RoutingStatesKeepsNewestNodeGeneration(t *testing.T) {
-	aggregate := pathv1.AggregateCheckpoint{Routing: pathv1.RoutingState{Reservations: map[string]pathv1.ActivationReservation{
-		"older": {ID: "older", NodeID: "approve", Generation: 1, State: pathv1.ReservationOpen},
-		"newer": {ID: "newer", NodeID: "approve", Generation: 2, State: pathv1.ReservationActivated},
-	}}}
-	for range 100 {
-		if got := pathV1RoutingStates(aggregate)["approve"]; got != string(pathv1.ReservationActivated) {
-			t.Fatalf("newest schema-7 routing state = %q, want %q", got, pathv1.ReservationActivated)
-		}
 	}
 }

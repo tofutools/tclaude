@@ -24,7 +24,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -992,16 +991,17 @@ func resolveProcessHumanMessage(ctx context.Context, message *db.HumanMessage, r
 	if err != nil {
 		return err
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		_, err := processexec.NewExclusiveV7(fs, nil).RecordObservation(ctx, message.ProcessRunID, message.ProcessNodeID, message.ProcessCommandID, processexec.Observation{
-			Actor:       state.ActorRef("human:operator"),
-			Verdict:     verdict,
-			Feedback:    feedback,
-			EvidenceRef: fmt.Sprintf("human-message:%d:reply", message.ID),
-		})
+	kind, err := store.ClassifyRunStateSchema(schema)
+	if err != nil {
 		return err
 	}
-	if schema <= 0 || schema > pathv1.LegacyMaxSchemaVersion {
+	switch kind {
+	case store.RunSchemaResetRequired:
+		return fmt.Errorf("%w: process run %q", store.ErrRunResetRequired, message.ProcessRunID)
+	case store.RunSchemaEpochV8:
+		return fmt.Errorf("schema-8 process human-reply mutation is not released")
+	case store.RunSchemaLegacy:
+	default:
 		return fmt.Errorf("unsupported process state schema %d", schema)
 	}
 	snapshot, err := fs.LoadRun(ctx, message.ProcessRunID)
