@@ -211,6 +211,8 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 		return fmt.Errorf(notApplicable, "--trust-dir", ShellHarnessName, "it has no trust-folder concept")
 	case params.RemoteControl:
 		return fmt.Errorf(notApplicable, "--remote-control", ShellHarnessName, "it has no built-in remote access")
+	case params.AutoMemory:
+		return fmt.Errorf(notApplicable, "--auto-memory", ShellHarnessName, "it has no auto-memory system")
 	case params.WaitForRateLimit:
 		return fmt.Errorf(notApplicable, "--wait-for-rate-limit", ShellHarnessName, "it has no API rate limit to wait on")
 	case params.JoinGroup != "":

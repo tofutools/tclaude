@@ -166,7 +166,7 @@ type NewParams struct {
 	// --auto-memory sets it to "0" (Claude Code's documented force-enable)
 	// instead. The daemon spawn path resolves the profile's tri-state into
 	// this definite bool; a direct human `session new` may set it too.
-	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for this session. Off by default: tclaude disables it (CLAUDE_CODE_DISABLE_AUTO_MEMORY=1) because agents sharing a repo cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
+	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for this session. Off by default for every Claude Code session tclaude launches (it injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1), because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
 
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's

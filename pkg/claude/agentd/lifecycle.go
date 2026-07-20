@@ -1110,6 +1110,7 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 		AutoReview:                 autoReview,
 		AskUserQuestionTimeout:     askTimeoutForRelaunch(convID),
 		RemoteControl:              remoteControl,
+		AutoMemory:                 autoMemoryForRelaunch(convID, harnessName),
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -5193,6 +5194,10 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// non-CC harness never sets it (remoteControlForRelaunch gates on the
 	// harness capability), so the forked `session new -r` never rejects it.
 	args = appendRemoteControlFlag(args, a.RemoteControl)
+	// Preserve the SOURCE conv's auto-memory opt-in across the relaunch.
+	// Omitted when false, which is the recommended posture and makes the forked
+	// `session new -r` inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
+	args = appendAutoMemoryFlag(args, a.AutoMemory)
 	return args
 }
 

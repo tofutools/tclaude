@@ -2,16 +2,26 @@ package harness
 
 import "fmt"
 
-// AutoMemoryEnvVar is Claude Code's auto-memory switch. Claude Code documents
-// it as a tri-value knob read from the environment: "1" disables auto memory,
-// "0" force-ENABLES it (overriding a disable that came from elsewhere), and an
-// absent variable leaves Claude Code on its own default. tclaude always sets
-// one of the two explicit values for a Claude Code launch, so a stray "=1"
-// exported in the operator's own shell can never silently decide an agent's
-// posture.
+// AutoMemoryEnvVar is Claude Code's auto-memory switch.
+//
+// The VALUE is load-bearing, not merely its presence. Claude Code's env-var
+// reference (https://code.claude.com/docs/en/settings, and the auto-memory
+// section of https://code.claude.com/docs/en/memory) documents it as a
+// tri-value knob: "1" disables auto memory, "0" force-ENABLES it — explicitly
+// described as a way to re-enable memory that was disabled elsewhere — and an
+// absent variable leaves Claude Code on its own default. That documented "0"
+// is what makes the opt-in direction below safe; if it ever regresses to a
+// presence check, `--auto-memory` would silently do the opposite of its label,
+// so treat this contract as the thing to re-verify when upgrading Claude Code.
+//
+// tclaude always sets one of the two explicit values for a Claude Code launch,
+// so a stray "=1" exported in the operator's own shell can never silently
+// decide a session's posture.
 //
 // It governs only the auto-generated memory store — the notes Claude Code
 // accumulates about a project on its own. CLAUDE.md / AGENTS.md are unaffected.
+// Claude Code also exposes an `autoMemoryEnabled` settings.json key; tclaude
+// uses the env var so it never has to edit the operator's settings file.
 const AutoMemoryEnvVar = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"
 
 // AutoMemoryEnvValue renders the value AutoMemoryEnvVar must carry for the

@@ -518,7 +518,7 @@ type SpawnParams struct {
 	// which tclaude disables by default. Opt-in only on the CLI, like
 	// --remote-control: the flag sends &true and its absence leaves the
 	// pointer nil so a profile default can still speak.
-	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for the new agent. Off by default: tclaude disables it because agents sharing a repo cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
+	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for the new agent. Off by default: tclaude disables it because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -651,11 +651,14 @@ func harnessEquivalent(a, b string) bool {
 // agnostic toggles (auto_focus, include_group_context, is_owner,
 // permission_overrides) are inherited regardless of harness.
 //
-// Two profile fields are deliberately NOT applied here:
+// Three profile fields are deliberately NOT applied here:
 //   - remote_control: the CLI can't see the group's remote-control policy, which
 //     must win over a profile default (JOH-262), and the wire carries
 //     RemoteControl as an authoritative *bool with no "soft default" channel.
 //     Use the explicit --remote-control flag to arm it.
+//   - auto_memory: likewise carried as an authoritative *bool. Leaving it nil
+//     here is what lets the daemon's profile tiers resolve it; the CLI's
+//     --auto-memory flag sets it explicitly when the caller wants to force it.
 //   - sync_worktree: CLI worktrees are flag-driven (--worktree <branch>) and a
 //     profile carries no branch, so the toggle has nothing to act on here.
 //

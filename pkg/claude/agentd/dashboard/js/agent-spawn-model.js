@@ -453,7 +453,11 @@ export function spawnProfileSeed(draft, context) {
   if (reviewer != null) seed.auto_review = reviewer;
   if (view.askTimeout.visible) seed.ask_user_question_timeout = draft.askTimeout;
   if (draft.harness === 'codex') seed.trust_dir = !!draft.trustDir;
-  if (view.showAutoMemory) seed.auto_memory = !!draft.autoMemory;
+  // Seed only an explicit opt-IN. Off is what an unset profile already
+  // resolves to, so pinning false would give the operator an "auto-memory off"
+  // chip on a field they never touched — indistinguishable from a deliberate
+  // pin, and it would opt the profile out of any future default change.
+  if (view.showAutoMemory && draft.autoMemory) seed.auto_memory = true;
   return seed;
 }
 

@@ -8,13 +8,19 @@ import (
 // posture by setting CLAUDE_CODE_DISABLE_AUTO_MEMORY in env.
 //
 // Why tclaude steers this at all: Claude Code's auto-memory system accumulates
-// per-project memory files on its own. Under tclaude a single repo routinely
-// has several agents running at once, and they all share that one store — so
-// one agent's working notes leak into every other agent's context, and a
-// worker inherits assumptions nobody asked it to hold. The memory system also
-// duplicates what tclaude already tracks per conversation. tclaude therefore
-// recommends auto memory OFF and resolves an unset profile field to off; an
-// operator who wants it can still opt in per profile or per spawn.
+// memory files on its own, keyed by project directory. Under tclaude a single
+// checkout routinely has several agents running at once, and every agent in
+// that directory shares the one store — so one agent's working notes leak into
+// every other agent's context, and a worker inherits assumptions nobody asked
+// it to hold. (Agents in separate git worktrees get separate stores, so the
+// collision is worst exactly where agents share a checkout.) tclaude therefore
+// recommends auto memory OFF and resolves an unset field to off; an operator
+// who wants it can still opt in per profile, per spawn, or per session.
+//
+// Note this applies to EVERY Claude Code session tclaude launches, including a
+// plain interactive `tclaude session new` with no agents involved — the
+// injection lives on the shared launch path. `--auto-memory` opts a single
+// session back in.
 //
 // The variable is set EXPLICITLY in both directions ("1" = off, "0" = force
 // on) rather than merely omitted for the on case. BuildEnvExports forwards the

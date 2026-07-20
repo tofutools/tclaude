@@ -421,6 +421,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AutoReview:             autoReview,
 		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
 		RemoteControl:          remoteControl,
+		AutoMemory:             autoMemoryForRelaunch(target, oldSess.Harness),
 	}); err != nil {
 		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",
