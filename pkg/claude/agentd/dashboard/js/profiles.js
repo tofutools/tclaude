@@ -227,6 +227,7 @@ function profileSummary(p) {
   // toggle leaves the dialog's own default, so it isn't worth a chip).
   if (p.trust_dir != null) parts.push(`trust-dir ${p.trust_dir ? 'on' : 'off'}`);
   if (p.remote_control != null) parts.push(`remote-control ${p.remote_control ? 'on' : 'off'}`);
+  if (p.auto_memory != null) parts.push(`auto-memory ${p.auto_memory ? 'on' : 'off'}`);
   if (p.sync_worktree != null) parts.push(`sync-wt ${p.sync_worktree ? 'on' : 'off'}`);
   if (p.auto_focus != null) parts.push(`focus ${p.auto_focus ? 'on' : 'off'}`);
   if (p.include_group_default_context != null) {
@@ -264,6 +265,7 @@ function profileDetailChips(p) {
   toggle('auto-review', p.auto_review);
   toggle('trust-dir', p.trust_dir);
   toggle('remote-control', p.remote_control);
+  toggle('auto-memory', p.auto_memory);
   text('name', p.agent_name);
   text('role', p.role);
   text('descr', p.descr);

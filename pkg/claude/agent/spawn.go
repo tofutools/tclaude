@@ -271,6 +271,25 @@ type SpawnRequest struct {
 	// row materialises.
 	RemoteControl *bool `json:"remote_control,omitempty"`
 
+	// AutoMemory keeps Claude Code's built-in auto memory ON for the spawned
+	// agent. Tri-state (*bool): a non-nil value is the AUTHORITATIVE per-spawn
+	// intent and overrides any profile default; nil = unspecified, so the
+	// daemon's profile tier stack fills it, falling back to FALSE.
+	//
+	// The default is off — and off is the interesting direction here: Claude
+	// Code's auto memory writes a per-project memory store that every tclaude
+	// agent on that repo reads, so several agents working one codebase
+	// cross-pollute each other's notes. tclaude therefore injects
+	// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 unless something opts back in. Setting
+	// it true has the launch inject "0" (Claude Code's documented force-enable)
+	// so an operator's own exported "=1" can't override the agent's posture.
+	//
+	// CLAUDE.md / AGENTS.md are unaffected either way. The daemon gates a
+	// non-nil true on the chosen harness having an auto-memory system (Claude
+	// Code); requesting it for Codex is a 400. Forwarded to `tclaude session
+	// new --auto-memory`.
+	AutoMemory *bool `json:"auto_memory,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -494,6 +513,12 @@ type SpawnParams struct {
 	AutoReview bool `long:"auto-review" help:"EXPERIMENTAL: route the new agent's Codex approval prompts to the guardian subagent (auto-decides in your place) instead of asking you. Off by default. Not applicable to claude"`
 
 	RemoteControl bool `long:"remote-control" help:"Start the new agent with Claude Code Remote Access ON (claude --remote-control), so it is reachable from the Claude app. Off by default. Requires a claude.ai login to pair. Not applicable to codex"`
+
+	// AutoMemory opts the new agent back INTO Claude Code's auto memory,
+	// which tclaude disables by default. Opt-in only on the CLI, like
+	// --remote-control: the flag sends &true and its absence leaves the
+	// pointer nil so a profile default can still speak.
+	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for the new agent. Off by default: tclaude disables it because agents sharing a repo cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -869,6 +894,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	autoReview := p.AutoReview
 	trustDir := false
 	remoteControl := p.RemoteControl
+	autoMemory := p.AutoMemory
 	clientHarness := strings.TrimSpace(p.Harness)
 	validationHarness := clientHarness
 	validateMergedProfile := false
@@ -952,6 +978,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
+		// Gate --auto-memory the same way: only a harness with an auto-memory
+		// system (Claude Code) can be asked to keep it on. The daemon re-gates
+		// server-side.
+		if autoMemory, err = harness.ResolveAutoMemory(h, &p.AutoMemory); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 	}
 	cwd := p.Cwd
 	if cwd == "" {
@@ -995,6 +1028,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if remoteControl {
 		on := true
 		req.RemoteControl = &on
+	}
+	// --auto-memory follows the same opt-in-only discipline: send &true when the
+	// flag is set, leave nil otherwise so a profile default can still speak. The
+	// nil case resolves to off server-side, which is the recommended posture.
+	if autoMemory {
+		on := true
+		req.AutoMemory = &on
 	}
 	// Group context: --no-group-context forces exclude, else a --profile may set
 	// it; an omitted pointer means the daemon includes the group context by

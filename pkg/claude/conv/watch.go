@@ -2296,6 +2296,16 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// from interrupting this resume. No-op for non-Claude harnesses. See
 	// session.ApplyClaudeResumeEnv.
 	session.ApplyClaudeResumeEnv(h, resumeEnv)
+	// Mirror the spawn path's auto-memory posture. Reading it back off the
+	// session row (rather than re-defaulting) keeps a session that explicitly
+	// opted INTO Claude Code's auto memory from silently losing it on resume;
+	// a conv with no recorded posture reads false, which is tclaude's
+	// recommended default anyway. No-op for non-Claude harnesses.
+	autoMemory, err := db.AutoMemoryForConv(convID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
+	}
+	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {

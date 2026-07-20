@@ -61,6 +61,11 @@ type profileJSON struct {
 	// the CLI can't see the group's remote-control policy, which must win, so use
 	// the explicit --remote-control flag. It is still surfaced here for parity.
 	RemoteControl *bool `json:"remote_control,omitempty"`
+	// AutoMemory is the profile's "keep Claude Code's auto memory on" default
+	// (tri-state). Unset resolves to OFF at spawn — tclaude disables auto
+	// memory so agents sharing a repo don't cross-pollute one project memory
+	// store. Claude-Code-only.
+	AutoMemory *bool `json:"auto_memory,omitempty"`
 
 	// Identity / enrollment fields.
 	AgentName      string `json:"agent_name,omitempty"`
@@ -673,6 +678,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 		v *bool
 	}{
 		{"auto_review", p.AutoReview}, {"trust_dir", p.TrustDir}, {"remote_control", p.RemoteControl},
+		{"auto_memory", p.AutoMemory},
 	})...)
 	if len(launch) > 0 {
 		fmt.Fprintf(w, "  launch:  %s\n", strings.Join(launch, " · "))

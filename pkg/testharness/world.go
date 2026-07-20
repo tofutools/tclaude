@@ -54,6 +54,7 @@ type World struct {
 	spawnAutoReview    map[string]bool
 	spawnTrustDir      map[string]bool
 	spawnRemoteControl map[string]bool
+	spawnAutoMemory    map[string]bool
 	spawnCwdProofs     map[string]string
 	spawnDirProofs     map[string]string
 	spawnGitCommonDirs map[string]string
@@ -95,6 +96,7 @@ func New(t *testing.T) *World {
 		spawnAutoReview:     map[string]bool{},
 		spawnTrustDir:       map[string]bool{},
 		spawnRemoteControl:  map[string]bool{},
+		spawnAutoMemory:     map[string]bool{},
 		spawnCwdProofs:      map[string]string{},
 		spawnDirProofs:      map[string]string{},
 		spawnGitCommonDirs:  map[string]string{},
@@ -317,6 +319,27 @@ func (w *World) SpawnRemoteControl(convID string) (bool, bool) {
 	defer w.spawnMu.Unlock()
 	rc, ok := w.spawnRemoteControl[convID]
 	return rc, ok
+}
+
+// RecordSpawnAutoMemory captures the auto-memory posture a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert what the spawn path resolved. The default (false —
+// tclaude disables Claude Code's shared per-project memory store) is recorded
+// too, which is the interesting case: it is what makes the launch inject
+// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
+func (w *World) RecordSpawnAutoMemory(convID string, autoMemory bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnAutoMemory[convID] = autoMemory
+}
+
+// SpawnAutoMemory returns the auto-memory posture recorded for a spawned
+// conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnAutoMemory(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	mem, ok := w.spawnAutoMemory[convID]
+	return mem, ok
 }
 
 // RecordSpawnCwdWriteProof captures the internal cwd proof token forwarded to

@@ -191,6 +191,7 @@ type templateInlineProfileJSON struct {
 	AutoReview             *bool             `json:"auto_review,omitempty"`
 	TrustDir               *bool             `json:"trust_dir,omitempty"`
 	RemoteControl          *bool             `json:"remote_control,omitempty"`
+	AutoMemory             *bool             `json:"auto_memory,omitempty"`
 	IsOwner                *bool             `json:"is_owner,omitempty"`
 	PermissionOverrides    map[string]string `json:"permission_overrides,omitempty"`
 }
@@ -212,6 +213,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		AutoReview:             p.AutoReview,
 		TrustDir:               p.TrustDir,
 		RemoteControl:          p.RemoteControl,
+		AutoMemory:             p.AutoMemory,
 		IsOwner:                p.IsOwner,
 		PermissionOverrides:    p.PermissionOverrides,
 	})
@@ -242,6 +244,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		AutoReview:             j.AutoReview,
 		TrustDir:               j.TrustDir,
 		RemoteControl:          j.RemoteControl,
+		AutoMemory:             j.AutoMemory,
 		IsOwner:                j.IsOwner,
 		PermissionOverrides:    j.PermissionOverrides,
 	}

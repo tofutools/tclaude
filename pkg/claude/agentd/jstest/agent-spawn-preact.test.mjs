@@ -24,7 +24,7 @@ const harnesses = [{
   can_auto_review: false,
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
-  can_remote_control: true,
+  can_remote_control: true, can_auto_memory: true,
 }, {
   name: 'codex', display_name: 'Codex CLI',
   models: [], effort_levels: ['medium', 'high', 'max'],
@@ -39,7 +39,7 @@ const harnesses = [{
   },
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
-  can_remote_control: false,
+  can_remote_control: false, can_auto_memory: false,
 }];
 
 const profiles = [{
@@ -228,7 +228,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
     sandbox_profile: 'strict', approval: 'plan', ask_user_question_timeout: 'never',
-    remote_control: false, is_owner: true,
+    remote_control: false, auto_memory: false, is_owner: true,
     permission_overrides: { 'groups.spawn': 'grant' },
     cwd: '/mono', worktree_path: '/tmp/wt', worktree_branch: 'worker',
   });
@@ -721,4 +721,51 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
   // help-field.test.mjs.
   assert.equal(host.querySelector('.spawn-field-caveat'), null);
   mounted.cleanup();
+});
+
+// The spawn dialog's auto-memory checkbox. Off is the load-bearing default:
+// it is what makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1, so
+// several agents on one repo don't cross-pollute Claude Code's shared
+// per-project memory store. Codex has no such system, so the control is hidden
+// and the field never reaches the wire.
+test('spawn dialog defaults auto memory off and hides it for a harness without memory', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+
+  const draft = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+  assert.equal(draft.autoMemory, false, 'a fresh spawn draft must default auto memory off');
+  assert.equal(model.spawnCapabilityView(draft, context).showAutoMemory, true,
+    'Claude Code exposes the auto-memory control');
+
+  // Opting in reaches the wire.
+  const on = model.buildSpawnRequest({ ...draft, name: 'w', autoMemory: true }, context, null, []);
+  assert.equal(on.body.auto_memory, true);
+
+  // Codex hides the control and omits the field entirely, rather than sending
+  // a value the server would have to reject.
+  const codex = model.selectSpawnHarness(draft, 'codex', context);
+  assert.equal(model.spawnCapabilityView(codex, context).showAutoMemory, false);
+  assert.equal(codex.autoMemory, false, 'switching to a memory-less harness clears the opt-in');
+  const codexReq = model.buildSpawnRequest({ ...codex, name: 'w' }, context, null, []);
+  assert.equal(codexReq.body.auto_memory, undefined);
+});
+
+// A profile that explicitly turned auto memory on pre-fills the dialog; one
+// that said nothing leaves the dialog's own default (off) alone.
+test('spawn dialog applies a profile auto memory default', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const draft = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+
+  const withMemory = model.applySpawnProfile(
+    draft, { name: 'keeper', harness: 'claude', auto_memory: true }, context,
+  );
+  assert.equal(withMemory.autoMemory, true);
+
+  const silent = model.applySpawnProfile(
+    draft, { name: 'quiet', harness: 'claude' }, context,
+  );
+  assert.equal(silent.autoMemory, false, 'a profile that says nothing leaves auto memory off');
 });

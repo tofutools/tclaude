@@ -156,6 +156,12 @@ func processSpawnParams(profile *db.SpawnProfile, request processexec.Request) (
 	if remoteControl, err = harness.ResolveRemoteControl(h, remoteControl); err != nil {
 		return spawnParams{}, err
 	}
+	// Unset auto_memory resolves to off, so a process performer also launches
+	// with Claude Code's shared per-project memory store disabled.
+	autoMemory, err := harness.ResolveAutoMemory(h, profile.AutoMemory)
+	if err != nil {
+		return spawnParams{}, err
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		return spawnParams{}, err
@@ -181,6 +187,7 @@ func processSpawnParams(profile *db.SpawnProfile, request processexec.Request) (
 		TrustDir:               trustDir,
 		TrustDirSet:            profile.TrustDir != nil,
 		RemoteControl:          remoteControl,
+		AutoMemory:             autoMemory,
 		PermissionOverrides:    profile.PermissionOverrides,
 		Timeout:                30 * time.Second,
 		ProcessCommandID:       request.Command.ID,

@@ -4,6 +4,14 @@ export const TRI_OPTIONS = [
   ['', "Default (leave dialog's own)"], ['1', 'on'], ['0', 'off'],
 ];
 
+// Auto memory's unset case is NOT "leave the dialog's own default" — tclaude
+// resolves an unset profile to OFF and injects CLAUDE_CODE_DISABLE_AUTO_MEMORY,
+// because agents sharing a repo cross-pollute one project memory store. Label
+// it so the operator can see what "Default" actually does here.
+export const AUTO_MEMORY_TRI_OPTIONS = [
+  ['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off'],
+];
+
 export function triValue(value) {
   return value == null ? '' : value ? '1' : '0';
 }
@@ -42,6 +50,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     approval: seed?.approval || defaults.approval, ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
+    auto_memory: triValue(seed?.auto_memory),
     agent_name: seed?.agent_name || '', role: seed?.role || '', descr: seed?.descr || '',
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
@@ -69,6 +78,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (trust != null) body.trust_dir = trust;
   const remote = (!h || h.can_remote_control) ? readTri(draft.remote_control) : null;
   if (remote != null) body.remote_control = remote;
+  const autoMemory = (!h || h.can_auto_memory) ? readTri(draft.auto_memory) : null;
+  if (autoMemory != null) body.auto_memory = autoMemory;
   for (const [key, value] of [['sync_worktree', draft.sync_worktree], ['auto_focus', draft.auto_focus], ['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]]) {
     const parsed = readTri(value); if (parsed != null) body[key] = parsed;
   }

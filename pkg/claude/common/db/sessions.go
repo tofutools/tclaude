@@ -76,6 +76,16 @@ type SessionRow struct {
 	// without setting this can't clobber it back to false — the same
 	// discipline the context-window columns use (schema v65, JOH-256).
 	RemoteControl bool
+	// AutoMemory is the auto-memory posture this launch actually resolved to:
+	// true = Claude Code keeps its auto-memory files, false = tclaude injected
+	// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1. A relaunch (resume / clone /
+	// reincarnate) reads it back so an agent that opted INTO memory does not
+	// silently lose it. Written out-of-band at launch (SetSessionAutoMemory),
+	// NOT by SaveSession's UPSERT, so a state-tracking hook tick that builds a
+	// SessionRow without setting it can't clobber it back to false — the same
+	// discipline RemoteControl uses. false for a pre-column row, which is also
+	// the posture a resumed legacy session should get.
+	AutoMemory bool
 	// ExitLaunchGeneration and ExitLaunchGateState are write-only launch
 	// boundary inputs. Generic hook/state UPSERTs leave them empty and preserve
 	// the existing durable launch binding; the explicit launch save sets both
@@ -182,7 +192,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -221,7 +231,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +249,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -264,7 +274,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -324,7 +334,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -385,14 +395,15 @@ func scanSession(row *sql.Row) (*SessionRow, error) {
 // aborts the whole read or just skips the one bad row.
 func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var row SessionRow
-	var autoReg, remoteCtl, approvalAutoReview int
+	var autoReg, remoteCtl, autoMemory, approvalAutoReview int
 	var createdStr, updatedStr, lastHookStr, effectiveSandbox string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
 	row.RemoteControl = remoteCtl != 0
+	row.AutoMemory = autoMemory != 0
 	row.ApprovalAutoReview = approvalAutoReview != 0
 	var err error
 	row.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
@@ -739,6 +750,35 @@ func RemoteControlForConv(convID string) (bool, error) {
 		return false, err
 	}
 	return s.RemoteControl, nil
+}
+
+// SetSessionAutoMemory records the auto-memory posture a launch resolved to,
+// keyed by session id — the same out-of-band discipline as
+// SetSessionRemoteControl: a targeted UPDATE that SaveSession's UPSERT never
+// writes, so a state-tracking hook tick can't reset it to its column default.
+// The launch path sets this once, right after the session row is written, so a
+// later relaunch can reproduce the posture the agent was actually started with.
+func SetSessionAutoMemory(sessionID string, on bool) error {
+	db, err := Open()
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE sessions SET auto_memory = ? WHERE id = ?`, boolToInt(on), sessionID)
+	return err
+}
+
+// AutoMemoryForConv reports the auto-memory posture recorded on a conv's
+// most-recently-updated session row. false (no error) when the conv has no
+// session row or predates the column — which is the tclaude-recommended
+// posture (memory off) either way, so a relaunch degrades safely. A relaunch
+// reads it to PRESERVE an explicit opt-in; the sibling of RemoteControlForConv
+// and AskTimeoutForConv.
+func AutoMemoryForConv(convID string) (bool, error) {
+	s, err := FindSessionByConvID(convID)
+	if err != nil || s == nil {
+		return false, err
+	}
+	return s.AutoMemory, nil
 }
 
 // AskTimeoutForConv returns the resolved AskUserQuestion idle-timeout recorded

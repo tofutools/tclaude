@@ -10,7 +10,6 @@ import (
 )
 
 func TestMigrateV137toV138AddsSubscriptionUsageExclusion(t *testing.T) {
-	require.Equal(t, 138, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v138?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

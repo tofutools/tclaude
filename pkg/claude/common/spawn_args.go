@@ -158,4 +158,12 @@ type SpawnArgs struct {
 	// sessions.remote_control=1 out-of-band once the row materialises, so the
 	// toggle's direction logic + dashboard indicator start armed.
 	RemoteControl bool
+
+	// AutoMemory keeps Claude Code's auto-memory system ON for the launch,
+	// forwarded as `tclaude session new --auto-memory`. false (the default)
+	// means tclaude injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 instead, so
+	// agents sharing a repo don't cross-pollute one per-project memory store.
+	// Only ever true via an explicit opt-in (profile field or spawn request).
+	// Harnesses with no auto-memory system (Codex) ignore it.
+	AutoMemory bool
 }

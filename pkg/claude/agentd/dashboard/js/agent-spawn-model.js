@@ -147,6 +147,7 @@ export function spawnCapabilityView(draft, context) {
     showApprovalReviewer: !!harness?.can_auto_review,
     showTrustDir: draft.harness === 'codex',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
+    showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
     sandboxProfilesDisabled,
   };
 }
@@ -187,6 +188,9 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     trustDir: false,
     trustDirSpecified: false,
     remoteControl: false,
+    // Off is tclaude's recommended posture: agents sharing a repo would
+    // otherwise cross-pollute one Claude Code project memory store.
+    autoMemory: false,
     sandboxProfile: '',
   };
 }
@@ -221,6 +225,7 @@ export function createSpawnDraft({
     autoFocus: !!autoFocus,
     includeGroupContext: true,
     remoteControl: groupRemoteControlDefault(group),
+    autoMemory: false,
   };
 }
 
@@ -254,6 +259,7 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     ...defaults,
     remoteControl: harness?.can_remote_control
       ? groupRemoteControlDefault(group) : false,
+    autoMemory: harness?.can_auto_memory ? draft.autoMemory : false,
   };
 }
 
@@ -309,6 +315,10 @@ export function applySpawnProfile(
   const group = findSpawnGroup(context.groups, next.group);
   next.remoteControl = view.showRemoteControl
     ? groupRemoteControlDefault(group, profile) : false;
+  // A profile's auto_memory speaks only when it explicitly set one; unset keeps
+  // the dialog's own default, which is off.
+  next.autoMemory = view.showAutoMemory && profile.auto_memory != null
+    ? !!profile.auto_memory : false;
   if (profile.agent_name) next.name = text(profile.agent_name);
   if (profile.role) next.role = text(profile.role);
   if (profile.descr) next.descr = text(profile.descr);
@@ -351,6 +361,7 @@ export function clearSpawnProfileFields(draft, context, {
     trustDir: false,
     trustDirSpecified: false,
     remoteControl: defaults.remoteControl,
+    autoMemory: false,
     owner: false,
     permissionOverrides: {},
     syncWorktree: defaults.syncWorktree,
@@ -442,13 +453,14 @@ export function spawnProfileSeed(draft, context) {
   if (reviewer != null) seed.auto_review = reviewer;
   if (view.askTimeout.visible) seed.ask_user_question_timeout = draft.askTimeout;
   if (draft.harness === 'codex') seed.trust_dir = !!draft.trustDir;
+  if (view.showAutoMemory) seed.auto_memory = !!draft.autoMemory;
   return seed;
 }
 
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'owner',
+  'approvalReviewer', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -519,6 +531,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     body.trust_dir = !!draft.trustDir;
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
+  if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
   if (draft.owner) body.is_owner = true;
   if (Object.keys(draft.permissionOverrides || {}).length) {
     body.permission_overrides = { ...draft.permissionOverrides };

@@ -1126,6 +1126,11 @@ type dashboardHarness struct {
 	// one without it (Codex). The per-row remote-control toggle gates on
 	// this exactly the way the rename control gates on CanRename (JOH-259).
 	CanRemoteControl bool `json:"can_remote_control"`
+	// CanAutoMemory mirrors Harness.CanAutoMemory — true only for a harness
+	// with an auto-memory system tclaude can steer (Claude Code), false for one
+	// without it (Codex). The spawn dialog and profile editor gate their
+	// auto-memory controls on this.
+	CanAutoMemory bool `json:"can_auto_memory"`
 }
 
 // buildHarnessCatalog assembles the spawnable-harness catalog for the
@@ -1152,6 +1157,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAutoReview:    h.SupportsAutoReview(),
 			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
+			CanAutoMemory:    h.CanAutoMemory(),
 		}
 		if dh.Models == nil {
 			dh.Models = []string{} // JSON [] not null, so JS .map() is safe

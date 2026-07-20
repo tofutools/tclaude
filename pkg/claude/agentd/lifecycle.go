@@ -2360,7 +2360,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var autoReviewSet, trustDirSet bool
-	var autoReviewNote, trustDirNote string
+	var autoReviewNote, trustDirNote, autoMemoryNote string
 	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
@@ -2375,12 +2375,27 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	// auto_memory rides the same tier stack, but note the default it falls back
+	// to: unset everywhere resolves to FALSE, and false here means tclaude
+	// injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1. That is deliberate — Claude
+	// Code's per-project memory store is shared by every agent on the repo, so
+	// leaving it on cross-pollutes their notes. Only an explicit opt-in (spawn
+	// body or a matching profile) turns it back on.
+	var autoMemory bool
+	autoMemory, _, autoMemoryNote, fieldFail = resolveBoolLaunchField(
+		"auto_memory", body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
+		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
 	}
-	for _, note := range []string{sandboxNote, approvalNote, askTimeoutNote, autoReviewNote, trustDirNote} {
+	for _, note := range []string{sandboxNote, approvalNote, askTimeoutNote, autoReviewNote, trustDirNote, autoMemoryNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -2731,6 +2746,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		TrustDir:                   trustDir,
 		TrustDirSet:                trustDirSet,
 		RemoteControl:              remoteControl,
+		AutoMemory:                 autoMemory,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
@@ -2936,6 +2952,14 @@ type spawnParams struct {
 	// also tags sessions.remote_control=1 once the row materialises, so the
 	// toggle direction logic + dashboard indicator start armed.
 	RemoteControl bool
+	// AutoMemory keeps Claude Code's auto memory ON for the new agent,
+	// forwarding `--auto-memory` to `tclaude session new`. false (the default,
+	// and what an unset profile resolves to) instead has the launch inject
+	// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1, so agents sharing a repo don't
+	// cross-pollute one per-project memory store. Gated at the spawn boundary
+	// (handleGroupSpawn → harness.ResolveAutoMemory); a harness with no
+	// auto-memory system (Codex) rejects a true value.
+	AutoMemory bool
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -3560,6 +3584,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		RemoteControl:              p.RemoteControl,
+		AutoMemory:                 p.AutoMemory,
 	}
 
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
@@ -5073,7 +5098,21 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	args = appendTrustDirFlag(args, a.TrustDir)
 	args = appendRemoteControlFlag(args, a.RemoteControl)
+	args = appendAutoMemoryFlag(args, a.AutoMemory)
 	args = appendInitialPromptArg(args, a)
+	return args
+}
+
+// appendAutoMemoryFlag adds `--auto-memory` to a `tclaude session new` argv
+// when the spawn opted back INTO Claude Code's auto memory. false omits it,
+// which is the recommended posture and makes the forked `session new` inject
+// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1. Bare boolean flag; the forked `session
+// new` re-validates it against the harness (a non-Claude harness rejects an
+// explicit opt-in).
+func appendAutoMemoryFlag(args []string, autoMemory bool) []string {
+	if autoMemory {
+		args = append(args, "--auto-memory")
+	}
 	return args
 }
 
