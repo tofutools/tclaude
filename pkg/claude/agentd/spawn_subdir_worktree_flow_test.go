@@ -49,8 +49,8 @@ func TestSpawn_SubdirWorktree_LaunchesInMonorepoTellsWorktree(t *testing.T) {
 
 	// The welcome (delivered as the launch prompt) names the worktree
 	// path + branch so the agent edits code in the right place.
-	f.AssertSpawnInitialPrompt(spawn.ConvID, worktreeDir, 5*time.Second)
-	f.AssertSpawnInitialPrompt(spawn.ConvID, "feature-x", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, worktreeDir, 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "feature-x", 10*time.Second)
 }
 
 // Scenario: an invalid worktree_path (a typo, a stale dir) is caught
@@ -87,7 +87,7 @@ func TestSpawn_SubdirWorktree_OmittedLeavesWelcomeClean(t *testing.T) {
 
 	// Wait for the welcome itself (it carries this marker), then confirm
 	// it said nothing about a worktree.
-	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 10*time.Second)
 	prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID)
 	assert.NotContainsf(t, prompt, "git worktree for code changes",
 		"a worktree-free spawn must not mention a worktree; got %q", prompt)

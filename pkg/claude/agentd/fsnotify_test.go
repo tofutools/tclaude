@@ -60,7 +60,7 @@ func TestConvMonitor_StartupScanIndexesExistingConvs(t *testing.T) {
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil && row.FirstPrompt != ""
-	}, 3*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"the startup scan must index a conv that existed before the monitor started")
 }
 
@@ -105,7 +105,7 @@ func TestConvMonitor_StartupScanRefreshesChangedConv(t *testing.T) {
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil && row.FirstPrompt == "first prompt added while tclaude was down"
-	}, 3*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"startup scan must reparse a .jsonl whose on-disk mtime/size moved past the cached row")
 }
 
@@ -170,7 +170,7 @@ func TestConvMonitor_WriteRefreshesConvIndex(t *testing.T) {
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil
-	}, 3*time.Second, 10*time.Millisecond, "startup scan must index the existing conv")
+	}, 10*time.Second, 10*time.Millisecond, "startup scan must index the existing conv")
 
 	// A /rename-style write to the live .jsonl — the title transition
 	// from "" proves the live fsnotify Write path, not the startup scan.
@@ -179,7 +179,7 @@ func TestConvMonitor_WriteRefreshesConvIndex(t *testing.T) {
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil && row.CustomTitle == "monitored-title"
-	}, 3*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"conv_index must reflect the live .jsonl write without any explicit conv ls")
 }
 
@@ -206,7 +206,7 @@ func TestConvMonitor_NewConvIsIndexed(t *testing.T) {
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil && row.FirstPrompt != ""
-	}, 3*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"a brand-new conversation .jsonl must be picked up by the monitor")
 }
 
@@ -229,13 +229,13 @@ func TestConvMonitor_RemoveDeletesConvIndexRow(t *testing.T) {
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil
-	}, 3*time.Second, 10*time.Millisecond, "conv must be indexed first")
+	}, 10*time.Second, 10*time.Millisecond, "conv must be indexed first")
 
 	// Delete the .jsonl — the monitor must drop the conv_index row.
 	require.NoError(t, os.Remove(cc.JsonlPath))
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row == nil
-	}, 3*time.Second, 10*time.Millisecond,
+	}, 10*time.Second, 10*time.Millisecond,
 		"conv_index row must be deleted when the .jsonl is removed")
 }

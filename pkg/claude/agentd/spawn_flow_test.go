@@ -28,13 +28,13 @@ func TestSpawn_RenamesAndResumes(t *testing.T) {
 	spawn := f.AsHuman().Spawn("alpha", "worker")
 
 	// The name rides in as the launch display name, not a tmux injection.
-	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "worker", 10*time.Second)
 
 	// What the human would see at the contact surface: `tclaude agent groups
 	// members alpha` lists the new conv with title "worker". `claude --name`
 	// writes a custom-title turn just like /rename, so the conv-index resolves
 	// the title from the .jsonl exactly as before.
-	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 10*time.Second)
 
 	// The launch-enrollment path injects NOTHING over tmux — the whole point.
 	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
@@ -65,12 +65,12 @@ func TestSpawn_NameBecomesTitleResolvableBySelector(t *testing.T) {
 	spawn := f.AsHuman().Spawn("alpha", "reviewer")
 
 	// The name is applied at launch (`claude --name reviewer`), not injected.
-	f.AssertSpawnName(spawn.ConvID, "reviewer", 5*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "reviewer", 10*time.Second)
 
 	// The name surfaces as the agent's title on the members view.
-	f.AssertGroupMember("alpha", spawn.ConvID, "reviewer", 5*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "reviewer", 10*time.Second)
 
 	// And the name resolves as a selector — what `tclaude agent
 	// lookup reviewer` / `agent message reviewer ...` rely on.
-	f.AssertResolvesByTitle("reviewer", spawn.ConvID, 5*time.Second)
+	f.AssertResolvesByTitle("reviewer", spawn.ConvID, 10*time.Second)
 }

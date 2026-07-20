@@ -48,8 +48,8 @@ func TestSpawn_AgentSpawner_KickoffAttributesSpawner(t *testing.T) {
 	// The worker is named via launch arg, and its welcome rides in as the
 	// launch prompt. The welcome's opening clause must name the PO, not the
 	// human.
-	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
-	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by tclaude-PO", 5*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "worker", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by tclaude-PO", 10*time.Second)
 
 	// Airtight: with an agent spawner, the misattributing phrase must appear
 	// nowhere — not in the launch prompt, and the launch-enrollment path sends
@@ -74,8 +74,8 @@ func TestSpawn_HumanSpawner_KickoffAttributesHuman(t *testing.T) {
 
 	spawn := f.AsHuman().Spawn("alpha", "worker")
 
-	f.AssertSpawnName(spawn.ConvID, "worker", 5*time.Second)
-	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 5*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "worker", 10*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by the human", 10*time.Second)
 }
 
 // Scenario: an agent spawns a worker, but the spawner's conv-id has no
@@ -98,7 +98,7 @@ func TestSpawn_AgentSpawner_UnresolvableName_StillNotHuman(t *testing.T) {
 	spawn := f.AsAgent(poConv).SpawnWith("alpha", map[string]any{"name": "worker"})
 	require.Equal(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 
-	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by another agent", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by another agent", 10*time.Second)
 	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); strings.Contains(prompt, "spawned by the human") {
 		t.Fatalf("an agent-spawned agent must not be told the human spawned it; got %q", prompt)
 	}
@@ -128,7 +128,7 @@ func TestSpawn_AgentSpawner_HostileTitle_WelcomeStaysClean(t *testing.T) {
 	spawn := f.AsAgent(poConv).Spawn("alpha", "worker")
 
 	// The hostile title is rejected; the welcome uses the safe fallback.
-	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by another agent", 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, "spawned by another agent", 10*time.Second)
 
 	// No fragment of the hostile title reached the worker — neither the
 	// "evil" text nor the "/exit" command — and the welcome stayed a

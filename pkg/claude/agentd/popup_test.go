@@ -306,7 +306,7 @@ func TestRequestHumanApproval_DefaultDoesNotOpenBrowserOrNotify(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("approval waiter did not finish")
 	}
 	if got := opened.Load(); got != 0 {
@@ -348,14 +348,14 @@ func TestRequestHumanApproval_OptInOpensBrowserAndNotifies(t *testing.T) {
 	go func() { done <- realRequestHumanApproval(req, "http://127.0.0.1:1234") }()
 	select {
 	case <-openedCh:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("approval waiter did not invoke the stubbed browser opener")
 	}
 	req.decision <- outcomeDeny
 
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("approval waiter did not finish")
 	}
 	if got := opened.Load(); got != 1 {

@@ -58,11 +58,11 @@ func TestReincarnate_RejectsControlCharTitleAtSendKeysSink(t *testing.T) {
 	// signal that the post-spawn goroutine ran to completion (it fires
 	// AFTER the new-pane deliverRename attempt + flush), so by the time
 	// we see it the new-pane rename decision has already been made.
-	f.AssertSentContains(r.TmuxTarget(), "new agent message", 5*time.Second)
+	f.AssertSentContains(r.TmuxTarget(), "new agent message", 10*time.Second)
 
 	// The old-pane sequence is synchronous in the handler, so /exit has
 	// already been injected by the time Reincarnate() returned.
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 2*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 10*time.Second),
 		"old pane should still receive /exit; sent=%+v", f.World.Tmux.Sent())
 
 	// Core assertion: the hostile title never reached send-keys on

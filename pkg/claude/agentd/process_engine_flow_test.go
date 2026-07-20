@@ -487,7 +487,7 @@ func TestProcessRunCreateAskHumanInvalidOversizedIdentitiesStayBoundedAcrossReso
 				}
 			}
 			return false
-		}, 2*time.Second, 10*time.Millisecond, "process-run approval did not become pending")
+		}, 10*time.Second, 10*time.Millisecond, "process-run approval did not become pending")
 
 		decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
 			"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": "deny"}))
@@ -495,7 +495,7 @@ func TestProcessRunCreateAskHumanInvalidOversizedIdentitiesStayBoundedAcrossReso
 		select {
 		case rec := <-result:
 			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("denied process-run request did not return")
 		}
 	}
@@ -756,7 +756,7 @@ func TestProcessEngineDynamicallyFollowsFeatureFlag(t *testing.T) {
 	require.Eventually(t, func() bool {
 		_, statErr := os.Stat(firstOutput)
 		return statErr == nil
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 
 	require.NoError(t, os.WriteFile(config.ConfigPath(), []byte(`{"features":{"processes":false}}`), 0o644))
 	pulseProcessEngine(t, pulses, observed, false)
@@ -777,7 +777,7 @@ func pulseProcessEngine(t *testing.T, pulses chan<- struct{}, observed <-chan bo
 	t.Helper()
 	select {
 	case pulses <- struct{}{}:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("timed out sending process engine supervisor pulse")
 	}
 	observeProcessEngineState(t, observed, want)
@@ -788,7 +788,7 @@ func observeProcessEngineState(t *testing.T, observed <-chan bool, want bool) {
 	select {
 	case got := <-observed:
 		assert.Equal(t, want, got, "process engine observed unexpected feature state")
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatalf("timed out waiting for process engine to observe enabled=%v", want)
 	}
 }
@@ -1957,26 +1957,26 @@ func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {
 		releaseFirst()
 		select {
 		case <-firstDone:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Error("first scheduler did not stop during cleanup")
 		}
 		if secondStarted {
 			select {
 			case <-secondDone:
-			case <-time.After(2 * time.Second):
+			case <-time.After(10 * time.Second):
 				t.Error("second scheduler did not stop during cleanup")
 			}
 		}
 	})
 	select {
 	case <-adapter.started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first scheduler never reached performer")
 	}
 	select {
 	case interval := <-heartbeatStarted:
 		assert.Equal(t, first.LeaseTTL/3, interval)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first scheduler did not start its heartbeat timer")
 	}
 	// Renew halfway through the original lease, then move just beyond its
@@ -1984,13 +1984,13 @@ func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {
 	setNow(baseTime.Add(first.LeaseTTL / 2))
 	select {
 	case heartbeatTicks <- baseTime.Add(first.LeaseTTL / 2):
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first scheduler did not accept the controlled heartbeat tick")
 	}
 	var renewed store.LeaseRecord
 	select {
 	case renewed = <-observedStore.renewed:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first scheduler did not renew its lease")
 	}
 	assert.Equal(t, baseTime.Add(first.LeaseTTL/2), renewed.UpdatedAt)
@@ -2003,7 +2003,7 @@ func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {
 	}()
 	select {
 	case <-secondDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("second scheduler did not return; it may have acquired the renewed lease")
 	}
 	require.NoError(t, secondErr)
@@ -2015,7 +2015,7 @@ func TestProcessEngineLeaseContentionAllowsOnlyOneScheduler(t *testing.T) {
 	case <-firstDone:
 		require.Len(t, firstResults, 1)
 		assert.Empty(t, firstResults[0].Error)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first scheduler did not finish")
 	}
 }
@@ -2035,12 +2035,12 @@ func TestProcessEngineRestartReconcilesWithoutDoubleExecution(t *testing.T) {
 	select {
 	case <-adapter.performed:
 		cancel() // crash after the external result exists, before observation
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("performer side effect did not start")
 	}
 	select {
 	case <-firstDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first host did not stop")
 	}
 

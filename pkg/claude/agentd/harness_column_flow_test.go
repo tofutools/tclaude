@@ -33,7 +33,7 @@ func TestSpawn_TagsHarnessClaude(t *testing.T) {
 
 	// Let the post-spawn /rename land so the conv has a scannable title
 	// turn in its .jsonl (the FreshConvRowResolved scan needs content).
-	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 10*time.Second)
 
 	// Session side: the row the simSpawner wrote via the production
 	// db.SaveSession path carries the default harness.

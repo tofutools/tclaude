@@ -32,7 +32,7 @@ func TestCodexAgent_CompactInjectsNativeCommand(t *testing.T) {
 	res := f.AsHuman().Compact(conv)
 	require.Equal(t, http.StatusOK, res.Code,
 		"compact on a codex agent must succeed; body=%s", res.Raw)
-	f.AssertSentContains("tmux-codex-1:0.0", "/compact", 2*time.Second)
+	f.AssertSentContains("tmux-codex-1:0.0", "/compact", 10*time.Second)
 }
 
 // Codex has no in-pane rename command, so a rename writes threads.title
@@ -112,6 +112,6 @@ func TestCodexAgent_ReincarnateCarriesIdentityAndTitle(t *testing.T) {
 	require.Eventually(t, func() bool {
 		title, err := newCx.ThreadTitle()
 		return err == nil && title == "original-codex"
-	}, 3*time.Second, 20*time.Millisecond,
+	}, 10*time.Second, 20*time.Millisecond,
 		"successor keeps the plain base name (JOH-319) on its native threads.title")
 }

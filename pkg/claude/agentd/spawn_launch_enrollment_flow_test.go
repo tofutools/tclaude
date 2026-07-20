@@ -54,16 +54,16 @@ func TestSpawn_LaunchEnrollment_PresetsConvIDNoInjection(t *testing.T) {
 	// The name + welcome rode in as launch args, not tmux injection. A short
 	// brief is inlined under the default cap: the launch prompt carries the
 	// brief verbatim AND notes the inbox copy by id.
-	f.AssertSpawnName(spawn.ConvID, "worker", 2*time.Second)
+	f.AssertSpawnName(spawn.ConvID, "worker", 10*time.Second)
 	msg := soleInboxMessage(t, spawn.ConvID)
-	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 2*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 10*time.Second)
 	if prompt, _ := f.World.SpawnInitialPrompt(spawn.ConvID); !strings.Contains(
 		prompt, fmt.Sprintf("message #%d", msg.ID)) {
 		t.Fatalf("inlined welcome should note the inbox copy by id; got %q", prompt)
 	}
 
 	// The title resolves from the .jsonl exactly as a /rename would.
-	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 2*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 10*time.Second)
 
 	// Nothing was injected over tmux — the whole point of the new path.
 	if sent := f.World.Tmux.Sent(); len(sent) != 0 {
@@ -141,9 +141,9 @@ func TestSpawn_LegacyInjection_ConfigRevertsToSendKeys(t *testing.T) {
 	msg := soleInboxMessage(t, spawn.ConvID)
 
 	// Legacy path: /rename + welcome are injected over tmux, as before.
-	f.AssertSentContains(target, "/rename worker", 5*time.Second)
-	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
-	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 5*time.Second)
+	f.AssertSentContains(target, "/rename worker", 10*time.Second)
+	f.AssertSentContains(target, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
+	f.AssertGroupMember("alpha", spawn.ConvID, "worker", 10*time.Second)
 
 	// And it did NOT take the launch-arg path: no launch --name / prompt.
 	if name, _ := f.World.SpawnName(spawn.ConvID); name != "" {

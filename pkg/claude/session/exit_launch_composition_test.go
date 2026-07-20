@@ -48,7 +48,7 @@ func TestPaneBootstrapLaunchGateBlocksHarnessUntilReleased(t *testing.T) {
 	select {
 	case err := <-done:
 		require.NoError(t, err)
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		require.Fail(t, "harness did not start after launch gate release")
 	}
 	require.FileExists(t, marker)

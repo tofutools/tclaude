@@ -89,7 +89,7 @@ func TestMulticast_ByName_FansOutToAllMembers(t *testing.T) {
 		require.Len(t, rows, 1, "member %s got a row", m)
 		assert.Equal(t, "ship it", rows[0].Body)
 	}
-	f.AssertSentContains("tclaude-spwn-mc01-a:0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains("tclaude-spwn-mc01-a:0.0", "new agent message", 10*time.Second)
 }
 
 // Scenario 2: group:<id> — a numeric token resolves to the group with

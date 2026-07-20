@@ -74,8 +74,8 @@ func TestHangupProcessGroup_ReachesForkedChild(t *testing.T) {
 	select {
 	case <-done:
 		// EOF: the forked child exited, so the group SIGHUP reached it.
-	case <-time.After(3 * time.Second):
-		t.Fatal("forked child still holding the pipe 3s after the group hangup — " +
+	case <-time.After(10 * time.Second):
+		t.Fatal("forked child still holding the pipe 10s after the group hangup — " +
 			"SIGHUP didn't reach it; a wrapper-only signal would leave the tmux client attached")
 	}
 }

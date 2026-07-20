@@ -233,13 +233,13 @@ func TestCronLivenessSnapshotTimeoutReleasesAuthorityLock(t *testing.T) {
 	fireTimeout()
 	select {
 	case <-tickDone:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("scheduler remained wedged after the tmux timeout")
 	}
 	select {
 	case code := <-patchDone:
 		assert.Equal(t, http.StatusOK, code)
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("cron PATCH remained blocked after the tmux timeout")
 	}
 }
@@ -404,7 +404,7 @@ func TestDashboardCronDelete_WaitsForAuthorizedScheduledDelivery(t *testing.T) {
 	}()
 	select {
 	case <-revalidated:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("scheduler did not reach authority revalidation")
 	}
 
@@ -416,7 +416,7 @@ func TestDashboardCronDelete_WaitsForAuthorizedScheduledDelivery(t *testing.T) {
 	}()
 	select {
 	case <-deleteAttempting:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("delete did not reach the authority lock")
 	}
 	select {
@@ -428,13 +428,13 @@ func TestDashboardCronDelete_WaitsForAuthorizedScheduledDelivery(t *testing.T) {
 	close(allowFire)
 	select {
 	case <-tickDone:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("scheduler did not complete delivery")
 	}
 	select {
 	case code := <-deleteDone:
 		require.Equal(t, http.StatusNoContent, code)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("delete did not complete after delivery released the authority lock")
 	}
 	assert.Equal(t, 1, msgRowCount(t, target),

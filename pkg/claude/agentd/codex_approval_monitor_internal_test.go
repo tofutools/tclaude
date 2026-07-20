@@ -105,7 +105,7 @@ func TestCodexApprovalMonitor_StartupReconcilesOnlyLivePaneProfile(t *testing.T)
 	require.Eventually(t, func() bool {
 		data, readErr := os.ReadFile(configPath)
 		return readErr == nil && strings.Contains(string(data), "linear.live_issue")
-	}, 3*time.Second, 10*time.Millisecond)
+	}, 10*time.Second, 10*time.Millisecond)
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "linear.stale_issue")

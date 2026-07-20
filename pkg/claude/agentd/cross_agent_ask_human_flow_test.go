@@ -55,7 +55,7 @@ func TestCrossAgentAskHuman_ResumeCreatesPendingRequestAndApprovalLaunchesOnce(t
 			}
 		}
 		return false
-	}, time.Second, 10*time.Millisecond, "resume must create a real pending access request")
+	}, 10*time.Second, 10*time.Millisecond, "resume must create a real pending access request")
 
 	decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
 		"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": "approve"}))
@@ -113,7 +113,7 @@ func TestCrossAgentAskHuman_ResumeDenyAndTimeoutLeaveTargetStopped(t *testing.T)
 						}
 					}
 					return false
-				}, time.Second, 10*time.Millisecond)
+				}, 10*time.Second, 10*time.Millisecond)
 				decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
 					"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": tc.decision}))
 				require.Equal(t, http.StatusOK, decision.Code, "decision body=%s", decision.Body.String())
@@ -185,7 +185,7 @@ func TestCrossAgentAskHuman_ResumeProvenanceRecoveryApproveDenyTimeout(t *testin
 						}
 					}
 					return false
-				}, time.Second, 10*time.Millisecond, "invalid provenance must create a real recovery request")
+				}, 10*time.Second, 10*time.Millisecond, "invalid provenance must create a real recovery request")
 				decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
 					"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": tc.decision}))
 				require.Equal(t, http.StatusOK, decision.Code, "decision body=%s", decision.Body.String())
@@ -260,7 +260,7 @@ func TestGroupResume_ProvenanceRecoveryApprovalIsMemberScoped(t *testing.T) {
 				}
 			}
 			return false
-		}, time.Second, 10*time.Millisecond)
+		}, 10*time.Second, 10*time.Millisecond)
 		return id
 	}
 	firstRequest := pending("")

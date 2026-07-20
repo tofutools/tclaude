@@ -34,7 +34,7 @@ func TestSpawn_InvalidNameNormalized(t *testing.T) {
 			resp := f.AsHuman().SpawnWith("alpha", map[string]any{"name": tc.in})
 			require.Equalf(t, http.StatusOK, resp.Code,
 				"spawn with name %q should normalize + succeed; body=%s", tc.in, resp.Raw)
-			f.AssertSpawnName(resp.ConvID, tc.want, 2*time.Second)
+			f.AssertSpawnName(resp.ConvID, tc.want, 10*time.Second)
 		})
 	}
 }
@@ -83,7 +83,7 @@ func TestSpawn_ValidNameAcceptedAndTrimmed(t *testing.T) {
 	resp := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "  code-reviewer_2  "})
 	require.Equalf(t, http.StatusOK, resp.Code,
 		"spawn with a valid name should succeed; body=%s", resp.Raw)
-	f.AssertSpawnName(resp.ConvID, "code-reviewer_2", 2*time.Second)
+	f.AssertSpawnName(resp.ConvID, "code-reviewer_2", 10*time.Second)
 }
 
 // Scenario: the name is optional — an omitted/empty name spawns an

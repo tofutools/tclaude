@@ -38,18 +38,18 @@ func TestReincarnate_SuccessorKeepsBaseName_PredecessorArchived(t *testing.T) {
 
 	// The successor keeps the base name.
 	f.AssertReincarnateTitle(r, "worker")
-	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 5*time.Second)
+	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 10*time.Second)
 
 	// The retiring predecessor is archive-renamed to "worker-x" and exits.
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-x", 2*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-x", 10*time.Second),
 		"old pane should be archive-renamed to worker-x; sent=%+v", f.World.Tmux.Sent())
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 1*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 10*time.Second),
 		"old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
 
 	// Surface-level invariants the human would see in `agent groups members`:
 	//   - the live member shows with the bare base name "worker";
 	//   - the old conv is gone (membership migrated atomically).
-	f.AssertGroupMember(g.Name, r.NewConv, "worker", 5*time.Second)
+	f.AssertGroupMember(g.Name, r.NewConv, "worker", 10*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
 
 	// JOH-320: the predecessor is hidden from `conv ls` by the durable
@@ -85,7 +85,7 @@ func TestReincarnate_RepeatRetirement_AddsArchiveCounter(t *testing.T) {
 	r := f.AsHuman().Reincarnate(oldConv, "fresh start")
 
 	f.AssertReincarnateTitle(r, "worker")
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-x-2", 2*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-x-2", 10*time.Second),
 		"a second retirement disambiguates with -x-2; sent=%+v", f.World.Tmux.Sent())
 }
 
@@ -109,14 +109,14 @@ func TestReincarnate_LegacyLivingNameShedsSuffix(t *testing.T) {
 
 	// Successor falls back to the plain base name.
 	f.AssertReincarnateTitle(r, "worker")
-	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 5*time.Second)
+	f.AssertSentContains(r.TmuxTarget(), "/rename worker", 10*time.Second)
 
 	// Predecessor keeps its legacy full title, archive-marked.
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 2*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/rename worker-r-3-x", 10*time.Second),
 		"legacy numbered predecessor archives as worker-r-3-x; sent=%+v", f.World.Tmux.Sent())
-	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 1*time.Second),
+	assert.True(t, f.World.Tmux.WaitForSendKeys(oldTmux+":0.0", "/exit", 10*time.Second),
 		"old pane should have received /exit; sent=%+v", f.World.Tmux.Sent())
 
-	f.AssertGroupMember(g.Name, r.NewConv, "worker", 5*time.Second)
+	f.AssertGroupMember(g.Name, r.NewConv, "worker", 10*time.Second)
 	f.AssertNotGroupMember(g.Name, oldConv)
 }

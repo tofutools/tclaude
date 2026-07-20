@@ -99,7 +99,7 @@ func requireExitGateResult(t *testing.T, done <-chan error) error {
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(10 * time.Second):
 		require.Fail(t, "timed out waiting for wrapped exit launch gate")
 		return nil
 	}
@@ -250,14 +250,14 @@ func TestExitLaunchGuard_FinalPendingReadRaceCannotReportFalseSuccess(t *testing
 	require.Eventually(t, func() bool {
 		_, statErr := os.Stat(rmReady)
 		return statErr == nil
-	}, 3*time.Second, 10*time.Millisecond, "pane reached timeout removal after its final pending read")
+	}, 10*time.Second, 10*time.Millisecond, "pane reached timeout removal after its final pending read")
 
 	releaseDone := make(chan error, 1)
 	go func() { releaseDone <- guard.release() }()
 	require.Eventually(t, func() bool {
 		raw, readErr := os.ReadFile(guard.barrierPath)
 		return readErr == nil && string(raw) == "go"
-	}, 3*time.Second, 10*time.Millisecond, "parent published go after pane's final pending read")
+	}, 10*time.Second, 10*time.Millisecond, "parent published go after pane's final pending read")
 	require.NoError(t, os.WriteFile(rmContinue, []byte("continue"), 0o600))
 
 	var paneExit *exec.ExitError

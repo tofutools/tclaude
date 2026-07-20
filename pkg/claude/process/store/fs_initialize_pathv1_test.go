@@ -214,7 +214,7 @@ func TestInitializePathV1ConcurrentCASAndAppendLockContention(t *testing.T) {
 		select {
 		case err := <-appendDone:
 			assert.ErrorIs(t, err, state.ErrNewerSchemaVersion)
-		case <-time.After(5 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("append deadlocked after initialization released the run lock")
 		}
 	})

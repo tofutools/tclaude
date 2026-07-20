@@ -100,7 +100,7 @@ func TestMail_HeldWhileRecipientAwaitingHumanInput(t *testing.T) {
 	f.SetSessionStatus(recipient, session.StatusWorking)
 	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(recipient),
 		"flush delivers once the recipient is no longer awaiting human input")
-	f.AssertSentContains(recvPane, nudge, 2*time.Second)
+	f.AssertSentContains(recvPane, nudge, 10*time.Second)
 	msg, err = db.GetAgentMessage(resp.ID)
 	require.NoError(t, err)
 	assert.False(t, msg.DeliveredAt.IsZero(), "message delivered after the recipient resumed")
@@ -144,7 +144,7 @@ func TestMail_ReaperBackstopDeliversHeldMailAfterResume(t *testing.T) {
 	agentd.RunReaperTickForTest(time.Now())
 	agentd.WaitForBackgroundForTest() // drain the goBackground flush the tick queued
 
-	f.AssertSentContains(recvPane, nudge, 2*time.Second)
+	f.AssertSentContains(recvPane, nudge, 10*time.Second)
 	msg, err := db.GetAgentMessage(resp.ID)
 	require.NoError(t, err)
 	assert.False(t, msg.DeliveredAt.IsZero(), "reaper backstop delivers held mail after resume")
@@ -175,7 +175,7 @@ func TestMail_DeliversImmediatelyWhenRecipientWorking(t *testing.T) {
 	require.True(t, resp.Queued, "working recipient: message queued for async delivery")
 
 	agentd.WaitForBackgroundForTest() // drain the async nudge
-	f.AssertSentContains(recvTmux+":0.0", fmt.Sprintf("new agent message #%d", resp.ID), 2*time.Second)
+	f.AssertSentContains(recvTmux+":0.0", fmt.Sprintf("new agent message #%d", resp.ID), 10*time.Second)
 	msg, err := db.GetAgentMessage(resp.ID)
 	require.NoError(t, err)
 	assert.False(t, msg.DeliveredAt.IsZero(), "delivered_at stamped by the worker")

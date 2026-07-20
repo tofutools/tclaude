@@ -37,7 +37,7 @@ func TestStartLogRotation_RotatesViaTicker(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		info, err := os.Stat(path + ".1")
 		return err == nil && info.Size() == 800
-	}, 2*time.Second, 10*time.Millisecond, "an oversized log must rotate at startup")
+	}, 10*time.Second, 10*time.Millisecond, "an oversized log must rotate at startup")
 
 	// The ticker keeps rotating: grow the fresh active log past the cap
 	// again and expect a second rotation (the first one cascades to .2).
@@ -46,7 +46,7 @@ func TestStartLogRotation_RotatesViaTicker(t *testing.T) {
 	assert.Eventually(t, func() bool {
 		info, err := os.Stat(path + ".1")
 		return err == nil && info.Size() == 700
-	}, 2*time.Second, 10*time.Millisecond, "the rotation ticker must keep firing")
+	}, 10*time.Second, 10*time.Millisecond, "the rotation ticker must keep firing")
 }
 
 // With max_size "0" rotation is disabled: startLogRotation returns

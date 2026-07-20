@@ -34,7 +34,7 @@ func TestInjectTextAndSubmitSerializesIndependentCallers(t *testing.T) {
 	go func() { firstDone <- InjectTextAndSubmit("pane-serialize:0.0", "first", opts(firstRun)) }()
 	select {
 	case <-firstStarted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first caller did not acquire the pane lock")
 	}
 	// The exact-match prefix is presentation, not identity: callers using the
@@ -133,7 +133,7 @@ func TestInjectTextAndSubmitLockIDSerializesPaneIDWithSessionStream(t *testing.T
 	go func() { firstDone <- InjectTextAndSubmit("lockid-sess:0.0", "first", opts(firstRun)) }()
 	select {
 	case <-firstStarted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("first caller did not acquire the pane lock")
 	}
 

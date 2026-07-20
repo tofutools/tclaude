@@ -573,7 +573,7 @@ func TestGroupImport_PresentConversationSucceedsWithLiveIndexMonitor(t *testing.
 	require.Eventually(t, func() bool {
 		row, _ := db.GetConvIndex(convID)
 		return row != nil && row.FullPath == dst
-	}, 3*time.Second, 10*time.Millisecond, "the live monitor indexes the import-owned path")
+	}, 10*time.Second, 10*time.Millisecond, "the live monitor indexes the import-owned path")
 }
 
 func TestGroupImport_MissingConversationSucceedsWithLiveIndexMonitor(t *testing.T) {

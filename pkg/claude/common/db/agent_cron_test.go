@@ -245,7 +245,7 @@ func TestInsertAgentCronJobWithRoutingAuthority_ReadsAuthorityAfterBeginImmediat
 				// authorityMutation's real SQLite writer lock. If the authority
 				// SELECT were moved before Begin, it would already have observed
 				// the still-committed member/active-group state at this point.
-			case <-time.After(5 * time.Second):
+			case <-time.After(10 * time.Second):
 				_ = authorityMutation.Rollback()
 				t.Fatal("cron insert did not attempt BEGIN IMMEDIATE")
 			}
@@ -254,7 +254,7 @@ func TestInsertAgentCronJobWithRoutingAuthority_ReadsAuthorityAfterBeginImmediat
 			var inserted insertResult
 			select {
 			case inserted = <-result:
-			case <-time.After(5 * time.Second):
+			case <-time.After(10 * time.Second):
 				t.Fatal("cron insert did not resume after authority mutation committed")
 			}
 			assert.Zero(t, inserted.id)

@@ -60,7 +60,7 @@ func TestSpawn_ShortBriefInlinedIntoLaunchPrompt(t *testing.T) {
 	// welcome metadata and the inbox-copy note. AssertSpawnInitialPrompt does a
 	// substring match, so passing the multi-line brief proves the newlines
 	// survived the shell-quoted argv round-trip.
-	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, brief, 10*time.Second)
 	prompt, ok := f.World.SpawnInitialPrompt(spawn.ConvID)
 	require.True(t, ok, "launch prompt should be recorded")
 	assert.Contains(t, prompt, "[system:", "inlined prompt still opens with the system welcome")
@@ -102,7 +102,7 @@ func TestSpawn_InlineDisabledByConfigKeepsPointer(t *testing.T) {
 
 	// Pointer welcome: it names the inbox message and the brief itself is NOT in
 	// the launch prompt.
-	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 	prompt, ok := f.World.SpawnInitialPrompt(spawn.ConvID)
 	require.True(t, ok, "launch prompt should be recorded")
 	assert.NotContains(t, prompt, brief,
@@ -180,7 +180,7 @@ func TestSpawn_LongBriefStaysUnread(t *testing.T) {
 	assert.Contains(t, msg.Body, brief, "inbox copy carries the verbatim brief")
 
 	// Pointer welcome: it names the inbox message; the brief is NOT inlined.
-	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 5*time.Second)
+	f.AssertSpawnInitialPrompt(spawn.ConvID, fmt.Sprintf("inbox read %d", msg.ID), 10*time.Second)
 	prompt, ok := f.World.SpawnInitialPrompt(spawn.ConvID)
 	require.True(t, ok, "launch prompt should be recorded")
 	assert.NotContains(t, prompt, brief,

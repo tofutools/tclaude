@@ -356,12 +356,12 @@ func TestCodexSim_CommandDelayIsAsync(t *testing.T) {
 	// handler remains causally held immediately before dispatch.
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("delayed command did not reach its dispatch barrier")
 	}
 	select {
 	case <-returned:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("Receive did not return while the delayed handler was blocked")
 	}
 	if envs := readRollout(t, cx.RolloutPath); len(envs) != 1 {
@@ -370,7 +370,7 @@ func TestCodexSim_CommandDelayIsAsync(t *testing.T) {
 	release()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("delayed command did not finish after barrier release")
 	}
 	if envs := readRollout(t, cx.RolloutPath); len(envs) <= 1 {

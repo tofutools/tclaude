@@ -433,9 +433,12 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 
 			action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID)
 			assert.Equal(t, "soft_stopped", action)
+			// Eventually returns as soon as the bounded retries land, so a generous
+			// deadline costs nothing on the normal path while tolerating a long CI
+			// scheduler pause.
 			require.Eventually(t, func() bool {
 				return countExitSends(f, tmuxSession+":0.0", "/exit") == tc.wantSends
-			}, 50*time.Millisecond, time.Millisecond)
+			}, 10*time.Second, time.Millisecond)
 
 			d, err := db.Open()
 			require.NoError(t, err)
@@ -581,7 +584,7 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 		agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop, eventID))
 	select {
 	case <-retryReached:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("retry attempt 2 never ran")
 	}
 

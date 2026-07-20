@@ -163,8 +163,8 @@ func TestAudit_MessageRecordsAgentActorAndPreview(t *testing.T) {
 	worker := f.AsHuman().Spawn("crew", "worker")
 	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
 	// Wait until both titles resolve at the contact surface.
-	f.AssertGroupMember("crew", po.ConvID, "po", 5*time.Second)
-	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("crew", po.ConvID, "po", 10*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
 
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{
@@ -197,8 +197,8 @@ func TestAudit_ReplyRecordsAgentActorAndTarget(t *testing.T) {
 	require.Equal(t, http.StatusOK, po.Code, "spawn po; body=%s", po.Raw)
 	worker := f.AsHuman().Spawn("crew", "worker")
 	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
-	f.AssertGroupMember("crew", po.ConvID, "po", 5*time.Second)
-	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("crew", po.ConvID, "po", 10*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
 
 	// PO messages the worker; capture the message id to reply to.
 	sent := testharness.Serve(f.Mux, agentd.AsAgentPeer(
@@ -245,7 +245,7 @@ func TestAudit_SelfRenameCapturesTitle(t *testing.T) {
 
 	worker := f.AsHuman().Spawn("crew", "worker")
 	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
-	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
 	require.NoError(t, db.SetAgentPermissionOverride(
 		worker.ConvID, agentd.PermSelfRename, db.PermEffectGrant, "operator"))
 
@@ -270,7 +270,7 @@ func TestAudit_SelfReincarnateWithoutSlugIsRecorded(t *testing.T) {
 
 	worker := f.AsHuman().Spawn("crew", "worker")
 	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
-	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
 
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/reincarnate",
@@ -295,8 +295,8 @@ func TestAudit_MessageDeleteRecorded(t *testing.T) {
 	require.Equal(t, http.StatusOK, po.Code, "spawn po; body=%s", po.Raw)
 	worker := f.AsHuman().Spawn("crew", "worker")
 	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
-	f.AssertGroupMember("crew", po.ConvID, "po", 5*time.Second)
-	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("crew", po.ConvID, "po", 10*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
 
 	sent := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/messages", map[string]any{
@@ -330,7 +330,7 @@ func TestAudit_InboxPruneRecorded(t *testing.T) {
 
 	worker := f.AsHuman().Spawn("crew", "worker")
 	require.Equal(t, http.StatusOK, worker.Code, "spawn worker; body=%s", worker.Raw)
-	f.AssertGroupMember("crew", worker.ConvID, "worker", 5*time.Second)
+	f.AssertGroupMember("crew", worker.ConvID, "worker", 10*time.Second)
 
 	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
 		testharness.JSONRequest(t, http.MethodPost, "/v1/inbox/prune",

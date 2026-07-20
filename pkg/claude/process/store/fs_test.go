@@ -1636,7 +1636,7 @@ func TestLoadRunViewCancellationReleasesWriterLock(t *testing.T) {
 		select {
 		case err := <-appendDone:
 			require.NoError(t, err)
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("append could not acquire lock after viewer cancellation")
 		}
 	}

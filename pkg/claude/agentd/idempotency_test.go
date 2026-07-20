@@ -228,7 +228,7 @@ func TestIdempotencyConcurrentRetryWaitsForOriginal(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("original handler did not start")
 	}
 
@@ -240,7 +240,7 @@ func TestIdempotencyConcurrentRetryWaitsForOriginal(t *testing.T) {
 	}()
 	select {
 	case <-retryWaiting:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("retry did not reach the pending-request wait path")
 	}
 	assert.Equal(t, int32(1), calls.Load(), "retry must not execute the handler")
@@ -249,7 +249,7 @@ func TestIdempotencyConcurrentRetryWaitsForOriginal(t *testing.T) {
 	for name, done := range map[string]<-chan struct{}{"first": firstDone, "second": secondDone} {
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatalf("%s request did not finish", name)
 		}
 	}

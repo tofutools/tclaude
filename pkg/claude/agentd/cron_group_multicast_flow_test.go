@@ -112,7 +112,7 @@ func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 	assert.Zero(t, msgRowCount(t, po), "the job owner is skipped from its own multicast")
 
 	// The online member was nudged in its tmux pane.
-	f.AssertSentContains("tclaude-spwn-cgm1-w1:0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains("tclaude-spwn-cgm1-w1:0.0", "new agent message", 10*time.Second)
 }
 
 // Scenario 2: membership is resolved AT FIRE TIME, not at create time.

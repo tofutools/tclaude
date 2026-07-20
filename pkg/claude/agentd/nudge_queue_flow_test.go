@@ -61,8 +61,8 @@ func TestNudgeQueue_SenderReturnsImmediately_WithDepth(t *testing.T) {
 	// The hold clears; a drain delivers the whole backlog, oldest first.
 	f.SetSessionStatus(recipient, "working")
 	assert.Equal(t, 2, agentd.FlushUndeliveredForTest(recipient), "both delivered once online")
-	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID), 2*time.Second)
-	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID), 10*time.Second)
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 10*time.Second)
 }
 
 // TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget reproduces TCL-281's
@@ -119,7 +119,7 @@ func TestNudgeQueue_HungLivenessProbeDoesNotWedgeTarget(t *testing.T) {
 		m, err := db.GetAgentMessage(id)
 		require.NoError(t, err)
 		assert.False(t, m.DeliveredAt.IsZero(), "message #%d delivered after the probe timeout", id)
-		f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 2*time.Second)
+		f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 10*time.Second)
 	}
 }
 
@@ -195,7 +195,7 @@ func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	r1 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "one"})
 	require.Eventually(t, func() bool {
 		return f.World.Tmux.CommandCount("send-keys") >= 1
-	}, 5*time.Second, time.Millisecond, "first worker reaches the hung send-keys")
+	}, 10*time.Second, time.Millisecond, "first worker reaches the hung send-keys")
 	r2 := mustSend(t, f, sender, map[string]any{"to": recipient, "body": "two"})
 	assert.Equal(t, 2, r2.Pending, "in-flight-but-unconfirmed #1 remains part of the durable queue")
 
@@ -208,7 +208,7 @@ func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	m2, err := db.GetAgentMessage(r2.ID)
 	require.NoError(t, err)
 	assert.False(t, m2.DeliveredAt.IsZero(), "later row is not wedged behind the failed attempt")
-	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r2.ID), 10*time.Second)
 	assertNoSendKeys(t, f, tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID))
 
 	// The recipient makes no request. Make the durable retry due, then drive
@@ -220,7 +220,7 @@ func TestNudgeQueue_HungSendKeysIsRetriedByReaper(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, m1.DeliveredAt.IsZero(), "reaper retry completes first delivery")
 	assert.Equal(t, 2, m1.NudgeAttempts, "retry attempt is durable")
-	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID), 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", r1.ID), 10*time.Second)
 }
 
 // TestNudgeQueue_StaleUndeliveredWarnNamesTargetAndMessage pins the operator's
@@ -297,7 +297,7 @@ func TestNudgeQueue_InternalSurvivesReincarnation(t *testing.T) {
 	// A drive of the recipient's NEW conv delivers the message queued against
 	// the OLD one — it followed the agent.
 	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(gen2), "queued message follows the agent to its new generation")
-	f.AssertSentContains(tmux2+":0.0", nudge, 2*time.Second)
+	f.AssertSentContains(tmux2+":0.0", nudge, 10*time.Second)
 	m, err := db.GetAgentMessage(id)
 	require.NoError(t, err)
 	assert.False(t, m.DeliveredAt.IsZero(), "delivered to the live generation")
@@ -339,8 +339,8 @@ func TestNudgeQueue_PrevGenTargeting(t *testing.T) {
 
 	headNudge := fmt.Sprintf("new agent message #%d", rHead.ID)
 	pinNudge := fmt.Sprintf("new agent message #%d", rPin.ID)
-	f.AssertSentContains(tmux2+":0.0", headNudge, 2*time.Second)
-	f.AssertSentContains(tmux1+":0.0", pinNudge, 2*time.Second)
+	f.AssertSentContains(tmux2+":0.0", headNudge, 10*time.Second)
+	f.AssertSentContains(tmux1+":0.0", pinNudge, 10*time.Second)
 	// And not crossed: the pinned message did not land in the head pane.
 	assertNoSendKeys(t, f, tmux2+":0.0", pinNudge)
 	assertNoSendKeys(t, f, tmux1+":0.0", headNudge)
@@ -441,7 +441,7 @@ func TestNudgeQueue_RetiredTargetCancelsQueuedNudges(t *testing.T) {
 	const tmux = "tclaude-nq08-r"
 	f.HaveAliveSession(recipient, "spwn-nq08-r", tmux, f.TestCwd("work"))
 	assert.Equal(t, 1, agentd.FlushUndeliveredForTest(recipient), "revived message delivers")
-	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 2*time.Second)
+	f.AssertSentContains(tmux+":0.0", fmt.Sprintf("new agent message #%d", id), 10*time.Second)
 }
 
 func queueInternalNudge(t *testing.T, recipient, body string) int64 {

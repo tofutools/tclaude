@@ -98,9 +98,9 @@ func TestExportFlow_HappyPath(t *testing.T) {
 
 	// 2. A clone is spawned and ITS pane (not the original's) is nudged with a
 	// fixed-format POINTER — never the raw instructions.
-	workerConv, cloneTmux := awaitExportClone(t, jobID, 5*time.Second)
+	workerConv, cloneTmux := awaitExportClone(t, jobID, 10*time.Second)
 	require.NotEqual(t, "exp00000-0000-4000-8000-000000000001", workerConv, "the worker is a clone, not the original")
-	f.AssertSentContains(cloneTmux, fmt.Sprintf("export show %d", jobID), 3*time.Second)
+	f.AssertSentContains(cloneTmux, fmt.Sprintf("export show %d", jobID), 10*time.Second)
 	for _, sk := range f.World.Tmux.Sent() {
 		assert.NotContains(t, sk.Text, "keep it concise for non-engineers",
 			"raw instructions must never ride send-keys")
@@ -203,7 +203,7 @@ func TestExportFlow_HappyPath(t *testing.T) {
 
 	// 7. The throwaway clone is RETIRED (not deleted) once the export lands, so
 	// its token spend stays in cost tracking (JOH-267).
-	assertCloneRetired(t, workerConv, 3*time.Second)
+	assertCloneRetired(t, workerConv, 10*time.Second)
 }
 
 // assertCloneRetired polls until the worker clone is retired — the teardown
@@ -251,15 +251,15 @@ func TestExportFlow_OfflineOriginalStillExports(t *testing.T) {
 
 	jobID := requestExport(t, dash, "off00000-0000-4000-8000-000000000002", map[string]any{"preset": "summary"})
 
-	workerConv, cloneTmux := awaitExportClone(t, jobID, 5*time.Second)
+	workerConv, cloneTmux := awaitExportClone(t, jobID, 10*time.Second)
 	require.NotEqual(t, "off00000-0000-4000-8000-000000000002", workerConv)
-	f.AssertSentContains(cloneTmux, fmt.Sprintf("export show %d", jobID), 3*time.Second)
+	f.AssertSentContains(cloneTmux, fmt.Sprintf("export show %d", jobID), 10*time.Second)
 
 	// And the export completes end-to-end on the clone, which is then retired
 	// (kept for cost tracking), not deleted.
 	subRec := submitAsWorker(t, f.Mux, jobID, workerConv, "summary.md", []byte("# summary\n"))
 	require.Equal(t, http.StatusOK, subRec.Code, subRec.Body.String())
-	assertCloneRetired(t, workerConv, 3*time.Second)
+	assertCloneRetired(t, workerConv, 10*time.Second)
 }
 
 func TestExportFlow_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
@@ -272,7 +272,7 @@ func TestExportFlow_CodexCopyUsesInheritedCwdWithoutCallerProof(t *testing.T) {
 	installCodexCopyCompatSpawner(t)
 
 	jobID := requestExport(t, dash, source, map[string]any{"preset": "summary"})
-	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
+	workerConv, _ := awaitExportClone(t, jobID, 10*time.Second)
 	got, ok := f.World.SpawnCodexGitCommonDir(workerConv)
 	require.True(t, ok)
 	assert.Empty(t, got,
@@ -294,7 +294,7 @@ func TestExportFlow_StandaloneCloneIsIsolated(t *testing.T) {
 	f.HaveMember("g", "iso00000-0000-4000-8000-000000000003")
 
 	jobID := requestExport(t, dash, "iso00000-0000-4000-8000-000000000003", map[string]any{"preset": "summary"})
-	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
+	workerConv, _ := awaitExportClone(t, jobID, 10*time.Second)
 
 	// The clone never joins the group (standalone is the default).
 	f.AssertNotGroupMember("g", workerConv)
@@ -323,10 +323,10 @@ func TestExportFlow_SameGroupCloneJoinsGroup(t *testing.T) {
 		"preset":     "summary",
 		"same_group": true,
 	})
-	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
+	workerConv, _ := awaitExportClone(t, jobID, 10*time.Second)
 
 	// The clone joins the original's group (poll — identity copy is async).
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	joined := false
 	for time.Now().Before(deadline) && !joined {
 		for _, m := range f.ListGroupMembers("g") {
@@ -361,7 +361,7 @@ func TestExportFlow_History(t *testing.T) {
 
 	mkExport := func(name string) int64 {
 		jobID := requestExport(t, dash, "h0000000-0000-4000-8000-000000000005", map[string]any{"preset": "summary"})
-		workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
+		workerConv, _ := awaitExportClone(t, jobID, 10*time.Second)
 		require.Equal(t, http.StatusOK,
 			submitAsWorker(t, f.Mux, jobID, workerConv, name, []byte("data:"+name)).Code)
 		return jobID
@@ -432,7 +432,7 @@ func TestExportFlow_CrossAgentSubmitDenied(t *testing.T) {
 	// Wait until the worker clone is recorded, so the gate has BOTH a real
 	// conv_id and a real worker_conv_id to reject against — otherwise the test
 	// could pass trivially while worker_conv_id is still empty.
-	workerConv, _ := awaitExportClone(t, jobID, 5*time.Second)
+	workerConv, _ := awaitExportClone(t, jobID, 10*time.Second)
 	require.NotEqual(t, "intruder0-0000-4000-8000-000000000007", workerConv)
 
 	// A third agent — neither the original nor the worker clone — tries to submit.

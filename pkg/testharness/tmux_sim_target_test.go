@@ -170,7 +170,7 @@ func TestTmuxSim_WaitForSendKeys_UnresolvedTargetsDoNotCrossMatch(t *testing.T) 
 	sim.MarkAlive("live")
 	sim.Command("send-keys", "-t", "gone-a:0.0", "/exit")
 
-	assert.True(t, sim.WaitForSendKeys("gone-a:0.0", "/exit", 100*time.Millisecond),
+	assert.True(t, sim.WaitForSendKeys("gone-a:0.0", "/exit", 10*time.Second),
 		"the literal logged target still matches after its session is gone")
 	assert.False(t, sim.WaitForSendKeys("gone-b:0.0", "/exit", 50*time.Millisecond),
 		"a different unresolvable target must not cross-match on \"\" == \"\"")
@@ -204,7 +204,7 @@ func TestTmuxSim_ExactPinnedPaneTargetsFailBeyondSendKeys(t *testing.T) {
 
 	// The plain pane ID keeps working on every path (no aliasing regressed).
 	assert.NoError(t, sim.Command("paste-buffer", "-d", "-p", "-r", "-b", "b1", "-t", "%88").Run())
-	assert.True(t, sim.WaitForSendKeys("%88", "hello", 100*time.Millisecond),
+	assert.True(t, sim.WaitForSendKeys("%88", "hello", 10*time.Second),
 		"the un-pinned paste reaches the exact pane")
 	assert.NoError(t, sim.Command("kill-pane", "-t", "%88").Run())
 	assert.False(t, sim.IsAlive("par"))

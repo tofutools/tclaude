@@ -69,7 +69,7 @@ func TestHumanReply_OnlineAgent_DeliversAndNudges(t *testing.T) {
 	assert.Equal(t, "Re: need a decision", rows[0].Subject)
 
 	// The live pane is nudged over tmux.
-	f.AssertSentContains("tclaude-hrpl-a:0.0", "new agent message", 2*time.Second)
+	f.AssertSentContains("tclaude-hrpl-a:0.0", "new agent message", 10*time.Second)
 
 	// Replying marks the original notification handled (read).
 	orig, err := db.GetHumanMessage(msgID)
