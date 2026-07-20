@@ -11,10 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 )
@@ -126,17 +124,17 @@ func handleProcessWorklistAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, item.Run)
+		kind, schemaErr := supportedProcessRunSchema(r.Context(), fs, item.Run)
 		if schemaErr != nil {
 			writeProcessActionError(w, schemaErr)
 			return
 		}
 		observation := processexec.Observation{Actor: actor, Verdict: body.Action, Feedback: body.Comment, EvidenceRef: evidenceRef}
-		if schema == pathv1.CheckpointStateSchemaVersion {
-			_, err = processexec.NewExclusiveV7(fs, nil).RecordObservation(r.Context(), item.Run, item.Node, item.Target.CommandID, observation)
-		} else {
-			_, err = executor.RecordOutstandingObservation(r.Context(), item.Run, item.Target.CommandID, observation)
+		if kind != store.RunSchemaLegacy {
+			writeProcessActionError(w, fmt.Errorf("process run schema does not support S2 worklist actions"))
+			return
 		}
+		_, err = executor.RecordOutstandingObservation(r.Context(), item.Run, item.Target.CommandID, observation)
 		if err != nil {
 			writeProcessActionError(w, err)
 			return
@@ -168,35 +166,18 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 		return processWorklistLoadResult{}, err
 	}
 	snapshots := make([]store.Snapshot, 0, len(runs))
-	v7Items := make([]worklist.Item, 0)
 	degraded := make([]degradedRun, 0)
 	for _, run := range runs {
 		if run.ID == "" {
 			continue
 		}
-		schema, schemaErr := supportedProcessRunSchema(ctx, fs, run.ID)
+		kind, schemaErr := supportedProcessRunSchema(ctx, fs, run.ID)
 		if schemaErr != nil {
 			degraded = append(degraded, degradedRun{Run: run.ID, Error: schemaErr.Error()})
 			continue
 		}
-		if schema == pathv1.CheckpointStateSchemaVersion {
-			snapshot, loadErr := fs.LoadPathV1RunView(ctx, run.ID)
-			if loadErr != nil {
-				degraded = append(degraded, degradedRun{Run: run.ID, Error: loadErr.Error()})
-				continue
-			}
-			items, itemErr := worklist.DerivePathV1(ctx, snapshot, func(_ context.Context, commandID string) (string, error) {
-				agent, lookupErr := db.AgentForProcessCommand(commandID)
-				if lookupErr != nil || agent == nil {
-					return "", lookupErr
-				}
-				return "agent:" + agent.AgentID, nil
-			})
-			if itemErr != nil {
-				degraded = append(degraded, degradedRun{Run: run.ID, Error: itemErr.Error()})
-				continue
-			}
-			v7Items = append(v7Items, items...)
+		if kind != store.RunSchemaLegacy {
+			degraded = append(degraded, degradedRun{Run: run.ID, Error: "process run schema does not expose S2 worklist items"})
 			continue
 		}
 		snapshot, loadErr := fs.LoadRun(ctx, run.ID)
@@ -206,7 +187,7 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	items := append(worklist.Derive(snapshots), v7Items...)
+	items := worklist.Derive(snapshots)
 	slices.SortFunc(items, func(a, b worklist.Item) int { return strings.Compare(a.ID, b.ID) })
 	return processWorklistLoadResult{Items: items, DegradedRuns: degraded}, nil
 }

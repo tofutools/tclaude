@@ -48,6 +48,10 @@ func TestInstantiateAppliesDefaultsRequiresParamsAndPinsExactRef(t *testing.T) {
 	if run.Template == nil || run.Template.ID != tmpl.ID {
 		t.Fatalf("pinned template = %#v", run.Template)
 	}
+	kind, err := fs.RunStateSchemaKind(t.Context(), run.ID)
+	if err != nil || kind != store.RunSchemaLegacy {
+		t.Fatalf("ineligible end-only template schema = %q, %v", kind, err)
+	}
 }
 
 func TestInstantiateRejectsUnknownParamAndUnsafeRunID(t *testing.T) {
@@ -173,6 +177,43 @@ func TestInstantiateReplayExistingRequiresIdenticalResolvedInputs(t *testing.T) 
 	}
 	if len(runs) != 1 || runs[0].Params["issue"] != "TCL-300" {
 		t.Fatalf("durable runs after retries = %#v", runs)
+	}
+}
+
+func TestInstantiateRoutesEligibleTemplateDirectlyToSchema8(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "epoch-eligible", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := Instantiate(t.Context(), fs, InstantiateRequest{TemplateRef: record.Ref, RunID: "epoch-eligible-run", ReplayExisting: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, err := fs.RunStateSchemaKind(t.Context(), run.ID)
+	if err != nil || kind != store.RunSchemaEpochV8 {
+		t.Fatalf("schema kind = %q, %v", kind, err)
+	}
+	snapshot, err := fs.LoadEpochV8RunView(t.Context(), run.ID)
+	if err != nil || len(snapshot.Checkpoint.View().Epochs) != 1 || len(snapshot.Checkpoint.View().Authorities) != 1 {
+		t.Fatalf("schema-8 initialization = %#v, %v", snapshot.Checkpoint, err)
+	}
+	if _, err := Instantiate(t.Context(), fs, InstantiateRequest{TemplateRef: record.Ref, RunID: run.ID}); !errors.Is(err, store.ErrRunExists) {
+		t.Fatalf("ordinary duplicate = %v", err)
+	}
+	replayed, err := Instantiate(t.Context(), fs, InstantiateRequest{TemplateRef: record.Ref, RunID: run.ID, ReplayExisting: true})
+	if err != nil || !replayed.CreatedAt.Equal(run.CreatedAt) {
+		t.Fatalf("exact replay = %#v, %v", replayed, err)
 	}
 }
 

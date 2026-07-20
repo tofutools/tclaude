@@ -25,7 +25,7 @@ import (
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
@@ -187,20 +187,12 @@ func startProcessEngineSupervisor(
 }
 
 func newProcessEngineHost(root string) (*processengine.Host, error) {
-	host, err := newLegacyProcessEngineHost(root)
-	if err != nil {
-		return nil, err
-	}
-	if err := host.EnableExclusiveV7(); err != nil {
-		return nil, err
-	}
-	return host, nil
+	return newLegacyProcessEngineHost(root)
 }
 
-// newLegacyProcessEngineHost builds the production adapter host without the
-// schema-7 release boundary. Production always enables schema 7; tests that
-// pin legacy v6 servicing behavior (still live until the parity migrator
-// retires the v6 executor) use it directly.
+// newLegacyProcessEngineHost is retained as the focused test constructor for
+// the ordinary production host. Persisted schema classification inside Host
+// keeps schemas 1-6 on this executor and refuses schemas 7 and 8 before decode.
 func newLegacyProcessEngineHost(root string) (*processengine.Host, error) {
 	fs, err := store.NewFS(root)
 	if err != nil {
@@ -267,25 +259,26 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]runView, 0, len(runs))
 	for _, run := range runs {
-		schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, run.ID)
+		kind, schemaErr := supportedProcessRunSchema(r.Context(), fs, run.ID)
 		if schemaErr != nil {
 			verification := processRunLoadFailure(run.ID, schemaErr)
 			views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus, Started: run.CreatedAt, Verification: verification})
 			continue
 		}
-		if schema == pathv1.CheckpointStateSchemaVersion {
-			checkpoint, loadErr := fs.LoadPathV1RunView(r.Context(), run.ID)
+		if kind == store.RunSchemaEpochV8 {
+			snapshot, loadErr := fs.LoadEpochV8RunView(r.Context(), run.ID)
 			if loadErr != nil {
 				verification := processRunLoadFailure(run.ID, loadErr)
 				views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus, Started: run.CreatedAt, Verification: verification})
 				continue
 			}
-			status := state.RunStatus(pathv1.CurrentRunStatus(checkpoint.Checkpoint))
-			verification := processverify.Report{RunID: run.ID, EffectiveStatus: status}
-			views = append(views, runView{
-				ID: run.ID, TemplateRef: run.TemplateRef, Status: status, Started: run.CreatedAt,
-				CurrentActivity: currentPathV1Activity(checkpoint.Checkpoint), Verification: verification,
-			})
+			verification := processverify.Report{RunID: run.ID, EffectiveStatus: state.RunStatusRunning}
+			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: state.RunStatusRunning, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Verification: verification})
+			continue
+		}
+		if kind == store.RunSchemaResetRequired {
+			verification := processRunLoadFailure(run.ID, store.ErrRunResetRequired)
+			views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus, Started: run.CreatedAt, CurrentActivity: string(store.RunSchemaResetRequired), Verification: verification})
 			continue
 		}
 		verification := processverify.StoreRun(r.Context(), fs, run.ID)
@@ -417,7 +410,7 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
-	schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, runID)
+	kind, schemaErr := supportedProcessRunSchema(r.Context(), fs, runID)
 	if schemaErr != nil {
 		if errors.Is(schemaErr, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -426,16 +419,19 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_run", "process run schema is unavailable")
 		return
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		snapshot, loadErr := fs.LoadPathV1RunView(r.Context(), runID)
+	if kind == store.RunSchemaResetRequired {
+		writeError(w, http.StatusConflict, "process_run_reset_required", store.ErrRunResetRequired.Error())
+		return
+	}
+	if kind == store.RunSchemaEpochV8 {
+		snapshot, loadErr := fs.LoadEpochV8RunView(r.Context(), runID)
 		if loadErr != nil {
-			writeError(w, http.StatusInternalServerError, "process_run", "schema-7 process run is unavailable")
+			writeError(w, http.StatusInternalServerError, "process_run", "schema-8 process run is unavailable")
 			return
 		}
-		status := state.RunStatus(pathv1.CurrentRunStatus(snapshot.Checkpoint))
 		writeProcessJSON(w, http.StatusOK, map[string]any{
-			"run": snapshot.Run, "state": snapshot.Checkpoint,
-			"verification": processverify.Report{RunID: runID, EffectiveStatus: status},
+			"run": snapshot.Run, "state": epochV8PublicState(snapshot.Checkpoint),
+			"verification": processverify.Report{RunID: runID, EffectiveStatus: state.RunStatusRunning},
 		})
 		return
 	}
@@ -462,12 +458,13 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	_ = page
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 		return
 	}
-	schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, runID)
+	kind, schemaErr := supportedProcessRunSchema(r.Context(), fs, runID)
 	if schemaErr != nil {
 		if errors.Is(schemaErr, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -481,18 +478,17 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		snapshot, loadErr := fs.LoadPathV1RunHistoryView(r.Context(), runID)
+	if kind == store.RunSchemaResetRequired {
+		writeError(w, http.StatusConflict, "process_run_reset_required", store.ErrRunResetRequired.Error())
+		return
+	}
+	if kind == store.RunSchemaEpochV8 {
+		snapshot, loadErr := fs.LoadEpochV8RunView(r.Context(), runID)
 		if loadErr != nil {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
 		}
-		envelope, buildErr := processview.BuildCurrentPathV1EnvelopePage(r.Context(), snapshot, page)
-		if buildErr != nil {
-			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
-			return
-		}
-		writeProcessJSON(w, http.StatusOK, envelope)
+		writeProcessJSON(w, http.StatusOK, map[string]any{"run": snapshot.Run, "state": epochV8PublicState(snapshot.Checkpoint), "schema": store.RunSchemaEpochV8})
 		return
 	}
 	snapshot, err := fs.LoadRunView(r.Context(), runID)
@@ -621,20 +617,17 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := state.ActorRef("agent:" + callerAgent)
-	schema, schemaErr := supportedProcessRunSchema(r.Context(), fs, r.PathValue("id"))
+	kind, schemaErr := supportedProcessRunSchema(r.Context(), fs, r.PathValue("id"))
 	if schemaErr != nil {
 		writeError(w, http.StatusConflict, "process_report", "process run schema is unavailable")
 		return
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		executor := processexec.NewExclusiveV7(fs, nil)
-		if _, err := executor.RecordObservation(r.Context(), r.PathValue("id"), r.PathValue("node"), body.CommandID, processexec.Observation{
-			Actor: actor, Verdict: body.Verdict, Feedback: strings.TrimSpace(body.Feedback), EvidenceRef: body.EvidenceRef,
-		}); err != nil {
-			writeError(w, http.StatusConflict, "process_report", err.Error())
-			return
-		}
-		writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
+	if kind == store.RunSchemaResetRequired {
+		writeError(w, http.StatusConflict, "process_report", store.ErrRunResetRequired.Error())
+		return
+	}
+	if kind == store.RunSchemaEpochV8 {
+		writeError(w, http.StatusConflict, "process_report", "schema-8 report mutation is not released")
 		return
 	}
 	snapshot, err := fs.LoadRun(r.Context(), r.PathValue("id"))
@@ -662,19 +655,9 @@ type processSignalRequest struct {
 }
 
 func handleProcessSignal(w http.ResponseWriter, r *http.Request) {
-	callerConv, ok := requirePermission(w, r, PermProcessAdvance)
+	_, ok := requirePermission(w, r, PermProcessAdvance)
 	if !ok {
 		return
-	}
-	isHuman := callerConv == ""
-	actor := state.ActorRef("human:operator")
-	if !isHuman {
-		agentID := peerAgentID(callerConv)
-		if agentID == "" {
-			writeError(w, http.StatusForbidden, "forbidden", "caller has no stable agent identity")
-			return
-		}
-		actor = state.ActorRef("agent:" + agentID)
 	}
 	var body processSignalRequest
 	decoder := json.NewDecoder(r.Body)
@@ -693,49 +676,41 @@ func handleProcessSignal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
 		return
 	}
-	schema, err := supportedProcessRunSchema(r.Context(), fs, r.PathValue("id"))
-	if err != nil || schema != pathv1.CheckpointStateSchemaVersion {
-		writeError(w, http.StatusConflict, "process_signal", "run has no schema-7 signal wait")
+	kind, err := supportedProcessRunSchema(r.Context(), fs, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusConflict, "process_signal", "process run schema is unavailable")
 		return
 	}
-	if _, err := processexec.NewExclusiveV7(fs, nil).SatisfySignal(r.Context(), r.PathValue("id"), r.PathValue("node"), body.Signal, actor); err != nil {
-		writeError(w, http.StatusConflict, "process_signal", err.Error())
+	if kind == store.RunSchemaResetRequired {
+		writeError(w, http.StatusConflict, "process_signal", store.ErrRunResetRequired.Error())
 		return
 	}
-	writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
+	if kind == store.RunSchemaEpochV8 {
+		writeError(w, http.StatusConflict, "process_signal", "schema-8 signal mutation is not released")
+		return
+	}
+	writeError(w, http.StatusConflict, "process_signal", "run has no schema-7 signal wait")
 }
 
-func supportedProcessRunSchema(ctx context.Context, fs *store.FS, runID string) (int, error) {
+func supportedProcessRunSchema(ctx context.Context, fs *store.FS, runID string) (store.RunSchemaKind, error) {
 	schema, err := fs.RunStateSchemaVersion(ctx, runID)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion || schema > 0 && schema <= pathv1.LegacyMaxSchemaVersion {
-		return schema, nil
-	}
-	return 0, fmt.Errorf("unsupported process state schema %d", schema)
+	return store.ClassifyRunStateSchema(schema)
 }
 
-func currentPathV1Activity(checkpoint *pathv1.CheckpointV7) string {
-	aggregate, err := pathv1.CurrentAggregateCheckpoint(checkpoint)
-	if err != nil {
-		return ""
+func epochV8PublicState(checkpoint *epochv8.CheckpointV8) map[string]any {
+	view := checkpoint.View()
+	return map[string]any{
+		"stateSchemaVersion": epochv8.StateSchemaVersion,
+		"binding":            view.Binding,
+		"runId":              view.RunID,
+		"originalEpochId":    view.OriginalEpoch,
+		"currentEpochId":     view.CurrentEpoch,
+		"epochs":             view.Epochs,
+		"authorities":        view.Authorities,
 	}
-	var nodes []string
-	for _, path := range aggregate.Routing.Paths {
-		if path.Kind != pathv1.PathActivationOutput || path.State != pathv1.PathLive {
-			continue
-		}
-		activation := aggregate.Routing.Activations[path.SourceActivation.ID]
-		if reservation := aggregate.Routing.Reservations[activation.ReservationID]; reservation.NodeID != "" {
-			nodes = append(nodes, reservation.NodeID)
-		}
-	}
-	slices.Sort(nodes)
-	if len(nodes) == 0 {
-		return ""
-	}
-	return nodes[0]
 }
 
 func writeProcessJSON(w http.ResponseWriter, status int, value any) {

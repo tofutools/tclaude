@@ -13,7 +13,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	processplan "github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -53,17 +52,24 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	schema, err := fs.RunStateSchemaVersion(cmd.Context(), p.RunID)
+	kind, err := fs.RunStateSchemaKind(cmd.Context(), p.RunID)
 	if err != nil {
 		report := processverify.LoadError(p.RunID, err)
 		renderReport(out, report)
 		return err
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		return runShowPathV1(cmd, fs, p, out)
-	}
-	if schema <= 0 || schema > pathv1.LegacyMaxSchemaVersion {
-		return fmt.Errorf("process run %q uses unsupported state schema %d", p.RunID, schema)
+	switch kind {
+	case store.RunSchemaResetRequired:
+		return fmt.Errorf("%w: process run %q", store.ErrRunResetRequired, p.RunID)
+	case store.RunSchemaEpochV8:
+		snapshot, loadErr := fs.LoadEpochV8RunView(cmd.Context(), p.RunID)
+		if loadErr != nil {
+			return loadErr
+		}
+		view := snapshot.Checkpoint.View()
+		fmt.Fprintf(out, "Run: %s\nTemplate: %s\nState schema: 8\nCurrent epoch: %s\nEpochs: %d\nAuthorities: %d\n", snapshot.Run.ID, snapshot.Run.TemplateRef, view.CurrentEpoch, len(view.Epochs), len(view.Authorities))
+		return nil
+	case store.RunSchemaLegacy:
 	}
 	snapshot, err := fs.LoadRun(cmd.Context(), p.RunID)
 	if err != nil {
@@ -171,125 +177,6 @@ func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {
 		fmt.Fprintf(out, "  #%d %s %s %s\n", entry.Seq, entry.Scope.Kind, orDash(entry.Scope.ID), entry.EventRef)
 	}
 	return nil
-}
-
-func runShowPathV1(cmd *cobra.Command, fs *store.FS, p *showParams, out io.Writer) error {
-	snapshot, err := fs.LoadPathV1RunView(cmd.Context(), p.RunID)
-	if err != nil {
-		return err
-	}
-	if _, err := pathv1.VerifyExecutionInput(cmd.Context(), snapshot.CheckpointJSON, snapshot.TemplateSource); err != nil {
-		return err
-	}
-	parsed, err := model.ParseExactSource(snapshot.TemplateSource)
-	if err != nil || parsed.Diagnostics.HasErrors() {
-		return fmt.Errorf("schema-7 process template is invalid")
-	}
-	aggregate, err := pathv1.CurrentAggregateCheckpoint(snapshot.Checkpoint)
-	if err != nil {
-		return err
-	}
-	if p.Mermaid {
-		renderPathV1Mermaid(out, parsed.Template)
-		return nil
-	}
-	fmt.Fprintf(out, "Run: %s\n", snapshot.Run.ID)
-	fmt.Fprintf(out, "Template: %s\n", snapshot.Run.TemplateRef)
-	fmt.Fprintf(out, "Status: %s\n", pathv1.CurrentRunStatus(snapshot.Checkpoint))
-	fmt.Fprintf(out, "State schema: %d\n", pathv1.CheckpointStateSchemaVersion)
-	fmt.Fprintf(out, "Checkpoint revision: %d\n", pathv1.CheckpointRevision(snapshot.Checkpoint))
-	fmt.Fprintln(out, "\nNodes:")
-	tw := newTable(out)
-	fmt.Fprintln(tw, "ID\tTYPE\tROUTING STATE")
-	states := pathV1RoutingStates(aggregate)
-	ids := make([]string, 0, len(parsed.Template.Nodes))
-	for id := range parsed.Template.Nodes {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", id, parsed.Template.Nodes[id].Type, orDash(states[id]))
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	if len(aggregate.Contacts) > 0 {
-		fmt.Fprintln(out, "\nNudges:")
-		cw := newTable(out)
-		fmt.Fprintln(cw, "COMMAND\tASSIGNEE\tLAST\tNEXT\tBUDGET\tESCALATION\tSTATE")
-		contactIDs := make([]string, 0, len(aggregate.Contacts))
-		for id := range aggregate.Contacts {
-			contactIDs = append(contactIDs, id)
-		}
-		sort.Strings(contactIDs)
-		for _, id := range contactIDs {
-			contact := aggregate.Contacts[id]
-			marker := aggregate.SideEffects[id]
-			contactState := "active"
-			switch {
-			case marker.State == pathv1.ContactStatePaused:
-				contactState = "paused: " + contact.PauseReason
-			case contact.EscalatedAt != "":
-				contactState = "escalated"
-			case marker.State == pathv1.ContactStateCompleted, marker.State == pathv1.ContactStateCanceled:
-				contactState = marker.State
-			}
-			command := "cmd_" + contact.SourceCommandID
-			if len(contact.SourceCommandID) >= 24 {
-				command = "cmd_" + contact.SourceCommandID[:24]
-			}
-			fmt.Fprintf(cw, "%s\t%s\t%s\t%s\t%d/%d\t%s\t%s\n", command, contact.Assignee,
-				orDash(pathV1ShowTime(contact.LastContactedAt)), orDash(pathV1ShowTime(contact.NextContactAt)),
-				contact.Used, contact.Budget, contact.EscalationTarget, contactState)
-		}
-		if err := cw.Flush(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// pathV1ShowTime renders a canonical contact timestamp with the same layout
-// legacy rows use; validated checkpoints cannot carry unparseable values.
-func pathV1ShowTime(value string) string {
-	parsed, err := pathv1.ParseCanonicalTimestamp(value)
-	if err != nil || parsed.IsZero() {
-		return ""
-	}
-	return formatTime(parsed)
-}
-
-func pathV1RoutingStates(aggregate pathv1.AggregateCheckpoint) map[string]string {
-	states := make(map[string]string)
-	generations := make(map[string]uint64)
-	for _, reservation := range aggregate.Routing.Reservations {
-		value := string(reservation.State)
-		if previous := states[reservation.NodeID]; previous == "" || reservation.Generation >= generations[reservation.NodeID] {
-			states[reservation.NodeID] = value
-			generations[reservation.NodeID] = reservation.Generation
-		}
-	}
-	return states
-}
-
-func renderPathV1Mermaid(out io.Writer, tmpl *model.Template) {
-	fmt.Fprintln(out, "graph TD")
-	edges, _ := model.NormalizeEdgesWithinBudget(tmpl)
-	for _, edge := range edges {
-		from := edge.From
-		if from == "" {
-			from = "__start"
-		}
-		fmt.Fprintf(out, "  %s -->|%s| %s\n", mermaidID(from), mermaidLabel(edge.Outcome), mermaidID(edge.To))
-	}
-	ids := make([]string, 0, len(tmpl.Nodes))
-	for id := range tmpl.Nodes {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		fmt.Fprintf(out, "  %s[\"%s<br/>%s\"]\n", mermaidID(id), mermaidLabel(id), mermaidLabel(string(tmpl.Nodes[id].Type)))
-	}
 }
 
 func sortedObligationIDs(values map[string]state.ObligationRecord) []string {

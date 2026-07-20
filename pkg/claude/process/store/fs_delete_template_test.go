@@ -163,18 +163,17 @@ func writeRawRunState(t *testing.T, root, runID, document string) {
 	}
 }
 
-// Regression: pathv1 writes schema 7, which the legacy state decoder rejects
-// outright (it is capped at 6). Classifying such a run by decoding it would
-// make every schema-7 run look unfinished forever, so its template could never
-// be deleted and no operator action could fix it.
+// Schema 7 is a stable reset-required state. It remains auditable and blocks
+// deletion regardless of its historical execution projection; S2 never treats
+// it as an ordinary finished legacy run or migrates it automatically.
 func TestDeleteTemplateClassifiesSchema7Runs(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		state     string
 		deletable bool
 	}{
-		{"finished", `{"stateSchemaVersion":7,"execution":{"status":"completed"}}`, true},
-		{"failed", `{"stateSchemaVersion":7,"execution":{"status":"failed"}}`, true},
+		{"finished", `{"stateSchemaVersion":7,"execution":{"status":"completed"}}`, false},
+		{"failed", `{"stateSchemaVersion":7,"execution":{"status":"failed"}}`, false},
 		{"running", `{"stateSchemaVersion":7,"execution":{"status":"running"}}`, false},
 		// An installed schema-7 checkpoint predating the mutable execution head
 		// is running by definition, mirroring pathv1.CurrentRunStatus.

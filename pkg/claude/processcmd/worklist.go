@@ -1,7 +1,6 @@
 package processcmd
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -10,9 +9,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -56,38 +53,17 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 		return err
 	}
 	snapshots := make([]store.Snapshot, 0, len(runs))
-	v7Items := make([]worklist.Item, 0)
 	for _, run := range runs {
 		if run.ID == "" {
 			continue
 		}
-		schema, schemaErr := fs.RunStateSchemaVersion(cmd.Context(), run.ID)
+		kind, schemaErr := fs.RunStateSchemaKind(cmd.Context(), run.ID)
 		if schemaErr != nil {
 			fmt.Fprintf(out, "Warning: skipped unreadable process run %s: %v\n", run.ID, schemaErr)
 			continue
 		}
-		if schema == pathv1.CheckpointStateSchemaVersion {
-			snapshot, loadErr := fs.LoadPathV1RunView(cmd.Context(), run.ID)
-			if loadErr != nil {
-				fmt.Fprintf(out, "Warning: skipped unreadable process run %s: %v\n", run.ID, loadErr)
-				continue
-			}
-			items, deriveErr := worklist.DerivePathV1(cmd.Context(), snapshot, func(_ context.Context, commandID string) (string, error) {
-				agent, lookupErr := db.AgentForProcessCommand(commandID)
-				if lookupErr != nil || agent == nil {
-					return "", lookupErr
-				}
-				return "agent:" + agent.AgentID, nil
-			})
-			if deriveErr != nil {
-				fmt.Fprintf(out, "Warning: skipped unreadable process run %s: %v\n", run.ID, deriveErr)
-				continue
-			}
-			v7Items = append(v7Items, items...)
-			continue
-		}
-		if schema <= 0 || schema > pathv1.LegacyMaxSchemaVersion {
-			fmt.Fprintf(out, "Warning: skipped unreadable process run %s: unsupported state schema %d\n", run.ID, schema)
+		if kind != store.RunSchemaLegacy {
+			fmt.Fprintf(out, "Warning: skipped process run %s: %s\n", run.ID, kind)
 			continue
 		}
 		snapshot, loadErr := fs.LoadRun(cmd.Context(), run.ID)
@@ -97,7 +73,7 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	items := append(worklist.Derive(snapshots), v7Items...)
+	items := worklist.Derive(snapshots)
 	slices.SortFunc(items, func(a, b worklist.Item) int { return strings.Compare(a.ID, b.ID) })
 	items = worklist.ApplyFilter(items, worklist.Filter{
 		Assignee: strings.TrimSpace(p.Assignee), Kind: worklist.Kind(strings.TrimSpace(p.Kind)),

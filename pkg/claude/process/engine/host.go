@@ -14,7 +14,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 )
@@ -25,34 +24,30 @@ const (
 )
 
 type Host struct {
-	Store              store.Store
-	Executor           *processexec.Executor
-	ExclusiveV7        *processexec.ExclusiveV7Executor
-	releaseStore       schema7ReleaseStore
-	exclusiveV7Enabled bool
-	Holder             string
-	LeaseTTL           time.Duration
-	MaxConcurrentRuns  int
-	Now                func() time.Time
-	heartbeatTimer     func(time.Duration) (<-chan time.Time, func())
-	tickMu             sync.Mutex
+	Store             store.Store
+	Executor          *processexec.Executor
+	releaseStore      schema7ReleaseStore
+	Holder            string
+	LeaseTTL          time.Duration
+	MaxConcurrentRuns int
+	Now               func() time.Time
+	heartbeatTimer    func(time.Duration) (<-chan time.Time, func())
+	tickMu            sync.Mutex
 }
 
-// EnableExclusiveV7 opens the compile-time release boundary for a production
-// host. New remains v6-compatible for embedders and legacy tests; agentd calls
-// this explicitly when constructing its live host.
+// EnableExclusiveV7 is retained as a compatibility check for callers that
+// construct the production filesystem host explicitly. Schema classification
+// itself is always active for a capable store; schema 7 is reset-required and
+// this method no longer enables migration or execution.
 func (h *Host) EnableExclusiveV7() error {
-	if h == nil || h.releaseStore == nil || h.ExclusiveV7 == nil {
+	if h == nil || h.releaseStore == nil {
 		return fmt.Errorf("schema-7 exclusive release requires the concrete filesystem store")
 	}
-	h.exclusiveV7Enabled = true
 	return nil
 }
 
 type schema7ReleaseStore interface {
-	MigrationReadinessAuthority
-	RunStateSchemaVersion(context.Context, string) (int, error)
-	InitializePathV1(context.Context, string, pathv1.UpgradeNeeded) (store.PathV1InitializationResult, error)
+	RunStateSchemaKind(context.Context, string) (store.RunSchemaKind, error)
 }
 
 type RunResult struct {
@@ -93,9 +88,6 @@ func New(st store.Store, holder string, adapters map[model.PerformerKind]process
 	}
 	if release, ok := st.(schema7ReleaseStore); ok {
 		host.releaseStore = release
-		if fs, fsOK := st.(*store.FS); fsOK {
-			host.ExclusiveV7 = processexec.NewExclusiveV7(fs, limited)
-		}
 	}
 	return host
 }
@@ -209,9 +201,6 @@ func (h *Host) Tick(ctx context.Context) ([]RunResult, error) {
 	h.tickMu.Lock()
 	defer h.tickMu.Unlock()
 	h.Executor.Now = h.Now
-	if h.exclusiveV7Enabled {
-		h.ExclusiveV7.Now = h.Now
-	}
 	runs, err := h.Store.ListRuns(ctx)
 	if err != nil {
 		return nil, err
@@ -261,17 +250,22 @@ func (h *Host) Tick(ctx context.Context) ([]RunResult, error) {
 
 func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 	result := RunResult{RunID: runID}
-	if h.exclusiveV7Enabled {
-		schema, err := h.releaseStore.RunStateSchemaVersion(ctx, runID)
+	if h.releaseStore != nil {
+		kind, err := h.releaseStore.RunStateSchemaKind(ctx, runID)
 		if err != nil {
 			result.Error = err.Error()
 			return result
 		}
-		if schema == pathv1.CheckpointStateSchemaVersion {
-			return h.tickPathV1Run(ctx, runID)
-		}
-		if schema > pathv1.LegacyMaxSchemaVersion {
-			result.Error = fmt.Sprintf("process run %q has unsupported state schema %d", runID, schema)
+		switch kind {
+		case store.RunSchemaResetRequired:
+			result.Error = fmt.Sprintf("%v: process run %q", store.ErrRunResetRequired, runID)
+			return result
+		case store.RunSchemaEpochV8:
+			result.Waiting = "epoch-v8 scheduling is not released"
+			return result
+		case store.RunSchemaLegacy:
+		default:
+			result.Error = fmt.Sprintf("process run %q has unsupported state schema", runID)
 			return result
 		}
 	}
@@ -299,47 +293,6 @@ func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 		<-heartbeatDone
 		_ = h.Store.ReleaseRunLease(context.WithoutCancel(ctx), runID, h.Holder)
 	}()
-	if h.exclusiveV7Enabled {
-		tmpl, templateErr := h.Store.GetTemplate(runCtx, runIDTemplateRef(checkpoint))
-		if templateErr != nil {
-			result.Error = templateErr.Error()
-			return result
-		}
-		if !exclusiveV7Eligible(tmpl) {
-			goto legacyPlanning
-		}
-		decision, decisionErr := DecideBeforePlanning(runCtx, h.releaseStore, runID)
-		if decisionErr != nil {
-			result.Error = decisionErr.Error()
-			return result
-		}
-		if decision.Action == PrePlanningUpgrade {
-			if _, initErr := h.releaseStore.InitializePathV1(runCtx, runID, decision.UpgradeNeeded); initErr != nil {
-				// Any initialization error can be an acknowledgement failure
-				// after the atomic rename. Re-observe the schema under this
-				// lease; only exact v7 is recovery authority, and every other
-				// state returns the original error without legacy planning.
-				schema, schemaErr := h.releaseStore.RunStateSchemaVersion(runCtx, runID)
-				if schemaErr != nil {
-					result.Error = fmt.Sprintf("%v; recover schema: %v", initErr, schemaErr)
-					return result
-				}
-				if schema == pathv1.CheckpointStateSchemaVersion {
-					return h.drivePathV1Leased(runCtx, runID, result, heartbeatErr)
-				}
-				if schema > 0 && schema <= pathv1.LegacyMaxSchemaVersion && errors.Is(initErr, pathv1.ErrInitializationAmbiguous) {
-					goto legacyPlanning
-				}
-				result.Error = initErr.Error()
-				return result
-			} else {
-				return h.drivePathV1Leased(runCtx, runID, result, heartbeatErr)
-			}
-		}
-	}
-
-legacyPlanning:
-
 	for round := 0; round < 1000; round++ {
 		select {
 		case err := <-heartbeatErr:
@@ -431,13 +384,6 @@ legacyPlanning:
 	}
 	result.Error = fmt.Sprintf("process run %q exceeded engine tick rounds", runID)
 	return result
-}
-
-func runIDTemplateRef(st *state.State) string {
-	if st == nil {
-		return ""
-	}
-	return st.OriginalTemplateRef
 }
 
 func exclusiveV7Eligible(tmpl *model.Template) bool {
@@ -565,59 +511,6 @@ func exclusiveV7WaitEligible(wait *model.WaitConfig) bool {
 	}
 	parsed, err := time.ParseDuration(duration)
 	return err == nil && parsed > 0
-}
-
-func (h *Host) tickPathV1Run(ctx context.Context, runID string) RunResult {
-	result := RunResult{RunID: runID}
-	ttl := h.LeaseTTL
-	if ttl <= 0 {
-		ttl = DefaultLeaseTTL
-	}
-	if _, err := h.Store.AcquireRunLease(ctx, runID, h.Holder, ttl); err != nil {
-		result.LeaseContended = errors.Is(err, store.ErrLeaseHeld)
-		result.Error = err.Error()
-		return result
-	}
-	runCtx, cancel, heartbeatErr, heartbeatDone := h.heartbeat(ctx, runID, ttl)
-	defer func() {
-		cancel()
-		<-heartbeatDone
-		_ = h.Store.ReleaseRunLease(context.WithoutCancel(ctx), runID, h.Holder)
-	}()
-	return h.drivePathV1Leased(runCtx, runID, result, heartbeatErr)
-}
-
-func (h *Host) drivePathV1Leased(ctx context.Context, runID string, result RunResult, heartbeatErr <-chan error) RunResult {
-	select {
-	case err := <-heartbeatErr:
-		result.Error = err.Error()
-		return result
-	default:
-	}
-	if err := ctx.Err(); err != nil {
-		result.Error = err.Error()
-		return result
-	}
-	checkpoint, err := h.ExclusiveV7.Drive(ctx, runID)
-	if err != nil {
-		result.Error = err.Error()
-		return result
-	}
-	if checkpoint == nil {
-		loaded, loadErr := h.ExclusiveV7.Store.LoadPathV1RunView(ctx, runID)
-		if loadErr != nil {
-			result.Error = loadErr.Error()
-			return result
-		}
-		checkpoint = loaded.Checkpoint
-	}
-	status := state.RunStatus(pathv1.CurrentRunStatus(checkpoint))
-	if !status.IsValid() {
-		result.Error = fmt.Sprintf("process run %q has invalid schema-7 status %q", runID, status)
-		return result
-	}
-	result.Status = status
-	return result
 }
 
 func hasIssuedInternalCommand(st *state.State) bool {

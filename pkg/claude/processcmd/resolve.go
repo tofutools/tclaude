@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
+	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -57,25 +57,15 @@ func runResolve(cmd *cobra.Command, p *resolveParams, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	schema, err := fs.RunStateSchemaVersion(cmd.Context(), p.RunID)
+	kind, err := fs.RunStateSchemaKind(cmd.Context(), p.RunID)
 	if err != nil {
 		return err
 	}
-	if schema == pathv1.CheckpointStateSchemaVersion {
-		_, commandID, err := processexec.NewExclusiveV7(fs, nil).RecordNodeObservation(cmd.Context(), p.RunID, p.NodeID, processexec.Observation{
-			Actor:       state.ActorRef(strings.TrimSpace(p.Actor)),
-			Verdict:     strings.TrimSpace(p.Verdict),
-			Feedback:    strings.TrimSpace(p.Feedback),
-			EvidenceRef: strings.TrimSpace(p.EvidenceRef),
-		})
-		if err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "Resolved process obligation for run %s node %s (%s)\n", p.RunID, p.NodeID, commandID)
-		return nil
+	if kind == store.RunSchemaResetRequired {
+		return fmt.Errorf("%w: process run %q", store.ErrRunResetRequired, p.RunID)
 	}
-	if schema <= 0 || schema > pathv1.LegacyMaxSchemaVersion {
-		return fmt.Errorf("unsupported process state schema %d", schema)
+	if kind == store.RunSchemaEpochV8 {
+		return fmt.Errorf("schema-8 process obligations are not released")
 	}
 	if err := ensureRunVerifies(cmd.Context(), fs, p.RunID, out); err != nil {
 		return err

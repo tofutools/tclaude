@@ -55,6 +55,8 @@ nodes:
       kind: human
       profile: johan
       ask: Approve merge?
+      choices: [approve, reject]
+      choiceOutcomes: {approve: pass, reject: fail}
       contact:
         cadence: 30m
         budget: 5

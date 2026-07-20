@@ -12,6 +12,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
@@ -82,15 +83,57 @@ func Instantiate(ctx context.Context, st store.Store, request InstantiateRequest
 	if err != nil {
 		return store.RunRecord{}, err
 	}
+	var epochSource []byte
+	epochStore, epochStoreOK := st.(interface {
+		InitializeEpochV8Run(context.Context, store.RunRecord, []byte) (store.EpochV8InitializationResult, error)
+	})
+	if epochStoreOK {
+		epochSource, err = st.GetTemplateSource(ctx, templateRef)
+		if err != nil {
+			return store.RunRecord{}, fmt.Errorf("load stored template source: %w", err)
+		}
+		classification, classifyErr := epochv8.ClassifyTemplateSource(epochSource)
+		if classifyErr != nil {
+			return store.RunRecord{}, classifyErr
+		}
+		if classification.Candidate() == nil {
+			epochStoreOK = false
+		}
+	}
 	const maxGeneratedIDAttempts = 1000
 	for attempt := 1; attempt <= maxGeneratedIDAttempts; attempt++ {
 		candidate := runID
 		if attempt > 1 {
 			candidate = fmt.Sprintf("%s-%d", runID, attempt)
 		}
-		created, err := st.CreateRun(ctx, store.RunRecord{
-			ID: candidate, TemplateRef: templateRef, Params: params,
-		}, initialState(candidate, templateRef, tmpl))
+		var created store.RunRecord
+		if epochStoreOK {
+			if existing, existingErr := st.GetRun(ctx, candidate); existingErr == nil {
+				if generatedID {
+					continue
+				}
+				if !request.ReplayExisting {
+					return store.RunRecord{}, fmt.Errorf("%w: %q", store.ErrRunExists, candidate)
+				}
+				if existing.TemplateRef != templateRef || !maps.Equal(existing.Params, params) {
+					return store.RunRecord{}, fmt.Errorf("%w: %q", store.ErrRunExists, candidate)
+				}
+			} else if !errors.Is(existingErr, store.ErrNotFound) {
+				return store.RunRecord{}, existingErr
+			}
+			initialized, initializeErr := epochStore.InitializeEpochV8Run(ctx, store.RunRecord{
+				ID: candidate, TemplateRef: templateRef, Params: params,
+			}, epochSource)
+			err = initializeErr
+			created = initialized.Run
+			if err == nil && initialized.Disposition == store.EpochV8InitializationAlreadyApplied && generatedID {
+				continue
+			}
+		} else {
+			created, err = st.CreateRun(ctx, store.RunRecord{
+				ID: candidate, TemplateRef: templateRef, Params: params,
+			}, initialState(candidate, templateRef, tmpl))
+		}
 		if err == nil {
 			return created, nil
 		}
