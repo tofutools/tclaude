@@ -92,6 +92,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// original is the operator-decided semantics — drive either from the phone.
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
+	autoMemory := autoMemoryForRelaunch(sourceConv, srcHarness)
 	cloneSandbox := sandboxForHarness(srcHarness)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
@@ -155,6 +156,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.AutoReview = autoReview
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
+		proofArgs.AutoMemory = autoMemory
 		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
 			agentDirectoryCleanup()
 			return "", "", "", "", &cloneSpawnError{
@@ -231,6 +233,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.AutoReview = autoReview
 	proofArgs.AskUserQuestionTimeout = askTimeout
 	proofArgs.RemoteControl = remoteControl
+	proofArgs.AutoMemory = autoMemory
 	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
 		agentDirectoryCleanup()
 		return "", "", "", "", &cloneSpawnError{

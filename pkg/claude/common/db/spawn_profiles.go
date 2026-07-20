@@ -55,6 +55,13 @@ type SpawnProfile struct {
 	// default — tri-state: nil = unset, false = off, true = on. Resolved at
 	// spawn under a group's remote-control policy, which overrides it (JOH-262).
 	RemoteControl *bool
+	// AutoMemory is the profile's "let Claude Code keep its auto-memory files"
+	// default — tri-state: nil = unset, false = off, true = on. Unset resolves
+	// to OFF at spawn: several tclaude agents on one repo share Claude Code's
+	// per-project memory store and cross-pollute each other's notes, so tclaude
+	// recommends memory disabled and injects CLAUDE_CODE_DISABLE_AUTO_MEMORY
+	// accordingly. Claude-Code-only, validated against the profile's harness.
+	AutoMemory *bool
 
 	// Identity / enrollment fields (dialog-side). "" = unset.
 	AgentName      string // the dialog's "Name" field (the spawned agent's display name)
@@ -132,15 +139,16 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		   (name, disabled, disabled_reason, harness, model, effort, sandbox, approval, ask_user_question_timeout,
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
-		    sync_worktree, auto_focus, include_group_default_context, remote_control,
+		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
 		    is_owner, permission_overrides,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
+		boolPtrToNull(p.AutoMemory),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		now, now)
 	if err != nil {
@@ -189,6 +197,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
+		   auto_memory = ?,
 		   is_owner = ?, permission_overrides = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
@@ -198,6 +207,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
+		boolPtrToNull(p.AutoMemory),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		time.Now().Format(time.RFC3339Nano), p.ID)
 	if err != nil {
@@ -440,19 +450,19 @@ func isSpawnProfileHandleViolation(err error) bool {
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, harness, model, effort, sandbox, approval,
 	ask_user_question_timeout,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
-	sync_worktree, auto_focus, include_group_default_context, remote_control,
+	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
 	is_owner, permission_overrides, created_at, updated_at
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
-	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, isOwner sql.NullInt64
+	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, isOwner sql.NullInt64
 	var permOverrides, createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
 		&p.AskUserQuestionTimeout,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
-		&syncWorktree, &autoFocus, &includeCtx, &remoteControl,
+		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory,
 		&isOwner, &permOverrides, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
@@ -463,6 +473,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.AutoFocus = nullToBoolPtr(autoFocus)
 	p.IncludeGroupDefaultContext = nullToBoolPtr(includeCtx)
 	p.RemoteControl = nullToBoolPtr(remoteControl)
+	p.AutoMemory = nullToBoolPtr(autoMemory)
 	p.IsOwner = nullToBoolPtr(isOwner)
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	p.CreatedAt = parseTimeOrZero(createdAt)

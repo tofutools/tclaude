@@ -283,6 +283,7 @@ func inlineProfileTag(raw json.RawMessage) string {
 		TrustDir            *bool             `json:"trust_dir"`
 		AutoReview          *bool             `json:"auto_review"`
 		RemoteControl       *bool             `json:"remote_control"`
+		AutoMemory          *bool             `json:"auto_memory"`
 		IsOwner             *bool             `json:"is_owner"`
 		PermissionOverrides map[string]string `json:"permission_overrides"`
 	}
@@ -309,6 +310,7 @@ func inlineProfileTag(raw json.RawMessage) string {
 	addBool("trust-dir", p.TrustDir)
 	addBool("auto-review", p.AutoReview)
 	addBool("remote-control", p.RemoteControl)
+	addBool("auto-memory", p.AutoMemory)
 	addBool("owner", p.IsOwner)
 	if len(p.PermissionOverrides) > 0 {
 		slugs := make([]string, 0, len(p.PermissionOverrides))

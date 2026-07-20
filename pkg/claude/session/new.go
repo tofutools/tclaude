@@ -159,6 +159,15 @@ type NewParams struct {
 	// pair — outside tclaude's control.
 	RemoteControl bool `long:"remote-control" help:"Start with Claude Code Remote Access ON (claude --remote-control), so the session is reachable from the Claude app. Off by default. Requires a claude.ai login to pair. Not applicable to codex"`
 
+	// AutoMemory opts back INTO Claude Code's auto-memory system, which
+	// tclaude disables by default: agents sharing a repo share one
+	// per-project memory store and cross-pollute each other's notes. Off by
+	// default, so the launch injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1;
+	// --auto-memory sets it to "0" (Claude Code's documented force-enable)
+	// instead. The daemon spawn path resolves the profile's tri-state into
+	// this definite bool; a direct human `session new` may set it too.
+	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for this session. Off by default for every Claude Code session tclaude launches (it injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1), because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -495,6 +504,17 @@ func runNew(params *NewParams) error {
 	}
 	params.RemoteControl = remoteControl
 
+	// Gate --auto-memory the same way: opting back into auto memory only means
+	// something for a harness that has an auto-memory system (Claude Code), so
+	// requesting it for Codex errors here rather than silently doing nothing.
+	// The default (off) is valid for every harness — it is simply not injected
+	// for one that has no such switch. See ApplyAutoMemoryEnv.
+	autoMemory, err := harness.ResolveAutoMemory(h, &params.AutoMemory)
+	if err != nil {
+		return err
+	}
+	params.AutoMemory = autoMemory
+
 	// Validate --ask-user-question-timeout: a Claude-Code-only settings.json
 	// override (never|60s|5m|10m) delivered via `--settings`, so a value for a
 	// harness with no AskUserQuestion dialog (Codex) errors here. There is no
@@ -680,6 +700,11 @@ func runNew(params *NewParams) error {
 	// tmux-driven flow can't answer a TUI it didn't expect). No-op for non-Claude
 	// harnesses. See ApplyClaudeResumeEnv.
 	ApplyClaudeResumeEnv(h, additionalEnv)
+	// Pin the auto-memory posture for this launch. Unset resolves to OFF, so a
+	// Claude Code pane spawned by tclaude does not accumulate per-project
+	// memory files that every other agent on the repo would inherit. No-op for
+	// harnesses without an auto-memory system. See ApplyAutoMemoryEnv.
+	ApplyAutoMemoryEnv(h, autoMemory, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
@@ -929,6 +954,19 @@ func runNew(params *NewParams) error {
 		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
 			killLaunchPane()
 			return fmt.Errorf("persist managed launch resume provenance: %w", err)
+		}
+	}
+	if h.SupportsAutoMemory() {
+		// Record the posture this launch actually ran with so a later relaunch
+		// reproduces it instead of falling back to the default. Out-of-band
+		// like SetSessionResumeProvenance, since SaveSession's UPSERT does not
+		// own the column. Best-effort: the pane is already running with the
+		// right env, and a lost write only costs a future relaunch its opt-in
+		// (degrading to memory off, the recommended posture) — not worth
+		// killing a healthy session over.
+		if err := db.SetSessionAutoMemory(sessionID, autoMemory); err != nil {
+			slog.Warn("failed to record session auto-memory posture",
+				"session_id", sessionID, "auto_memory", autoMemory, "error", err)
 		}
 	}
 	if h.Name == harness.CodexName {

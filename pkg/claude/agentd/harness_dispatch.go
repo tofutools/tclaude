@@ -208,6 +208,32 @@ func remoteControlForRelaunch(sourceConv, harnessName string) bool {
 	return h.CanRemoteControl()
 }
 
+// autoMemoryForRelaunch resolves the auto-memory posture a relaunch (resume /
+// clone / reincarnate) threads onto the new pane, carried from the SOURCE
+// conversation's recorded value. Same preserve semantics as
+// remoteControlForRelaunch: an operator who explicitly opted an agent INTO
+// Claude Code's auto memory must not have it silently reverted by a handoff.
+//
+// false — tclaude's recommended posture, which makes the launch inject
+// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 — for a source that never opted in, a
+// pre-column row, or a lookup error (logged, never fatal). The capability check
+// is defence in depth: only a Claude Code conv can ever record auto_memory=1
+// (the spawn that set it is gated on CanAutoMemory), so a Codex source is false
+// by construction.
+func autoMemoryForRelaunch(sourceConv, harnessName string) bool {
+	on, err := db.AutoMemoryForConv(sourceConv)
+	if err != nil {
+		slog.Warn("relaunch: auto-memory lookup failed; not preserving",
+			"conv", sourceConv, "error", err)
+		return false
+	}
+	if !on {
+		return false
+	}
+	h, _ := harness.Resolve(strings.TrimSpace(harnessName))
+	return h.CanAutoMemory()
+}
+
 // askTimeoutForRelaunch resolves the AskUserQuestion idle-timeout a relaunch
 // (resume / clone / reincarnate) threads onto the new pane, carried from the
 // SOURCE conversation's persisted value (schema v97). Like approval posture,

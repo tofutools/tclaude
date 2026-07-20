@@ -727,7 +727,11 @@ type templateAgentLaunch struct {
 	// spawn profile (template-local or referenced) carries, resolved from the
 	// profile tiers like TrustDir/AutoReview and threaded into spawnParams so a
 	// template deploy honours them. Both default off/"".
-	RemoteControl          bool
+	RemoteControl bool
+	// AutoMemory keeps Claude Code's auto memory on for a template-deployed
+	// agent. Resolved from the profile tiers like RemoteControl; defaults off,
+	// which makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
+	AutoMemory             bool
 	AskUserQuestionTimeout string
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
@@ -891,6 +895,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.RemoteControl != nil {
 		if _, err := harness.ResolveRemoteControl(h, *p.RemoteControl); err != nil {
 			return wrap("invalid_remote_control", err.Error())
+		}
+	}
+	if p.AutoMemory != nil {
+		if _, err := harness.ResolveAutoMemory(h, p.AutoMemory); err != nil {
+			return wrap("invalid_auto_memory", err.Error())
 		}
 	}
 	return nil
@@ -1109,6 +1118,18 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
+	// Auto memory rides the same pattern, but its default is the load-bearing
+	// one: unset resolves to off, i.e. tclaude disables Claude Code's shared
+	// per-project memory store for template-deployed agents too.
+	autoMemory, _, memNote, fail := resolveBoolLaunchField("auto_memory", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
+		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if memNote != "" {
+		notes = append(notes, memNote)
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -1129,6 +1150,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		AutoReview:             autoReview,
 		AutoReviewSet:          autoReviewSet,
 		RemoteControl:          remoteControl,
+		AutoMemory:             autoMemory,
 		AskUserQuestionTimeout: askTimeout,
 		Notes:                  notes,
 	}, nil
@@ -3590,6 +3612,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	out.AutoReview = prev.AutoReview
 	out.TrustDir = prev.TrustDir
 	out.RemoteControl = prev.RemoteControl
+	out.AutoMemory = prev.AutoMemory
 	for slug, effect := range prev.PermissionOverrides {
 		if effect != db.PermEffectGrant {
 			if out.PermissionOverrides == nil {
@@ -3602,7 +3625,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	}
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.AskUserQuestionTimeout == "" &&
-		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil &&
+		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil
 	}

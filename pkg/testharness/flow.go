@@ -184,6 +184,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(cc.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
+	s.w.RecordSpawnAutoMemory(cc.ConvID, args.AutoMemory)
 	s.w.RecordSpawnCwdWriteProof(cc.ConvID, args.CwdWriteProof)
 	s.w.RecordSpawnDirWriteProof(cc.ConvID, args.DirWriteProof)
 	s.w.RecordSpawnGitWorktreeWriteDirs(cc.ConvID, args.GitWorktreeWriteDirs)
@@ -258,6 +259,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnApproval(convID, args.Approval)
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
+	s.w.RecordSpawnAutoMemory(convID, args.AutoMemory)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
 	s.w.RecordSpawnDirWriteProof(convID, args.DirWriteProof)
 	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)
@@ -363,6 +365,7 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(cx.ConvID, args.AutoReview)
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
+	s.w.RecordSpawnAutoMemory(cx.ConvID, args.AutoMemory)
 	s.w.RecordSpawnCwdWriteProof(cx.ConvID, args.CwdWriteProof)
 	s.w.RecordSpawnDirWriteProof(cx.ConvID, args.DirWriteProof)
 	s.w.RecordSpawnGitWorktreeWriteDirs(cx.ConvID, args.GitWorktreeWriteDirs)
@@ -419,6 +422,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	// Always false for Codex (no built-in Remote Access), but recorded so a
 	// flow test can positively assert a Codex relaunch never carries it (JOH-261).
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
+	s.w.RecordSpawnAutoMemory(convID, args.AutoMemory)
 	s.w.RecordSpawnCwdWriteProof(convID, args.CwdWriteProof)
 	s.w.RecordSpawnDirWriteProof(convID, args.DirWriteProof)
 	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)

@@ -231,6 +231,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			AutoReview:              launch.AutoReview,
 			AutoReviewSet:           launch.AutoReviewSet,
 			RemoteControl:           launch.RemoteControl,
+			AutoMemory:              launch.AutoMemory,
 			AskUserQuestionTimeout:  launch.AskUserQuestionTimeout,
 			GroupContext:            agentContext,
 			ReplyToConv:             caller,

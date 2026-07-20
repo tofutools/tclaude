@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
 import { roleSummary } from './roles.js';
-import { dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
+import { AUTO_MEMORY_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { sandboxProfileSummary } from './sandbox-profiles-data.js';
 import { pickDirectory } from './helpers.js';
@@ -62,7 +62,7 @@ function HarnessFields({ draft, setDraft, catalog, profile = false }) {
     const h = harnessByName(catalog, harness);
     const defaults = harnessDefaults(h);
     setCustomModel(false);
-    setDraft((current) => ({ ...current, harness, model: '', effort: '', ...defaults, trust_dir: '', remote_control: '' }));
+    setDraft((current) => ({ ...current, harness, model: '', effort: '', ...defaults, trust_dir: '', remote_control: '', auto_memory: '' }));
   };
   const [helpOpen, setHelpOpen] = useState('');
   const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
@@ -126,6 +126,7 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} profile />
     <${Row} label="Trust dir" hidden=${draft.harness !== 'codex'}><${Select} id="profile-editor-trust-dir" value=${draft.trust_dir} onChange=${(value) => change(setDraft, 'trust_dir', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${Select} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} options=${TRI_OPTIONS}/></${Row}>
+    <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${Select} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} options=${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>
     ${[['Agent name', 'agent_name', 'optional — names the spawned agent'], ['Role', 'role', 'optional — e.g. researcher, planner'], ['Descr', 'descr', 'optional — short one-line description']].map(([label, key, placeholder]) => html`<${Row} key=${key} label=${label} hidden=${local}><input value=${draft[key]} onInput=${(event) => change(setDraft, key, event.currentTarget.value)} placeholder=${placeholder} autocomplete="off" spellcheck="false"/></${Row}>`)}
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     ${[['Sync worktree', 'sync_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${Select} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} options=${TRI_OPTIONS}/></${Row}>`)}

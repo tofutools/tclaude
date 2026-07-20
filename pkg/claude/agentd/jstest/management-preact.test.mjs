@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_auto_review: true, can_remote_control: false }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_auto_review: true, can_remote_control: false, can_auto_memory: false }];
 
 function choose(select, value) {
   for (const option of select.options) {
@@ -116,13 +116,14 @@ test('profile choices expose aliases as distinct handles tied to one profile', a
 		disabled: false, disabled_reason: 'previous outage',
     harness: 'claude', model: 'sonnet', effort: 'high', sandbox: 'inherit', approval: 'plan',
     ask_user_question_timeout: '5m', auto_review: false, trust_dir: true, remote_control: false,
+    auto_memory: true,
     agent_name: 'worker', role: 'reviewer', descr: 'cold\nreview', initial_message: 'check this',
     sync_worktree: true, auto_focus: false, include_group_default_context: true, is_owner: false,
     permission_overrides: { 'human.notify': 'grant', 'groups.spawn': 'deny' },
   }), [
 		'last disable reason · previous outage',
     'harness claude', 'model sonnet', 'effort high', 'sandbox inherit', 'approval plan',
-    'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off',
+    'ask-timeout 5m', 'auto-review off', 'trust-dir on', 'remote-control off', 'auto-memory on',
     'name worker', 'role reviewer', 'descr cold review', 'initial message · 10 chars',
     'sync-wt on', 'focus off', 'group-ctx on', 'owner off',
     'perm groups.spawn deny', 'perm human.notify grant',
@@ -414,4 +415,39 @@ test('role editor preserves missing profile references and nested permission foc
   assert.equal(harness.document.activeElement, write); assert.match(host.querySelector('.cron-create-label').parentElement.parentElement.textContent, /reviewer|Role/i);
   host.querySelector('#role-editor-modal .primary').click(); await harness.act(() => Promise.resolve()); assert.ok(saved); assert.deepEqual(saved.payload.permissions, ['read', 'write']);
   cleanups.reverse().forEach((fn) => fn());
+});
+
+// Auto memory is a tri-state on the profile, and its unset case is NOT
+// "inherit whatever the harness does": tclaude resolves unset to OFF and
+// injects CLAUDE_CODE_DISABLE_AUTO_MEMORY, because agents sharing a repo
+// otherwise cross-pollute one Claude Code project memory store. These pin the
+// draft/payload round-trip and the harness gate.
+test('profile auto memory round-trips as a tri-state and is gated on the harness', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/management-model.js');
+
+  // Unset stays unset on the wire, so the server-side default (off) applies
+  // rather than the dialog pinning an explicit value.
+  const unset = model.profileDraft({ name: 'p', harness: 'claude' }, {}, catalog);
+  assert.equal(unset.auto_memory, '');
+  assert.equal(model.profilePayload(unset, null, catalog).auto_memory, undefined);
+
+  // Both explicit values survive.
+  const on = model.profileDraft({ name: 'p', harness: 'claude', auto_memory: true }, {}, catalog);
+  assert.equal(on.auto_memory, '1');
+  assert.equal(model.profilePayload(on, null, catalog).auto_memory, true);
+
+  const off = model.profileDraft({ name: 'p', harness: 'claude', auto_memory: false }, {}, catalog);
+  assert.equal(off.auto_memory, '0');
+  assert.equal(model.profilePayload(off, null, catalog).auto_memory, false);
+
+  // Codex has no auto-memory system, so the field is dropped rather than sent
+  // as a value the server would reject.
+  const codex = model.profileDraft({ name: 'p', harness: 'codex', auto_memory: true }, {}, catalog);
+  codex.harness = 'codex';
+  assert.equal(model.profilePayload(codex, null, catalog).auto_memory, undefined);
+
+  // The tri-state labels name the real default so the operator isn't misled
+  // into reading "Default" as "leave Claude Code alone".
+  assert.match(model.AUTO_MEMORY_TRI_OPTIONS[0][1], /off/i);
 });

@@ -2,12 +2,14 @@ package conv
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -194,6 +196,17 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	// Read the auto-memory posture BEFORE this resume writes its own session
+	// row: AutoMemoryForConv resolves the conv's most-recently-updated row, so
+	// reading after the write would just echo the new row's column default and
+	// decay an opt-in to off on the next resume. resumeLaunchCmd already
+	// applied this same recorded posture to the launch env; re-recording it
+	// below keeps the value alive across repeated resumes.
+	autoMemory, err := db.AutoMemoryForConv(rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 
 	// Launch through the shared script mechanism, not an inline `sh -c`: the
 	// resume command carries the same env exports and sandbox dir lists as a
@@ -228,6 +241,16 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	if err := session.SaveSessionState(state); err != nil {
 		fmt.Fprintf(stderr, "Failed to save session state: %v\n", err)
 		return 1
+	}
+	// Carry the posture onto the row this resume just created. Out-of-band,
+	// like the spawn path: SaveSession's UPSERT does not own the column.
+	// Best-effort — the pane is already running with the right env, and a lost
+	// write only costs a FUTURE resume its opt-in.
+	if h.SupportsAutoMemory() {
+		if err := db.SetSessionAutoMemory(sessionID, autoMemory); err != nil {
+			slog.Warn("failed to record resumed session auto-memory posture",
+				"session_id", sessionID, "auto_memory", autoMemory, "error", err)
+		}
 	}
 
 	displayName := rc.DisplayName

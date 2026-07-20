@@ -45,7 +45,7 @@ const PASTE_REPEAT_MS = 1000;
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout',
-  'trustDir', 'trustDirSpecified', 'remoteControl', 'owner', 'permissionOverrides',
+  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner', 'permissionOverrides',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -270,7 +270,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout', 'trustDir', 'remoteControl']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -836,6 +836,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-remote-control" type="checkbox" checked=${draft.remoteControl} disabled=${busy}
         onChange=${(event) => update('remoteControl', event.currentTarget.checked)} />
       Start with remote control — reachable from the Claude app (claude --remote-control)
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-auto-memory-row" hidden=${!view.showAutoMemory}
+      title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md.">
+      <input id="agent-spawn-auto-memory" type="checkbox" checked=${draft.autoMemory} disabled=${busy}
+        onChange=${(event) => update('autoMemory', event.currentTarget.checked)} />
+      Keep Claude Code auto memory on — off by default to stop agents cross-polluting one project memory
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons">

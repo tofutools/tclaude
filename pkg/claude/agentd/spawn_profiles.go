@@ -66,6 +66,7 @@ type spawnProfileJSON struct {
 	AskUserQuestionTimeout string `json:"ask_user_question_timeout,omitempty"`
 	AutoReview             *bool  `json:"auto_review,omitempty"`
 	TrustDir               *bool  `json:"trust_dir,omitempty"`
+	AutoMemory             *bool  `json:"auto_memory,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
 	// remote-control policy overrides it at spawn (JOH-262).
@@ -108,6 +109,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
+		AutoMemory:                 p.AutoMemory,
 		RemoteControl:              p.RemoteControl,
 		AgentName:                  p.AgentName,
 		Role:                       p.Role,
@@ -255,6 +257,14 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
 		}
 	}
+	// Likewise a profile may keep auto memory on only for a harness that has an
+	// auto-memory system: auto_memory=true on a Codex profile is a 400. false /
+	// unset is always fine, and both resolve to "tclaude disables memory".
+	if body.AutoMemory != nil {
+		if _, err := harness.ResolveAutoMemory(h, body.AutoMemory); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_auto_memory", err.Error()}
+		}
+	}
 
 	// The agent_name becomes the spawned agent's display name (a /rename title
 	// at spawn) — same slash/control-char rules a template agent name follows.
@@ -300,6 +310,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,
 		RemoteControl:              body.RemoteControl,
+		AutoMemory:                 body.AutoMemory,
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),
 		Descr:                      strings.TrimSpace(body.Descr),
