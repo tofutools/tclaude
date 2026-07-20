@@ -36,10 +36,9 @@ const LABEL_GLYPH_RATIO = 0.6;
 //
 // `box` is the label's measured host-space rectangle. It is what makes the
 // clearance correct: the layout's label anchor is a point on the edge geometry,
-// and the text grows around it differently per edge -- `text-anchor: end` on
-// back edges, `middle` elsewhere -- and scales with the viewport. Offsetting
-// from the anchor instead collides with the label on exactly the edges whose
-// text does not happen to be centred on it.
+// while the rendered text extent depends on its content and the viewport scale.
+// The centred anchor makes the estimate below a safe fallback, but measuring is
+// the only way to place the normal control against the label's real boundary.
 export function edgePinPlacement({
   anchor, box = null, outcome = '', orientation = 'horizontal', zoom = 1, half = 11,
 } = {}) {

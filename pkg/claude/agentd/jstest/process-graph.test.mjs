@@ -142,6 +142,29 @@ test('edge renderer gives the exact routed path to the auto-oriented SVG marker'
   }
 });
 
+test('edge renderer centres every label on its layout midpoint', () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;
+  try {
+    const edge = {
+      id: 'retry', inputIndex: 0, from: 'review', to: 'work', back: true, outcome: 'retry',
+      path: 'M 90 20 C 140 20, 140 80, 90 80',
+      label: { x: 127.5, y: 50 },
+    };
+    const rendered = ProcessGraph.prototype.renderEdge.call({
+      markerID: 'forward-marker', backMarkerID: 'back-marker',
+    }, edge);
+    const label = rendered.querySelector('.process-edge-label');
+    const text = label.querySelector('text');
+    assert.equal(label.getAttribute('transform'), 'translate(127.5 50)');
+    assert.equal(text.getAttribute('text-anchor'), 'middle');
+    assert.equal(text.getAttribute('dominant-baseline'), 'middle');
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
 test('live edge reroutes update geometry without replacing interactive edge DOM', () => {
   const previousDocument = globalThis.document;
   globalThis.document = parseHTML('<!doctype html><html><body></body></html>').window.document;

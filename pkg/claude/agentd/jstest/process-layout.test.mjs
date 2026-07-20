@@ -46,6 +46,11 @@ function assertRouteAvoids(edge, nodes) {
   }
 }
 
+function assertPointNear(actual, expected, message, tolerance = 0.1) {
+  assert.ok(Math.hypot(actual.x - expected.x, actual.y - expected.y) <= tolerance,
+    `${message}: got (${actual.x}, ${actual.y})`);
+}
+
 test('forward edges advance to a downstream layer and route with arrow paths', () => {
   const result = layoutProcessGraph(linear);
   const nodes = byID(result);
@@ -55,6 +60,60 @@ test('forward edges advance to a downstream layer and route with arrow paths', (
     assert.ok(edge.path.startsWith('M '));
     assert.ok(edge.points.at(-1).y > edge.points[0].y, `${edge.from} -> ${edge.to} must point down`);
   }
+});
+
+test('edge labels use the midpoint of every connector shape without an offset', () => {
+  const snapped = layoutProcessGraph(linear).edges[0];
+  assertPointNear(snapped.label, { x: 136.75346, y: 173.69288 },
+    'a single cubic uses its rendered distance midpoint');
+
+  const side = layoutProcessGraph({
+    nodes: [
+      { id: 'from', type: 'task', pinned: { x: 100, y: 100 } },
+      { id: 'to', type: 'end', pinned: { x: 420, y: 130 } },
+    ],
+    edges: [{ from: 'from', to: 'to', outcome: 'pass' }],
+  }).edges[0];
+  assertPointNear(side.label, { x: 288.2478, y: 99.5693 },
+    'a two-cubic side route uses its rendered distance midpoint');
+
+  const routed = layoutProcessGraph({
+    nodes: [
+      { id: 'start', type: 'start' }, { id: 'middle', type: 'task' }, { id: 'end', type: 'end' },
+    ],
+    edges: [
+      { from: 'start', to: 'middle' }, { from: 'middle', to: 'end' },
+      { from: 'start', to: 'end', outcome: 'skip' },
+    ],
+  }).edges.find((edge) => edge.outcome === 'skip');
+  assertPointNear(routed.label, { x: 52, y: 269 },
+    'an orthogonal route uses its rendered distance midpoint');
+
+  const returns = layoutProcessGraph({
+    nodes: [{ id: 'a', type: 'task' }, { id: 'b', type: 'task' }],
+    edges: [
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'a', outcome: 'retry', back: true },
+      { from: 'a', to: 'a', outcome: 'again', back: true },
+    ],
+  }).edges.filter((edge) => edge.back);
+  assertPointNear(returns[0].label, { x: 271.5, y: 98 },
+    'a self return curve uses its rendered distance midpoint');
+  assertPointNear(returns[1].label, { x: 340.5, y: 188 },
+    'an ordinary return curve uses its rendered distance midpoint');
+
+  const asymmetric = layoutProcessGraph({
+    nodes: [
+      { id: 'left', type: 'task', pinned: { x: 0, y: 0 } },
+      { id: 'right', type: 'task', pinned: { x: 600, y: 30 } },
+    ],
+    edges: [
+      { from: 'left', to: 'right' },
+      { from: 'right', to: 'left', outcome: 'back', back: true },
+    ],
+  }).edges.find((edge) => edge.back);
+  assertPointNear(asymmetric.label, { x: 442.4816, y: 3.3367 },
+    'an asymmetric cubic uses arc length rather than t=0.5');
 });
 
 test('sanctioned retry back-edge is excluded from layering and routed distinctly', () => {

@@ -55,16 +55,14 @@ test('a horizontal edge puts the pin under the label, a vertical one beside it',
 });
 
 test('placement follows the measured box, not the layout anchor', () => {
-  // The anchor is a point on the edge geometry; the text grows around it
-  // differently per edge (text-anchor is `end` on back edges, `middle`
-  // elsewhere). A back edge's label sits LEFT of its anchor -- deriving the
-  // clearance from the anchor would drop the pin straight onto the text.
-  const backEdgeBox = { left: 60, top: 50, width: 40, height: 14 };
+  // The anchor is a point on the edge geometry, not the rendered text extent.
+  // A long label can still reach the decoration placed from that point alone.
+  const backEdgeBox = { left: 80, top: 50, width: 40, height: 14 };
   const anchor = { left: 100, top: 50 };
   const placement = edgePinPlacement({ anchor, box: backEdgeBox, orientation: 'vertical' });
   assert.equal(overlaps(placement, backEdgeBox), false);
-  assert.ok(placement.left < anchor.left + 40,
-    'the pin tracks the text, which ends at the anchor, not a centre it never had');
+  assert.ok(placement.left > anchor.left,
+    'the pin tracks the measured text extent beyond its midpoint anchor');
 });
 
 test('a wider label pushes the pin further out', () => {
