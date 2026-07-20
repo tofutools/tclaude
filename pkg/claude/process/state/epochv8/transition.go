@@ -2,6 +2,7 @@ package epochv8
 
 import (
 	"cmp"
+	"container/heap"
 	"fmt"
 	"reflect"
 	"slices"
@@ -572,13 +573,15 @@ func blockerForKind(kind AuthorityKind) BlockerCode {
 }
 
 func canonicalBlockers(blockers []Blocker) []Blocker {
-	slices.SortFunc(blockers, func(a, b Blocker) int {
-		if value := cmp.Compare(a.Code, b.Code); value != 0 {
-			return value
-		}
-		return cmp.Compare(a.AuthorityID, b.AuthorityID)
-	})
+	slices.SortFunc(blockers, compareBlockers)
 	return slices.Compact(blockers)
+}
+
+func compareBlockers(a, b Blocker) int {
+	if value := cmp.Compare(a.Code, b.Code); value != 0 {
+		return value
+	}
+	return cmp.Compare(a.AuthorityID, b.AuthorityID)
 }
 
 // blockerAccumulator applies the preview budget to the globally unique stable
@@ -587,27 +590,34 @@ func canonicalBlockers(blockers []Blocker) []Blocker {
 type blockerAccumulator struct {
 	limit    int
 	blockers map[Blocker]struct{}
+	greatest blockerMaxHeap
 }
 
 func newBlockerAccumulator(limit int) *blockerAccumulator {
-	return &blockerAccumulator{limit: limit, blockers: make(map[Blocker]struct{}, limit)}
+	return &blockerAccumulator{
+		limit: limit, blockers: make(map[Blocker]struct{}, limit), greatest: make(blockerMaxHeap, 0, limit),
+	}
 }
 
 func (a *blockerAccumulator) add(blocker Blocker) {
-	if a == nil {
+	if a == nil || a.limit <= 0 {
 		return
 	}
 	if _, exists := a.blockers[blocker]; exists {
 		return
 	}
-	if len(a.blockers) >= a.limit {
+	if len(a.blockers) < a.limit {
+		a.blockers[blocker] = struct{}{}
+		heap.Push(&a.greatest, blocker)
 		return
 	}
+	if compareBlockers(blocker, a.greatest[0]) >= 0 {
+		return
+	}
+	displaced := heap.Pop(&a.greatest).(Blocker)
+	delete(a.blockers, displaced)
 	a.blockers[blocker] = struct{}{}
-}
-
-func (a *blockerAccumulator) full() bool {
-	return a == nil || len(a.blockers) >= a.limit
+	heap.Push(&a.greatest, blocker)
 }
 
 func (a *blockerAccumulator) canonical() []Blocker {
@@ -619,6 +629,27 @@ func (a *blockerAccumulator) canonical() []Blocker {
 		result = append(result, blocker)
 	}
 	return canonicalBlockers(result)
+}
+
+// blockerMaxHeap keeps the greatest retained blocker at index zero, allowing
+// a later canonically smaller value to displace it in O(log MaxBlockers).
+type blockerMaxHeap []Blocker
+
+func (h blockerMaxHeap) Len() int           { return len(h) }
+func (h blockerMaxHeap) Less(i, j int) bool { return compareBlockers(h[i], h[j]) > 0 }
+func (h blockerMaxHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *blockerMaxHeap) Push(value any) {
+	*h = append(*h, value.(Blocker))
+}
+
+func (h *blockerMaxHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	old[last] = Blocker{}
+	*h = old[:last]
+	return value
 }
 
 func protectedClosure(authorities []AuthorityRecord) ([]AuthorityRecord, error) {
@@ -762,7 +793,7 @@ func (index *authorityDependencyIndex) logicalFrontierAvailable(source OwnerIden
 }
 
 func (index *authorityDependencyIndex) addActiveDependentBlockers(sources map[OwnerIdentity]struct{}, blockers *blockerAccumulator) {
-	if index == nil || blockers.full() || len(sources) == 0 {
+	if index == nil || blockers == nil || blockers.limit <= 0 || len(sources) == 0 {
 		return
 	}
 	queue := make([]OwnerIdentity, 0, len(sources))
@@ -772,14 +803,14 @@ func (index *authorityDependencyIndex) addActiveDependentBlockers(sources map[Ow
 		seen[source] = struct{}{}
 	}
 	slices.Sort(queue)
-	for cursor := 0; cursor < len(queue) && !blockers.full(); cursor++ {
+	reported := make(map[OwnerIdentity]struct{})
+	for cursor := 0; cursor < len(queue); cursor++ {
 		for _, id := range index.reverse[queue[cursor]] {
 			authority := index.byID[id]
-			if authority.State.active() {
+			_, alreadyReported := reported[id]
+			if authority.State.active() && !alreadyReported {
 				blockers.add(Blocker{Code: blockerForKind(authority.Kind), AuthorityID: authority.Identity})
-				if blockers.full() {
-					break
-				}
+				reported[id] = struct{}{}
 			}
 			if _, exists := seen[id]; exists {
 				continue

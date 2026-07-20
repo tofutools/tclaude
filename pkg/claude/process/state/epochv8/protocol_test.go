@@ -446,6 +446,41 @@ func TestSourceBlockersDoNotConsumeDuplicateDependentBudget(t *testing.T) {
 	}
 }
 
+func TestBlockerBudgetMembershipIsIndependentOfDirectiveOrder(t *testing.T) {
+	checkpoint := testCheckpoint(t, "canonical-blocker-budget", []AuthoritySeed{{
+		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	frontier := checkpoint.wire.Authorities[0]
+	directives := make([]HandoffDirective, 0, MaxBlockers+2)
+	directives = append(directives, HandoffDirective{Source: frontier.Identity, Action: HandoffRetain})
+	want := make([]Blocker, 0, MaxBlockers+1)
+	for i := 0; i < MaxBlockers+1; i++ {
+		source := OwnerIdentity(testDigest(fmt.Sprintf("unknown-%05d", i)))
+		directives = append(directives, HandoffDirective{Source: source, Action: HandoffRetain})
+		want = append(want, Blocker{Code: BlockerHandoffUnknown, AuthorityID: source})
+	}
+	want = canonicalBlockers(want)[:MaxBlockers]
+
+	preview := func(order []HandoffDirective) PreviewResult {
+		t.Helper()
+		result, err := PreviewApply(checkpoint, ApplyDraft{
+			BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "canonical-blocker-budget-next"), Handoffs: order,
+		})
+		if err != nil || result.Plan != nil || !reflect.DeepEqual(result.Blockers, want) {
+			t.Fatalf("canonical blocker top-K: blockers=%d plan=%v err=%v", len(result.Blockers), result.Plan != nil, err)
+		}
+		return result
+	}
+	forward := preview(directives)
+	reversed := slices.Clone(directives)
+	slices.Reverse(reversed)
+	backward := preview(reversed)
+	if !reflect.DeepEqual(forward.Blockers, backward.Blockers) {
+		t.Fatalf("blocker membership depends on directive order: forward=%+v backward=%+v", forward.Blockers, backward.Blockers)
+	}
+}
+
 func TestTransferRejectsHistoricalMaterializationReuse(t *testing.T) {
 	checkpoint := testCheckpoint(t, "reuse-epoch-zero", []AuthoritySeed{{
 		LocalID: "frontier", ReservationID: "frontier-r", NodeID: "work", Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
