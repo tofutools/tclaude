@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
@@ -62,8 +63,20 @@ func (s *FS) RunStateSchemaVersion(ctx context.Context, runID string) (int, erro
 // LoadPathV1RunView returns a fully verified, detached schema-7 checkpoint and
 // exact template source. Evidence is intentionally not an input.
 func (s *FS) LoadPathV1RunView(ctx context.Context, runID string) (PathV1RunSnapshot, error) {
+	return s.loadPathV1RunView(ctx, runID, false)
+}
+
+// LoadPathV1RunHistoryView adds bounded legacy evidence only for checkpoints
+// carrying migration projection metadata. Native schema-7 runs never touch
+// the legacy evidence tree.
+func (s *FS) LoadPathV1RunHistoryView(ctx context.Context, runID string) (PathV1RunSnapshot, error) {
+	return s.loadPathV1RunView(ctx, runID, true)
+}
+
+func (s *FS) loadPathV1RunView(ctx context.Context, runID string, includeLegacyEvidence bool) (PathV1RunSnapshot, error) {
 	var snapshot PathV1RunSnapshot
-	err := s.WithPathV1ExecutionView(ctx, runID, func(view PathV1ExecutionView) error {
+	budget := s.newExecutionViewBudget(ctx)
+	err := s.withPathV1ExecutionViewBudget(ctx, runID, budget, func(view PathV1ExecutionView) error {
 		encoded, err := pathv1.EncodeCheckpointV7(view.Checkpoint)
 		if err != nil {
 			return err
@@ -76,15 +89,50 @@ func (s *FS) LoadPathV1RunView(ctx context.Context, runID string) (PathV1RunSnap
 			Run: view.Run, CheckpointJSON: bytes.Clone(view.CheckpointJSON),
 			TemplateSource: bytes.Clone(view.TemplateSource), Checkpoint: checkpoint,
 		}
+		if !includeLegacyEvidence || checkpoint.Execution == nil || checkpoint.Execution.LegacyProjection == nil {
+			return nil
+		}
+		runDir, err := s.openPathV1InitializationRunDir(runID)
+		if err != nil {
+			return err
+		}
+		defer runDir.Close()
+		manifest, logs, err := readPathV1LegacyEvidenceAt(ctx, runDir, budget)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			snapshot.LegacyEvidenceFailure = classifyPathV1LegacyEvidenceFailure(err)
+			return nil
+		}
+		if err := s.requirePathV1RunDirCurrent(runID, runDir); err != nil {
+			return err
+		}
+		snapshot.LegacyEvidence = &PathV1LegacyEvidence{Manifest: manifest, NodeLogs: logs}
 		return nil
 	})
 	return snapshot, err
+}
+
+func classifyPathV1LegacyEvidenceFailure(err error) PathV1LegacyEvidenceFailure {
+	if errors.Is(err, ErrExecutionViewOverBudget) {
+		return PathV1LegacyEvidenceResourceLimit
+	}
+	var readErr *evidence.ReadError
+	if errors.As(err, &readErr) {
+		return PathV1LegacyEvidenceInvalid
+	}
+	return PathV1LegacyEvidenceUnavailable
 }
 
 // WithPathV1ExecutionView exposes the coherent schema-7 read
 // boundary. The callback is pure: external adapters must never be invoked
 // while its run/template locks are held.
 func (s *FS) WithPathV1ExecutionView(ctx context.Context, runID string, callback func(PathV1ExecutionView) error) error {
+	return s.withPathV1ExecutionViewBudget(ctx, runID, s.newExecutionViewBudget(ctx), callback)
+}
+
+func (s *FS) withPathV1ExecutionViewBudget(ctx context.Context, runID string, budget *viewBudget, callback func(PathV1ExecutionView) error) error {
 	if callback == nil {
 		return fmt.Errorf("path-v1 execution view callback is required")
 	}
@@ -109,11 +157,10 @@ func (s *FS) WithPathV1ExecutionView(ctx context.Context, runID string, callback
 	if s.executionRunLockedHook != nil {
 		s.executionRunLockedHook()
 	}
-	return s.withPathV1ExecutionViewRunLocked(ctx, runID, callback)
+	return s.withPathV1ExecutionViewRunLocked(ctx, runID, budget, callback)
 }
 
-func (s *FS) withPathV1ExecutionViewRunLocked(ctx context.Context, runID string, callback func(PathV1ExecutionView) error) error {
-	budget := s.newExecutionViewBudget(ctx)
+func (s *FS) withPathV1ExecutionViewRunLocked(ctx context.Context, runID string, budget *viewBudget, callback func(PathV1ExecutionView) error) error {
 	run, err := s.readExecutionRunRecordAt(ctx, runID, budget)
 	if err != nil {
 		return pathV1ExecutionReadError("run record", err)
@@ -228,7 +275,7 @@ func (s *FS) AppendPathV1(ctx context.Context, runID string, transition *pathv1.
 	}
 
 	var result PathV1AppendResult
-	err = s.withPathV1ExecutionViewRunLocked(ctx, runID, func(view PathV1ExecutionView) error {
+	err = s.withPathV1ExecutionViewRunLocked(ctx, runID, s.newExecutionViewBudget(ctx), func(view PathV1ExecutionView) error {
 		current := view.Binding
 		_, desiredBytes, desired, validationErr := pathv1.ValidateExecutionTransitionForAppend(ctx, view.CheckpointJSON, view.TemplateSource, transition)
 		if validationErr != nil {
@@ -310,7 +357,7 @@ func (s *FS) ReconfirmPathV1Durability(ctx context.Context, runID string, expect
 	}
 	defer unlockRun()
 	var checkpoint *pathv1.CheckpointV7
-	err = s.withPathV1ExecutionViewRunLocked(ctx, runID, func(view PathV1ExecutionView) error {
+	err = s.withPathV1ExecutionViewRunLocked(ctx, runID, s.newExecutionViewBudget(ctx), func(view PathV1ExecutionView) error {
 		if view.Binding != expected {
 			return &ConflictError{RunID: runID, ExpectedSeq: int64(expected.Generation), ActualSeq: int64(view.Binding.Generation)}
 		}

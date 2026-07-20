@@ -33,13 +33,17 @@ func CanonicalInitializationAnchor(checkpoint *CheckpointV7) ([]byte, string, er
 // Every installed section is a complete replacement, never a delta whose
 // meaning depends on evidence or a preceding file.
 type ExecutionCheckpoint struct {
-	Revision       uint64              `json:"revision"`
-	PreviousDigest string              `json:"previousDigest"`
-	Status         string              `json:"status"`
-	LogAdvanced    bool                `json:"logAdvanced,omitempty"`
-	LastLogSeq     uint64              `json:"lastLogSeq"`
-	LogChecksum    string              `json:"logChecksum"`
-	Aggregate      AggregateCheckpoint `json:"aggregate"`
+	Revision       uint64 `json:"revision"`
+	PreviousDigest string `json:"previousDigest"`
+	Status         string `json:"status"`
+	LogAdvanced    bool   `json:"logAdvanced,omitempty"`
+	LastLogSeq     uint64 `json:"lastLogSeq"`
+	LogChecksum    string `json:"logChecksum"`
+	// LegacyProjection binds the sole migration materialization to the exact
+	// verified schema-6 evidence it summarizes. Runtime transitions preserve
+	// this immutable anchor; ordinary schema-7 checkpoints omit it.
+	LegacyProjection *LegacyProjectionMetadata `json:"legacyProjection,omitempty"`
+	Aggregate        AggregateCheckpoint       `json:"aggregate"`
 }
 
 // CheckpointRevision returns the ABA-safe mutable revision. Legacy installed
@@ -178,12 +182,13 @@ func advanceCheckpointV7To(checkpoint *CheckpointV7, aggregate AggregateCheckpoi
 	}
 	logAdvanced := delta > 0
 	execution := &ExecutionCheckpoint{
-		Revision:       CheckpointRevision(checkpoint) + 1,
-		PreviousDigest: current.Digest,
-		Status:         status,
-		LogAdvanced:    logAdvanced,
-		LastLogSeq:     lastLogSeq,
-		Aggregate:      aggregate,
+		Revision:         CheckpointRevision(checkpoint) + 1,
+		PreviousDigest:   current.Digest,
+		Status:           status,
+		LogAdvanced:      logAdvanced,
+		LastLogSeq:       lastLogSeq,
+		LegacyProjection: cloneLegacyProjectionMetadata(currentLegacyProjection(checkpoint)),
+		Aggregate:        aggregate,
 	}
 	if logAdvanced {
 		checksum, err := executionLogChecksum(execution)
@@ -288,6 +293,15 @@ func validateExecutionCheckpoint(checkpoint *CheckpointV7, genesisDigest string)
 	if execution.Aggregate.RunID != checkpoint.Initialize.UpgradeNeeded.RunID || execution.Aggregate.TemplateRef != checkpoint.Initialize.TemplateHash ||
 		execution.Aggregate.TemplateSourceHash != checkpoint.Initialize.UpgradeNeeded.TemplateSourceHash {
 		return fmt.Errorf("%w: execution aggregate anchor mismatch", ErrInitializationInvalid)
+	}
+	if err := validateLegacyProjectionMetadata(execution.LegacyProjection, checkpoint.Initialize.UpgradeNeeded); err != nil {
+		return err
+	}
+	if err := validateLegacyProjectionAggregate(execution.LegacyProjection, execution); err != nil {
+		return err
+	}
+	if err := validateLegacyProjectionProvenance(execution.LegacyProjection, execution.Aggregate.View(), checkpoint.Initialize.EventSeq); err != nil {
+		return err
 	}
 	if report := ValidateAggregate(execution.Aggregate.View()); !report.Valid() {
 		return fmt.Errorf("%w: execution aggregate diagnostics=%v (%d suppressed)", ErrInitializationInvalid, report.Diagnostics, report.Suppressed)

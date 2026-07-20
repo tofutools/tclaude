@@ -7,11 +7,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"reflect"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
@@ -54,7 +57,8 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 		return PathV1InitializationResult{}, err
 	}
 	defer runDir.Close()
-	data, err := readPathV1InitializationStateAt(ctx, runDir, s.newExecutionViewBudget(ctx))
+	budget := s.newExecutionViewBudget(ctx)
+	data, err := readPathV1InitializationStateAt(ctx, runDir, budget)
 	if err != nil {
 		return PathV1InitializationResult{}, err
 	}
@@ -72,7 +76,7 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 		if err := pathv1.ExactInitializationReplay(checkpoint, supplied); err != nil {
 			return PathV1InitializationResult{}, err
 		}
-		tmpl, err := s.validatePathV1ReplayTemplateRunLocked(ctx, runID, checkpoint)
+		tmpl, err := s.validatePathV1ReplayTemplateRunLocked(ctx, runID, checkpoint, budget)
 		if err != nil {
 			return PathV1InitializationResult{}, err
 		}
@@ -90,6 +94,25 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 			expectedAnchor, expectedDigest, expectedErr := pathv1.CanonicalInitializationAnchor(expected)
 			if installedErr != nil || expectedErr != nil || installedDigest != expectedDigest || !bytes.Equal(installedAnchor, expectedAnchor) {
 				return PathV1InitializationResult{}, fmt.Errorf("%w: mutable checkpoint initialization anchor differs from deterministic exact-template replay", pathv1.ErrInitializationInconsistent)
+			}
+		}
+		if projection := checkpoint.Execution; projection != nil && projection.LegacyProjection != nil {
+			manifest, logs, err := readPathV1LegacyEvidenceAt(ctx, runDir, budget)
+			if err != nil {
+				return PathV1InitializationResult{}, err
+			}
+			legacyState, legacyJSON, err := pathv1.ReplayLegacyProjectionEvidence(
+				ctx, supplied.RunID, supplied.TemplateRef, supplied.TemplateRef, tmpl, manifest, logs,
+			)
+			if err != nil {
+				return PathV1InitializationResult{}, err
+			}
+			rebuilt, err := pathv1.BuildProgressedInitialization(ctx, pathv1.LegacyProjectionInput{
+				UpgradeNeeded: supplied, Template: tmpl, LegacyState: &legacyState,
+				LegacyCheckpointJSON: legacyJSON, Manifest: manifest, NodeLogs: logs,
+			})
+			if err != nil || rebuilt.Execution == nil || !reflect.DeepEqual(rebuilt.Execution.LegacyProjection, projection.LegacyProjection) {
+				return PathV1InitializationResult{}, fmt.Errorf("%w: installed progressed projection differs from deterministic evidence replay", pathv1.ErrInitializationInconsistent)
 			}
 		}
 		if err := s.syncPathV1InitializationDir(runDir); err != nil {
@@ -123,10 +146,19 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 		if err := pathv1.RequireExactUpgradeNeeded(supplied, derived); err != nil {
 			return err
 		}
-		if err := pathv1.ValidateUnambiguousLegacyInitialization(view.Snapshot.State, view.Template); err != nil {
-			return err
+		var checkpoint *pathv1.CheckpointV7
+		if pristineErr := pathv1.ValidateUnambiguousLegacyInitialization(view.Snapshot.State, view.Template); pristineErr == nil {
+			checkpoint, err = pathv1.BuildInitialization(ctx, derived, view.Template)
+		} else if errors.Is(pristineErr, pathv1.ErrInitializationAmbiguous) {
+			checkpoint, err = pathv1.BuildProgressedInitialization(ctx, pathv1.LegacyProjectionInput{
+				UpgradeNeeded: derived, Template: view.Template, LegacyState: view.Snapshot.State,
+				LegacyCheckpointJSON: view.LegacyCheckpointJSON,
+				Manifest:             view.Snapshot.Manifest,
+				NodeLogs:             view.Snapshot.NodeLogs,
+			})
+		} else {
+			return pristineErr
 		}
-		checkpoint, err := pathv1.BuildInitialization(ctx, derived, view.Template)
 		if err != nil {
 			return err
 		}
@@ -142,7 +174,7 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 				return err
 			}
 		}
-		current, err := readPathV1InitializationStateAt(ctx, runDir, s.newExecutionViewBudget(ctx))
+		current, err := readPathV1InitializationStateAt(ctx, runDir, budget)
 		if err != nil {
 			return err
 		}
@@ -170,6 +202,25 @@ func (s *FS) InitializePathV1(ctx context.Context, runID string, supplied pathv1
 		return PathV1InitializationResult{}, err
 	}
 	return result, nil
+}
+
+func readPathV1LegacyEvidenceAt(ctx context.Context, runDir *os.File, budget *viewBudget) ([]evidence.ManifestEntry, []evidence.NodeLog, error) {
+	manifestData, err := readViewRegularAt(budget, runDir, "manifest.jsonl", true)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read migrated legacy manifest: %w", err)
+	}
+	if err := budget.addRecords(manifestData); err != nil {
+		return nil, nil, err
+	}
+	manifest, err := evidence.ReadManifestContext(ctx, bytes.NewReader(manifestData))
+	if err != nil {
+		return nil, nil, annotateReadError(err, "manifest.jsonl")
+	}
+	logs, err := readViewLogsAt(budget, runDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	return manifest, logs, nil
 }
 
 func (s *FS) openPathV1InitializationRunDir(runID string) (*os.File, error) {
@@ -268,8 +319,7 @@ func (s *FS) syncPathV1InitializationDir(dir *os.File) error {
 	return nil
 }
 
-func (s *FS) validatePathV1ReplayTemplateRunLocked(ctx context.Context, runID string, checkpoint *pathv1.CheckpointV7) (*model.Template, error) {
-	budget := s.newExecutionViewBudget(ctx)
+func (s *FS) validatePathV1ReplayTemplateRunLocked(ctx context.Context, runID string, checkpoint *pathv1.CheckpointV7, budget *viewBudget) (*model.Template, error) {
 	run, err := s.readExecutionRunRecordAt(ctx, runID, budget)
 	if err != nil {
 		return nil, err

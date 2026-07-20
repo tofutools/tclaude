@@ -482,7 +482,7 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if schema == pathv1.CheckpointStateSchemaVersion {
-		snapshot, loadErr := fs.LoadPathV1RunView(r.Context(), runID)
+		snapshot, loadErr := fs.LoadPathV1RunHistoryView(r.Context(), runID)
 		if loadErr != nil {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return

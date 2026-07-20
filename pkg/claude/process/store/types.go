@@ -125,15 +125,36 @@ type PathV1ExecutionView struct {
 	Input          *pathv1.VerifiedExclusiveInput
 }
 
-// PathV1RunSnapshot is the detached checkpoint-only read shape for live API
-// and viewer callers. Unlike PathV1ExecutionView it may outlive the callback;
+// PathV1RunSnapshot is the detached schema-7 read shape for live API and
+// viewer callers. Unlike PathV1ExecutionView it may outlive the callback;
 // every byte slice and checkpoint value is independently decoded/copied.
 type PathV1RunSnapshot struct {
 	Run            RunRecord
 	CheckpointJSON []byte
 	TemplateSource []byte
 	Checkpoint     *pathv1.CheckpointV7
+	// LegacyEvidence is populated only by LoadPathV1RunHistoryView and only
+	// when the checkpoint carries migration projection metadata. It is raw,
+	// bounded evidence; semantic replay belongs below verify/view consumers.
+	LegacyEvidence        *PathV1LegacyEvidence
+	LegacyEvidenceFailure PathV1LegacyEvidenceFailure
 }
+
+type PathV1LegacyEvidence struct {
+	Manifest []evidence.ManifestEntry
+	NodeLogs []evidence.NodeLog
+}
+
+// PathV1LegacyEvidenceFailure is deliberately content-free. A migrated
+// history read can fail without invalidating the separately verified current
+// schema-7 checkpoint used by the live viewer.
+type PathV1LegacyEvidenceFailure string
+
+const (
+	PathV1LegacyEvidenceInvalid       PathV1LegacyEvidenceFailure = "invalid"
+	PathV1LegacyEvidenceUnavailable   PathV1LegacyEvidenceFailure = "unavailable"
+	PathV1LegacyEvidenceResourceLimit PathV1LegacyEvidenceFailure = "resource_limit"
+)
 
 type PathV1AppendDisposition string
 

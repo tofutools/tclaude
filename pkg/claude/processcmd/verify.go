@@ -11,7 +11,6 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
-	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
@@ -64,20 +63,11 @@ func runVerify(ctx context.Context, p *verifyParams, out io.Writer) error {
 	}
 	var report processverify.Report
 	if schema == pathv1.CheckpointStateSchemaVersion {
-		snapshot, loadErr := fs.LoadPathV1RunView(ctx, p.RunID)
+		snapshot, loadErr := fs.LoadPathV1RunHistoryView(ctx, p.RunID)
 		if loadErr != nil {
 			report = processverify.LoadError(p.RunID, loadErr)
-		} else if _, verifyErr := pathv1.VerifyExecutionInput(ctx, snapshot.CheckpointJSON, snapshot.TemplateSource); verifyErr != nil {
-			report = processverify.Report{
-				RunID: p.RunID, EffectiveStatus: state.RunStatusInconsistent,
-				Diagnostics: []processverify.Diagnostic{{
-					Layer: processverify.LayerSemantic, Severity: model.SeverityError,
-					Code: "path_v1_invalid", Message: "schema-7 checkpoint or exact template authority is invalid",
-				}},
-			}
 		} else {
-			status := state.RunStatus(pathv1.CurrentRunStatus(snapshot.Checkpoint))
-			report = processverify.Report{RunID: p.RunID, StoredStatus: status, EffectiveStatus: status}
+			report, _, _ = processverify.PathV1History(ctx, snapshot)
 		}
 	} else if schema > 0 && schema <= pathv1.LegacyMaxSchemaVersion {
 		report = processverify.StoreRun(ctx, fs, p.RunID)

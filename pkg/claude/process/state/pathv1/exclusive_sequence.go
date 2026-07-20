@@ -268,7 +268,7 @@ func buildExclusiveRouteSequence(ctx context.Context, input *VerifiedExclusiveIn
 		if err := ctx.Err(); err != nil {
 			return exclusiveRouteSequenceDraft{}, err
 		}
-		eventSeq++
+		eventSeq = nextExclusiveSequenceEventSeq(input, eventSeq)
 		command, next, buildErr := buildExclusiveSequenceClosure(input.binding, post, loser, eventSeq)
 		if buildErr != nil {
 			return exclusiveRouteSequenceDraft{}, buildErr
@@ -295,14 +295,14 @@ func buildExclusiveRouteSequence(ctx context.Context, input *VerifiedExclusiveIn
 		if err := ctx.Err(); err != nil {
 			return exclusiveRouteSequenceDraft{}, err
 		}
-		command, next, required, buildErr := buildExclusiveSequenceDeadReservation(input.binding, post, reservationID, eventSeq+1)
+		command, next, required, buildErr := buildExclusiveSequenceDeadReservation(input.binding, post, reservationID, nextExclusiveSequenceEventSeq(input, eventSeq))
 		if buildErr != nil {
 			return exclusiveRouteSequenceDraft{}, buildErr
 		}
 		if !required {
 			continue
 		}
-		eventSeq++
+		eventSeq = nextExclusiveSequenceEventSeq(input, eventSeq)
 		post = next
 		if err := validateExclusiveSequenceStep(post, route); err != nil {
 			return exclusiveRouteSequenceDraft{}, err
@@ -313,7 +313,7 @@ func buildExclusiveRouteSequence(ctx context.Context, input *VerifiedExclusiveIn
 		}
 	}
 
-	eventSeq++
+	eventSeq = nextExclusiveSequenceEventSeq(input, eventSeq)
 	activation, post, err := buildExclusiveSequenceActivation(input.binding, post, selected, eventSeq)
 	if err != nil {
 		return exclusiveRouteSequenceDraft{}, err
@@ -328,7 +328,7 @@ func buildExclusiveRouteSequence(ctx context.Context, input *VerifiedExclusiveIn
 
 	reservation := post.Routing.Reservations[activation.Identity.TargetReservationID]
 	if node, ok := input.template.Nodes[reservation.NodeID]; ok && node.Type == model.NodeTypeEnd {
-		eventSeq++
+		eventSeq = nextExclusiveSequenceEventSeq(input, eventSeq)
 		end, ended, endErr := buildExclusiveSequenceEnd(input, post, activation, eventSeq)
 		if endErr != nil {
 			return exclusiveRouteSequenceDraft{}, endErr
@@ -357,6 +357,13 @@ func buildExclusiveRouteSequence(ctx context.Context, input *VerifiedExclusiveIn
 		captured = final
 	}
 	return exclusiveRouteSequenceDraft{commands: commands, final: final, captured: captured, route: route}, nil
+}
+
+func nextExclusiveSequenceEventSeq(input *VerifiedExclusiveInput, current int64) int64 {
+	if input != nil && input.projectionEventSeq > 0 {
+		return input.projectionEventSeq
+	}
+	return current + 1
 }
 
 func captureExclusiveSequenceProjection(dst *AggregateCheckpoint, captureAt, cursor int, view AggregateView) error {
