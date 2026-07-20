@@ -441,6 +441,9 @@ func (i *aggregateIndex) validateContacts() {
 		if (record.PauseReason != "") != (marker.State == ContactStatePaused) {
 			i.c.add("contact_pause_reason_incoherent", path, "pause reason presence does not match marker state %q", marker.State)
 		}
+		if record.LegacyPauseReason != "" && marker.State != ContactStateCompleted {
+			i.c.add("contact_legacy_pause_reason_incoherent", path, "historical pause reason requires completed migration marker, got %q", marker.State)
+		}
 		if marker.State == ContactStateDue && (record.NextContactAt == "" || record.EscalatedAt != "") {
 			i.c.add("contact_due_incoherent", path, "due contact must have a next contact time and no escalation")
 		}

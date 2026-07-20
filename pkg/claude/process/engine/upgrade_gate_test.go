@@ -1,12 +1,16 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/evidence"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
@@ -15,6 +19,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
+	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
+	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
 )
 
 type fixedMigrationAuthority struct {
@@ -35,6 +41,11 @@ type releaseGateDeferredAdapter struct {
 	reconciliations int
 }
 
+type progressedMigrationAdapter struct {
+	reconciliations int
+	nudges          int
+}
+
 func (*releaseGateDeferredAdapter) Validate(processexec.Request) error { return nil }
 func (*releaseGateDeferredAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
 	panic("deferred adapter must not perform synchronously")
@@ -48,6 +59,41 @@ func (a *releaseGateDeferredAdapter) ReconcileDeferred(context.Context, processe
 		return processexec.Observation{}, processexec.DeferredInFlight, nil
 	}
 	return processexec.Observation{Actor: "agent:agt_release1", Verdict: "pass", EvidenceRef: "artifact:release"}, processexec.DeferredObserved, nil
+}
+
+func (*progressedMigrationAdapter) Validate(request processexec.Request) error {
+	if request.Input.NodeID == "recover" {
+		return fmt.Errorf("fixture stops before recovery dispatch")
+	}
+	return nil
+}
+
+func (*progressedMigrationAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	panic("progressed migration fixture is deferred")
+}
+
+func (*progressedMigrationAdapter) Dispatch(context.Context, processexec.Request) (processexec.DispatchResult, error) {
+	return processexec.DispatchResult{ExternalRef: "agent:agt_migrationworker", Assignee: "agent:agt_migrationworker"}, nil
+}
+
+func (a *progressedMigrationAdapter) ReconcileDeferred(context.Context, processexec.Request) (processexec.Observation, processexec.DeferredStatus, error) {
+	a.reconciliations++
+	if a.reconciliations < 3 {
+		return processexec.Observation{}, processexec.DeferredInFlight, nil
+	}
+	return processexec.Observation{
+		Actor: "agent:agt_migrationworker", Verdict: "fail", EvidenceRef: "artifact:migration-failure",
+		EvidenceHash: strings.Repeat("a", 64), ExternalRef: "agent:agt_migrationworker",
+	}, processexec.DeferredObserved, nil
+}
+
+func (a *progressedMigrationAdapter) Contact(context.Context, processexec.Request, bool) error {
+	a.nudges++
+	return nil
+}
+
+func (*progressedMigrationAdapter) Activity(context.Context, processexec.Request, time.Time) (processexec.Activity, error) {
+	return processexec.Activity{}, nil
 }
 
 func (a *fixedMigrationAuthority) UpgradeNeeded(context.Context, string) (pathv1.UpgradeNeeded, error) {
@@ -506,6 +552,278 @@ func TestEnabledHostDrainsActiveLegacyCommandBeforeMigration(t *testing.T) {
 	schema, err = fs.RunStateSchemaVersion(t.Context(), "run-v6-drain")
 	if err != nil || schema != state.StateSchemaVersion || adapter.reconciliations != 2 {
 		t.Fatalf("repeat tick was not idempotent: schema = %d, err = %v, reconciliations = %d", schema, err, adapter.reconciliations)
+	}
+}
+
+func TestEnabledHostDrainsMigratesAndResumesProgressedLegacyRun(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "release-progressed-migration", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {
+				Type: model.NodeTypeTask,
+				Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work", Contact: &model.ContactSchedule{
+					Cadence: "5m", Budget: 3, EscalationTarget: "human:operator",
+				}},
+				Next: model.Next{"pass": "done", "fail": "recover"},
+			},
+			"recover": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "recover"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+			"done":    {Type: model.NodeTypeEnd, Result: "completed"},
+			"failed":  {Type: model.NodeTypeEnd, Result: "failed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "run-v6-progressed-migration"
+	checkpoint := state.New(runID, record.Ref, record.Ref, []state.NodeInit{
+		{ID: "work", Type: model.NodeTypeTask, Status: state.NodeStatusReady},
+		{ID: "recover", Type: model.NodeTypeTask, Status: state.NodeStatusPending},
+		{ID: "done", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+		{ID: "failed", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
+	})
+	checkpoint.Status = state.RunStatusRunning
+	if _, err := fs.CreateRun(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 7, 20, 8, 0, 0, 0, time.UTC)
+	legacyAdapter := &progressedMigrationAdapter{}
+	legacyHost := New(fs, "test:progressed-legacy", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: legacyAdapter})
+	legacyHost.Now = func() time.Time { return now }
+	results, err := legacyHost.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || legacyAdapter.reconciliations != 0 {
+		t.Fatalf("legacy dispatch tick = %#v, err=%v adapter=%#v", results, err, legacyAdapter)
+	}
+	now = now.Add(6 * time.Minute)
+	results, err = legacyHost.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || legacyAdapter.reconciliations != 1 || legacyAdapter.nudges != 1 {
+		t.Fatalf("legacy contact tick = %#v, err=%v adapter=%#v", results, err, legacyAdapter)
+	}
+	now = now.Add(time.Minute)
+	results, err = legacyHost.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || legacyAdapter.reconciliations != 2 {
+		t.Fatalf("legacy second reconcile tick = %#v, err=%v adapter=%#v", results, err, legacyAdapter)
+	}
+	now = now.Add(time.Minute)
+	results, err = legacyHost.Tick(t.Context())
+	if err != nil || len(results) != 1 || !strings.Contains(results[0].Error, "fixture stops before recovery dispatch") || legacyAdapter.reconciliations != 3 {
+		t.Fatalf("legacy settle tick = %#v, err=%v adapter=%#v", results, err, legacyAdapter)
+	}
+
+	legacySnapshot, err := fs.LoadRun(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacySnapshot.State.Status != state.RunStatusRunning || legacySnapshot.State.Nodes["work"].Status != state.NodeStatusFailed || legacySnapshot.State.Nodes["recover"].Status != state.NodeStatusReady {
+		t.Fatalf("quiescent legacy frontier = %#v", legacySnapshot.State.Nodes)
+	}
+	var legacyContact state.ContactState
+	for _, contact := range legacySnapshot.State.Contacts {
+		legacyContact = contact
+	}
+	if legacyContact.Used != 1 || !legacyContact.Paused || legacyContact.PauseReason != "performer observed" {
+		t.Fatalf("settled legacy contact = %#v", legacyContact)
+	}
+	proof, err := fs.UpgradeNeeded(t.Context(), runID)
+	if err != nil || proof.Reason != pathv1.UpgradeMigrationRequired || len(proof.ActiveLegacyIDs) != 0 {
+		t.Fatalf("quiescent migration proof = %#v, %v", proof, err)
+	}
+	stateBefore, err := os.ReadFile(filepath.Join(root, "runs", runID, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore, err := os.ReadFile(filepath.Join(root, "runs", runID, "manifest.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workLogBefore, err := os.ReadFile(filepath.Join(root, "runs", runID, "nodes", "work", "log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoverLogBefore, err := os.ReadFile(filepath.Join(root, "runs", runID, "nodes", "recover", "log.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	enabled := New(fs, "test:progressed-v7", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: releaseGateAdapter{}})
+	if err := enabled.EnableExclusiveV7(); err != nil {
+		t.Fatal(err)
+	}
+	injectedCommitFailure := errors.New("injected progressed migration commit failure")
+	restoreInitializeHook := fs.SetPathV1InitializeHooksForTest(func() error { return injectedCommitFailure }, nil)
+	failedResults, failedErr := enabled.Tick(t.Context())
+	restoreInitializeHook()
+	if failedErr == nil && len(failedResults) == 1 && failedResults[0].Error == "" {
+		t.Fatalf("progressed migration commit failure was acknowledged: %#v", failedResults)
+	}
+	for path, want := range map[string][]byte{
+		filepath.Join(root, "runs", runID, "state.json"):                    stateBefore,
+		filepath.Join(root, "runs", runID, "manifest.jsonl"):                manifestBefore,
+		filepath.Join(root, "runs", runID, "nodes", "work", "log.jsonl"):    workLogBefore,
+		filepath.Join(root, "runs", runID, "nodes", "recover", "log.jsonl"): recoverLogBefore,
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("progressed commit failure changed %s: err=%v", path, err)
+		}
+	}
+	results, err = enabled.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("progressed migration/resume tick = %#v, %v", results, err)
+	}
+	if schema, err := fs.RunStateSchemaVersion(t.Context(), runID); err != nil || schema != pathv1.CheckpointStateSchemaVersion {
+		t.Fatalf("migrated schema = %d, %v", schema, err)
+	}
+	view, err := fs.LoadPathV1RunView(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pathv1.CurrentRunStatus(view.Checkpoint) != "completed" || view.Checkpoint.Execution == nil || view.Checkpoint.Execution.LegacyProjection == nil {
+		t.Fatalf("migrated checkpoint = %#v", view.Checkpoint)
+	}
+	if len(view.Checkpoint.Execution.Aggregate.Contacts) != 1 {
+		t.Fatalf("migrated contacts = %#v", view.Checkpoint.Execution.Aggregate.Contacts)
+	}
+	migrationAdminRecords := 0
+	for _, record := range view.Checkpoint.Execution.Aggregate.AdminRecords {
+		if record.AdminType == pathv1.LegacyProjectionAdminType {
+			migrationAdminRecords++
+		}
+	}
+	if migrationAdminRecords != 1 {
+		t.Fatalf("progressed migration retry admin records = %d", migrationAdminRecords)
+	}
+	for _, contact := range view.Checkpoint.Execution.Aggregate.Contacts {
+		if contact.Used != 1 || contact.Budget != 3 || contact.Provenance != pathv1.ContactProvenanceLegacyProjection || contact.LegacyPauseReason != "performer observed" {
+			t.Fatalf("migrated contact = %#v", contact)
+		}
+		if marker := view.Checkpoint.Execution.Aggregate.SideEffects[contact.ID]; marker.State != pathv1.ContactStateCompleted {
+			t.Fatalf("migrated contact marker = %#v", marker)
+		}
+	}
+	if legacyAdapter.reconciliations != 3 || legacyAdapter.nudges != 1 {
+		t.Fatalf("projection or v7 resume touched legacy adapter: %#v", legacyAdapter)
+	}
+	history, err := fs.LoadPathV1RunHistoryView(t.Context(), runID)
+	if err != nil || history.LegacyEvidence == nil {
+		t.Fatalf("load migrated history view: evidence=%#v err=%v", history.LegacyEvidence, err)
+	}
+	var historyReadBytes, previousHistoryReadBytes int64
+	var previousHistoryReadName string
+	restoreHistoryReadHook := fs.SetViewerIOHooksForTest(func(name string, bytesRead int64) {
+		if name != previousHistoryReadName || bytesRead <= previousHistoryReadBytes {
+			historyReadBytes += bytesRead
+		} else {
+			historyReadBytes += bytesRead - previousHistoryReadBytes
+		}
+		previousHistoryReadName, previousHistoryReadBytes = name, bytesRead
+	}, nil)
+	_, err = fs.LoadPathV1RunHistoryView(t.Context(), runID)
+	restoreHistoryReadHook()
+	if err != nil || historyReadBytes < 2 {
+		t.Fatalf("measure migrated history reads: bytes=%d err=%v", historyReadBytes, err)
+	}
+	restoreHistoryLimits := fs.SetViewerResourceLimitsForTest(16<<20, historyReadBytes-1, 100_000, 4_096)
+	limitedHistory, err := fs.LoadPathV1RunHistoryView(t.Context(), runID)
+	restoreHistoryLimits()
+	if err != nil || limitedHistory.Checkpoint == nil || limitedHistory.LegacyEvidence != nil ||
+		limitedHistory.LegacyEvidenceFailure != store.PathV1LegacyEvidenceResourceLimit {
+		t.Fatalf("over-budget migrated history = %#v, err=%v", limitedHistory, err)
+	}
+	limitedEnvelope, err := processview.BuildCurrentPathV1Envelope(t.Context(), limitedHistory)
+	if err != nil || limitedEnvelope.Run.StoredStatus != state.RunStatusCompleted || limitedEnvelope.Run.EffectiveStatus != state.RunStatusCompleted ||
+		limitedEnvelope.ViewerV2.ExactTopology == nil || len(limitedEnvelope.Report.Nodes) != 0 || len(limitedEnvelope.Verification.Diagnostics) != 1 {
+		t.Fatalf("over-budget migrated viewer = %#v, err=%v", limitedEnvelope, err)
+	}
+	verification, historical, _ := processverify.PathV1History(t.Context(), history)
+	if verification.HasErrors() || historical == nil || historical.State.Status != state.RunStatusRunning {
+		t.Fatalf("composed migrated verification = %#v historical=%#v", verification, historical)
+	}
+	envelope, err := processview.BuildCurrentPathV1Envelope(t.Context(), history)
+	if err != nil || envelope.Run.StoredStatus != state.RunStatusCompleted || envelope.Run.EffectiveStatus != state.RunStatusCompleted ||
+		envelope.Graph != nil || len(envelope.Report.Nodes) == 0 || envelope.ViewerV2.StateSchemaVersion != pathv1.CheckpointStateSchemaVersion ||
+		envelope.ViewerV2.ExactTopology == nil {
+		t.Fatalf("composed migrated viewer = %#v, err=%v", envelope, err)
+	}
+	viewerJSON, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"artifact:migration-failure", strings.Repeat("a", 64), "agent:agt_migrationworker"} {
+		if bytes.Contains(viewerJSON, []byte(private)) {
+			t.Fatalf("migrated viewer leaked private legacy evidence %q: %s", private, viewerJSON)
+		}
+	}
+	tampered := history
+	tampered.LegacyEvidence = &store.PathV1LegacyEvidence{
+		Manifest: append([]evidence.ManifestEntry(nil), history.LegacyEvidence.Manifest...),
+		NodeLogs: history.LegacyEvidence.NodeLogs,
+	}
+	tampered.LegacyEvidence.Manifest[0].Checksum = strings.Repeat("b", 64)
+	tamperedVerification, tamperedHistorical, _ := processverify.PathV1History(t.Context(), tampered)
+	if !tamperedVerification.HasErrors() || tamperedHistorical != nil {
+		t.Fatalf("tampered migrated verification = %#v historical=%#v", tamperedVerification, tamperedHistorical)
+	}
+	tamperedEnvelope, err := processview.BuildCurrentPathV1Envelope(t.Context(), tampered)
+	if err != nil || tamperedEnvelope.Run.StoredStatus != state.RunStatusCompleted || tamperedEnvelope.Run.EffectiveStatus != state.RunStatusCompleted ||
+		tamperedEnvelope.Graph != nil || len(tamperedEnvelope.Report.Nodes) != 0 || len(tamperedEnvelope.Verification.Diagnostics) != 1 ||
+		tamperedEnvelope.Verification.Diagnostics[0].Severity != model.SeverityError {
+		t.Fatalf("tampered migrated viewer = %#v, err=%v", tamperedEnvelope, err)
+	}
+	var replayReadBytes, previousReadBytes int64
+	var previousReadName string
+	restoreReadHook := fs.SetViewerIOHooksForTest(func(name string, bytesRead int64) {
+		if name != previousReadName || bytesRead <= previousReadBytes {
+			replayReadBytes += bytesRead
+		} else {
+			replayReadBytes += bytesRead - previousReadBytes
+		}
+		previousReadName, previousReadBytes = name, bytesRead
+	}, nil)
+	replayed, err := fs.InitializePathV1(t.Context(), runID, proof)
+	restoreReadHook()
+	if err != nil || replayed.Disposition != pathv1.InitializationAlreadyApplied || replayReadBytes < 2 {
+		t.Fatalf("measure migrated replay reads = %#v, bytes=%d, err=%v", replayed, replayReadBytes, err)
+	}
+	restoreLimits := fs.SetViewerResourceLimitsForTest(16<<20, replayReadBytes-1, 100_000, 4_096)
+	_, err = fs.InitializePathV1(t.Context(), runID, proof)
+	restoreLimits()
+	var overBudget *store.ExecutionViewOverBudgetError
+	if !errors.As(err, &overBudget) || overBudget.Limit != "total_bytes" {
+		t.Fatalf("migrated replay aggregate budget = %#v, err=%v", overBudget, err)
+	}
+	for path, want := range map[string][]byte{
+		filepath.Join(root, "runs", runID, "manifest.jsonl"):                manifestBefore,
+		filepath.Join(root, "runs", runID, "nodes", "work", "log.jsonl"):    workLogBefore,
+		filepath.Join(root, "runs", runID, "nodes", "recover", "log.jsonl"): recoverLogBefore,
+	} {
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("legacy evidence changed at %s: err=%v", path, err)
+		}
+	}
+	manifestPath := filepath.Join(root, "runs", runID, "manifest.jsonl")
+	if err := os.WriteFile(manifestPath, append(append([]byte(nil), manifestBefore...), '{'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	malformedHistory, err := fs.LoadPathV1RunHistoryView(t.Context(), runID)
+	if err != nil || malformedHistory.Checkpoint == nil || malformedHistory.LegacyEvidence != nil ||
+		malformedHistory.LegacyEvidenceFailure != store.PathV1LegacyEvidenceInvalid {
+		t.Fatalf("malformed migrated history = %#v, err=%v", malformedHistory, err)
+	}
+	malformedEnvelope, err := processview.BuildCurrentPathV1Envelope(t.Context(), malformedHistory)
+	if err != nil || malformedEnvelope.Run.StoredStatus != state.RunStatusCompleted || malformedEnvelope.Run.EffectiveStatus != state.RunStatusCompleted ||
+		malformedEnvelope.ViewerV2.ExactTopology == nil || len(malformedEnvelope.Report.Nodes) != 0 || len(malformedEnvelope.Verification.Diagnostics) != 1 {
+		t.Fatalf("malformed migrated viewer = %#v, err=%v", malformedEnvelope, err)
+	}
+	if _, err := fs.InitializePathV1(t.Context(), runID, proof); err == nil {
+		t.Fatal("initializer replay accepted malformed migrated evidence")
 	}
 }
 

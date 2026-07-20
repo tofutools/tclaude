@@ -103,6 +103,20 @@ func TestInitializePathV1ReplayAcceptsAuthenticatedMutableExecutionHead(t *testi
 	assert.Equal(t, uint64(1), pathv1.CheckpointRevision(replayed.Checkpoint))
 }
 
+func TestLoadPathV1RunHistoryViewDoesNotReadLegacyEvidenceWithoutProjectionMetadata(t *testing.T) {
+	root := t.TempDir()
+	fs, runID, _ := initializedPathV1ExecutionRunAt(t, root)
+	manifestPath := filepath.Join(root, "runs", runID, "manifest.jsonl")
+	if err := os.Remove(manifestPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	require.NoError(t, os.Symlink("state.json", manifestPath))
+
+	snapshot, err := fs.LoadPathV1RunHistoryView(t.Context(), runID)
+	require.NoError(t, err)
+	assert.Nil(t, snapshot.LegacyEvidence)
+}
+
 func TestPathV1AppendCrashBoundariesAndAmbiguousAcknowledgement(t *testing.T) {
 	t.Run("before rename", func(t *testing.T) {
 		fs, runID, _ := initializedPathV1ExecutionRun(t)

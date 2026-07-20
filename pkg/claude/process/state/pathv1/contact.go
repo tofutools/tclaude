@@ -97,13 +97,17 @@ type ContactRecordV7 struct {
 	Budget           uint64 `json:"budget"`
 	EscalationTarget string `json:"escalationTarget"`
 
-	Used              uint64 `json:"used,omitempty"`
-	ScheduledAt       string `json:"scheduledAt"`
-	LastContactedAt   string `json:"lastContactedAt,omitempty"`
-	NextContactAt     string `json:"nextContactAt,omitempty"`
-	LastRecoveredAt   string `json:"lastRecoveredAt,omitempty"`
-	EscalatedAt       string `json:"escalatedAt,omitempty"`
-	PauseReason       string `json:"pauseReason,omitempty"`
+	Used            uint64 `json:"used,omitempty"`
+	ScheduledAt     string `json:"scheduledAt"`
+	LastContactedAt string `json:"lastContactedAt,omitempty"`
+	NextContactAt   string `json:"nextContactAt,omitempty"`
+	LastRecoveredAt string `json:"lastRecoveredAt,omitempty"`
+	EscalatedAt     string `json:"escalatedAt,omitempty"`
+	PauseReason     string `json:"pauseReason,omitempty"`
+	// LegacyPauseReason preserves a terminal schema-6 contact's historical
+	// pause explanation without weakening the live invariant that PauseReason
+	// is present iff the contact marker is actively paused.
+	LegacyPauseReason string `json:"legacyPauseReason,omitempty"`
 	HumanInteractedAt string `json:"humanInteractedAt,omitempty"`
 
 	EventSeq int64 `json:"eventSeq"`
@@ -148,6 +152,12 @@ func ValidateContactRecord(record ContactRecordV7) error {
 	if !record.Provenance.Valid() {
 		return fmt.Errorf("invalid contact provenance %q", record.Provenance)
 	}
+	if record.LegacyPauseReason != "" && record.Provenance != ContactProvenanceLegacyProjection {
+		return fmt.Errorf("legacy pause reason requires legacy projection provenance")
+	}
+	if record.LegacyPauseReason != "" && record.PauseReason != "" {
+		return fmt.Errorf("live and historical contact pause reasons are mutually exclusive")
+	}
 	if record.SourceCommandID == "" {
 		return fmt.Errorf("contact record lacks a source command")
 	}
@@ -163,7 +173,7 @@ func ValidateContactRecord(record ContactRecordV7) error {
 	if record.EscalationTarget == "" || len(record.EscalationTarget) > MaxContactFieldBytes {
 		return fmt.Errorf("contact escalation target is empty or over %d bytes", MaxContactFieldBytes)
 	}
-	if len(record.PauseReason) > MaxContactFieldBytes {
+	if len(record.PauseReason) > MaxContactFieldBytes || len(record.LegacyPauseReason) > MaxContactFieldBytes {
 		return fmt.Errorf("contact pause reason is over %d bytes", MaxContactFieldBytes)
 	}
 	if record.ScheduledAt == "" {

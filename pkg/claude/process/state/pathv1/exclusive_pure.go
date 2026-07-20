@@ -33,6 +33,10 @@ type VerifiedExclusiveInput struct {
 	template        *model.Template
 	binding         CheckpointBinding
 	parallel        *parallelTopology
+	// projectionEventSeq is set only by the migration-only projector. It
+	// makes every materialized protocol record share the single migration
+	// sequence without changing ordinary runtime sequencing.
+	projectionEventSeq int64
 }
 
 func (v *VerifiedExclusiveInput) ParallelEnabled() bool { return v != nil && v.parallel != nil }
@@ -570,6 +574,9 @@ func buildExclusiveRouteDraft(ctx context.Context, input *VerifiedExclusiveInput
 	}
 
 	eventSeq := int64(lastLogSeq + 1)
+	if input.projectionEventSeq > 0 {
+		eventSeq = input.projectionEventSeq
+	}
 	before := Clone(*view.Routing)
 	after := Clone(before)
 	inheritedSource, _, err := inheritPathDetachments(&after, source)
