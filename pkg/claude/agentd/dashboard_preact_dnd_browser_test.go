@@ -38,6 +38,7 @@ func TestDashboardPreactDnDChrome(t *testing.T) {
 		dockDragCancelState(true),
 		memberDragCancelState(),
 		groupDragCancelState(),
+		terminalTabNativeDragState(),
 	}
 	if filter := os.Getenv("TCLAUDE_DASHSNAP_FILTER"); filter != "" {
 		filtered := states[:0]
@@ -274,6 +275,72 @@ func groupDragCancelState() dashsnap.State {
 if (document.querySelector('.group-reorder-source')) throw new Error('cancel left group source highlighted');
 if (document.querySelector('.group-drop-before, .group-drop-after, .group-drop-into')) throw new Error('cancel left reorder target highlighted');
 `)
+}
+
+// terminalTabNativeDragState uses Chrome's input domain for the whole gesture:
+// no synthetic DragEvent or hand-built DataTransfer participates. The terminal
+// sockets intentionally point at missing routes; this smoke owns tab chrome and
+// keyed pane identity, while the live terminal smoke covers PTY connections.
+func terminalTabNativeDragState() dashsnap.State {
+	return dashsnap.State{
+		Key:     "terminal-tab-native-drag",
+		Title:   "Terminal tabs: native drag reorder",
+		Caption: "Real Chrome drags the first terminal tab past the second; the active key and keyed pane nodes survive, and transient drag chrome clears.",
+		JS: `
+return (async function(){
+  var terminals = await import('/static/js/terminals-tab.js');
+  await terminals.openTerminalPane({ws:'/testhook/missing-terminal-one', key:'native-dnd-one', label:'one'}, {reveal:false});
+  await terminals.openTerminalPane({ws:'/testhook/missing-terminal-two', key:'native-dnd-two', label:'two'}, {reveal:false});
+  document.querySelector('nav [data-tab="terminals"]').click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
+  var tabs = document.querySelectorAll('.mux-tab');
+  if (tabs.length !== 2) throw new Error('terminal drag fixture did not open two tabs');
+  window.__terminalDnDSource = tabs[0];
+  window.__terminalDnDTarget = tabs[1];
+  window.__terminalDnDEvents = [];
+  ['dragstart','dragover','drop','dragend'].forEach(function(type){
+    document.addEventListener(type, function(event){
+      window.__terminalDnDEvents.push(type + ':' + event.target.tagName + '.' + event.target.className);
+    }, {capture:true});
+  });
+  window.__terminalDnDPanes = {};
+  document.querySelectorAll('.mux-pane').forEach(function(pane){ window.__terminalDnDPanes[pane.id] = pane; });
+})();`,
+		Actions: []dashsnap.BrowserAction{
+			{Kind: "mouse-down", Selector: `.mux-tab:first-child .mux-tab-label`},
+			{Kind: "move-to-at", Steps: 12, JS: `
+var rect = window.__terminalDnDTarget.getBoundingClientRect();
+var y = rect.top + rect.height / 2;
+for (var x = rect.left + rect.width * 0.55; x < rect.right - 3; x += 2) {
+  var hit = document.elementFromPoint(x, y);
+  if (hit && hit.closest('.mux-tab') === window.__terminalDnDTarget && !hit.closest('button')) return {x:x, y:y};
+}
+throw new Error('terminal target has no non-button point in its right half');
+`},
+			{Kind: "eval", JS: `
+if (!window.__terminalDnDSource.classList.contains('dragging')) throw new Error('Chrome did not start the terminal-tab native drag');
+if (!window.__terminalDnDTarget.classList.contains('drop-after')) throw new Error('native drag did not show the right-edge insertion marker');
+`},
+			{Kind: "mouse-up"},
+			{Kind: "eval", JS: `
+return (async function(){
+  var labels = Array.from(document.querySelectorAll('.mux-tab-label')).map(function(label){ return label.textContent; });
+  if (labels.join(',') !== 'two,one') throw new Error('native drop order: ' + labels.join(',') + '; events=' + JSON.stringify(window.__terminalDnDEvents));
+  var active = document.querySelector('.mux-tab[aria-selected="true"] .mux-tab-label');
+  if (!active || active.textContent !== 'two') throw new Error('native reorder changed the active terminal');
+  document.querySelectorAll('.mux-pane').forEach(function(pane){
+    if (window.__terminalDnDPanes[pane.id] !== pane) throw new Error('native reorder replaced keyed pane ' + pane.id);
+  });
+  if (document.querySelector('.mux-tab.dragging, .mux-tab.drop-before, .mux-tab.drop-after')) throw new Error('native drop left transient drag chrome');
+  for (;;) {
+    var close = document.querySelector('.mux-tab-close');
+    if (!close) break;
+    close.click();
+    await new Promise(function(resolve){ requestAnimationFrame(resolve); });
+  }
+})();`},
+		},
+	}
 }
 
 func dragCancelState(key, title string, wizard bool, selector, activeSelector string, dx, dy float64, cleanupChecks string) dashsnap.State {

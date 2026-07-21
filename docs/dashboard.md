@@ -815,6 +815,20 @@ or a replaced browser client finishes tearing down. Once the connection has
 been stable for a second, later disconnects keep the explicit **Reconnect**
 control; they never enter a permanent automatic retry loop.
 
+Terminal tabs can be dragged within the tab strip to reorder them. The insertion
+line shows whether the drop will land before or after the tab under the pointer.
+For a keyboard path, focus a terminal tab and press **Alt-Shift-Left Arrow** or
+**Alt-Shift-Right Arrow**. Reordering leaves the active terminal and every live
+terminal connection unchanged.
+
+An explicitly reordered tab sequence is stored as a dashboard presentation
+preference in the same server-backed preferences as the other sticky view
+settings. A terminal key already in that stored sequence returns to its
+remembered relative position when it is reopened; a key absent from it is
+appended at the end of the current strip. Simply opening, closing, switching, or
+popping out a terminal does not rewrite the stored order. Remembered history is
+bounded to 512 keys and 60 KiB.
+
 In 🧙 wizard mode, the Terminals tab and its popped-out browser terminals use
 the same purple-and-gold portal chrome as the rest of the dashboard. Each pane
 header has an **Arcane palette** checkbox beside **Copy** and **⧉ tab**. It

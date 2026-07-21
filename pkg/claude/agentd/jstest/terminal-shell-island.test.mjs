@@ -91,6 +91,8 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   const composed = [];
   const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
   const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const { terminalTabReorderOffset } =
+    await harness.importDashboardModule('js/terminal-shell-island.js');
   const cleanup = await mountTerminalsFeature({
     widgetFactory: fake.factory,
     confirm: async () => true,
@@ -185,6 +187,84 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[1].activeEdges.length, inactiveEdges, 'reveal does not touch inactive widgets');
   assert.equal(fake.widgets[1].calls.length, inactiveCalls,
     'reveal never fits or focuses an inactive widget');
+
+  const tabsBeforeDrag = [...host.querySelectorAll('[role="tab"]')];
+  const oneTab = tabsBeforeDrag.find((tab) => tab.querySelector('.mux-tab-label').textContent === 'one');
+  const twoTab = tabsBeforeDrag.find((tab) => tab.querySelector('.mux-tab-label').textContent === 'two');
+  oneTab.getBoundingClientRect = () => ({ left: 10, width: 100 });
+  const transfer = {
+    data: {}, effectAllowed: '', dropEffect: '',
+    setData(type, value) { this.data[type] = value; },
+    getData(type) { return this.data[type] || ''; },
+  };
+  await harness.act(() => harness.fireEvent(twoTab.querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  assert.equal(transfer.data['application/x-tclaude-terminal-tab'], 'two');
+  assert.equal(transfer.data['text/plain'], undefined,
+    'terminal-tab drag stays isolated from the dashboard member drag router');
+  assert.ok(twoTab.classList.contains('dragging'), 'source tab shows its drag state');
+  await harness.act(() => harness.fireEvent(oneTab, 'dragover', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  assert.ok(oneTab.classList.contains('drop-before'), 'target tab shows the exact insertion edge');
+  await harness.act(() => harness.fireEvent(oneTab, 'drop', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['two', 'one']);
+  assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one',
+    'drag reorder preserves the active terminal');
+  assert.equal(fake.widgets[0].child, opaqueChild, 'reorder keeps the keyed xterm host intact');
+  assert.equal(fake.widgets[0].disposeCount, 0);
+  assert.equal(fake.widgets[1].disposeCount, 0, 'reorder neither closes nor reconnects a terminal');
+  assert.equal(host.querySelector('.drop-before,.drop-after,.dragging'), null,
+    'drop clears every transient drag marker');
+
+  const movedOneTab = [...host.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'one');
+  assert.equal(movedOneTab.getAttribute('aria-keyshortcuts'),
+    'Alt+Shift+ArrowLeft Alt+Shift+ArrowRight');
+  assert.equal(terminalTabReorderOffset({
+    type: 'keydown', key: 'ArrowLeft', altKey: true, shiftKey: true,
+    target: { closest: (selector) => selector === 'button' ? {} : null },
+  }), null, 'a reorder shortcut from the nested Close button is ignored');
+  await harness.act(() => harness.fireEvent(movedOneTab, 'keydown', {
+    key: 'ArrowLeft', altKey: true, shiftKey: true,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['one', 'two'], 'keyboard reordering follows the same state path');
+  assert.match(host.querySelector('.mux-tab-a11y[role="status"]').textContent,
+    /Moved one to position 1 of 2/);
+  assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one');
+
+  twoTab.getBoundingClientRect = () => ({ left: 10, width: 100 });
+  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  await harness.act(() => harness.fireEvent(twoTab, 'dragover', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  assert.ok(twoTab.classList.contains('drop-before'));
+  await harness.act(() => harness.fireEvent(twoTab, 'drop', {
+    dataTransfer: transfer, clientX: 100,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['two', 'one'], 'drop coordinates, not a stale hover render, choose the committed edge');
+
+  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  await harness.act(() => harness.fireEvent(twoTab, 'dragover', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragend', {
+    dataTransfer: transfer,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['two', 'one'], 'a cancelled drag leaves order unchanged');
+  assert.equal(host.querySelector('.drop-before,.drop-after,.dragging'), null,
+    'drag cancellation clears source and target state');
 
   const closeOne = getByRole(host, 'button', { name: 'Close one' });
   await harness.act(() => harness.fireEvent(closeOne, 'click'));
