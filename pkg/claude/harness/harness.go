@@ -144,6 +144,26 @@ type Harness struct {
 	// (SupportsAutoReview gates on this, NOT on SupportsApproval). Codex sets it
 	// true. See JOH-200 part 2.
 	ApprovalsReviewer bool
+
+	// BackgroundShells marks a harness that can run a shell command in the
+	// BACKGROUND — detached from the turn, so the agent's turn ends while
+	// the command keeps running — and that names each such command in its
+	// hook stream well enough for tclaude to track it. Claude Code sets it
+	// true: its Bash tool takes `run_in_background: true` and its
+	// PostToolUse payload carries the resulting backgroundTaskId. Codex has
+	// no equivalent mechanism and leaves it false, so nothing in the
+	// background-shell ledger, its liveness reconcile, or the "⚙+N" badge
+	// engages for a Codex agent. See db.BgShellSet (TCL-613).
+	BackgroundShells bool
+}
+
+// SupportsBackgroundShells reports whether tclaude tracks background shell
+// commands for this harness. Callers must not feed or read the
+// background-shell ledger when it is false — an unknown/empty harness folds
+// to false, so a harness tclaude cannot reason about never grows a ledger
+// nothing would ever retire.
+func (h *Harness) SupportsBackgroundShells() bool {
+	return h != nil && h.BackgroundShells
 }
 
 // SupportsRename reports whether the harness has a usable in-pane rename
