@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +18,40 @@ func TestReplyCmdSupportsBodyFlag(t *testing.T) {
 	require.NotNil(t, flag, "reply should accept --body like message does")
 	assert.Equal(t, "string", flag.Value.Type())
 	assert.Contains(t, cmd.UseLine(), "[text]")
+}
+
+// The -b shorthand is not declared in the struct tag: ParamEnricherShort
+// derives it from the field name, in field order. That makes it silently
+// mutable — inserting another b-initial field ahead of Body, or renaming
+// Body, would reassign or drop -b while --body kept working and every
+// long-flag test stayed green. `message` exposes -b for the same reason,
+// so the two subcommands only stay in step if both are pinned.
+func TestReplyAndMessageCmdBodyShorthandIsB(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cmd  *cobra.Command
+	}{
+		{name: "reply", cmd: replyCmd()},
+		{name: "message", cmd: messageCmd()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flag := tc.cmd.Flags().Lookup("body")
+			require.NotNil(t, flag, "--body must exist")
+			assert.Equal(t, "b", flag.Shorthand, "--body must be reachable as -b")
+
+			// Registered under -b specifically, not merely carrying the
+			// letter in its Shorthand field.
+			byShort := tc.cmd.Flags().ShorthandLookup("b")
+			require.NotNil(t, byShort, "-b must be registered")
+			assert.Equal(t, "body", byShort.Name, "-b must resolve to --body")
+
+			// And it actually parses: `-b <value>` lands in --body. This is
+			// the assertion that survives a shorthand mutation — retagging
+			// the short to -x leaves --body working but fails here.
+			require.NoError(t, tc.cmd.ParseFlags([]string{"-b", "short flag value"}))
+			assert.Equal(t, "short flag value", tc.cmd.Flags().Lookup("body").Value.String())
+		})
+	}
 }
 
 // TestRunReplyBodySources covers the four interchangeable body sources on
