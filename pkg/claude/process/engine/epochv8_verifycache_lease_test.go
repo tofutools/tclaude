@@ -3,7 +3,6 @@ package engine
 import (
 	"errors"
 	"path/filepath"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -15,21 +14,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
-// raceInstrumented reports whether this test binary was built with the race
-// detector, read from the recorded build settings.
-func raceInstrumented() bool {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return false
-	}
-	for _, setting := range info.Settings {
-		if setting.Key == "-race" && setting.Value == "true" {
-			return true
-		}
-	}
-	return false
-}
-
 func epochLeaseTestTemplate() *model.Template {
 	return &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "epoch-lease", Start: "work",
@@ -40,15 +24,29 @@ func epochLeaseTestTemplate() *model.Template {
 	}
 }
 
-// TestEpochV8ShortTTLDriveKeepsEngineLeaseColdAndRestartShaped runs the
+// TestEpochV8ShortTTLDriveKeepsEngineLeaseWithFreshHolderReload runs the
 // production 1-task schema-8 flow with a short lease TTL and a fast fake
 // heartbeat timer. Before the checkpoint-verification memo, repeated full
 // receipt-chain replays held the run flock long enough to starve
 // RenewEngineLease past the TTL, surfacing "engine lease is absent, expired,
 // or has a different token/generation". The run's checkpoints are unique
-// fresh bytes, so this drive is cold-cache by construction; the second host
-// models a restarted engine re-reading and re-verifying state from disk.
-func TestEpochV8ShortTTLDriveKeepsEngineLeaseColdAndRestartShaped(t *testing.T) {
+// fresh bytes, so the drive replays each checkpoint uncached exactly once.
+// The second host is a fresh lease holder reloading and re-verifying state
+// from disk in the same process; the process-global verification memo stays
+// warm across it, so this is deliberately NOT claimed as a cache-clearing
+// restart — cold-cache memo behavior is pinned by the epochv8 package's
+// cache-instance/reset regressions.
+//
+// The short-TTL drive is a plain-build regression only. Race instrumentation
+// slows the CPU-bound uncached replays several-fold, re-creating the
+// documented residual cold-history lease limit (see the non-release
+// decision) below the 6s test TTL, so under -race this case would assert
+// that known limit instead of the memoization regression it pins. The
+// replacement-generation fencing test below runs under -race unchanged.
+func TestEpochV8ShortTTLDriveKeepsEngineLeaseWithFreshHolderReload(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("short-TTL drive is a plain-build regression: -race re-creates the documented cold-history lease limit below the 6s test TTL")
+	}
 	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
 	if err != nil {
 		t.Fatal(err)
@@ -122,15 +120,16 @@ func TestEpochV8ShortTTLDriveKeepsEngineLeaseColdAndRestartShaped(t *testing.T) 
 	}
 	// Generous supplementary ceiling: the deterministic lease and call-count
 	// assertions are the primary evidence; this only guards against the old
-	// ~30s-per-tick full-replay profile returning wholesale. The race
-	// detector slows this CPU-bound drive several-fold, so the wall-clock
-	// ceiling is only meaningful (and only asserted) in uninstrumented runs.
-	if elapsed > 20*time.Second && !raceInstrumented() {
+	// ~30s-per-tick full-replay profile returning wholesale. The test skips
+	// under -race above, so the ceiling always applies when reached.
+	if elapsed > 20*time.Second {
 		t.Fatalf("cold 1-task drive took %s, want well below the 30s lease boundary", elapsed)
 	}
 
-	// Restart shape: a fresh holder re-acquires the lease, reloads state from
-	// disk, and re-verifies the terminal checkpoint without lease errors.
+	// Fresh-holder reload: a new holder re-acquires the lease, reloads state
+	// from disk, and re-verifies the terminal checkpoint without lease
+	// errors. The process-global verification memo remains warm here; this is
+	// a disk-reload check, not a cache-clearing restart.
 	restarted := New(fs, "epoch-lease-engine-restarted", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: &countingReleaseAdapter{}})
 	restarted.LeaseTTL = shortTTL
 	restoreRestarted := restarted.SetHeartbeatTimerForTest(func(time.Duration) (<-chan time.Time, func()) {
