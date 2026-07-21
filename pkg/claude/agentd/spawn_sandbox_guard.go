@@ -52,8 +52,12 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReadBaseline)
 		}
 	}
+	exclusions := snapshot.Effective.ReadBaselineExclusions
+	if err := harness.ValidateSandboxReadExclusions(harnessOrDefault(harnessName), sandboxMode, exclusions); err != nil {
+		return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReadExclusions)
+	}
 	if grants := snapshot.Effective.BreakGlassFilesystem; len(grants) > 0 {
-		if err := harness.ValidateSandboxBreakGlass(harnessOrDefault(harnessName), sandboxMode, grants); err != nil {
+		if err := harness.ValidateSandboxBreakGlassWithReadExclusions(harnessOrDefault(harnessName), sandboxMode, grants, exclusions); err != nil {
 			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityBreakGlass)
 		}
 		if _, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective); err != nil {

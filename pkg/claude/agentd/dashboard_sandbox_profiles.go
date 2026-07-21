@@ -10,6 +10,7 @@ import "net/http"
 // sandbox-profiles.manage permission check on every payload read and mutation.
 func registerDashboardSandboxProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sandbox-profiles", dashboardSandboxProfilesRoute(handleSandboxProfiles))
+	mux.HandleFunc("/api/sandbox-profile-read-exclusions", dashboardSandboxProfilesRoute(handleSandboxReadExclusionCatalog))
 	mux.HandleFunc("/api/sandbox-profile-default", dashboardSandboxProfilesRoute(handleGlobalSandboxProfile))
 	mux.HandleFunc("GET /api/sandbox-profiles/export", dashboardSandboxProfilesRoute(handleSandboxProfilesExport))
 	mux.HandleFunc("POST /api/sandbox-profiles/import/inspect", dashboardSandboxProfilesRoute(handleSandboxProfilesImportInspect))

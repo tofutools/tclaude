@@ -476,16 +476,26 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	rec := installRecordingResumeSpawner(t)
 	rec.spawnErr = errors.New("launch reservation lost")
 	const convID = "failed-resume-sandbox-conv-12345678"
-	saveResumeSession(t, convID, t.TempDir(), harness.DefaultName)
+	row := saveResumeSession(t, convID, t.TempDir(), harness.DefaultName)
+	row.SandboxMode = harness.ClaudeSandboxOn
+	require.NoError(t, db.SaveSession(row))
 
 	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
 		Name:        "changing-policy",
 		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_VERSION", Value: "old"}},
+		ReadBaselineExclusions: []string{
+			sandboxpolicy.ReadExclusionHome,
+			sandboxpolicy.ReadExclusionSSH,
+		},
 	})
 	require.NoError(t, err)
 	oldEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
 		Name:        "changing-policy",
 		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "POLICY_VERSION", Value: "old"}},
+		ReadBaselineExclusions: []string{
+			sandboxpolicy.ReadExclusionHome,
+			sandboxpolicy.ReadExclusionSSH,
+		},
 	}})
 	require.NoError(t, err)
 	previous := sandboxpolicy.NewSnapshot(oldEffective, []sandboxpolicy.AppliedProfile{{
@@ -497,6 +507,7 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	profile, err := db.GetSandboxProfileByID(profileID)
 	require.NoError(t, err)
 	profile.Environment[0].Value = "new"
+	profile.ReadBaselineExclusions = []string{sandboxpolicy.ReadExclusionCloud}
 	require.NoError(t, db.UpdateSandboxProfile(profile))
 
 	res := resumeOneConv(convID)
@@ -504,10 +515,16 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	assert.Contains(t, res.Detail, "launch reservation lost")
 	require.NotNil(t, rec.effectiveSandbox)
 	assert.Equal(t, "new", rec.effectiveSandbox.Effective.Environment[0].Value)
+	assert.Equal(t, []string{sandboxpolicy.ReadExclusionCloud}, rec.effectiveSandbox.Effective.ReadBaselineExclusions)
+	assert.Equal(t, map[string][]sandboxpolicy.ProfileSource{
+		sandboxpolicy.ReadExclusionCloud: {{Scope: sandboxpolicy.ScopeExplicit, Profile: "changing-policy"}},
+	}, rec.effectiveSandbox.Effective.Provenance.ReadBaselineExclusions)
 
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	require.NoError(t, err)
 	require.NotNil(t, persisted)
 	assert.Equal(t, "old", persisted.Effective.Environment[0].Value,
 		"a failed launch must not commit policy for a pane that never started")
+	assert.Equal(t, []string{sandboxpolicy.ReadExclusionHome, sandboxpolicy.ReadExclusionSSH}, persisted.Effective.ReadBaselineExclusions,
+		"a failed launch restores the exact previous snapshot rather than persisting the newly resolved profile")
 }

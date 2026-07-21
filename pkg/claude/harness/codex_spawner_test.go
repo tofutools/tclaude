@@ -16,6 +16,13 @@ func codexBuild(env, resume, effort, model string, extra []string) string {
 	})
 }
 
+func TestCodexSpawnerPinsVerifiedExecutablePath(t *testing.T) {
+	got := codexSpawner{}.BuildCommand(SpawnSpec{ExecutablePath: "/opt/verified codex/bin/codex"})
+	if !strings.HasPrefix(got, "'/opt/verified codex/bin/codex'") {
+		t.Fatalf("verified executable was not shell-quoted and pinned: %q", got)
+	}
+}
+
 // TestCodexSpawner_New covers a fresh Codex session: bare `codex`, with an
 // optional `--model`, env exports prepended, and the binary name.
 func TestCodexSpawner_New(t *testing.T) {

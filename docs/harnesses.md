@@ -148,7 +148,11 @@ safe and non-blocking:
     rev-parse --git-dir`). That lets an agent create `../<repo>-<branch>` and
     commit there while the rest of `$HOME` stays read-only. A container at/above
     `$HOME` is never granted; in that layout the original worktree is the narrow
-    fallback root. The
+    fallback root. A sandbox profile selecting the strict `home.directory`
+    read exclusion narrows this further: it reopens only the active workspace
+    and exact verified Git common/admin paths, never the whole repository
+    container. Direct sibling-worktree creation is incompatible with strict
+    Home and must be created or brokered before launch. The
     operator, Codex, and Claude Code all use the same canonical state-free
     endpoint; agentd temporarily also serves the legacy
     `~/.tclaude-agentd.sock` and `~/.tclaude/agentd.sock` paths for

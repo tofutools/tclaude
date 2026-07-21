@@ -26,6 +26,23 @@ func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
 	}
 }
 
+func TestSandboxProfileCapabilityFailureGatesSemanticReadExclusions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH},
+	}}
+	require.Nil(t, sandboxProfileCapabilityFailure(harness.DefaultName, harness.ClaudeSandboxOn, snapshot))
+	require.Nil(t, sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot))
+	for _, tc := range []struct{ harness, mode string }{
+		{harness.DefaultName, harness.ClaudeSandboxInherit},
+		{harness.CodexName, harness.SandboxReadOnly},
+	} {
+		failure := sandboxProfileCapabilityFailure(tc.harness, tc.mode, snapshot)
+		require.NotNil(t, failure)
+		require.Equal(t, harness.SandboxCapabilityReadExclusions, failure.Kind)
+	}
+}
+
 func TestSandboxProfileCapabilityFailureIgnoresMissingAllowRulesButRejectsMissingDeny(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

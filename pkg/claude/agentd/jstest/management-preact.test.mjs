@@ -316,7 +316,7 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   const draft = { name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [], includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet' };
   // The save body always carries the full-replace shape, so the TCL-609
   // fields ride along explicitly even when untouched.
-  const body = { ...draft, read_baseline: '', break_glass_filesystem: [] };
+  const body = { ...draft, read_baseline: '', read_baseline_exclusions: [], break_glass_filesystem: [] };
   const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
   assert.deepEqual(state.sandboxDiff.value, { before: null, after: body }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
@@ -401,6 +401,66 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve()); assert.equal(scribe, null); assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'invalid raw JSON blocks scribe handoff');
   raw.value = '[{"path":"/raw","access":"read"}]'; raw.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve()); host.querySelector('#sandbox-profile-editor-scribe').click(); await harness.act(() => Promise.resolve());
   assert.equal(scribe.value.filesystem[0].path, '/raw'); assert.equal(scribe.value.network_access, 'none'); assert.equal(scribe.options.targetName, 'dev'); assert.equal(host.querySelector('#sandbox-profile-editor-modal'), null, 'scribe handoff closes the editor so its returned draft can be delivered');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
+test('sandbox editor keeps Home and external leaves distinct and lets owners remove unknown IDs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
+    name: 'base', filesystem: [], environment: [], includes: [], agent_directories: [],
+    read_baseline_exclusions: ['future.inherited-store'],
+  }]);
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'hardened', filesystem: [], environment: [], includes: ['base'], agent_directories: [],
+      read_baseline_exclusions: ['future.secret-store'],
+    },
+    options: {},
+  });
+  let saved = null;
+  const actions = {
+    async loadReadExclusionCatalog() {
+      return {
+        version: 1,
+        categories: [
+          { id: 'secrets.ssh', label: 'Deny SSH', description: 'SSH credentials.', tier: 'portable', paths: ['/home/op/.ssh'] },
+          { id: 'home.directory', label: 'Deny Home', description: 'Home baseline.', tier: 'home', paths: ['/home/op'] },
+        ],
+        informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
+      };
+    },
+    async inspectDirectories() { return { missing: [], creatable: [] }; },
+    async createDirectories() {},
+    async saveSandbox(value) { saved = value; },
+    configureSandboxWithAgent() {},
+  };
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  const exclusions = host.querySelector('.sbx-read-exclusions');
+  assert.match(exclusions.textContent, /Unknown restriction: future\.secret-store/);
+  assert.match(exclusions.textContent, /Unknown restriction: future\.inherited-store/);
+  const unknownRows = [...exclusions.querySelectorAll('.sbx-exclusion-row.unknown')];
+  const ownedUnknown = unknownRows.find((row) => row.textContent.includes('future.secret-store'));
+  const inheritedUnknown = unknownRows.find((row) => row.textContent.includes('future.inherited-store'));
+  assert.notEqual(ownedUnknown.querySelector('input').disabled, true, 'direct owner can recover on an older catalog');
+  assert.equal(inheritedUnknown.querySelector('input').disabled, true, 'inherited unknown remains locked at its consumer');
+  let choices = host.querySelectorAll('.sbx-exclusion-list input');
+  assert.equal(choices.length, 2); assert.notEqual(choices[0].disabled, true); assert.notEqual(choices[1].checked, true);
+  choices[1].checked = true; choices[1].dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
+  choices = host.querySelectorAll('.sbx-exclusion-list input');
+  assert.notEqual(choices[0].checked, true, 'Home does not claim coverage for a leaf that may resolve outside Home');
+  assert.notEqual(choices[0].disabled, true);
+  ownedUnknown.querySelector('input').checked = false;
+  ownedUnknown.querySelector('input').dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.read_baseline_exclusions, ['home.directory']);
   cleanups.reverse().forEach((fn) => fn());
 });
 

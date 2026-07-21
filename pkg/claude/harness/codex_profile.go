@@ -202,6 +202,10 @@ type CodexSandboxRules struct {
 	// the operator's acknowledged access.
 	BreakGlassReadDirs  []string
 	BreakGlassWriteDirs []string
+	// RequireSplitPolicy pins the Linux backend away from legacy Landlock.
+	// Home exclusions set it only after the isolated behavioral probe proved
+	// denied-parent/narrower-reopen semantics for this Codex executable.
+	RequireSplitPolicy bool
 }
 
 // codexMinimalRuntimeGrants are the special paths a minimal (extends-less)
@@ -326,13 +330,19 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	} else if useOfflineProxy {
 		featureNetworkProxy = "true"
 	}
-	if featureNetworkProxy != "" {
+	if featureNetworkProxy != "" || rules.RequireSplitPolicy {
 		// Use the scalar feature form so this launch profile replaces any
 		// feature-level proxy configuration from the user's base config. This
 		// prevents inherited allowlists from widening an offline launch and
 		// prevents an inherited proxy from narrowing explicit Internet access.
 		fmt.Fprintf(&b, "[features]\n")
-		fmt.Fprintf(&b, "network_proxy = %s\n\n", featureNetworkProxy)
+		if featureNetworkProxy != "" {
+			fmt.Fprintf(&b, "network_proxy = %s\n", featureNetworkProxy)
+		}
+		if rules.RequireSplitPolicy {
+			fmt.Fprintf(&b, "use_legacy_landlock = false\n")
+		}
+		fmt.Fprintln(&b)
 	}
 	fmt.Fprintf(&b, "[permissions.%s]\n", p)
 	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
@@ -351,17 +361,20 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 		for _, grant := range codexMinimalRuntimeGrants {
 			fmt.Fprintf(&b, "%q = %q\n", grant.key, grant.access)
 		}
-		// Harness-owned homes intentionally remain agent-readable. Codex's
+		// Harness-owned homes intentionally remain agent-readable unless Home
+		// is itself excluded. Codex's
 		// standalone distribution can live below ~/.codex/packages, and the
 		// Linux sandbox re-executes that binary for every tool command. A
 		// whole-home deny (or an allowlist that omits it) therefore prevents
 		// commands from launching at all. Path-level hardening requires a
 		// measured runtime/state split and is tracked separately.
-		home, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			return "", fmt.Errorf("resolve home directory for Codex runtime grants: %w", homeErr)
+		if !rules.RequireSplitPolicy {
+			home, homeErr := os.UserHomeDir()
+			if homeErr != nil {
+				return "", fmt.Errorf("resolve home directory for Codex runtime grants: %w", homeErr)
+			}
+			fmt.Fprintf(&b, "%q = \"read\"\n", filepath.Join(home, ".codex"))
 		}
-		fmt.Fprintf(&b, "%q = \"read\"\n", filepath.Join(home, ".codex"))
 	}
 	if !suppressPrivateStateDeny {
 		fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)

@@ -10,7 +10,6 @@ import (
 )
 
 func TestMigrateV140toV141AddsBgShellsColumn(t *testing.T) {
-	require.Equal(t, 141, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v141?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

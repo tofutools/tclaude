@@ -213,7 +213,18 @@ Notes:
 - **Do not deny the whole `~/.codex` tree.** Standalone Codex installs its
   executable below `~/.codex/packages` and re-executes it for tool commands;
   a whole-tree deny strands managed Codex agents. Narrower state boundaries
-  require separate runtime/state analysis.
+  require separate runtime/state analysis. Sandbox profiles that select the
+  semantic `home.directory` read exclusion handle this through a capability
+  gate: on Linux, tclaude first runs an isolated Codex behavioral probe that
+  proves a denied Home can retain narrower child reopens and determines
+  whether the exact executable leaf must be reopened. Codex macOS is refused.
+  Before merging changes to that contract, run the host-only smoke outside any
+  nested agent sandbox:
+
+  ```bash
+  TCLAUDE_CODEX_SPLIT_SMOKE=1 go test ./pkg/claude/harness -run TestCodexSplitPolicyHostSmoke -count=1 -v
+  ```
+
 - **Check for paths that re-open these.** The sandbox's writable set is
   your working directory plus `permissions.additionalDirectories` plus
   `sandbox.filesystem.allowWrite`. Make sure none of those lists contains

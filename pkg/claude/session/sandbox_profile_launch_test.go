@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ func TestCodexManagedProfileCarriesSnapshotNetworkPolicy(t *testing.T) {
 		PermissionProfile:          harness.CodexAgentProfile,
 		GitWorktreeWriteDirsPinned: true,
 	}
-	_, path, err := ensureCodexManagedProfileWithSnapshot(params, t.TempDir(), "1234567890abcdef", &snapshot)
+	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, t.TempDir(), "1234567890abcdef", &snapshot)
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -194,7 +195,7 @@ func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
 
 	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
-	_, path, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -223,11 +224,113 @@ func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
 	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
-	_, path, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `extends = ":workspace"`)
 	assert.NotContains(t, string(raw), `"`+workspace+`" = "write"`,
 		"today's behavior is unchanged: :workspace already covers the cwd")
+}
+
+func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
+	t.Setenv("HOME", home)
+	ssh := filepath.Join(home, ".ssh")
+	require.NoError(t, os.MkdirAll(ssh, 0o700))
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "no-ssh", ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
+	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, t.TempDir(), "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"`+ssh+`" = "none"`)
+	assert.Contains(t, string(raw), `extends = ":workspace"`)
+}
+
+func TestStrictHomeGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T) {
+	container := t.TempDir()
+	workspace := filepath.Join(container, "active")
+	common := filepath.Join(workspace, ".git")
+	admin := filepath.Join(common, "worktrees", "active")
+	siblingRepo := filepath.Join(container, "sibling-repo")
+	for _, dir := range []string{workspace, common, admin, siblingRepo} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+
+	got := strictHomeGitWriteDirs(workspace, common, []string{container, common, admin, siblingRepo})
+	assert.Equal(t, []string{canonicalWorkspace, common, admin}, got)
+	assert.NotContains(t, got, container, "strict Home must not reopen the historical sibling-worktree container")
+	assert.NotContains(t, got, siblingRepo)
+}
+
+func TestCodexStrictHomeSessionRendererHostSmoke(t *testing.T) {
+	if os.Getenv("TCLAUDE_CODEX_SPLIT_SMOKE") != "1" {
+		t.Skip("set TCLAUDE_CODEX_SPLIT_SMOKE=1 on an unsandboxed Linux host with Codex+bubblewrap")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux only")
+	}
+	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	container := filepath.Join(home, "git")
+	workspace := filepath.Join(container, "active")
+	common := filepath.Join(workspace, ".git")
+	admin := filepath.Join(common, "worktrees", "active")
+	sibling := filepath.Join(container, "sibling")
+	private := filepath.Join(home, ".tclaude", "data")
+	breakGlass := filepath.Join(private, "acknowledged")
+	explicitRead := filepath.Join(home, "explicit-read")
+	explicitWrite := filepath.Join(home, "explicit-write")
+	agentCache := filepath.Join(home, "agent-cache")
+	for _, dir := range []string{workspace, common, admin, sibling, breakGlass, explicitRead, explicitWrite, agentCache} {
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+	}
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name:                   "strict-home",
+		ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionHome},
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: explicitRead, Access: sandboxpolicy.AccessRead},
+			{Path: explicitWrite, Access: sandboxpolicy.AccessWrite},
+		},
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{Path: breakGlass, Access: sandboxpolicy.AccessRead}},
+	}})
+	require.NoError(t, err)
+	effective.Filesystem = append(effective.Filesystem, sandboxpolicy.FilesystemGrant{Path: agentCache, Access: sandboxpolicy.AccessWrite})
+	effective.AgentDirectories = []string{"GOCACHE"}
+	effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{Name: "GOCACHE", Value: agentCache})
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	params := &NewParams{
+		PermissionProfile:          harness.CodexAgentProfile,
+		CodexGitCommonDir:          common,
+		CodexGitCommonDirPinned:    true,
+		GitWorktreeWriteDirs:       []string{container, common, admin, sibling},
+		GitWorktreeWriteDirsPinned: true,
+	}
+	_, profilePath, capability, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, capability)
+	require.NoError(t, harness.RevalidateCodexHomeSplitPolicyCapability(*capability))
+	raw, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	content := string(raw)
+	for _, allowed := range []string{workspace, common, admin, explicitRead, explicitWrite, agentCache, breakGlass} {
+		assert.Contains(t, content, `"`+allowed+`"`)
+	}
+	assert.NotContains(t, content, `"`+container+`" = "write"`)
+	assert.NotContains(t, content, sibling)
 }

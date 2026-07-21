@@ -476,6 +476,54 @@ Harness support is **not** symmetric, and tclaude does not pretend otherwise:
 For sandbox lineage, `minimal → default` is **widening**: an agent whose own
 launch was minimal cannot spawn a child with the broader default baseline.
 
+#### `read_baseline_exclusions` — cataloged Default-baseline restrictions
+
+When `minimal` is too restrictive, a profile can keep the harness's broad
+Default read baseline while subtracting audited sensitive categories. The
+portable profile stores stable semantic IDs, never machine paths:
+
+* `secrets.ssh`, `secrets.gnupg`, `secrets.cloud`, and
+  `secrets.vcs-tokens`
+* `toolchain.caches` and `browser.profiles`
+* `home.directory`, the broad Home path itself
+
+The dashboard obtains labels, warnings, and current-platform paths from the
+daemon's versioned catalog. Category paths are resolved and symlink-canonicalized
+at launch, so exports remain portable while enforcement follows the current
+machine. These are audited/default-location restrictions, not a claim to find
+every application-configured credential or cache location. Restrictions
+compose as a union across includes and the global →
+group → explicit scopes, with every contributing profile retained in
+provenance. An ordinary read/write grant that intersects a selected leaf
+category is rejected; each leaf ID remains distinct from `home.directory`
+because (for example) `~/.ssh` can be a symlink outside Home. `home.directory`
+instead uses managed, auditable reopens
+for the workspace, control plane, runtime, agent-owned directories, and
+explicit grants. For Codex, strict Home reopens only the active workspace and
+exact verified Git common/admin paths, not the historical whole repository
+container. Direct sibling-worktree creation is therefore unavailable under
+strict Home; create or broker the worktree before launch.
+
+Unknown but well-formed IDs survive storage, export, import, and display. They
+fail launch with `unsupported_sandbox_profile_read_exclusions` until the local
+tclaude/platform knows how to enforce them, preventing an older installation
+from silently dropping a newer restriction.
+
+Harness support is capability-gated:
+
+* **Claude Code:** leaf and Home restrictions require sandbox `on`.
+* **Codex:** leaf restrictions require the managed `tclaude-agent` profile.
+  Home is Linux-only and launches only after an isolated behavioral probe
+  verifies the non-legacy bubblewrap split policy (a denied Home with a
+  narrower readable child). Codex macOS is refused because narrower reopens
+  beneath a denied Home are not currently reliable; raw Codex sandbox modes
+  are also refused.
+
+Minimal remains the stronger allowlist posture. Selecting leaf restrictions
+under Default is useful defense-in-depth, but the catalog is intentionally
+finite and is not a claim that every possible credential or cache path has
+been enumerated.
+
 #### `break_glass_filesystem` — exceptional protected-path access
 
 tclaude denies every sandboxed agent access to `~/.tclaude/data` (daemon
@@ -577,9 +625,10 @@ will actually be assigned.
 
 **Resume and reincarnation never gain authority.** Both re-resolve ordinary
 rules from the current registry, but the protected-access decision and the read
-baseline are clamped to what was recorded at launch: break-glass is intersected
-with the frozen snapshot (never added, never widened read → write) and the
-baseline takes the stricter of the two. There is no human in the loop on a
+baseline restrictions are clamped to what was recorded at launch: break-glass
+is intersected with the frozen snapshot (never added, never widened read →
+write), the baseline takes the stricter of the two, and exclusions can only be
+preserved or strengthened (`home.directory` subsumes its leaves). There is no human in the loop on a
 relaunch to acknowledge new protected access, so it is never granted
 implicitly. To widen a running agent's protected access, spawn a fresh one and
 acknowledge it.

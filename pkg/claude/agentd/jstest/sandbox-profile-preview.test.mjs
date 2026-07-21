@@ -22,6 +22,7 @@ test('profiles without the TCL-609 fields compose exactly as before', () => {
     'global:dev · write /data (global) · env: GOFLAGS (global) · network: internet (global)',
   );
   assert.deepEqual(policy.breakGlass, []);
+  assert.deepEqual(policy.readExclusions, []);
   assert.equal(policy.readBaseline, null);
   assert.equal(
     composeSandboxProfilePreview([{ scope: 'global', profile: dev }], { base, dev }),
@@ -116,4 +117,23 @@ test('unresolved includes still surface while break-glass from resolvable ones s
   assert.equal(policy.breakGlass.length, 1);
   assert.deepEqual(policy.readBaseline, { scope: 'group', profile: 'debug' });
   assert.match(policy.text, /⚠ unresolved includes: missing/);
+});
+
+test('read restrictions union across includes and scopes while preserving their origins', () => {
+  const home = { name: 'home', read_baseline_exclusions: ['home.directory'] };
+  const wrapper = { name: 'wrapper', includes: ['home'] };
+  const leaf = { name: 'leaf', read_baseline_exclusions: ['secrets.ssh'] };
+  const policy = composeSandboxProfilePolicy(
+    [
+      { scope: 'global', profile: wrapper },
+      { scope: 'explicit', profile: leaf },
+    ],
+    { home, wrapper, leaf },
+  );
+  assert.deepEqual(policy.readExclusions, [
+    { id: 'home.directory', origins: ['global:home'] },
+    { id: 'secrets.ssh', origins: ['explicit:leaf'] },
+  ]);
+  assert.match(policy.text, /home\.directory \(global:home\)/);
+  assert.match(policy.text, /secrets\.ssh \(explicit:leaf\)/);
 });

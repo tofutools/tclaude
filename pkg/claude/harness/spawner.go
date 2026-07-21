@@ -7,6 +7,11 @@ package harness
 // command, so "unset" reliably means "let the harness use its own
 // default".
 type SpawnSpec struct {
+	// ExecutablePath pins the exact harness executable selected and verified by
+	// a capability boundary. Empty uses the adapter's ordinary PATH lookup.
+	// Codex strict-Home launches set this to the binary whose split-policy
+	// behavior and identity were probed, preventing a later PATH substitution.
+	ExecutablePath string
 	// EnvExports is a pre-built `export K=V; …` prefix prepended verbatim
 	// to the command. The caller assembles it (tclaude identity env +
 	// any pass-through), so the Spawner stays agnostic about which vars

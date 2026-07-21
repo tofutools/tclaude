@@ -3891,6 +3891,12 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-break-glass legend { color: #ff7b72; font-weight: 700; }
 .sbx-break-glass .sbx-bg-add { border-color: rgba(248, 81, 73, 0.45); color: #ffa198; }
 .sbx-break-glass .sbx-bg-add:hover { background: rgba(248, 81, 73, 0.10); border-color: rgba(248, 81, 73, 0.70); color: #ffc1bc; }
+.sbx-exclusion-list { display: grid; gap: 8px; margin-top: 8px; }
+.sbx-exclusion-row { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+.sbx-exclusion-row span { min-width: 0; display: grid; gap: 3px; }
+.sbx-exclusion-row small, .sbx-exclusion-row code { display: block; overflow-wrap: anywhere; }
+.sbx-exclusion-row.locked { opacity: .78; }
+.sbx-exclusion-row.unknown { border-color: rgba(248, 81, 73, 0.55); }
 .sbx-bg-intro { color: #8b949e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
 .sbx-bg-warning {
   border: 1px solid rgba(248, 81, 73, 0.60); border-left: 4px solid #f85149;

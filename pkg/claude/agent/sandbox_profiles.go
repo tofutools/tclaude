@@ -22,16 +22,17 @@ import (
 // payload read on sandbox-profiles.manage to avoid disclosing accidental
 // credentials to ordinary agents.
 type sandboxProfileJSON struct {
-	Name                 string                           `json:"name"`
-	Filesystem           []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
-	ReadBaseline         sandboxpolicy.ReadBaseline       `json:"read_baseline,omitempty"`
-	BreakGlassFilesystem []sandboxpolicy.BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
-	Environment          []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	AgentDirectories     []string                         `json:"agent_directories,omitempty"`
-	NetworkAccess        sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
-	Includes             []string                         `json:"includes,omitempty"`
-	CreatedAt            string                           `json:"created_at,omitempty"`
-	UpdatedAt            string                           `json:"updated_at,omitempty"`
+	Name                   string                           `json:"name"`
+	Filesystem             []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
+	ReadBaseline           sandboxpolicy.ReadBaseline       `json:"read_baseline,omitempty"`
+	ReadBaselineExclusions []string                         `json:"read_baseline_exclusions,omitempty"`
+	BreakGlassFilesystem   []sandboxpolicy.BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
+	Environment            []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	AgentDirectories       []string                         `json:"agent_directories,omitempty"`
+	NetworkAccess          sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
+	Includes               []string                         `json:"includes,omitempty"`
+	CreatedAt              string                           `json:"created_at,omitempty"`
+	UpdatedAt              string                           `json:"updated_at,omitempty"`
 	// BreakGlassAcknowledged is set from --i-understand-break-glass-risk and is
 	// request-only: it is never emitted by show/export, so an acknowledgement
 	// cannot be smuggled along inside a saved profile file.

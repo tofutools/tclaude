@@ -127,17 +127,19 @@ type Profile struct {
 	Filesystem []FilesystemGrant `json:"filesystem,omitempty"`
 	// ReadBaseline and BreakGlassFilesystem are both omitempty so a profile
 	// that uses neither serializes byte-identically to a pre-TCL-609 profile.
-	ReadBaseline         ReadBaseline       `json:"read_baseline,omitempty"`
-	BreakGlassFilesystem []BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
-	Environment          []EnvironmentEntry `json:"environment,omitempty"`
-	AgentDirectories     []string           `json:"agent_directories,omitempty"`
-	NetworkAccess        NetworkAccess      `json:"network_access,omitempty"`
-	Includes             []string           `json:"includes,omitempty"`
+	ReadBaseline           ReadBaseline       `json:"read_baseline,omitempty"`
+	ReadBaselineExclusions []string           `json:"read_baseline_exclusions,omitempty"`
+	BreakGlassFilesystem   []BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
+	Environment            []EnvironmentEntry `json:"environment,omitempty"`
+	AgentDirectories       []string           `json:"agent_directories,omitempty"`
+	NetworkAccess          NetworkAccess      `json:"network_access,omitempty"`
+	Includes               []string           `json:"includes,omitempty"`
 
 	// derivedBreakGlass is opaque effective provenance computed by Flatten. It
 	// is deliberately separate from the public authored fields; see
 	// derivedBreakGlassProvenance above.
-	derivedBreakGlass *derivedBreakGlassProvenance
+	derivedBreakGlass          *derivedBreakGlassProvenance
+	derivedReadExclusionChains map[string][][]string
 }
 
 func (p Profile) withDerivedBreakGlass(chains map[string][][]string) Profile {
@@ -150,6 +152,14 @@ func (p Profile) withDerivedBreakGlass(chains map[string][][]string) Profile {
 		sealed.chains[path] = cloneChains(pathChains)
 	}
 	p.derivedBreakGlass = sealed
+	return p
+}
+
+func (p Profile) withDerivedReadExclusions(chains map[string][][]string) Profile {
+	p.derivedReadExclusionChains = make(map[string][][]string, len(chains))
+	for id, paths := range chains {
+		p.derivedReadExclusionChains[id] = cloneChains(paths)
+	}
 	return p
 }
 
@@ -217,6 +227,10 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	readExclusions, err := NormalizeReadBaselineExclusions(in.ReadBaselineExclusions)
+	if err != nil {
+		return Profile{}, nil, err
+	}
 	breakGlass, breakGlassMissing, err := normalizeBreakGlass(in.BreakGlassFilesystem, allowMissing)
 	if err != nil {
 		return Profile{}, nil, err
@@ -239,7 +253,7 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 		return Profile{}, nil, err
 	}
 	return Profile{
-		Name: name, Filesystem: filesystem, ReadBaseline: readBaseline, BreakGlassFilesystem: breakGlass,
+		Name: name, Filesystem: filesystem, ReadBaseline: readBaseline, ReadBaselineExclusions: readExclusions, BreakGlassFilesystem: breakGlass,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes,
 	}, missing, nil
 }

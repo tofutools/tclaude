@@ -126,14 +126,15 @@ func unresolvedIncludeBreakGlass(p *db.SandboxProfile) []sandboxpolicy.BreakGlas
 
 func sandboxProfileToPolicy(p *db.SandboxProfile) sandboxpolicy.Profile {
 	return sandboxpolicy.Profile{
-		Name:                 p.Name,
-		Filesystem:           p.Filesystem,
-		ReadBaseline:         p.ReadBaseline,
-		BreakGlassFilesystem: p.BreakGlassFilesystem,
-		Environment:          p.Environment,
-		AgentDirectories:     p.AgentDirectories,
-		NetworkAccess:        p.NetworkAccess,
-		Includes:             p.Includes,
+		Name:                   p.Name,
+		Filesystem:             p.Filesystem,
+		ReadBaseline:           p.ReadBaseline,
+		ReadBaselineExclusions: p.ReadBaselineExclusions,
+		BreakGlassFilesystem:   p.BreakGlassFilesystem,
+		Environment:            p.Environment,
+		AgentDirectories:       p.AgentDirectories,
+		NetworkAccess:          p.NetworkAccess,
+		Includes:               p.Includes,
 	}
 }
 

@@ -585,15 +585,14 @@ func TestBreakGlassCountIsBounded(t *testing.T) {
 	assert.Contains(t, err.Error(), "too many entries")
 }
 
-// Snapshot v2 is what the current release persists. Rejecting it would break
-// every existing session, actor, and pending-spawn row on upgrade, so the
-// version bump must UPGRADE v1/v2 rather than fail closed on them.
-func TestSnapshotVersionsOneAndTwoUpgradeToCurrent(t *testing.T) {
+// Older snapshots remain structurally compatible and must upgrade rather than
+// strand existing sessions, actors, and pending spawns.
+func TestLegacySnapshotVersionsUpgradeToCurrent(t *testing.T) {
 	home, _, _, _ := protectedHome(t)
 	workspace := filepath.Join(home, "workspace")
 	require.NoError(t, os.Mkdir(workspace, 0o755))
 
-	for _, version := range []int{1, 2, SnapshotVersion} {
+	for _, version := range []int{1, 2, 3, SnapshotVersion} {
 		// Decode from real persisted JSON, not a hand-built struct, so this
 		// exercises the same path a stored row takes.
 		raw := `{"version":` + itoa(version) + `,"effective":{` +
