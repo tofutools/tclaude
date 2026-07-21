@@ -325,6 +325,8 @@ function PaneContextMenu({ menu, actions, closeMenu, focusAfterAction, focusAfte
       style=${{ left: `${menu.x}px`, top: `${menu.y}px` }}
       onKeyDown=${onMenuKeyDown}
     >
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.popOutPane(menu.key))}>Detach tab</button>
+      <div class="mux-tab-menu-separator" role="separator"></div>
       <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closePane(menu.key))}>Close tab</button>
       <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closeOtherPanes(menu.key))}>Close other tabs</button>
       <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item danger" onClick=${() => run(() => actions.closeAllPanes())}>Close all tabs</button>
@@ -344,6 +346,7 @@ function TerminalTabs({
   const [dropTarget, setDropTarget] = useState(null);
   const [reorderAnnouncement, setReorderAnnouncement] = useState('');
   const [tabMenu, setTabMenu] = useState(null);
+  const [menuFocusRequest, setMenuFocusRequest] = useState(0);
 
   const clearDrag = () => {
     dragKeyRef.current = null;
@@ -395,11 +398,13 @@ function TerminalTabs({
     setTabMenu(null);
     if (restoreFocus) queueMicrotask(() => trigger?.focus());
   };
-  const focusAfterTabMenuAction = () => queueMicrotask(() => {
+  const focusAfterTabMenuAction = () => setMenuFocusRequest((value) => value + 1);
+  useLayoutEffect(() => {
+    if (!menuFocusRequest) return;
     const activeTab = shellRef.current?.querySelector('.mux-tab[aria-selected="true"]');
     if (activeTab) activeTab.focus();
     else document.querySelector('nav [data-tab="groups"]')?.focus();
-  });
+  }, [menuFocusRequest]);
   const focusAfterTabMenuDismiss = (reverse) => {
     const trigger = tabMenu?.trigger;
     queueMicrotask(() => {

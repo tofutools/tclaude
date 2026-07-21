@@ -67,6 +67,9 @@
 .mux-tab-menu-item:focus-visible {
   outline: none; border-color: #58a6ff; background: #1f2935; color: #f0f6fc;
 }
+.mux-tab-menu-separator {
+  height: 1px; margin: 4px 5px; background: #30363d;
+}
 .mux-tab-menu-item.danger { color: #f0a3a0; }
 .mux-tab-menu-item.danger:hover,
 .mux-tab-menu-item.danger:focus-visible {
@@ -162,6 +165,7 @@ body.wizard .mux-tab-menu-item:hover,
 body.wizard .mux-tab-menu-item:focus-visible {
   border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
 }
+body.wizard .mux-tab-menu-separator { background: rgba(217, 180, 90, 0.38); }
 body.wizard .mux-tab-menu-item.danger { color: #e6a3ad; }
 body.wizard .mux-tab-menu-item.danger:hover,
 body.wizard .mux-tab-menu-item.danger:focus-visible {

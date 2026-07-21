@@ -823,12 +823,14 @@ rules may suppress it. Browsers supply the confirmation text, so it may refer
 generically to unsaved changes rather than naming the open terminal. Closing
 the last pane removes the guard; an idle dashboard never prompts.
 
-Right-click a terminal tab to **Close tab**, **Close other tabs**, or **Close
-all tabs**. Keyboard users can focus a tab and press **Shift+F10** or the
-keyboard's context-menu key, then use the arrow keys and Enter. These actions
-only close the browser terminal views; the underlying agents and tmux sessions
-keep running. In wizard mode the same menu uses the terminal strip's
-purple-and-gold portal styling.
+Right-click a terminal tab to **Detach tab**, **Close tab**, **Close other
+tabs**, or **Close all tabs**. **Detach tab** is the context-menu twin of the
+pane header's **⧉ tab** button: it moves that terminal into a standalone browser
+tab. Keyboard users can focus a tab and press **Shift+F10** or the keyboard's
+context-menu key, then use the arrow keys and Enter. The close actions only
+close the browser terminal views; the underlying agents and tmux sessions keep
+running. In wizard mode the same menu uses the terminal strip's purple-and-gold
+portal styling.
 
 Each terminal pane's **⧉ tab** button moves that terminal into a standalone
 browser tab. The standalone header's **↩ dashboard** button moves it back to
