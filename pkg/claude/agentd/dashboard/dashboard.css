@@ -12391,6 +12391,39 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
 .process-editor-title:focus-visible,
 .process-name-edit:focus-visible { border-color: #58a6ff; outline: none; }
 .process-editor-title:disabled { cursor: default; }
+/* The description cell edits in place too, but it is prose rather than a label:
+   it stays at the muted cell weight and WRAPS instead of ellipsing, because the
+   stored value is never truncated. The height cap keeps one long description
+   from stretching the whole row. */
+.process-description-edit {
+  display: block;
+  max-width: 100%;
+  max-height: 4.5em;
+  overflow: hidden auto;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.process-description-edit:hover:not(:disabled) { border-color: #30363d; background: #0d1117; }
+.process-description-edit:focus-visible { border-color: #58a6ff; outline: none; }
+.process-description-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid #58a6ff;
+  border-radius: 6px;
+  color: #e6edf3;
+  background: #0d1117;
+  font: inherit;
+}
+.process-description-input:focus { outline: none; }
 .process-editor-title-input,
 .process-name-input {
   box-sizing: border-box;
@@ -13062,8 +13095,10 @@ body.wizard .process-unnamed { color: #a99bc0; }
 body.wizard .process-editor-title,
 body.wizard .process-name-edit { color: #f3e6c0; }
 body.wizard .process-editor-title:hover:not(:disabled),
+body.wizard .process-description-edit:hover:not(:disabled),
 body.wizard .process-name-edit:hover:not(:disabled) { background: #181226; border-color: #6d5695; }
 body.wizard .process-editor-title-input,
+body.wizard .process-description-input,
 body.wizard .process-name-input { color: #f3e6c0; background: #181226; border-color: #d4af37; }
 body.wizard .process-param-row,
 body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }

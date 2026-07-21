@@ -26,27 +26,42 @@ function RequestBody({ request, label, retry, children }) {
   return html`<${Fragment}>${request.phase === 'error' && html`<div role="alert" class="island-error">Refresh failed: ${request.error} <button onClick=${retry}>retry</button></div>`}${children}</${Fragment}>`;
 }
 
-// Click-to-edit name in the list. Unlike the editor header, there is no draft
-// to fold this into, so committing is an immediate CAS save through
-// submitRename -- which is also why the row still offers the dialog, where the
-// id and the consequences are spelled out.
-function EditableName({ template, actions, busy }) {
+// Click-to-edit metadata in the list. Unlike the editor header, there is no
+// draft to fold this into, so committing is an immediate CAS save -- which is
+// also why the name row still offers the dialog, where the id and the
+// consequences are spelled out.
+//
+// One component serves both the display name and the description so the
+// interaction (focus, Enter, Escape, commit-once) cannot drift between the two
+// cells; only the wording, the styling, and the commit differ.
+function InlineTemplateField({
+  value, placeholder, emptyLabel, editLabel, editTitle, className, editAttr, inputAttr, id, busy, commit: save,
+}) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef(null);
+  // The edit session is frozen when it OPENS. The list keeps refreshing under
+  // an open editor -- the snapshot poll observes moved heads and reloads the
+  // rows -- so both the commit callback (which carries the CAS baseline the
+  // operator was looking at) and the value it compares against would otherwise
+  // be silently replaced mid-typing. Committing through the re-rendered
+  // callback would save against the NEW head, which the server then accepts:
+  // the concurrent writer's change is overwritten instead of conflicting.
+  const session = useRef(null);
+  const open = () => { session.current = { value: value || '', save }; setEditing(true); };
   useLayoutEffect(() => {
     if (!editing) return;
     const input = inputRef.current;
     if (!input) return;
     // Seed explicitly; see EditableTitle.
-    input.value = template.name || '';
+    input.value = session.current?.value || '';
     input.focus();
     // Not every DOM implementation provides select() (the linkedom test DOM
-    // does not); selecting the existing name is a convenience, not a contract.
+    // does not); selecting the existing text is a convenience, not a contract.
     input.select?.();
   }, [editing]);
   // One edit session resolves exactly once -- see EditableTitle for why: Enter
   // unmounts the input and the trailing blur would otherwise commit an empty
-  // name read from a dead ref, here as a real CAS save.
+  // value read from a dead ref, here as a real CAS save.
   const settled = useRef(false);
   useLayoutEffect(() => { if (editing) settled.current = false; }, [editing]);
   // Read through the ref, not the event: see EditableTitle.
@@ -54,25 +69,25 @@ function EditableName({ template, actions, busy }) {
     if (settled.current) return;
     const input = inputRef.current;
     if (!input) return;
+    const started = session.current;
+    if (!started) return;
     settled.current = true;
     const next = String(input.value ?? '').trim();
     setEditing(false);
-    if (next === (template.name || '')) return;
-    // Commit directly. Routing through openRename would flash the dialog open
-    // and immediately shut it again.
+    // Compare against what the operator opened on, not against a value the
+    // list may have refreshed underneath them.
+    if (next === started.value) return;
     try {
-      await actions.renameTemplate({
-        id: template.id, name: template.name || '', sourceHash: template.latestVersion?.sourceHash || '',
-      }, next);
+      await started.save(next);
     } catch {
-      // renameTemplate already surfaced the failure through the notice line.
+      // The action already surfaced the failure through the notice line.
     }
   };
   if (editing) {
     return html`<input
-      ref=${inputRef} class="process-name-input" type="text" spellcheck="false"
-      placeholder="display name" aria-label=${`Display name for ${template.id}`}
-      data-process-name-input=${template.id} defaultValue=${template.name || ''}
+      ref=${inputRef} class=${`${className}-input`} type="text" spellcheck="false"
+      placeholder=${placeholder} aria-label=${editLabel}
+      ...${{ [inputAttr]: id }} defaultValue=${session.current?.value || ''}
       onBlur=${() => commit()}
       onKeyDown=${(event) => {
         if (event.isComposing || event.keyCode === 229) return;
@@ -82,11 +97,41 @@ function EditableName({ template, actions, busy }) {
     />`;
   }
   return html`<button
-    class=${`process-name-edit${template.name ? '' : ' process-unnamed'}`}
-    type="button" data-process-name-edit=${template.id} disabled=${busy}
-    title="Click to rename" aria-label=${`Rename ${template.name || template.id}`}
-    onClick=${() => setEditing(true)}
-  >${template.name || template.id}</button>`;
+    class=${`${className}-edit${value ? '' : ' process-unnamed'}`}
+    type="button" ...${{ [editAttr]: id }} disabled=${busy}
+    title=${editTitle} aria-label=${editLabel}
+    onClick=${open}
+  >${value || emptyLabel}</button>`;
+}
+
+function EditableName({ template, actions, busy }) {
+  // Commit directly. Routing through openRename would flash the dialog open and
+  // immediately shut it again.
+  const commit = (next) => actions.renameTemplate({
+    id: template.id, name: template.name || '', sourceHash: template.latestVersion?.sourceHash || '',
+  }, next);
+  return html`<${InlineTemplateField}
+    id=${template.id} value=${template.name || ''} emptyLabel=${template.id}
+    placeholder="display name" className="process-name"
+    editAttr="data-process-name-edit" inputAttr="data-process-name-input"
+    editTitle="Click to rename" editLabel=${`Rename ${template.name || template.id}`}
+    busy=${busy} commit=${commit}
+  />`;
+}
+
+// The description is part of the template source, so editing it here commits a
+// normal CAS version exactly like the editor's metadata inspector does.
+function EditableDescription({ template, actions, busy }) {
+  const commit = (next) => actions.describeTemplate({
+    id: template.id, description: template.description || '', sourceHash: template.latestVersion?.sourceHash || '',
+  }, next);
+  return html`<${InlineTemplateField}
+    id=${template.id} value=${template.description || ''} emptyLabel="add a description"
+    placeholder="short description" className="process-description"
+    editAttr="data-process-description-edit" inputAttr="data-process-description-input"
+    editTitle="Click to edit the description" editLabel=${`Description for ${template.name || template.id}`}
+    busy=${busy} commit=${commit}
+  />`;
 }
 
 // Same 24x24 outline trash used by the group member rows, so the two tabs read
@@ -102,7 +147,7 @@ function Templates({ current, actions }) {
     <div id="process-templates-list" class="process-list" aria-busy=${current.requests.templates.phase === 'loading'}>
       <${RequestBody} request=${current.requests.templates} label="templates" retry=${() => actions.load('templates')}>
         ${rows.length === 0 ? html`<div class="process-placeholder"><h3>No process templates yet</h3><p>Create a blank template to start shaping a repeatable graph.</p></div>` : html`<table><thead><tr><th>Template</th><th>Description</th><th>Latest</th><th>Versions</th><th></th></tr></thead><tbody>
-          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id} draggable=${true} data-process-template-drag=${template.id} data-process-template-name=${template.name || ''} data-process-template-versions=${template.versionCount || 0}><td><${EditableName} template=${template} actions=${actions} busy=${current.mutation.busy} /><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description">${template.description || '—'}</td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="rename" data-id=${template.id} type="button" title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button><button class="process-action process-action-danger process-delete-btn" data-process-action="delete" data-id=${template.id} type="button" disabled=${current.mutation.busy} title="Delete this template and all its versions — refused while an unfinished run still needs it" aria-label=${`Delete ${template.name || template.id}`} onClick=${() => actions.deleteTemplate({ id: template.id, name: template.name || '', versionCount: template.versionCount || 0 })}><${TrashIcon} /></button></td></tr>`; })}
+          ${rows.map((template) => { const latest = template.latestVersion || {}; const hash = (latest.semanticHash || '').slice(0, 10); const actor = actions.describeActor(latest.actor); return html`<tr key=${template.id} data-process-template=${template.id} draggable=${true} data-process-template-drag=${template.id} data-process-template-name=${template.name || ''} data-process-template-versions=${template.versionCount || 0}><td><${EditableName} template=${template} actions=${actions} busy=${current.mutation.busy} /><div class="process-secondary" title="Template id (permanent)">${template.id}</div></td><td class="process-description"><${EditableDescription} template=${template} actions=${actions} busy=${current.mutation.busy} /></td><td><span class="process-hash" title=${latest.semanticHash || ''}>${hash || '—'}</span>${actor && html`<div class="process-secondary process-version-actor">by ${actor.label}</div>`}</td><td>${template.versionCount || 0}</td><td class="process-actions"><button class="process-action" data-process-action="edit" data-id=${template.id} type="button" onClick=${() => actions.openEditor(template.id)}>open</button><button class="process-action" data-process-action="rename" data-id=${template.id} type="button" title="Change the display name; the id stays fixed" onClick=${() => actions.openRename({ id: template.id, name: template.name || '', sourceHash: latest.sourceHash || '' })}>rename</button><button class="process-action" data-process-action="instantiate" data-id=${template.id} type="button" onClick=${() => actions.openInstantiation({ id: template.id, ref: latest.ref })}>instantiate</button><button class="process-action process-action-danger process-delete-btn" data-process-action="delete" data-id=${template.id} type="button" disabled=${current.mutation.busy} title="Delete this template and all its versions — refused while an unfinished run still needs it" aria-label=${`Delete ${template.name || template.id}`} onClick=${() => actions.deleteTemplate({ id: template.id, name: template.name || '', versionCount: template.versionCount || 0 })}><${TrashIcon} /></button></td></tr>`; })}
         </tbody></table>`}
       </${RequestBody}>
     </div>

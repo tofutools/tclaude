@@ -1307,6 +1307,241 @@ test('regression: opening the list name editor prefills the current name', async
   await mounted.unmount();
 });
 
+// A Templates list wired to one row whose head carries a full graph, so a
+// description edit can be checked for what it leaves alone as well as what it
+// changes.
+async function mountDescribableList(t, { row = {}, head = {}, post } = {}) {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const template = { id: 'described', name: 'Release train', description: 'Old description', latestVersion: { sourceHash: 'row-v1' }, ...row };
+  const editHead = {
+    template: { id: 'described', name: 'Release train', description: 'Old description', nodes: { a: {} } },
+    edges: [{ from: 'a', to: 'b', outcome: '' }], layout: { nodes: { a: { x: 4, y: 9 } } },
+    sourceHash: 'row-v1', semanticHash: 'a'.repeat(64), source: 'id: described\n', diagnostics: [], authorship: [],
+    ...head,
+  };
+  const requests = [];
+  const notices = [];
+  const actions = createProcessesActions({
+    state, notify(message) { notices.push(message); },
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [template] }) };
+      if (options.method === 'POST') return post ? post() : { ok: true, status: 201, json: async () => ({ ref: 'described@sha256:new' }) };
+      return { ok: true, json: async () => editHead };
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  const posts = () => requests.filter((request) => request.options.method === 'POST');
+  const settle = async () => { for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve()); };
+  return { harness, state, mounted, requests, notices, posts, settle, editHead };
+}
+
+test('the Templates list edits a description inline and commits only that field', async (t) => {
+  const { harness, mounted, posts, settle, editHead } = await mountDescribableList(t);
+  const trigger = mounted.container.querySelector('[data-process-description-edit="described"]');
+  assert.ok(trigger, 'the description itself is the edit affordance');
+  assert.equal(trigger.textContent, 'Old description');
+  assert.equal(trigger.getAttribute('aria-label'), 'Description for Release train',
+    'the control names the template it describes, not just "edit"');
+  assert.notEqual(trigger.getAttribute('title'), null, 'the affordance is discoverable on hover too');
+
+  await harness.act(() => harness.fireEvent(trigger, 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  assert.ok(input, 'clicking the description swaps in an editor');
+  assert.equal(harness.document.activeElement, input, 'the editor takes focus when opened');
+  assert.equal(input.value, 'Old description', 'the edit starts from the current description');
+
+  input.value = 'Ships the release train';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  await settle();
+
+  assert.equal(posts().length, 1, 'Enter commits exactly one save');
+  const body = JSON.parse(posts()[0].options.body);
+  // The save handler sets DisallowUnknownFields, so forwarding the whole head
+  // edit view would 400 in production while still satisfying the value
+  // assertions below. Pin the key set so that refactor cannot pass silently.
+  assert.deepEqual(Object.keys(body).sort(), ['edges', 'layout', 'sourceHash', 'template']);
+  assert.equal(body.template.description, 'Ships the release train');
+  assert.equal(body.template.name, 'Release train', 'the display name survives a description edit');
+  assert.equal(body.template.id, 'described', 'the immutable id is preserved');
+  assert.deepEqual(body.template.nodes, editHead.template.nodes, 'the graph survives untouched');
+  assert.deepEqual(body.edges, editHead.edges, 'edges round-trip untouched');
+  assert.deepEqual(body.layout, editHead.layout, 'editor layout round-trips untouched');
+  assert.equal(body.sourceHash, 'row-v1', 'the edit saves against the version the row was showing');
+  await mounted.unmount();
+});
+
+test('an inline description commits once on blur, and never twice after Enter', async (t) => {
+  const { harness, mounted, posts, settle } = await mountDescribableList(t);
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  input.value = 'Committed by blur';
+  await harness.act(() => harness.fireEvent(input, 'blur'));
+  await settle();
+  assert.equal(posts().length, 1, 'blur commits the edit');
+  assert.equal(JSON.parse(posts()[0].options.body).template.description, 'Committed by blur');
+
+  // Enter unmounts the input; the trailing blur must not commit a second time
+  // from a dead ref.
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const second = mounted.container.querySelector('[data-process-description-input="described"]');
+  second.value = 'Committed by Enter';
+  await harness.act(() => harness.fireEvent(second, 'keydown', { key: 'Enter' }));
+  await harness.act(() => harness.fireEvent(second, 'blur'));
+  await settle();
+  assert.equal(posts().length, 2, 'Enter followed by the trailing blur is a single commit');
+  await mounted.unmount();
+});
+
+test('Escape and unchanged text abandon an inline description edit without saving', async (t) => {
+  const { harness, mounted, posts, settle } = await mountDescribableList(t);
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  input.value = 'Discard this';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Escape' }));
+  await settle();
+  assert.equal(posts().length, 0, 'Escape commits nothing');
+  assert.equal(mounted.container.querySelector('[data-process-description-edit="described"]').textContent, 'Old description');
+
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const again = mounted.container.querySelector('[data-process-description-input="described"]');
+  again.value = 'Old description';
+  await harness.act(() => harness.fireEvent(again, 'keydown', { key: 'Enter' }));
+  await settle();
+  assert.equal(posts().length, 0, 'retyping the same description commits no new version');
+  await mounted.unmount();
+});
+
+test('an empty inline description clears the stored value and offers an empty-state affordance', async (t) => {
+  const { harness, state, mounted, posts, settle } = await mountDescribableList(t);
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  input.value = '   ';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  await settle();
+  assert.equal(posts().length, 1);
+  assert.equal(JSON.parse(posts()[0].options.body).template.description, '', 'whitespace-only input clears the description');
+  assert.match(state.notice.value, /Cleared the description for described/);
+
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), { templates: [{ id: 'described', name: 'Release train' }] });
+  await harness.act(() => Promise.resolve());
+  const empty = mounted.container.querySelector('[data-process-description-edit="described"]');
+  assert.match(empty.textContent, /add a description/i, 'an empty description still offers a visible way in');
+  await mounted.unmount();
+});
+
+test('an inline description edit disabled while another template mutation runs', async (t) => {
+  const { harness, state, mounted } = await mountDescribableList(t);
+  assert.equal(mounted.container.querySelector('[data-process-description-edit="described"]').disabled, false);
+  state.beginMutation();
+  await harness.act(() => Promise.resolve());
+  assert.equal(mounted.container.querySelector('[data-process-description-edit="described"]').disabled, true,
+    'a second concurrent template mutation cannot be started from the description cell');
+  state.endMutation();
+  await mounted.unmount();
+});
+
+test('an inline description losing the CAS race reports a description-specific conflict', async (t) => {
+  const { harness, state, mounted, notices, settle } = await mountDescribableList(t, {
+    post: () => ({ ok: false, status: 409, json: async () => ({ code: 'process_template_conflict' }) }),
+  });
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  input.value = 'Written over a concurrent edit';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  await settle();
+
+  assert.match(state.notice.value, /Description update failed/);
+  assert.match(state.notice.value, /changed while you were editing its description/);
+  assert.doesNotMatch(state.notice.value, /Rename failed/, 'the conflict names the action the operator actually took');
+  assert.doesNotMatch(state.notice.value, /Written over a concurrent edit/, 'the notice does not reproduce the description body');
+  assert.doesNotMatch(notices.join('\n'), /Written over a concurrent edit/, 'nor does the notification channel');
+  assert.equal(state.mutation.value.busy, false, 'the mutation gate is released after a conflict');
+  // The row keeps showing truthful server state rather than the rejected draft.
+  assert.equal(mounted.container.querySelector('[data-process-description-edit="described"]').textContent, 'Old description');
+  await mounted.unmount();
+});
+
+// The list keeps refreshing under an open editor: the snapshot poll observes
+// moved heads and reloads the rows. If the open editor tracked those refreshed
+// props, Enter would save against the NEW head -- which the server accepts --
+// and the concurrent writer's change would be overwritten instead of
+// conflicting. The edit session must stay pinned to what the operator opened on.
+test('a list refresh under an open description editor cannot substitute a newer CAS baseline', async (t) => {
+  const { harness, state, mounted, posts, settle } = await mountDescribableList(t, {
+    post: () => ({ ok: false, status: 409, json: async () => ({ code: 'process_template_conflict' }) }),
+  });
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  input.value = 'my stale draft';
+
+  // A concurrent writer moves the head while the operator is still typing, and
+  // the ordinary refresh publishes the newer row.
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), {
+    templates: [{ id: 'described', name: 'Release train', description: 'concurrent description', latestVersion: { sourceHash: 'row-v2' } }],
+  });
+  await harness.act(() => Promise.resolve());
+  const live = mounted.container.querySelector('[data-process-description-input="described"]');
+  assert.equal(live, input, 'the refresh does not tear down the open editor');
+  assert.equal(live.value, 'my stale draft', 'nor does it discard the operator draft');
+
+  await harness.act(() => harness.fireEvent(live, 'keydown', { key: 'Enter' }));
+  await settle();
+
+  assert.equal(posts().length, 1);
+  const body = JSON.parse(posts()[0].options.body);
+  assert.equal(body.sourceHash, 'row-v1',
+    'committing against the refreshed head would silently overwrite the concurrent description instead of conflicting');
+  assert.equal(body.template.description, 'my stale draft');
+  // The save is therefore refused, and the row keeps showing the concurrent
+  // writer's truthful state rather than the rejected draft.
+  assert.match(state.notice.value, /changed while you were editing its description/);
+  await harness.act(() => Promise.resolve());
+  assert.equal(mounted.container.querySelector('[data-process-description-edit="described"]').textContent, 'concurrent description');
+  await mounted.unmount();
+});
+
+test('a list refresh under an open name editor cannot substitute a newer CAS baseline', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{ id: 'racy', name: 'What the operator saw', latestVersion: { sourceHash: 'name-v1' } }] }) };
+      if (options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'racy@sha256:new' }) };
+      return { ok: true, json: async () => ({ template: { id: 'racy', name: 'Renamed by an agent' }, sourceHash: 'name-v2' }) };
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-edit="racy"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-name-input="racy"]');
+  input.value = 'Operator name';
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), {
+    templates: [{ id: 'racy', name: 'Renamed by an agent', latestVersion: { sourceHash: 'name-v2' } }],
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-input="racy"]'), 'keydown', { key: 'Enter' }));
+  for (let i = 0; i < 10 && !requests.some((r) => r.options.method === 'POST'); i++) await harness.act(() => Promise.resolve());
+  const body = JSON.parse(requests.find((request) => request.options.method === 'POST').options.body);
+  assert.equal(body.sourceHash, 'name-v1', 'the shared edit session pins the inline rename baseline too');
+  await mounted.unmount();
+});
+
 test('creating a template persists the named scaffold and prepopulates the editor with its generated id', async (t) => {
   const harness = await createPreactHarness(t);
   const previous = { raf: globalThis.requestAnimationFrame, css: globalThis.CSS };
