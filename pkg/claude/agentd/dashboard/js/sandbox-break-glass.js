@@ -9,7 +9,13 @@
 // not the enforcement boundary.
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
 
-export const BREAK_GLASS_WARNING = 'Break-glass rules expose protected tclaude/harness state that ordinary sandbox rules must never touch. An agent with this access can read operator credentials and session state (~/.tclaude/data, ~/.claude/sessions, ~/.codex), corrupt the daemon’s SQLite/config/runtime state, bypass or invalidate agent-authorization assumptions, take control of other sessions through host-control sockets, and break the daemon or harness. Write access is materially more dangerous than read. This is an exceptional, operator-only debugging mechanism — never a routine or recommended posture.';
+// Stable wire vocabulary: the daemon rejects any commit of unacknowledged
+// break-glass authority with a 422 carrying this code. Recovery surfaces key
+// off it to refresh authoritative state and demand a fresh acknowledgement —
+// never to resend automatically.
+export const BREAK_GLASS_ACK_CODE = 'break_glass_acknowledgement_required';
+
+export const BREAK_GLASS_WARNING ='Break-glass rules expose protected tclaude/harness state that ordinary sandbox rules must never touch. An agent with this access can read operator credentials and session state (~/.tclaude/data, ~/.claude/sessions, ~/.codex), corrupt the daemon’s SQLite/config/runtime state, bypass or invalidate agent-authorization assumptions, take control of other sessions through host-control sockets, and break the daemon or harness. Write access is materially more dangerous than read. This is an exceptional, operator-only debugging mechanism — never a routine or recommended posture.';
 
 export function breakGlassRules(profile) {
   return Array.isArray(profile?.break_glass_filesystem) ? profile.break_glass_filesystem : [];

@@ -3,9 +3,17 @@ const API = '/api/sandbox-profiles';
 async function request(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options });
   if (!response.ok) {
+    // Failures carry the daemon's structured {"error", "code"} body; the
+    // status and typed code stay on the thrown Error so callers can key
+    // recovery (e.g. break_glass_acknowledgement_required) off them instead
+    // of pattern-matching message text.
     const raw = await response.text();
-    try { const body = JSON.parse(raw); throw new Error(body.message || body.error || raw || `HTTP ${response.status}`); }
-    catch (error) { if (error instanceof SyntaxError) throw new Error(raw || `HTTP ${response.status}`); throw error; }
+    let body = null;
+    try { body = JSON.parse(raw); } catch (_) { body = null; }
+    const error = new Error(body?.message || body?.error || raw || `HTTP ${response.status}`);
+    error.status = response.status;
+    if (body?.code) error.code = body.code;
+    throw error;
   }
   if (response.status === 204) return null;
   return response.json().catch(() => ({}));

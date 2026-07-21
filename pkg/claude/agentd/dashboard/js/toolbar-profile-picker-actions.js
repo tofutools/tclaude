@@ -4,7 +4,25 @@ import { openProfileEditor } from './modal-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
 import { shellConfirm } from './shell-state.js';
-import { assignedBreakGlass, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
+import { assignedBreakGlass, BREAK_GLASS_ACK_CODE, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
+
+// Assignment failures carry the daemon's structured {"error", "code"} body.
+// The typed acknowledgement code means the profile's authoritative
+// break-glass authority changed between our warning and the commit: surface
+// that specifically so the operator retries — which reloads the registry and
+// shows a fresh warning — instead of silently re-sending the stale ack.
+async function assignmentError(response) {
+  const raw = await response.text();
+  let body = null;
+  try { body = JSON.parse(raw); } catch (_) { body = null; }
+  const message = body?.message || body?.error || raw || `HTTP ${response.status}`;
+  const error = new Error(body?.code === BREAK_GLASS_ACK_CODE
+    ? `${message} The profile's break-glass authority changed since the warning was shown; the assignment was NOT applied. Retry to review the current rules and re-acknowledge.`
+    : message);
+  error.status = response.status;
+  if (body?.code) error.code = body.code;
+  return error;
+}
 
 function choices(items) {
   return profileChoices(items).map(({ value, label }) => Object.freeze({ value, label }));
@@ -59,7 +77,7 @@ export function createToolbarProfilePickerActions({
           headers: { 'Content-Type': 'application/json' },
           body: name ? JSON.stringify({ name, ...(breakGlassAcknowledged ? { break_glass_acknowledged: true } : {}) }) : undefined,
         });
-        if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+        if (!response.ok) throw await assignmentError(response);
         notify(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
         await refresh();
         renderDashSandboxProfile();

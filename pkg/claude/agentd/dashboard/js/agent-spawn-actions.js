@@ -9,9 +9,23 @@ async function responseText(response) {
   try { return await response.text(); } catch (_) { return ''; }
 }
 
+// Failures carry the daemon's structured {"error", "code"} body; status and
+// typed code stay on the thrown Error so submit-side recovery can key off
+// break_glass_acknowledgement_required rather than message text.
+async function responseError(response, prefix = '') {
+  const raw = await responseText(response);
+  let body = null;
+  try { body = JSON.parse(raw); } catch (_) { body = null; }
+  const message = body?.message || body?.error || raw || `HTTP ${response.status}`;
+  const error = new Error(prefix ? `${prefix}${message}` : message);
+  error.status = response.status;
+  if (body?.code) error.code = body.code;
+  return error;
+}
+
 async function jsonRequest(fetchImpl, path) {
   const response = await fetchImpl(path, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
+  if (!response.ok) throw await responseError(response);
   return response.json().catch(() => ({}));
 }
 
@@ -183,7 +197,7 @@ export function createAgentSpawnActions({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request.body),
       });
-      if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
+      if (!response.ok) throw await responseError(response);
       return response.json().catch(() => ({}));
     },
 

@@ -1062,3 +1062,65 @@ test('Preact agent-spawn aborts on a fast successful reload during worktree reso
     mounted.cleanup();
   }
 });
+
+// A daemon-side typed acknowledgement refusal (the server resolved
+// break-glass this dialog's policy did not show) must reload the policy and
+// demand a fresh confirmation — never auto-resend the stale acknowledgement.
+test('Preact agent-spawn recovers from the typed acknowledgement 422 with a policy reload and fresh confirmation', async (t) => {
+  const loads = [];
+  const spawnAttempts = [];
+  const confirms = [];
+  let refuseNext = true;
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => {
+      spawnAttempts.push(request);
+      if (refuseNext) {
+        refuseNext = false;
+        throw Object.assign(new Error('spawn requires break-glass acknowledgement: write /home/op/.codex'), { status: 422, code: 'break_glass_acknowledgement_required' });
+      }
+      return { conv_id: '1234567890' };
+    },
+    confirmBreakGlassSpawn: async (entries) => { confirms.push(entries); return true; },
+  });
+  const { harness, host, state } = mounted;
+  const policy = { profiles: [], selected: '', preview: 'no profiles applied', breakGlass: [] };
+  const refreshedPolicy = {
+    profiles: [], selected: '',
+    preview: '⚠ BREAK-GLASS protected access: write /home/op/.codex (group:debug)',
+    breakGlass: [{ path: '/home/op/.codex', access: 'write', origins: ['group:debug'] }],
+  };
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve(policy);
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1, 'the daemon refused the first attempt');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /review the current break-glass rules/);
+    await flush(harness);
+    assert.equal(loads.length, 2, 'the refusal forces a policy reload');
+    assert.equal(spawnAttempts.length, 1, 'the refused request is never retried automatically');
+
+    loads[1].pending.resolve(refreshedPolicy);
+    await flush(harness);
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirms.length, 1, 'the fresh submit demands a fresh confirmation for the refreshed policy');
+    assert.deepEqual(confirms[0], refreshedPolicy.breakGlass);
+    assert.equal(spawnAttempts.length, 2);
+    assert.equal(spawnAttempts[1].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});

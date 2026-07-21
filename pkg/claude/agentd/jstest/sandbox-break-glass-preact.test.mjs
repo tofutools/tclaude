@@ -427,12 +427,23 @@ test('the diff confirmation resolves includes so break-glass cannot hide behind 
   unmount();
 });
 
-async function importScenario(harness, state, envelope) {
+async function importScenario(harness, state, envelope, overrides = {}) {
   state.openDialog({ kind: 'sandbox-import' });
   const imports = [];
+  const inspects = [];
   const mountedResult = await mountManagement(harness, state, {
-    async inspectSandboxBundle(value) { return { profiles: value.profiles, warnings: [] }; },
-    async importSandboxBundle(...args) { imports.push(args); },
+    // Mirrors the real /api/sandbox-profiles/import/inspect response shape:
+    // normalized profiles, path warnings, and per-conflict-policy include
+    // errors (plus break_glass_profiles/break_glass_risk when carriers exist).
+    async inspectSandboxBundle(value) {
+      inspects.push(value);
+      return { profiles: value.profiles, warnings: [], include_errors: {}, ...(overrides.inspect ? overrides.inspect(value) : {}) };
+    },
+    async importSandboxBundle(...args) {
+      imports.push(args);
+      if (overrides.importImpl) return overrides.importImpl(...args);
+      return undefined;
+    },
   });
   await harness.act(() => Promise.resolve());
   const { host } = mountedResult;
@@ -450,7 +461,7 @@ async function importScenario(harness, state, envelope) {
     select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
     await harness.act(() => Promise.resolve());
   };
-  return { ...mountedResult, imports, setConflict };
+  return { ...mountedResult, imports, inspects, setConflict };
 }
 
 test('import under skip warns for retained local break-glass reached through a new wrapper', async (t) => {
@@ -589,4 +600,227 @@ test('the editor survives an advanced rename whose raw includes reference the pr
   assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'the editor renders instead of crashing on the self-referential rename');
   assert.ok(host.querySelector('#sandbox-profile-editor-submit'), 'the editor stays interactive so normal validation can run on save');
   unmount();
+});
+
+// The retained-local-A vs incoming A<->B cycle from the backend regression:
+// under "skip" the clashing incoming A is discarded (local A has no
+// includes), so the graph is valid; under "overwrite" (and "error", which
+// shares the all-incoming graph) the A<->B cycle lands and must block import
+// with the server-normalized error.
+test('import preview gates on per-conflict-policy include errors', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'A' }]);
+  const cycleError = 'sandbox profile include cycle: A → B → A';
+  const { host, imports, setConflict, unmount } = await importScenario(harness, state, {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [{ name: 'A', includes: ['B'] }, { name: 'B', includes: ['A'] }],
+  }, { inspect: () => ({ include_errors: { overwrite: cycleError } }) });
+
+  const importButton = [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+  assert.equal(host.querySelector('#sandbox-profile-import-include-error'), null, 'skip has a valid graph — no error shown');
+  assert.equal(importButton.disabled, false, 'skip stays importable');
+
+  await setConflict('overwrite');
+  const shown = host.querySelector('#sandbox-profile-import-include-error');
+  assert.ok(shown, 'overwrite renders the server-normalized include error');
+  assert.match(shown.textContent, /cycle: A → B → A/);
+  assert.equal(importButton.disabled, true, 'the invalid policy blocks import');
+
+  await setConflict('error');
+  assert.ok(host.querySelector('#sandbox-profile-import-include-error'), '"error" shares the all-incoming graph and stays blocked');
+  assert.equal(importButton.disabled, true);
+
+  await setConflict('skip');
+  assert.equal(host.querySelector('#sandbox-profile-import-include-error'), null);
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 1, 'the valid policy imports');
+  assert.equal(imports[0][1], 'skip');
+  unmount();
+});
+
+test('the data layer preserves the daemon status and typed error code', async (t) => {
+  const harness = await createPreactHarness(t);
+  const data = await harness.importDashboardModule('js/sandbox-profiles-data.js');
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false, status: 422,
+    text: async () => JSON.stringify({ error: 'sandbox profile "debug" grants break-glass access', code: 'break_glass_acknowledgement_required' }),
+  });
+  t.after(() => { globalThis.fetch = previousFetch; });
+  await assert.rejects(
+    data.saveSandboxProfile('debug', { name: 'debug' }, 'r1'),
+    (error) => {
+      assert.equal(error.status, 422);
+      assert.equal(error.code, 'break_glass_acknowledgement_required');
+      assert.match(error.message, /grants break-glass access/);
+      return true;
+    },
+  );
+});
+
+test('save recovery on the typed 422 reloads the registry, blocks resend, and demands a fresh acknowledgement', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const state = createManagementState();
+  let loads = 0;
+  let saves = 0;
+  const sandboxAPI = {
+    loadSandboxProfiles: async () => { loads += 1; return [{ name: 'lib', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] }]; },
+    previewSandboxProfile: async (name, body) => ({ before: null, after: body, revision: 'r1' }),
+    saveSandboxProfile: async () => {
+      saves += 1;
+      throw Object.assign(new Error('sandbox profile "wrapper" now carries break-glass access: read /home/op/.tclaude/data'), { status: 422, code: BREAK_GLASS_ACK_CODE });
+    },
+  };
+  const actions = createManagementActions({ state, confirm: async () => true, notify() {}, refreshSandboxSpawn: async () => {}, sandboxAPI });
+  const draft = { name: 'wrapper', filesystem: [], environment: [], includes: ['lib'], agent_directories: [], network_access: '' };
+  const outcome = actions.saveSandbox({ draft, original: null, breakGlassAcknowledged: false });
+  await Promise.resolve();
+  state.cancelSandboxDiff(true);
+  assert.equal(await outcome, BREAK_GLASS_ACK_CODE, 'the typed refusal is reported distinctly');
+  assert.equal(saves, 1, 'the unacknowledged request is never retried automatically');
+  assert.equal(loads, 1, 'the registry is reloaded so the editor re-resolves includes');
+  assert.match(state.error.value, /re-acknowledge/);
+});
+
+test('the editor invalidates its acknowledgement when the daemon demands a fresh one', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'debug', filesystem: [], environment: [], includes: [], agent_directories: [], break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+    options: {},
+  });
+  const saves = [];
+  const { host, unmount } = await mountManagement(harness, state, {
+    async inspectDirectories() { return { missing: [], creatable: [] }; },
+    async createDirectories() {},
+    saveSandbox(value) { saves.push(value); return BREAK_GLASS_ACK_CODE; },
+    configureSandboxWithAgent() {},
+  });
+  await harness.act(() => Promise.resolve());
+  const ack = host.querySelector('#sandbox-profile-editor-break-glass-ack');
+  ack.checked = true;
+  ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].breakGlassAcknowledged, true);
+  assert.notEqual(host.querySelector('#sandbox-profile-editor-break-glass-ack').checked, true,
+    'the stale acknowledgement does not carry over to the refreshed rules');
+  unmount();
+});
+
+test('import recovery on the typed 422 refreshes the authoritative preview and demands a fresh acknowledgement', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), []);
+  let failNext = true;
+  const { host, imports, inspects, unmount } = await importScenario(harness, state, {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [{ name: 'debug', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'write' }] }],
+  }, {
+    importImpl: () => {
+      if (failNext) {
+        failNext = false;
+        throw Object.assign(new Error('import requires break-glass acknowledgement'), { status: 422, code: BREAK_GLASS_ACK_CODE });
+      }
+      return undefined;
+    },
+  });
+  const importButton = [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+  const ack = host.querySelector('#sandbox-profile-import-break-glass-ack');
+  ack.checked = true;
+  ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 1, 'the refused import is never retried automatically');
+  assert.equal(inspects.length, 2, 'the authoritative preview is re-run after the refusal');
+  assert.notEqual(host.querySelector('#sandbox-profile-import-break-glass-ack').checked, true, 'the stale acknowledgement is invalidated');
+  assert.equal(importButton.disabled, true, 'import stays blocked until a fresh acknowledgement');
+  assert.match([...host.querySelectorAll('#sandbox-profile-import-modal .cron-create-error')].map((el) => el.textContent).join(' '), /re-acknowledge/);
+
+  const freshAck = host.querySelector('#sandbox-profile-import-break-glass-ack');
+  freshAck.checked = true;
+  freshAck.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 2, 'a fresh explicit acknowledgement allows a fresh attempt');
+  assert.equal(imports[1][2], true);
+  unmount();
+});
+
+test('assignment surfaces surface the typed 422 as a fresh-acknowledgement retry without resending', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/profiles.js', `
+    export async function loadProfiles() { return []; }
+    export function profileChoices() { return []; }
+    export async function setDashDefaultProfile() { return ''; }
+  `);
+  await harness.replaceDashboardModule('js/sandbox-profiles.js', `
+    export async function loadSandboxProfiles() { return []; }
+    export function openSandboxProfileEditor() {}
+  `);
+  await harness.replaceDashboardModule('js/modal-profiles.js', 'export function openProfileEditor() {}');
+  await harness.replaceDashboardModule('js/toolbar-profile-renderers.js', `
+    export function renderDashDefaultProfile() {}
+    export function renderDashSandboxProfile() {}
+  `);
+  await harness.replaceDashboardModule('js/agent-spawn-controller.js', 'export function refreshAgentSpawnSandboxPolicy() {}');
+  const { createToolbarProfilePickerActions } = await harness.importDashboardModule('js/toolbar-profile-picker-actions.js');
+  const body422 = JSON.stringify({ error: 'assignment requires break-glass acknowledgement', code: 'break_glass_acknowledgement_required' });
+  let fetches = 0;
+  const actions = createToolbarProfilePickerActions({
+    fetchImpl: async () => { fetches += 1; return { ok: false, status: 422, text: async () => body422 }; },
+    notify() {},
+    refresh: async () => {},
+    confirmDanger: async () => true,
+    loadSandboxProfilesImpl: async () => [
+      { name: 'debug', break_glass_filesystem: [{ path: '/home/op/.codex', access: 'read' }] },
+    ],
+  });
+  await assert.rejects(actions.commit('sandbox', 'debug'), (error) => {
+    assert.equal(error.code, 'break_glass_acknowledgement_required');
+    assert.match(error.message, /re-acknowledge/);
+    return true;
+  });
+  assert.equal(fetches, 1, 'the stale acknowledgement is never re-sent automatically');
+
+  const { createGroupsActions } = await harness.importDashboardModule('js/groups-actions.js');
+  const previousFetch = globalThis.fetch;
+  let groupFetches = 0;
+  globalThis.fetch = async () => { groupFetches += 1; return { ok: false, status: 422, text: async () => body422 }; };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  await harness.replaceDashboardModule('js/sandbox-profiles.js', `
+    export async function loadSandboxProfiles() {
+      return [{ name: 'debug', break_glass_filesystem: [{ path: '/home/op/.codex', access: 'read' }] }];
+    }
+    export function openSandboxProfileEditor() {}
+  `);
+  const groupActions = createGroupsActions({ state: {}, refresh: () => {}, notify() {}, confirmDanger: async () => true });
+  await assert.rejects(groupActions.setGroupProfile({ name: 'ops' }, 'sandbox', 'debug'), (error) => {
+    assert.equal(error.code, 'break_glass_acknowledgement_required');
+    assert.match(error.message, /re-acknowledge/);
+    return true;
+  });
+  assert.equal(groupFetches, 1);
 });

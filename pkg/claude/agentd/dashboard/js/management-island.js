@@ -6,7 +6,7 @@ import { roleSummary } from './roles.js';
 import { AUTO_MEMORY_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { sandboxProfileSummary } from './sandbox-profiles-data.js';
-import { assignedBreakGlass, BREAK_GLASS_WARNING, breakGlassRules, describeBreakGlassEntries, resolvedBreakGlass } from './sandbox-break-glass.js';
+import { assignedBreakGlass, BREAK_GLASS_ACK_CODE, BREAK_GLASS_WARNING, breakGlassRules, describeBreakGlassEntries, resolvedBreakGlass } from './sandbox-break-glass.js';
 import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
@@ -174,7 +174,12 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     let value = draft;
     if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
     if (resolvedBreakGlass(value, current.sandboxProfiles, seed?.name || '').length && !breakGlassAck) { state.error.value = 'break-glass rules (including ones carried by includes) require the explicit risk acknowledgement below before saving'; return; }
-    await actions.saveSandbox({ draft: value, original: seed, options, breakGlassAcknowledged: breakGlassAck });
+    const outcome = await actions.saveSandbox({ draft: value, original: seed, options, breakGlassAcknowledged: breakGlassAck });
+    // The daemon refused the commit because break-glass authority appeared or
+    // changed after the preview: the registry has been reloaded, so the
+    // warning above now shows the current rules — the stale acknowledgement
+    // must not carry over to them.
+    if (outcome === BREAK_GLASS_ACK_CODE) setBreakGlassAck(false);
   };
   useEffect(() => {
     if (wasSaving.current && !saving) queueMicrotask(() => {
@@ -272,9 +277,39 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     .map((item) => ({ name: item.name, entries: assignedBreakGlass(item.name, composedProfiles, 'import') }))
     .filter((item) => item.entries.length);
   const needsAck = breakGlassCarriers.length > 0;
-  const submit = async () => { if (!preview) { setError('preview the import first'); return; } if (needsAck && !bgAck) { setError('break-glass profiles require the explicit risk acknowledgement before import'); return; } setBusy('import'); try { await actions.importSandboxBundle(envelope, conflict, needsAck && bgAck); state.closeDialog(); } catch (e) { setError(message(e)); } finally { setBusy(''); } };
-  return html`<${Overlay} id="sandbox-profile-import-modal" labelledby="sandbox-profile-import-title" onClose=${state.closeDialog} dirty=${!!raw} blocked=${!!busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3><${Row} label="File"><input type="file" accept=".json,application/json" onChange=${async (event) => { const file = event.currentTarget.files?.[0]; if (file) { setRaw(await file.text()); setPreview(null); setBgAck(false); } }}/></${Row}><${Row} label="or paste"><textarea rows="6" value=${raw} onInput=${(event) => { setRaw(event.currentTarget.value); setPreview(null); setBgAck(false); }}/></${Row}><button disabled=${busy} onClick=${inspect}>Preview</button>${preview && html`<div class="profile-transfer-list">${incoming.map((item) => html`<div key=${item.name} class="profile-transfer-row"><span>${item.name} · ${sandboxProfileSummary(item)}${existing.has(item.name) ? ' · already exists locally' : ''}</span></div>`)}</div>${needsAck && html`<div class="sbx-bg-warning" role="alert"><strong>🚨 Break-glass protected access in this bundle:</strong> ${breakGlassCarriers.map((carrier) => `${carrier.name}: ${describeBreakGlassEntries(carrier.entries)}`).join(' — ')}. ${BREAK_GLASS_WARNING} Importing on this machine requires a fresh acknowledgement after paths are canonicalized.</div><label class="sbx-bg-ack"><input type="checkbox" id="sandbox-profile-import-break-glass-ack" checked=${bgAck} onChange=${(event) => setBgAck(event.currentTarget.checked)}/> I understand these profiles grant break-glass access to protected tclaude/harness state and I accept that risk on this machine.</label>`}${incoming.some((item) => existing.has(item.name)) && html`<${Row} label="Name conflicts"><${Select} id="sandbox-profile-import-conflict" value=${conflict} onChange=${(value) => { setConflict(value); setBgAck(false); }} options=${[['skip', 'Skip existing'], ['overwrite', 'Overwrite existing'], ['error', 'Stop with an error']]}/></${Row}>`}`}
-    <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button disabled=${!!busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview || (needsAck && !bgAck)} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
+  // The ack-free inspect reports include-graph errors PER conflict policy
+  // ("skip" keeps a clashing local profile's own includes, so only one policy
+  // may be invalid). Importing under "error" only succeeds when no names
+  // clash — every incoming profile lands — so it shares the overwrite graph.
+  const includeError = preview?.include_errors?.[conflict === 'skip' ? 'skip' : 'overwrite'] || '';
+  const submit = async () => {
+    if (!preview) { setError('preview the import first'); return; }
+    if (includeError) { setError(includeError); return; }
+    if (needsAck && !bgAck) { setError('break-glass profiles require the explicit risk acknowledgement before import'); return; }
+    setBusy('import');
+    try { await actions.importSandboxBundle(envelope, conflict, needsAck && bgAck); state.closeDialog(); }
+    catch (e) {
+      if (e?.code === BREAK_GLASS_ACK_CODE) {
+        // The daemon's authoritative import plan demanded an acknowledgement
+        // this preview did not anticipate (its state moved after inspect).
+        // Refresh the authoritative preview, invalidate the stale ack, and
+        // demand a fresh one — never resend automatically. A failed refresh
+        // clears the preview, which keeps Import blocked.
+        setBgAck(false);
+        try {
+          const found = await actions.inspectSandboxBundle(envelope);
+          setPreview(found);
+          setError(`${message(e)} The authoritative preview was refreshed — review the current break-glass carriers and re-acknowledge before importing again.`);
+        } catch (inspectError) {
+          setPreview(null);
+          setError(`${message(e)} Refreshing the authoritative preview failed (${message(inspectError)}) — preview again before importing.`);
+        }
+      } else setError(message(e));
+    }
+    finally { setBusy(''); }
+  };
+  return html`<${Overlay} id="sandbox-profile-import-modal" labelledby="sandbox-profile-import-title" onClose=${state.closeDialog} dirty=${!!raw} blocked=${!!busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3><${Row} label="File"><input type="file" accept=".json,application/json" onChange=${async (event) => { const file = event.currentTarget.files?.[0]; if (file) { setRaw(await file.text()); setPreview(null); setBgAck(false); } }}/></${Row}><${Row} label="or paste"><textarea rows="6" value=${raw} onInput=${(event) => { setRaw(event.currentTarget.value); setPreview(null); setBgAck(false); }}/></${Row}><button disabled=${busy} onClick=${inspect}>Preview</button>${preview && html`<div class="profile-transfer-list">${incoming.map((item) => html`<div key=${item.name} class="profile-transfer-row"><span>${item.name} · ${sandboxProfileSummary(item)}${existing.has(item.name) ? ' · already exists locally' : ''}</span></div>`)}</div>${needsAck && html`<div class="sbx-bg-warning" role="alert"><strong>🚨 Break-glass protected access in this bundle:</strong> ${breakGlassCarriers.map((carrier) => `${carrier.name}: ${describeBreakGlassEntries(carrier.entries)}`).join(' — ')}. ${BREAK_GLASS_WARNING} Importing on this machine requires a fresh acknowledgement after paths are canonicalized.</div><label class="sbx-bg-ack"><input type="checkbox" id="sandbox-profile-import-break-glass-ack" checked=${bgAck} onChange=${(event) => setBgAck(event.currentTarget.checked)}/> I understand these profiles grant break-glass access to protected tclaude/harness state and I accept that risk on this machine.</label>`}${incoming.some((item) => existing.has(item.name)) && html`<${Row} label="Name conflicts"><${Select} id="sandbox-profile-import-conflict" value=${conflict} onChange=${(value) => { setConflict(value); setBgAck(false); }} options=${[['skip', 'Skip existing'], ['overwrite', 'Overwrite existing'], ['error', 'Stop with an error']]}/></${Row}>`}${includeError && html`<div id="sandbox-profile-import-include-error" role="alert" class="cron-create-error">Include graph invalid under this conflict policy: ${includeError}</div>`}`}
+    <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button disabled=${!!busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview || !!includeError || (needsAck && !bgAck)} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
 }
 
 function SandboxDiffModal({ model, close, profiles = [] }) {

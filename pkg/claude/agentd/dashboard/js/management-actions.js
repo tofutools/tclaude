@@ -8,6 +8,7 @@ import {
   importProfiles,
 } from './profiles.js';
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
+import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
 import {
   loadSandboxProfiles,
   previewSandboxProfile,
@@ -823,6 +824,17 @@ export function createManagementActions({
       await options.onCreate?.(preview.after.name);
       return true;
     } catch (error) {
+      if (error?.code === BREAK_GLASS_ACK_CODE) {
+        // The daemon's authoritative state changed after the preview (e.g.
+        // an included profile gained break-glass). Reload the registry so
+        // the editor re-resolves its includes against current reality and
+        // shows the exact current rules, then demand a fresh explicit
+        // acknowledgement — never resend automatically. A failed reload
+        // still leaves saving blocked behind the invalidated ack.
+        try { await load('sandbox'); } catch (_) {}
+        state.error.value = `${error.message || String(error)} The sandbox-profile registry changed since this preview — review the current break-glass rules above and re-acknowledge before saving again.`;
+        return BREAK_GLASS_ACK_CODE;
+      }
       state.error.value = error.message || String(error);
       return false;
     } finally {

@@ -38,6 +38,7 @@ import {
 } from './agent-spawn-model.js';
 import { registerAgentSpawnController } from './agent-spawn-controller.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
+import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
 import { HelpField } from './help-field.js';
 
 const html = htm.bind(h);
@@ -252,8 +253,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     // The stored key records which selection the resolved policy belongs to.
     // Clearing it up front makes a stale policy — one loaded for a previous
     // group/profile pick, or one still in flight — ineligible for submit
-    // until the matching load lands.
-    const policyKey = sandboxPolicyKey(draft.group, draft.sandboxProfile, current.sandboxRevision);
+    // until the matching load lands. The revision is read LIVE from the
+    // dialog signal (not the render prop) so a load triggered before a
+    // revision bump has re-rendered this component still stores the key the
+    // submit gates will compare against.
+    const policyKey = sandboxPolicyKey(draft.group, draft.sandboxProfile, state.dialog.value?.sandboxRevision);
     setSandboxPolicy((value) => ({ ...value, key: '' }));
     actions.loadSandboxPolicy(draft.group, draft.sandboxProfile).then((value) => {
       if (request !== sandboxRequest.current || !state.isCurrent(generation)) return;
@@ -587,7 +591,28 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       actions.complete(payload, next);
     } catch (cause) {
       if (state.isCurrent(current.generation)) {
-        setError(errorMessage(cause));
+        if (cause?.code === BREAK_GLASS_ACK_CODE) {
+          // The daemon resolved break-glass authority this dialog's policy
+          // did not show (its registry/assignments moved after our load).
+          // Invalidate the local policy immediately — the stale one must not
+          // stay submit-eligible — and reload the resolved policy DIRECTLY
+          // rather than via the render effect: this error path must not
+          // depend on render scheduling, and the effect's own reload (for
+          // selection/revision changes) would race it through the shared
+          // request counter. The next submit builds a fresh token and
+          // demands a fresh confirmation; nothing is resent automatically,
+          // and a failed reload leaves the empty policy key blocking submit.
+          setSandboxPolicy((value) => ({ ...value, breakGlass: [], key: '' }));
+          const reloadRequest = ++sandboxRequest.current;
+          const reloadKey = sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
+          actions.loadSandboxPolicy(next.group, next.sandboxProfile).then((value) => {
+            if (reloadRequest !== sandboxRequest.current || !state.isCurrent(current.generation)) return;
+            setSandboxPolicy({ ...value, error: '', key: reloadKey });
+          }).catch(() => {});
+          setError(`${errorMessage(cause)} The resolved sandbox policy was refreshed — review the current break-glass rules in the preview and submit again.`);
+        } else {
+          setError(errorMessage(cause));
+        }
         busyRef.current = false;
         setBusy(false);
         submitLock.current = false;

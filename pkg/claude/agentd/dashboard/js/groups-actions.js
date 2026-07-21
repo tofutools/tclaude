@@ -16,10 +16,28 @@ import {
 } from './add-member-actions.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { shellConfirm } from './shell-state.js';
-import { assignedBreakGlass, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
+import { assignedBreakGlass, BREAK_GLASS_ACK_CODE, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
 
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
+}
+
+// Group sandbox-assignment failures carry the daemon's structured
+// {"error", "code"} body. The typed acknowledgement code means the profile's
+// break-glass authority changed between our warning and the commit; say so
+// explicitly — a retry reloads the registry and shows a fresh warning, and
+// the stale acknowledgement is never re-sent automatically.
+async function sandboxAssignmentError(response) {
+  const raw = await response.text();
+  let body = null;
+  try { body = JSON.parse(raw); } catch (_) { body = null; }
+  const message = body?.message || body?.error || raw || `HTTP ${response.status}`;
+  const error = new Error(body?.code === BREAK_GLASS_ACK_CODE
+    ? `set sandbox profile failed: ${message} The profile's break-glass authority changed since the warning was shown; the assignment was NOT applied. Retry to review the current rules and re-acknowledge.`
+    : `set sandbox profile failed: ${message}`);
+  error.status = response.status;
+  if (body?.code) error.code = body.code;
+  return error;
 }
 
 export function createGroupsActions({
@@ -186,7 +204,7 @@ export function createGroupsActions({
           headers: { 'Content-Type': 'application/json' },
           body: name ? JSON.stringify({ name, ...(breakGlassAcknowledged ? { break_glass_acknowledged: true } : {}) }) : undefined,
         });
-        if (!response.ok) throw new Error(`set sandbox profile failed: ${await responseError(response)}`);
+        if (!response.ok) throw await sandboxAssignmentError(response);
         notify(name ? `${group.name} sandbox profile: ${name}` : `${group.name} sandbox profile cleared`);
         refreshAgentSpawnSandboxPolicy();
       } else {
