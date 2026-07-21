@@ -1107,19 +1107,80 @@ test('Preact agent-spawn recovers from the typed acknowledgement 422 with a poli
     host.querySelector('#agent-spawn-submit').click();
     await flush(harness);
     assert.equal(spawnAttempts.length, 1, 'the daemon refused the first attempt');
-    assert.match(host.querySelector('#agent-spawn-error').textContent, /review the current break-glass rules/);
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /stays blocked until it completes/);
     await flush(harness);
     assert.equal(loads.length, 2, 'the refusal forces a policy reload');
     assert.equal(spawnAttempts.length, 1, 'the refused request is never retried automatically');
 
     loads[1].pending.resolve(refreshedPolicy);
     await flush(harness);
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /was refreshed — review the current break-glass rules/);
     host.querySelector('#agent-spawn-submit').click();
     await flush(harness);
     assert.equal(confirms.length, 1, 'the fresh submit demands a fresh confirmation for the refreshed policy');
     assert.deepEqual(confirms[0], refreshedPolicy.breakGlass);
     assert.equal(spawnAttempts.length, 2);
     assert.equal(spawnAttempts[1].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// Failure paths for the typed-422 recovery: while the policy reload is
+// pending — or after it fails — submit stays blocked, nothing proceeds, and
+// the message must not falsely claim the policy "was refreshed".
+test('Preact agent-spawn stays blocked when the post-422 policy reload is pending or fails', async (t) => {
+  const loads = [];
+  const spawnAttempts = [];
+  const confirms = [];
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => {
+      spawnAttempts.push(request);
+      throw Object.assign(new Error('spawn requires break-glass acknowledgement'), { status: 422, code: 'break_glass_acknowledgement_required' });
+    },
+    confirmBreakGlassSpawn: async (entries) => { confirms.push(entries); return true; },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve({ profiles: [], selected: '', preview: 'no profiles applied', breakGlass: [] });
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1);
+    assert.equal(loads.length, 2, 'the refusal starts a policy reload');
+    // Reload still PENDING: blocked, and no false "was refreshed" claim.
+    let text = host.querySelector('#agent-spawn-error').textContent;
+    assert.match(text, /stays blocked/);
+    assert.ok(!text.includes('was refreshed'), 'a pending reload is not described as refreshed');
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1, 'no request proceeds while the reload is pending');
+    assert.equal(confirms.length, 0, 'no confirmation proceeds while the reload is pending');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /finish loading/);
+
+    // Reload FAILS: still blocked, still no false claim.
+    loads[1].pending.reject(new Error('policy backend down'));
+    await flush(harness);
+    text = host.querySelector('#agent-spawn-error').textContent;
+    assert.match(text, /Reloading the resolved sandbox policy failed/);
+    assert.ok(!text.includes('was refreshed'), 'a failed reload is not described as refreshed');
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1, 'no request proceeds after a failed reload');
+    assert.equal(confirms.length, 0);
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /finish loading/);
   } finally {
     mounted.cleanup();
   }

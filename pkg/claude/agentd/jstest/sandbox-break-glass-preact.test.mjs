@@ -431,18 +431,25 @@ async function importScenario(harness, state, envelope, overrides = {}) {
   state.openDialog({ kind: 'sandbox-import' });
   const imports = [];
   const inspects = [];
+  const loads = [];
   const mountedResult = await mountManagement(harness, state, {
     // Mirrors the real /api/sandbox-profiles/import/inspect response shape:
     // normalized profiles, path warnings, and per-conflict-policy include
     // errors (plus break_glass_profiles/break_glass_risk when carriers exist).
     async inspectSandboxBundle(value) {
       inspects.push(value);
+      if (overrides.inspectImpl) return overrides.inspectImpl(value, inspects.length);
       return { profiles: value.profiles, warnings: [], include_errors: {}, ...(overrides.inspect ? overrides.inspect(value) : {}) };
     },
     async importSandboxBundle(...args) {
       imports.push(args);
       if (overrides.importImpl) return overrides.importImpl(...args);
       return undefined;
+    },
+    async load(kind) {
+      loads.push(kind);
+      if (overrides.loadImpl) return overrides.loadImpl(kind);
+      return true;
     },
   });
   await harness.act(() => Promise.resolve());
@@ -461,7 +468,7 @@ async function importScenario(harness, state, envelope, overrides = {}) {
     select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
     await harness.act(() => Promise.resolve());
   };
-  return { ...mountedResult, imports, inspects, setConflict };
+  return { ...mountedResult, imports, inspects, loads, setConflict };
 }
 
 test('import under skip warns for retained local break-glass reached through a new wrapper', async (t) => {
@@ -684,10 +691,37 @@ test('save recovery on the typed 422 reloads the registry, blocks resend, and de
   const outcome = actions.saveSandbox({ draft, original: null, breakGlassAcknowledged: false });
   await Promise.resolve();
   state.cancelSandboxDiff(true);
-  assert.equal(await outcome, BREAK_GLASS_ACK_CODE, 'the typed refusal is reported distinctly');
+  assert.deepEqual(await outcome, { breakGlassAckRequired: true, recovered: true }, 'the typed refusal is reported distinctly with the recovery result');
   assert.equal(saves, 1, 'the unacknowledged request is never retried automatically');
   assert.equal(loads, 1, 'the registry is reloaded so the editor re-resolves includes');
   assert.match(state.error.value, /re-acknowledge/);
+});
+
+test('save recovery reports a failed registry reload so the editor stays blocked', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const state = createManagementState();
+  let saves = 0;
+  const sandboxAPI = {
+    loadSandboxProfiles: async () => { throw new Error('daemon unreachable'); },
+    previewSandboxProfile: async (name, body) => ({ before: null, after: body, revision: 'r1' }),
+    saveSandboxProfile: async () => {
+      saves += 1;
+      throw Object.assign(new Error('save requires break-glass acknowledgement'), { status: 422, code: BREAK_GLASS_ACK_CODE });
+    },
+  };
+  const actions = createManagementActions({ state, confirm: async () => true, notify() {}, refreshSandboxSpawn: async () => {}, sandboxAPI });
+  const draft = { name: 'wrapper', filesystem: [], environment: [], includes: ['lib'], agent_directories: [], network_access: '' };
+  const outcome = actions.saveSandbox({ draft, original: null, breakGlassAcknowledged: false });
+  await Promise.resolve();
+  state.cancelSandboxDiff(true);
+  assert.deepEqual(await outcome, { breakGlassAckRequired: true, recovered: false });
+  assert.equal(saves, 1, 'no automatic retry');
+  assert.match(state.error.value, /stays blocked/);
 });
 
 test('the editor invalidates its acknowledgement when the daemon demands a fresh one', async (t) => {
@@ -706,7 +740,7 @@ test('the editor invalidates its acknowledgement when the daemon demands a fresh
   const { host, unmount } = await mountManagement(harness, state, {
     async inspectDirectories() { return { missing: [], creatable: [] }; },
     async createDirectories() {},
-    saveSandbox(value) { saves.push(value); return BREAK_GLASS_ACK_CODE; },
+    saveSandbox(value) { saves.push(value); return { breakGlassAckRequired: true, recovered: true }; },
     configureSandboxWithAgent() {},
   });
   await harness.act(() => Promise.resolve());
@@ -720,6 +754,63 @@ test('the editor invalidates its acknowledgement when the daemon demands a fresh
   assert.equal(saves[0].breakGlassAcknowledged, true);
   assert.notEqual(host.querySelector('#sandbox-profile-editor-break-glass-ack').checked, true,
     'the stale acknowledgement does not carry over to the refreshed rules');
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false,
+    'a SUCCESSFUL registry reload leaves saving available for a fresh acknowledged attempt');
+  assert.equal(host.querySelector('#sandbox-profile-editor-recovery'), null, 'no recovery banner when the reload succeeded');
+  unmount();
+});
+
+test('a failed registry reload after the typed 422 blocks saving until an authoritative reload succeeds', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  // The stale cached registry shows a CLEAN "lib": the editor cannot see the
+  // break-glass the daemon just refused, so nothing here may be acknowledged.
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'lib' }]);
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'wrapper', filesystem: [], environment: [], includes: ['lib'], agent_directories: [] }, options: {} });
+  const saves = [];
+  let loadOk = false;
+  const { host, unmount } = await mountManagement(harness, state, {
+    async inspectDirectories() { return { missing: [], creatable: [] }; },
+    async createDirectories() {},
+    saveSandbox(value) { saves.push(value); return { breakGlassAckRequired: true, recovered: false }; },
+    configureSandboxWithAgent() {},
+    async load() {
+      if (!loadOk) return false;
+      state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+        { name: 'lib', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'write' }] },
+      ]);
+      return true;
+    },
+  });
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-break-glass-ack'), null, 'the stale clean registry offers nothing to acknowledge');
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves.length, 1);
+
+  const banner = host.querySelector('#sandbox-profile-editor-recovery');
+  assert.ok(banner, 'a failed reload surfaces the recovery-blocked state');
+  assert.match(banner.textContent, /registry reload failed/);
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true, 'saving is blocked from stale state');
+  assert.equal(host.querySelector('#sandbox-profile-editor-break-glass-ack'), null, 'no acknowledgement control for rules the editor cannot see');
+
+  host.querySelector('#sandbox-profile-editor-recovery-retry').click();
+  await harness.act(() => Promise.resolve());
+  assert.ok(host.querySelector('#sandbox-profile-editor-recovery'), 'a second failed reload stays blocked');
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true);
+
+  loadOk = true;
+  host.querySelector('#sandbox-profile-editor-recovery-retry').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-recovery'), null, 'a successful reload lifts the block');
+  assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, false);
+  const warning = host.querySelector('.sbx-break-glass .sbx-bg-warning');
+  assert.ok(warning, 'the refreshed registry reveals the real rules');
+  assert.match(warning.textContent, /write \/home\/op\/\.tclaude\/data \(profile:lib\)/, 'the exact new rule and origin are shown');
+  const ack = host.querySelector('#sandbox-profile-editor-break-glass-ack');
+  assert.ok(ack, 'a fresh acknowledgement is required for the revealed rules');
+  assert.notEqual(ack.checked, true);
   unmount();
 });
 
@@ -823,4 +914,152 @@ test('assignment surfaces surface the typed 422 as a fresh-acknowledgement retry
     return true;
   });
   assert.equal(groupFetches, 1);
+});
+
+// The reviewer's concrete stale-registry case: cached local A is clean, the
+// bundle ships a conflicting clean A plus wrapper→A under skip, and the
+// RETAINED local A gains break-glass server-side after the preview. The
+// typed 422 recovery must refresh BOTH the local registry and the bundle
+// inspection — re-inspect alone would leave the cached clean A composing no
+// carriers, no checkbox, and endless 422s.
+test('import recovery refreshes the local registry so retained-local break-glass becomes acknowledgeable', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'A' }]);
+  let refused = false;
+  const { host, imports, inspects, loads, unmount } = await importScenario(harness, state, {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [{ name: 'A' }, { name: 'wrapper', includes: ['A'] }],
+  }, {
+    importImpl: () => {
+      if (!refused) {
+        refused = true;
+        throw Object.assign(new Error('retained profile "A" now carries break-glass access: read /home/op/.aws-adjacent/.tclaude/data'), { status: 422, code: BREAK_GLASS_ACK_CODE });
+      }
+      return undefined;
+    },
+    loadImpl: () => {
+      // The registry reload reveals the server-side mutation.
+      state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+        { name: 'A', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+      ]);
+      return true;
+    },
+  });
+  const importButton = [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+  assert.equal(host.querySelector('#sandbox-profile-import-break-glass-ack'), null, 'the stale clean registry composes no carriers under skip');
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+
+  assert.equal(imports.length, 1, 'exactly one refused request; nothing is resent automatically');
+  assert.equal(loads.length, 1, 'the local registry is reloaded');
+  assert.equal(inspects.length, 2, 'the authoritative inspection is re-run');
+  const warning = host.querySelector('#sandbox-profile-import-modal .sbx-bg-warning');
+  assert.ok(warning, 'the refreshed registry reveals the retained-local carrier');
+  assert.match(warning.textContent, /wrapper/);
+  assert.match(warning.textContent, /import:A/);
+  const ack = host.querySelector('#sandbox-profile-import-break-glass-ack');
+  assert.ok(ack, 'the checkbox appears only after recovery reveals the current rules');
+  assert.notEqual(ack.checked, true);
+  assert.equal(importButton.disabled, true, 'import stays blocked until the fresh acknowledgement');
+
+  ack.checked = true;
+  ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 2, 'a fresh explicit user attempt follows recovery');
+  assert.equal(imports[1][2], true, 'the fresh attempt carries the fresh acknowledgement');
+  unmount();
+});
+
+test('import recovery failures — registry reload or re-inspect — keep import blocked', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const typedRefusal = () => Object.assign(new Error('import requires break-glass acknowledgement'), { status: 422, code: BREAK_GLASS_ACK_CODE });
+  const envelope = {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [{ name: 'debug', break_glass_filesystem: [{ path: '/home/op/.codex', access: 'read' }] }],
+  };
+  for (const [label, overrides] of [
+    ['failed registry reload', { importImpl: () => { throw typedRefusal(); }, loadImpl: () => false }],
+    ['failed re-inspect', { importImpl: () => { throw typedRefusal(); }, inspectImpl: (value, call) => { if (call > 1) throw new Error('daemon unreachable'); return { profiles: value.profiles, warnings: [], include_errors: {} }; } }],
+  ]) {
+    const state = createManagementState();
+    state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), []);
+    const { host, imports, unmount } = await importScenario(harness, state, envelope, overrides);
+    const importButton = [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+    const ack = host.querySelector('#sandbox-profile-import-break-glass-ack');
+    ack.checked = true;
+    ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await harness.act(() => Promise.resolve());
+    importButton.click();
+    await harness.act(() => Promise.resolve());
+    await harness.act(() => Promise.resolve());
+    assert.equal(imports.length, 1, `${label}: no automatic resend`);
+    assert.equal(importButton.disabled, true, `${label}: import stays blocked`);
+    assert.match([...host.querySelectorAll('#sandbox-profile-import-modal .cron-create-error')].map((el) => el.textContent).join(' '), /stays blocked/, `${label}: the block is stated`);
+    unmount();
+  }
+});
+
+// After a typed refusal with NO automatic resend, the authoritative rules
+// change; an explicit user retry must load fresh state and confirm the fresh
+// rules before exactly one acknowledged request.
+test('assignment retry after a typed refusal reloads and confirms the fresh rules', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/profiles.js', `
+    export async function loadProfiles() { return []; }
+    export function profileChoices() { return []; }
+    export async function setDashDefaultProfile() { return ''; }
+  `);
+  await harness.replaceDashboardModule('js/sandbox-profiles.js', `
+    export async function loadSandboxProfiles() { return []; }
+    export function openSandboxProfileEditor() {}
+  `);
+  await harness.replaceDashboardModule('js/modal-profiles.js', 'export function openProfileEditor() {}');
+  await harness.replaceDashboardModule('js/toolbar-profile-renderers.js', `
+    export function renderDashDefaultProfile() {}
+    export function renderDashSandboxProfile() {}
+  `);
+  await harness.replaceDashboardModule('js/agent-spawn-controller.js', 'export function refreshAgentSpawnSandboxPolicy() {}');
+  const { createToolbarProfilePickerActions } = await harness.importDashboardModule('js/toolbar-profile-picker-actions.js');
+  const rulesV1 = [{ path: '/home/op/.tclaude/data', access: 'read' }];
+  const rulesV2 = [{ path: '/home/op/.codex', access: 'write' }];
+  let authoritative = rulesV1;
+  const fetches = [];
+  const prompts = [];
+  const body422 = JSON.stringify({ error: 'assignment requires break-glass acknowledgement', code: 'break_glass_acknowledgement_required' });
+  const actions = createToolbarProfilePickerActions({
+    fetchImpl: async (url, options) => {
+      fetches.push(options);
+      if (fetches.length === 1) return { ok: false, status: 422, text: async () => body422 };
+      return { ok: true, text: async () => '' };
+    },
+    notify() {},
+    refresh: async () => {},
+    confirmDanger: async (prompt) => { prompts.push(prompt); return true; },
+    loadSandboxProfilesImpl: async () => [{ name: 'debug', break_glass_filesystem: authoritative }],
+  });
+
+  await assert.rejects(actions.commit('sandbox', 'debug'), /re-acknowledge/);
+  assert.equal(fetches.length, 1, 'the refusal produces no automatic resend');
+  assert.match(prompts[0].body, /read \/home\/op\/\.tclaude\/data/);
+
+  // The daemon's rules change before the user retries.
+  authoritative = rulesV2;
+  assert.equal(await actions.commit('sandbox', 'debug'), true);
+  assert.equal(prompts.length, 2, 'the explicit retry re-confirms');
+  assert.match(prompts[1].body, /write \/home\/op\/\.codex/, 'the fresh confirmation shows the CURRENT rules');
+  assert.ok(!prompts[1].body.includes('read /home/op/.tclaude/data'), 'the fresh confirmation no longer describes the stale rule');
+  assert.equal(fetches.length, 2, 'exactly one acknowledged request follows the fresh confirmation');
+  assert.deepEqual(JSON.parse(fetches[1].body), { name: 'debug', break_glass_acknowledged: true });
 });

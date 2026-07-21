@@ -829,11 +829,16 @@ export function createManagementActions({
         // an included profile gained break-glass). Reload the registry so
         // the editor re-resolves its includes against current reality and
         // shows the exact current rules, then demand a fresh explicit
-        // acknowledgement — never resend automatically. A failed reload
-        // still leaves saving blocked behind the invalidated ack.
-        try { await load('sandbox'); } catch (_) {}
-        state.error.value = `${error.message || String(error)} The sandbox-profile registry changed since this preview — review the current break-glass rules above and re-acknowledge before saving again.`;
-        return BREAK_GLASS_ACK_CODE;
+        // acknowledgement — never resend automatically. load() reports
+        // failure as `false` rather than throwing; a failed reload means
+        // the editor still cannot see the real rules, so it must stay
+        // blocked from saving until an authoritative reload succeeds.
+        let recovered = false;
+        try { recovered = (await load('sandbox')) === true; } catch (_) { recovered = false; }
+        state.error.value = recovered
+          ? `${error.message || String(error)} The sandbox-profile registry changed since this preview — review the current break-glass rules above and re-acknowledge before saving again.`
+          : `${error.message || String(error)} Reloading the sandbox-profile registry failed, so the current rules are unknown — saving stays blocked until an authoritative reload succeeds.`;
+        return { breakGlassAckRequired: true, recovered };
       }
       state.error.value = error.message || String(error);
       return false;

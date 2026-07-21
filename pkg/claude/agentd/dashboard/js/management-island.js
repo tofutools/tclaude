@@ -161,6 +161,27 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // The acknowledgement is deliberately NOT part of the draft: it never
   // persists, and every editor session must collect it afresh.
   const [breakGlassAck, setBreakGlassAck] = useState(false);
+  // After a daemon-side acknowledgement refusal whose registry reload
+  // FAILED, the editor cannot see the rules it would be acknowledging, so
+  // saving stays blocked until an authoritative reload succeeds.
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const retryRecovery = async () => {
+    setRecoveryBusy(true);
+    state.error.value = '';
+    try {
+      if ((await actions.load('sandbox')) === true) {
+        setRecoveryBlocked(false);
+        state.error.value = 'Registry reloaded — review the current break-glass rules above and re-acknowledge before saving.';
+      } else {
+        state.error.value = 'Registry reload failed again — saving stays blocked until an authoritative reload succeeds.';
+      }
+    } catch (error) {
+      state.error.value = error.message || String(error);
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
   const [directoryStatus, setDirectoryStatus] = useState({ missing: [], creatable: [] }); const [directoryBusy, setDirectoryBusy] = useState(false);
   const directoryGeneration = useRef(0); const submitRef = useRef(null); const wasSaving = useRef(false); const filesystemSignature = JSON.stringify(draft.filesystem); const latestFilesystem = useRef(filesystemSignature); latestFilesystem.current = filesystemSignature;
   const dirty = dirtyDraft(draft, baseline);
@@ -175,11 +196,15 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
     if (resolvedBreakGlass(value, current.sandboxProfiles, seed?.name || '').length && !breakGlassAck) { state.error.value = 'break-glass rules (including ones carried by includes) require the explicit risk acknowledgement below before saving'; return; }
     const outcome = await actions.saveSandbox({ draft: value, original: seed, options, breakGlassAcknowledged: breakGlassAck });
-    // The daemon refused the commit because break-glass authority appeared or
-    // changed after the preview: the registry has been reloaded, so the
-    // warning above now shows the current rules — the stale acknowledgement
-    // must not carry over to them.
-    if (outcome === BREAK_GLASS_ACK_CODE) setBreakGlassAck(false);
+    // The daemon refused the commit because break-glass authority appeared
+    // or changed after the preview. The stale acknowledgement must not carry
+    // over — and if the registry reload failed, the editor cannot even show
+    // the rules a fresh acknowledgement would cover, so saving stays blocked
+    // until an authoritative reload succeeds.
+    if (outcome && typeof outcome === 'object' && outcome.breakGlassAckRequired) {
+      setBreakGlassAck(false);
+      setRecoveryBlocked(outcome.recovered !== true);
+    }
   };
   useEffect(() => {
     if (wasSaving.current && !saving) queueMicrotask(() => {
@@ -218,7 +243,8 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     ${resolvedBG.length > 0 && html`<label class="sbx-bg-ack"><input type="checkbox" id="sandbox-profile-editor-break-glass-ack" checked=${breakGlassAck} onChange=${(event) => setBreakGlassAck(event.currentTarget.checked)}/> I understand this profile grants break-glass access to protected tclaude/harness state — including possible credential and session disclosure, state corruption, authorization bypass, host-control risk, and daemon/harness breakage — and I accept that risk.</label>`}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
     <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}><${Row} label="Break-glass JSON" title="Exact-path {path, access: read|write} rules for normally protected tclaude/harness state. Dangerous; requires the explicit acknowledgement to save."><textarea id="sandbox-profile-editor-break-glass" rows="3" value=${rawBreakGlass} onInput=${(event) => setRawBreakGlass(event.currentTarget.value)}/></${Row}></div>`}
-    <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${saving || directoryBusy} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
+    ${recoveryBlocked && html`<div id="sandbox-profile-editor-recovery" class="sbx-bg-warning" role="alert">The daemon refused this save because the profile now carries break-glass authority this editor cannot see: the registry reload failed, so the current rules are unknown. Saving stays blocked until an authoritative reload succeeds. <button type="button" id="sandbox-profile-editor-recovery-retry" disabled=${recoveryBusy || saving} onClick=${() => { void retryRecovery(); }}>${recoveryBusy ? 'Reloading…' : '↻ Retry registry reload'}</button></div>`}
+    <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${saving || directoryBusy || recoveryBlocked} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
 }
 
 function ProfileExport({ current, state, actions, confirmDiscard }) {
@@ -292,17 +318,30 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
       if (e?.code === BREAK_GLASS_ACK_CODE) {
         // The daemon's authoritative import plan demanded an acknowledgement
         // this preview did not anticipate (its state moved after inspect).
-        // Refresh the authoritative preview, invalidate the stale ack, and
-        // demand a fresh one — never resend automatically. A failed refresh
-        // clears the preview, which keeps Import blocked.
+        // The carriers the operator must acknowledge are composed from BOTH
+        // sides, so recovery refreshes BOTH: the local sandbox-profile
+        // registry (a RETAINED local profile may have gained break-glass
+        // that a skip-policy wrapper now reaches) and the authoritative
+        // bundle inspection. Either refresh failing is a recovery failure:
+        // the preview clears so Import stays blocked. Never resend
+        // automatically — a fresh explicit acknowledgement is required.
         setBgAck(false);
-        try {
-          const found = await actions.inspectSandboxBundle(envelope);
-          setPreview(found);
-          setError(`${message(e)} The authoritative preview was refreshed — review the current break-glass carriers and re-acknowledge before importing again.`);
-        } catch (inspectError) {
+        let failure = '';
+        let refreshed = null;
+        let registryOk = false;
+        try { registryOk = (await actions.load('sandbox')) === true; } catch (_) { registryOk = false; }
+        if (!registryOk) {
+          failure = 'reloading the sandbox-profile registry failed';
+        } else {
+          try { refreshed = await actions.inspectSandboxBundle(envelope); }
+          catch (inspectError) { failure = `re-running the authoritative preview failed (${message(inspectError)})`; }
+        }
+        if (failure) {
           setPreview(null);
-          setError(`${message(e)} Refreshing the authoritative preview failed (${message(inspectError)}) — preview again before importing.`);
+          setError(`${message(e)} ${failure} — import stays blocked; preview again once the daemon is reachable.`);
+        } else {
+          setPreview(refreshed);
+          setError(`${message(e)} The registry and authoritative preview were refreshed — review the current break-glass carriers and re-acknowledge before importing again.`);
         }
       } else setError(message(e));
     }

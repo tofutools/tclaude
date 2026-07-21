@@ -605,11 +605,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
           setSandboxPolicy((value) => ({ ...value, breakGlass: [], key: '' }));
           const reloadRequest = ++sandboxRequest.current;
           const reloadKey = sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
+          // The message must not claim a refresh that has not happened:
+          // while the reload is pending (and if it fails) the empty policy
+          // key keeps submit blocked, and the copy says so.
+          setError(`${errorMessage(cause)} Reloading the resolved sandbox policy — submitting stays blocked until it completes.`);
           actions.loadSandboxPolicy(next.group, next.sandboxProfile).then((value) => {
             if (reloadRequest !== sandboxRequest.current || !state.isCurrent(current.generation)) return;
             setSandboxPolicy({ ...value, error: '', key: reloadKey });
-          }).catch(() => {});
-          setError(`${errorMessage(cause)} The resolved sandbox policy was refreshed — review the current break-glass rules in the preview and submit again.`);
+            setError(`${errorMessage(cause)} The resolved sandbox policy was refreshed — review the current break-glass rules in the preview and submit again.`);
+          }).catch((reloadError) => {
+            if (reloadRequest !== sandboxRequest.current || !state.isCurrent(current.generation)) return;
+            setError(`${errorMessage(cause)} Reloading the resolved sandbox policy failed (${errorMessage(reloadError)}) — submitting stays blocked until the policy reloads.`);
+          });
         } else {
           setError(errorMessage(cause));
         }
