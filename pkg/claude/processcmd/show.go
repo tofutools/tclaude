@@ -91,12 +91,16 @@ func runShowDispatch(cmd *cobra.Command, p *showParams, out io.Writer) error {
 	}
 	var envelope struct {
 		Run     struct{ ID, TemplateRef, EffectiveStatus string } `json:"run"`
+		Adapted bool                                              `json:"adapted"`
 		Lineage struct {
 			OriginalTemplateRef, CurrentTemplateRef string
+			TotalEpochs                             int               `json:"totalEpochs"`
 			Epochs                                  []json.RawMessage `json:"epochs"`
 		} `json:"lineage"`
 		AuthorityCounts struct {
-			Total int `json:"total"`
+			Total    int `json:"total"`
+			Active   int `json:"active"`
+			Terminal int `json:"terminal"`
 		} `json:"authorityCounts"`
 		CurrentBinding struct {
 			Revision uint64 `json:"revision"`
@@ -106,7 +110,7 @@ func runShowDispatch(cmd *cobra.Command, p *showParams, out io.Writer) error {
 	if err := agent.DaemonRequest("GET", "/v1/process/runs/"+p.RunID, nil, &envelope, agent.DaemonOpts{Timeout: schema8DaemonTimeout}); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Run: %s\nTemplate: %s\nState schema: 8\nEffective status: %s\nCurrent template: %s\nBase revision: %d\nBase digest: %s\nEpochs: %d\nAuthorities: %d\n", envelope.Run.ID, envelope.Run.TemplateRef, envelope.Run.EffectiveStatus, envelope.Lineage.CurrentTemplateRef, envelope.CurrentBinding.Revision, envelope.CurrentBinding.Digest, len(envelope.Lineage.Epochs), envelope.AuthorityCounts.Total)
+	fmt.Fprintf(out, "Run: %s\nTemplate: %s\nState schema: 8\nEffective status: %s\nAdapted: %t\nOriginal template: %s\nCurrent template: %s\nBase revision: %d\nBase digest: %s\nEpochs: %d\nAuthorities: %d (%d active, %d terminal)\n", envelope.Run.ID, envelope.Run.TemplateRef, envelope.Run.EffectiveStatus, envelope.Adapted, envelope.Lineage.OriginalTemplateRef, envelope.Lineage.CurrentTemplateRef, envelope.CurrentBinding.Revision, envelope.CurrentBinding.Digest, envelope.Lineage.TotalEpochs, envelope.AuthorityCounts.Total, envelope.AuthorityCounts.Active, envelope.AuthorityCounts.Terminal)
 	return nil
 }
 

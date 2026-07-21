@@ -80,8 +80,18 @@ nodes:
 	if err := runWorklist(cmd, &worklistParams{StoreRoot: root, Run: "schema7-cli-reads", Status: "pending"}, &out); err != nil {
 		t.Fatalf("worklist schema 7: %v", err)
 	}
-	if !strings.Contains(out.String(), "skipped process run schema7-cli-reads: epoch_v8") {
-		t.Fatalf("schema-8 worklist did not refuse unreleased scheduling:\n%s", out.String())
+	// S6 releases the schema-8 worklist projection: the pending human task is
+	// an owner-epoch-labeled item with a bounded allowlisted summary. The
+	// performer's ask text and profile never reach the ordinary listing.
+	for _, want := range []string{"wi8_", "schema7-cli-reads", "approve", "Task awaiting human performer"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("schema-8 worklist output missing %q:\n%s", want, out.String())
+		}
+	}
+	for _, forbidden := range []string{"Approve migrated release?", "johan", "skipped process run"} {
+		if strings.Contains(out.String(), forbidden) {
+			t.Fatalf("schema-8 worklist output must not contain %q:\n%s", forbidden, out.String())
+		}
 	}
 }
 
