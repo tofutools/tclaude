@@ -53,7 +53,7 @@ func AdvanceParallelAll(ctx context.Context, input *VerifiedExclusiveInput) (*Ex
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, TransitionParallelAll)
+		return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelAll, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -135,7 +135,7 @@ func AdvanceParallelRoute(ctx context.Context, input *VerifiedExclusiveInput) (*
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, TransitionParallelRoute)
+	return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelRoute, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 }
 
 // AdvanceParallelExclusiveArrival activates the first fully settled exclusive
@@ -209,7 +209,7 @@ func AdvanceParallelExclusiveArrival(ctx context.Context, input *VerifiedExclusi
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, TransitionParallelExclusiveArrival)
+		return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelExclusiveArrival, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -254,7 +254,7 @@ func AdvanceParallelEnd(ctx context.Context, input *VerifiedExclusiveInput, sour
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, TransitionParallelEnd)
+	return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelEnd, ExecutionWitnessV1{Source: &SourceExecutionWitnessV1{SourcePathID: sourcePathID}})
 }
 
 // AdvanceParallelPropagation advances exactly one immutable frontier entry.
@@ -375,7 +375,7 @@ func AdvanceParallelPropagation(ctx context.Context, input *VerifiedExclusiveInp
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, TransitionParallelPropagation)
+		return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelPropagation, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -491,7 +491,7 @@ func advanceParallelPropagationSeed(ctx context.Context, input *VerifiedExclusiv
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, TransitionParallelPropagationSeed)
+		return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelPropagationSeed, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -670,7 +670,7 @@ func AdvanceParallelTerminalClosure(ctx context.Context, input *VerifiedExclusiv
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, TransitionParallelTerminalClosure)
+		return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelTerminalClosure, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 	}
 	return nil, ErrParallelAllNotReady
 }

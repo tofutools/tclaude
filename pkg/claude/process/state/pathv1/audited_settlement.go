@@ -176,7 +176,10 @@ func SettleExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, 
 	if err != nil {
 		return nil, err
 	}
-	transition, err := newExecutionTransition(input.checkpoint, next, TransitionAuditedSettlement)
+	transition, err := newWitnessedExecutionTransition(input.checkpoint, next, TransitionAuditedSettlement, ExecutionWitnessV1{Settlement: &AuditedSettlementInput{
+		NodeID: resolution.NodeID, BlockedAttempt: resolution.BlockedAttempt, Decision: resolution.Decision,
+		Actor: resolution.Actor, Reason: resolution.Reason, EvidenceRef: resolution.EvidenceRef, Timestamp: settlement.Timestamp,
+	}})
 	if err != nil {
 		return nil, err
 	}

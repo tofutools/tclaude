@@ -3,7 +3,11 @@
 // external-dispatch behavior.
 package epochv8
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
+)
 
 const (
 	StateSchemaVersion = 8
@@ -284,28 +288,30 @@ const (
 )
 
 // RuntimeReceipt is the complete typed authority receipt for one indivisible
-// owner-runtime event. Before/After are canonical complete projections; this
-// keeps S1 replay self-contained after superseded runtime artifacts are GC'd.
+// owner-runtime event. Before/After are canonical complete projections; the
+// typed witness makes them independently replayable after artifact GC.
 type RuntimeReceipt struct {
-	ID                   string                `json:"id"`
-	Kind                 RuntimeTransitionKind `json:"kind"`
-	PathTransitionKind   string                `json:"pathTransitionKind,omitempty"`
-	Owner                OwnerIdentity         `json:"owner"`
-	EpochID              EpochID               `json:"epochId"`
-	TemplateSourceDigest string                `json:"templateSourceDigest"`
-	PreRuntime           RuntimeBinding        `json:"preRuntime"`
-	PostRuntime          RuntimeBinding        `json:"postRuntime"`
-	Before               []AuthorityRecord     `json:"before"`
-	After                []AuthorityRecord     `json:"after"`
-	EvidenceDigest       string                `json:"evidenceDigest,omitempty"`
-	Decision             string                `json:"decision,omitempty"`
-	Actor                string                `json:"actor,omitempty"`
-	Timestamp            string                `json:"timestamp,omitempty"`
-	NodeID               string                `json:"nodeId,omitempty"`
-	BlockedAttempt       uint64                `json:"blockedAttempt,omitempty"`
-	Reason               string                `json:"reason,omitempty"`
-	EvidenceRef          string                `json:"evidenceRef,omitempty"`
-	ResolutionDigest     string                `json:"resolutionDigest,omitempty"`
+	ID                   string                          `json:"id"`
+	Kind                 RuntimeTransitionKind           `json:"kind"`
+	PathTransitionKind   string                          `json:"pathTransitionKind,omitempty"`
+	Owner                OwnerIdentity                   `json:"owner"`
+	EpochID              EpochID                         `json:"epochId"`
+	TemplateSourceDigest string                          `json:"templateSourceDigest"`
+	PreRuntime           RuntimeBinding                  `json:"preRuntime"`
+	PostRuntime          RuntimeBinding                  `json:"postRuntime"`
+	Before               []AuthorityRecord               `json:"before"`
+	After                []AuthorityRecord               `json:"after"`
+	EvidenceDigest       string                          `json:"evidenceDigest,omitempty"`
+	Decision             string                          `json:"decision,omitempty"`
+	Actor                string                          `json:"actor,omitempty"`
+	Timestamp            string                          `json:"timestamp,omitempty"`
+	NodeID               string                          `json:"nodeId,omitempty"`
+	BlockedAttempt       uint64                          `json:"blockedAttempt,omitempty"`
+	Reason               string                          `json:"reason,omitempty"`
+	EvidenceRef          string                          `json:"evidenceRef,omitempty"`
+	ResolutionDigest     string                          `json:"resolutionDigest,omitempty"`
+	GenesisWitness       *pathv1.RuntimeGenesisWitnessV1 `json:"genesisWitness,omitempty"`
+	ExecutionWitness     *pathv1.ExecutionWitnessV1      `json:"executionWitness,omitempty"`
 }
 
 type HistoryEvent struct {

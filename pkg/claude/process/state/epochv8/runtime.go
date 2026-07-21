@@ -87,7 +87,7 @@ func AttachGenesis(ctx context.Context, checkpoint *CheckpointV8, templateSource
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
-	inner, err := pathv1.BuildRuntimeGenesis(ctx, internal, templateSource, head.NodeID)
+	inner, genesisWitness, err := pathv1.BuildRuntimeGenesisWitness(ctx, internal, templateSource, head.NodeID)
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
@@ -104,25 +104,26 @@ func AttachGenesis(ctx context.Context, checkpoint *CheckpointV8, templateSource
 		TemplateSourceDigest: epoch.TemplateSourceDigest, PreRuntime: RuntimeBinding{},
 		PostRuntime: RuntimeBinding{Revision: 1, Digest: artifact.Digest},
 		Before:      cloneAuthorities(checkpoint.wire.Authorities), After: cloneAuthorities(artifact.Projection),
+		GenesisWitness: genesisWitness,
 	})
 }
 
 func AdvanceHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, templateSource []byte, transition *pathv1.ExecutionTransition) (RuntimeTransitionResult, error) {
-	if transition == nil || !runtimeAdvanceKind(transition.Kind()) {
+	if transition == nil || transition.Witness() == nil || !runtimeAdvanceKind(transition.Kind()) {
 		return RuntimeTransitionResult{}, fmt.Errorf("%w: path-v1 transition kind is not admitted", ErrInvalid)
 	}
 	return advanceRuntime(ctx, checkpoint, artifactJSON, templateSource, transition, RuntimeAdvanceHead, "")
 }
 
 func ClaimExternal(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, templateSource []byte, transition *pathv1.ExecutionTransition) (RuntimeTransitionResult, error) {
-	if transition == nil || transition.Kind() != pathv1.TransitionClaimAttempt {
+	if transition == nil || transition.Witness() == nil || transition.Kind() != pathv1.TransitionClaimAttempt {
 		return RuntimeTransitionResult{}, fmt.Errorf("%w: exact attempt claim is required", ErrInvalid)
 	}
 	return advanceRuntime(ctx, checkpoint, artifactJSON, templateSource, transition, RuntimeClaimExternal, "")
 }
 
 func FinishClaimedHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, templateSource []byte, transition *pathv1.ExecutionTransition, evidenceDigest string) (RuntimeTransitionResult, error) {
-	if transition == nil || transition.Kind() != pathv1.TransitionObserveAttempt || !canonicalDigest(evidenceDigest) {
+	if transition == nil || transition.Witness() == nil || transition.Kind() != pathv1.TransitionObserveAttempt || !canonicalDigest(evidenceDigest) {
 		return RuntimeTransitionResult{}, fmt.Errorf("%w: exact attempt observation/evidence is required", ErrInvalid)
 	}
 	return advanceRuntime(ctx, checkpoint, artifactJSON, templateSource, transition, RuntimeFinishClaimed, evidenceDigest)
@@ -133,7 +134,7 @@ func FinishClaimedHead(ctx context.Context, checkpoint *CheckpointV8, artifactJS
 // advancement and derives its receipt authority from the sealed path-v1
 // transition rather than caller-supplied metadata.
 func AuditedSettlement(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, templateSource []byte, transition *pathv1.ExecutionTransition) (RuntimeTransitionResult, error) {
-	if transition == nil {
+	if transition == nil || transition.Witness() == nil {
 		return RuntimeTransitionResult{}, fmt.Errorf("%w: exact audited settlement is required", ErrInvalid)
 	}
 	resolution, ok := transition.AuditedResolution()
@@ -184,6 +185,7 @@ func AuditedSettlement(ctx context.Context, checkpoint *CheckpointV8, artifactJS
 		Decision: resolution.Decision, Actor: resolution.Actor, Timestamp: resolution.Timestamp,
 		NodeID: resolution.NodeID, BlockedAttempt: resolution.BlockedAttempt, Reason: resolution.Reason,
 		EvidenceRef: resolution.EvidenceRef, ResolutionDigest: resolutionDigest,
+		ExecutionWitness: transition.Witness(),
 	}
 	return appendRuntimeReceipt(checkpoint, next, nextJSON, receipt)
 }
@@ -266,7 +268,7 @@ func ApplyTransferHead(ctx context.Context, checkpoint *CheckpointV8, artifactJS
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
-	inner, err := pathv1.BuildRuntimeGenesis(ctx, internal, candidateSource, target.NodeID)
+	inner, genesisWitness, err := pathv1.BuildRuntimeGenesisWitness(ctx, internal, candidateSource, target.NodeID)
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
@@ -284,6 +286,7 @@ func ApplyTransferHead(ctx context.Context, checkpoint *CheckpointV8, artifactJS
 		TemplateSourceDigest: record.CandidateEpoch.TemplateSourceDigest, PreRuntime: checkpoint.wire.RuntimeBinding,
 		PostRuntime: RuntimeBinding{Revision: checkpoint.wire.RuntimeBinding.Revision + 1, Digest: artifact.Digest},
 		Before:      cloneAuthorities(checkpoint.wire.Authorities), After: cloneAuthorities(artifact.Projection),
+		GenesisWitness: genesisWitness,
 	}
 	return appendRuntimeApplyReceipt(checkpoint, record, artifact, nextJSON, receipt)
 }
@@ -323,6 +326,7 @@ func advanceRuntime(ctx context.Context, checkpoint *CheckpointV8, artifactJSON,
 		TemplateSourceDigest: current.TemplateSourceDigest, PreRuntime: checkpoint.wire.RuntimeBinding,
 		PostRuntime: RuntimeBinding{Revision: checkpoint.wire.RuntimeBinding.Revision + 1, Digest: next.Digest},
 		Before:      cloneAuthorities(checkpoint.wire.Authorities), After: cloneAuthorities(next.Projection), EvidenceDigest: evidence,
+		ExecutionWitness: transition.Witness(),
 	}
 	return appendRuntimeReceipt(checkpoint, next, nextJSON, receipt)
 }
@@ -541,10 +545,19 @@ func mergeRuntimeHistory(current, projection []AuthorityRecord) []AuthorityRecor
 		byID[authority.Identity] = struct{}{}
 	}
 	for _, authority := range current {
-		if _, exists := byID[authority.Identity]; exists || !authority.State.terminal() {
+		if _, exists := byID[authority.Identity]; exists {
 			continue
 		}
-		projection = append(projection, cloneAuthority(authority))
+		retained := cloneAuthority(authority)
+		if !retained.State.terminal() {
+			if retained.State != AuthorityActive || retained.Kind != AuthorityOutcome && retained.Kind != AuthorityJoin ||
+				!strings.HasPrefix(retained.LocalID, "reservation.") || retained.ReservationID != retained.LocalID {
+				continue
+			}
+			retained.State = AuthorityCompleted
+			sealTerminal(&retained, "reservation", strings.TrimPrefix(retained.LocalID, "reservation."), string(pathv1.ReservationActivated))
+		}
+		projection = append(projection, retained)
 	}
 	sortAuthorities(projection)
 	return projection

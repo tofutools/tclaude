@@ -2,13 +2,120 @@ package epochv8
 
 import (
 	"bytes"
+	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
+
+func TestRuntimeWitnessRejectsCoherentForgeries(t *testing.T) {
+	started := runtimeStartedFixture(t, "runtime-witness-forgery")
+
+	t.Run("coherently_rehashed_allowed_kind_mint", func(t *testing.T) {
+		assertRehashedRuntimeMintRejected(t, started.Checkpoint, RuntimeAdvanceHead)
+	})
+	t.Run("route_submode_substitution", func(t *testing.T) {
+		forged := rehashLastRuntimeReceipt(t, started.Checkpoint, RuntimeAdvanceHead, func(receipt *RuntimeReceipt) {
+			receipt.ExecutionWitness.RouteObservation.Mode = "pending_route"
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "execution witness replay") {
+			t.Fatalf("coherently rehashed route witness forgery was accepted: %v", err)
+		}
+	})
+	t.Run("kind_substitution", func(t *testing.T) {
+		forged := rehashLastRuntimeReceipt(t, started.Checkpoint, RuntimeAdvanceHead, func(receipt *RuntimeReceipt) {
+			receipt.PathTransitionKind = pathv1.TransitionParallelAny
+			receipt.ExecutionWitness.Kind = pathv1.TransitionParallelAny
+			receipt.ExecutionWitness.RouteObservation = nil
+			receipt.ExecutionWitness.Empty = &pathv1.EmptyExecutionWitnessV1{}
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "execution witness replay") {
+			t.Fatalf("transition kind substitution was accepted: %v", err)
+		}
+	})
+	t.Run("pre_binding_splice", func(t *testing.T) {
+		forged := rehashLastRuntimeReceipt(t, started.Checkpoint, RuntimeAdvanceHead, func(receipt *RuntimeReceipt) {
+			receipt.ExecutionWitness.Pre = receipt.ExecutionWitness.Post
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "pre-binding mismatch") {
+			t.Fatalf("witness pre-binding splice was accepted: %v", err)
+		}
+	})
+	t.Run("execution_witness_bound", func(t *testing.T) {
+		forged := rehashLastRuntimeReceipt(t, started.Checkpoint, RuntimeAdvanceHead, func(receipt *RuntimeReceipt) {
+			receipt.ExecutionWitness.RouteObservation.Mode = strings.Repeat("x", pathv1.MaxExecutionWitnessBytes)
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "execution_witness_bytes") {
+			t.Fatalf("oversized execution witness was accepted: %v", err)
+		}
+	})
+}
+
+func TestRuntimeGenesisWitnessRejectsNodeSemanticPreimageMismatch(t *testing.T) {
+	attached := runtimeAttachedFixture(t, "runtime-genesis-forgery")
+	forged := rehashLastRuntimeReceipt(t, attached.Checkpoint, RuntimeAttachGenesis, func(receipt *RuntimeReceipt) {
+		var tmpl model.Template
+		if err := json.Unmarshal(receipt.GenesisWitness.Template, &tmpl); err != nil {
+			t.Fatal(err)
+		}
+		node := tmpl.Nodes["start"]
+		node.Name = "forged semantic node"
+		tmpl.Nodes["start"] = node
+		canonical, err := model.CanonicalSemanticJSON(&tmpl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipt.GenesisWitness.Template = canonical
+	})
+	if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "semantic") {
+		t.Fatalf("node semantic preimage mismatch was accepted: %v", err)
+	}
+}
+
+func runtimeAttachedFixture(t *testing.T, runID string) RuntimeTransitionResult {
+	t.Helper()
+	source := testTemplateSource(runID)
+	checkpoint, err := Initialize(runID, supportedCandidate(t, runID), []AuthoritySeed{{
+		LocalID: "initial-frontier", ReservationID: "initial-reservation", NodeID: "start",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := AttachGenesis(t.Context(), checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return attached
+}
+
+func runtimeStartedFixture(t *testing.T, runID string) RuntimeTransitionResult {
+	t.Helper()
+	source := testTemplateSource(runID)
+	attached := runtimeAttachedFixture(t, runID)
+	input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePath(t, attached.Artifact.Checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := pathv1.AdvanceExclusiveStart(t.Context(), input, aggregate.Authority.Genesis.OutputPathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := AdvanceHead(t.Context(), attached.Checkpoint, attached.ArtifactJSON, source, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return started
+}
 
 func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 	source := testTemplateSource("audited retry")
@@ -130,8 +237,8 @@ func assertRehashedRuntimeMintRejected(t *testing.T, checkpoint *CheckpointV8, k
 	t.Helper()
 	forged := rehashLastRuntimeReceipt(t, checkpoint, kind, func(receipt *RuntimeReceipt) {
 		authority := AuthorityRecord{
-			EpochID: receipt.EpochID, LocalID: "forged.retry", ReservationID: "forged.retry", NodeID: "work",
-			Kind: AuthorityRetry, State: AuthorityCompleted, DependsOn: []OwnerIdentity{},
+			EpochID: receipt.EpochID, LocalID: "command.forged", ReservationID: "forged", NodeID: "work",
+			Kind: AuthorityCommand, State: AuthorityCompleted, DependsOn: []OwnerIdentity{},
 		}
 		var err error
 		authority.Identity, err = authorityIdentity(checkpoint.wire.Anchor.RunID, authority)
@@ -142,7 +249,7 @@ func assertRehashedRuntimeMintRejected(t *testing.T, checkpoint *CheckpointV8, k
 		receipt.After = append(receipt.After, authority)
 		sortAuthorities(receipt.After)
 	})
-	if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "mints unauthorized") {
+	if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "typed witness projection") {
 		t.Fatalf("rehashed %s mint forgery was not rejected semantically: %v", kind, err)
 	}
 }
@@ -160,7 +267,7 @@ func assertRehashedRuntimeDropRejected(t *testing.T, checkpoint *CheckpointV8, k
 		forged := rehashLastRuntimeReceipt(t, checkpoint, kind, func(receipt *RuntimeReceipt) {
 			receipt.After = slices.DeleteFunc(receipt.After, func(authority AuthorityRecord) bool { return authority.Identity == candidate.Identity })
 		})
-		if err := VerifyCheckpointV8(forged); err != nil && strings.Contains(err.Error(), "drops authority") {
+		if err := VerifyCheckpointV8(forged); err != nil && strings.Contains(err.Error(), "typed witness projection") {
 			return
 		}
 	}
@@ -240,7 +347,7 @@ func TestRuntimeReplayRejectsTemporaryAuthorityDropMintAndRestore(t *testing.T) 
 				receipt.Before = slices.DeleteFunc(receipt.Before, func(authority AuthorityRecord) bool { return authority.Identity == conserved })
 			}
 		})
-		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "drops authority") {
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "typed witness projection") {
 			t.Fatalf("temporary authority drop/restore was not rejected semantically: %v", err)
 		}
 	})
@@ -265,7 +372,7 @@ func TestRuntimeReplayRejectsTemporaryAuthorityDropMintAndRestore(t *testing.T) 
 				sortAuthorities(receipt.Before)
 			}
 		})
-		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "mints unauthorized") {
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "typed witness projection") {
 			t.Fatalf("temporary authority mint/removal was not rejected semantically: %v", err)
 		}
 	})
@@ -563,6 +670,51 @@ func TestRuntimeArtifactStrictDecodeAndOwnerSource(t *testing.T) {
 	}
 	if _, err := VerifyRuntimeArtifact(t.Context(), result.Checkpoint, result.ArtifactJSON, testTemplateSource("other")); err == nil {
 		t.Fatal("wrong owner source accepted")
+	}
+}
+
+func TestMergeRuntimeHistoryTerminalizesOnlyActivatedReservationAuthorities(t *testing.T) {
+	reservation := AuthorityRecord{
+		Identity: "reservation-outcome", EpochID: "epoch", LocalID: "reservation.path-reservation",
+		ReservationID: "reservation.path-reservation", NodeID: "left", Kind: AuthorityOutcome, State: AuthorityActive,
+		DependsOn: []OwnerIdentity{},
+	}
+	join := AuthorityRecord{
+		Identity: "reservation-join", EpochID: "epoch", LocalID: "reservation.join-reservation",
+		ReservationID: "reservation.join-reservation", NodeID: "join", Kind: AuthorityJoin, State: AuthorityActive,
+		DependsOn: []OwnerIdentity{},
+	}
+	command := AuthorityRecord{
+		Identity: "missing-command", EpochID: "epoch", LocalID: "command.missing", ReservationID: "path-reservation",
+		NodeID: "left", Kind: AuthorityCommand, State: AuthorityActive, DependsOn: []OwnerIdentity{},
+	}
+	malformed := AuthorityRecord{
+		Identity: "malformed-reservation", EpochID: "epoch", LocalID: "reservation.malformed", ReservationID: "different",
+		NodeID: "left", Kind: AuthorityOutcome, State: AuthorityActive, DependsOn: []OwnerIdentity{},
+	}
+	terminal := AuthorityRecord{
+		Identity: "old-terminal", EpochID: "epoch", LocalID: "path.old", ReservationID: "old",
+		NodeID: "old", Kind: AuthorityOutcome, State: AuthorityCompleted, DependsOn: []OwnerIdentity{}, TerminalRecordID: "sealed",
+	}
+
+	merged := mergeRuntimeHistory([]AuthorityRecord{reservation, join, command, malformed, terminal}, nil)
+	if len(merged) != 3 {
+		t.Fatalf("merged authority count = %d, want 3: %+v", len(merged), merged)
+	}
+	for _, identity := range []OwnerIdentity{reservation.Identity, join.Identity} {
+		authority, ok := authorityByID(merged, identity)
+		if !ok || authority.State != AuthorityCompleted || authority.TerminalRecordID == "" {
+			t.Fatalf("activated reservation %q was not terminalized exactly: %+v", identity, authority)
+		}
+	}
+	if _, ok := authorityByID(merged, command.Identity); ok {
+		t.Fatal("unrelated missing active command was synthesized")
+	}
+	if _, ok := authorityByID(merged, malformed.Identity); ok {
+		t.Fatal("malformed reservation relationship was synthesized")
+	}
+	if got, ok := authorityByID(merged, terminal.Identity); !ok || !reflect.DeepEqual(got, terminal) {
+		t.Fatalf("historical terminal was not byte-identical: %+v", got)
 	}
 }
 

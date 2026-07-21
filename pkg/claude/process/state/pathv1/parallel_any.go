@@ -57,7 +57,7 @@ func AdvanceParallelAny(ctx context.Context, input *VerifiedExclusiveInput) (*Ex
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, TransitionParallelAny)
+		return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelAny, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 	}
 	return nil, ErrParallelAnyNotReady
 }
@@ -507,5 +507,5 @@ func AdvanceParallelDetachedSink(ctx context.Context, input *VerifiedExclusiveIn
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, TransitionParallelDetachedSink)
+	return newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelDetachedSink, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 }

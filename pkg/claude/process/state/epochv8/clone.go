@@ -1,6 +1,31 @@
 package epochv8
 
-import "slices"
+import (
+	"encoding/json"
+	"slices"
+
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
+)
+
+func cloneGenesisWitness(value *pathv1.RuntimeGenesisWitnessV1) *pathv1.RuntimeGenesisWitnessV1 {
+	if value == nil {
+		return nil
+	}
+	data, _ := json.Marshal(value)
+	var result pathv1.RuntimeGenesisWitnessV1
+	_ = json.Unmarshal(data, &result)
+	return &result
+}
+
+func cloneExecutionWitness(value *pathv1.ExecutionWitnessV1) *pathv1.ExecutionWitnessV1 {
+	if value == nil {
+		return nil
+	}
+	data, _ := json.Marshal(value)
+	var result pathv1.ExecutionWitnessV1
+	_ = json.Unmarshal(data, &result)
+	return &result
+}
 
 func cloneGraph(graph EpochGraph) EpochGraph {
 	graph.Nodes = slices.Clone(graph.Nodes)
@@ -80,6 +105,8 @@ func cloneHistory(events []HistoryEvent) []HistoryEvent {
 			runtime := *event.Runtime
 			runtime.Before = cloneAuthorities(runtime.Before)
 			runtime.After = cloneAuthorities(runtime.After)
+			runtime.GenesisWitness = cloneGenesisWitness(runtime.GenesisWitness)
+			runtime.ExecutionWitness = cloneExecutionWitness(runtime.ExecutionWitness)
 			result[i].Runtime = &runtime
 		}
 	}

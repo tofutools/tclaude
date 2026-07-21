@@ -224,6 +224,65 @@ func verifyExecutionInput(ctx context.Context, checkpointBytes, templateSource [
 	}, nil
 }
 
+func verifyExecutionInputFromTemplate(ctx context.Context, checkpoint *CheckpointV7, tmpl *model.Template, sourceHash string) (*VerifiedExclusiveInput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateCheckpointV7(checkpoint); err != nil || tmpl == nil {
+		return nil, fmt.Errorf("%w: reconstructed checkpoint/template is invalid", ErrExclusiveInputInvalid)
+	}
+	semanticHash, err := model.SemanticHash(tmpl)
+	if err != nil {
+		return nil, fmt.Errorf("%w: reconstructed template semantic hash: %v", ErrExclusiveInputInvalid, err)
+	}
+	event := checkpoint.Initialize
+	if model.TemplateRef(tmpl.ID, semanticHash) != event.UpgradeNeeded.TemplateRef || semanticHash != event.TemplateHash || sourceHash != event.UpgradeNeeded.TemplateSourceHash {
+		return nil, fmt.Errorf("%w: reconstructed template ref/source binding mismatch", ErrExclusiveInputInvalid)
+	}
+	genesisNode := tmpl.Start
+	if event.Kind == RuntimeGenesisEventKind {
+		if event.RuntimeGenesis == nil || tmpl.Nodes[event.RuntimeGenesis.NodeID].Type == "" {
+			return nil, fmt.Errorf("%w: reconstructed runtime genesis node is absent", ErrExclusiveInputInvalid)
+		}
+		genesisNode = event.RuntimeGenesis.NodeID
+	}
+	current, err := CurrentAggregateCheckpoint(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	view := current.View()
+	if view.RunID != event.UpgradeNeeded.RunID || view.TemplateRef != semanticHash || view.TemplateSourceHash != sourceHash || view.Authority == nil || view.Authority.Genesis.StartNodeID != genesisNode {
+		return nil, fmt.Errorf("%w: reconstructed aggregate binding mismatch", ErrExclusiveInputInvalid)
+	}
+	encoded, err := EncodeCheckpointV7(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	input := &VerifiedExclusiveInput{checkpointBytes: encoded, checkpoint: checkpoint, template: tmpl, binding: CurrentCheckpointBinding(checkpoint)}
+	hasParallel := false
+	for _, node := range tmpl.Nodes {
+		if node.Type == model.NodeTypeParallel {
+			hasParallel = true
+			break
+		}
+	}
+	if !hasParallel {
+		if err := validateExclusiveMaterializedTopology(ctx, current.View(), tmpl); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrExclusiveInputInvalid, err)
+		}
+		return input, nil
+	}
+	topology, err := deriveParallelTopology(tmpl, checkpoint.Initialize.Aggregate.TemplateRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
+	}
+	if err := validateParallelMaterializedTopology(ctx, current.View(), tmpl, topology); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrParallelInputInvalid, err)
+	}
+	input.parallel = &topology
+	return input, nil
+}
+
 // PlanExclusiveRoute creates one canonical route_paths_v1 command. It performs
 // no I/O and does not expose the supporting observation records it derives;
 // ReduceExclusiveRoute deterministically recomputes and validates them.

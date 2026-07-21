@@ -2,6 +2,8 @@ package epochv8
 
 import (
 	"cmp"
+	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
@@ -76,6 +78,8 @@ func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
 	seenApplySource := make(map[OwnerIdentity]struct{})
 	seenApplyTarget := make(map[OwnerIdentity]struct{})
 	seenFinishIdentity := make(map[OwnerIdentity]struct{})
+	var runtimeLineage *runtimeLineageReplay
+	witnessBytes := 0
 	for i, event := range wire.History {
 		if event.Revision != uint64(i+1) {
 			return fmt.Errorf("%w: history revision %d is out of order", ErrInvalid, event.Revision)
@@ -194,8 +198,14 @@ func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
 			} else if receipt.Kind == RuntimeApplyRetain || receipt.Kind == RuntimeApplyTransfer {
 				return fmt.Errorf("%w: runtime apply record is absent", ErrInvalid)
 			}
-			if err := validateRuntimeReceipt(runtimePrefix, receipt); err != nil {
-				return err
+			projectionBase := runtimePrefix.Authorities
+			if event.Apply != nil {
+				projectionBase = appliedAuthorities
+			}
+			var replayErr error
+			runtimeLineage, witnessBytes, replayErr = validateRuntimeReceipt(runtimePrefix, receipt, runtimeLineage, witnessBytes, projectionBase)
+			if replayErr != nil {
+				return replayErr
 			}
 			if event.Apply != nil && !reflect.DeepEqual(appliedAuthorities, receipt.After) {
 				return fmt.Errorf("%w: runtime receipt differs from applied handoff set", ErrInvalid)
@@ -266,29 +276,54 @@ func replayRuntimeApply(prefix *checkpointWire, record *ApplyRecord, base Bindin
 	return nil
 }
 
-func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt) error {
+type runtimeLineageReplay struct {
+	checkpoint  *pathv1.CheckpointV7
+	template    *model.Template
+	head        OwnerIdentity
+	epoch       EpochID
+	source      string
+	templateRef string
+}
+
+func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt, lineage *runtimeLineageReplay, witnessBytes int, projectionBase []AuthorityRecord) (*runtimeLineageReplay, int, error) {
+	for _, witness := range []any{receipt.GenesisWitness, receipt.ExecutionWitness} {
+		if reflect.ValueOf(witness).IsNil() {
+			continue
+		}
+		encoded, marshalErr := json.Marshal(witness)
+		if marshalErr != nil || len(encoded) == 0 || len(encoded) > pathv1.MaxCheckpointBytes || witnessBytes > pathv1.MaxCheckpointBytes-len(encoded) {
+			return nil, witnessBytes, &OverBudgetError{Limit: "runtime_witness_bytes", Value: witnessBytes + len(encoded), Maximum: pathv1.MaxCheckpointBytes}
+		}
+		witnessBytes += len(encoded)
+	}
+	if receipt.ExecutionWitness != nil {
+		encoded, _ := json.Marshal(receipt.ExecutionWitness)
+		if len(encoded) > pathv1.MaxExecutionWitnessBytes {
+			return nil, witnessBytes, &OverBudgetError{Limit: "execution_witness_bytes", Value: len(encoded), Maximum: pathv1.MaxExecutionWitnessBytes}
+		}
+	}
 	wantID, err := runtimeReceiptIdentity(receipt)
 	if err != nil || wantID != receipt.ID || receipt.PreRuntime != prefix.RuntimeBinding ||
 		!reflect.DeepEqual(receipt.Before, prefix.Authorities) || !canonicalDigest(string(receipt.Owner)) ||
 		!canonicalDigest(string(receipt.EpochID)) || !canonicalDigest(receipt.TemplateSourceDigest) {
-		return fmt.Errorf("%w: runtime receipt identity/binding is invalid", ErrInvalid)
+		return nil, witnessBytes, fmt.Errorf("%w: runtime receipt identity/binding is invalid", ErrInvalid)
 	}
 	epoch, ok := epochByID(prefix.Epochs, receipt.EpochID)
 	if !ok || epoch.TemplateSourceDigest != receipt.TemplateSourceDigest {
-		return fmt.Errorf("%w: runtime receipt owner source is invalid", ErrInvalid)
+		return nil, witnessBytes, fmt.Errorf("%w: runtime receipt owner source is invalid", ErrInvalid)
 	}
 	owner, ownerOK := authorityByID(receipt.Before, receipt.Owner)
 	if !ownerOK {
 		owner, ownerOK = authorityByID(receipt.After, receipt.Owner)
 	}
 	if !ownerOK || owner.EpochID != receipt.EpochID {
-		return fmt.Errorf("%w: runtime receipt owner epoch is invalid", ErrInvalid)
+		return nil, witnessBytes, fmt.Errorf("%w: runtime receipt owner epoch is invalid", ErrInvalid)
 	}
 	if len(receipt.After) > MaxAuthorities {
-		return &OverBudgetError{Limit: "authorities", Value: len(receipt.After), Maximum: MaxAuthorities}
+		return nil, witnessBytes, &OverBudgetError{Limit: "authorities", Value: len(receipt.After), Maximum: MaxAuthorities}
 	}
 	if err := validateAuthorities(prefix.Anchor.RunID, prefix.Epochs, receipt.After, false); err != nil {
-		return err
+		return nil, witnessBytes, err
 	}
 	preAbsent := receipt.PreRuntime == (RuntimeBinding{})
 	settlementFieldsEmpty := receipt.Decision == "" && receipt.Actor == "" && receipt.Timestamp == "" && receipt.NodeID == "" &&
@@ -296,32 +331,32 @@ func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt) error
 	switch receipt.Kind {
 	case RuntimeAttachGenesis:
 		if !preAbsent || receipt.PathTransitionKind != "" || receipt.PostRuntime.Revision != 1 || !canonicalDigest(receipt.PostRuntime.Digest) || receipt.EvidenceDigest != "" || !settlementFieldsEmpty {
-			return fmt.Errorf("%w: attach runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: attach runtime receipt is invalid", ErrInvalid)
 		}
 		active := activeAuthorities(receipt.Before)
 		if !reflect.DeepEqual(receipt.Before, receipt.After) || len(active) != 1 || active[0].Identity != receipt.Owner ||
 			active[0].Kind != AuthorityFrontier || active[0].State != AuthorityVerifiedUnclaimed {
-			return fmt.Errorf("%w: attach runtime authority delta is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: attach runtime authority delta is invalid", ErrInvalid)
 		}
 	case RuntimeAdvanceHead:
 		if preAbsent || !runtimeSuccessor(receipt.PreRuntime, receipt.PostRuntime) || !runtimeAdvanceKind(receipt.PathTransitionKind) || receipt.EvidenceDigest != "" || !settlementFieldsEmpty {
-			return fmt.Errorf("%w: advance runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: advance runtime receipt is invalid", ErrInvalid)
 		}
 	case RuntimeClaimExternal:
 		if preAbsent || !runtimeSuccessor(receipt.PreRuntime, receipt.PostRuntime) || receipt.PathTransitionKind != pathv1.TransitionClaimAttempt || receipt.EvidenceDigest != "" || !settlementFieldsEmpty ||
 			!authorityStateChanged(receipt.Before, receipt.After, receipt.Owner, AuthorityVerifiedUnclaimed, AuthorityClaimed) {
-			return fmt.Errorf("%w: claim runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: claim runtime receipt is invalid", ErrInvalid)
 		}
 	case RuntimeFinishClaimed:
 		if preAbsent || !runtimeSuccessor(receipt.PreRuntime, receipt.PostRuntime) || receipt.PathTransitionKind != pathv1.TransitionObserveAttempt || !settlementFieldsEmpty ||
 			!authorityBecameTerminal(receipt.Before, receipt.After, receipt.Owner) || !canonicalDigest(receipt.EvidenceDigest) {
-			return fmt.Errorf("%w: finish runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: finish runtime receipt is invalid", ErrInvalid)
 		}
 	case RuntimeSettlement:
 		if preAbsent || !runtimeSuccessor(receipt.PreRuntime, receipt.PostRuntime) || receipt.PathTransitionKind != pathv1.TransitionAuditedSettlement || receipt.EvidenceDigest != "" ||
 			(receipt.Decision != "retry" && receipt.Decision != "skip" && receipt.Decision != "cancel") ||
 			strings.TrimSpace(receipt.Actor) == "" || strings.TrimSpace(receipt.Timestamp) == "" {
-			return fmt.Errorf("%w: settlement runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: settlement runtime receipt is invalid", ErrInvalid)
 		}
 		resolution := pathv1.BlockResolution{
 			NodeID: receipt.NodeID, BlockedAttempt: receipt.BlockedAttempt, Decision: receipt.Decision,
@@ -329,262 +364,148 @@ func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt) error
 		}
 		resolutionDigest, resolutionErr := pathv1.ValidateBlockResolution(resolution)
 		if resolutionErr != nil || resolutionDigest != receipt.ResolutionDigest {
-			return fmt.Errorf("%w: settlement runtime provenance is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: settlement runtime provenance is invalid", ErrInvalid)
 		}
 		added := addedVerifiedFrontiers(receipt.Before, receipt.After)
 		addedActive := addedActiveAuthorities(receipt.Before, receipt.After)
 		if receipt.Decision == "retry" && (len(added) != 1 || added[0] != receipt.Owner || len(addedActive) != 1 || addedActive[0] != receipt.Owner) ||
 			receipt.Decision != "retry" && (len(added) != 0 || len(addedActive) != 0) {
-			return fmt.Errorf("%w: settlement runtime authority delta is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: settlement runtime authority delta is invalid", ErrInvalid)
 		}
 	case RuntimeApplyRetain:
 		if preAbsent || receipt.PreRuntime != receipt.PostRuntime || !reflect.DeepEqual(receipt.Before, receipt.After) || receipt.PathTransitionKind != "" || receipt.EvidenceDigest != "" || !settlementFieldsEmpty {
-			return fmt.Errorf("%w: retain runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: retain runtime receipt is invalid", ErrInvalid)
 		}
 	case RuntimeApplyTransfer:
 		if preAbsent || !runtimeSuccessor(receipt.PreRuntime, receipt.PostRuntime) || receipt.PathTransitionKind != "" || receipt.EvidenceDigest != "" || !settlementFieldsEmpty {
-			return fmt.Errorf("%w: transfer runtime receipt is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: transfer runtime receipt is invalid", ErrInvalid)
 		}
 		beforeActive, afterActive := activeAuthorities(receipt.Before), activeAuthorities(receipt.After)
 		if len(beforeActive) != 1 || beforeActive[0].Kind != AuthorityFrontier || beforeActive[0].State != AuthorityVerifiedUnclaimed ||
 			len(afterActive) != 1 || afterActive[0].Identity != receipt.Owner || afterActive[0].Kind != AuthorityFrontier || afterActive[0].State != AuthorityVerifiedUnclaimed {
-			return fmt.Errorf("%w: transfer runtime active closure is invalid", ErrInvalid)
+			return nil, witnessBytes, fmt.Errorf("%w: transfer runtime active closure is invalid", ErrInvalid)
 		}
 	default:
-		return fmt.Errorf("%w: unknown runtime receipt kind %q", ErrInvalid, receipt.Kind)
+		return nil, witnessBytes, fmt.Errorf("%w: unknown runtime receipt kind %q", ErrInvalid, receipt.Kind)
 	}
-	if err := validateRuntimeAuthorityDelta(receipt); err != nil {
+	nextLineage, err := replayRuntimeWitness(prefix, receipt, lineage, epoch, projectionBase)
+	if err != nil {
+		return nil, witnessBytes, err
+	}
+	return nextLineage, witnessBytes, nil
+}
+
+func replayRuntimeWitness(prefix checkpointWire, receipt RuntimeReceipt, lineage *runtimeLineageReplay, epoch TemplateEpoch, projectionBase []AuthorityRecord) (*runtimeLineageReplay, error) {
+	switch receipt.Kind {
+	case RuntimeAttachGenesis, RuntimeApplyTransfer:
+		if receipt.GenesisWitness == nil || receipt.ExecutionWitness != nil {
+			return nil, fmt.Errorf("%w: runtime genesis witness shape is invalid", ErrInvalid)
+		}
+		witness := receipt.GenesisWitness
+		internal, err := RuntimeInternalRunID(prefix.Anchor.RunID, receipt.Owner, receipt.EpochID, receipt.TemplateSourceDigest)
+		if err != nil || witness.InternalRunID != internal || witness.TemplateRef != epoch.TemplateRef || witness.TemplateSourceDigest != epoch.TemplateSourceDigest || witness.NodeID == "" {
+			return nil, fmt.Errorf("%w: runtime genesis witness binding is invalid", ErrInvalid)
+		}
+		inner, tmpl, err := pathv1.ReplayRuntimeGenesisWitness(context.Background(), witness)
+		if err != nil {
+			return nil, fmt.Errorf("%w: runtime genesis witness replay: %v", ErrInvalid, err)
+		}
+		if err := validateRuntimeWitnessTemplate(epoch, tmpl); err != nil {
+			return nil, err
+		}
+		next := &runtimeLineageReplay{checkpoint: inner, template: tmpl, head: receipt.Owner, epoch: receipt.EpochID, source: receipt.TemplateSourceDigest, templateRef: epoch.TemplateRef}
+		if err := validateReplayedRuntimeProjection(prefix, receipt, next, projectionBase); err != nil {
+			return nil, err
+		}
+		return next, nil
+	case RuntimeApplyRetain:
+		if lineage == nil || receipt.GenesisWitness != nil || receipt.ExecutionWitness != nil {
+			return nil, fmt.Errorf("%w: retain runtime lineage witness is invalid", ErrInvalid)
+		}
+		return lineage, nil
+	default:
+		if lineage == nil || receipt.GenesisWitness != nil || receipt.ExecutionWitness == nil || lineage.epoch != receipt.EpochID || lineage.source != receipt.TemplateSourceDigest {
+			return nil, fmt.Errorf("%w: execution runtime lineage witness is invalid", ErrInvalid)
+		}
+		transition, err := pathv1.ReplayExecutionWitnessV1(context.Background(), lineage.checkpoint, lineage.template, lineage.source, receipt.ExecutionWitness)
+		if err != nil {
+			return nil, fmt.Errorf("%w: execution witness replay: %v", ErrInvalid, err)
+		}
+		if transition.Kind() != receipt.PathTransitionKind {
+			return nil, fmt.Errorf("%w: execution witness transition kind differs", ErrInvalid)
+		}
+		inner, err := pathv1.ReplayedCheckpointV7(transition)
+		if err != nil {
+			return nil, err
+		}
+		next := &runtimeLineageReplay{checkpoint: inner, template: lineage.template, head: lineage.head, epoch: lineage.epoch, source: lineage.source, templateRef: lineage.templateRef}
+		if err := validateReplayedRuntimeProjection(prefix, receipt, next, projectionBase); err != nil {
+			return nil, err
+		}
+		return next, nil
+	}
+}
+
+func validateRuntimeWitnessTemplate(epoch TemplateEpoch, tmpl *model.Template) error {
+	if tmpl == nil || len(tmpl.Nodes) != len(epoch.Graph.Nodes) {
+		return fmt.Errorf("%w: runtime witness graph cardinality differs", ErrInvalid)
+	}
+	graphNodes := make(map[string]GraphNode, len(epoch.Graph.Nodes))
+	for _, node := range epoch.Graph.Nodes {
+		graphNodes[node.ID] = node
+	}
+	for id, node := range tmpl.Nodes {
+		graphNode, ok := graphNodes[id]
+		digest, err := digestValue("template-node/v1", node)
+		if !ok || err != nil || graphNode.SemanticDigest != digest || graphNode.Type != string(node.Type) || graphNode.Join != string(node.Join) {
+			return fmt.Errorf("%w: runtime witness node semantic preimage differs for %q", ErrInvalid, id)
+		}
+	}
+	edges, diagnostics := model.NormalizeEdgesWithinBudget(tmpl)
+	if diagnostics.HasErrors() || len(edges) != len(epoch.Graph.Edges) {
+		return fmt.Errorf("%w: runtime witness graph edges differ", ErrInvalid)
+	}
+	for i, edge := range edges {
+		want := GraphEdge{From: edge.From, Outcome: edge.Outcome, To: edge.To}
+		if !reflect.DeepEqual(want, epoch.Graph.Edges[i]) {
+			return fmt.Errorf("%w: runtime witness graph edge differs", ErrInvalid)
+		}
+	}
+	return nil
+}
+
+func validateReplayedRuntimeProjection(prefix checkpointWire, receipt RuntimeReceipt, lineage *runtimeLineageReplay, projectionBase []AuthorityRecord) error {
+	innerJSON, err := pathv1.EncodeCheckpointV7(lineage.checkpoint)
+	if err != nil {
 		return err
 	}
-	return nil
-}
-
-func validateRuntimeAuthorityDelta(receipt RuntimeReceipt) error {
-	switch receipt.Kind {
-	case RuntimeAttachGenesis, RuntimeApplyRetain, RuntimeApplyTransfer:
-		return nil
-	case RuntimeAdvanceHead:
-		return validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
-			if old.EpochID != receipt.EpochID {
-				return false
-			}
-			if receipt.PathTransitionKind == pathv1.TransitionClaimWait && old.Kind == AuthorityFrontier &&
-				old.State == AuthorityVerifiedUnclaimed && next.State == AuthorityClaimed {
-				return true
-			}
-			return old.State.active() && next.State.terminal() && runtimeAdvanceChangedKind(receipt.PathTransitionKind, old.Kind)
-		}, func(added AuthorityRecord) bool {
-			return added.EpochID == receipt.EpochID && runtimeAdvanceAddedKind(receipt.PathTransitionKind, added.Kind)
-		})
-	case RuntimeClaimExternal:
-		commands, effects := 0, 0
-		var commandReservation, effectReservation string
-		owner, ok := authorityByID(receipt.Before, receipt.Owner)
-		if !ok {
-			return fmt.Errorf("%w: claimed runtime owner is absent", ErrInvalid)
-		}
-		err := validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
-			return old.Identity == receipt.Owner && old.Kind == AuthorityFrontier && old.State == AuthorityVerifiedUnclaimed && next.State == AuthorityClaimed
-		}, func(added AuthorityRecord) bool {
-			if added.EpochID != receipt.EpochID || added.NodeID != owner.NodeID || added.State != AuthorityActive {
-				return false
-			}
-			switch added.Kind {
-			case AuthorityCommand:
-				if !strings.HasPrefix(added.LocalID, "command.") {
-					return false
-				}
-				commands++
-				commandReservation = added.ReservationID
-			case AuthorityDispatchedSideEffect:
-				if !strings.HasPrefix(added.LocalID, "effect.") {
-					return false
-				}
-				effects++
-				effectReservation = added.ReservationID
-			default:
-				return false
-			}
-			return true
-		})
-		if err != nil || commands != 1 || effects != 1 || commandReservation != effectReservation {
-			return fmt.Errorf("%w: claim runtime authority delta is not exact (commands=%d effects=%d owner=%q node=%q reservation=%q): %v", ErrInvalid, commands, effects, owner.Identity, owner.NodeID, owner.ReservationID, err)
-		}
-		return nil
-	case RuntimeFinishClaimed:
-		commands, finishedCommands, finishedEffects := 0, 0, 0
-		var attemptReservation string
-		owner, ok := authorityByID(receipt.Before, receipt.Owner)
-		if !ok {
-			return fmt.Errorf("%w: finished runtime owner is absent", ErrInvalid)
-		}
-		err := validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
-			if old.Identity == receipt.Owner {
-				return old.Kind == AuthorityFrontier && old.State == AuthorityClaimed && next.State.terminal()
-			}
-			if old.EpochID != receipt.EpochID || !old.State.active() || !next.State.terminal() {
-				return false
-			}
-			switch old.Kind {
-			case AuthorityCommand, AuthorityDispatchedSideEffect:
-				if old.NodeID != owner.NodeID || attemptReservation != "" && attemptReservation != old.ReservationID {
-					return false
-				}
-				attemptReservation = old.ReservationID
-				if old.Kind == AuthorityCommand {
-					finishedCommands++
-				} else {
-					finishedEffects++
-				}
-				return true
-			case AuthorityContact:
-				if old.NodeID != owner.NodeID {
-					return false
-				}
-				return true
-			default:
-				return false
-			}
-		}, func(added AuthorityRecord) bool {
-			if added.EpochID != receipt.EpochID || added.Kind != AuthorityCommand || !strings.HasPrefix(added.LocalID, "command.") || !added.State.terminal() || added.NodeID != owner.NodeID || attemptReservation == "" || added.ReservationID != attemptReservation {
-				return false
-			}
-			commands++
-			return true
-		})
-		if err != nil || commands != 1 || finishedCommands != 1 || finishedEffects != 1 {
-			return fmt.Errorf("%w: finish runtime authority delta is not exact (added_commands=%d finished_commands=%d finished_effects=%d owner=%q node=%q reservation=%q): %v", ErrInvalid, commands, finishedCommands, finishedEffects, owner.Identity, owner.NodeID, owner.ReservationID, err)
-		}
-		return nil
-	case RuntimeSettlement:
-		frontiers, obligations, changedFrontiers := 0, 0, 0
-		err := validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
-			if old.EpochID != receipt.EpochID || old.Kind != AuthorityFrontier || old.NodeID != receipt.NodeID ||
-				receipt.Decision != "retry" || old.State != AuthorityCompleted || next.State != AuthorityFailed {
-				return false
-			}
-			changedFrontiers++
-			return true
-		}, func(added AuthorityRecord) bool {
-			if added.EpochID != receipt.EpochID || added.NodeID != receipt.NodeID {
-				return false
-			}
-			switch added.Kind {
-			case AuthorityFrontier:
-				if receipt.Decision != "retry" || added.Identity != receipt.Owner || added.State != AuthorityVerifiedUnclaimed ||
-					added.LocalID != "retry."+receipt.ResolutionDigest || added.ReservationID != "retry."+receipt.ResolutionDigest {
-					return false
-				}
-				frontiers++
-			case AuthorityObligation:
-				if !added.State.terminal() || !strings.HasPrefix(added.LocalID, "effect.") {
-					return false
-				}
-				obligations++
-			default:
-				return false
-			}
-			return true
-		})
-		wantFrontiers := 0
-		if receipt.Decision == "retry" {
-			wantFrontiers = 1
-		}
-		wantChangedFrontiers := 0
-		if receipt.Decision == "retry" {
-			wantChangedFrontiers = 1
-		}
-		if err != nil || changedFrontiers != wantChangedFrontiers || frontiers != wantFrontiers || obligations != 1 {
-			return fmt.Errorf("%w: settlement runtime authority delta is not exact (changed=%d frontiers=%d obligations=%d): %v", ErrInvalid, changedFrontiers, frontiers, obligations, err)
-		}
-		return nil
-	default:
-		return fmt.Errorf("%w: runtime authority delta kind is unknown", ErrInvalid)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(lineage.checkpoint)
+	if err != nil {
+		return err
 	}
-}
-
-func validateConservedRuntimeAuthorities(receipt RuntimeReceipt, changed func(AuthorityRecord, AuthorityRecord) bool, added func(AuthorityRecord) bool) error {
-	after := make(map[OwnerIdentity]AuthorityRecord, len(receipt.After))
-	for _, authority := range receipt.After {
-		after[authority.Identity] = authority
+	internal, err := RuntimeInternalRunID(prefix.Anchor.RunID, lineage.head, lineage.epoch, lineage.source)
+	if err != nil || aggregate.RunID != internal || aggregate.TemplateSourceHash != lineage.source {
+		return fmt.Errorf("%w: replayed runtime aggregate identity differs", ErrInvalid)
 	}
-	known := make(map[OwnerIdentity]struct{}, len(receipt.Before))
-	for _, old := range receipt.Before {
-		known[old.Identity] = struct{}{}
-		next, ok := after[old.Identity]
-		if !ok {
-			return fmt.Errorf("%w: runtime receipt drops authority %q", ErrInvalid, old.Identity)
-		}
-		if reflect.DeepEqual(old, next) {
-			continue
-		}
-		oldEnvelope, nextEnvelope := old, next
-		oldEnvelope.State, nextEnvelope.State = "", ""
-		oldEnvelope.TerminalRecordID, nextEnvelope.TerminalRecordID = "", ""
-		if !reflect.DeepEqual(oldEnvelope, nextEnvelope) || changed == nil || !changed(old, next) {
-			return fmt.Errorf("%w: runtime receipt changes unauthorized %s authority %q node=%q local=%q (%s to %s)", ErrInvalid, old.Kind, old.Identity, old.NodeID, old.LocalID, old.State, next.State)
-		}
+	head, ok := authorityByID(projectionBase, lineage.head)
+	if !ok {
+		return fmt.Errorf("%w: replayed runtime head authority is absent", ErrInvalid)
 	}
-	for _, authority := range receipt.After {
-		if _, exists := known[authority.Identity]; exists {
-			continue
-		}
-		if added == nil || !added(authority) {
-			return fmt.Errorf("%w: %s runtime receipt mints unauthorized %s authority %q node=%q local=%q state=%q", ErrInvalid, receipt.PathTransitionKind, authority.Kind, authority.Identity, authority.NodeID, authority.LocalID, authority.State)
-		}
+	projection, err := projectRuntimeAuthorities(prefix.Anchor.RunID, lineage.epoch, head, aggregate)
+	if err != nil {
+		return err
+	}
+	projection = mergeRuntimeHistory(projectionBase, projection)
+	if !reflect.DeepEqual(projection, receipt.After) {
+		return fmt.Errorf("%w: runtime receipt After differs from typed witness projection", ErrInvalid)
+	}
+	artifact := RuntimeArtifactV1{Version: RuntimeArtifactVersion, InternalRunID: internal, HeadOwner: lineage.head, EpochID: lineage.epoch,
+		TemplateRef: lineage.templateRef, TemplateSourceDigest: lineage.source, Checkpoint: innerJSON, Projection: projection}
+	artifact.Digest, err = runtimeArtifactDigest(artifact)
+	if err != nil || artifact.Digest != receipt.PostRuntime.Digest {
+		return fmt.Errorf("%w: runtime receipt post binding differs from typed witness artifact", ErrInvalid)
 	}
 	return nil
-}
-
-func runtimeAdvanceAddedKind(pathKind string, kind AuthorityKind) bool {
-	switch pathKind {
-	case pathv1.TransitionClaimWait:
-		return kind == AuthorityCommand || kind == AuthorityWait || kind == AuthorityTimer
-	case pathv1.TransitionObserveWait:
-		return kind == AuthorityCommand
-	case pathv1.TransitionRouteObservation:
-		return kind == AuthorityFrontier || kind == AuthorityOutcome || kind == AuthorityJoin || kind == AuthorityCommand || kind == AuthorityDispatchedSideEffect
-	case pathv1.TransitionClaimCompletion, pathv1.TransitionObserveCompletion:
-		return kind == AuthorityCommand
-	case pathv1.TransitionScheduleContact, pathv1.TransitionMarkContactDue, pathv1.TransitionNudgeContact,
-		pathv1.TransitionEscalateContact, pathv1.TransitionPauseContact, pathv1.TransitionLatchContactHuman,
-		pathv1.TransitionClearContactHumanLatch, pathv1.TransitionRecoverContact:
-		return kind == AuthorityContact || kind == AuthorityObligation || kind == AuthorityCommand
-	case pathv1.TransitionParallelSplit, pathv1.TransitionParallelAll, pathv1.TransitionParallelAny,
-		pathv1.TransitionParallelRoute, pathv1.TransitionParallelExclusiveArrival, pathv1.TransitionParallelEnd,
-		pathv1.TransitionParallelPropagation, pathv1.TransitionParallelPropagationSeed,
-		pathv1.TransitionParallelTerminalClosure, pathv1.TransitionParallelDetachedSink,
-		pathv1.TransitionParallelDetachmentIntern:
-		return kind != AuthorityRetry && kind != AuthorityRollbackForward
-	default:
-		return false
-	}
-}
-
-func runtimeAdvanceChangedKind(pathKind string, kind AuthorityKind) bool {
-	switch pathKind {
-	case pathv1.TransitionClaimWait:
-		return kind == AuthorityFrontier || kind == AuthorityCommand || kind == AuthorityWait || kind == AuthorityTimer
-	case pathv1.TransitionObserveWait:
-		return kind == AuthorityFrontier || kind == AuthorityCommand || kind == AuthorityWait || kind == AuthorityTimer
-	case pathv1.TransitionRouteObservation:
-		return kind == AuthorityFrontier || kind == AuthorityOutcome || kind == AuthorityJoin || kind == AuthorityCommand ||
-			kind == AuthorityWait || kind == AuthorityTimer || kind == AuthorityObligation || kind == AuthorityContact || kind == AuthorityDispatchedSideEffect
-	case pathv1.TransitionClaimCompletion, pathv1.TransitionObserveCompletion:
-		return kind == AuthorityFrontier || kind == AuthorityOutcome || kind == AuthorityCommand
-	case pathv1.TransitionScheduleContact, pathv1.TransitionMarkContactDue, pathv1.TransitionNudgeContact,
-		pathv1.TransitionEscalateContact, pathv1.TransitionPauseContact, pathv1.TransitionLatchContactHuman,
-		pathv1.TransitionClearContactHumanLatch, pathv1.TransitionRecoverContact:
-		return kind == AuthorityContact || kind == AuthorityObligation || kind == AuthorityCommand
-	case pathv1.TransitionParallelSplit, pathv1.TransitionParallelAll, pathv1.TransitionParallelAny,
-		pathv1.TransitionParallelRoute, pathv1.TransitionParallelExclusiveArrival, pathv1.TransitionParallelEnd,
-		pathv1.TransitionParallelPropagation, pathv1.TransitionParallelPropagationSeed,
-		pathv1.TransitionParallelTerminalClosure, pathv1.TransitionParallelDetachedSink,
-		pathv1.TransitionParallelDetachmentIntern:
-		return kind != AuthorityRetry && kind != AuthorityRollbackForward
-	default:
-		return false
-	}
 }
 
 func activeAuthorities(authorities []AuthorityRecord) []AuthorityRecord {

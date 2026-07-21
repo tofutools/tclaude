@@ -174,17 +174,28 @@ func BuildRuntimeGenesis(ctx context.Context, runID string, templateSource []byt
 	if strings.TrimSpace(runID) == "" || nodeID == "" || parsed.Template.Nodes[nodeID].Type == "" {
 		return nil, fmt.Errorf("%w: runtime run/node authority is invalid", ErrInitializationInvalid)
 	}
-	anchor := RuntimeGenesis{RunID: runID, TemplateRef: parsed.Ref, TemplateSourceHash: parsed.SourceHash, NodeID: nodeID}
+	return buildRuntimeGenesisFromTemplate(ctx, runID, parsed.Template, parsed.Ref, parsed.SourceHash, nodeID)
+}
+
+func buildRuntimeGenesisFromTemplate(ctx context.Context, runID string, tmpl *model.Template, templateRef, sourceHash, nodeID string) (*CheckpointV7, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tmpl == nil || strings.TrimSpace(runID) == "" || nodeID == "" || tmpl.Nodes[nodeID].Type == "" {
+		return nil, fmt.Errorf("%w: runtime run/node authority is invalid", ErrInitializationInvalid)
+	}
+	anchor := RuntimeGenesis{RunID: runID, TemplateRef: templateRef, TemplateSourceHash: sourceHash, NodeID: nodeID}
+	var err error
 	anchor.Digest, err = runtimeGenesisDigest(anchor)
 	if err != nil {
 		return nil, err
 	}
 	needed := UpgradeNeeded{
 		Reason: UpgradeMigrationRequired, RunID: runID, LegacyStateSchema: LegacyMaxSchemaVersion,
-		Checkpoint: CheckpointBinding{Digest: anchor.Digest}, TemplateRef: parsed.Ref,
-		TemplateSourceHash: parsed.SourceHash, ActiveLegacyIDs: []LegacyActiveID{},
+		Checkpoint: CheckpointBinding{Digest: anchor.Digest}, TemplateRef: templateRef,
+		TemplateSourceHash: sourceHash, ActiveLegacyIDs: []LegacyActiveID{},
 	}
-	return buildInitializationAt(ctx, needed, parsed.Template, nodeID, RuntimeGenesisEventKind, &anchor)
+	return buildInitializationAt(ctx, needed, tmpl, nodeID, RuntimeGenesisEventKind, &anchor)
 }
 
 func buildInitializationAt(ctx context.Context, needed UpgradeNeeded, tmpl *model.Template, nodeID, eventKind string, runtime *RuntimeGenesis) (*CheckpointV7, error) {
