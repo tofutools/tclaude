@@ -118,6 +118,38 @@ func TestAuthorizedApplyRejectsMissingOrAlternateCoherentlyRehashedProvenance(t 
 	}
 }
 
+func TestAuthorizedApplyRejectsTransferBeforeRuntimeGenesis(t *testing.T) {
+	checkpoint, err := Initialize("authorized-pregen-transfer", supportedCandidate(t, "base"), []AuthoritySeed{{
+		LocalID: "frontier", ReservationID: "reservation", NodeID: "start",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := checkpoint.View().ProtectedAuthorities[0]
+	preview, err := PreviewApply(checkpoint, ApplyDraft{
+		BaseBinding: checkpoint.Binding(), Candidate: supportedCandidate(t, "next"),
+		Handoffs: []HandoffDirective{{
+			Source: owner.Identity, Action: HandoffTransfer,
+			TargetLocalID: "next-frontier", TargetReservationID: "next-reservation", TargetNodeID: "start",
+		}},
+	})
+	if err != nil || preview.Plan == nil {
+		t.Fatalf("preview: plan=%v err=%v", preview.Plan != nil, err)
+	}
+	preflight, err := PreflightRuntimeApply(t.Context(), checkpoint, nil, nil, testTemplateSource("next"), preview.Plan)
+	if err != nil || preflight != RuntimeApplyRefused {
+		t.Fatalf("preflight=%q err=%v", preflight, err)
+	}
+	if _, err := ApplyAuthorized(checkpoint, preview.Plan, testApplyAuthorization(strings.Repeat("f", 64))); err == nil {
+		t.Fatal("authorized pre-genesis transfer was accepted")
+	}
+	attached, err := AttachGenesis(t.Context(), checkpoint, testTemplateSource("base"))
+	if err != nil || attached.Artifact == nil {
+		t.Fatalf("refusal stranded genesis: artifact=%v err=%v", attached.Artifact != nil, err)
+	}
+}
+
 func TestAuthorizedRuntimeRetainAndTransferRecordUnlockReason(t *testing.T) {
 	source0 := testTemplateSource("base")
 	checkpoint, err := Initialize("authorized-runtime", supportedCandidate(t, "base"), []AuthoritySeed{{

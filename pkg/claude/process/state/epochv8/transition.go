@@ -251,6 +251,9 @@ func apply(checkpoint *CheckpointV8, plan *ApplyPlan, authorization *ApplyAuthor
 	if err := validateApplyCoreStatic(checkpoint.wire.Anchor.RunID, core); err != nil {
 		return TransitionResult{}, err
 	}
+	if authorization != nil && checkpoint.wire.RuntimeBinding == (RuntimeBinding{}) && planTransfersAuthority(plan) {
+		return TransitionResult{}, fmt.Errorf("%w: authorized transfer requires an attached runtime", ErrInvalid)
+	}
 	for _, event := range checkpoint.wire.History {
 		if event.Apply != nil && reflect.DeepEqual(event.Apply.applyCore, core) {
 			provenance := applyAuthorization(*event.Apply)

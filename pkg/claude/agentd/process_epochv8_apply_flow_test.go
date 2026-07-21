@@ -184,17 +184,33 @@ func TestEpochV8ApplyPermissionFirstDomainReplayAndProvenance(t *testing.T) {
 	_, idempotencyErr := db.GetAgentdRequest("11111111-1111-4111-8111-111111111111")
 	require.Error(t, idempotencyErr, "unlock apply must not create generic idempotency state")
 
+	// Runtime genesis may attach after the epoch commit but before a lost-ack
+	// retry. Historical replay must verify, not re-run the now-inapplicable
+	// unattached constructor.
+	genesisLease, err := fs.AcquireEngineLease(t.Context(), "apply-flow-run", "test-genesis", time.Minute)
+	require.NoError(t, err)
+	_, err = fs.EnsureEpochV8Runtime(t.Context(), genesisLease)
+	require.NoError(t, err)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), genesisLease))
+	beforeReplay, err := fs.LoadEpochV8RunView(t.Context(), "apply-flow-run")
+	require.NoError(t, err)
+	require.NotNil(t, beforeReplay.Runtime)
+
 	// A separately authorized caller gets domain replay and the original actor,
 	// time, reason code, epoch, and disposition rather than newly minted values.
 	replayed := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, path, applyBody)))
 	require.Equal(t, http.StatusOK, replayed.Code, replayed.Body.String())
 	var replayedBody struct {
-		Status      string `json:"status"`
-		Disposition string `json:"disposition"`
-		EpochID     string `json:"epochId"`
-		ReasonCode  string `json:"reasonCode"`
-		Actor       string `json:"actor"`
-		AppliedAt   string `json:"appliedAt"`
+		Status         string `json:"status"`
+		Disposition    string `json:"disposition"`
+		EpochID        string `json:"epochId"`
+		ReasonCode     string `json:"reasonCode"`
+		Actor          string `json:"actor"`
+		AppliedAt      string `json:"appliedAt"`
+		CurrentBinding struct {
+			Revision uint64 `json:"revision"`
+			Digest   string `json:"digest"`
+		} `json:"currentBinding"`
 	}
 	testharness.DecodeJSON(t, replayed, &replayedBody)
 	assert.Equal(t, "already_applied", replayedBody.Status)
@@ -203,6 +219,12 @@ func TestEpochV8ApplyPermissionFirstDomainReplayAndProvenance(t *testing.T) {
 	assert.Equal(t, appliedBody.ReasonCode, replayedBody.ReasonCode)
 	assert.Equal(t, appliedBody.Actor, replayedBody.Actor)
 	assert.Equal(t, appliedBody.AppliedAt, replayedBody.AppliedAt)
+	assert.Equal(t, beforeReplay.Checkpoint.Binding().Revision, replayedBody.CurrentBinding.Revision)
+	assert.Equal(t, beforeReplay.Checkpoint.Binding().Digest, replayedBody.CurrentBinding.Digest)
+	afterReplay, err := fs.LoadEpochV8RunView(t.Context(), "apply-flow-run")
+	require.NoError(t, err)
+	assert.Equal(t, beforeReplay.CheckpointJSON, afterReplay.CheckpointJSON, "read-only replay mutated checkpoint")
+	assert.Equal(t, beforeReplay.RuntimeJSON, afterReplay.RuntimeJSON, "read-only replay mutated runtime")
 
 	// Exact submitted handoff DTO identity is part of domain replay. A changed
 	// action/target cannot borrow the old commit after the outer binding moved.
@@ -293,6 +315,73 @@ func TestEpochV8ApplyAskHumanDenyAndTimeoutDoNotReadOrRetainDraft(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestEpochV8ApplyRejectsTransferBeforeRuntimeGenesis(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	makeSource := func(prompt string) []byte {
+		tmpl := &model.Template{APIVersion: model.APIVersion, Kind: model.Kind, ID: "pregen-transfer", Start: "work", Nodes: map[string]model.Node{
+			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: prompt}, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		}}
+		encoded, encodeErr := model.CanonicalYAML(tmpl)
+		require.NoError(t, encodeErr)
+		return encoded
+	}
+	initialSource, candidateSource := makeSource("initial"), makeSource("candidate")
+	parsed, err := model.ParseExactSource(initialSource)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), parsed.Template)
+	require.NoError(t, err)
+	initialized, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "pregen-transfer-run", TemplateRef: record.Ref}, initialSource)
+	require.NoError(t, err)
+	owner := initialized.Checkpoint.View().ProtectedAuthorities[0]
+	token, err := epochv8.HandoffToken(initialized.Checkpoint, owner.Identity)
+	require.NoError(t, err)
+	classification, err := epochv8.ClassifyTemplateSource(candidateSource)
+	require.NoError(t, err)
+	plan, err := epochv8.PreviewApply(initialized.Checkpoint, epochv8.ApplyDraft{
+		BaseBinding: initialized.Checkpoint.Binding(), Candidate: classification.Candidate(),
+		Handoffs: []epochv8.HandoffDirective{{
+			Source: owner.Identity, Action: epochv8.HandoffTransfer,
+			TargetLocalID: "next-frontier", TargetReservationID: "next-reservation", TargetNodeID: "work",
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, plan.Plan)
+
+	base := map[string]any{"revision": initialized.Checkpoint.Binding().Revision, "digest": initialized.Checkpoint.Binding().Digest}
+	handoffs := []map[string]any{{
+		"token": token, "action": epochv8.HandoffTransfer,
+		"target": map[string]any{"localId": "next-frontier", "reservationId": "next-reservation", "nodeId": "work"},
+	}}
+	previewBody := map[string]any{"baseBinding": base, "candidateSource": string(candidateSource), "handoffs": handoffs}
+	preview := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/process/runs/pregen-transfer-run/unlock/preview", previewBody)))
+	require.Equal(t, http.StatusUnprocessableEntity, preview.Code, preview.Body.String())
+	assert.NotContains(t, preview.Body.String(), "rescues_now")
+
+	applyBody := map[string]any{
+		"baseBinding": base, "applyToken": plan.Plan.ProposalDigest(),
+		"candidateSource": string(candidateSource), "handoffs": handoffs,
+	}
+	applied := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/process/runs/pregen-transfer-run/unlock/apply", applyBody)))
+	require.Equal(t, http.StatusUnprocessableEntity, applied.Code, applied.Body.String())
+	loaded, err := fs.LoadEpochV8RunView(t.Context(), "pregen-transfer-run")
+	require.NoError(t, err)
+	assert.Equal(t, initialized.Checkpoint.Binding(), loaded.Checkpoint.Binding())
+	_, err = fs.ReadEpochV8AppliedArtifacts(t.Context(), "pregen-transfer-run", plan.Plan.CandidateEpoch().ID)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+
+	lease, err := fs.AcquireEngineLease(t.Context(), "pregen-transfer-run", "test-genesis", time.Minute)
+	require.NoError(t, err)
+	attached, err := fs.EnsureEpochV8Runtime(t.Context(), lease)
+	require.NoError(t, err, "refused transfer must leave runtime genesis attachable")
+	assert.Equal(t, epochv8.RuntimeAttachGenesis, attached.Checkpoint.View().History[0].Runtime.Kind)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease))
 }
 
 type countingErrorBody struct {

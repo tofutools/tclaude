@@ -331,8 +331,8 @@ func PreflightRuntimeApply(ctx context.Context, checkpoint *CheckpointV8, artifa
 		if _, err := Apply(checkpoint, plan); err != nil {
 			return RuntimeApplyRefused, nil
 		}
-		if bare && transfer {
-			return RuntimeApplyTransferReady, nil
+		if planTransfersAuthority(plan) {
+			return RuntimeApplyRefused, nil
 		}
 		return RuntimeApplyRetainReady, nil
 	}
@@ -346,6 +346,18 @@ func PreflightRuntimeApply(ctx context.Context, checkpoint *CheckpointV8, artifa
 		return RuntimeApplyRetainReady, nil
 	}
 	return RuntimeApplyRefused, nil
+}
+
+func planTransfersAuthority(plan *ApplyPlan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, handoff := range plan.core.HandoffSet {
+		if handoff.Action == HandoffTransfer {
+			return true
+		}
+	}
+	return false
 }
 
 func bareTransfer(checkpoint *CheckpointV8, plan *ApplyPlan) (bool, bool) {

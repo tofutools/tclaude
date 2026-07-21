@@ -237,6 +237,9 @@ func buildEpochV8Preview(r *http.Request, view store.EpochV8ExecutionView, body 
 	if err != nil {
 		return err
 	}
+	if view.Runtime == nil && apply == epochv8.RuntimeApplyRefused {
+		return epochv8.ErrInvalid
+	}
 	if apply == epochv8.RuntimeApplyTransferReady {
 		response.Classification = "rescues_now"
 		return nil
@@ -315,8 +318,6 @@ func handleProcessEpochV8Apply(w http.ResponseWriter, r *http.Request) {
 		digest := sha256.Sum256(reason)
 		reasonDigest = hex.EncodeToString(digest[:])
 	}
-	sourceDigest := sha256.Sum256([]byte(body.CandidateSource))
-
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_unlock_unavailable", "process unlock is unavailable")
@@ -329,6 +330,24 @@ func handleProcessEpochV8Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = fs.ReleaseMaintenanceLease(context.WithoutCancel(r.Context()), lease) }()
 
+	committed, found, err := fs.VerifyCommittedEpochV8Apply(
+		r.Context(), lease, body.BaseBinding.engine(), body.ApplyToken,
+		[]byte(body.CandidateSource), reason, handoffDigest,
+	)
+	if err != nil {
+		writeEpochV8ApplyError(w, err, epochV8BindingDTO{})
+		return
+	}
+	if found {
+		setAuditDetail(r, "reason_code="+epochv8.ApplyReasonUnlock+";disposition="+string(epochv8.DispositionReplayed)+";revision="+strconv.FormatUint(committed.Binding.Revision, 10))
+		writeProcessJSON(w, http.StatusOK, epochV8ApplyResponse{
+			Status: "already_applied", Disposition: string(epochv8.DispositionReplayed), ApplyToken: body.ApplyToken,
+			EpochID: committed.EpochID, CurrentBinding: bindingDTO(committed.Binding),
+			ReasonCode: committed.Provenance.ReasonCode, Actor: committed.Provenance.Actor, AppliedAt: committed.Provenance.AppliedAt,
+		})
+		return
+	}
+
 	requestedAuthorization := epochv8.ApplyAuthorization{
 		HandoffDirectiveDigest: handoffDigest,
 		ReasonCode:             epochv8.ApplyReasonUnlock,
@@ -340,17 +359,6 @@ func handleProcessEpochV8Apply(w http.ResponseWriter, r *http.Request) {
 	var currentBinding epochv8.Binding
 	err = fs.WithEpochV8ExecutionView(r.Context(), r.PathValue("id"), func(view store.EpochV8ExecutionView) error {
 		currentBinding = view.Checkpoint.Binding()
-		committed, found, findErr := epochv8.FindCommittedAuthorizedApply(
-			view.Checkpoint, body.BaseBinding.engine(), body.ApplyToken,
-			hex.EncodeToString(sourceDigest[:]), reasonDigest, handoffDigest,
-		)
-		if findErr != nil {
-			return findErr
-		}
-		if found {
-			plan, kind = committed.Plan, committed.Kind
-			return nil
-		}
 		if currentBinding != body.BaseBinding.engine() {
 			return errEpochV8ApplyStale
 		}
