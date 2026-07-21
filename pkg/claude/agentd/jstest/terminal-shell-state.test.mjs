@@ -187,16 +187,20 @@ test('terminal actions sequence socket disposal, detach, pop-out, and external h
   const state = createTerminalShellState();
   const requests = [];
   const opened = [];
+  const notices = [];
+  let popupBlocked = false;
   const actions = createTerminalShellActions({
     state,
     fetchImpl: async (url, options) => { requests.push([url, options]); return { ok: true }; },
     windowRef: {
       open(url, target) {
+        if (popupBlocked) return null;
         const tab = { opened: [url, target], location: { replace: (next) => opened.push(next) } };
         opened.push(tab);
         return tab;
       },
     },
+    notify: (message, error) => notices.push([message, error]),
     documentRef: harness.document,
   });
 
@@ -237,6 +241,22 @@ test('terminal actions sequence socket disposal, detach, pop-out, and external h
   assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/);
   const payload = JSON.parse(decodeURIComponent(opened.at(-1).split('#open=')[1]));
   assert.equal(payload.hideConv, 'agt_pop');
+  assert.deepEqual(notices, [], 'a detach that lands says nothing');
+
+  // A blocked pop-up must not silently swallow a detach: the drag gesture has
+  // already told the operator the terminal was about to leave the strip.
+  popupBlocked = true;
+  const blocked = actions.openPane({ ws: '/blocked', key: 'blocked', label: 'blocked', hideConv: 'agt_blocked' });
+  const blockedWidget = fakeWidget();
+  actions.registerWidget(blocked.id, blockedWidget);
+  assert.equal(await actions.popOutPane(blocked.key), false);
+  assert.equal(state.panes.value.some((pane) => pane.key === 'blocked'), true,
+    'a blocked detach leaves the terminal exactly where it was');
+  assert.equal(blockedWidget.disposeCount, 0, 'a blocked detach never disposes a live terminal');
+  assert.equal(notices.length, 1);
+  assert.match(notices[0][0], /pop-ups/);
+  assert.equal(notices[0][1], true, 'the blocked detach is reported as an error toast');
+  popupBlocked = false;
 
   actions.dispose();
   actions.dispose();

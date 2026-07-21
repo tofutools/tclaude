@@ -864,6 +864,11 @@ Because the rule is conservative rather than clever, anything it does not
 recognise simply falls through to the explicit buttons and the tab context
 menu, which remain the dependable and keyboard-accessible path.
 
+Detaching — by drag, by **⧉ tab**, or from the context menu — needs a new browser
+tab, so a browser that blocks pop-ups for the dashboard cannot complete it. The
+terminal then stays exactly where it was, still connected, and the dashboard
+says so rather than appearing to lose the drag.
+
 An explicitly reordered tab sequence is stored as a dashboard presentation
 preference in the same server-backed preferences as the other sticky view
 settings. A terminal key already in that stored sequence returns to its
