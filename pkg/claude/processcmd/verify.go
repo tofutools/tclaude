@@ -10,6 +10,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
@@ -38,9 +39,37 @@ func verifyCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *verifyParams, cmd *cobra.Command, _ []string) {
-			exitWithError(runVerify(cmd.Context(), p, os.Stdout))
+			exitWithError(runVerifyDispatch(cmd.Context(), p, os.Stdout))
 		},
 	}.ToCobra()
+}
+
+func runVerifyDispatch(ctx context.Context, p *verifyParams, out io.Writer) error {
+	canonical := requireCanonicalProcessStore(p.StoreRoot) == nil
+	kind, probeErr := localRunSchema(ctx, p.StoreRoot, p.RunID)
+	if !canonical {
+		if probeErr == nil && kind == store.RunSchemaEpochV8 {
+			return requireCanonicalProcessStore(p.StoreRoot)
+		}
+		return runVerify(ctx, p, out)
+	}
+	if probeErr == nil && kind != store.RunSchemaEpochV8 {
+		return runVerify(ctx, p, out)
+	}
+	var response struct {
+		Verified bool `json:"verified"`
+		View     struct {
+			Run struct{ ID, EffectiveStatus string } `json:"run"`
+		} `json:"view"`
+	}
+	if err := agent.DaemonRequest("GET", "/v1/process/runs/"+p.RunID+"/verify", nil, &response, agent.DaemonOpts{Timeout: schema8DaemonTimeout}); err != nil {
+		return err
+	}
+	if !response.Verified {
+		return fmt.Errorf("process run %q failed verification", p.RunID)
+	}
+	fmt.Fprintf(out, "Run: %s\nEffective status: %s\n", response.View.Run.ID, response.View.Run.EffectiveStatus)
+	return nil
 }
 
 func runVerify(ctx context.Context, p *verifyParams, out io.Writer) error {

@@ -70,10 +70,27 @@ func (s *FS) AppendEpochV8FinishExternal(ctx context.Context, runID string, tran
 // AppendEpochV8Settlement is explicit non-engine operator authority. It may
 // race a live engine lease under the run flock, but maintenance excludes it.
 func (s *FS) AppendEpochV8Settlement(ctx context.Context, runID string, transition *pathv1.ExecutionTransition) (epochv8.RuntimeTransitionResult, error) {
+	return s.appendEpochV8Settlement(ctx, runID, epochv8.Binding{}, transition)
+}
+
+// AppendEpochV8SettlementAtBinding adds the outer checkpoint CAS required by
+// daemon-carried opaque settlement tokens. The inner transition retains its
+// own path-v1 prebinding.
+func (s *FS) AppendEpochV8SettlementAtBinding(ctx context.Context, runID string, expected epochv8.Binding, transition *pathv1.ExecutionTransition) (epochv8.RuntimeTransitionResult, error) {
+	if expected == (epochv8.Binding{}) {
+		return epochv8.RuntimeTransitionResult{}, fmt.Errorf("exact schema-8 settlement binding is required")
+	}
+	return s.appendEpochV8Settlement(ctx, runID, expected, transition)
+}
+
+func (s *FS) appendEpochV8Settlement(ctx context.Context, runID string, expected epochv8.Binding, transition *pathv1.ExecutionTransition) (epochv8.RuntimeTransitionResult, error) {
 	if transition == nil || transition.Kind() != pathv1.TransitionAuditedSettlement {
 		return epochv8.RuntimeTransitionResult{}, fmt.Errorf("exact audited settlement transition is required")
 	}
 	return s.mutateEpochV8Runtime(ctx, runID, epochRuntimeAppendAuthority{external: true}, func(snapshot EpochV8RunSnapshot, source []byte) (epochv8.RuntimeTransitionResult, error) {
+		if expected != (epochv8.Binding{}) && snapshot.Checkpoint.Binding() != expected {
+			return epochv8.RuntimeTransitionResult{}, ErrWriterInProgress
+		}
 		return epochv8.AuditedSettlement(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, source, transition)
 	})
 }

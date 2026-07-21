@@ -21,28 +21,50 @@ type AuditedSettlementInput struct {
 	Timestamp      time.Time
 }
 
+// FailedExclusiveAttempt is an internal, generation-bound settlement target.
+// Transport layers must project it as an opaque token rather than exposing
+// either field to unprivileged callers.
+type FailedExclusiveAttempt struct {
+	NodeID         string
+	BlockedAttempt uint64
+}
+
+// UniqueFailedExclusiveAttempt returns the sole failed performer generation
+// in the current verified aggregate. It fails closed when none or more than
+// one are eligible for the audited settlement constructor.
+func UniqueFailedExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput) (FailedExclusiveAttempt, error) {
+	return failedExclusiveAttempt(ctx, input, "", true)
+}
+
 // LatestFailedExclusiveAttempt binds a node-only operator request to the sole
 // currently failed activation generation. Multiple failed activations are
 // ambiguous and fail closed.
 func LatestFailedExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, nodeID string) (uint64, error) {
+	target, err := failedExclusiveAttempt(ctx, input, strings.TrimSpace(nodeID), false)
+	return target.BlockedAttempt, err
+}
+
+func failedExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, nodeID string, globallyUnique bool) (FailedExclusiveAttempt, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return FailedExclusiveAttempt{}, err
 	}
-	if input == nil || input.checkpoint == nil || strings.TrimSpace(nodeID) == "" {
-		return 0, fmt.Errorf("%w: sealed input and node are required", ErrMutationInvalid)
+	if input == nil || input.checkpoint == nil || !globallyUnique && nodeID == "" {
+		return FailedExclusiveAttempt{}, fmt.Errorf("%w: sealed input and node are required", ErrMutationInvalid)
 	}
 	aggregate, err := CurrentAggregateCheckpoint(input.checkpoint)
 	if err != nil {
-		return 0, err
+		return FailedExclusiveAttempt{}, err
 	}
 	var matched uint64
 	var matchedActivation ActivationID
+	var matchedNode string
 	for _, command := range aggregate.Commands {
 		if command.Identity.Kind != CommandPerformAttempt || (command.State != CommandObserved && command.State != CommandReconciled) {
 			continue
 		}
 		activation, ok := aggregate.Routing.Activations[command.Identity.SourceActivationID]
-		if !ok || aggregate.Routing.Reservations[activation.ReservationID].NodeID != strings.TrimSpace(nodeID) || aggregate.Routing.Paths[activation.OutputPathID].State != PathFailed {
+		reservation, reservationOK := aggregate.Routing.Reservations[activation.ReservationID]
+		if !ok || !reservationOK || nodeID != "" && reservation.NodeID != nodeID || aggregate.Routing.Paths[activation.OutputPathID].State != PathFailed {
 			continue
 		}
 		effectID, effectErr := AttemptIdentity(aggregate.RunID, activation.ID, command.Identity.Attempt)
@@ -50,16 +72,16 @@ func LatestFailedExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveI
 			continue
 		}
 		if matchedActivation != "" && matchedActivation != activation.ID {
-			return 0, fmt.Errorf("%w: node has multiple failed activation generations", ErrMutationInvalid)
+			return FailedExclusiveAttempt{}, fmt.Errorf("%w: failed activation generation is ambiguous", ErrMutationInvalid)
 		}
-		if command.Identity.Attempt > matched {
-			matched, matchedActivation = command.Identity.Attempt, activation.ID
+		if command.Identity.Attempt > matched || matchedActivation == "" {
+			matched, matchedActivation, matchedNode = command.Identity.Attempt, activation.ID, reservation.NodeID
 		}
 	}
 	if matched == 0 {
-		return 0, fmt.Errorf("%w: node has no failed performer generation", ErrMutationInvalid)
+		return FailedExclusiveAttempt{}, fmt.Errorf("%w: failed performer generation is absent", ErrMutationInvalid)
 	}
-	return matched, nil
+	return FailedExclusiveAttempt{NodeID: matchedNode, BlockedAttempt: matched}, nil
 }
 
 // SettleExclusiveAttempt records a generation-bound retry/skip/cancel choice.

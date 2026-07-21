@@ -474,6 +474,12 @@ type EpochV8RunSnapshot struct {
 	Runtime        *epochv8.RuntimeArtifactV1
 }
 
+type EpochV8AppliedArtifacts struct {
+	Diff      []byte
+	Reason    []byte
+	HasReason bool
+}
+
 type EpochV8ExecutionView struct {
 	Run            RunRecord
 	CheckpointJSON []byte

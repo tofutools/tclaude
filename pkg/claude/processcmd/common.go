@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -23,6 +24,8 @@ var (
 	defaultActorPattern = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
 )
 
+const schema8DaemonTimeout = 2 * time.Minute
+
 func openStore(root string, readOnly bool) (*store.FS, error) {
 	if readOnly {
 		if err := preflightStoreRoot(root); err != nil {
@@ -30,6 +33,29 @@ func openStore(root string, readOnly bool) (*store.FS, error) {
 		}
 	}
 	return store.NewFS(root)
+}
+
+func requireCanonicalProcessStore(root string) error {
+	got, err := filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return err
+	}
+	want, err := filepath.Abs(filepath.Clean(store.DefaultRoot()))
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("schema-8 daemon commands require the canonical process store %s; custom roots are not addressable through agentd", want)
+	}
+	return nil
+}
+
+func localRunSchema(ctx context.Context, root, runID string) (store.RunSchemaKind, error) {
+	fs, err := openStore(root, true)
+	if err != nil {
+		return "", err
+	}
+	return fs.RunStateSchemaKind(ctx, runID)
 }
 
 func ensureRunVerifies(ctx context.Context, st store.Store, runID string, out io.Writer) error {
