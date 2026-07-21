@@ -153,6 +153,105 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 	assert.NotEmpty(t, saved.SemanticHash)
 }
 
+// The Templates list edits a description by round-tripping the head edit view
+// through the ordinary save route, changing exactly one top-level field. This
+// pins that the existing route expresses that safely: a description-only edit
+// keeps every other field, still cuts a normal version, can clear the value,
+// and still loses the CAS race against a head that moved -- so the list needs
+// no in-place metadata mutation that would bypass versioning or hashing.
+func TestProcessTemplateSaveDescriptionOnlyEditPreservesTemplateAndCAS(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	original := processRESTTemplate("described", "first description", 40)
+	originalRecord, err := fs.PutTemplate(t.Context(), original)
+	require.NoError(t, err)
+
+	getRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/described", nil)
+	require.Equal(t, http.StatusOK, getRec.Code, getRec.Body.String())
+	var head processEditResponse
+	testharness.DecodeJSON(t, getRec, &head)
+	require.NotNil(t, head.Template)
+	require.NotEmpty(t, head.Edges, "the edit view carries the graph edges the list must round-trip")
+	require.NotNil(t, head.Layout)
+	baseHash := head.SourceHash
+
+	// Exactly the wire shape the list commits: the head's editable model with a
+	// single top-level field replaced, saved against the hash observed when the
+	// edit session began.
+	describe := func(sourceHash, description string) *httptest.ResponseRecorder {
+		edited := *head.Template
+		edited.Description = description
+		return processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/described", map[string]any{
+			"template": &edited, "edges": head.Edges, "layout": head.Layout, "sourceHash": sourceHash,
+		})
+	}
+
+	saveRec := describe(baseHash, "corrected description")
+	require.Equal(t, http.StatusCreated, saveRec.Code, saveRec.Body.String())
+	var saved struct {
+		Ref        string `json:"ref"`
+		SourceHash string `json:"sourceHash"`
+	}
+	testharness.DecodeJSON(t, saveRec, &saved)
+	assert.NotEqual(t, originalRecord.Ref, saved.Ref, "a description is semantic, so editing it cuts a new version")
+	assert.NotEqual(t, baseHash, saved.SourceHash)
+
+	reopenRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/described", nil)
+	require.Equal(t, http.StatusOK, reopenRec.Code, reopenRec.Body.String())
+	var reopened processEditResponse
+	testharness.DecodeJSON(t, reopenRec, &reopened)
+	require.NotNil(t, reopened.Template)
+	assert.Equal(t, "corrected description", reopened.Template.Description)
+	// Everything else must survive value-equivalently: comparing the whole
+	// template with the description normalised back catches any field the save
+	// path might quietly drop, not just the ones spelled out below.
+	restored := *reopened.Template
+	restored.Description = head.Template.Description
+	assert.Equal(t, *head.Template, restored, "a description edit changes nothing else in the template")
+	assert.Equal(t, head.Edges, reopened.Edges, "edges round-trip untouched")
+	assert.Equal(t, head.Layout, reopened.Layout, "editor layout round-trips untouched")
+
+	listRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
+	require.Equal(t, http.StatusOK, listRec.Code, listRec.Body.String())
+	var list struct {
+		Templates []struct {
+			ID           string `json:"id"`
+			Description  string `json:"description"`
+			VersionCount int    `json:"versionCount"`
+		} `json:"templates"`
+	}
+	testharness.DecodeJSON(t, listRec, &list)
+	require.Len(t, list.Templates, 1)
+	assert.Equal(t, "corrected description", list.Templates[0].Description, "the list shows the edited description")
+	assert.Equal(t, 2, list.Templates[0].VersionCount, "the edit is a normal new version, not an in-place mutation")
+
+	// A stale baseline must still lose: the operator's edit session started on a
+	// head that has since moved.
+	staleRec := describe(baseHash, "written over a concurrent edit")
+	require.Equal(t, http.StatusConflict, staleRec.Code, staleRec.Body.String())
+	var conflict struct {
+		Code              string `json:"code"`
+		CurrentSourceHash string `json:"currentSourceHash"`
+	}
+	testharness.DecodeJSON(t, staleRec, &conflict)
+	assert.Equal(t, "process_template_conflict", conflict.Code)
+	assert.Equal(t, saved.SourceHash, conflict.CurrentSourceHash)
+
+	clearRec := describe(saved.SourceHash, "")
+	require.Equal(t, http.StatusCreated, clearRec.Code, clearRec.Body.String())
+	clearedRec := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates/described", nil)
+	require.Equal(t, http.StatusOK, clearedRec.Code, clearedRec.Body.String())
+	var cleared processEditResponse
+	testharness.DecodeJSON(t, clearedRec, &cleared)
+	require.NotNil(t, cleared.Template)
+	assert.Empty(t, cleared.Template.Description, "an emptied description clears rather than being ignored")
+	assert.Equal(t, head.Template.Name, cleared.Template.Name, "clearing the description keeps the display name")
+	assert.Equal(t, head.Template.Doc, cleared.Template.Doc, "clearing the description keeps the documentation")
+	assert.Equal(t, head.Edges, cleared.Edges)
+	assert.Equal(t, head.Layout, cleared.Layout)
+}
+
 func TestProcessTemplateGetRejectsLegacyOverBudgetSourceWithoutPanic(t *testing.T) {
 	f, root := processEngineFlow(t)
 	fs, err := store.NewFS(root)

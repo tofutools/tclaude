@@ -508,20 +508,48 @@ export function createProcessesActions({
     state.setRename(null);
     return true;
   }
-  // renameTemplate is the shared commit. It takes its target explicitly rather
-  // than reading dialog state, so the inline list editor can rename WITHOUT
-  // opening (and instantly closing) the dialog.
-  async function renameTemplate({ id, name = '', sourceHash = '' } = {}, value) {
-    if (!id) return false;
+  // The list can edit two top-level template fields in place. Both are ordinary
+  // versioned source edits through the same CAS save, so the wording is the only
+  // real difference -- kept here so the two flows cannot drift apart.
+  //
+  // The description copy deliberately never quotes the value: a description is
+  // free-form prose that can be long, and the notice line and the notification
+  // channel are not the place to reproduce it.
+  const TEMPLATE_META_FIELDS = {
+    name: {
+      busy: 'Another process action is still running; retry the rename once it settles.',
+      conflict: 'this template changed while you were renaming it; reload and try again',
+      invalid: 'this template no longer passes validation, so it cannot be saved under a new name until the graph is fixed in the editor',
+      done: (id, next) => (next ? `Renamed ${id} to ${next}.` : `Cleared the display name for ${id}.`),
+      failed: 'Rename failed',
+      notify: 'process template rename failed',
+    },
+    description: {
+      busy: 'Another process action is still running; retry the description edit once it settles.',
+      conflict: 'this template changed while you were editing its description; reload and try again',
+      invalid: 'this template no longer passes validation, so its description cannot be saved until the graph is fixed in the editor',
+      done: (id, next) => (next ? `Updated the description for ${id}.` : `Cleared the description for ${id}.`),
+      failed: 'Description update failed',
+      notify: 'process template description update failed',
+    },
+  };
+  // commitTemplateMeta is the shared commit for the list's in-place metadata
+  // edits. It takes its target explicitly rather than reading dialog state, so
+  // an inline list editor can commit WITHOUT opening (and instantly closing) a
+  // dialog.
+  async function commitTemplateMeta({ id, field, current = '', sourceHash = '' } = {}, value) {
+    const copy = TEMPLATE_META_FIELDS[field];
+    if (!id || !copy) return false;
     const next = String(value ?? '').trim();
-    if (next === String(name || '').trim()) return true;
-    if (!state.beginMutation()) { state.setNotice('Another process action is still running; retry the rename once it settles.'); return false; }
+    if (next === String(current || '').trim()) return true;
+    if (!state.beginMutation()) { state.setNotice(copy.busy); return false; }
     const path = `/v1/process/templates/${encodeURIComponent(id)}`;
     try {
       // Round-trip the head's full edit view so layout and edges survive the
-      // rename untouched; only the display name differs from what we read. The
-      // save is expressed against the hash observed when the edit STARTED, so a
-      // head that moved in the meantime is rejected rather than overwritten.
+      // edit untouched; only the one requested field differs from what we read.
+      // The save is expressed against the hash observed when the edit STARTED,
+      // so a head that moved in the meantime is rejected rather than
+      // overwritten.
       const head = await processJSON(path, fetchImpl);
       if (!head.template) throw new Error('template head returned no editable model');
       const response = await fetchImpl(path, {
@@ -529,28 +557,32 @@ export function createProcessesActions({
         // Only these four keys are decodable: the save handler rejects unknown
         // fields, so read-only view fields must not be forwarded.
         body: JSON.stringify({
-          template: { ...head.template, name: next },
+          template: { ...head.template, [field]: next },
           edges: head.edges, layout: head.layout, sourceHash: sourceHash || head.sourceHash,
         }),
       });
       const body = await response.json().catch(() => ({}));
-      if (response.status === 409 || body.code === 'process_template_conflict') {
-        throw new Error('this template changed while you were renaming it; reload and try again');
-      }
-      if (body.code === 'process_template_invalid') {
-        throw new Error('this template no longer passes validation, so it cannot be saved under a new name until the graph is fixed in the editor');
-      }
+      if (response.status === 409 || body.code === 'process_template_conflict') throw new Error(copy.conflict);
+      if (body.code === 'process_template_invalid') throw new Error(copy.invalid);
       if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
-      state.setNotice(next ? `Renamed ${id} to ${next}.` : `Cleared the display name for ${id}.`);
+      state.setNotice(copy.done(id, next));
       void load('templates', { quiet: true });
       return true;
     } catch (error) {
-      state.setNotice(`Rename failed: ${error.message}`);
-      notify(`process template rename failed: ${error.message}`, true);
+      state.setNotice(`${copy.failed}: ${error.message}`);
+      notify(`${copy.notify}: ${error.message}`, true);
       throw error;
     } finally {
       state.endMutation();
     }
+  }
+  // renameTemplate keeps the rename call shape (the dialog and the inline name
+  // editor both pass the row's current name) on top of the shared commit.
+  function renameTemplate({ id, name = '', sourceHash = '' } = {}, value) {
+    return commitTemplateMeta({ id, field: 'name', current: name, sourceHash }, value);
+  }
+  function describeTemplate({ id, description = '', sourceHash = '' } = {}, value) {
+    return commitTemplateMeta({ id, field: 'description', current: description, sourceHash }, value);
   }
   // submitRename is the DIALOG wrapper: it owns dialog lifecycle (close on
   // success, keep open and show the error on failure) around the shared commit.
@@ -749,7 +781,7 @@ export function createProcessesActions({
     load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
     openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
-    openRename, closeRename, submitRename, renameTemplate, deleteTemplate,
+    openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
     previewUnlock, applyUnlock, loadExactArtifact,

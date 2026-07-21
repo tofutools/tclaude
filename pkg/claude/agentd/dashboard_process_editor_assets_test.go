@@ -545,7 +545,25 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-editor-modal .process-editor-field input:-webkit-autofill",
 		"body.wizard .process-editor-modal",
 		".palette-item.disabled",
+		// TCL-600: the Templates list edits the description in place. A stored
+		// description may legally be long, so the cell wraps and breaks rather
+		// than ellipsing it away, and the button styling must be explicit or the
+		// UA default paints it black-on-dark on both skins.
+		".process-description-edit {",
+		".process-description-input {",
+		"body.wizard .process-description-edit:hover:not(:disabled)",
+		"body.wizard .process-description-input",
 	)
+	descriptionRule := css[strings.Index(css, ".process-description-edit {"):]
+	descriptionRule = descriptionRule[:strings.Index(descriptionRule, "}")]
+	for _, needle := range []string{"white-space: normal", "overflow-wrap: anywhere", "color: inherit"} {
+		if !strings.Contains(descriptionRule, needle) {
+			t.Errorf("dashboard.css .process-description-edit missing %q", needle)
+		}
+	}
+	if strings.Contains(descriptionRule, "text-overflow: ellipsis") {
+		t.Error("dashboard.css .process-description-edit must wrap the description, not truncate it")
+	}
 
 	// The graph core and validation loop stay out of every eager entry module:
 	// only the lazily imported editor may import them (flag-off page loads

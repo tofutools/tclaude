@@ -1191,6 +1191,20 @@ func baseStates() []dashsnap.State {
 			SettleMS: 900,
 		},
 		{
+			Key:     "processes-template-description-edit",
+			Title:   "Processes — inline description edit",
+			Caption: "TCL-600: the Templates list edits a template description in place, with the click-to-edit affordance swapped for a focused, skin-themed editor.",
+			JS:      processTabJS("templates", `[data-process-template="release-train"]`),
+			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `var edit=document.querySelector('[data-process-description-edit="release-train"]');
+  if(!edit) throw new Error('inline description affordance missing');
+  if(!edit.getAttribute('aria-label')) throw new Error('inline description affordance has no accessible name');
+  edit.click();
+  var input=document.querySelector('[data-process-description-input="release-train"]');
+  if(!input) throw new Error('clicking the description did not open an editor');
+  if(document.activeElement!==input) throw new Error('the description editor did not take focus');`}},
+			SettleMS: 900,
+		},
+		{
 			Key:     "processes-scribe-library-entry",
 			Title:   "Processes — library scribe entry",
 			Caption: "TCL-434 capstone: the Processes list exposes one visible library-scoped scribe action with skin-coherent language before any template is opened.",
