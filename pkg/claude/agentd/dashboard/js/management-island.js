@@ -287,16 +287,17 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
   // cannot be trusted. While set, EVERY preview attempt — including the
   // ordinary Preview button — must reload the registry before inspecting,
   // and only both succeeding restores the preview and lifts the block.
-  // Bundle or policy edits do not clear it (the registry is still stale);
-  // only a successful reload does, and closing the dialog discards it with
-  // the rest of the import state.
-  const [registryRecoveryRequired, setRegistryRecoveryRequired] = useState(false);
+  // Bundle or policy edits do not clear it (the registry is still stale) —
+  // and neither does closing and reopening this dialog: the marker lives in
+  // the shared management state, whose stale cached registry it describes,
+  // so only a successful authoritative reload clears it.
+  const registryRecoveryRequired = state.sandboxRegistryRecoveryRequired;
   const inspect = async () => {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
       if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
-      if (registryRecoveryRequired) {
+      if (registryRecoveryRequired.value) {
         let registryOk = false;
         try { registryOk = (await actions.load('sandbox')) === true; } catch (_) { registryOk = false; }
         if (!registryOk) {
@@ -307,9 +308,9 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
       }
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found); setBgAck(false);
-      setRegistryRecoveryRequired(false);
+      registryRecoveryRequired.value = false;
     } catch (e) {
-      if (registryRecoveryRequired) setPreview(null);
+      if (registryRecoveryRequired.value) setPreview(null);
       setError(message(e));
     } finally { setBusy(''); }
   };
@@ -364,7 +365,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
           failure = 'reloading the sandbox-profile registry failed';
           // Sticky: the cached registry cannot be trusted, so every later
           // preview attempt must reload it first (see inspect above).
-          setRegistryRecoveryRequired(true);
+          registryRecoveryRequired.value = true;
         } else {
           try { refreshed = await actions.inspectSandboxBundle(envelope); }
           catch (inspectError) { failure = `re-running the authoritative preview failed (${message(inspectError)})`; }
@@ -374,7 +375,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
           setError(`${message(e)} ${failure} — import stays blocked; preview again once the daemon is reachable.`);
         } else {
           setPreview(refreshed);
-          setRegistryRecoveryRequired(false);
+          registryRecoveryRequired.value = false;
           setError(`${message(e)} The registry and authoritative preview were refreshed — review the current break-glass carriers and re-acknowledge before importing again.`);
         }
       } else setError(message(e));

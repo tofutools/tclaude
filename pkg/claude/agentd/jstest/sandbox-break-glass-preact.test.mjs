@@ -1150,3 +1150,95 @@ test('the Preview button honors registry-recovery-required and cannot bypass a f
   assert.equal(imports[1][2], true);
   unmount();
 });
+
+// The final lifecycle probe: closing and reopening the import dialog must
+// not discard the failed-registry recovery state — the stale cached registry
+// it describes survives the dialog, so the marker must too.
+test('close/reopen of the import dialog cannot bypass registry-recovery-required', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { BREAK_GLASS_ACK_CODE }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/sandbox-break-glass.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{ name: 'A' }]);
+  let registryReachable = false;
+  let refused = false;
+  const envelope = {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [{ name: 'A' }, { name: 'wrapper', includes: ['A'] }],
+  };
+  const { host, imports, inspects, loads, unmount } = await importScenario(harness, state, envelope, {
+    importImpl: () => {
+      if (!refused) {
+        refused = true;
+        throw Object.assign(new Error('retained profile "A" now carries break-glass access'), { status: 422, code: BREAK_GLASS_ACK_CODE });
+      }
+      return undefined;
+    },
+    loadImpl: () => {
+      if (!registryReachable) return false;
+      state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+        { name: 'A', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+      ]);
+      return true;
+    },
+  });
+  const importButton = () => [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+  const previewButton = () => [...host.querySelectorAll('#sandbox-profile-import-modal button')].find((button) => button.textContent === 'Preview');
+  const pasteBundle = async () => {
+    const rawInput = host.querySelector('#sandbox-profile-import-modal textarea');
+    rawInput.value = JSON.stringify(envelope);
+    rawInput.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+    await harness.act(() => Promise.resolve());
+  };
+
+  importButton().click();
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 1, 'the typed refusal is not resent');
+  assert.equal(loads.length, 1, 'recovery attempted the registry reload');
+
+  // Close and reopen the dialog: the recovery marker must survive.
+  state.closeDialog();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-import-modal'), null);
+  state.openDialog({ kind: 'sandbox-import' });
+  await harness.act(() => Promise.resolve());
+  await pasteBundle();
+
+  const inspectsBefore = inspects.length;
+  previewButton().click();
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.equal(loads.length, 2, 'the reopened Preview still re-attempts the registry reload');
+  assert.equal(inspects.length, inspectsBefore, 'no inspect against the stale cached registry');
+  assert.equal(host.querySelector('#sandbox-profile-import-break-glass-ack'), null, 'no acknowledgement control while current rules are unavailable');
+  assert.equal(importButton().disabled, true, 'Import stays blocked after reopen');
+  importButton().click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 1, 'no import request can be sent from the reopened stale state');
+
+  // Registry and inspect both succeed after reopen: current carrier appears,
+  // fresh acknowledgement required, only the explicit retry sends.
+  registryReachable = true;
+  previewButton().click();
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => Promise.resolve());
+  assert.equal(inspects.length, inspectsBefore + 1);
+  const warning = host.querySelector('#sandbox-profile-import-modal .sbx-bg-warning');
+  assert.ok(warning, 'the refreshed registry reveals the retained-local carrier');
+  assert.match(warning.textContent, /wrapper/);
+  assert.match(warning.textContent, /import:A/);
+  const ack = host.querySelector('#sandbox-profile-import-break-glass-ack');
+  assert.ok(ack);
+  assert.notEqual(ack.checked, true);
+  ack.checked = true;
+  ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  importButton().click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 2, 'only the explicit acknowledged retry sends');
+  assert.equal(imports[1][2], true);
+  unmount();
+});

@@ -297,7 +297,13 @@ export function createManagementActions({
           : kind === 'roles'
             ? await roles.loadRoles(true)
             : await sandbox.loadSandboxProfiles();
-      return lifecycle.commitRequest(token, data);
+      const committed = lifecycle.commitRequest(token, data);
+      // Any successful authoritative sandbox-registry load makes the cached
+      // registry trustworthy again for break-glass composition.
+      if (committed && kind === 'sandbox' && state.sandboxRegistryRecoveryRequired) {
+        state.sandboxRegistryRecoveryRequired.value = false;
+      }
+      return committed;
     } catch (error) {
       lifecycle.failRequest(token, error);
       return false;

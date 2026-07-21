@@ -18,6 +18,12 @@ export function createManagementState() {
   const busy = signal('');
   const error = signal('');
   const sandboxDiff = signal(null);
+  // Sticky "the cached sandbox-profile registry cannot be trusted" marker,
+  // set when a break-glass typed-422 recovery fails to reload the registry.
+  // It lives here — NOT in the import dialog — so closing and reopening the
+  // dialog cannot discard it while the stale cached registry survives; only
+  // a successful authoritative registry reload clears it.
+  const sandboxRegistryRecoveryRequired = signal(false);
   let settleSandboxDiff = null;
   const templateManagerCloseCallbacks = new Set();
 
@@ -46,7 +52,7 @@ export function createManagementState() {
 
   return Object.freeze({
     manager, dialog, templateDialog, templateManager, profileFilter, roleFilter, sandboxFilter, templateFilter, profiles, roles, sandboxProfiles, templates, templateGroups, profilesRequest, rolesRequest, sandboxRequest,
-    busy, error, sandboxDiff, view, confirmSandboxDiff, cancelSandboxDiff,
+    busy, error, sandboxDiff, sandboxRegistryRecoveryRequired, view, confirmSandboxDiff, cancelSandboxDiff,
     openManager(kind) { error.value = ''; manager.value = kind; },
     closeManager() { manager.value = ''; },
     openDialog(value) { error.value = ''; dialog.value = value; },
