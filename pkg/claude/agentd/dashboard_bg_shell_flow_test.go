@@ -211,6 +211,68 @@ func TestDashboardSnapshot_BgShellReconcileRetiresAFinishedCommand(t *testing.T)
 		"and the agent settles to idle once nothing is left running")
 }
 
+// The dashboard polls every agent on every tick. A running background
+// shell must therefore reach a STEADY STATE: repeated reads must not keep
+// rewriting the ledger row, or every poll would also miss the read-through
+// cache and re-walk the host's whole process table.
+func TestDashboardSnapshot_BgShellReconcileIsStableAcrossPolls(t *testing.T) {
+	const conv = "bgst-1111-2222-3333-4444"
+	const label = "spwn-bgst"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSession(conv, label, "tmux-bgst", f.TestCwd("bgst"))
+	f.HaveMember("squad", conv)
+
+	marker := fmt.Sprintf("tcl613-stable-%d", os.Getpid())
+	command := "sleep 120 #" + marker
+	cmd := exec.Command("sh", "-c", command)
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+
+	require.NoError(t, session.ApplyHook(
+		bgLaunchHook(conv, f.TestCwd("bgst"), command, "task-1"), label))
+
+	read := func() (int, string) {
+		t.Helper()
+		row, err := db.LoadSession(label)
+		require.NoError(t, err)
+		row.PID = os.Getpid()
+		require.NoError(t, db.SaveSession(row))
+		agentd.ResetBgShellReconcileCacheForTest()
+		m := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
+		require.NotNil(t, m)
+		after, err := db.LoadSession(label)
+		require.NoError(t, err)
+		return m.State.BgShellCount, after.BgShellsJSON
+	}
+
+	// Let the child appear, then take the settled ledger as the baseline.
+	var count int
+	var settled string
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if count, settled = read(); count == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Equal(t, 1, count, "the live background shell is badged")
+
+	for i := range 3 {
+		count, again := read()
+		assert.Equal(t, 1, count, "poll %d still badges the live shell", i)
+		assert.Equal(t, settled, again,
+			"poll %d rewrote the ledger — a freshly-stamped entry must not be re-stamped every tick", i)
+	}
+}
+
 // Background shells are children of the harness process, so an OFFLINE
 // agent has none regardless of what its stale row says.
 func TestDashboardSnapshot_BgShellCountZeroForOfflineAgent(t *testing.T) {

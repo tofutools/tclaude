@@ -37,6 +37,11 @@ const (
 	// after its last read, so the map does not grow with every agent that
 	// has ever been rendered.
 	bgShellCacheTTL = 5 * time.Minute
+	// bgShellRefreshAfter is how stale a ledger entry must be before a
+	// positive liveness verdict re-stamps it. See the call site: this is
+	// what keeps the stored ledger — and therefore the read-through cache
+	// key — stable between polls.
+	bgShellRefreshAfter = db.BgShellTTL / 4
 )
 
 var bgShellReconcileMu struct {
@@ -107,7 +112,17 @@ func bgShellCountOnRead(sess *db.SessionRow, alive bool) int {
 		// Re-stamp what is provably still running, so a background shell
 		// that legitimately runs for hours is never aged out by the TTL
 		// backstop on a host where this reconcile works.
-		next.Refresh(id, now)
+		//
+		// Only once an entry has gone stale, NOT on every poll. Re-stamping
+		// eagerly would rewrite the ledger on every dashboard tick, and
+		// since the cache is keyed on the stored value that would also mean
+		// a permanent cache miss — i.e. a full process-table walk plus a DB
+		// write per poll for as long as any background shell is running.
+		// Refreshing at a quarter of the TTL keeps entries ~4x clear of
+		// expiry while leaving the stored value stable in between.
+		if e, known := next[id]; known && now.Sub(e.Seen) > bgShellRefreshAfter {
+			next.Refresh(id, now)
+		}
 	}
 	next.Sweep(now)
 	if encoded := next.Encode(); encoded != sess.BgShellsJSON {
