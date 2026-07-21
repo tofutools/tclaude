@@ -1,4 +1,5 @@
-import { composeSandboxProfilePreview } from './sandbox-profile-preview.js';
+import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
+import { BREAK_GLASS_WARNING, describeBreakGlassEntries } from './sandbox-break-glass.js';
 import { WT_NEW } from './agent-spawn-model.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
@@ -8,9 +9,23 @@ async function responseText(response) {
   try { return await response.text(); } catch (_) { return ''; }
 }
 
+// Failures carry the daemon's structured {"error", "code"} body; status and
+// typed code stay on the thrown Error so submit-side recovery can key off
+// break_glass_acknowledgement_required rather than message text.
+async function responseError(response, prefix = '') {
+  const raw = await responseText(response);
+  let body = null;
+  try { body = JSON.parse(raw); } catch (_) { body = null; }
+  const message = body?.message || body?.error || raw || `HTTP ${response.status}`;
+  const error = new Error(prefix ? `${prefix}${message}` : message);
+  error.status = response.status;
+  if (body?.code) error.code = body.code;
+  return error;
+}
+
 async function jsonRequest(fetchImpl, path) {
   const response = await fetchImpl(path, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
+  if (!response.ok) throw await responseError(response);
   return response.json().catch(() => ({}));
 }
 
@@ -148,10 +163,15 @@ export function createAgentSpawnActions({
       if (selected && byName[selected]) {
         applied.push({ scope: 'explicit', profile: byName[selected] });
       }
+      const policy = composeSandboxProfilePolicy(applied, byName);
       return {
         profiles,
         selected: byName[selected] ? selected : '',
-        preview: composeSandboxProfilePreview(applied, byName),
+        preview: policy.text,
+        // Break-glass can arrive from ANY layer (global or group assignment,
+        // not just the explicit pick), so the spawn gate keys off the resolved
+        // composition, mirroring the daemon's own acknowledgement rule.
+        breakGlass: policy.breakGlass,
       };
     },
 
@@ -177,7 +197,7 @@ export function createAgentSpawnActions({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request.body),
       });
-      if (!response.ok) throw new Error((await responseText(response)) || `HTTP ${response.status}`);
+      if (!response.ok) throw await responseError(response);
       return response.json().catch(() => ({}));
     },
 
@@ -199,6 +219,14 @@ export function createAgentSpawnActions({
         body: 'No name or description was given, so the agent will be auto-named from the first words of your initial message:',
         meta: `“${name}”`,
         okLabel: 'Auto-name & spawn',
+      });
+    },
+
+    confirmBreakGlassSpawn(entries) {
+      return confirm({
+        title: '\u{1f6a8} Spawn with break-glass protected access?',
+        body: `The resolved sandbox policy for this launch carries break-glass protected-path access: ${describeBreakGlassEntries(entries)}. ${BREAK_GLASS_WARNING}`,
+        okLabel: 'I understand the risk — spawn',
       });
     },
 

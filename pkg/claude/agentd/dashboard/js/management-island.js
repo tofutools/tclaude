@@ -6,6 +6,7 @@ import { roleSummary } from './roles.js';
 import { AUTO_MEMORY_TRI_OPTIONS, dirtyDraft, harnessByName, harnessDefaults, profileDraft, profilePayload, readTri, roleDraft, rolePayload, TRI_OPTIONS } from './management-model.js';
 import { registerManagementController } from './management-controller.js';
 import { sandboxProfileSummary } from './sandbox-profiles-data.js';
+import { assignedBreakGlass, BREAK_GLASS_ACK_CODE, BREAK_GLASS_WARNING, breakGlassRules, describeBreakGlassEntries, resolvedBreakGlass } from './sandbox-break-glass.js';
 import { pickDirectory } from './helpers.js';
 import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
@@ -45,7 +46,7 @@ function Manager({ kind, current, state, actions, confirmDiscard }) {
       ${kind === 'sandbox' && html`<button id="sandbox-profile-export-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-export' })}>⇪ export</button><button id="sandbox-profile-import-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-import' })}>⤒ import</button><button id="sandbox-profile-scribe-open" class="tool" onClick=${() => actions.configureSandboxWithAgent({ name: '', filesystem: [], environment: [], network_access: '' })}>🤖 configure with agent</button>`}
       <button id=${profiles ? 'profile-create-open' : roles ? 'role-create-open' : 'sandbox-profile-create-open'} class="primary" onClick=${() => profiles ? actions.openProfileEditor() : roles ? actions.openRoleEditor() : actions.openSandboxEditor()}>${profiles ? html`<span class="profiles-word-regular">+ new profile</span><span class="profiles-word-wizard">+ new pattern</span>` : roles ? html`<span class="roles-word-regular">+ new role</span><span class="roles-word-wizard">+ new class</span>` : html`<span class="sandbox-word-regular">+ new sandbox profile</span><span class="sandbox-word-wizard">+ new ward</span>`}</button>
     </div>
-    <div id=${profiles ? 'profiles-list' : roles ? 'roles-list' : 'sandbox-profiles-list'}><${RequestList} request=${request} label=${kind} retry=${() => actions.load(kind)}>${list.length ? list.map((item) => html`<div key=${item.name} class=${`template-card ${profiles ? 'profile' : roles ? 'role' : 'sandbox-profile'}-card${profiles && item.disabled ? ' profile-card-disabled' : ''}`} data-key=${item.name}><div class="tc-head"><span class="tc-name">${item.name}</span>${profiles && item.disabled ? html`<span class="tc-disabled" aria-label="Disabled profile">🚫 Disabled</span>` : null}${profiles && item.aliases?.length ? html`<span class="tc-aliases">${profileAliasesLabel(item)}</span>` : null}<span class="tc-descr">${profiles ? profileSummary(item) : roles ? roleSummary(item) : sandboxProfileSummary(item)}</span><span class="tc-actions"><button class="tool" onClick=${() => profiles ? actions.openProfileEditor(item) : roles ? actions.openRoleEditor(item) : actions.openSandboxEditor(item)}>edit</button><button class="tool" onClick=${() => profiles ? actions.removeProfile(item.name) : roles ? actions.removeRole(item.name) : actions.removeSandbox(item.name)}>delete</button></span></div>${profiles && item.disabled && html`<div class="tc-sub tc-disabled-reason">${item.disabled_reason}</div>`}${roles && item.descr && html`<div class="tc-sub">${item.descr}</div>`}${kind === 'sandbox' && html`<div class="sbx-caps">${(item.filesystem || []).map((entry) => html`<div key=${`${entry.access}:${entry.path}`} class="sbx-cap"><span class=${`sbx-cap-tag sbx-cap-${entry.access}`}>${entry.access}</span><span class="sbx-cap-val" title=${entry.path}>${entry.path}</span></div>`)}${(item.includes || []).map((name) => html`<div key=${`inc:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-inc">include</span><span class="sbx-cap-val" title=${name}>${name}</span></div>`)}${(item.environment || []).map((entry) => { const binding = `${entry.name} → ${entry.value}`; return html`<div key=${`env:${entry.name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title=${binding}>${binding}</span></div>`; })}${(item.agent_directories || []).map((name) => html`<div key=${`own:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-own">own</span><span class="sbx-cap-val" title=${`${name} — isolated per agent`}>${name}</span></div>`)}</div>`}</div>`) : html`<div class="template-empty">${all.length ? wizWord('No items match the filter.', 'No items match the filter.') : profiles ? wizWord('No spawn profiles yet', 'No familiar patterns yet') : roles ? wizWord('No roles yet', 'No classes yet') : wizWord('No sandbox profiles yet', 'No wards yet')}</div>`}</${RequestList}></div>
+    <div id=${profiles ? 'profiles-list' : roles ? 'roles-list' : 'sandbox-profiles-list'}><${RequestList} request=${request} label=${kind} retry=${() => actions.load(kind)}>${list.length ? list.map((item) => html`<div key=${item.name} class=${`template-card ${profiles ? 'profile' : roles ? 'role' : 'sandbox-profile'}-card${profiles && item.disabled ? ' profile-card-disabled' : ''}`} data-key=${item.name}><div class="tc-head"><span class="tc-name">${item.name}</span>${profiles && item.disabled ? html`<span class="tc-disabled" aria-label="Disabled profile">🚫 Disabled</span>` : null}${profiles && item.aliases?.length ? html`<span class="tc-aliases">${profileAliasesLabel(item)}</span>` : null}<span class="tc-descr">${profiles ? profileSummary(item) : roles ? roleSummary(item) : sandboxProfileSummary(item)}</span><span class="tc-actions"><button class="tool" onClick=${() => profiles ? actions.openProfileEditor(item) : roles ? actions.openRoleEditor(item) : actions.openSandboxEditor(item)}>edit</button><button class="tool" onClick=${() => profiles ? actions.removeProfile(item.name) : roles ? actions.removeRole(item.name) : actions.removeSandbox(item.name)}>delete</button></span></div>${profiles && item.disabled && html`<div class="tc-sub tc-disabled-reason">${item.disabled_reason}</div>`}${roles && item.descr && html`<div class="tc-sub">${item.descr}</div>`}${kind === 'sandbox' && html`<div class="sbx-caps">${assignedBreakGlass(item.name, all, 'profile').map((entry) => { const via = entry.origins.filter((origin) => origin !== `profile:${item.name}`).map((origin) => origin.slice('profile:'.length)); return html`<div key=${`bg:${entry.access}:${entry.path}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-bg" title=${BREAK_GLASS_WARNING}>🚨 break-glass ${entry.access}</span><span class="sbx-cap-val" title=${`${entry.path} — protected tclaude/harness state (${entry.origins.join(', ')})`}>${entry.path}${via.length ? ` — via ${via.join(', ')}` : ''}</span></div>`; })}${item.read_baseline === 'minimal' ? html`<div key="read-baseline" class="sbx-cap"><span class="sbx-cap-tag sbx-cap-baseline">minimal reads</span><span class="sbx-cap-val" title="Strict opt-in read baseline; strictest-wins when composed.">strict read baseline</span></div>` : null}${(item.filesystem || []).map((entry) => html`<div key=${`${entry.access}:${entry.path}`} class="sbx-cap"><span class=${`sbx-cap-tag sbx-cap-${entry.access}`}>${entry.access}</span><span class="sbx-cap-val" title=${entry.path}>${entry.path}</span></div>`)}${(item.includes || []).map((name) => html`<div key=${`inc:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-inc">include</span><span class="sbx-cap-val" title=${name}>${name}</span></div>`)}${(item.environment || []).map((entry) => { const binding = `${entry.name} → ${entry.value}`; return html`<div key=${`env:${entry.name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title=${binding}>${binding}</span></div>`; })}${(item.agent_directories || []).map((name) => html`<div key=${`own:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-own">own</span><span class="sbx-cap-val" title=${`${name} — isolated per agent`}>${name}</span></div>`)}</div>`}</div>`) : html`<div class="template-empty">${all.length ? wizWord('No items match the filter.', 'No items match the filter.') : profiles ? wizWord('No spawn profiles yet', 'No familiar patterns yet') : roles ? wizWord('No roles yet', 'No classes yet') : wizWord('No sandbox profiles yet', 'No wards yet')}</div>`}</${RequestList}></div>
     <div class="modal-buttons"><span class="spacer"></span><button onClick=${state.closeManager}>Close</button></div>
   </${Overlay}>`;
 }
@@ -155,18 +156,56 @@ function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
 function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
-  const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: seed?.network_access || '' }), [descriptor]);
-  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2));
+  const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: seed?.network_access || '', read_baseline: seed?.read_baseline === 'minimal' ? 'minimal' : '', break_glass_filesystem: clone(breakGlassRules(seed)) }), [descriptor]);
+  const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawBreakGlass, setRawBreakGlass] = useState(() => JSON.stringify(baseline.break_glass_filesystem, null, 2));
+  // The acknowledgement is deliberately NOT part of the draft: it never
+  // persists, and every editor session must collect it afresh.
+  const [breakGlassAck, setBreakGlassAck] = useState(false);
+  // After a daemon-side acknowledgement refusal whose registry reload
+  // FAILED, the editor cannot see the rules it would be acknowledging, so
+  // saving stays blocked until an authoritative reload succeeds.
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const retryRecovery = async () => {
+    setRecoveryBusy(true);
+    state.error.value = '';
+    try {
+      if ((await actions.load('sandbox')) === true) {
+        setRecoveryBlocked(false);
+        state.error.value = 'Registry reloaded — review the current break-glass rules above and re-acknowledge before saving.';
+      } else {
+        state.error.value = 'Registry reload failed again — saving stays blocked until an authoritative reload succeeds.';
+      }
+    } catch (error) {
+      state.error.value = error.message || String(error);
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
   const [directoryStatus, setDirectoryStatus] = useState({ missing: [], creatable: [] }); const [directoryBusy, setDirectoryBusy] = useState(false);
   const directoryGeneration = useRef(0); const submitRef = useRef(null); const wasSaving = useRef(false); const filesystemSignature = JSON.stringify(draft.filesystem); const latestFilesystem = useRef(filesystemSignature); latestFilesystem.current = filesystemSignature;
   const dirty = dirtyDraft(draft, baseline);
   const saving = state.busy.value === 'sandbox-save';
   const setFS = (index, patch) => setDraft((value) => ({ ...value, filesystem: value.filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
   const setEnv = (index, patch) => setDraft((value) => ({ ...value, environment: value.environment.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); if (![filesystem, environment, includes, agent_directories].every(Array.isArray)) throw new Error('filesystem, environment, includes and agent dirs must be arrays'); return { filesystem, environment, includes, agent_directories }; };
+  const parseRaw = () => { const filesystem = JSON.parse(rawFS || '[]'); const environment = JSON.parse(rawEnv || '[]'); const includes = JSON.parse(rawIncludes || '[]'); const agent_directories = JSON.parse(rawAgentDirs || '[]'); const break_glass_filesystem = JSON.parse(rawBreakGlass || '[]'); if (![filesystem, environment, includes, agent_directories, break_glass_filesystem].every(Array.isArray)) throw new Error('filesystem, environment, includes, agent dirs and break-glass rules must be arrays'); return { filesystem, environment, includes, agent_directories, break_glass_filesystem }; };
   const applyRaw = () => { try { const parsed = parseRaw(); setDraft((value) => ({ ...value, ...parsed })); state.error.value = ''; return true; } catch (error) { state.error.value = error.message || String(error); return false; } };
-  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { setRawFS(JSON.stringify(draft.filesystem, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); } setAdvanced(!advanced); };
-  const submit = async () => { let value = draft; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } await actions.saveSandbox({ draft: value, original: seed, options }); };
+  const toggleAdvanced = () => { if (advanced && !applyRaw()) return; if (!advanced) { setRawFS(JSON.stringify(draft.filesystem, null, 2)); setRawEnv(JSON.stringify(draft.environment, null, 2)); setRawIncludes(JSON.stringify(draft.includes, null, 2)); setRawAgentDirs(JSON.stringify(draft.agent_directories, null, 2)); setRawBreakGlass(JSON.stringify(draft.break_glass_filesystem, null, 2)); } setAdvanced(!advanced); };
+  const submit = async () => {
+    let value = draft;
+    if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
+    if (resolvedBreakGlass(value, current.sandboxProfiles, seed?.name || '').length && !breakGlassAck) { state.error.value = 'break-glass rules (including ones carried by includes) require the explicit risk acknowledgement below before saving'; return; }
+    const outcome = await actions.saveSandbox({ draft: value, original: seed, options, breakGlassAcknowledged: breakGlassAck });
+    // The daemon refused the commit because break-glass authority appeared
+    // or changed after the preview. The stale acknowledgement must not carry
+    // over — and if the registry reload failed, the editor cannot even show
+    // the rules a fresh acknowledgement would cover, so saving stays blocked
+    // until an authoritative reload succeeds.
+    if (outcome && typeof outcome === 'object' && outcome.breakGlassAckRequired) {
+      setBreakGlassAck(false);
+      setRecoveryBlocked(outcome.recovered !== true);
+    }
+  };
   useEffect(() => {
     if (wasSaving.current && !saving) queueMicrotask(() => {
       const button = submitRef.current;
@@ -177,15 +216,35 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   useEffect(() => { if (advanced) return undefined; let active = true; const generation = ++directoryGeneration.current; const filesystem = clone(draft.filesystem); const timer = setTimeout(async () => { try { const result = await actions.inspectDirectories(filesystem); if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: result?.missing || [], creatable: result?.creatable || [] }); } catch (_) { if (active && generation === directoryGeneration.current) setDirectoryStatus({ missing: [], creatable: [] }); } }, 300); return () => { active = false; clearTimeout(timer); }; }, [advanced, filesystemSignature]);
   const createMissing = async () => { const filesystem = clone(draft.filesystem); const signature = JSON.stringify(filesystem); const generation = ++directoryGeneration.current; setDirectoryBusy(true); state.error.value = ''; try { const result = await actions.createDirectories(filesystem); const refreshed = await actions.inspectDirectories(filesystem); if (generation === directoryGeneration.current && signature === latestFilesystem.current) { const created = result?.created || []; state.error.value = `Created ${created.length} sandbox director${created.length === 1 ? 'y' : 'ies'}.`; setDirectoryStatus({ missing: refreshed?.missing || [], creatable: refreshed?.creatable || [] }); } } catch (error) { if (generation === directoryGeneration.current) state.error.value = error.message || String(error); } finally { setDirectoryBusy(false); } };
   const configureWithAgent = () => { let value = draft; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName: options.targetName || seed?.name || '', onCreate: options.onCreate }); };
-  const rawDirty = advanced && [rawFS !== JSON.stringify(draft.filesystem, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2)].some(Boolean);
+  const rawDirty = advanced && [rawFS !== JSON.stringify(draft.filesystem, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawBreakGlass !== JSON.stringify(draft.break_glass_filesystem, null, 2)].some(Boolean);
+  const setBG = (index, patch) => setDraft((value) => ({ ...value, break_glass_filesystem: value.break_glass_filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
+  // The warning and acknowledgement must track the profile that would be
+  // saved: the raw JSON when advanced mode is authoritative (falling back to
+  // the structured rows while it is unparseable), and break-glass carried by
+  // INCLUDES resolved against the current registry — a wrapper whose include
+  // contributes a rule is exactly as dangerous as one carrying it directly.
+  const candidate = (() => {
+    if (!advanced) return draft;
+    try { return { ...draft, ...parseRaw() }; } catch (_) { return draft; }
+  })();
+  const draftBreakGlass = candidate.break_glass_filesystem || [];
+  const resolvedBG = resolvedBreakGlass(candidate, current.sandboxProfiles, seed?.name || '');
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network policies control external IP connectivity while retaining the tclaude agent socket. Managed Codex profiles block the host tmux server independently. Environment values are ordinary configuration, not secrets.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}><${Row} label="Network"><${Select} id="sandbox-profile-editor-network" value=${draft.network_access} onChange=${(value) => change(setDraft, 'network_access', value)} options=${[['', 'No override (inherit profile layers)'], ['internet', 'Internet access'], ['none', 'Offline (macOS; unavailable on Linux/WSL)']]}/></${Row}>
+    <${Row} label="Read baseline" title="Strictest-wins across includes and global/group/explicit layers: if any applied profile says minimal, the effective read scope is minimal. Requires harness support; launch fails with a typed capability error where it cannot be enforced."><${Select} id="sandbox-profile-editor-read-baseline" value=${draft.read_baseline} onChange=${(value) => change(setDraft, 'read_baseline', value)} options=${[['', "Default — harness baseline (broad reads, today's behavior)"], ['minimal', 'Minimal — strict opt-in: only workspace, required runtime paths, and explicit grants']]}/></${Row}>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend><div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...current.sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
+    <fieldset class="sbx-section sbx-break-glass" hidden=${advanced}><legend title="Exact-path read/write access to normally protected tclaude/harness state. An exception mechanism for debugging tclaude itself — not a recommended posture.">🚨 Break-glass protected access</legend>
+      ${resolvedBG.length ? html`<div class="sbx-bg-warning" role="alert"><strong>🚨 Dangerous:</strong> This profile grants break-glass protected access: ${describeBreakGlassEntries(resolvedBG)}. ${BREAK_GLASS_WARNING}</div>` : html`<div class="sbx-bg-intro">Grants access to normally protected tclaude/harness state (daemon database, sessions, credentials). Exceptional debugging only — leave empty unless you are deliberately debugging tclaude itself.</div>`}
+      <div class="sbx-rows">${draftBreakGlass.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setBG(index, { access })} options=${[['read', 'read'], ['write', 'write']]}/><input class="sbx-path" value=${row.path || ''} placeholder="~/.tclaude/data" onInput=${(event) => setBG(index, { path: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, break_glass_filesystem: value.break_glass_filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div>
+      <button type="button" class="sbx-add-row sbx-bg-add" onClick=${() => setDraft((value) => ({ ...value, break_glass_filesystem: [...value.break_glass_filesystem, { path: '', access: 'read' }] }))}>＋ add break-glass rule (dangerous)</button>
+    </fieldset>
+    ${resolvedBG.length > 0 && html`<label class="sbx-bg-ack"><input type="checkbox" id="sandbox-profile-editor-break-glass-ack" checked=${breakGlassAck} onChange=${(event) => setBreakGlassAck(event.currentTarget.checked)}/> I understand this profile grants break-glass access to protected tclaude/harness state — including possible credential and session disclosure, state corruption, authorization bypass, host-control risk, and daemon/harness breakage — and I accept that risk.</label>`}
     ${!advanced && directoryStatus.missing.length > 0 && html`<div class="sbx-missing"><span>${directoryStatus.missing.length} director${directoryStatus.missing.length === 1 ? 'y does' : 'ies do'} not exist. Saving is allowed; read/write rules activate on a later launch, while deny targets must exist before launch.</span>${directoryStatus.creatable.length > 0 && html`<button type="button" disabled=${directoryBusy || saving} onClick=${createMissing}>${directoryBusy ? 'Creating…' : `Create ${directoryStatus.creatable.length} missing director${directoryStatus.creatable.length === 1 ? 'y' : 'ies'}`}</button>`}</div>`}
-    <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}></div>`}
-    <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${saving || directoryBusy} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
+    <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}><${Row} label="Break-glass JSON" title="Exact-path {path, access: read|write} rules for normally protected tclaude/harness state. Dangerous; requires the explicit acknowledgement to save."><textarea id="sandbox-profile-editor-break-glass" rows="3" value=${rawBreakGlass} onInput=${(event) => setRawBreakGlass(event.currentTarget.value)}/></${Row}></div>`}
+    ${recoveryBlocked && html`<div id="sandbox-profile-editor-recovery" class="sbx-bg-warning" role="alert">The daemon refused this save because the profile now carries break-glass authority this editor cannot see: the registry reload failed, so the current rules are unknown. Saving stays blocked until an authoritative reload succeeds. <button type="button" id="sandbox-profile-editor-recovery-retry" disabled=${recoveryBusy || saving} onClick=${() => { void retryRecovery(); }}>${recoveryBusy ? 'Reloading…' : '↻ Retry registry reload'}</button></div>`}
+    <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${saving || directoryBusy || recoveryBlocked} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
 }
 
 function ProfileExport({ current, state, actions, confirmDiscard }) {
@@ -222,14 +281,112 @@ function SandboxExport({ current, state, actions, confirmDiscard }) {
 function SandboxImport({ current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [raw, setRaw] = useState(''); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [conflict, setConflict] = useState('skip'); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
-  const inspect = async () => { setError(''); setBusy('inspect'); try { const parsed = JSON.parse(raw); if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export'); const found = await actions.inspectSandboxBundle(parsed); setEnvelope(parsed); setPreview(found); } catch (e) { setError(message(e)); } finally { setBusy(''); } };
-  const submit = async () => { if (!preview) { setError('preview the import first'); return; } setBusy('import'); try { await actions.importSandboxBundle(envelope, conflict); state.closeDialog(); } catch (e) { setError(message(e)); } finally { setBusy(''); } };
+  const [bgAck, setBgAck] = useState(false);
+  // Sticky after a typed 422 whose registry reload FAILED: the cached local
+  // registry may hide server-side break-glass, so carriers composed from it
+  // cannot be trusted. While set, EVERY preview attempt — including the
+  // ordinary Preview button — must reload the registry before inspecting,
+  // and only both succeeding restores the preview and lifts the block.
+  // Bundle or policy edits do not clear it (the registry is still stale) —
+  // and neither does closing and reopening this dialog: the marker lives in
+  // the shared management state, whose stale cached registry it describes,
+  // so only a successful authoritative reload clears it.
+  const registryRecoveryRequired = state.sandboxRegistryRecoveryRequired;
+  const inspect = async () => {
+    setError(''); setBusy('inspect');
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (registryRecoveryRequired.value) {
+        let registryOk = false;
+        try { registryOk = (await actions.load('sandbox')) === true; } catch (_) { registryOk = false; }
+        if (!registryOk) {
+          setPreview(null);
+          setError('reloading the sandbox-profile registry failed — the current break-glass rules are unknown, so preview and import stay blocked until an authoritative reload succeeds');
+          return;
+        }
+      }
+      const found = await actions.inspectSandboxBundle(parsed);
+      setEnvelope(parsed); setPreview(found); setBgAck(false);
+      registryRecoveryRequired.value = false;
+    } catch (e) {
+      if (registryRecoveryRequired.value) setPreview(null);
+      setError(message(e));
+    } finally { setBusy(''); }
+  };
   const existing = new Set(current.sandboxProfiles.map((item) => item.name)); const incoming = preview?.profiles || envelope?.profiles || [];
-  return html`<${Overlay} id="sandbox-profile-import-modal" labelledby="sandbox-profile-import-title" onClose=${state.closeDialog} dirty=${!!raw} blocked=${!!busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3><${Row} label="File"><input type="file" accept=".json,application/json" onChange=${async (event) => { const file = event.currentTarget.files?.[0]; if (file) { setRaw(await file.text()); setPreview(null); } }}/></${Row}><${Row} label="or paste"><textarea rows="6" value=${raw} onInput=${(event) => { setRaw(event.currentTarget.value); setPreview(null); }}/></${Row}><button disabled=${busy} onClick=${inspect}>Preview</button>${preview && html`<div class="profile-transfer-list">${incoming.map((item) => html`<div key=${item.name} class="profile-transfer-row"><span>${item.name} · ${sandboxProfileSummary(item)}${existing.has(item.name) ? ' · already exists locally' : ''}</span></div>`)}</div>${incoming.some((item) => existing.has(item.name)) && html`<${Row} label="Name conflicts"><${Select} id="sandbox-profile-import-conflict" value=${conflict} onChange=${setConflict} options=${[['skip', 'Skip existing'], ['overwrite', 'Overwrite existing'], ['error', 'Stop with an error']]}/></${Row}>`}`}
-    <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button disabled=${!!busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
+  // Break-glass carried anywhere in an imported profile's composition — its
+  // own rules or ones an included bundle/local profile contributes — needs a
+  // fresh acknowledgement on this machine before import. The registry the
+  // composition resolves against must honor the conflict policy: under
+  // "skip", a conflicting incoming profile is discarded (its rules must not
+  // demand acknowledgement) and includes keep resolving to the RETAINED
+  // local version (whose break-glass must not go unwarned); under
+  // "overwrite" (and "error", which only succeeds without conflicts) the
+  // incoming versions win.
+  const incomingNames = new Set(incoming.map((item) => item.name));
+  const localNames = new Set(current.sandboxProfiles.map((item) => item.name));
+  const imported = conflict === 'skip' ? incoming.filter((item) => !localNames.has(item.name)) : incoming;
+  const composedProfiles = conflict === 'skip'
+    ? [...current.sandboxProfiles, ...imported]
+    : [...current.sandboxProfiles.filter((item) => !incomingNames.has(item.name)), ...incoming];
+  const breakGlassCarriers = imported
+    .map((item) => ({ name: item.name, entries: assignedBreakGlass(item.name, composedProfiles, 'import') }))
+    .filter((item) => item.entries.length);
+  const needsAck = breakGlassCarriers.length > 0;
+  // The ack-free inspect reports include-graph errors PER conflict policy
+  // ("skip" keeps a clashing local profile's own includes, so only one policy
+  // may be invalid). Importing under "error" only succeeds when no names
+  // clash — every incoming profile lands — so it shares the overwrite graph.
+  const includeError = preview?.include_errors?.[conflict === 'skip' ? 'skip' : 'overwrite'] || '';
+  const submit = async () => {
+    if (!preview) { setError('preview the import first'); return; }
+    if (includeError) { setError(includeError); return; }
+    if (needsAck && !bgAck) { setError('break-glass profiles require the explicit risk acknowledgement before import'); return; }
+    setBusy('import');
+    try { await actions.importSandboxBundle(envelope, conflict, needsAck && bgAck); state.closeDialog(); }
+    catch (e) {
+      if (e?.code === BREAK_GLASS_ACK_CODE) {
+        // The daemon's authoritative import plan demanded an acknowledgement
+        // this preview did not anticipate (its state moved after inspect).
+        // The carriers the operator must acknowledge are composed from BOTH
+        // sides, so recovery refreshes BOTH: the local sandbox-profile
+        // registry (a RETAINED local profile may have gained break-glass
+        // that a skip-policy wrapper now reaches) and the authoritative
+        // bundle inspection. Either refresh failing is a recovery failure:
+        // the preview clears so Import stays blocked. Never resend
+        // automatically — a fresh explicit acknowledgement is required.
+        setBgAck(false);
+        let failure = '';
+        let refreshed = null;
+        let registryOk = false;
+        try { registryOk = (await actions.load('sandbox')) === true; } catch (_) { registryOk = false; }
+        if (!registryOk) {
+          failure = 'reloading the sandbox-profile registry failed';
+          // Sticky: the cached registry cannot be trusted, so every later
+          // preview attempt must reload it first (see inspect above).
+          registryRecoveryRequired.value = true;
+        } else {
+          try { refreshed = await actions.inspectSandboxBundle(envelope); }
+          catch (inspectError) { failure = `re-running the authoritative preview failed (${message(inspectError)})`; }
+        }
+        if (failure) {
+          setPreview(null);
+          setError(`${message(e)} ${failure} — import stays blocked; preview again once the daemon is reachable.`);
+        } else {
+          setPreview(refreshed);
+          registryRecoveryRequired.value = false;
+          setError(`${message(e)} The registry and authoritative preview were refreshed — review the current break-glass carriers and re-acknowledge before importing again.`);
+        }
+      } else setError(message(e));
+    }
+    finally { setBusy(''); }
+  };
+  return html`<${Overlay} id="sandbox-profile-import-modal" labelledby="sandbox-profile-import-title" onClose=${state.closeDialog} dirty=${!!raw} blocked=${!!busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="sandbox-profile-import-title"><span class="sandbox-word-regular">Import sandbox profiles</span><span class="sandbox-word-wizard">📜 Read wards</span></h3><${Row} label="File"><input type="file" accept=".json,application/json" onChange=${async (event) => { const file = event.currentTarget.files?.[0]; if (file) { setRaw(await file.text()); setPreview(null); setBgAck(false); } }}/></${Row}><${Row} label="or paste"><textarea rows="6" value=${raw} onInput=${(event) => { setRaw(event.currentTarget.value); setPreview(null); setBgAck(false); }}/></${Row}><button disabled=${busy} onClick=${inspect}>Preview</button>${preview && html`<div class="profile-transfer-list">${incoming.map((item) => html`<div key=${item.name} class="profile-transfer-row"><span>${item.name} · ${sandboxProfileSummary(item)}${existing.has(item.name) ? ' · already exists locally' : ''}</span></div>`)}</div>${needsAck && html`<div class="sbx-bg-warning" role="alert"><strong>🚨 Break-glass protected access in this bundle:</strong> ${breakGlassCarriers.map((carrier) => `${carrier.name}: ${describeBreakGlassEntries(carrier.entries)}`).join(' — ')}. ${BREAK_GLASS_WARNING} Importing on this machine requires a fresh acknowledgement after paths are canonicalized.</div><label class="sbx-bg-ack"><input type="checkbox" id="sandbox-profile-import-break-glass-ack" checked=${bgAck} onChange=${(event) => setBgAck(event.currentTarget.checked)}/> I understand these profiles grant break-glass access to protected tclaude/harness state and I accept that risk on this machine.</label>`}${incoming.some((item) => existing.has(item.name)) && html`<${Row} label="Name conflicts"><${Select} id="sandbox-profile-import-conflict" value=${conflict} onChange=${(value) => { setConflict(value); setBgAck(false); }} options=${[['skip', 'Skip existing'], ['overwrite', 'Overwrite existing'], ['error', 'Stop with an error']]}/></${Row}>`}${includeError && html`<div id="sandbox-profile-import-include-error" role="alert" class="cron-create-error">Include graph invalid under this conflict policy: ${includeError}</div>`}`}
+    <div role="alert" class="cron-create-error">${error}</div><div class="modal-buttons"><button disabled=${!!busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !preview || !!includeError || (needsAck && !bgAck)} onClick=${submit}>${busy === 'import' ? 'Importing…' : 'Import'}</button></div></${Overlay}>`;
 }
 
-function SandboxDiffModal({ model, close }) {
+function SandboxDiffModal({ model, close, profiles = [] }) {
   const confirmRef = useRef(null);
   const { dialogRef } = useDialogFocus({ open: !!model, initialFocusRef: confirmRef, onEscape: () => close(false) });
   useEffect(() => {
@@ -254,9 +411,17 @@ function SandboxDiffModal({ model, close }) {
   const dels = diff.filter((line) => line.t === 'del').length;
   const sign = { add: '+', del: '\u2212', ctx: ' ' };
   const cancelOutside = (event) => { if (event.target === event.currentTarget) close(false); };
+  // Resolve against the registry so break-glass carried purely by includes
+  // stays visible in the confirmation, matching the daemon's acknowledgement
+  // rule. Own rules are also covered by breakGlassRules on the raw payload.
+  const afterBreakGlass = resolvedBreakGlass(model.after, profiles, model.before?.name || '');
+  const beforeBreakGlass = model.before ? resolvedBreakGlass(model.before, profiles, model.before.name) : [];
   return html`<div ref=${dialogRef} id="sandbox-profile-diff-modal" class="modal-overlay show" role="dialog" aria-modal="true" aria-labelledby="sandbox-profile-diff-title" onClick=${cancelOutside}>
     <div class="config-diff-modal">
       <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
+      ${afterBreakGlass.length > 0 && html`<div id="sandbox-profile-diff-break-glass" class="sbx-bg-warning" role="alert"><strong>🚨 Break-glass protected access:</strong> ${describeBreakGlassEntries(afterBreakGlass)} — ${BREAK_GLASS_WARNING}</div>`}
+      ${!afterBreakGlass.length && beforeBreakGlass.length > 0 && html`<div id="sandbox-profile-diff-break-glass-removed" class="cfg-diff-sub">Break-glass protected access is removed by this change.</div>`}
+      ${model.after?.read_baseline === 'minimal' && html`<div id="sandbox-profile-diff-read-baseline" class="cfg-diff-sub">Read baseline: minimal — strict opt-in read scope (strictest-wins when composed with other profiles).</div>`}
       <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
       <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
       <div class="modal-buttons"><button id="sandbox-profile-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button><span class="spacer"></span><button ref=${confirmRef} id="sandbox-profile-diff-confirm" class="primary" type="button" onClick=${() => close(true)}>Save sandbox profile</button></div>
@@ -284,7 +449,7 @@ function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePer
     ${descriptor?.kind === 'group-context' && html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'group-clone' && html`<${GroupCloneDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'template-deploy' && html`<${TemplateDeployDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    <${SandboxDiffModal} model=${current.sandboxDiff} close=${state.cancelSandboxDiff} />`;
+    <${SandboxDiffModal} model=${current.sandboxDiff} close=${state.cancelSandboxDiff} profiles=${current.sandboxProfiles} />`;
 }
 
 export function mountManagementIsland({ host, state, actions, confirm, confirmDiscard, openProfilePermissions, registerCleanup }) {

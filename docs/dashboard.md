@@ -301,6 +301,33 @@ saves referencing unknown profiles are rejected, renames follow into
 referrers, and a profile cannot be deleted while another profile includes it.
 Exporting a profile automatically bundles the profiles it includes.
 
+Two opt-in policy fields extend the ordinary profile payload. **Read
+baseline** is `default` (omitted — the harness's broad read baseline,
+today's behavior) or `minimal`, a strict opt-in posture that narrows reads to
+the workspace, required runtime paths, and explicit grants. Minimal composes
+strictest-wins across includes and the global → group → explicit layers: any
+minimal layer makes the effective baseline minimal, and a later default layer
+never widens it back. Where a harness cannot faithfully enforce the strict
+posture, launch fails with a typed capability error rather than pretending
+isolation. **Break-glass protected access** (`break_glass_filesystem`) is the
+only representation that may touch the normally protected tclaude/harness
+state (`~/.tclaude/data`, `~/.claude/sessions`, `~/.codex`); ordinary
+filesystem rules keep rejecting those paths. Each rule is an exact path with
+`read` or `write` access — read never implies write. It exists solely for
+deliberate debugging of tclaude itself and is rendered as dangerous
+everywhere: the editor, the save diff, profile cards, import previews, the
+resolved spawn preview, and both assignment chips show a prominent warning
+naming the concrete risks (credential/session disclosure, daemon-state
+corruption, authorization bypass, host-control sockets, daemon/harness
+breakage), and every commit surface — create, edit, import, global or group
+assignment, and spawning under a resolved policy that carries break-glass —
+requires an explicit fresh acknowledgement (`break_glass_acknowledged`;
+`--i-understand-break-glass-risk` in the CLI). Includes never hide the
+origin: previews attribute every break-glass rule and a minimal baseline to
+the profile and scope that introduced them. Agent-initiated spawns can
+neither introduce nor widen break-glass access, and `minimal → default` is
+treated as widening under the same lineage rules.
+
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing
 scribes keep working in parallel. The scribe can discuss paths, literal

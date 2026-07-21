@@ -3,6 +3,26 @@ import { loadSandboxProfiles, openSandboxProfileEditor } from './sandbox-profile
 import { openProfileEditor } from './modal-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
+import { shellConfirm } from './shell-state.js';
+import { assignedBreakGlass, BREAK_GLASS_ACK_CODE, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
+
+// Assignment failures carry the daemon's structured {"error", "code"} body.
+// The typed acknowledgement code means the profile's authoritative
+// break-glass authority changed between our warning and the commit: surface
+// that specifically so the operator retries — which reloads the registry and
+// shows a fresh warning — instead of silently re-sending the stale ack.
+async function assignmentError(response) {
+  const raw = await response.text();
+  let body = null;
+  try { body = JSON.parse(raw); } catch (_) { body = null; }
+  const message = body?.message || body?.error || raw || `HTTP ${response.status}`;
+  const error = new Error(body?.code === BREAK_GLASS_ACK_CODE
+    ? `${message} The profile's break-glass authority changed since the warning was shown; the assignment was NOT applied. Retry to review the current rules and re-acknowledge.`
+    : message);
+  error.status = response.status;
+  if (body?.code) error.code = body.code;
+  return error;
+}
 
 function choices(items) {
   return profileChoices(items).map(({ value, label }) => Object.freeze({ value, label }));
@@ -12,6 +32,8 @@ export function createToolbarProfilePickerActions({
   fetchImpl = fetch,
   notify = () => {},
   refresh = () => {},
+  confirmDanger = shellConfirm,
+  loadSandboxProfilesImpl = loadSandboxProfiles,
 } = {}) {
   const pending = new Set();
   const actions = {
@@ -34,13 +56,28 @@ export function createToolbarProfilePickerActions({
           renderDashDefaultProfile();
           return true;
         }
+        // A global assignment is the most persistent break-glass surface:
+        // every future launch inherits it until the assignment is removed, so
+        // it needs the prominent warning and the explicit acknowledgement.
+        let breakGlassAcknowledged = false;
+        if (name) {
+          const entries = assignedBreakGlass(name, await loadSandboxProfilesImpl(), 'global');
+          if (entries.length) {
+            const proceed = await confirmDanger(breakGlassAssignmentPrompt({
+              scopeLabel: 'This assigns the GLOBAL default sandbox profile: every newly launched agent inherits it until the assignment is removed.',
+              name, entries,
+            }));
+            if (!proceed) return false;
+            breakGlassAcknowledged = true;
+          }
+        }
         const response = await fetchImpl('/api/sandbox-profile-default', {
           method: name ? 'PUT' : 'DELETE',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: name ? JSON.stringify({ name }) : undefined,
+          body: name ? JSON.stringify({ name, ...(breakGlassAcknowledged ? { break_glass_acknowledged: true } : {}) }) : undefined,
         });
-        if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
+        if (!response.ok) throw await assignmentError(response);
         notify(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
         await refresh();
         renderDashSandboxProfile();

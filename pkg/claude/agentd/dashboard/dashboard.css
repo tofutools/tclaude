@@ -3855,6 +3855,10 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-cap-inc   { color: #d2a8ff; background: rgba(163, 113, 247, 0.12); border-color: rgba(163, 113, 247, 0.30); }
 /* "own" = agent-owned directory variable (isolated per-agent dir at spawn). */
 .sbx-cap-own   { color: #56d4dd; background: rgba(57, 197, 207, 0.12); border-color: rgba(57, 197, 207, 0.30); }
+/* Break-glass = protected tclaude/harness state deliberately exposed; must
+   read as dangerous everywhere, never like an ordinary grant. */
+.sbx-cap-bg    { color: #ff7b72; background: rgba(248, 81, 73, 0.18); border-color: rgba(248, 81, 73, 0.60); font-weight: 700; min-width: 0; }
+.sbx-cap-baseline { color: #79c0ff; background: rgba(56, 139, 253, 0.12); border-color: rgba(56, 139, 253, 0.35); min-width: 0; }
 .sbx-cap-val {
   flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; color: #c9d1d9;
@@ -3881,6 +3885,25 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .sbx-missing button:hover { background: #2d2a20; border-color: #9e7c32; }
 .sbx-missing button:disabled { opacity: 0.55; cursor: default; }
+/* Break-glass editor section and the shared danger banner. Deliberately the
+   loudest chrome in the dialog: red border, red legend, persistent warning. */
+.sbx-break-glass { border-color: rgba(248, 81, 73, 0.55); }
+.sbx-break-glass legend { color: #ff7b72; font-weight: 700; }
+.sbx-break-glass .sbx-bg-add { border-color: rgba(248, 81, 73, 0.45); color: #ffa198; }
+.sbx-break-glass .sbx-bg-add:hover { background: rgba(248, 81, 73, 0.10); border-color: rgba(248, 81, 73, 0.70); color: #ffc1bc; }
+.sbx-bg-intro { color: #8b949e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
+.sbx-bg-warning {
+  border: 1px solid rgba(248, 81, 73, 0.60); border-left: 4px solid #f85149;
+  border-radius: 6px; background: rgba(248, 81, 73, 0.08);
+  color: #ffa198; font-size: 12px; line-height: 1.5;
+  padding: 8px 10px; margin: 4px 0 8px;
+}
+.sbx-bg-warning strong { color: #ff7b72; }
+.sbx-bg-ack {
+  display: flex; gap: 8px; align-items: flex-start;
+  margin: 2px 0 6px; color: #ffa198; font-size: 12px; line-height: 1.5;
+}
+.sbx-bg-ack input { accent-color: #f85149; margin-top: 2px; }
 /* Advanced raw-JSON disclosure. */
 .sbx-advanced { display: flex; flex-direction: column; gap: 8px; }
 .sbx-advanced-toggle {

@@ -769,3 +769,419 @@ test('spawn dialog applies a profile auto memory default', async (t) => {
   );
   assert.equal(silent.autoMemory, false, 'a profile that says nothing leaves auto memory off');
 });
+
+// TCL-609: the resolved sandbox policy drives the break-glass spawn gate, so
+// a policy loaded for a previous selection (or still in flight) must never be
+// submit-eligible — the confirmation could describe profile A while the
+// request selects profile B.
+test('Preact agent-spawn blocks submit on a stale sandbox policy and acknowledges the resolved one', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  const confirms = [];
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+    confirmBreakGlassSpawn: async (entries) => { confirms.push(entries); return true; },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'an unresolved policy blocks submit');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy preview to finish loading/);
+
+    loads[0].pending.resolve({ profiles: [{ name: 'danger' }], selected: '', preview: 'no profiles applied', breakGlass: [] });
+    await flush(harness);
+    const picker = host.querySelector('#agent-spawn-sandbox-profile');
+    setValue(picker, 'danger');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    assert.equal(loads.length, 2, 'a selection change starts a fresh policy load');
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'the previous selection’s resolved policy is not submit-eligible for the new one');
+    assert.equal(confirms.length, 0, 'no confirmation is shown from a stale policy');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy preview to finish loading/);
+
+    loads[1].pending.resolve({
+      profiles: [{ name: 'danger' }], selected: 'danger',
+      preview: '⚠ BREAK-GLASS protected access: write /home/op/.tclaude/data (explicit:danger)',
+      breakGlass: [{ path: '/home/op/.tclaude/data', access: 'write', origins: ['explicit:danger'] }],
+    });
+    await flush(harness);
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirms.length, 1, 'the matching policy triggers the break-glass confirmation');
+    assert.deepEqual(confirms[0], [{ path: '/home/op/.tclaude/data', access: 'write', origins: ['explicit:danger'] }]);
+    assert.equal(spawnRequests.length, 1);
+    assert.equal(spawnRequests[0].body.sandbox_profile, 'danger');
+    assert.equal(spawnRequests[0].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// The policy must stay valid across every await inside submit — a refresh
+// while the break-glass confirmation is pending must not let the old
+// policy's acknowledgement ride the request.
+test('Preact agent-spawn aborts when the policy is refreshed while break-glass confirmation is pending', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  const confirmGates = [];
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+    confirmBreakGlassSpawn: () => {
+      const gate = deferred();
+      confirmGates.push(gate);
+      return gate.promise;
+    },
+  });
+  const { harness, host, state } = mounted;
+  const policy = {
+    profiles: [], selected: '',
+    preview: '⚠ BREAK-GLASS protected access: write /home/op/.tclaude/data (group:group-debug)',
+    breakGlass: [{ path: '/home/op/.tclaude/data', access: 'write', origins: ['group:group-debug'] }],
+  };
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve(policy);
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirmGates.length, 1, 'the matching policy opens the confirmation');
+
+    state.refreshSandboxPolicy();
+    await flush(harness);
+    assert.equal(loads.length, 2, 'the refresh starts a replacement load');
+    confirmGates[0].resolve(true);
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'a confirmation for the pre-refresh policy must not spawn');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy changed/);
+
+    loads[1].pending.resolve(policy);
+    await flush(harness);
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirmGates.length, 2, 'a fresh submit re-confirms against the reloaded policy');
+    confirmGates[1].resolve(true);
+    await flush(harness);
+    assert.equal(spawnRequests.length, 1);
+    assert.equal(spawnRequests[0].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// The load-failure variant: a refresh whose replacement load FAILS while
+// later async work (worktree resolution) is pending leaves no valid policy,
+// so the spawn must abort rather than fall back to the stale one.
+test('Preact agent-spawn aborts when a policy reload fails during in-flight spawn work', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  const worktreeGate = deferred();
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    resolveWorktree: () => worktreeGate.promise,
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve({ profiles: [], selected: '', preview: 'no profiles applied', breakGlass: [] });
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'worktree resolution is still pending');
+
+    state.refreshSandboxPolicy();
+    await flush(harness);
+    assert.equal(loads.length, 2);
+    loads[1].pending.reject(new Error('policy backend down'));
+    await flush(harness);
+    worktreeGate.resolve({ path: '', branch: '' });
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'no valid policy, no spawn');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy changed/);
+    assert.equal(host.querySelector('#agent-spawn-submit').disabled, false, 'the dialog recovers for a retry');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// The sharpest variant: the refresh's replacement load COMPLETES (with a
+// materially different policy) while the old confirmation is still open.
+// Live-to-live comparison would re-align and let the old confirmation
+// authorize policy B; the frozen submission token must abort instead and
+// demand a fresh confirmation for B.
+test('Preact agent-spawn rejects an old confirmation after a fast successful policy reload', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  const confirmGates = [];
+  const confirmedEntries = [];
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+    confirmBreakGlassSpawn: (entries) => {
+      const gate = deferred();
+      confirmGates.push(gate);
+      confirmedEntries.push(entries);
+      return gate.promise;
+    },
+  });
+  const { harness, host, state } = mounted;
+  const policyA = {
+    profiles: [], selected: '',
+    preview: '⚠ BREAK-GLASS protected access: read /home/op/.tclaude/data (group:debug-a)',
+    breakGlass: [{ path: '/home/op/.tclaude/data', access: 'read', origins: ['group:debug-a'] }],
+  };
+  const policyB = {
+    profiles: [], selected: '',
+    preview: '⚠ BREAK-GLASS protected access: write /home/op/.codex (group:debug-b)',
+    breakGlass: [{ path: '/home/op/.codex', access: 'write', origins: ['group:debug-b'] }],
+  };
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve(policyA);
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirmGates.length, 1, 'the confirmation opens for policy A');
+    assert.deepEqual(confirmedEntries[0], policyA.breakGlass);
+
+    // Refresh AND land the replacement load before the operator answers the
+    // old confirmation — live state now matches policy B on both sides.
+    state.refreshSandboxPolicy();
+    await flush(harness);
+    assert.equal(loads.length, 2);
+    loads[1].pending.resolve(policyB);
+    await flush(harness);
+
+    confirmGates[0].resolve(true);
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'the old confirmation must not authorize the new policy');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy changed/);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirmGates.length, 2, 'a fresh submit demands a fresh confirmation');
+    assert.deepEqual(confirmedEntries[1], policyB.breakGlass, 'the fresh confirmation shows policy B, not A');
+    confirmGates[1].resolve(true);
+    await flush(harness);
+    assert.equal(spawnRequests.length, 1);
+    assert.equal(spawnRequests[0].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// Same token invariant around the later awaits: a refresh whose reload lands
+// (same content, new revision) while worktree resolution is pending still
+// aborts — the submit's token is bound to the revision it validated.
+test('Preact agent-spawn aborts on a fast successful reload during worktree resolution', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  const worktreeGate = deferred();
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    resolveWorktree: () => worktreeGate.promise,
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+  });
+  const { harness, host, state } = mounted;
+  const policy = { profiles: [], selected: '', preview: 'no profiles applied', breakGlass: [] };
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve(policy);
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'worktree resolution is pending');
+
+    state.refreshSandboxPolicy();
+    await flush(harness);
+    assert.equal(loads.length, 2);
+    loads[1].pending.resolve(policy);
+    await flush(harness);
+    worktreeGate.resolve({ path: '', branch: '' });
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'a refresh mid-flight aborts even when its reload succeeds');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy changed/);
+    assert.equal(host.querySelector('#agent-spawn-submit').disabled, false, 'the dialog recovers for a retry');
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// A daemon-side typed acknowledgement refusal (the server resolved
+// break-glass this dialog's policy did not show) must reload the policy and
+// demand a fresh confirmation — never auto-resend the stale acknowledgement.
+test('Preact agent-spawn recovers from the typed acknowledgement 422 with a policy reload and fresh confirmation', async (t) => {
+  const loads = [];
+  const spawnAttempts = [];
+  const confirms = [];
+  let refuseNext = true;
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => {
+      spawnAttempts.push(request);
+      if (refuseNext) {
+        refuseNext = false;
+        throw Object.assign(new Error('spawn requires break-glass acknowledgement: write /home/op/.codex'), { status: 422, code: 'break_glass_acknowledgement_required' });
+      }
+      return { conv_id: '1234567890' };
+    },
+    confirmBreakGlassSpawn: async (entries) => { confirms.push(entries); return true; },
+  });
+  const { harness, host, state } = mounted;
+  const policy = { profiles: [], selected: '', preview: 'no profiles applied', breakGlass: [] };
+  const refreshedPolicy = {
+    profiles: [], selected: '',
+    preview: '⚠ BREAK-GLASS protected access: write /home/op/.codex (group:debug)',
+    breakGlass: [{ path: '/home/op/.codex', access: 'write', origins: ['group:debug'] }],
+  };
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve(policy);
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1, 'the daemon refused the first attempt');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /stays blocked until it completes/);
+    await flush(harness);
+    assert.equal(loads.length, 2, 'the refusal forces a policy reload');
+    assert.equal(spawnAttempts.length, 1, 'the refused request is never retried automatically');
+
+    loads[1].pending.resolve(refreshedPolicy);
+    await flush(harness);
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /was refreshed — review the current break-glass rules/);
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirms.length, 1, 'the fresh submit demands a fresh confirmation for the refreshed policy');
+    assert.deepEqual(confirms[0], refreshedPolicy.breakGlass);
+    assert.equal(spawnAttempts.length, 2);
+    assert.equal(spawnAttempts[1].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});
+
+// Failure paths for the typed-422 recovery: while the policy reload is
+// pending — or after it fails — submit stays blocked, nothing proceeds, and
+// the message must not falsely claim the policy "was refreshed".
+test('Preact agent-spawn stays blocked when the post-422 policy reload is pending or fails', async (t) => {
+  const loads = [];
+  const spawnAttempts = [];
+  const confirms = [];
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => {
+      spawnAttempts.push(request);
+      throw Object.assign(new Error('spawn requires break-glass acknowledgement'), { status: 422, code: 'break_glass_acknowledgement_required' });
+    },
+    confirmBreakGlassSpawn: async (entries) => { confirms.push(entries); return true; },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+    loads[0].pending.resolve({ profiles: [], selected: '', preview: 'no profiles applied', breakGlass: [] });
+    await flush(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1);
+    assert.equal(loads.length, 2, 'the refusal starts a policy reload');
+    // Reload still PENDING: blocked, and no false "was refreshed" claim.
+    let text = host.querySelector('#agent-spawn-error').textContent;
+    assert.match(text, /stays blocked/);
+    assert.ok(!text.includes('was refreshed'), 'a pending reload is not described as refreshed');
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1, 'no request proceeds while the reload is pending');
+    assert.equal(confirms.length, 0, 'no confirmation proceeds while the reload is pending');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /finish loading/);
+
+    // Reload FAILS: still blocked, still no false claim.
+    loads[1].pending.reject(new Error('policy backend down'));
+    await flush(harness);
+    text = host.querySelector('#agent-spawn-error').textContent;
+    assert.match(text, /Reloading the resolved sandbox policy failed/);
+    assert.ok(!text.includes('was refreshed'), 'a failed reload is not described as refreshed');
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnAttempts.length, 1, 'no request proceeds after a failed reload');
+    assert.equal(confirms.length, 0);
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /finish loading/);
+  } finally {
+    mounted.cleanup();
+  }
+});
