@@ -8,6 +8,7 @@ import { registerTerminalShellController } from './terminals-tab.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
+import { dragLeftRegion } from './terminal-drag-out.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -29,6 +30,23 @@ function composeTarget(pane, actions) {
     // pane closed while the composer was open, activation safely returns false.
     restoreFocus: () => actions.activatePane(pane.key),
   });
+}
+
+// While a terminal drag is in flight, follow the pointer so the surface can say
+// "release here and this terminal leaves" before the user commits. The same
+// geometry decides the gesture on dragend, so the hint never lies.
+function useDragOutArmed(active, regionRef) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!active) {
+      setArmed(false);
+      return undefined;
+    }
+    const onDragOver = (event) => setArmed(dragLeftRegion(event, regionRef.current));
+    document.addEventListener('dragover', onDragOver);
+    return () => document.removeEventListener('dragover', onDragOver);
+  }, [active]);
+  return armed;
 }
 
 function useTerminalThemeState() {
@@ -118,10 +136,26 @@ function TerminalPane({
   const [status, setStatus] = useState('disconnected');
   const [reconnect, setReconnect] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const headerRef = useRef(null);
+  // A solo pop-out has no tab strip to drag out of, so its header is the home
+  // region: pull the title off the header and the terminal goes back to the
+  // dashboard — the mirror image of dragging a dashboard tab out of the strip.
+  const reattachArmed = useDragOutArmed(solo && dragging, headerRef);
   const theme = useTerminalThemeState();
   const composeMessage = pane.seed.agent && onComposeMessage
     ? () => onComposeMessage(composeTarget(pane, actions))
     : null;
+  const startTitleDrag = (event) => {
+    event.stopPropagation();
+    event.dataTransfer?.setData(TERMINAL_TAB_DRAG_MIME, pane.key);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+    setDragging(true);
+  };
+  const endTitleDrag = (event) => {
+    setDragging(false);
+    if (dragLeftRegion(event, headerRef.current)) void actions.reattachPane(pane.key);
+  };
   useEffect(() => {
     if (active && manageTitle) {
       document.title = `${pane.label ? `${pane.label} — ` : ''}tclaude terminals`;
@@ -133,8 +167,17 @@ function TerminalPane({
       id=${pane.id}
       role=${solo ? null : 'tabpanel'}
     >
-      <div class="mux-pane-header">
-        <span class="mux-pane-title">${pane.label}</span>
+      <div ref=${headerRef} class=${`mux-pane-header${reattachArmed ? ' drag-out-armed' : ''}`}>
+        ${solo ? html`
+          <span
+            class=${`mux-pane-title mux-pane-title-drag${dragging ? ' dragging' : ''}`}
+            draggable="true"
+            title="Drag off this header — or click ↩ dashboard — to move this terminal back to the dashboard's Terminals tab"
+            onDragStart=${startTitleDrag}
+            onDragEnd=${endTitleDrag}
+          >${pane.label}</span>
+          ${reattachArmed ? html`<span class="mux-drag-out-hint">Release to send this terminal back to the dashboard</span>` : null}
+        ` : html`<span class="mux-pane-title">${pane.label}</span>`}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
         ${reconnect ? html`<button type="button" class="mux-btn" onClick=${() => void actions.widgetFor(pane.id)?.connect()}>Reconnect</button>` : null}
@@ -238,7 +281,7 @@ function PaneTab({
       <span
         class="mux-tab-label"
         draggable="true"
-        title="Drag to reorder · Alt+Shift+Left/Right to move with the keyboard"
+        title="Drag to reorder · drag off the strip to detach into its own browser tab · Alt+Shift+Left/Right to move with the keyboard"
         onDragStart=${(event) => onDragStart(event, pane.key)}
         onDragEnd=${onDragEnd}
       >${pane.label}</span>
@@ -341,15 +384,19 @@ function TerminalTabs({
   const current = state.view.value;
   const hasPanes = current.panes.length > 0;
   const shellRef = useRef(null);
+  const tabsRef = useRef(null);
   const dragKeyRef = useRef(null);
+  const droppedRef = useRef(false);
   const [dragKey, setDragKey] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [reorderAnnouncement, setReorderAnnouncement] = useState('');
   const [tabMenu, setTabMenu] = useState(null);
   const [menuFocusRequest, setMenuFocusRequest] = useState(0);
 
+  const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
   const clearDrag = () => {
     dragKeyRef.current = null;
+    droppedRef.current = false;
     setDragKey(null);
     setDropTarget(null);
   };
@@ -361,8 +408,18 @@ function TerminalTabs({
     event.dataTransfer.setData(TERMINAL_TAB_DRAG_MIME, key);
     event.dataTransfer.effectAllowed = 'move';
     dragKeyRef.current = key;
+    droppedRef.current = false;
     setDragKey(key);
     setDropTarget(null);
+  };
+  // Nothing in the strip accepted the drag and it ended clear of the strip:
+  // treat that as "pull this terminal out into its own browser tab". A drop on
+  // a sibling tab (reorder) or a cancelled drag never reaches the detach.
+  const endTabDrag = (event) => {
+    const key = dragKeyRef.current;
+    const detach = !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
+    clearDrag();
+    if (detach) void actions.popOutPane(key);
   };
   const tabDragOver = (event, targetKey) => {
     const sourceKey = dragKeyRef.current;
@@ -386,6 +443,7 @@ function TerminalTabs({
   const dropTab = (event, targetKey) => {
     event.preventDefault();
     event.stopPropagation();
+    droppedRef.current = true;
     const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
     const bounds = event.currentTarget.getBoundingClientRect();
     const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
@@ -499,9 +557,10 @@ function TerminalTabs({
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
+          Drag a tab off the strip to detach it into its own browser tab, or use the tab's context menu.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
-        <div class="mux-tabs" role="tablist" aria-label="Open terminals">
+        <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
           ${current.panes.map((pane) => html`
             <${PaneTab}
               key=${pane.key}
@@ -513,7 +572,7 @@ function TerminalTabs({
               dragging=${dragKey === pane.key}
               dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
               onDragStart=${startTabDrag}
-              onDragEnd=${clearDrag}
+              onDragEnd=${endTabDrag}
               onDragOver=${tabDragOver}
               onDragLeave=${tabDragLeave}
               onDrop=${dropTab}
@@ -521,6 +580,7 @@ function TerminalTabs({
             />
           `)}
         </div>
+        ${detachArmed ? html`<div class="mux-drag-out-hint">Release to detach this terminal into its own browser tab</div>` : null}
       ` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction} focusAfterDismiss=${focusAfterTabMenuDismiss} />` : null}
       ${hasPanes || !empty ? html`

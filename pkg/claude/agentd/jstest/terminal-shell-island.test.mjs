@@ -542,3 +542,78 @@ test('terminal button and shortcut route through the mounted Preact operator com
   terminalCleanup();
   messageCleanup();
 });
+
+test('dragging a terminal tab clear of the strip detaches it into its own browser tab', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const requests = [];
+  const opened = [];
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+    windowRef: { open: () => ({ location: { replace: (next) => opened.push(next) } }) },
+  });
+  const open = async (key) => harness.act(async () => {
+    controller.openTerminalPane({ ws: `/${key}`, key, label: key, hideConv: `agt_${key}` });
+    await Promise.resolve();
+  });
+  await open('one');
+  await open('two');
+  const strip = host.querySelector('.mux-tabs');
+  // The strip is the home region; the geometry rule is what the browser cannot
+  // tell us, so the test supplies the measurement a real layout would.
+  strip.getBoundingClientRect = () => ({ left: 0, top: 0, right: 400, bottom: 30, width: 400, height: 30 });
+  const labels = () => [...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent);
+  const label = (name) => [...host.querySelectorAll('.mux-tab-label')].find((el) => el.textContent === name);
+  const tab = (name) => label(name).closest('[role="tab"]');
+  const transfer = {
+    data: {}, effectAllowed: '', dropEffect: '',
+    setData(type, value) { this.data[type] = value; },
+    getData(type) { return this.data[type] || ''; },
+  };
+  const dragOver = (init) => harness.act(() => harness.fireEvent(harness.document, 'dragover', init));
+
+  await harness.act(() => harness.fireEvent(label('two'), 'dragstart', { dataTransfer: transfer }));
+  await dragOver({ clientX: 120, clientY: 60 });
+  assert.equal(host.querySelector('.mux-drag-out-hint'), null,
+    'a drag hovering just past the strip is still a reorder near-miss');
+  assert.equal(strip.classList.contains('drag-out-armed'), false);
+  await dragOver({ clientX: 120, clientY: 260 });
+  assert.match(host.querySelector('.mux-drag-out-hint').textContent, /Release to detach/,
+    'the strip states the pending detach before the user commits');
+  assert.equal(strip.classList.contains('drag-out-armed'), true);
+  await harness.act(async () => {
+    harness.fireEvent(label('two'), 'dragend', { dataTransfer: transfer, clientX: 120, clientY: 260 });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  assert.deepEqual(labels(), ['one'], 'the dragged terminal leaves the dashboard strip');
+  assert.equal(host.querySelector('.mux-drag-out-hint'), null, 'the gesture clears its own hint');
+  assert.equal(fake.widgets[1].disposeCount, 1, 'drag detach disposes the dashboard widget');
+  assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/,
+    'drag detach reuses the standalone handoff, not a new session');
+  assert.deepEqual(requests, ['/api/hide/agt_two']);
+
+  await open('three');
+  await harness.act(() => harness.fireEvent(label('three'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(() => harness.fireEvent(tab('one'), 'dragover', { dataTransfer: transfer, clientX: 20 }));
+  await harness.act(() => harness.fireEvent(tab('one'), 'drop', { dataTransfer: transfer, clientX: 20 }));
+  await harness.act(async () => {
+    harness.fireEvent(label('three'), 'dragend', { dataTransfer: transfer, clientX: 120, clientY: 260 });
+    await Promise.resolve();
+  });
+  assert.deepEqual(labels(), ['one', 'three'], 'a reorder drop still reorders');
+  assert.equal(opened.length, 1, 'a tab that accepted the drop is never also detached');
+
+  await harness.act(() => harness.fireEvent(label('three'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(async () => {
+    harness.fireEvent(label('three'), 'dragend', { dataTransfer: transfer });
+    await Promise.resolve();
+  });
+  assert.deepEqual(labels(), ['one', 'three'], 'a cancelled drag reports no end point and detaches nothing');
+  assert.equal(opened.length, 1);
+  cleanup();
+});

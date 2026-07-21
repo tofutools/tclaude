@@ -297,3 +297,64 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assert.equal(fake.widgets[0].disposeCount, 1);
   assert.equal(host.childElementCount, 0);
 });
+
+test('dragging the solo header title off the header sends the terminal back to the dashboard', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  const fake = fakeWidgetFactory(harness);
+  const [{ createTerminalShellState }, { createTerminalShellActions }, { mountStandaloneTerminalShell }] =
+    await Promise.all([
+      harness.importDashboardModule('js/terminal-shell-state.js'),
+      harness.importDashboardModule('js/terminal-shell-actions.js'),
+      harness.importDashboardModule('js/terminal-shell-island.js'),
+    ]);
+  const state = createTerminalShellState({ persistOrder: false });
+  const reattached = [];
+  const actions = createTerminalShellActions({
+    state,
+    windowRef: harness.window,
+    documentRef: harness.document,
+    fetchImpl: async () => ({ ok: true }),
+    onReattachPane: (pane) => { reattached.push(pane.key); return true; },
+  });
+  const cleanup = mountStandaloneTerminalShell({ host, state, actions, widgetFactory: fake.factory });
+  await harness.act(async () => {
+    actions.openPane({ ws: '/solo', key: 'solo', label: 'solo terminal' });
+    await Promise.resolve();
+  });
+
+  const header = host.querySelector('.mux-pane-header');
+  // The solo pop-out has no tab strip, so its header is the home region the
+  // terminal is dragged out of. Supply the measurement a real layout would.
+  header.getBoundingClientRect = () => ({ left: 0, top: 0, right: 900, bottom: 34, width: 900, height: 34 });
+  const title = host.querySelector('.mux-pane-title');
+  assert.equal(title.classList.contains('mux-pane-title-drag'), true, 'the solo title is the drag handle');
+  const transfer = {
+    data: {}, effectAllowed: '', dropEffect: '',
+    setData(type, value) { this.data[type] = value; },
+    getData(type) { return this.data[type] || ''; },
+  };
+  const dragOver = (init) => harness.act(() => harness.fireEvent(harness.document, 'dragover', init));
+
+  await harness.act(() => harness.fireEvent(title, 'dragstart', { dataTransfer: transfer }));
+  assert.equal(transfer.data['application/x-tclaude-terminal-tab'], 'solo');
+  await dragOver({ clientX: 300, clientY: 60 });
+  assert.equal(host.querySelector('.mux-drag-out-hint'), null, 'a drag still near the header is a near-miss');
+  await dragOver({ clientX: 300, clientY: 400 });
+  assert.match(host.querySelector('.mux-drag-out-hint').textContent, /back to the dashboard/);
+  assert.equal(header.classList.contains('drag-out-armed'), true);
+  await harness.act(async () => {
+    harness.fireEvent(title, 'dragend', { dataTransfer: transfer, clientX: 300, clientY: 400 });
+    await Promise.resolve();
+  });
+  assert.deepEqual(reattached, ['solo'],
+    'the drag runs the same reattach path as the ↩ dashboard button');
+
+  await harness.act(() => harness.fireEvent(title, 'dragstart', { dataTransfer: transfer }));
+  await harness.act(async () => {
+    harness.fireEvent(title, 'dragend', { dataTransfer: transfer });
+    await Promise.resolve();
+  });
+  assert.deepEqual(reattached, ['solo'], 'a cancelled drag leaves the terminal in its pop-out');
+  cleanup();
+});

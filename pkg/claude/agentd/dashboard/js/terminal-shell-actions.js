@@ -1,5 +1,6 @@
 import { setArcanePaletteEnabled } from './terminal-theme.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
+import { shellToast } from './shell-state.js';
 
 export function createTerminalShellActions({
   state,
@@ -7,6 +8,7 @@ export function createTerminalShellActions({
   fetchImpl = globalThis.fetch,
   windowRef = globalThis.window,
   documentRef = globalThis.document,
+  notify = shellToast,
   onReattachPane = null,
 } = {}) {
   if (!state) throw new TypeError('terminal shell actions require state');
@@ -120,10 +122,16 @@ export function createTerminalShellActions({
 
   async function popOutPane(key) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
-    if (!pane) return;
+    if (!pane) return false;
     let target = null;
     try { target = windowRef.open('about:blank', '_blank'); } catch (_) { target = null; }
-    if (!target) return;
+    if (!target) {
+      // A blocked pop-up leaves the pane exactly where it is — nothing is lost,
+      // but the gesture must say so. Drag-out especially: the strip has just
+      // promised the terminal was about to leave.
+      notify('terminal detach blocked: allow pop-ups for this dashboard to open a terminal in its own browser tab', true);
+      return false;
+    }
     const seed = {
       ws: pane.seed.ws,
       label: pane.label,
@@ -136,6 +144,7 @@ export function createTerminalShellActions({
     await closePane(key);
     try { target.location.replace(`/terminals?solo=1${encodeTerminalOpenHash(seed)}`); }
     catch (_) { /* target closed while detach was landing */ }
+    return true;
   }
 
   function reattachPane(key) {
