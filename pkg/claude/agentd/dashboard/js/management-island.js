@@ -282,7 +282,37 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const [raw, setRaw] = useState(''); const [envelope, setEnvelope] = useState(null); const [preview, setPreview] = useState(null); const [conflict, setConflict] = useState('skip'); const [error, setError] = useState(''); const [busy, setBusy] = useState('');
   const [bgAck, setBgAck] = useState(false);
-  const inspect = async () => { setError(''); setBusy('inspect'); try { const parsed = JSON.parse(raw); if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export'); const found = await actions.inspectSandboxBundle(parsed); setEnvelope(parsed); setPreview(found); setBgAck(false); } catch (e) { setError(message(e)); } finally { setBusy(''); } };
+  // Sticky after a typed 422 whose registry reload FAILED: the cached local
+  // registry may hide server-side break-glass, so carriers composed from it
+  // cannot be trusted. While set, EVERY preview attempt — including the
+  // ordinary Preview button — must reload the registry before inspecting,
+  // and only both succeeding restores the preview and lifts the block.
+  // Bundle or policy edits do not clear it (the registry is still stale);
+  // only a successful reload does, and closing the dialog discards it with
+  // the rest of the import state.
+  const [registryRecoveryRequired, setRegistryRecoveryRequired] = useState(false);
+  const inspect = async () => {
+    setError(''); setBusy('inspect');
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (registryRecoveryRequired) {
+        let registryOk = false;
+        try { registryOk = (await actions.load('sandbox')) === true; } catch (_) { registryOk = false; }
+        if (!registryOk) {
+          setPreview(null);
+          setError('reloading the sandbox-profile registry failed — the current break-glass rules are unknown, so preview and import stay blocked until an authoritative reload succeeds');
+          return;
+        }
+      }
+      const found = await actions.inspectSandboxBundle(parsed);
+      setEnvelope(parsed); setPreview(found); setBgAck(false);
+      setRegistryRecoveryRequired(false);
+    } catch (e) {
+      if (registryRecoveryRequired) setPreview(null);
+      setError(message(e));
+    } finally { setBusy(''); }
+  };
   const existing = new Set(current.sandboxProfiles.map((item) => item.name)); const incoming = preview?.profiles || envelope?.profiles || [];
   // Break-glass carried anywhere in an imported profile's composition — its
   // own rules or ones an included bundle/local profile contributes — needs a
@@ -332,6 +362,9 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
         try { registryOk = (await actions.load('sandbox')) === true; } catch (_) { registryOk = false; }
         if (!registryOk) {
           failure = 'reloading the sandbox-profile registry failed';
+          // Sticky: the cached registry cannot be trusted, so every later
+          // preview attempt must reload it first (see inspect above).
+          setRegistryRecoveryRequired(true);
         } else {
           try { refreshed = await actions.inspectSandboxBundle(envelope); }
           catch (inspectError) { failure = `re-running the authoritative preview failed (${message(inspectError)})`; }
@@ -341,6 +374,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
           setError(`${message(e)} ${failure} — import stays blocked; preview again once the daemon is reachable.`);
         } else {
           setPreview(refreshed);
+          setRegistryRecoveryRequired(false);
           setError(`${message(e)} The registry and authoritative preview were refreshed — review the current break-glass carriers and re-acknowledge before importing again.`);
         }
       } else setError(message(e));

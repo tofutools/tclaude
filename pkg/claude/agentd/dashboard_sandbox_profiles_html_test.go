@@ -79,6 +79,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-recovery-retry"`:                     "explicit registry-reload retry affordance",
 		`return { breakGlassAckRequired: true, recovered }`:              "save recovery reports reload success distinctly from failure",
 		`registryOk = (await actions.load('sandbox')) === true`:          "import recovery reloads the local registry, not just the inspect",
+		`setRegistryRecoveryRequired(true)`:                              "a failed registry reload sticks until an authoritative reload succeeds",
 		`conflict === 'skip' ? 'skip' : 'overwrite'`:                     "the error policy shares the all-incoming overwrite graph",
 		`id="sandbox-profile-diff-break-glass"`:                          "diff confirmation keeps break-glass visible",
 		`⚠ BREAK-GLASS protected access`:                                 "resolved preview marks break-glass with a persistent caveat",
