@@ -335,8 +335,11 @@ isolation. **Additional filesystem restrictions**
 (`read_baseline_exclusions`) keep Default while subtracting versioned catalog
 categories for audited/default locations such as SSH credentials, cloud
 configuration, toolchain caches, browser profiles, or the whole Home
-directory. The editor shows the concrete current-machine paths and
-category-specific warnings; restrictions union across includes/scopes and
+directory. Each editor row stays one line — a checkbox, a short label, and a
+lock badge for inherited or Minimal-locked entries — with the description,
+category-specific warning, concrete current-machine paths, and inherited
+provenance behind the row's `[?]` disclosure, the same affordance the
+spawn-agent dialog uses. Restrictions union across includes/scopes and
 inherited rows are locked. Home does not check or lock leaf IDs because a leaf
 may resolve through a symlink outside Home. Directly owned unknown IDs remain
 removable for downgrade recovery, while inherited unknown IDs stay locked;

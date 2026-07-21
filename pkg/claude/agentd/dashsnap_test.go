@@ -1343,6 +1343,13 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:      "management-sandbox-editor-exclusion-help",
+			Title:    "Management — sandbox exclusion help",
+			Caption:  "Compact filesystem-restriction rows — checkbox plus short label — with one row's [?] disclosure expanded over its description, warning, audited paths, and provenance.",
+			JS:       sandboxExclusionHelpJS(),
+			SettleMS: 700,
+		},
+		{
 			Key:      "processes-worklist",
 			Title:    "Processes — worklist (My work)",
 			Caption:  "Worklist My-work view: a decision row with the nudge schedule line, advertised approve/reject actions with the required comment input, the actionable-count sub-nav badge, and the amber degraded-runs strip.",
@@ -3411,6 +3418,26 @@ func managementModalJS(modulePath, opener, readySelector string) string {
   }
   if (!document.querySelector(%q)) throw new Error('management modal did not render: %s');
 })();`, modulePath, opener, opener, opener, readySelector, readySelector, readySelector)
+}
+
+// sandboxExclusionHelpJS opens the sandbox-profile editor and expands the [?]
+// on the first filesystem-restriction row, so the snapshot captures both the
+// compact rows and one row's help popover at once.
+func sandboxExclusionHelpJS() string {
+	return `return (async function(){
+  var module = await import('/static/js/sandbox-profiles.js');
+  module.openSandboxProfileEditor(null);
+  var deadline = Date.now() + 5000;
+  while (!document.querySelector('.sbx-exclusion-row .spawn-field-help-trigger') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var trigger = document.querySelector('.sbx-exclusion-row .spawn-field-help-trigger');
+  if (!trigger) throw new Error('sandbox exclusion rows did not render');
+  trigger.closest('.sbx-read-exclusions').scrollIntoView({ block: 'center' });
+  trigger.click();
+  await new Promise(function(resolve){ setTimeout(resolve, 120); });
+  if (trigger.getAttribute('aria-expanded') !== 'true') throw new Error('exclusion help did not expand');
+})();`
 }
 
 func actionDialogJS(call, readySelector, extraJS string) string {
