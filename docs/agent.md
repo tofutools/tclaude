@@ -233,12 +233,14 @@ they're for.
 ```bash
 tclaude agent whoami           # who am I (stable agent_id + name, or <human>)
 tclaude agent lookup <name>    # resolve prefix / title to the stable agent_id
-tclaude agent ls               # peers in any group I'm in (ID = agent_id; online indicator + groups)
+tclaude agent ls               # peers in any group I'm in (runtime, activity, role, group, worktree)
 tclaude agent ls --json
 ```
 
 `ls` is restricted to peers reachable through a shared group — the
-group acts as an allow-list.
+group acts as an allow-list. Each row includes the peer's harness, reported
+model and reasoning effort, dashboard-aligned state, and live sub-agent
+count. The JSON form exposes those fields under `state`.
 
 ### message / reply / inbox
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -942,9 +943,22 @@ type peerEntry struct {
 	// recorded in its conv_index row (Claude Code stamps gitBranch into
 	// every .jsonl turn). Empty when the conv isn't indexed yet or the
 	// session isn't inside a git repo.
-	Branch string   `json:"branch,omitempty"`
-	Online bool     `json:"online"`
-	Groups []string `json:"groups"`
+	Branch string    `json:"branch,omitempty"`
+	Online bool      `json:"online"`
+	Groups []string  `json:"groups"`
+	State  peerState `json:"state"`
+}
+
+// peerState mirrors the deliberately narrow runtime summary returned by
+// agentd's /v1/peers endpoint. Context and cost data are not part of this
+// cross-agent listing; those have their own permission-gated commands.
+type peerState struct {
+	Harness       string `json:"harness,omitempty"`
+	Model         string `json:"model,omitempty"`
+	EffortLevel   string `json:"effort_level,omitempty"`
+	Status        string `json:"status,omitempty"`
+	SubagentCount int    `json:"subagent_count"`
+	ExitReason    string `json:"exit_reason,omitempty"`
 }
 
 func runLs(p *lsParams, stdout, stderr io.Writer) int {
@@ -978,6 +992,10 @@ func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
 }
 
 func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
+	return renderPeersAtWidth(p, peers, stdout, table.GetTerminalWidth())
+}
+
+func renderPeersAtWidth(p *lsParams, peers []*peerEntry, stdout io.Writer, terminalWidth int) int {
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -990,29 +1008,87 @@ func renderPeers(p *lsParams, peers []*peerEntry, stdout io.Writer) int {
 		fmt.Fprintln(stdout, "(no peers — you are not in any groups, or your groups have no other members)")
 		return rcOK
 	}
-	tbl := table.New(
-		table.Column{Header: "", Width: 1},
-		table.Column{Header: "ID", Width: 12},
-		table.Column{Header: "NAME", MinWidth: 8, Weight: 0.8, Truncate: true},
-		table.Column{Header: "ROLE", MinWidth: 6, Weight: 0.4, Truncate: true},
-		table.Column{Header: "GROUPS", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "BRANCH", MinWidth: 8, Weight: 0.6, Truncate: true},
-		table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true},
-	)
-	tbl.SetTerminalWidth(table.GetTerminalWidth())
+	showRole := terminalWidth >= 77
+	showBranch := terminalWidth >= 88
+	showDescr := terminalWidth >= 100
+	nameMin, groupsMin := 8, 8
+	nameWeight, harnessWeight, modelWeight, stateWeight, groupsWeight := 1.0, 1.0, 1.0, 1.0, 1.0
+	if !showRole {
+		// The previous table fit at 65 cells. Preserve that floor by giving
+		// each flexible core column a weight proportional to its minimum;
+		// the allocator then lands exactly on those minima at width 65.
+		nameMin, groupsMin = 6, 6
+		nameWeight, harnessWeight, modelWeight, stateWeight, groupsWeight = 6, 7, 8, 8, 6
+	}
+	columns := []table.Column{
+		{Header: "", Width: 1},
+		{Header: "ID", Width: 12},
+		{Header: "NAME", MinWidth: nameMin, Weight: nameWeight, Truncate: true},
+		{Header: "HARNESS", MinWidth: 7, MaxWidth: 8, Weight: harnessWeight, Truncate: true},
+		{Header: "MODEL", MinWidth: 8, Weight: modelWeight, Truncate: true},
+		{Header: "STATE", MinWidth: 8, Weight: stateWeight, Truncate: true},
+		{Header: "SUB", Width: 3, Align: table.AlignRight},
+	}
+	if showRole {
+		columns = append(columns, table.Column{Header: "ROLE", MinWidth: 6, Truncate: true})
+	}
+	columns = append(columns, table.Column{Header: "GROUPS", MinWidth: groupsMin, Weight: groupsWeight, Truncate: true})
+	if showBranch {
+		columns = append(columns, table.Column{Header: "BRANCH", MinWidth: 8, Truncate: true})
+	}
+	if showDescr {
+		columns = append(columns, table.Column{Header: "DESCR", MinWidth: 10, Weight: 1.2, Truncate: true})
+	}
+	tbl := table.New(columns...)
+	tbl.SetTerminalWidth(terminalWidth)
 	for _, pe := range peers {
 		// ID is the stable agent_id (short form for the table); NAME is the
 		// conv's display title. conv-id is available via --json.
-		tbl.AddRow(table.Row{Cells: []string{
+		cells := []string{
 			onlineMark(pe.Online),
 			shortAgentID(pe.AgentID, pe.ConvID),
 			pe.Title,
-			pe.Role,
-			strings.Join(pe.Groups, ","),
-			pe.Branch,
-			pe.Descr,
-		}})
+			pe.State.Harness,
+			peerModel(pe.State),
+			peerStatus(pe),
+			strconv.Itoa(pe.State.SubagentCount),
+		}
+		if showRole {
+			cells = append(cells, pe.Role)
+		}
+		cells = append(cells, strings.Join(pe.Groups, ","))
+		if showBranch {
+			cells = append(cells, pe.Branch)
+		}
+		if showDescr {
+			cells = append(cells, pe.Descr)
+		}
+		tbl.AddRow(table.Row{Cells: cells})
 	}
 	fmt.Fprintln(stdout, tbl.Render())
 	return rcOK
+}
+
+func peerModel(state peerState) string {
+	if state.Model == "" || state.EffortLevel == "" {
+		return state.Model
+	}
+	return state.Model + " (" + state.EffortLevel + ")"
+}
+
+// peerStatus applies the same top-level liveness labels as the dashboard:
+// an offline pane is offline even if its last persisted hook said "idle", and
+// a live pre-first-hook session is simply online.
+func peerStatus(pe *peerEntry) string {
+	if !pe.Online {
+		if pe.State.ExitReason == "unexpected" {
+			return "crashed"
+		}
+		return "offline"
+	}
+	status := pe.State.Status
+	if status == "" {
+		status = "online"
+	}
+	return status
 }
