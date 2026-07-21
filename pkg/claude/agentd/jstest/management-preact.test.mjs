@@ -443,6 +443,10 @@ test('sandbox editor keeps Home and external leaves distinct and lets owners rem
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const exclusions = host.querySelector('.sbx-read-exclusions');
+  // Unknown restrictions fail launch closed, so they unfold the otherwise
+  // collapsed catalog rather than sitting unseen behind the summary.
+  assert.equal(host.querySelector('#sandbox-profile-editor-exclusions-fold').hasAttribute('open'), true,
+    'an unknown restriction unfolds the catalog once it loads');
   assert.match(exclusions.textContent, /Unknown restriction: future\.secret-store/);
   assert.match(exclusions.textContent, /Unknown restriction: future\.inherited-store/);
   const unknownRows = [...exclusions.querySelectorAll('.sbx-exclusion-row.unknown')];

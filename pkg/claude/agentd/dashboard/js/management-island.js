@@ -288,8 +288,12 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // An unknown restriction fails launch closed until this tclaude understands
   // it, so it must never sit unseen behind the fold: its arrival opens the
   // section. The operator can still collapse it again afterwards.
+  // Keyed on the ID set, not merely on "any unknown": a second unknown
+  // arriving while the first is still present must re-reveal the section, even
+  // if the operator collapsed it in between.
   const hasUnknownExclusions = unknownExclusions.length > 0;
-  useEffect(() => { if (hasUnknownExclusions) setExclusionsOpen(true); }, [hasUnknownExclusions]);
+  const unknownExclusionKey = unknownExclusions.map((entry) => entry.id).sort().join('\0');
+  useEffect(() => { if (unknownExclusionKey) setExclusionsOpen(true); }, [unknownExclusionKey]);
   const inheritedExclusionCount = effectiveReadExclusions.filter((entry) => !candidate.read_baseline_exclusions?.includes(entry.id)).length;
   const exclusionSummary = effectiveReadExclusions.length
     ? [`${effectiveReadExclusions.length} active`, inheritedExclusionCount ? `${inheritedExclusionCount} inherited` : '', hasUnknownExclusions ? `⚠ ${unknownExclusions.length} unknown` : ''].filter(Boolean).join(' · ')

@@ -3436,6 +3436,9 @@ func sandboxExclusionHelpJS() string {
   if (!fold) throw new Error('exclusion fold did not render');
   fold.click();
   await new Promise(function(resolve){ setTimeout(resolve, 120); });
+  // Descendants stay queryable while collapsed, so assert the fold really
+  // expanded rather than screenshotting a closed section with a clicked [?].
+  if (!fold.closest('details').open) throw new Error('exclusion fold did not expand');
   var trigger = document.querySelector('.sbx-exclusion-row .spawn-field-help-trigger');
   if (!trigger) throw new Error('sandbox exclusion rows did not render');
   trigger.closest('.sbx-read-exclusions').scrollIntoView({ block: 'center' });
