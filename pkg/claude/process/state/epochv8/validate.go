@@ -353,7 +353,238 @@ func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt) error
 	default:
 		return fmt.Errorf("%w: unknown runtime receipt kind %q", ErrInvalid, receipt.Kind)
 	}
+	if err := validateRuntimeAuthorityDelta(receipt); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateRuntimeAuthorityDelta(receipt RuntimeReceipt) error {
+	switch receipt.Kind {
+	case RuntimeAttachGenesis, RuntimeApplyRetain, RuntimeApplyTransfer:
+		return nil
+	case RuntimeAdvanceHead:
+		return validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
+			if old.EpochID != receipt.EpochID {
+				return false
+			}
+			if receipt.PathTransitionKind == pathv1.TransitionClaimWait && old.Kind == AuthorityFrontier &&
+				old.State == AuthorityVerifiedUnclaimed && next.State == AuthorityClaimed {
+				return true
+			}
+			return old.State.active() && next.State.terminal() && runtimeAdvanceChangedKind(receipt.PathTransitionKind, old.Kind)
+		}, func(added AuthorityRecord) bool {
+			return added.EpochID == receipt.EpochID && runtimeAdvanceAddedKind(receipt.PathTransitionKind, added.Kind)
+		})
+	case RuntimeClaimExternal:
+		commands, effects := 0, 0
+		var commandReservation, effectReservation string
+		owner, ok := authorityByID(receipt.Before, receipt.Owner)
+		if !ok {
+			return fmt.Errorf("%w: claimed runtime owner is absent", ErrInvalid)
+		}
+		err := validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
+			return old.Identity == receipt.Owner && old.Kind == AuthorityFrontier && old.State == AuthorityVerifiedUnclaimed && next.State == AuthorityClaimed
+		}, func(added AuthorityRecord) bool {
+			if added.EpochID != receipt.EpochID || added.NodeID != owner.NodeID || added.State != AuthorityActive {
+				return false
+			}
+			switch added.Kind {
+			case AuthorityCommand:
+				if !strings.HasPrefix(added.LocalID, "command.") {
+					return false
+				}
+				commands++
+				commandReservation = added.ReservationID
+			case AuthorityDispatchedSideEffect:
+				if !strings.HasPrefix(added.LocalID, "effect.") {
+					return false
+				}
+				effects++
+				effectReservation = added.ReservationID
+			default:
+				return false
+			}
+			return true
+		})
+		if err != nil || commands != 1 || effects != 1 || commandReservation != effectReservation {
+			return fmt.Errorf("%w: claim runtime authority delta is not exact (commands=%d effects=%d owner=%q node=%q reservation=%q): %v", ErrInvalid, commands, effects, owner.Identity, owner.NodeID, owner.ReservationID, err)
+		}
+		return nil
+	case RuntimeFinishClaimed:
+		commands, finishedCommands, finishedEffects := 0, 0, 0
+		var attemptReservation string
+		owner, ok := authorityByID(receipt.Before, receipt.Owner)
+		if !ok {
+			return fmt.Errorf("%w: finished runtime owner is absent", ErrInvalid)
+		}
+		err := validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
+			if old.Identity == receipt.Owner {
+				return old.Kind == AuthorityFrontier && old.State == AuthorityClaimed && next.State.terminal()
+			}
+			if old.EpochID != receipt.EpochID || !old.State.active() || !next.State.terminal() {
+				return false
+			}
+			switch old.Kind {
+			case AuthorityCommand, AuthorityDispatchedSideEffect:
+				if old.NodeID != owner.NodeID || attemptReservation != "" && attemptReservation != old.ReservationID {
+					return false
+				}
+				attemptReservation = old.ReservationID
+				if old.Kind == AuthorityCommand {
+					finishedCommands++
+				} else {
+					finishedEffects++
+				}
+				return true
+			case AuthorityContact:
+				if old.NodeID != owner.NodeID {
+					return false
+				}
+				return true
+			default:
+				return false
+			}
+		}, func(added AuthorityRecord) bool {
+			if added.EpochID != receipt.EpochID || added.Kind != AuthorityCommand || !strings.HasPrefix(added.LocalID, "command.") || !added.State.terminal() || added.NodeID != owner.NodeID || attemptReservation == "" || added.ReservationID != attemptReservation {
+				return false
+			}
+			commands++
+			return true
+		})
+		if err != nil || commands != 1 || finishedCommands != 1 || finishedEffects != 1 {
+			return fmt.Errorf("%w: finish runtime authority delta is not exact (added_commands=%d finished_commands=%d finished_effects=%d owner=%q node=%q reservation=%q): %v", ErrInvalid, commands, finishedCommands, finishedEffects, owner.Identity, owner.NodeID, owner.ReservationID, err)
+		}
+		return nil
+	case RuntimeSettlement:
+		frontiers, obligations, changedFrontiers := 0, 0, 0
+		err := validateConservedRuntimeAuthorities(receipt, func(old, next AuthorityRecord) bool {
+			if old.EpochID != receipt.EpochID || old.Kind != AuthorityFrontier || old.NodeID != receipt.NodeID ||
+				receipt.Decision != "retry" || old.State != AuthorityCompleted || next.State != AuthorityFailed {
+				return false
+			}
+			changedFrontiers++
+			return true
+		}, func(added AuthorityRecord) bool {
+			if added.EpochID != receipt.EpochID || added.NodeID != receipt.NodeID {
+				return false
+			}
+			switch added.Kind {
+			case AuthorityFrontier:
+				if receipt.Decision != "retry" || added.Identity != receipt.Owner || added.State != AuthorityVerifiedUnclaimed ||
+					added.LocalID != "retry."+receipt.ResolutionDigest || added.ReservationID != "retry."+receipt.ResolutionDigest {
+					return false
+				}
+				frontiers++
+			case AuthorityObligation:
+				if !added.State.terminal() || !strings.HasPrefix(added.LocalID, "effect.") {
+					return false
+				}
+				obligations++
+			default:
+				return false
+			}
+			return true
+		})
+		wantFrontiers := 0
+		if receipt.Decision == "retry" {
+			wantFrontiers = 1
+		}
+		wantChangedFrontiers := 0
+		if receipt.Decision == "retry" {
+			wantChangedFrontiers = 1
+		}
+		if err != nil || changedFrontiers != wantChangedFrontiers || frontiers != wantFrontiers || obligations != 1 {
+			return fmt.Errorf("%w: settlement runtime authority delta is not exact (changed=%d frontiers=%d obligations=%d): %v", ErrInvalid, changedFrontiers, frontiers, obligations, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: runtime authority delta kind is unknown", ErrInvalid)
+	}
+}
+
+func validateConservedRuntimeAuthorities(receipt RuntimeReceipt, changed func(AuthorityRecord, AuthorityRecord) bool, added func(AuthorityRecord) bool) error {
+	after := make(map[OwnerIdentity]AuthorityRecord, len(receipt.After))
+	for _, authority := range receipt.After {
+		after[authority.Identity] = authority
+	}
+	known := make(map[OwnerIdentity]struct{}, len(receipt.Before))
+	for _, old := range receipt.Before {
+		known[old.Identity] = struct{}{}
+		next, ok := after[old.Identity]
+		if !ok {
+			return fmt.Errorf("%w: runtime receipt drops authority %q", ErrInvalid, old.Identity)
+		}
+		if reflect.DeepEqual(old, next) {
+			continue
+		}
+		oldEnvelope, nextEnvelope := old, next
+		oldEnvelope.State, nextEnvelope.State = "", ""
+		oldEnvelope.TerminalRecordID, nextEnvelope.TerminalRecordID = "", ""
+		if !reflect.DeepEqual(oldEnvelope, nextEnvelope) || changed == nil || !changed(old, next) {
+			return fmt.Errorf("%w: runtime receipt changes unauthorized %s authority %q node=%q local=%q (%s to %s)", ErrInvalid, old.Kind, old.Identity, old.NodeID, old.LocalID, old.State, next.State)
+		}
+	}
+	for _, authority := range receipt.After {
+		if _, exists := known[authority.Identity]; exists {
+			continue
+		}
+		if added == nil || !added(authority) {
+			return fmt.Errorf("%w: %s runtime receipt mints unauthorized %s authority %q node=%q local=%q state=%q", ErrInvalid, receipt.PathTransitionKind, authority.Kind, authority.Identity, authority.NodeID, authority.LocalID, authority.State)
+		}
+	}
+	return nil
+}
+
+func runtimeAdvanceAddedKind(pathKind string, kind AuthorityKind) bool {
+	switch pathKind {
+	case pathv1.TransitionClaimWait:
+		return kind == AuthorityCommand || kind == AuthorityWait || kind == AuthorityTimer
+	case pathv1.TransitionObserveWait:
+		return kind == AuthorityCommand
+	case pathv1.TransitionRouteObservation:
+		return kind == AuthorityFrontier || kind == AuthorityOutcome || kind == AuthorityJoin || kind == AuthorityCommand || kind == AuthorityDispatchedSideEffect
+	case pathv1.TransitionClaimCompletion, pathv1.TransitionObserveCompletion:
+		return kind == AuthorityCommand
+	case pathv1.TransitionScheduleContact, pathv1.TransitionMarkContactDue, pathv1.TransitionNudgeContact,
+		pathv1.TransitionEscalateContact, pathv1.TransitionPauseContact, pathv1.TransitionLatchContactHuman,
+		pathv1.TransitionClearContactHumanLatch, pathv1.TransitionRecoverContact:
+		return kind == AuthorityContact || kind == AuthorityObligation || kind == AuthorityCommand
+	case pathv1.TransitionParallelSplit, pathv1.TransitionParallelAll, pathv1.TransitionParallelAny,
+		pathv1.TransitionParallelRoute, pathv1.TransitionParallelExclusiveArrival, pathv1.TransitionParallelEnd,
+		pathv1.TransitionParallelPropagation, pathv1.TransitionParallelPropagationSeed,
+		pathv1.TransitionParallelTerminalClosure, pathv1.TransitionParallelDetachedSink,
+		pathv1.TransitionParallelDetachmentIntern:
+		return kind != AuthorityRetry && kind != AuthorityRollbackForward
+	default:
+		return false
+	}
+}
+
+func runtimeAdvanceChangedKind(pathKind string, kind AuthorityKind) bool {
+	switch pathKind {
+	case pathv1.TransitionClaimWait:
+		return kind == AuthorityFrontier || kind == AuthorityCommand || kind == AuthorityWait || kind == AuthorityTimer
+	case pathv1.TransitionObserveWait:
+		return kind == AuthorityFrontier || kind == AuthorityCommand || kind == AuthorityWait || kind == AuthorityTimer
+	case pathv1.TransitionRouteObservation:
+		return kind == AuthorityFrontier || kind == AuthorityOutcome || kind == AuthorityJoin || kind == AuthorityCommand ||
+			kind == AuthorityWait || kind == AuthorityTimer || kind == AuthorityObligation || kind == AuthorityContact || kind == AuthorityDispatchedSideEffect
+	case pathv1.TransitionClaimCompletion, pathv1.TransitionObserveCompletion:
+		return kind == AuthorityFrontier || kind == AuthorityOutcome || kind == AuthorityCommand
+	case pathv1.TransitionScheduleContact, pathv1.TransitionMarkContactDue, pathv1.TransitionNudgeContact,
+		pathv1.TransitionEscalateContact, pathv1.TransitionPauseContact, pathv1.TransitionLatchContactHuman,
+		pathv1.TransitionClearContactHumanLatch, pathv1.TransitionRecoverContact:
+		return kind == AuthorityContact || kind == AuthorityObligation || kind == AuthorityCommand
+	case pathv1.TransitionParallelSplit, pathv1.TransitionParallelAll, pathv1.TransitionParallelAny,
+		pathv1.TransitionParallelRoute, pathv1.TransitionParallelExclusiveArrival, pathv1.TransitionParallelEnd,
+		pathv1.TransitionParallelPropagation, pathv1.TransitionParallelPropagationSeed,
+		pathv1.TransitionParallelTerminalClosure, pathv1.TransitionParallelDetachedSink,
+		pathv1.TransitionParallelDetachmentIntern:
+		return kind != AuthorityRetry && kind != AuthorityRollbackForward
+	default:
+		return false
+	}
 }
 
 func activeAuthorities(authorities []AuthorityRecord) []AuthorityRecord {

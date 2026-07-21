@@ -812,6 +812,88 @@ func TestTypedLeaseDomainTreatsLegacyUntypedAsEngine(t *testing.T) {
 	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), renewed))
 }
 
+func TestEpochV8ExactBaseLeaseGenerationUpgrade(t *testing.T) {
+	now := time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC)
+
+	t.Run("first_engine", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-first-engine")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		lease, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), lease.Generation)
+		_, err = fs.EnsureEpochV8Runtime(t.Context(), lease)
+		require.NoError(t, err)
+		require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease))
+	})
+
+	t.Run("first_maintenance", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-first-maintenance")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		lease, err := fs.AcquireMaintenanceLease(t.Context(), runID, "maintainer", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), lease.Generation)
+		require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), lease))
+	})
+
+	t.Run("active_legacy_lease_remains_held", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-active-legacy")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		writeLeaseFixture(t, root, store.LeaseRecord{RunID: runID, Holder: "legacy", ExpiresAt: now.Add(time.Minute), UpdatedAt: now})
+		_, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		assert.ErrorIs(t, err, store.ErrLeaseHeld)
+		_, err = os.Stat(filepath.Join(root, "runs", runID, "lease-generation.json"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("stale_base_maintenance_lease_sets_floor", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-stale-maintenance")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		writeLeaseFixture(t, root, store.LeaseRecord{
+			RunID: runID, Holder: "old-maintainer", Kind: store.LeaseKindMaintenance, Token: strings.Repeat("a", 64),
+			ExpiresAt: now.Add(-time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
+		})
+		lease, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), lease.Generation)
+	})
+
+	t.Run("stale_tokenized_lease_preserves_generation_floor", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-stale-tokenized")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		writeLeaseFixture(t, root, store.LeaseRecord{
+			RunID: runID, Holder: "old-engine", Kind: store.LeaseKindEngine, Token: strings.Repeat("b", 64), Generation: 7,
+			ExpiresAt: now.Add(-time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
+		})
+		lease, err := fs.AcquireMaintenanceLease(t.Context(), runID, "maintainer", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(8), lease.Generation)
+	})
+
+	t.Run("crash_after_burn_never_reuses_generation", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-burn-crash")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		crash := errors.New("crash after generation burn")
+		restore := fs.SetLeaseGenerationAfterBurnHookForTest(func() error { return crash })
+		_, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		restore()
+		assert.ErrorIs(t, err, crash)
+		_, err = os.Stat(filepath.Join(root, "runs", runID, "lease.json"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+		generation, err := os.ReadFile(filepath.Join(root, "runs", runID, "lease-generation.json"))
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"generation":1}`, string(generation))
+		lease, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), lease.Generation)
+	})
+}
+
 func TestEpochV8GarbageCollectionIsLeaseBoundedAndPreservesReferences(t *testing.T) {
 	root := t.TempDir()
 	fs, checkpoint, runID := initializedEpochV8Run(t, root)
@@ -903,6 +985,29 @@ func initializedEpochV8Run(t *testing.T, root string) (*store.FS, *epochv8.Check
 	result, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-run", TemplateRef: record.Ref}, source)
 	require.NoError(t, err)
 	return fs, result.Checkpoint, "epoch-run"
+}
+
+// exactBaseEpochV8Fixture removes only the runtime directory and generation
+// tombstone added after 0c84f616, leaving the schema-8 bytes created by that
+// exact base for upgrade compatibility coverage.
+func exactBaseEpochV8Fixture(t *testing.T, root, runID string) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, source := putEpochV8Template(t, fs, runID, "exact base fixture")
+	_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, source)
+	require.NoError(t, err)
+	runDir := filepath.Join(root, "runs", runID)
+	require.NoError(t, os.Remove(filepath.Join(runDir, "lease-generation.json")))
+	require.NoError(t, os.RemoveAll(filepath.Join(runDir, "runtime")))
+	return fs, runID
+}
+
+func writeLeaseFixture(t *testing.T, root string, lease store.LeaseRecord) {
+	t.Helper()
+	data, err := json.Marshal(lease)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", lease.RunID, "lease.json"), append(data, '\n'), 0o644))
 }
 
 func putEpochV8Template(t *testing.T, fs *store.FS, id, prompt string) (store.TemplateRecord, []byte) {

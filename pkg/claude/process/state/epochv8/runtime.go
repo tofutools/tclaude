@@ -133,8 +133,11 @@ func FinishClaimedHead(ctx context.Context, checkpoint *CheckpointV8, artifactJS
 // advancement and derives its receipt authority from the sealed path-v1
 // transition rather than caller-supplied metadata.
 func AuditedSettlement(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, templateSource []byte, transition *pathv1.ExecutionTransition) (RuntimeTransitionResult, error) {
+	if transition == nil {
+		return RuntimeTransitionResult{}, fmt.Errorf("%w: exact audited settlement is required", ErrInvalid)
+	}
 	resolution, ok := transition.AuditedResolution()
-	if transition == nil || transition.Kind() != pathv1.TransitionAuditedSettlement || !ok {
+	if transition.Kind() != pathv1.TransitionAuditedSettlement || !ok {
 		return RuntimeTransitionResult{}, fmt.Errorf("%w: exact audited settlement is required", ErrInvalid)
 	}
 	resolutionDigest, err := pathv1.ValidateBlockResolution(resolution)
@@ -332,7 +335,7 @@ func exactRuntimeReplay(checkpoint *CheckpointV8, artifact *RuntimeArtifactV1, a
 		}
 		if receipt.Kind != kind || receipt.PathTransitionKind != pathKind || receipt.EvidenceDigest != evidence ||
 			resolutionDigest != "" && receipt.ResolutionDigest != resolutionDigest {
-			return RuntimeTransitionResult{}, fmt.Errorf("%w: runtime replay authority differs", ErrInvalid)
+			continue
 		}
 		return RuntimeTransitionResult{Checkpoint: checkpoint, Artifact: cloneRuntimeArtifact(artifact), ArtifactJSON: bytes.Clone(artifactJSON), Disposition: DispositionReplayed, Binding: checkpoint.Binding()}, nil
 	}

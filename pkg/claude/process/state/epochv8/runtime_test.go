@@ -2,6 +2,7 @@ package epochv8
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertRehashedRuntimeMintRejected(t, current.Checkpoint, RuntimeAdvanceHead)
 	input, _ = pathv1.VerifyExecutionInput(t.Context(), current.Artifact.Checkpoint, source)
 	aggregate, _ = pathv1.CurrentAggregateCheckpoint(mustDecodePath(t, current.Artifact.Checkpoint))
 	var workPath pathv1.PathID
@@ -50,6 +52,7 @@ func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertRehashedRuntimeDropRejected(t, current.Checkpoint, RuntimeClaimExternal)
 	input, _ = pathv1.VerifyExecutionInput(t.Context(), current.Artifact.Checkpoint, source)
 	recovered, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), input)
 	if err != nil || !found {
@@ -63,6 +66,7 @@ func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertRehashedRuntimeMintRejected(t, current.Checkpoint, RuntimeFinishClaimed)
 	failedAuthorities := current.Checkpoint.View().Authorities
 	input, _ = pathv1.VerifyExecutionInput(t.Context(), current.Artifact.Checkpoint, source)
 	for _, decision := range []string{"skip", "cancel"} {
@@ -93,6 +97,7 @@ func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertRehashedRuntimeDropRejected(t, rescued.Checkpoint, RuntimeSettlement)
 	added := addedVerifiedFrontiers(failedAuthorities, rescued.Checkpoint.View().Authorities)
 	if len(added) != 1 {
 		t.Fatalf("retry frontier delta = %v", added)
@@ -121,6 +126,254 @@ func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 	}
 }
 
+func assertRehashedRuntimeMintRejected(t *testing.T, checkpoint *CheckpointV8, kind RuntimeTransitionKind) {
+	t.Helper()
+	forged := rehashLastRuntimeReceipt(t, checkpoint, kind, func(receipt *RuntimeReceipt) {
+		authority := AuthorityRecord{
+			EpochID: receipt.EpochID, LocalID: "forged.retry", ReservationID: "forged.retry", NodeID: "work",
+			Kind: AuthorityRetry, State: AuthorityCompleted, DependsOn: []OwnerIdentity{},
+		}
+		var err error
+		authority.Identity, err = authorityIdentity(checkpoint.wire.Anchor.RunID, authority)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealTerminal(&authority, "forged", authority.LocalID, string(authority.State))
+		receipt.After = append(receipt.After, authority)
+		sortAuthorities(receipt.After)
+	})
+	if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "mints unauthorized") {
+		t.Fatalf("rehashed %s mint forgery was not rejected semantically: %v", kind, err)
+	}
+}
+
+func assertRehashedRuntimeDropRejected(t *testing.T, checkpoint *CheckpointV8, kind RuntimeTransitionKind) {
+	t.Helper()
+	last := checkpoint.wire.History[len(checkpoint.wire.History)-1].Runtime
+	if last == nil || last.Kind != kind {
+		t.Fatalf("last runtime receipt is %v, want %s", last, kind)
+	}
+	for _, candidate := range last.Before {
+		if candidate.Identity == last.Owner || runtimeAuthorityReferenced(last.After, candidate.Identity) {
+			continue
+		}
+		forged := rehashLastRuntimeReceipt(t, checkpoint, kind, func(receipt *RuntimeReceipt) {
+			receipt.After = slices.DeleteFunc(receipt.After, func(authority AuthorityRecord) bool { return authority.Identity == candidate.Identity })
+		})
+		if err := VerifyCheckpointV8(forged); err != nil && strings.Contains(err.Error(), "drops authority") {
+			return
+		}
+	}
+	t.Fatalf("could not construct semantic %s drop forgery", kind)
+}
+
+func runtimeAuthorityReferenced(authorities []AuthorityRecord, identity OwnerIdentity) bool {
+	for _, authority := range authorities {
+		if authority.Successor == identity || slices.Contains(authority.DependsOn, identity) {
+			return true
+		}
+	}
+	return false
+}
+
+func rehashLastRuntimeReceipt(t *testing.T, checkpoint *CheckpointV8, kind RuntimeTransitionKind, mutate func(*RuntimeReceipt)) *CheckpointV8 {
+	t.Helper()
+	wire := cloneWire(checkpoint.wire)
+	event := &wire.History[len(wire.History)-1]
+	if event.Runtime == nil || event.Runtime.Kind != kind {
+		t.Fatalf("last runtime receipt is %v, want %s", event.Runtime, kind)
+	}
+	mutate(event.Runtime)
+	var err error
+	event.Runtime.ID, err = runtimeReceiptIdentity(*event.Runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event.Digest, err = historyEventDigest(*event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire.Authorities = cloneAuthorities(event.Runtime.After)
+	wire.RuntimeBinding = event.Runtime.PostRuntime
+	wire.Digest, err = checkpointDigest(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &CheckpointV8{wire: wire}
+}
+
+func TestRuntimeReplayRejectsTemporaryAuthorityDropMintAndRestore(t *testing.T) {
+	finished := runtimeFinishedFixture(t, "runtime-history-forgery")
+	claimIndex, finishIndex := -1, -1
+	for i := range finished.wire.History {
+		receipt := finished.wire.History[i].Runtime
+		if receipt == nil {
+			continue
+		}
+		switch receipt.Kind {
+		case RuntimeClaimExternal:
+			claimIndex = i
+		case RuntimeFinishClaimed:
+			finishIndex = i
+		}
+	}
+	if claimIndex < 0 || finishIndex <= claimIndex {
+		t.Fatal("claim/finish receipts are absent")
+	}
+	claim := finished.wire.History[claimIndex].Runtime
+	var conserved OwnerIdentity
+	for _, authority := range claim.Before {
+		if authority.Identity != claim.Owner && !runtimeAuthorityReferenced(claim.After, authority.Identity) {
+			conserved = authority.Identity
+			break
+		}
+	}
+	if conserved == "" {
+		t.Fatal("conserved authority for temporary drop forgery is absent")
+	}
+
+	t.Run("drop_then_restore", func(t *testing.T) {
+		forged := rehashRuntimeReceipts(t, finished, []int{claimIndex, finishIndex}, func(index int, receipt *RuntimeReceipt) {
+			if index == claimIndex {
+				receipt.After = slices.DeleteFunc(receipt.After, func(authority AuthorityRecord) bool { return authority.Identity == conserved })
+			} else {
+				receipt.Before = slices.DeleteFunc(receipt.Before, func(authority AuthorityRecord) bool { return authority.Identity == conserved })
+			}
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "drops authority") {
+			t.Fatalf("temporary authority drop/restore was not rejected semantically: %v", err)
+		}
+	})
+
+	t.Run("mint_then_remove", func(t *testing.T) {
+		forgedAuthority := AuthorityRecord{
+			EpochID: claim.EpochID, LocalID: "forged.temporary", ReservationID: "forged.temporary", NodeID: "work",
+			Kind: AuthorityRetry, State: AuthorityCompleted, DependsOn: []OwnerIdentity{},
+		}
+		var err error
+		forgedAuthority.Identity, err = authorityIdentity(finished.wire.Anchor.RunID, forgedAuthority)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealTerminal(&forgedAuthority, "forged", forgedAuthority.LocalID, string(forgedAuthority.State))
+		forged := rehashRuntimeReceipts(t, finished, []int{claimIndex, finishIndex}, func(index int, receipt *RuntimeReceipt) {
+			if index == claimIndex {
+				receipt.After = append(receipt.After, forgedAuthority)
+				sortAuthorities(receipt.After)
+			} else {
+				receipt.Before = append(receipt.Before, forgedAuthority)
+				sortAuthorities(receipt.Before)
+			}
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "mints unauthorized") {
+			t.Fatalf("temporary authority mint/removal was not rejected semantically: %v", err)
+		}
+	})
+}
+
+func rehashRuntimeReceipts(t *testing.T, checkpoint *CheckpointV8, indices []int, mutate func(int, *RuntimeReceipt)) *CheckpointV8 {
+	t.Helper()
+	wire := cloneWire(checkpoint.wire)
+	for _, index := range indices {
+		event := &wire.History[index]
+		if event.Runtime == nil {
+			t.Fatalf("history event %d has no runtime receipt", index)
+		}
+		mutate(index, event.Runtime)
+		var err error
+		event.Runtime.ID, err = runtimeReceiptIdentity(*event.Runtime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		event.Digest, err = historyEventDigest(*event)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var err error
+	wire.Digest, err = checkpointDigest(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &CheckpointV8{wire: wire}
+}
+
+func runtimeFinishedFixture(t *testing.T, runID string) *CheckpointV8 {
+	t.Helper()
+	source := testTemplateSource(runID)
+	checkpoint, err := Initialize(runID, supportedCandidate(t, runID), []AuthoritySeed{{
+		LocalID: "initial-frontier", ReservationID: "initial-reservation", NodeID: "start",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := AttachGenesis(t.Context(), checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := pathv1.VerifyExecutionInput(t.Context(), current.Artifact.Checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePath(t, current.Artifact.Checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := pathv1.AdvanceExclusiveStart(t.Context(), input, aggregate.Authority.Genesis.OutputPathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err = AdvanceHead(t.Context(), current.Checkpoint, current.ArtifactJSON, source, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err = pathv1.VerifyExecutionInput(t.Context(), current.Artifact.Checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err = pathv1.CurrentAggregateCheckpoint(mustDecodePath(t, current.Artifact.Checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workPath pathv1.PathID
+	for _, path := range aggregate.Routing.Paths {
+		activation := aggregate.Routing.Activations[path.SourceActivation.ID]
+		if path.Kind == pathv1.PathActivationOutput && path.State == pathv1.PathLive && aggregate.Routing.Reservations[activation.ReservationID].NodeID == "work" {
+			workPath = path.ID
+		}
+	}
+	plan, err := pathv1.PlanExclusiveAttempt(t.Context(), input, workPath, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := pathv1.ClaimExclusiveAttempt(t.Context(), input, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err = ClaimExternal(t.Context(), current.Checkpoint, current.ArtifactJSON, source, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err = pathv1.VerifyExecutionInput(t.Context(), current.Artifact.Checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), input)
+	if err != nil || !found {
+		t.Fatalf("recover claimed attempt: found=%v err=%v", found, err)
+	}
+	observed, err := pathv1.ObserveExclusiveAttempt(t.Context(), input, recovered, pathv1.ExclusiveObservation{Outcome: "pass", Actor: "human:operator"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err = FinishClaimedHead(t.Context(), current.Checkpoint, current.ArtifactJSON, source, observed, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return current.Checkpoint
+}
+
 func TestAttachGenesisBindsExactOwnerRuntime(t *testing.T) {
 	source := testTemplateSource("runtime")
 	checkpoint, err := Initialize("runtime-run", supportedCandidate(t, "runtime"), []AuthoritySeed{{
@@ -143,6 +396,24 @@ func TestAttachGenesisBindsExactOwnerRuntime(t *testing.T) {
 	}
 	if !bytes.Equal(verified.Checkpoint, result.Artifact.Checkpoint) || verified.HeadOwner == "" {
 		t.Fatalf("runtime verification changed artifact")
+	}
+}
+
+func TestAuditedSettlementRejectsNilTransition(t *testing.T) {
+	source := testTemplateSource("nil settlement")
+	checkpoint, err := Initialize("runtime-nil-settlement", supportedCandidate(t, "nil settlement"), []AuthoritySeed{{
+		LocalID: "initial-frontier", ReservationID: "initial-reservation", NodeID: "start",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := AttachGenesis(t.Context(), checkpoint, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuditedSettlement(t.Context(), attached.Checkpoint, attached.ArtifactJSON, source, nil); err == nil {
+		t.Fatal("nil audited settlement transition was accepted")
 	}
 }
 
@@ -210,6 +481,66 @@ func TestRuntimeAdvanceKindClosedExactSet(t *testing.T) {
 		if runtimeAdvanceKind(kind) {
 			t.Fatalf("special/unknown transition %q admitted generically", kind)
 		}
+	}
+}
+
+func TestRuntimeAdvanceReplaySearchesPastRetainReceipt(t *testing.T) {
+	source0 := testTemplateSource("replay epoch zero")
+	checkpoint, err := Initialize("runtime-replay-retain", supportedCandidate(t, "replay epoch zero"), []AuthoritySeed{{
+		LocalID: "initial-frontier", ReservationID: "initial-reservation", NodeID: "start",
+		Kind: AuthorityFrontier, State: AuthorityVerifiedUnclaimed,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := AttachGenesis(t.Context(), checkpoint, source0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePath(t, attached.Artifact.Checkpoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transition, err := pathv1.AdvanceExclusiveStart(t.Context(), input, aggregate.Authority.Genesis.OutputPathID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanced, err := AdvanceHead(t.Context(), attached.Checkpoint, attached.ArtifactJSON, source0, transition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := PreviewApply(advanced.Checkpoint, ApplyDraft{
+		BaseBinding: advanced.Checkpoint.Binding(), Candidate: supportedCandidate(t, "replay epoch one"),
+		Handoffs: retainAll(advanced.Checkpoint.View().ProtectedAuthorities),
+	})
+	if err != nil || preview.Plan == nil {
+		t.Fatalf("retain preview: %+v, %v", preview, err)
+	}
+	retained, err := ApplyRetainHead(t.Context(), advanced.Checkpoint, advanced.ArtifactJSON, source0, preview.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCheckpoint, err := EncodeCheckpointV8(retained.Checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := AdvanceHead(t.Context(), retained.Checkpoint, retained.ArtifactJSON, source0, transition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotCheckpoint, err := EncodeCheckpointV8(replayed.Checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Disposition != DispositionReplayed || !bytes.Equal(gotCheckpoint, wantCheckpoint) || !bytes.Equal(replayed.ArtifactJSON, retained.ArtifactJSON) {
+		t.Fatal("lost-ack transition replay after retain was not byte-exact")
+	}
+	if _, err := exactRuntimeReplay(retained.Checkpoint, retained.Artifact, retained.ArtifactJSON, RuntimeAdvanceHead, transition.Kind(), strings.Repeat("f", 64), ""); err == nil {
+		t.Fatal("nonmatching transition authority sharing the retained binding was accepted")
 	}
 }
 

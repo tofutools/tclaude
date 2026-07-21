@@ -60,6 +60,7 @@ type FS struct {
 	epochV8InitializeBeforeCommit func() error
 	epochV8InitializeAfterCommit  func() error
 	epochV8InitializeDirSync      func() error
+	leaseGenerationAfterBurn      func() error
 }
 
 var processLocks sync.Map
@@ -192,6 +193,14 @@ func (s *FS) SetEpochV8InitializeDirSyncHookForTest(hook func() error) func() {
 	old := s.epochV8InitializeDirSync
 	s.epochV8InitializeDirSync = hook
 	return func() { s.epochV8InitializeDirSync = old }
+}
+
+// SetLeaseGenerationAfterBurnHookForTest injects a crash boundary after the
+// monotonic generation is durable and before its lease capability is published.
+func (s *FS) SetLeaseGenerationAfterBurnHookForTest(hook func() error) func() {
+	old := s.leaseGenerationAfterBurn
+	s.leaseGenerationAfterBurn = hook
+	return func() { s.leaseGenerationAfterBurn = old }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
@@ -2350,6 +2359,11 @@ func (s *FS) AcquireEngineLease(ctx context.Context, runID, holder string, ttl t
 	if err != nil {
 		return EngineLease{}, err
 	}
+	if s.leaseGenerationAfterBurn != nil {
+		if err := s.leaseGenerationAfterBurn(); err != nil {
+			return EngineLease{}, err
+		}
+	}
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return EngineLease{}, fmt.Errorf("generate engine lease token: %w", err)
@@ -2468,6 +2482,11 @@ func (s *FS) AcquireMaintenanceLease(ctx context.Context, runID, holder string, 
 	if err != nil {
 		return MaintenanceLease{}, err
 	}
+	if s.leaseGenerationAfterBurn != nil {
+		if err := s.leaseGenerationAfterBurn(); err != nil {
+			return MaintenanceLease{}, err
+		}
+	}
 	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindMaintenance, Token: token, Generation: generation, ExpiresAt: now.Add(ttl), UpdatedAt: now}
 	if err := s.writeLease(next); err != nil {
 		return MaintenanceLease{}, err
@@ -2556,18 +2575,30 @@ type leaseGenerationState struct {
 func (s *FS) issueLeaseGenerationUnlocked(runID string) (uint64, error) {
 	path := filepath.Join(s.runDir(runID), "lease-generation.json")
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, fmt.Errorf("read durable lease generation: %w", err)
 	}
 	var state leaseGenerationState
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&state); err != nil {
-		return 0, fmt.Errorf("decode durable lease generation: %w", err)
+	if err == nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&state); err != nil {
+			return 0, fmt.Errorf("decode durable lease generation: %w", err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("decode durable lease generation trailing data")
+		}
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return 0, fmt.Errorf("decode durable lease generation trailing data")
+	lease, leaseErr := s.readLease(runID)
+	if leaseErr != nil && !errors.Is(leaseErr, ErrNotFound) {
+		return 0, leaseErr
+	}
+	if leaseErr == nil {
+		if err := validateLeaseGenerationFloor(lease); err != nil {
+			return 0, err
+		}
+		state.Generation = max(state.Generation, lease.Generation)
 	}
 	if state.Generation == math.MaxUint64 {
 		return 0, fmt.Errorf("durable lease generation exhausted")
@@ -2585,6 +2616,23 @@ func (s *FS) issueLeaseGenerationUnlocked(runID string) (uint64, error) {
 		return 0, err
 	}
 	return state.Generation, nil
+}
+
+func validateLeaseGenerationFloor(lease LeaseRecord) error {
+	kind := lease.normalizedKind()
+	if kind != LeaseKindEngine && kind != LeaseKindMaintenance {
+		return fmt.Errorf("invalid lease generation floor: unknown lease kind %q", lease.Kind)
+	}
+	if lease.Generation == 0 {
+		if kind == LeaseKindEngine && lease.Token == "" || kind == LeaseKindMaintenance && len(lease.Token) == 64 && isHexSHA256(lease.Token) {
+			return nil
+		}
+		return fmt.Errorf("invalid legacy lease generation floor")
+	}
+	if len(lease.Token) != 64 || !isHexSHA256(lease.Token) {
+		return fmt.Errorf("invalid tokenized lease generation floor")
+	}
+	return nil
 }
 
 func (s *FS) writeLease(lease LeaseRecord) error {
