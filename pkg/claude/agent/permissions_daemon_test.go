@@ -104,6 +104,43 @@ func TestPermissionsLs_AmbiguousRendersDaemonCandidates(t *testing.T) {
 	assert.Contains(t, out, "99998888", "falls back to the conv prefix without an agent_id")
 }
 
+// A pre-TCL-611 daemon ignores `?target` and answers the targeted GET
+// with the ordinary roster at HTTP 200. That decodes into the effective
+// struct as all-zero, which would render as "this agent holds nothing" —
+// a material misstatement of authority. The CLI must refuse it and point
+// at the version skew instead, in --json mode too.
+func TestPermissionsLs_OldDaemonResponseRefused(t *testing.T) {
+	const conv = "11112222-3333-4444-5555-666677778888"
+	oldDaemonRoster := func(string) (int, any) {
+		// Exactly what a pre-PR daemon returns for ANY GET /v1/permissions:
+		// the roster, with no `resolved` discriminator and no target echo.
+		return http.StatusOK, permissionsState{
+			Defaults:  []string{"self.rename"},
+			Grants:    map[string][]string{conv: {"groups.spawn"}},
+			Overrides: map[string]map[string]string{conv: {"groups.spawn": "grant"}},
+		}
+	}
+
+	for _, jsonOut := range []bool{false, true} {
+		name := "text mode"
+		if jsonOut {
+			name = "json mode"
+		}
+		t.Run(name, func(t *testing.T) {
+			permLsHarness(t, oldDaemonRoster)
+
+			var stdout, stderr bytes.Buffer
+			rc := runPermissionsLs(&permissionsLsParams{Target: conv, JSON: jsonOut}, &stdout, &stderr)
+
+			assert.Equal(t, rcIOFailure, rc, "a contract mismatch must fail, not report an empty set")
+			assert.Empty(t, stdout.String(),
+				"must emit NO result — a false empty set is what a script would act on")
+			assert.Contains(t, stderr.String(), "restart tclaude agentd",
+				"error must tell the operator how to fix the version skew")
+		})
+	}
+}
+
 // The untargeted roster decorates keys from the daemon's `titles`
 // projection. With an empty local store, a title in the output can only
 // have come over the wire.

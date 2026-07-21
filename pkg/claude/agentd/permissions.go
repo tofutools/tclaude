@@ -408,6 +408,13 @@ type permissionsState struct {
 // resolution and the effective/owner-implied calculation done here
 // rather than in the CLI (TCL-611).
 type permissionsEffectiveResp struct {
+	// Resolved is the explicit contract discriminator, always true here.
+	// A pre-TCL-611 daemon ignores `?target` and answers the same GET with
+	// the ordinary roster (HTTP 200), which decodes into this struct as
+	// all-zero — an empty effective set that would materially misstate the
+	// target's authority. Clients MUST refuse a response without this flag
+	// and tell the operator to restart agentd.
+	Resolved bool `json:"resolved"`
 	// Target echoes the selector as typed.
 	Target string `json:"target"`
 	// TargetKey is the resolved conv-id; empty for the "default" sentinel.
@@ -608,7 +615,7 @@ func handlePermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if target := strings.TrimSpace(r.URL.Query().Get("target")); target != "" {
-		writeEffectivePermissions(w, state, target)
+		writeEffectivePermissions(w, r, state, target)
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
@@ -618,11 +625,12 @@ func handlePermissions(w http.ResponseWriter, r *http.Request) {
 // permission view for it. Unknown selectors get a concise typed
 // `not_found`; ambiguous ones a typed `ambiguous` with candidates, the
 // same envelope /v1/lookup and /v1/messages already use.
-func writeEffectivePermissions(w http.ResponseWriter, state permissionsState, target string) {
+func writeEffectivePermissions(w http.ResponseWriter, r *http.Request, state permissionsState, target string) {
 	if target == targetSentinelDefault {
 		defs := append([]string{}, state.Defaults...)
 		sort.Strings(defs)
 		writeJSON(w, http.StatusOK, permissionsEffectiveResp{
+			Resolved:     true,
 			Target:       targetSentinelDefault,
 			Effective:    defs,
 			Source:       "defaults",
@@ -630,7 +638,27 @@ func writeEffectivePermissions(w http.ResponseWriter, state permissionsState, ta
 		})
 		return
 	}
-	res, matches, err := agent.ResolveSelector(target)
+	// `.` / `-` mean "the conversation invoking this command". The CLI used
+	// to expand them from its own process before resolving; now that the
+	// selector travels to the daemon, they must be resolved from the
+	// AUTHENTICATED PEER instead — letting agent.ResolveSelector see them
+	// here would inspect the daemon's own process identity and answer for
+	// the wrong conversation (or nothing at all).
+	selector := target
+	if selector == "." || selector == "-" {
+		callerConv, isHuman, ok := authedCaller(w, r)
+		if !ok {
+			return // authedCaller already wrote the refusal
+		}
+		if isHuman || callerConv == "" {
+			writeError(w, http.StatusNotFound, "not_found",
+				fmt.Sprintf("%q means the calling conversation; this invocation has none — pass a conv selector, or %q for the defaults list",
+					target, targetSentinelDefault))
+			return
+		}
+		selector = callerConv
+	}
+	res, matches, err := agent.ResolveSelector(selector)
 	if errors.Is(err, agent.ErrAmbiguous) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":      fmt.Sprintf("selector %q matches multiple conversations", target),
@@ -648,6 +676,7 @@ func writeEffectivePermissions(w http.ResponseWriter, state permissionsState, ta
 		return
 	}
 	resp := permissionsEffectiveResp{
+		Resolved:  true,
 		Target:    target,
 		TargetKey: res.ConvID,
 		AgentID:   res.AgentID,

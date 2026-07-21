@@ -177,6 +177,56 @@ func TestPermissionsLsTarget_OwnerImpliedAndDeny(t *testing.T) {
 	assert.Contains(t, v.Source, "−denies", "source notes the deny")
 }
 
+// Scenario: `permissions ls .` (and `-`) — "my own permissions". The
+// sentinel used to be expanded in the CLI process before resolution.
+// Now that the selector travels to the daemon it must be resolved from
+// the AUTHENTICATED PEER: resolving it daemon-side against the daemon's
+// own process identity would answer for the wrong conversation, or miss
+// entirely. The daemon process deliberately has no TCLAUDE_SESSION_ID
+// here, so a regression cannot accidentally pass.
+func TestPermissionsLsTarget_SelfSelectorsResolveToCaller(t *testing.T) {
+	t.Setenv("TCLAUDE_SESSION_ID", "")
+	f := newFlow(t)
+
+	const caller = "plss-aaaa-bbbb-cccc-0001"
+	f.HaveConvWithTitle(caller, "sandboxed-agent")
+	f.HaveEnrolledAgent(caller)
+	permMutate(t, f, "grant", caller, "permissions.grant")
+
+	for _, selector := range []string{".", "-"} {
+		t.Run("selector "+selector, func(t *testing.T) {
+			res := getPermissionsTarget(t, f, caller, selector)
+			require.Equalf(t, http.StatusOK, res.Code, "GET %q body=%s", selector, res.Body)
+			v := decodeEffective(t, res)
+			assert.Equal(t, selector, v.Target, "echoes the sentinel as typed")
+			assert.Equal(t, caller, v.TargetKey, "resolves to the AUTHENTICATED caller")
+			assert.Equal(t, "sandboxed-agent", v.Title, "caller's own title")
+			assert.Contains(t, v.Effective, "permissions.grant", "caller's own effective set")
+		})
+	}
+}
+
+// A human shell invocation has no calling conversation, so the self
+// sentinels have nothing to resolve to. That must be a concise typed
+// not_found naming the alternatives — never a silent wrong answer.
+func TestPermissionsLsTarget_SelfSelectorFromHumanIsNotFound(t *testing.T) {
+	t.Setenv("TCLAUDE_SESSION_ID", "")
+	f := newFlow(t)
+
+	rec := testharness.Serve(f.Mux,
+		agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/permissions?target=.", nil)))
+	require.Equal(t, http.StatusNotFound, rec.Code, "body=%s", rec.Body.String())
+
+	var envelope struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "decode error envelope")
+	assert.Equal(t, "not_found", envelope.Code, "typed not_found")
+	assert.Contains(t, envelope.Error, "calling conversation", "explains why the sentinel could not resolve")
+	assertNoPrivatePaths(t, envelope.Error)
+}
+
 // Scenario: `permissions ls default`. The magic sentinel is answered
 // daemon-side too, so the CLI needs no special case that reads config or
 // the DB itself.

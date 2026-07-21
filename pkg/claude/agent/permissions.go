@@ -70,6 +70,12 @@ type permissionsState struct {
 // GET /v1/permissions?target=<selector>. Selector resolution and the
 // effective/owner-implied calculation both happen daemon-side.
 type permissionsEffectiveResp struct {
+	// Resolved is the contract discriminator the daemon always sets on a
+	// targeted answer. It is what distinguishes a real effective view from
+	// a pre-TCL-611 daemon's reply — that build ignores `?target` and
+	// returns the ordinary roster with HTTP 200, which decodes here as
+	// all-zero and would otherwise render as "this agent holds nothing".
+	Resolved     bool     `json:"resolved"`
 	Target       string   `json:"target"`
 	TargetKey    string   `json:"target_key"`
 	AgentID      string   `json:"agent_id"`
@@ -229,6 +235,16 @@ func renderEffectivePerms(p *permissionsLsParams, stdout, stderr io.Writer) int 
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	// Refuse anything that isn't a genuine targeted answer BEFORE rendering
+	// — including in --json mode, where a zero-valued struct would emit a
+	// false "no permissions" result a script could act on.
+	if !resp.Resolved || resp.Target == "" || resp.Source == "" {
+		fmt.Fprintf(stderr,
+			"Error: agentd answered without a resolved permission view for %q. "+
+				"The running daemon predates this CLI build; restart tclaude agentd so it picks up the current binary.\n",
+			p.Target)
+		return rcIOFailure
 	}
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
