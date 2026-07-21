@@ -291,10 +291,14 @@ func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt, linea
 			continue
 		}
 		encoded, marshalErr := json.Marshal(witness)
-		if marshalErr != nil || len(encoded) == 0 || len(encoded) > pathv1.MaxCheckpointBytes || witnessBytes > pathv1.MaxCheckpointBytes-len(encoded) {
+		if marshalErr != nil || len(encoded) == 0 || len(encoded) > pathv1.MaxCheckpointBytes {
 			return nil, witnessBytes, &OverBudgetError{Limit: "runtime_witness_bytes", Value: witnessBytes + len(encoded), Maximum: pathv1.MaxCheckpointBytes}
 		}
-		witnessBytes += len(encoded)
+		var budgetErr error
+		witnessBytes, budgetErr = accumulateRuntimeWitnessBytes(witnessBytes, len(encoded))
+		if budgetErr != nil {
+			return nil, witnessBytes, budgetErr
+		}
 	}
 	if receipt.ExecutionWitness != nil {
 		encoded, _ := json.Marshal(receipt.ExecutionWitness)
@@ -395,6 +399,13 @@ func validateRuntimeReceipt(prefix checkpointWire, receipt RuntimeReceipt, linea
 	return nextLineage, witnessBytes, nil
 }
 
+func accumulateRuntimeWitnessBytes(current, added int) (int, error) {
+	if current < 0 || added < 0 || current > pathv1.MaxCheckpointBytes-added {
+		return current, &OverBudgetError{Limit: "runtime_witness_bytes", Value: current + added, Maximum: pathv1.MaxCheckpointBytes}
+	}
+	return current + added, nil
+}
+
 func replayRuntimeWitness(prefix checkpointWire, receipt RuntimeReceipt, lineage *runtimeLineageReplay, epoch TemplateEpoch, projectionBase []AuthorityRecord) (*runtimeLineageReplay, error) {
 	switch receipt.Kind {
 	case RuntimeAttachGenesis, RuntimeApplyTransfer:
@@ -419,7 +430,7 @@ func replayRuntimeWitness(prefix checkpointWire, receipt RuntimeReceipt, lineage
 		}
 		return next, nil
 	case RuntimeApplyRetain:
-		if lineage == nil || receipt.GenesisWitness != nil || receipt.ExecutionWitness != nil {
+		if lineage == nil || receipt.GenesisWitness != nil || receipt.ExecutionWitness != nil || receipt.Owner != lineage.head || receipt.EpochID != lineage.epoch || receipt.TemplateSourceDigest != lineage.source {
 			return nil, fmt.Errorf("%w: retain runtime lineage witness is invalid", ErrInvalid)
 		}
 		return lineage, nil
@@ -433,6 +444,25 @@ func replayRuntimeWitness(prefix checkpointWire, receipt RuntimeReceipt, lineage
 		}
 		if transition.Kind() != receipt.PathTransitionKind {
 			return nil, fmt.Errorf("%w: execution witness transition kind differs", ErrInvalid)
+		}
+		switch receipt.Kind {
+		case RuntimeAdvanceHead:
+			if receipt.Owner != lineage.head {
+				return nil, fmt.Errorf("%w: advance runtime receipt owner differs from lineage", ErrInvalid)
+			}
+		case RuntimeSettlement:
+			resolution, ok := transition.AuditedResolution()
+			outer := pathv1.BlockResolution{
+				NodeID: receipt.NodeID, BlockedAttempt: receipt.BlockedAttempt, Decision: receipt.Decision,
+				Actor: receipt.Actor, Reason: receipt.Reason, EvidenceRef: receipt.EvidenceRef, Timestamp: receipt.Timestamp,
+			}
+			digest, digestErr := pathv1.ValidateBlockResolution(resolution)
+			if !ok || digestErr != nil || digest != receipt.ResolutionDigest || !reflect.DeepEqual(resolution, outer) {
+				return nil, fmt.Errorf("%w: settlement receipt provenance differs from typed witness", ErrInvalid)
+			}
+			if receipt.Decision != "retry" && receipt.Owner != lineage.head {
+				return nil, fmt.Errorf("%w: nonretry settlement owner differs from lineage", ErrInvalid)
+			}
 		}
 		inner, err := pathv1.ReplayedCheckpointV7(transition)
 		if err != nil {

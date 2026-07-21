@@ -597,6 +597,17 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
+	offsetSettlement, err := SettleExclusiveAttempt(t.Context(), input, AuditedSettlementInput{
+		NodeID: "work", BlockedAttempt: 1, Decision: "retry", Actor: "human:operator",
+		Reason: "operator approved rescue", EvidenceRef: "ticket:TCL-604",
+		Timestamp: time.Date(2026, 7, 20, 14, 0, 0, 0, time.FixedZone("UTC+2", 2*60*60)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(settlement.Witness(), offsetSettlement.Witness()) {
+		t.Fatal("offset-equivalent settlement timestamps produced different canonical witnesses")
+	}
 	resolution, ok := settlement.AuditedResolution()
 	if !ok || resolution.Decision != "retry" {
 		t.Fatalf("sealed settlement metadata = %#v, %v", resolution, ok)

@@ -46,6 +46,14 @@ func TestRuntimeWitnessRejectsCoherentForgeries(t *testing.T) {
 			t.Fatalf("witness pre-binding splice was accepted: %v", err)
 		}
 	})
+	t.Run("advance_owner_substitution", func(t *testing.T) {
+		forged := rehashLastRuntimeReceipt(t, started.Checkpoint, RuntimeAdvanceHead, func(receipt *RuntimeReceipt) {
+			receipt.Owner = alternateSameEpochAuthority(t, receipt)
+		})
+		if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "owner differs from lineage") {
+			t.Fatalf("advance owner substitution was accepted: %v", err)
+		}
+	})
 	t.Run("execution_witness_bound", func(t *testing.T) {
 		forged := rehashLastRuntimeReceipt(t, started.Checkpoint, RuntimeAdvanceHead, func(receipt *RuntimeReceipt) {
 			receipt.ExecutionWitness.RouteObservation.Mode = strings.Repeat("x", pathv1.MaxExecutionWitnessBytes)
@@ -54,6 +62,28 @@ func TestRuntimeWitnessRejectsCoherentForgeries(t *testing.T) {
 			t.Fatalf("oversized execution witness was accepted: %v", err)
 		}
 	})
+}
+
+func alternateSameEpochAuthority(t *testing.T, receipt *RuntimeReceipt) OwnerIdentity {
+	t.Helper()
+	for _, authority := range receipt.After {
+		if authority.EpochID == receipt.EpochID && authority.Identity != receipt.Owner {
+			return authority.Identity
+		}
+	}
+	t.Fatal("alternate same-epoch authority is absent")
+	return ""
+}
+
+func TestRuntimeWitnessCumulativeBudgetNearLimit(t *testing.T) {
+	remaining := pathv1.MaxCheckpointBytes - 1
+	got, err := accumulateRuntimeWitnessBytes(remaining, 1)
+	if err != nil || got != pathv1.MaxCheckpointBytes {
+		t.Fatalf("exact cumulative witness limit: got=%d err=%v", got, err)
+	}
+	if _, err := accumulateRuntimeWitnessBytes(remaining, 2); err == nil || !strings.Contains(err.Error(), "runtime_witness_bytes") {
+		t.Fatalf("cumulative witness overflow was accepted: %v", err)
+	}
 }
 
 func TestRuntimeGenesisWitnessRejectsNodeSemanticPreimageMismatch(t *testing.T) {
@@ -192,6 +222,46 @@ func TestAuditedSettlementCreatesFreshRetryAuthority(t *testing.T) {
 		if added := addedVerifiedFrontiers(failedAuthorities, terminal.Checkpoint.View().Authorities); len(added) != 0 {
 			t.Fatalf("%s settlement minted frontier %v", decision, added)
 		}
+		t.Run(decision+"_outer_decision_substitution", func(t *testing.T) {
+			forged := rehashLastRuntimeReceipt(t, terminal.Checkpoint, RuntimeSettlement, func(receipt *RuntimeReceipt) {
+				if receipt.Decision == "skip" {
+					receipt.Decision = "cancel"
+				} else {
+					receipt.Decision = "skip"
+				}
+				resolution := pathv1.BlockResolution{NodeID: receipt.NodeID, BlockedAttempt: receipt.BlockedAttempt, Decision: receipt.Decision, Actor: receipt.Actor, Reason: receipt.Reason, EvidenceRef: receipt.EvidenceRef, Timestamp: receipt.Timestamp}
+				var digestErr error
+				receipt.ResolutionDigest, digestErr = pathv1.ValidateBlockResolution(resolution)
+				if digestErr != nil {
+					t.Fatal(digestErr)
+				}
+			})
+			if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "provenance differs from typed witness") {
+				t.Fatalf("outer settlement decision substitution was accepted: %v", err)
+			}
+		})
+		t.Run(decision+"_outer_metadata_substitution", func(t *testing.T) {
+			forged := rehashLastRuntimeReceipt(t, terminal.Checkpoint, RuntimeSettlement, func(receipt *RuntimeReceipt) {
+				receipt.Actor, receipt.Reason, receipt.EvidenceRef = "human:forged", "forged reason", "ticket:forged"
+				resolution := pathv1.BlockResolution{NodeID: receipt.NodeID, BlockedAttempt: receipt.BlockedAttempt, Decision: receipt.Decision, Actor: receipt.Actor, Reason: receipt.Reason, EvidenceRef: receipt.EvidenceRef, Timestamp: receipt.Timestamp}
+				var digestErr error
+				receipt.ResolutionDigest, digestErr = pathv1.ValidateBlockResolution(resolution)
+				if digestErr != nil {
+					t.Fatal(digestErr)
+				}
+			})
+			if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "provenance differs from typed witness") {
+				t.Fatalf("outer settlement metadata substitution was accepted: %v", err)
+			}
+		})
+		t.Run(decision+"_owner_substitution", func(t *testing.T) {
+			forged := rehashLastRuntimeReceipt(t, terminal.Checkpoint, RuntimeSettlement, func(receipt *RuntimeReceipt) {
+				receipt.Owner = alternateSameEpochAuthority(t, receipt)
+			})
+			if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "owner differs from lineage") {
+				t.Fatalf("nonretry settlement owner substitution was accepted: %v", err)
+			}
+		})
 	}
 	settlement, err := pathv1.SettleExclusiveAttempt(t.Context(), input, pathv1.AuditedSettlementInput{
 		NodeID: "work", BlockedAttempt: 1, Decision: "retry", Actor: "human:operator",
@@ -803,4 +873,27 @@ func TestRuntimeApplyRetainThenBareTransfer(t *testing.T) {
 		t.Fatal("runtime receipt that differs from its apply handoffs was accepted")
 	}
 	_ = source1
+}
+
+func TestRuntimeRetainReceiptBindsOriginalLineageAcrossEpoch(t *testing.T) {
+	runID := "runtime-retain-owner-binding"
+	source := testTemplateSource(runID)
+	started := runtimeStartedFixture(t, runID)
+	preview, err := PreviewApply(started.Checkpoint, ApplyDraft{
+		BaseBinding: started.Checkpoint.Binding(), Candidate: supportedCandidate(t, "runtime-retain-next"),
+		Handoffs: retainAll(started.Checkpoint.View().ProtectedAuthorities),
+	})
+	if err != nil || preview.Plan == nil {
+		t.Fatalf("retain preview: %+v, %v", preview, err)
+	}
+	retained, err := ApplyRetainHead(t.Context(), started.Checkpoint, started.ArtifactJSON, source, preview.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := rehashLastRuntimeReceipt(t, retained.Checkpoint, RuntimeApplyRetain, func(receipt *RuntimeReceipt) {
+		receipt.Owner = alternateSameEpochAuthority(t, receipt)
+	})
+	if err := VerifyCheckpointV8(forged); err == nil || !strings.Contains(err.Error(), "retain runtime lineage witness") {
+		t.Fatalf("retain owner substitution across epoch change was accepted: %v", err)
+	}
 }
