@@ -381,9 +381,14 @@ func bareTransfer(checkpoint *CheckpointV8, plan *ApplyPlan) (bool, bool) {
 	return true, transfers == 1 && matched
 }
 
-// PreflightAuditedSettlement runs the exact outer runtime constructor in
-// memory. AuditedSettlement itself proves that retry creates exactly one new
-// verified frontier and that non-retry decisions create none.
+// PreflightAuditedSettlement runs the real settlement constructor purely in
+// memory: it invokes AuditedSettlement on the given inputs and returns its
+// full result, and nothing is persisted. The returned result IS the would-be
+// next state rather than a discard-style preview enum, and replaying the real
+// settlement against that state afterward is idempotent. Callers must not
+// treat a successful preflight as a persisted settlement. AuditedSettlement
+// itself proves that retry creates exactly one new verified frontier and that
+// non-retry decisions create none.
 func PreflightAuditedSettlement(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource []byte, transition *pathv1.ExecutionTransition) (RuntimeTransitionResult, error) {
 	return AuditedSettlement(ctx, checkpoint, artifactJSON, ownerSource, transition)
 }
