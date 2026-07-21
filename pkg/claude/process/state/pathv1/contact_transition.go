@@ -160,13 +160,13 @@ func ScheduleExclusiveContact(ctx context.Context, input *VerifiedExclusiveInput
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "schedule_contact")
+	return newWitnessedExecutionTransition(input.checkpoint, next, TransitionScheduleContact, ExecutionWitnessV1{ScheduleContact: &ScheduleContactWitnessV1{Schedule: schedule, Now: CanonicalTimestamp(now.UTC())}})
 }
 
 // contactMutation seals one exact record/marker change. Every public contact
 // transition below reduces to it; preconditions were checked by the caller
 // against the same detached aggregate.
-func contactMutation(input *VerifiedExclusiveInput, aggregate AggregateCheckpoint, record ContactRecordV7, markerState, label string) (*ExecutionTransition, error) {
+func contactMutation(input *VerifiedExclusiveInput, aggregate AggregateCheckpoint, record ContactRecordV7, markerState, label string, witness ExecutionWitnessV1) (*ExecutionTransition, error) {
 	record.EventSeq = int64(CurrentLastLogSeq(input.checkpoint)) + 1
 	if err := ValidateContactRecord(record); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrMutationInvalid, err)
@@ -182,7 +182,7 @@ func contactMutation(input *VerifiedExclusiveInput, aggregate AggregateCheckpoin
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, label)
+	return newWitnessedExecutionTransition(input.checkpoint, next, label, witness)
 }
 
 // currentContact re-derives the exact contact pair from the sealed input; the
@@ -232,7 +232,7 @@ func MarkExclusiveContactDue(ctx context.Context, input *VerifiedExclusiveInput,
 	if now.Before(next) {
 		return nil, fmt.Errorf("%w: contact %q is not due until %s", ErrMutationInvalid, contactID, record.NextContactAt)
 	}
-	return contactMutation(input, aggregate, record, ContactStateDue, "mark_contact_due")
+	return contactMutation(input, aggregate, record, ContactStateDue, TransitionMarkContactDue, ExecutionWitnessV1{ContactAt: &ContactAtWitnessV1{ContactID: contactID, At: CanonicalTimestamp(now.UTC())}})
 }
 
 // NudgeExclusiveContact seals a delivered non-escalation nudge. The caller
@@ -260,7 +260,7 @@ func NudgeExclusiveContact(ctx context.Context, input *VerifiedExclusiveInput, c
 	record.Used++
 	record.LastContactedAt = CanonicalTimestamp(now.UTC())
 	record.NextContactAt = CanonicalTimestamp(now.UTC().Add(cadence))
-	return contactMutation(input, aggregate, record, ContactStateScheduled, "nudge_contact")
+	return contactMutation(input, aggregate, record, ContactStateScheduled, TransitionNudgeContact, ExecutionWitnessV1{ContactAt: &ContactAtWitnessV1{ContactID: contactID, At: CanonicalTimestamp(now.UTC())}})
 }
 
 // EscalateExclusiveContact seals the exactly-once escalation after the budget
@@ -285,7 +285,7 @@ func EscalateExclusiveContact(ctx context.Context, input *VerifiedExclusiveInput
 	}
 	record.EscalatedAt = CanonicalTimestamp(now.UTC())
 	record.NextContactAt = ""
-	return contactMutation(input, aggregate, record, ContactStateScheduled, "escalate_contact")
+	return contactMutation(input, aggregate, record, ContactStateScheduled, TransitionEscalateContact, ExecutionWitnessV1{ContactAt: &ContactAtWitnessV1{ContactID: contactID, At: CanonicalTimestamp(now.UTC())}})
 }
 
 // PauseExclusiveContact freezes automation with an explicit reason (human
@@ -305,7 +305,7 @@ func PauseExclusiveContact(ctx context.Context, input *VerifiedExclusiveInput, c
 		return nil, fmt.Errorf("%w: contact pause requires a reason", ErrMutationInvalid)
 	}
 	record.PauseReason = strings.TrimSpace(reason)
-	return contactMutation(input, aggregate, record, ContactStatePaused, "pause_contact")
+	return contactMutation(input, aggregate, record, ContactStatePaused, TransitionPauseContact, ExecutionWitnessV1{ContactReason: &ContactReasonWitnessV1{ContactID: contactID, Reason: strings.TrimSpace(reason)}})
 }
 
 // LatchExclusiveContactHumanInteraction records observed human activity on the
@@ -323,7 +323,7 @@ func LatchExclusiveContactHumanInteraction(ctx context.Context, input *VerifiedE
 		return nil, fmt.Errorf("%w: contact %q is not active", ErrMutationInconsistent, contactID)
 	}
 	record.HumanInteractedAt = CanonicalTimestamp(at.UTC())
-	return contactMutation(input, aggregate, record, marker.State, "latch_contact_human")
+	return contactMutation(input, aggregate, record, marker.State, TransitionLatchContactHuman, ExecutionWitnessV1{ContactAt: &ContactAtWitnessV1{ContactID: contactID, At: CanonicalTimestamp(at.UTC())}})
 }
 
 // ClearExclusiveContactHumanLatch removes the human-interaction latch once
@@ -346,7 +346,7 @@ func ClearExclusiveContactHumanLatch(ctx context.Context, input *VerifiedExclusi
 		record.PauseReason = ""
 		state = ContactStateScheduled
 	}
-	return contactMutation(input, aggregate, record, state, "clear_contact_human_latch")
+	return contactMutation(input, aggregate, record, state, TransitionClearContactHumanLatch, ExecutionWitnessV1{ContactReason: &ContactReasonWitnessV1{ContactID: contactID, Reason: pauseReason}})
 }
 
 // RecoverExclusiveContactReset applies performer-recovery semantics: budget
@@ -373,7 +373,7 @@ func RecoverExclusiveContactReset(ctx context.Context, input *VerifiedExclusiveI
 	record.HumanInteractedAt = ""
 	record.PauseReason = ""
 	record.NextContactAt = CanonicalTimestamp(now.UTC().Add(cadence))
-	return contactMutation(input, aggregate, record, ContactStateScheduled, "recover_contact")
+	return contactMutation(input, aggregate, record, ContactStateScheduled, TransitionRecoverContact, ExecutionWitnessV1{RecoverContact: &RecoverContactWitnessV1{ContactID: contactID, RecoveredAt: CanonicalTimestamp(recoveredAt.UTC()), Now: CanonicalTimestamp(now.UTC())}})
 }
 
 // completeContactsForSettledCommand composes contact settlement into a command

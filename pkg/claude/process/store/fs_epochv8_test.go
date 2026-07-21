@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
@@ -90,6 +92,371 @@ func TestEpochV8InitializeReadPublishAndExactReplay(t *testing.T) {
 	reasonInfo, err := os.Stat(filepath.Join(root, "runs", runID, "epochs", string(plan.CandidateEpoch().ID), "reason.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), reasonInfo.Mode().Perm())
+}
+
+func TestEpochV8RuntimePublicationAndDurableEngineLeaseGeneration(t *testing.T) {
+	root := t.TempDir()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, source := putEpochV8Template(t, fs, "epoch-runtime", "runtime")
+	_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-runtime", TemplateRef: record.Ref}, source)
+	require.NoError(t, err)
+
+	now := time.Date(2026, 7, 20, 22, 0, 0, 0, time.UTC)
+	t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+	lease1, err := fs.AcquireEngineLease(t.Context(), "epoch-runtime", "engine", time.Minute)
+	require.NoError(t, err)
+	require.NotZero(t, lease1.Generation)
+	require.Len(t, lease1.Token, 64)
+	_, err = fs.AcquireEngineLease(t.Context(), "epoch-runtime", "engine", time.Minute)
+	assert.ErrorIs(t, err, store.ErrLeaseHeld)
+	assert.ErrorIs(t, fs.ReleaseRunLease(t.Context(), "epoch-runtime", "engine"), store.ErrLeaseHeld)
+
+	attached, err := fs.EnsureEpochV8Runtime(t.Context(), lease1)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), attached.Checkpoint.View().RuntimeBinding.Revision)
+	loaded, err := fs.LoadEpochV8RunView(t.Context(), "epoch-runtime")
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Runtime)
+	assert.Equal(t, attached.Artifact.Digest, loaded.Runtime.Digest)
+
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease1))
+	lease2, err := fs.AcquireEngineLease(t.Context(), "epoch-runtime", "engine", time.Minute)
+	require.NoError(t, err)
+	assert.Greater(t, lease2.Generation, lease1.Generation)
+	assert.ErrorIs(t, fs.ReleaseEngineLease(t.Context(), lease1), store.ErrLeaseHeld)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease2))
+
+	generationBytes, err := os.ReadFile(filepath.Join(root, "runs", "epoch-runtime", "lease-generation.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(generationBytes), strconv.FormatUint(lease2.Generation, 10))
+}
+
+func TestEpochV8RuntimeArtifactFirstCrashAndLostAcknowledgementReplay(t *testing.T) {
+	root := t.TempDir()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, source := putEpochV8Template(t, fs, "epoch-runtime-crash", "runtime crash")
+	_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-runtime-crash", TemplateRef: record.Ref}, source)
+	require.NoError(t, err)
+	lease, err := fs.AcquireEngineLease(t.Context(), "epoch-runtime-crash", "engine", time.Minute)
+	require.NoError(t, err)
+
+	crash := errors.New("crash after runtime artifact")
+	restore := fs.SetEpochV8PublishHooksForTest(nil, nil, func() error { return crash }, nil)
+	_, err = fs.EnsureEpochV8Runtime(t.Context(), lease)
+	assert.ErrorIs(t, err, crash)
+	restore()
+	orphaned, err := fs.LoadEpochV8RunView(t.Context(), "epoch-runtime-crash")
+	require.NoError(t, err)
+	assert.Nil(t, orphaned.Runtime)
+	entries, err := os.ReadDir(filepath.Join(root, "runs", "epoch-runtime-crash", "runtime"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+
+	attached, err := fs.EnsureEpochV8Runtime(t.Context(), lease)
+	require.NoError(t, err)
+	input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePathV1(t, attached.Artifact.Checkpoint))
+	require.NoError(t, err)
+	plan, err := pathv1.PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	require.NoError(t, err)
+	claim, err := pathv1.ClaimExclusiveAttempt(t.Context(), input, plan)
+	require.NoError(t, err)
+	lostAck := errors.New("runtime state committed before acknowledgement")
+	restore = fs.SetEpochV8PublishHooksForTest(nil, nil, nil, func() error { return lostAck })
+	_, err = fs.AppendEpochV8ClaimExternal(t.Context(), lease, claim)
+	assert.ErrorIs(t, err, lostAck)
+	restore()
+	replayed, err := fs.AppendEpochV8ClaimExternal(t.Context(), lease, claim)
+	require.NoError(t, err)
+	assert.Equal(t, epochv8.DispositionReplayed, replayed.Disposition)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease))
+}
+
+func TestEpochV8ExternalSettlementAcceptsLiveEngineAndRejectsMaintenance(t *testing.T) {
+	root := t.TempDir()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, source := putEpochV8Template(t, fs, "epoch-settlement", "fail then rescue")
+	_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-settlement", TemplateRef: record.Ref}, source)
+	require.NoError(t, err)
+	engine1, err := fs.AcquireEngineLease(t.Context(), "epoch-settlement", "engine", time.Minute)
+	require.NoError(t, err)
+	transition := failedEpochV8SettlementTransition(t, fs, "epoch-settlement", source, engine1)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), engine1))
+
+	maintenance, err := fs.AcquireMaintenanceLease(t.Context(), "epoch-settlement", "maintainer", time.Minute)
+	require.NoError(t, err)
+	_, err = fs.AppendEpochV8Settlement(t.Context(), "epoch-settlement", transition)
+	assert.ErrorIs(t, err, store.ErrLeaseHeld)
+	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), maintenance))
+	unknownLease := store.LeaseRecord{
+		RunID: "epoch-settlement", Holder: "future-writer", Kind: store.LeaseKind("future"),
+		ExpiresAt: time.Now().UTC().Add(time.Minute), UpdatedAt: time.Now().UTC(),
+	}
+	unknownJSON, err := json.Marshal(unknownLease)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", "epoch-settlement", "lease.json"), append(unknownJSON, '\n'), 0o644))
+	_, err = fs.AppendEpochV8Settlement(t.Context(), "epoch-settlement", transition)
+	assert.ErrorIs(t, err, store.ErrLeaseHeld)
+	require.NoError(t, os.Remove(filepath.Join(root, "runs", "epoch-settlement", "lease.json")))
+
+	engine2, err := fs.AcquireEngineLease(t.Context(), "epoch-settlement", "engine", time.Minute)
+	require.NoError(t, err)
+	assert.Greater(t, engine2.Generation, engine1.Generation)
+	_, err = fs.EnsureEpochV8Runtime(t.Context(), engine1)
+	assert.ErrorIs(t, err, store.ErrLeaseHeld)
+	type settlementResult struct {
+		result epochv8.RuntimeTransitionResult
+		err    error
+	}
+	results := make(chan settlementResult, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, appendErr := fs.AppendEpochV8Settlement(t.Context(), "epoch-settlement", transition)
+			results <- settlementResult{result: result, err: appendErr}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	dispositions := make([]epochv8.Disposition, 0, 2)
+	var settled epochv8.RuntimeTransitionResult
+	for value := range results {
+		require.NoError(t, value.err)
+		dispositions = append(dispositions, value.result.Disposition)
+		settled = value.result
+	}
+	assert.ElementsMatch(t, []epochv8.Disposition{epochv8.DispositionApplied, epochv8.DispositionReplayed}, dispositions)
+	verified := 0
+	for _, authority := range settled.Checkpoint.View().Authorities {
+		if authority.Kind == epochv8.AuthorityFrontier && authority.State == epochv8.AuthorityVerifiedUnclaimed {
+			verified++
+		}
+	}
+	assert.Equal(t, 1, verified)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), engine2))
+	runtimeDir := filepath.Join(root, "runs", "epoch-settlement", "runtime")
+	entries, err := os.ReadDir(runtimeDir)
+	require.NoError(t, err)
+	old := time.Now().UTC().Add(-store.EpochV8GCMinOrphanAge - time.Minute)
+	for _, entry := range entries {
+		require.NoError(t, os.Chtimes(filepath.Join(runtimeDir, entry.Name()), old, old))
+	}
+	gcLease, err := fs.AcquireMaintenanceLease(t.Context(), "epoch-settlement", "gc", time.Minute)
+	require.NoError(t, err)
+	gc, err := fs.CollectEpochV8RuntimeGarbage(t.Context(), gcLease, "")
+	require.NoError(t, err)
+	assert.Greater(t, gc.Removed, 0)
+	assert.FileExists(t, filepath.Join(runtimeDir, settled.Artifact.Digest+".json"))
+	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), gcLease))
+}
+
+func TestEpochV8ExternalReportAndSignalAcceptLiveEngineLease(t *testing.T) {
+	t.Run("report", func(t *testing.T) {
+		fs, err := store.NewFS(t.TempDir())
+		require.NoError(t, err)
+		record, source := putEpochV8Template(t, fs, "epoch-live-report", "report while engine owns lease")
+		_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-live-report", TemplateRef: record.Ref}, source)
+		require.NoError(t, err)
+		lease, err := fs.AcquireEngineLease(t.Context(), "epoch-live-report", "agentd", time.Minute)
+		require.NoError(t, err)
+		attached, err := fs.EnsureEpochV8Runtime(t.Context(), lease)
+		require.NoError(t, err)
+		input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source)
+		require.NoError(t, err)
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePathV1(t, attached.Artifact.Checkpoint))
+		require.NoError(t, err)
+		plan, err := pathv1.PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+		require.NoError(t, err)
+		claim, err := pathv1.ClaimExclusiveAttempt(t.Context(), input, plan)
+		require.NoError(t, err)
+		claimed, err := fs.AppendEpochV8ClaimExternal(t.Context(), lease, claim)
+		require.NoError(t, err)
+		input, err = pathv1.VerifyExecutionInput(t.Context(), claimed.Artifact.Checkpoint, source)
+		require.NoError(t, err)
+		recovered, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), input)
+		require.NoError(t, err)
+		require.True(t, found)
+		observation, err := pathv1.ObserveExclusiveAttempt(t.Context(), input, recovered, pathv1.ExclusiveObservation{
+			Outcome: "pass", Actor: "agent:agt_report", EvidenceRef: "artifact:report",
+		}, false)
+		require.NoError(t, err)
+		reported, err := fs.AppendEpochV8FinishExternal(t.Context(), "epoch-live-report", observation, observation.PostBinding().Digest)
+		require.NoError(t, err)
+		assert.Equal(t, epochv8.DispositionApplied, reported.Disposition)
+		require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease))
+	})
+
+	t.Run("signal", func(t *testing.T) {
+		fs, err := store.NewFS(t.TempDir())
+		require.NoError(t, err)
+		tmpl := &model.Template{
+			APIVersion: model.APIVersion, Kind: model.Kind, ID: "epoch-live-signal", Start: "wait",
+			Nodes: map[string]model.Node{
+				"wait": {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "release"}, Next: model.Next{"pass": "done"}},
+				"done": {Type: model.NodeTypeEnd, Result: "completed"},
+			},
+		}
+		record, err := fs.PutTemplate(t.Context(), tmpl)
+		require.NoError(t, err)
+		source, err := fs.GetTemplateSource(t.Context(), record.Ref)
+		require.NoError(t, err)
+		_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-live-signal", TemplateRef: record.Ref}, source)
+		require.NoError(t, err)
+		lease, err := fs.AcquireEngineLease(t.Context(), "epoch-live-signal", "agentd", time.Minute)
+		require.NoError(t, err)
+		attached, err := fs.EnsureEpochV8Runtime(t.Context(), lease)
+		require.NoError(t, err)
+		input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source)
+		require.NoError(t, err)
+		aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePathV1(t, attached.Artifact.Checkpoint))
+		require.NoError(t, err)
+		wait, err := pathv1.PlanExclusiveWait(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, time.Now())
+		require.NoError(t, err)
+		claim, err := pathv1.ClaimExclusiveWait(t.Context(), input, wait)
+		require.NoError(t, err)
+		claimed, err := fs.AppendEpochV8Advance(t.Context(), lease, claim)
+		require.NoError(t, err)
+		input, err = pathv1.VerifyExecutionInput(t.Context(), claimed.Artifact.Checkpoint, source)
+		require.NoError(t, err)
+		wait, found, err := pathv1.RecoverExclusiveWait(t.Context(), input)
+		require.NoError(t, err)
+		require.True(t, found)
+		observation, err := pathv1.ObserveExclusiveWait(t.Context(), input, wait, "agent:agt_signal", "signal:release")
+		require.NoError(t, err)
+		signaled, err := fs.AppendEpochV8Signal(t.Context(), "epoch-live-signal", observation)
+		require.NoError(t, err)
+		assert.Equal(t, epochv8.DispositionApplied, signaled.Disposition)
+		require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease))
+	})
+}
+
+func failedEpochV8SettlementTransition(t *testing.T, fs *store.FS, runID string, source []byte, lease store.EngineLease) *pathv1.ExecutionTransition {
+	t.Helper()
+	attached, err := fs.EnsureEpochV8Runtime(t.Context(), lease)
+	require.NoError(t, err)
+	input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePathV1(t, attached.Artifact.Checkpoint))
+	require.NoError(t, err)
+	plan, err := pathv1.PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	require.NoError(t, err)
+	claim, err := pathv1.ClaimExclusiveAttempt(t.Context(), input, plan)
+	require.NoError(t, err)
+	claimed, err := fs.AppendEpochV8ClaimExternal(t.Context(), lease, claim)
+	require.NoError(t, err)
+	claimReplay, err := fs.AppendEpochV8ClaimExternal(t.Context(), lease, claim)
+	require.NoError(t, err)
+	assert.Equal(t, epochv8.DispositionReplayed, claimReplay.Disposition)
+	input, err = pathv1.VerifyExecutionInput(t.Context(), claimed.Artifact.Checkpoint, source)
+	require.NoError(t, err)
+	recovered, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), input)
+	require.NoError(t, err)
+	require.True(t, found)
+	observed, err := pathv1.ObserveExclusiveAttempt(t.Context(), input, recovered, pathv1.ExclusiveObservation{Outcome: "fail", Actor: "human:operator"}, false)
+	require.NoError(t, err)
+	finished, err := fs.AppendEpochV8FinishClaimed(t.Context(), lease, observed, digestText("failed observation"))
+	require.NoError(t, err)
+	finishReplay, err := fs.AppendEpochV8FinishClaimed(t.Context(), lease, observed, digestText("failed observation"))
+	require.NoError(t, err)
+	assert.Equal(t, epochv8.DispositionReplayed, finishReplay.Disposition)
+	input, err = pathv1.VerifyExecutionInput(t.Context(), finished.Artifact.Checkpoint, source)
+	require.NoError(t, err)
+	transition, err := pathv1.SettleExclusiveAttempt(t.Context(), input, pathv1.AuditedSettlementInput{
+		NodeID: "work", BlockedAttempt: 1, Decision: "retry", Actor: "human:operator",
+		Reason: "approved rescue", EvidenceRef: "ticket:TCL-604", Timestamp: time.Date(2026, 7, 20, 23, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	return transition
+}
+
+func mustDecodePathV1(t *testing.T, data []byte) *pathv1.CheckpointV7 {
+	t.Helper()
+	checkpoint, err := pathv1.DecodeCheckpointV7(data)
+	require.NoError(t, err)
+	return checkpoint
+}
+
+func TestEpochV8MaintenanceRetainThenTransferPublishesOneRuntimeHead(t *testing.T) {
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	record0, source0 := putEpochV8HandoffTemplate(t, fs, "epoch-runtime-apply", "zero")
+	initialized, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "epoch-runtime-apply", TemplateRef: record0.Ref}, source0)
+	require.NoError(t, err)
+	engineLease, err := fs.AcquireEngineLease(t.Context(), "epoch-runtime-apply", "engine", time.Minute)
+	require.NoError(t, err)
+	attached, err := fs.EnsureEpochV8Runtime(t.Context(), engineLease)
+	require.NoError(t, err)
+	input, err := pathv1.VerifyExecutionInput(t.Context(), attached.Artifact.Checkpoint, source0)
+	require.NoError(t, err)
+	aggregate, err := pathv1.CurrentAggregateCheckpoint(mustDecodePathV1(t, attached.Artifact.Checkpoint))
+	require.NoError(t, err)
+	attempt, err := pathv1.PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	require.NoError(t, err)
+	claim, err := pathv1.ClaimExclusiveAttempt(t.Context(), input, attempt)
+	require.NoError(t, err)
+	claimed, err := fs.AppendEpochV8ClaimExternal(t.Context(), engineLease, claim)
+	require.NoError(t, err)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), engineLease))
+
+	_, source1 := putEpochV8Template(t, fs, "epoch-runtime-apply", "one")
+	classification1, err := epochv8.ClassifyTemplateSource(source1)
+	require.NoError(t, err)
+	directives := make([]epochv8.HandoffDirective, 0, len(claimed.Checkpoint.View().ProtectedAuthorities))
+	for _, authority := range claimed.Checkpoint.View().ProtectedAuthorities {
+		directives = append(directives, epochv8.HandoffDirective{Source: authority.Identity, Action: epochv8.HandoffRetain})
+	}
+	preview1, err := epochv8.PreviewApply(claimed.Checkpoint, epochv8.ApplyDraft{BaseBinding: claimed.Checkpoint.Binding(), Candidate: classification1.Candidate(), Handoffs: directives})
+	require.NoError(t, err)
+	maintenance1, err := fs.AcquireMaintenanceLease(t.Context(), "epoch-runtime-apply", "maintainer", time.Minute)
+	require.NoError(t, err)
+	retained, err := fs.PublishEpochV8Retain(t.Context(), maintenance1, preview1.Plan, source1, nil)
+	require.NoError(t, err)
+	retainedReplay, err := fs.PublishEpochV8Retain(t.Context(), maintenance1, preview1.Plan, source1, nil)
+	require.NoError(t, err)
+	assert.Equal(t, epochv8.DispositionReplayed, retainedReplay.Disposition)
+	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), maintenance1))
+	assert.Equal(t, claimed.Artifact.Digest, retained.Artifact.Digest)
+
+	finishLease, err := fs.AcquireEngineLease(t.Context(), "epoch-runtime-apply", "engine", time.Minute)
+	require.NoError(t, err)
+	input, err = pathv1.VerifyExecutionInput(t.Context(), retained.Artifact.Checkpoint, source0)
+	require.NoError(t, err)
+	recovered, found, err := pathv1.RecoverExclusiveAttempt(t.Context(), input)
+	require.NoError(t, err)
+	require.True(t, found)
+	observation, err := pathv1.ObserveExclusiveAttempt(t.Context(), input, recovered, pathv1.ExclusiveObservation{Outcome: "pass", Actor: "human:operator"}, false)
+	require.NoError(t, err)
+	finished, err := fs.AppendEpochV8FinishClaimed(t.Context(), finishLease, observation, digestText("old owner result"))
+	require.NoError(t, err)
+	input, err = pathv1.VerifyExecutionInput(t.Context(), finished.Artifact.Checkpoint, source0)
+	require.NoError(t, err)
+	route, err := pathv1.AdvanceExclusiveRoute(t.Context(), input)
+	require.NoError(t, err)
+	routed, err := fs.AppendEpochV8Advance(t.Context(), finishLease, route)
+	require.NoError(t, err)
+	require.NoError(t, fs.ReleaseEngineLease(t.Context(), finishLease))
+
+	_, source2 := putEpochV8Template(t, fs, "epoch-runtime-apply", "two")
+	plan2 := previewEpochV8Apply(t, routed.Checkpoint, source2, "")
+	maintenance2, err := fs.AcquireMaintenanceLease(t.Context(), "epoch-runtime-apply", "maintainer", time.Minute)
+	require.NoError(t, err)
+	transferred, err := fs.PublishEpochV8Transfer(t.Context(), maintenance2, plan2, source2, nil)
+	require.NoError(t, err)
+	transferredReplay, err := fs.PublishEpochV8Transfer(t.Context(), maintenance2, plan2, source2, nil)
+	require.NoError(t, err)
+	assert.Equal(t, epochv8.DispositionReplayed, transferredReplay.Disposition)
+	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), maintenance2))
+	assert.NotEqual(t, retained.Artifact.Digest, transferred.Artifact.Digest)
+	assert.Equal(t, plan2.CandidateEpoch().ID, transferred.Artifact.EpochID)
+	loaded, err := fs.LoadEpochV8RunView(t.Context(), initialized.Run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, transferred.Artifact.Digest, loaded.Runtime.Digest)
 }
 
 func TestEpochV8InitializationCrashBoundariesReplayDurability(t *testing.T) {
@@ -445,6 +812,88 @@ func TestTypedLeaseDomainTreatsLegacyUntypedAsEngine(t *testing.T) {
 	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), renewed))
 }
 
+func TestEpochV8ExactBaseLeaseGenerationUpgrade(t *testing.T) {
+	now := time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC)
+
+	t.Run("first_engine", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-first-engine")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		lease, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), lease.Generation)
+		_, err = fs.EnsureEpochV8Runtime(t.Context(), lease)
+		require.NoError(t, err)
+		require.NoError(t, fs.ReleaseEngineLease(t.Context(), lease))
+	})
+
+	t.Run("first_maintenance", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-first-maintenance")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		lease, err := fs.AcquireMaintenanceLease(t.Context(), runID, "maintainer", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), lease.Generation)
+		require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), lease))
+	})
+
+	t.Run("active_legacy_lease_remains_held", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-active-legacy")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		writeLeaseFixture(t, root, store.LeaseRecord{RunID: runID, Holder: "legacy", ExpiresAt: now.Add(time.Minute), UpdatedAt: now})
+		_, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		assert.ErrorIs(t, err, store.ErrLeaseHeld)
+		_, err = os.Stat(filepath.Join(root, "runs", runID, "lease-generation.json"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	t.Run("stale_base_maintenance_lease_sets_floor", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-stale-maintenance")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		writeLeaseFixture(t, root, store.LeaseRecord{
+			RunID: runID, Holder: "old-maintainer", Kind: store.LeaseKindMaintenance, Token: strings.Repeat("a", 64),
+			ExpiresAt: now.Add(-time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
+		})
+		lease, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(1), lease.Generation)
+	})
+
+	t.Run("stale_tokenized_lease_preserves_generation_floor", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-stale-tokenized")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		writeLeaseFixture(t, root, store.LeaseRecord{
+			RunID: runID, Holder: "old-engine", Kind: store.LeaseKindEngine, Token: strings.Repeat("b", 64), Generation: 7,
+			ExpiresAt: now.Add(-time.Minute), UpdatedAt: now.Add(-2 * time.Minute),
+		})
+		lease, err := fs.AcquireMaintenanceLease(t.Context(), runID, "maintainer", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(8), lease.Generation)
+	})
+
+	t.Run("crash_after_burn_never_reuses_generation", func(t *testing.T) {
+		root := t.TempDir()
+		fs, runID := exactBaseEpochV8Fixture(t, root, "base-burn-crash")
+		t.Cleanup(fs.SetNowForTest(func() time.Time { return now }))
+		crash := errors.New("crash after generation burn")
+		restore := fs.SetLeaseGenerationAfterBurnHookForTest(func() error { return crash })
+		_, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		restore()
+		assert.ErrorIs(t, err, crash)
+		_, err = os.Stat(filepath.Join(root, "runs", runID, "lease.json"))
+		assert.ErrorIs(t, err, os.ErrNotExist)
+		generation, err := os.ReadFile(filepath.Join(root, "runs", runID, "lease-generation.json"))
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"generation":1}`, string(generation))
+		lease, err := fs.AcquireEngineLease(t.Context(), runID, "engine", time.Minute)
+		require.NoError(t, err)
+		assert.Equal(t, uint64(2), lease.Generation)
+	})
+}
+
 func TestEpochV8GarbageCollectionIsLeaseBoundedAndPreservesReferences(t *testing.T) {
 	root := t.TempDir()
 	fs, checkpoint, runID := initializedEpochV8Run(t, root)
@@ -538,6 +987,29 @@ func initializedEpochV8Run(t *testing.T, root string) (*store.FS, *epochv8.Check
 	return fs, result.Checkpoint, "epoch-run"
 }
 
+// exactBaseEpochV8Fixture removes only the runtime directory and generation
+// tombstone added after 0c84f616, leaving the schema-8 bytes created by that
+// exact base for upgrade compatibility coverage.
+func exactBaseEpochV8Fixture(t *testing.T, root, runID string) (*store.FS, string) {
+	t.Helper()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, source := putEpochV8Template(t, fs, runID, "exact base fixture")
+	_, err = fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: runID, TemplateRef: record.Ref}, source)
+	require.NoError(t, err)
+	runDir := filepath.Join(root, "runs", runID)
+	require.NoError(t, os.Remove(filepath.Join(runDir, "lease-generation.json")))
+	require.NoError(t, os.RemoveAll(filepath.Join(runDir, "runtime")))
+	return fs, runID
+}
+
+func writeLeaseFixture(t *testing.T, root string, lease store.LeaseRecord) {
+	t.Helper()
+	data, err := json.Marshal(lease)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "runs", lease.RunID, "lease.json"), append(data, '\n'), 0o644))
+}
+
 func putEpochV8Template(t *testing.T, fs *store.FS, id, prompt string) (store.TemplateRecord, []byte) {
 	t.Helper()
 	tmpl := epochV8Template(id, prompt)
@@ -548,6 +1020,21 @@ func putEpochV8Template(t *testing.T, fs *store.FS, id, prompt string) (store.Te
 	classification, err := epochv8.ClassifyTemplateSource(source)
 	require.NoError(t, err)
 	require.NotNil(t, classification.Candidate(), "template eligibility: %s", classification.Reason)
+	return record, source
+}
+
+func putEpochV8HandoffTemplate(t *testing.T, fs *store.FS, id, prompt string) (store.TemplateRecord, []byte) {
+	t.Helper()
+	tmpl := epochV8Template(id, prompt)
+	tmpl.Nodes["work"] = model.Node{Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: prompt}, Next: model.Next{"pass": "handoff"}}
+	tmpl.Nodes["handoff"] = model.Node{Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "new work"}, Next: model.Next{"pass": "done"}}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	source, err := fs.GetTemplateSource(t.Context(), record.Ref)
+	require.NoError(t, err)
+	classification, err := epochv8.ClassifyTemplateSource(source)
+	require.NoError(t, err)
+	require.NotNil(t, classification.Candidate())
 	return record, source
 }
 

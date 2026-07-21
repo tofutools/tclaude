@@ -3,7 +3,11 @@
 // external-dispatch behavior.
 package epochv8
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
+)
 
 const (
 	StateSchemaVersion = 8
@@ -12,6 +16,7 @@ const (
 
 	MaxEpochs            = 1_024
 	MaxHistoryEvents     = 4_096
+	MaxRuntimeReceipts   = 32_768
 	MaxAuthorities       = 100_000
 	MaxAuthorityLinks    = 400_000
 	MaxHandoffEntries    = 100_000
@@ -42,6 +47,13 @@ const (
 )
 
 type Binding struct {
+	Revision uint64 `json:"revision"`
+	Digest   string `json:"digest"`
+}
+
+// RuntimeBinding identifies the exact immutable path-v1 runtime artifact.
+// The only absent value is {0,""}.
+type RuntimeBinding struct {
 	Revision uint64 `json:"revision"`
 	Digest   string `json:"digest"`
 }
@@ -137,6 +149,7 @@ type InitializationAnchor struct {
 	Capabilities       []Capability      `json:"capabilities"`
 	OriginalEpoch      TemplateEpoch     `json:"originalEpoch"`
 	InitialAuthorities []AuthorityRecord `json:"initialAuthorities"`
+	RuntimeBinding     RuntimeBinding    `json:"runtimeBinding,omitzero"`
 	Digest             string            `json:"digest"`
 }
 
@@ -259,14 +272,55 @@ type HistoryKind string
 const (
 	HistoryApply         HistoryKind = "apply"
 	HistoryFinishClaimed HistoryKind = "finish_claimed"
+	HistoryRuntime       HistoryKind = "runtime"
 )
 
+type RuntimeTransitionKind string
+
+const (
+	RuntimeAttachGenesis RuntimeTransitionKind = "attach_genesis"
+	RuntimeAdvanceHead   RuntimeTransitionKind = "advance_head"
+	RuntimeClaimExternal RuntimeTransitionKind = "claim_external"
+	RuntimeFinishClaimed RuntimeTransitionKind = "finish_claimed_head"
+	RuntimeSettlement    RuntimeTransitionKind = "audited_settlement"
+	RuntimeApplyRetain   RuntimeTransitionKind = "apply_retain_head"
+	RuntimeApplyTransfer RuntimeTransitionKind = "apply_transfer_head"
+)
+
+// RuntimeReceipt is the complete typed authority receipt for one indivisible
+// owner-runtime event. Before/After are canonical complete projections; the
+// typed witness makes them independently replayable after artifact GC.
+type RuntimeReceipt struct {
+	ID                   string                          `json:"id"`
+	Kind                 RuntimeTransitionKind           `json:"kind"`
+	PathTransitionKind   string                          `json:"pathTransitionKind,omitempty"`
+	Owner                OwnerIdentity                   `json:"owner"`
+	EpochID              EpochID                         `json:"epochId"`
+	TemplateSourceDigest string                          `json:"templateSourceDigest"`
+	PreRuntime           RuntimeBinding                  `json:"preRuntime"`
+	PostRuntime          RuntimeBinding                  `json:"postRuntime"`
+	Before               []AuthorityRecord               `json:"before"`
+	After                []AuthorityRecord               `json:"after"`
+	EvidenceDigest       string                          `json:"evidenceDigest,omitempty"`
+	Decision             string                          `json:"decision,omitempty"`
+	Actor                string                          `json:"actor,omitempty"`
+	Timestamp            string                          `json:"timestamp,omitempty"`
+	NodeID               string                          `json:"nodeId,omitempty"`
+	BlockedAttempt       uint64                          `json:"blockedAttempt,omitempty"`
+	Reason               string                          `json:"reason,omitempty"`
+	EvidenceRef          string                          `json:"evidenceRef,omitempty"`
+	ResolutionDigest     string                          `json:"resolutionDigest,omitempty"`
+	GenesisWitness       *pathv1.RuntimeGenesisWitnessV1 `json:"genesisWitness,omitempty"`
+	ExecutionWitness     *pathv1.ExecutionWitnessV1      `json:"executionWitness,omitempty"`
+}
+
 type HistoryEvent struct {
-	Revision uint64         `json:"revision"`
-	Kind     HistoryKind    `json:"kind"`
-	Apply    *ApplyRecord   `json:"apply,omitempty"`
-	Finish   *FinishReceipt `json:"finish,omitempty"`
-	Digest   string         `json:"digest"`
+	Revision uint64          `json:"revision"`
+	Kind     HistoryKind     `json:"kind"`
+	Apply    *ApplyRecord    `json:"apply,omitempty"`
+	Finish   *FinishReceipt  `json:"finish,omitempty"`
+	Runtime  *RuntimeReceipt `json:"runtime,omitempty"`
+	Digest   string          `json:"digest"`
 }
 
 type checkpointWire struct {
@@ -278,6 +332,7 @@ type checkpointWire struct {
 	Epochs             []TemplateEpoch      `json:"epochs"`
 	History            []HistoryEvent       `json:"history"`
 	Authorities        []AuthorityRecord    `json:"authorities"`
+	RuntimeBinding     RuntimeBinding       `json:"runtimeBinding,omitzero"`
 	Digest             string               `json:"digest"`
 }
 
@@ -294,6 +349,7 @@ type CheckpointView struct {
 	Authorities          []AuthorityRecord
 	ProtectedAuthorities []AuthorityRecord
 	History              []HistoryEvent
+	RuntimeBinding       RuntimeBinding
 }
 
 type ApplyDraft struct {

@@ -20,6 +20,7 @@ import (
 const (
 	CheckpointStateSchemaVersion = 7
 	InitializeEventKind          = "routing_initialized_from_legacy_v1"
+	RuntimeGenesisEventKind      = "runtime_genesis_v1"
 )
 
 var (
@@ -50,11 +51,23 @@ type InitializeEvent struct {
 	Kind            string              `json:"kind"`
 	EventSeq        int64               `json:"eventSeq"`
 	UpgradeNeeded   UpgradeNeeded       `json:"upgradeNeeded"`
+	RuntimeGenesis  *RuntimeGenesis     `json:"runtimeGenesis,omitempty"`
 	TemplateHash    string              `json:"templateHash"`
 	Command         CommandRecord       `json:"command"`
 	AdminRecord     PathV1AdminRecord   `json:"adminRecord"`
 	Aggregate       AggregateCheckpoint `json:"aggregate"`
 	AggregateDigest string              `json:"aggregateDigest"`
+}
+
+// RuntimeGenesis is the sealed fresh authority for a schema-8-owned path-v1
+// aggregate. It deliberately contains no predecessor checkpoint or lineage;
+// predecessor binding belongs to the outer epoch receipt.
+type RuntimeGenesis struct {
+	RunID              string `json:"runId"`
+	TemplateRef        string `json:"templateRef"`
+	TemplateSourceHash string `json:"templateSourceHash"`
+	NodeID             string `json:"nodeId"`
+	Digest             string `json:"digest"`
 }
 
 // AggregateCheckpoint is the complete persisted path-v1 aggregate. Static
@@ -89,6 +102,7 @@ type AggregateAuthorityCheckpoint struct {
 
 type InitializeRoutingPayload struct {
 	UpgradeNeeded   UpgradeNeeded    `json:"upgradeNeeded"`
+	RuntimeGenesis  *RuntimeGenesis  `json:"runtimeGenesis,omitempty"`
 	TemplateHash    string           `json:"templateHash"`
 	Genesis         GenesisAuthority `json:"genesis"`
 	AggregateDigest string           `json:"aggregateDigest"`
@@ -140,6 +154,51 @@ func ValidateUnambiguousLegacyInitialization(st *legacy.State, tmpl *model.Templ
 // transition. It performs no I/O and does not authorize a caller to persist
 // the result without rechecking UpgradeNeeded under the append lock.
 func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.Template) (*CheckpointV7, error) {
+	if tmpl == nil {
+		return nil, fmt.Errorf("%w: exact template is required", ErrInitializationInvalid)
+	}
+	return buildInitializationAt(ctx, needed, tmpl, tmpl.Start, InitializeEventKind, nil)
+}
+
+// BuildRuntimeGenesis constructs a fresh path-v1 aggregate for a schema-8
+// owner. nodeID may be the template start or the exact target of a sealed S1
+// handoff. The resulting inner checkpoint has no predecessor reachback.
+func BuildRuntimeGenesis(ctx context.Context, runID string, templateSource []byte, nodeID string) (*CheckpointV7, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parsed, err := model.ParseExactSource(templateSource)
+	if err != nil || parsed == nil || parsed.Template == nil || parsed.Diagnostics.HasErrors() {
+		return nil, fmt.Errorf("%w: exact runtime template is invalid", ErrInitializationInvalid)
+	}
+	if strings.TrimSpace(runID) == "" || nodeID == "" || parsed.Template.Nodes[nodeID].Type == "" {
+		return nil, fmt.Errorf("%w: runtime run/node authority is invalid", ErrInitializationInvalid)
+	}
+	return buildRuntimeGenesisFromTemplate(ctx, runID, parsed.Template, parsed.Ref, parsed.SourceHash, nodeID)
+}
+
+func buildRuntimeGenesisFromTemplate(ctx context.Context, runID string, tmpl *model.Template, templateRef, sourceHash, nodeID string) (*CheckpointV7, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if tmpl == nil || strings.TrimSpace(runID) == "" || nodeID == "" || tmpl.Nodes[nodeID].Type == "" {
+		return nil, fmt.Errorf("%w: runtime run/node authority is invalid", ErrInitializationInvalid)
+	}
+	anchor := RuntimeGenesis{RunID: runID, TemplateRef: templateRef, TemplateSourceHash: sourceHash, NodeID: nodeID}
+	var err error
+	anchor.Digest, err = runtimeGenesisDigest(anchor)
+	if err != nil {
+		return nil, err
+	}
+	needed := UpgradeNeeded{
+		Reason: UpgradeMigrationRequired, RunID: runID, LegacyStateSchema: LegacyMaxSchemaVersion,
+		Checkpoint: CheckpointBinding{Digest: anchor.Digest}, TemplateRef: templateRef,
+		TemplateSourceHash: sourceHash, ActiveLegacyIDs: []LegacyActiveID{},
+	}
+	return buildInitializationAt(ctx, needed, tmpl, nodeID, RuntimeGenesisEventKind, &anchor)
+}
+
+func buildInitializationAt(ctx context.Context, needed UpgradeNeeded, tmpl *model.Template, nodeID, eventKind string, runtime *RuntimeGenesis) (*CheckpointV7, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -149,8 +208,11 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 	if needed.Reason != UpgradeMigrationRequired || len(needed.ActiveLegacyIDs) != 0 || len(needed.CheckpointAdminRecords) != 0 {
 		return nil, fmt.Errorf("%w: legacy drain is required", ErrInitializationInvalid)
 	}
-	if tmpl == nil || tmpl.Start == "" || tmpl.Nodes[tmpl.Start].Type == "" {
-		return nil, fmt.Errorf("%w: exact template has no valid start node", ErrInitializationInvalid)
+	if tmpl == nil || nodeID == "" || tmpl.Nodes[nodeID].Type == "" {
+		return nil, fmt.Errorf("%w: exact template has no valid genesis node", ErrInitializationInvalid)
+	}
+	if eventKind != InitializeEventKind && eventKind != RuntimeGenesisEventKind {
+		return nil, fmt.Errorf("%w: unsupported genesis kind", ErrInitializationInvalid)
 	}
 	edges, cardinalityDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
 	if cardinalityDiagnostics.HasErrors() {
@@ -174,7 +236,7 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 	if err != nil {
 		return nil, err
 	}
-	reservationID, err := ReservationIdentity(needed.RunID, tmpl.Start, rootScopeID, "", generation)
+	reservationID, err := ReservationIdentity(needed.RunID, nodeID, rootScopeID, "", generation)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +253,7 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 		return nil, err
 	}
 	genesis := GenesisAuthority{
-		RootScopeID: rootScopeID, StartNodeID: tmpl.Start, ReservationID: reservationID,
+		RootScopeID: rootScopeID, StartNodeID: nodeID, ReservationID: reservationID,
 		ActivationID: activationID, OutputPathID: outputPathID, Generation: generation,
 	}
 
@@ -203,7 +265,7 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 			ID: rootScopeID, Generation: generation, ExpectedBranchEdgeIDs: []EdgeID{},
 		}},
 		Reservations: map[ReservationID]ReservationAuthority{reservationID: {
-			ID: reservationID, NodeID: tmpl.Start, ScopeID: rootScopeID, Generation: generation,
+			ID: reservationID, NodeID: nodeID, ScopeID: rootScopeID, Generation: generation,
 			JoinPolicy: JoinExclusive, Candidates: []CandidateRecord{}, PossibleSlots: []PossibleSlotRecord{},
 		}},
 	}
@@ -234,7 +296,7 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 	if err != nil {
 		return nil, err
 	}
-	payload := InitializeRoutingPayload{UpgradeNeeded: cloneUpgradeNeeded(needed), TemplateHash: templateHash, Genesis: genesis, AggregateDigest: aggregateDigest}
+	payload := InitializeRoutingPayload{UpgradeNeeded: cloneUpgradeNeeded(needed), RuntimeGenesis: cloneRuntimeGenesis(runtime), TemplateHash: templateHash, Genesis: genesis, AggregateDigest: aggregateDigest}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -252,9 +314,13 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 		ID: commandID, IdempotencyKey: CommandIdempotencyKey(identity.Kind, commandID), Identity: identity,
 		Payload: payloadJSON, PayloadHash: hex.EncodeToString(payloadHash[:]), State: CommandObserved,
 	}
+	actor, reasonCode := "system:migration", "upgrade_needed"
+	if eventKind == RuntimeGenesisEventKind {
+		actor, reasonCode = "system:epoch-runtime", "runtime_genesis"
+	}
 	admin := PathV1AdminRecord{
-		RunID: needed.RunID, EventSeq: eventSeq, AdminType: InitializeEventKind,
-		Actor: "system:migration", ReasonCode: "upgrade_needed", EvidenceRef: commandID,
+		RunID: needed.RunID, EventSeq: eventSeq, AdminType: eventKind,
+		Actor: actor, ReasonCode: reasonCode, EvidenceRef: commandID,
 	}
 	admin.ID, err = AdminRecordIdentity(admin)
 	if err != nil {
@@ -275,7 +341,7 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 		ExpectedBranchEdgeIDs: []EdgeID{}, State: ScopeOpen, EventSeq: eventSeq,
 	}
 	routing.Reservations[reservationID] = ActivationReservation{
-		ID: reservationID, RunID: needed.RunID, NodeID: tmpl.Start, ScopeID: rootScopeID,
+		ID: reservationID, RunID: needed.RunID, NodeID: nodeID, ScopeID: rootScopeID,
 		Generation: generation, JoinPolicy: JoinExclusive, Candidates: []CandidateRecord{},
 		PossibleSlots: []PossibleSlotRecord{}, State: ReservationActivated,
 		Activation: &activationRef, CommandID: commandID, EventSeq: eventSeq,
@@ -296,7 +362,7 @@ func BuildInitialization(ctx context.Context, needed UpgradeNeeded, tmpl *model.
 		AdminRecords: map[string]PathV1AdminRecord{admin.ID: admin}, AdminResolutions: map[string]BlockResolution{},
 	}
 	event := InitializeEvent{
-		Kind: InitializeEventKind, EventSeq: eventSeq, UpgradeNeeded: cloneUpgradeNeeded(needed), TemplateHash: templateHash,
+		Kind: eventKind, EventSeq: eventSeq, UpgradeNeeded: cloneUpgradeNeeded(needed), RuntimeGenesis: cloneRuntimeGenesis(runtime), TemplateHash: templateHash,
 		Command: command, AdminRecord: admin,
 		Aggregate: aggregate, AggregateDigest: aggregateDigest,
 	}
@@ -388,7 +454,7 @@ func ValidateCheckpointV7(checkpoint *CheckpointV7) error {
 		return fmt.Errorf("%w: schema-7 checkpoint is required", ErrInitializationInvalid)
 	}
 	event := checkpoint.Initialize
-	if event.Kind != InitializeEventKind || event.EventSeq <= 0 {
+	if (event.Kind != InitializeEventKind && event.Kind != RuntimeGenesisEventKind) || event.EventSeq <= 0 {
 		return fmt.Errorf("%w: initialize event kind or sequence is invalid", ErrInitializationInvalid)
 	}
 	if err := ValidateUpgradeNeeded(event.UpgradeNeeded); err != nil || event.UpgradeNeeded.Reason != UpgradeMigrationRequired ||
@@ -397,6 +463,13 @@ func ValidateCheckpointV7(checkpoint *CheckpointV7) error {
 	}
 	if event.EventSeq != int64(event.UpgradeNeeded.Checkpoint.Generation+1) {
 		return fmt.Errorf("%w: initialize event sequence is not checkpoint-coupled", ErrInitializationInvalid)
+	}
+	if event.Kind == InitializeEventKind {
+		if event.RuntimeGenesis != nil {
+			return fmt.Errorf("%w: legacy initialization carries runtime authority", ErrInitializationInvalid)
+		}
+	} else if err := validateRuntimeGenesis(event.RuntimeGenesis, event.UpgradeNeeded); err != nil {
+		return err
 	}
 	_, templateHash, ok := splitExactTemplateRef(event.UpgradeNeeded.TemplateRef)
 	if !ok || templateHash != event.TemplateHash || !canonicalDigest(event.TemplateHash) {
@@ -427,12 +500,13 @@ func ValidateCheckpointV7(checkpoint *CheckpointV7) error {
 	}
 	var payload InitializeRoutingPayload
 	if err := decodeExactJSON(command.Payload, &payload); err != nil || !equalUpgradeNeeded(payload.UpgradeNeeded, event.UpgradeNeeded) ||
+		!equalRuntimeGenesis(payload.RuntimeGenesis, event.RuntimeGenesis) ||
 		payload.TemplateHash != event.TemplateHash || payload.Genesis != view.Authority.Genesis || payload.AggregateDigest != event.AggregateDigest {
 		return fmt.Errorf("%w: initialize command payload mismatch", ErrInitializationInvalid)
 	}
 	admin, ok := view.AdminRecords[event.AdminRecord.ID]
 	if !ok || !reflect.DeepEqual(admin, event.AdminRecord) || admin.EventSeq != event.EventSeq ||
-		admin.AdminType != InitializeEventKind || admin.EvidenceRef != command.ID {
+		admin.AdminType != event.Kind || admin.EvidenceRef != command.ID {
 		return fmt.Errorf("%w: initialize admin provenance mismatch", ErrInitializationInvalid)
 	}
 	if err := ValidateAdminRecord(admin, false, nil); err != nil {
@@ -459,6 +533,9 @@ func ValidateCheckpointV7(checkpoint *CheckpointV7) error {
 func ExactInitializationReplay(checkpoint *CheckpointV7, needed UpgradeNeeded) error {
 	if err := ValidateCheckpointV7(checkpoint); err != nil {
 		return fmt.Errorf("%w: %v", ErrInitializationInconsistent, err)
+	}
+	if checkpoint.Initialize.Kind != InitializeEventKind {
+		return fmt.Errorf("%w: checkpoint is not a legacy initialization", ErrInitializationInconsistent)
 	}
 	if err := ValidateUpgradeNeeded(needed); err != nil || !equalUpgradeNeeded(checkpoint.Initialize.UpgradeNeeded, needed) {
 		return fmt.Errorf("%w: supplied upgrade proof differs from installed initialization", ErrInitializationInconsistent)
@@ -614,4 +691,45 @@ func equalCheckpointAdminRecord(a, b CheckpointLegacyAdminRecord) bool {
 		return a.Resolution == nil && b.Resolution == nil
 	}
 	return *a.Resolution == *b.Resolution
+}
+
+func runtimeGenesisDigest(value RuntimeGenesis) (string, error) {
+	value.Digest = ""
+	encoded, err := canonicalJSON(struct {
+		Domain  string         `json:"domain"`
+		Genesis RuntimeGenesis `json:"genesis"`
+	}{Domain: "tclaude:path-v1:runtime-genesis:v1", Genesis: value})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func validateRuntimeGenesis(value *RuntimeGenesis, needed UpgradeNeeded) error {
+	if value == nil || value.RunID != needed.RunID || value.TemplateRef != needed.TemplateRef ||
+		value.TemplateSourceHash != needed.TemplateSourceHash || strings.TrimSpace(value.NodeID) == "" ||
+		needed.Checkpoint.Generation != 0 || needed.Checkpoint.Digest != value.Digest {
+		return fmt.Errorf("%w: runtime genesis authority is inconsistent", ErrInitializationInvalid)
+	}
+	want, err := runtimeGenesisDigest(*value)
+	if err != nil || want != value.Digest {
+		return fmt.Errorf("%w: runtime genesis digest mismatch", ErrInitializationInvalid)
+	}
+	return nil
+}
+
+func cloneRuntimeGenesis(value *RuntimeGenesis) *RuntimeGenesis {
+	if value == nil {
+		return nil
+	}
+	result := *value
+	return &result
+}
+
+func equalRuntimeGenesis(a, b *RuntimeGenesis) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
 }

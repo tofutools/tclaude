@@ -601,7 +601,14 @@ func handleProcessReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if kind == store.RunSchemaEpochV8 {
-		writeError(w, http.StatusConflict, "process_report", "schema-8 report mutation is not released")
+		executor := processexec.NewEpochV8External(fs)
+		if _, err := executor.RecordObservation(r.Context(), r.PathValue("id"), r.PathValue("node"), body.CommandID, processexec.Observation{
+			Actor: actor, Verdict: body.Verdict, Feedback: strings.TrimSpace(body.Feedback), EvidenceRef: body.EvidenceRef,
+		}); err != nil {
+			writeError(w, http.StatusConflict, "process_report", err.Error())
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true, "actor": actor})
 		return
 	}
 	snapshot, err := fs.LoadRun(r.Context(), r.PathValue("id"))
@@ -660,7 +667,12 @@ func handleProcessSignal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if kind == store.RunSchemaEpochV8 {
-		writeError(w, http.StatusConflict, "process_signal", "schema-8 signal mutation is not released")
+		executor := processexec.NewEpochV8External(fs)
+		if _, err := executor.SatisfySignal(r.Context(), r.PathValue("id"), r.PathValue("node"), body.Signal, state.ActorRef("system:agentd")); err != nil {
+			writeError(w, http.StatusConflict, "process_signal", err.Error())
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, map[string]any{"recorded": true})
 		return
 	}
 	writeError(w, http.StatusConflict, "process_signal", "run has no schema-7 signal wait")

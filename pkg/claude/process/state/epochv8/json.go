@@ -83,7 +83,7 @@ func EncodeAppliedEpochDiff(checkpoint *CheckpointV8, epochID EpochID) ([]byte, 
 	var record *ApplyRecord
 	for i := range checkpoint.wire.History {
 		event := &checkpoint.wire.History[i]
-		if event.Kind != HistoryApply || event.Apply == nil || event.Apply.CandidateEpoch.ID != epochID {
+		if event.Apply == nil || event.Apply.CandidateEpoch.ID != epochID {
 			continue
 		}
 		if record != nil {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,6 +60,7 @@ type FS struct {
 	epochV8InitializeBeforeCommit func() error
 	epochV8InitializeAfterCommit  func() error
 	epochV8InitializeDirSync      func() error
+	leaseGenerationAfterBurn      func() error
 }
 
 var processLocks sync.Map
@@ -191,6 +193,14 @@ func (s *FS) SetEpochV8InitializeDirSyncHookForTest(hook func() error) func() {
 	old := s.epochV8InitializeDirSync
 	s.epochV8InitializeDirSync = hook
 	return func() { s.epochV8InitializeDirSync = old }
+}
+
+// SetLeaseGenerationAfterBurnHookForTest injects a crash boundary after the
+// monotonic generation is durable and before its lease capability is published.
+func (s *FS) SetLeaseGenerationAfterBurnHookForTest(hook func() error) func() {
+	old := s.leaseGenerationAfterBurn
+	s.leaseGenerationAfterBurn = hook
+	return func() { s.leaseGenerationAfterBurn = old }
 }
 
 func (s *FS) PutTemplate(ctx context.Context, tmpl *model.Template) (TemplateRecord, error) {
@@ -2261,7 +2271,7 @@ func (s *FS) AcquireRunLease(ctx context.Context, runID, holder string, ttl time
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return LeaseRecord{}, err
 	}
-	if err == nil && lease.ExpiresAt.After(now) && (lease.normalizedKind() != LeaseKindEngine || lease.Holder != holder) {
+	if err == nil && lease.ExpiresAt.After(now) && (lease.normalizedKind() != LeaseKindEngine || lease.Holder != holder || lease.Token != "" || lease.Generation != 0) {
 		return LeaseRecord{}, fmt.Errorf("%w: run %q held by %q until %s", ErrLeaseHeld, runID, lease.Holder, lease.ExpiresAt.Format(time.RFC3339Nano))
 	}
 	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindEngine, ExpiresAt: now.Add(ttl), UpdatedAt: now}
@@ -2292,7 +2302,7 @@ func (s *FS) ReleaseRunLease(ctx context.Context, runID, holder string) error {
 	if err != nil {
 		return err
 	}
-	if lease.normalizedKind() != LeaseKindEngine || lease.Holder != holder {
+	if lease.normalizedKind() != LeaseKindEngine || lease.Holder != holder || lease.Token != "" || lease.Generation != 0 {
 		return fmt.Errorf("%w: run %q held by %q", ErrLeaseHeld, runID, lease.Holder)
 	}
 	if err := os.Remove(filepath.Join(s.runDir(runID), "lease.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -2317,6 +2327,127 @@ func (lease LeaseRecord) normalizedKind() LeaseKind {
 		return LeaseKindEngine
 	}
 	return lease.Kind
+}
+
+// AcquireEngineLease mints the opaque token+generation capability used by
+// schema-8 engine appends. Unlike the legacy holder-only lease, a live lease
+// is never silently replaced by the same holder.
+func (s *FS) AcquireEngineLease(ctx context.Context, runID, holder string, ttl time.Duration) (EngineLease, error) {
+	if err := ctx.Err(); err != nil {
+		return EngineLease{}, err
+	}
+	if err := validateLeaseRequest(holder, ttl); err != nil {
+		return EngineLease{}, err
+	}
+	if _, err := s.readRun(runID); err != nil {
+		return EngineLease{}, err
+	}
+	unlock, err := s.lockRun(ctx, runID)
+	if err != nil {
+		return EngineLease{}, err
+	}
+	defer unlock()
+	now := s.now().UTC()
+	current, readErr := s.readLease(runID)
+	if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+		return EngineLease{}, readErr
+	}
+	if readErr == nil && current.ExpiresAt.After(now) {
+		return EngineLease{}, fmt.Errorf("%w: run %q held by %q until %s", ErrLeaseHeld, runID, current.Holder, current.ExpiresAt.Format(time.RFC3339Nano))
+	}
+	generation, err := s.issueLeaseGenerationUnlocked(runID)
+	if err != nil {
+		return EngineLease{}, err
+	}
+	if s.leaseGenerationAfterBurn != nil {
+		if err := s.leaseGenerationAfterBurn(); err != nil {
+			return EngineLease{}, err
+		}
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return EngineLease{}, fmt.Errorf("generate engine lease token: %w", err)
+	}
+	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindEngine, Token: hex.EncodeToString(tokenBytes), Generation: generation, ExpiresAt: now.Add(ttl), UpdatedAt: now}
+	if err := s.writeLease(next); err != nil {
+		return EngineLease{}, err
+	}
+	if err := syncDir(s.runDir(runID)); err != nil {
+		return EngineLease{}, err
+	}
+	return engineLeaseFromRecord(next), nil
+}
+
+func (s *FS) RenewEngineLease(ctx context.Context, lease EngineLease, ttl time.Duration) (EngineLease, error) {
+	if err := ctx.Err(); err != nil {
+		return EngineLease{}, err
+	}
+	if err := validateEngineLeaseInput(lease); err != nil {
+		return EngineLease{}, err
+	}
+	if err := validateLeaseRequest(lease.Holder, ttl); err != nil {
+		return EngineLease{}, err
+	}
+	unlock, err := s.lockRun(ctx, lease.RunID)
+	if err != nil {
+		return EngineLease{}, err
+	}
+	defer unlock()
+	current, err := s.requireEngineLeaseUnlocked(lease)
+	if err != nil {
+		return EngineLease{}, err
+	}
+	now := s.now().UTC()
+	current.ExpiresAt, current.UpdatedAt = now.Add(ttl), now
+	if err := s.writeLease(current); err != nil {
+		return EngineLease{}, err
+	}
+	return engineLeaseFromRecord(current), nil
+}
+
+func (s *FS) ReleaseEngineLease(ctx context.Context, lease EngineLease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateEngineLeaseInput(lease); err != nil {
+		return err
+	}
+	unlock, err := s.lockRun(ctx, lease.RunID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := s.requireEngineLeaseUnlocked(lease); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(s.runDir(lease.RunID), "lease.json")); err != nil {
+		return fmt.Errorf("remove engine lease: %w", err)
+	}
+	return syncDir(s.runDir(lease.RunID))
+}
+
+func validateEngineLeaseInput(lease EngineLease) error {
+	if safeSegment(lease.RunID) != nil || strings.TrimSpace(lease.Holder) == "" || len(lease.Holder) > MaxLeaseHolderBytes ||
+		len(lease.Token) != 64 || !isHexSHA256(lease.Token) || lease.Generation == 0 {
+		return fmt.Errorf("invalid engine lease")
+	}
+	return nil
+}
+
+func (s *FS) requireEngineLeaseUnlocked(lease EngineLease) (LeaseRecord, error) {
+	current, err := s.readLease(lease.RunID)
+	if err != nil {
+		return LeaseRecord{}, err
+	}
+	if current.normalizedKind() != LeaseKindEngine || current.Holder != lease.Holder || current.Token != lease.Token ||
+		current.Generation != lease.Generation || !current.ExpiresAt.After(s.now().UTC()) {
+		return LeaseRecord{}, fmt.Errorf("%w: engine lease is absent, expired, or has a different token/generation", ErrLeaseHeld)
+	}
+	return current, nil
+}
+
+func engineLeaseFromRecord(record LeaseRecord) EngineLease {
+	return EngineLease{RunID: record.RunID, Holder: record.Holder, Token: record.Token, Generation: record.Generation, ExpiresAt: record.ExpiresAt}
 }
 
 func (s *FS) AcquireMaintenanceLease(ctx context.Context, runID, holder string, ttl time.Duration) (MaintenanceLease, error) {
@@ -2347,8 +2478,20 @@ func (s *FS) AcquireMaintenanceLease(ctx context.Context, runID, holder string, 
 	if readErr == nil && current.ExpiresAt.After(now) {
 		return MaintenanceLease{}, fmt.Errorf("%w: run %q held by %q until %s", ErrLeaseHeld, runID, current.Holder, current.ExpiresAt.Format(time.RFC3339Nano))
 	}
-	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindMaintenance, Token: token, ExpiresAt: now.Add(ttl), UpdatedAt: now}
+	generation, err := s.issueLeaseGenerationUnlocked(runID)
+	if err != nil {
+		return MaintenanceLease{}, err
+	}
+	if s.leaseGenerationAfterBurn != nil {
+		if err := s.leaseGenerationAfterBurn(); err != nil {
+			return MaintenanceLease{}, err
+		}
+	}
+	next := LeaseRecord{RunID: runID, Holder: holder, Kind: LeaseKindMaintenance, Token: token, Generation: generation, ExpiresAt: now.Add(ttl), UpdatedAt: now}
 	if err := s.writeLease(next); err != nil {
+		return MaintenanceLease{}, err
+	}
+	if err := syncDir(s.runDir(runID)); err != nil {
 		return MaintenanceLease{}, err
 	}
 	return maintenanceLeaseFromRecord(next), nil
@@ -2404,7 +2547,7 @@ func (s *FS) ReleaseMaintenanceLease(ctx context.Context, lease MaintenanceLease
 }
 
 func validateMaintenanceLeaseInput(lease MaintenanceLease) error {
-	if safeSegment(lease.RunID) != nil || strings.TrimSpace(lease.Holder) == "" || len(lease.Holder) > MaxLeaseHolderBytes || len(lease.Token) != 64 || !isHexSHA256(lease.Token) {
+	if safeSegment(lease.RunID) != nil || strings.TrimSpace(lease.Holder) == "" || len(lease.Holder) > MaxLeaseHolderBytes || len(lease.Token) != 64 || !isHexSHA256(lease.Token) || lease.Generation == 0 {
 		return fmt.Errorf("invalid maintenance lease")
 	}
 	return nil
@@ -2415,14 +2558,81 @@ func (s *FS) requireMaintenanceLeaseUnlocked(lease MaintenanceLease) (LeaseRecor
 	if err != nil {
 		return LeaseRecord{}, err
 	}
-	if current.normalizedKind() != LeaseKindMaintenance || current.Holder != lease.Holder || current.Token != lease.Token || !current.ExpiresAt.After(s.now().UTC()) {
+	if current.normalizedKind() != LeaseKindMaintenance || current.Holder != lease.Holder || current.Token != lease.Token || current.Generation != lease.Generation || !current.ExpiresAt.After(s.now().UTC()) {
 		return LeaseRecord{}, fmt.Errorf("%w: maintenance lease is absent, expired, or has a different token", ErrLeaseHeld)
 	}
 	return current, nil
 }
 
 func maintenanceLeaseFromRecord(record LeaseRecord) MaintenanceLease {
-	return MaintenanceLease{RunID: record.RunID, Holder: record.Holder, Token: record.Token, ExpiresAt: record.ExpiresAt}
+	return MaintenanceLease{RunID: record.RunID, Holder: record.Holder, Token: record.Token, Generation: record.Generation, ExpiresAt: record.ExpiresAt}
+}
+
+type leaseGenerationState struct {
+	Generation uint64 `json:"generation"`
+}
+
+func (s *FS) issueLeaseGenerationUnlocked(runID string) (uint64, error) {
+	path := filepath.Join(s.runDir(runID), "lease-generation.json")
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, fmt.Errorf("read durable lease generation: %w", err)
+	}
+	var state leaseGenerationState
+	if err == nil {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&state); err != nil {
+			return 0, fmt.Errorf("decode durable lease generation: %w", err)
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return 0, fmt.Errorf("decode durable lease generation trailing data")
+		}
+	}
+	lease, leaseErr := s.readLease(runID)
+	if leaseErr != nil && !errors.Is(leaseErr, ErrNotFound) {
+		return 0, leaseErr
+	}
+	if leaseErr == nil {
+		if err := validateLeaseGenerationFloor(lease); err != nil {
+			return 0, err
+		}
+		state.Generation = max(state.Generation, lease.Generation)
+	}
+	if state.Generation == math.MaxUint64 {
+		return 0, fmt.Errorf("durable lease generation exhausted")
+	}
+	state.Generation++
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return 0, err
+	}
+	encoded = append(encoded, '\n')
+	if err := writeFileAtomic(path, encoded, 0o644); err != nil {
+		return 0, err
+	}
+	if err := syncDir(s.runDir(runID)); err != nil {
+		return 0, err
+	}
+	return state.Generation, nil
+}
+
+func validateLeaseGenerationFloor(lease LeaseRecord) error {
+	kind := lease.normalizedKind()
+	if kind != LeaseKindEngine && kind != LeaseKindMaintenance {
+		return fmt.Errorf("invalid lease generation floor: unknown lease kind %q", lease.Kind)
+	}
+	if lease.Generation == 0 {
+		if kind == LeaseKindEngine && lease.Token == "" || kind == LeaseKindMaintenance && len(lease.Token) == 64 && isHexSHA256(lease.Token) {
+			return nil
+		}
+		return fmt.Errorf("invalid legacy lease generation floor")
+	}
+	if len(lease.Token) != 64 || !isHexSHA256(lease.Token) {
+		return fmt.Errorf("invalid tokenized lease generation floor")
+	}
+	return nil
 }
 
 func (s *FS) writeLease(lease LeaseRecord) error {
@@ -2514,6 +2724,13 @@ func (s *FS) readLease(runID string) (LeaseRecord, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&lease); err != nil {
 		return LeaseRecord{}, fmt.Errorf("decode lease: %w", err)
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return LeaseRecord{}, fmt.Errorf("decode lease trailing data")
+	}
+	if lease.RunID != runID {
+		return LeaseRecord{}, fmt.Errorf("decode lease: run id differs from containing run")
 	}
 	return lease, nil
 }

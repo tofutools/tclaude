@@ -137,21 +137,22 @@ func (s *FS) InitializeEpochV8Run(ctx context.Context, run RunRecord, source []b
 	}()
 	epochID := string(checkpoint.View().OriginalEpoch)
 	epochDir := filepath.Join(staging, "epochs", epochID)
-	for _, dir := range []string{filepath.Join(staging, "nodes"), filepath.Join(staging, "artifacts"), epochDir} {
+	for _, dir := range []string{filepath.Join(staging, "nodes"), filepath.Join(staging, "artifacts"), filepath.Join(staging, "runtime"), epochDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return EpochV8InitializationResult{}, err
 		}
 	}
 	for path, data := range map[string][]byte{
-		filepath.Join(staging, "run.json"):     runJSON,
-		filepath.Join(staging, "state.json"):   checkpointJSON,
-		filepath.Join(epochDir, "source.yaml"): source,
+		filepath.Join(staging, "run.json"):              runJSON,
+		filepath.Join(staging, "state.json"):            checkpointJSON,
+		filepath.Join(staging, "lease-generation.json"): []byte("{\"generation\":0}\n"),
+		filepath.Join(epochDir, "source.yaml"):          source,
 	} {
 		if err := writeFileAtomic(path, data, 0o644); err != nil {
 			return EpochV8InitializationResult{}, err
 		}
 	}
-	for _, dir := range []string{epochDir, filepath.Join(staging, "epochs"), filepath.Join(staging, "nodes"), filepath.Join(staging, "artifacts"), staging} {
+	for _, dir := range []string{epochDir, filepath.Join(staging, "epochs"), filepath.Join(staging, "nodes"), filepath.Join(staging, "artifacts"), filepath.Join(staging, "runtime"), staging} {
 		if err := syncDir(dir); err != nil {
 			return EpochV8InitializationResult{}, err
 		}
@@ -315,7 +316,34 @@ func (s *FS) loadEpochV8RunViewUnlocked(ctx context.Context, runID string, budge
 		epochDir.Close()
 		sources[epoch.ID] = bytes.Clone(source)
 	}
-	return EpochV8RunSnapshot{Run: run, CheckpointJSON: bytes.Clone(checkpointJSON), Checkpoint: checkpoint, EpochSources: sources}, nil
+	result := EpochV8RunSnapshot{Run: run, CheckpointJSON: bytes.Clone(checkpointJSON), Checkpoint: checkpoint, EpochSources: sources}
+	if view.RuntimeBinding != (epochv8.RuntimeBinding{}) {
+		runtimeDir, openErr := openViewDirAt(runDir, "runtime")
+		if openErr != nil {
+			return EpochV8RunSnapshot{}, openErr
+		}
+		defer runtimeDir.Close()
+		name := view.RuntimeBinding.Digest + ".json"
+		runtimeJSON, readErr := readEpochV8RegularAt(budget, runtimeDir, name, false, epochv8.MaxRuntimeArtifactBytes)
+		if readErr != nil {
+			return EpochV8RunSnapshot{}, readErr
+		}
+		ownerEpoch := epochv8.EpochID("")
+		for i := len(view.History) - 1; i >= 0; i-- {
+			receipt := view.History[i].Runtime
+			if receipt != nil && receipt.PostRuntime == view.RuntimeBinding {
+				ownerEpoch = receipt.EpochID
+				break
+			}
+		}
+		source, sourceOK := sources[ownerEpoch]
+		artifact, verifyErr := epochv8.VerifyRuntimeArtifact(ctx, checkpoint, runtimeJSON, source)
+		if !sourceOK || verifyErr != nil || artifact.EpochID != ownerEpoch {
+			return EpochV8RunSnapshot{}, &ExecutionViewInconsistentError{Err: fmt.Errorf("runtime artifact has no exact owner source")}
+		}
+		result.RuntimeJSON, result.Runtime = bytes.Clone(runtimeJSON), artifact
+	}
+	return result, nil
 }
 
 func digestBytes(data []byte) string {

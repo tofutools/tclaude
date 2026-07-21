@@ -160,7 +160,7 @@ func (e *ExclusiveV7Executor) serviceExclusiveContact(ctx context.Context, runID
 func (e *ExclusiveV7Executor) applyContactTransition(ctx context.Context, runID string, build func(input *pathv1.VerifiedExclusiveInput) (*pathv1.ExecutionTransition, error)) error {
 	for attempt := 0; attempt < maxObservationCASAttempts; attempt++ {
 		var transition *pathv1.ExecutionTransition
-		err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+		err := e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 			var buildErr error
 			transition, buildErr = build(view.Input)
 			return buildErr
@@ -168,7 +168,7 @@ func (e *ExclusiveV7Executor) applyContactTransition(ctx context.Context, runID 
 		if err != nil {
 			return err
 		}
-		_, err = e.Store.AppendPathV1(ctx, runID, transition)
+		_, err = e.appendTransition(ctx, runID, transition)
 		if store.IsConflict(err) {
 			continue
 		}
@@ -179,7 +179,7 @@ func (e *ExclusiveV7Executor) applyContactTransition(ctx context.Context, runID 
 
 func (e *ExclusiveV7Executor) contactForCommand(ctx context.Context, runID, sourceCommandID string) (*pathv1.ExclusiveContactPlan, error) {
 	var found *pathv1.ExclusiveContactPlan
-	err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+	err := e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 		contacts, err := pathv1.RecoverExclusiveContacts(ctx, view.Input)
 		if err != nil {
 			return err

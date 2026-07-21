@@ -149,6 +149,11 @@ func historyEventDigest(event HistoryEvent) (string, error) {
 	return digestValue("history-event/v1", event)
 }
 
+func runtimeReceiptIdentity(receipt RuntimeReceipt) (string, error) {
+	receipt.ID = ""
+	return digestValue("runtime-receipt/v1", receipt)
+}
+
 func checkpointDigest(wire checkpointWire) (string, error) {
 	wire.Digest = ""
 	return digestValue("checkpoint/v1", wire)

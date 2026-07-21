@@ -73,7 +73,7 @@ func advanceReducerDetachmentIntern(ctx context.Context, input *VerifiedExclusiv
 		if advanceErr != nil {
 			return nil, false, advanceErr
 		}
-		transition, transitionErr := newExecutionTransition(input.checkpoint, next, "parallel_detachment_intern")
+		transition, transitionErr := newWitnessedExecutionTransition(input.checkpoint, next, TransitionParallelDetachmentIntern, ExecutionWitnessV1{Empty: &EmptyExecutionWitnessV1{}})
 		return transition, true, transitionErr
 	}
 	return nil, false, nil

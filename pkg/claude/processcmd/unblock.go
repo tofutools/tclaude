@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -53,6 +55,20 @@ func runUnblock(cmd *cobra.Command, p *unblockParams, out io.Writer) error {
 	actor := state.ActorRef(strings.TrimSpace(p.Actor))
 	if actor == "" {
 		actor = defaultActor()
+	}
+	schema, err := fs.RunStateSchemaVersion(cmd.Context(), strings.TrimSpace(p.RunID))
+	if err != nil {
+		return err
+	}
+	if schema == epochv8.StateSchemaVersion {
+		checkpoint, resolution, resolveErr := processexec.NewEpochV8External(fs).ResolveAuditedSettlement(
+			cmd.Context(), p.RunID, p.NodeID, p.Decision, string(actor), p.Reason, p.EvidenceRef,
+		)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		fmt.Fprintf(out, "Resolved blocked node %s in run %s with decision %s at seq %d\n", resolution.NodeID, p.RunID, resolution.Decision, pathv1.CurrentLastLogSeq(checkpoint))
+		return nil
 	}
 	executor := processexec.New(fs, nil)
 	request := processexec.BlockResolutionRequest{

@@ -2,15 +2,76 @@ package processcmd
 
 import (
 	"bytes"
+	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
+	processengine "github.com/tofutools/tclaude/pkg/claude/process/engine"
 	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
+
+func TestEpochV8CLISettlementRetryRunsFreshAuthority(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "store")
+	templatePath := writeTemplate(t, `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: epoch-cli-unblock
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: retry me}
+    next: {pass: done}
+  done: {type: end, result: completed}
+`)
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	var out bytes.Buffer
+	if err := runRun(cmd, &runParams{Template: templatePath, StoreRoot: root, RunID: "epoch-cli-unblock"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &epochRetryAdapter{}
+	host := processengine.New(fs, "test:epoch-cli-unblock", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter})
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("first epoch tick = %#v, %v", results, err)
+	}
+	out.Reset()
+	if err := runUnblock(cmd, &unblockParams{
+		RunID: "epoch-cli-unblock", NodeID: "work", StoreRoot: root, Decision: "retry",
+		Actor: "human:johan", Reason: "reviewed failure", EvidenceRef: "ticket:TCL-604",
+	}, &out); err != nil {
+		t.Fatalf("epoch unblock: %v\n%s", err, out.String())
+	}
+	assertOutputContains(t, out.String(), "Resolved blocked node work")
+	results, err = host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("rescued epoch tick = %#v, %v", results, err)
+	}
+	if adapter.calls != 2 {
+		t.Fatalf("adapter calls = %d, want 2", adapter.calls)
+	}
+}
+
+type epochRetryAdapter struct{ calls int }
+
+func (a *epochRetryAdapter) Validate(processexec.Request) error { return nil }
+func (a *epochRetryAdapter) Perform(_ context.Context, _ processexec.Request) (processexec.Observation, error) {
+	a.calls++
+	verdict := "pass"
+	if a.calls == 1 {
+		verdict = "fail"
+	}
+	return processexec.Observation{Actor: "human:johan", Verdict: verdict}, nil
+}
 
 func TestPoisonUnblockRetryFlowCompletes(t *testing.T) {
 	cmd, root := poisonedCompoundFlow(t, "unblock_retry")
