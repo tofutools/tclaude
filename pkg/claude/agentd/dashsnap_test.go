@@ -487,6 +487,21 @@ func seedProcessWorklistDashSnap(t *testing.T, root string) {
 	if err := os.WriteFile(filepath.Join(corrupt, "run.json"), []byte("{broken"), 0o644); err != nil {
 		t.Fatalf("worklist corrupt run.json: %v", err)
 	}
+	// A schema-8 run seeded AFTER the engine tick: its runtime stays
+	// unattached, so it truthfully has zero worklist items (keeping the badge
+	// fixtures stable) while the viewer renders the full safe adaptation
+	// summary and unlock panel.
+	createEngineRun(t, root, "dashsnap-epoch-8", &model.Template{
+		APIVersion: model.APIVersion,
+		Kind:       model.Kind,
+		ID:         "dashsnap-epoch",
+		Name:       "Adaptable release hold",
+		Start:      "hold",
+		Nodes: map[string]model.Node{
+			"hold": {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "go-ahead"}, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}, false)
 }
 
 func seedMember(t *testing.T, f *testharness.Flow, groupID int64, group string, m dashMemberSpec) {
@@ -1196,6 +1211,13 @@ func baseStates() []dashsnap.State {
 			Title:    "Processes — legacy routing unavailable",
 			Caption:  "Legacy run view fails closed: exact pinned topology remains visible while the routing overlay and checkpoint detail tables explicitly report their unavailable state.",
 			JS:       processViewerStateJS("dashsnap-approve-7", false),
+			SettleMS: 1200,
+		},
+		{
+			Key:      "process-viewer-epoch-summary",
+			Title:    "Processes — schema-8 safe summary",
+			Caption:  "Schema-8 run renders the honest epoch_v8_summary restriction, the adaptation summary (lineage, structural totals, authority state chips, bounded timeline), and the memory-only unlock draft panel; exact topology stays restricted.",
+			JS:       processViewerEpochStateJS("dashsnap-epoch-8"),
 			SettleMS: 1200,
 		},
 		{
@@ -3184,6 +3206,44 @@ func processViewerStateJS(runID string, rich bool) string {
   }
   if (timelineRect.width < 100 || timelineRect.height < 20) throw new Error('sanitized timeline is not visible: ' + JSON.stringify(timelineRect.toJSON()));
 })();`, runID, runID, expected)
+}
+
+// processViewerEpochStateJS opens a seeded schema-8 run and verifies the S6
+// safe-summary contract: the honest restriction banner, the adaptation
+// summary panel with authority state chips, the memory-only unlock draft
+// field, and the absence of any exact-topology rendering.
+func processViewerEpochStateJS(runID string) string {
+	return fmt.Sprintf(`return (async function(){
+  var nav = document.querySelector('nav [data-tab="processes"]');
+  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
+  nav.click();
+  var sub = document.querySelector('[data-process-subtab="runs"]');
+  if (!sub) throw new Error('Processes runs subtab missing');
+  sub.click();
+  var deadline = Date.now() + 5000;
+  var openSel = 'button[data-process-action="view"][data-id="%s"]';
+  while (!document.querySelector(openSel) && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var open = document.querySelector(openSel);
+  if (!open) throw new Error('process viewer action did not render for %s');
+  open.click();
+  while (!document.querySelector('#process-viewer-canvas .process-epoch-summary') && Date.now() < deadline) {
+    await new Promise(function(resolve){ setTimeout(resolve, 40); });
+  }
+  var canvas = document.querySelector('#process-viewer-canvas');
+  if (!canvas) throw new Error('process viewer did not mount');
+  if (!canvas.querySelector('.process-viewer-unavailable.reason-epoch_v8_summary')) throw new Error('epoch_v8_summary restriction banner missing');
+  if (canvas.querySelector('.process-graph-svg')) throw new Error('schema-8 viewer must not render exact topology');
+  var panel = canvas.querySelector('.process-epoch-summary');
+  if (!panel) throw new Error('adaptation summary panel missing');
+  if (!panel.querySelector('.process-viewer-state-chips span')) throw new Error('authority state chips missing');
+  if (!panel.querySelector('#process-unlock-source')) throw new Error('unlock draft field missing');
+  var label = panel.querySelector('label[for="process-unlock-source"]');
+  if (!label) throw new Error('unlock draft field is unlabeled');
+  var rect = panel.getBoundingClientRect();
+  if (rect.width < 100 || rect.height < 60) throw new Error('adaptation summary panel is not visible: ' + JSON.stringify(rect.toJSON()));
+})();`, runID, runID)
 }
 
 // worklistTabJS drives the Worklist sub-view into one of its filter-chip

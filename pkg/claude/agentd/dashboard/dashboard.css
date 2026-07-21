@@ -13496,3 +13496,15 @@ body.wizard .usage-history-error { color: #f0a3bf; }
 .process-epoch-subhead { margin: 10px 0 4px; }
 .process-epoch-list, .process-epoch-entries, .process-epoch-timeline { margin: 4px 0; padding-left: 18px; }
 .process-epoch-timeline { max-height: 180px; overflow-y: auto; }
+.process-unlock-panel { border-top: 1px dashed var(--border, #8884); margin-top: 10px; padding-top: 8px; }
+.process-unlock-source { width: 100%; font-family: monospace; font-size: 12px; }
+.process-unlock-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.process-unlock-row input[type="text"] { flex: 1 1 160px; min-width: 120px; }
+.process-unlock-label { font-size: 11px; opacity: 0.8; }
+.process-unlock-stale, .process-unlock-applied { border: 1px solid var(--border, #8884); border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
+.process-unlock-blockers { padding-left: 18px; }
+.process-unlock-handoff, .process-unlock-transfer { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
+.process-unlock-transfer input { width: 110px; }
+.process-unlock-confirm { border: 1px solid var(--border, #8884); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+.process-epoch-artifact-pre { max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.process-epoch-artifact-row { margin-right: 12px; }

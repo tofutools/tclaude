@@ -66,6 +66,7 @@ export function epochV8Summary(envelope) {
     epochs: (lineage.epochs || []).map((epoch) => ({
       ordinal: epoch.ordinal,
       templateRef: epoch.templateRef || '',
+      epochId: epoch.epochId || '',
     })),
     structural: {
       nodes: structural.nodes || 0,

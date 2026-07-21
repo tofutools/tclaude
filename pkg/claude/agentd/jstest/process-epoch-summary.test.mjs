@@ -80,3 +80,85 @@ test('viewer island renders the adaptation summary panel for schema-8 runs', asy
   assert.ok(unavailable, 'restriction banner names the epoch_v8_summary reason');
   await mounted.unmount();
 });
+
+test('unlock panel preserves the dirty draft and invalidates tokens on stale binding', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');
+  const envelope = epochEnvelope();
+  const previews = [];
+  const actions = {
+    loadRunView: async () => envelope,
+    previewUnlock: async (_id, payload) => {
+      previews.push(payload);
+      return { status: 409, ok: false, body: { status: 'stale', currentBinding: { revision: 9, digest: 'e'.repeat(64) } } };
+    },
+    applyUnlock: async () => { throw new Error('apply must not be reachable'); },
+    loadExactArtifact: async () => ({ status: 200, ok: true, text: '' }),
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-epoch', key: 'run-epoch' }} actions=${actions}
+    setTimeoutImpl=${() => 0} clearTimeoutImpl=${() => {}} />`);
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  const root = mounted.container;
+
+  const sourceInput = root.querySelector('#process-unlock-source');
+  assert.ok(sourceInput, 'unlock panel renders a candidate source field');
+  await harness.input(sourceInput, 'id: draft-template');
+  const previewButton = [...root.querySelectorAll('.process-unlock-panel button')].find((b) => /preview/.test(b.textContent));
+  await harness.act(() => { previewButton.click(); return Promise.resolve(); });
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+
+  assert.equal(previews.length, 1);
+  assert.equal(previews[0].candidateSource, 'id: draft-template');
+  const stale = root.querySelector('.process-unlock-stale');
+  assert.ok(stale, 'stale banner is a visible status region');
+  assert.equal(stale.getAttribute('role'), 'status');
+  assert.match(stale.textContent, /revision 9/);
+  assert.match(stale.textContent, /draft is unchanged/i);
+  // The dirty draft survives verbatim; no preview result or apply affordance remains.
+  assert.equal(root.querySelector('#process-unlock-source').value, 'id: draft-template');
+  assert.equal(root.querySelector('.process-unlock-preview'), null);
+  assert.equal(root.querySelector('.process-unlock-apply'), null);
+  // Draft material never leaks into persisted client state.
+  assert.equal(Object.keys(globalThis.localStorage || {}).length ? 'has-keys' : 'empty', 'empty');
+  await mounted.unmount();
+});
+
+test('exact artifact drill-down renders the restricted denial as a bounded error state', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');
+  const envelope = epochEnvelope();
+  envelope.lineage.epochs = [
+    { ordinal: 0, templateRef: 'tmpl@sha256:aa', epochId: 'a'.repeat(64) },
+    { ordinal: 1, templateRef: 'tmpl@sha256:bb', epochId: 'b'.repeat(64) },
+  ];
+  const requested = [];
+  const actions = {
+    loadRunView: async () => envelope,
+    previewUnlock: async () => ({ status: 500, ok: false, body: {} }),
+    applyUnlock: async () => ({ status: 500, ok: false, body: {} }),
+    loadExactArtifact: async (id, epochId, kind) => {
+      requested.push({ id, epochId, kind });
+      return { status: 403, ok: false, text: '{"secret":"denied-body"}' };
+    },
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-epoch', key: 'run-epoch' }} actions=${actions}
+    setTimeoutImpl=${() => 0} clearTimeoutImpl=${() => {}} />`);
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  const root = mounted.container;
+
+  const diffButton = [...root.querySelectorAll('.process-epoch-artifact-row button')].find((b) => /exact diff/.test(b.textContent));
+  assert.ok(diffButton, 'applied epochs offer an exact diff drill-down');
+  await harness.act(() => { diffButton.click(); return Promise.resolve(); });
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+
+  assert.deepEqual(requested, [{ id: 'run-epoch', epochId: 'b'.repeat(64), kind: 'diff' }], 'only the applied epoch is addressable');
+  const denial = root.querySelector('.process-epoch-artifact-view .island-error');
+  assert.ok(denial, 'denial renders as an explicit alert state');
+  assert.equal(denial.getAttribute('role'), 'alert');
+  assert.match(denial.textContent, /process\.runs\.unlock\.read/);
+  // The denied response body is never rendered.
+  assert.doesNotMatch(root.innerHTML, /denied-body/);
+  await mounted.unmount();
+});
