@@ -1195,13 +1195,19 @@ func baseStates() []dashsnap.State {
 			Title:   "Processes — inline description edit",
 			Caption: "TCL-600: the Templates list edits a template description in place, with the click-to-edit affordance swapped for a focused, skin-themed editor.",
 			JS:      processTabJS("templates", `[data-process-template="release-train"]`),
-			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `var edit=document.querySelector('[data-process-description-edit="release-train"]');
+			// `return` matters, and so does the frame wait: the editor swaps in
+			// through a Preact state update, so a synchronous read right after
+			// the click always misses it. See processTabJS.
+			Actions: []dashsnap.BrowserAction{{Kind: "eval", JS: `return (async function(){
+  var edit=document.querySelector('[data-process-description-edit="release-train"]');
   if(!edit) throw new Error('inline description affordance missing');
   if(!edit.getAttribute('aria-label')) throw new Error('inline description affordance has no accessible name');
   edit.click();
+  await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   var input=document.querySelector('[data-process-description-input="release-train"]');
   if(!input) throw new Error('clicking the description did not open an editor');
-  if(document.activeElement!==input) throw new Error('the description editor did not take focus');`}},
+  if(document.activeElement!==input) throw new Error('the description editor did not take focus');
+})();`}},
 			SettleMS: 900,
 		},
 		{
