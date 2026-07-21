@@ -150,10 +150,7 @@ func ValidateSandboxBreakGlass(harnessName, sandboxMode string, grants []sandbox
 // Neither is acceptable, so the launch is refused with an actionable message.
 // (Claude has the opposite precedence and handles this shape natively.)
 func validateCodexBreakGlassShape(grants []sandboxpolicy.BreakGlassGrant) error {
-	// EVERY protected root the managed profile denies, not just the
-	// private-state directory: the renderer now denies all three, so a child
-	// beneath ~/.codex or ~/.claude/sessions would be masked exactly the same
-	// way. Sourcing the list from sandboxpolicy means a future root cannot be
+	// Source the list from sandboxpolicy so a future protected root cannot be
 	// added without this validation covering it.
 	roots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {

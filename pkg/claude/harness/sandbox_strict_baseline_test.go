@@ -299,18 +299,17 @@ func TestClaudeBreakGlassChildPathReachableWhileSiblingsStayDenied(t *testing.T)
 // acknowledged access (or suppressing the parent deny and exposing every
 // sibling), the launch is refused with a typed, actionable error.
 // The renderer denies EVERY protected root, so the child-path refusal has to
-// cover every one of them — a child beneath ~/.codex or ~/.claude/sessions
-// would be masked exactly like one beneath ~/.tclaude/data. Iterating the
+// cover every one of them. Iterating the
 // sandboxpolicy set means a future root cannot regress this.
 func TestCodexBreakGlassChildPathIsTypedCapabilityErrorNotOvergrant(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	for _, dir := range []string{".tclaude/data", ".claude/sessions", ".codex"} {
+	for _, dir := range []string{".tclaude/data", ".claude/sessions"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(home, dir, "child"), 0o755))
 	}
 	roots, err := sandboxpolicy.ProtectedPaths()
 	require.NoError(t, err)
-	require.Len(t, roots, 3)
+	require.Len(t, roots, 2)
 
 	for _, root := range roots {
 		for _, access := range []sandboxpolicy.Access{sandboxpolicy.AccessRead, sandboxpolicy.AccessWrite} {
@@ -349,7 +348,7 @@ func TestCodexBreakGlassSuppressionLeavesOtherDeniesIntact(t *testing.T) {
 		"suppressing one acknowledged deny must not drop unrelated restrictions")
 }
 
-// tclaude advertises three protected roots and gates the whole break-glass
+// tclaude advertises protected roots and gates the whole break-glass
 // mechanism on them being denied BEFORE any acknowledgement. That promise has
 // to hold on every harness, or break-glass is theatre.
 func TestEveryProtectedRootIsDeniedOnBothHarnessesBeforeBreakGlass(t *testing.T) {
@@ -364,7 +363,7 @@ func TestEveryProtectedRootIsDeniedOnBothHarnessesBeforeBreakGlass(t *testing.T)
 
 	protected, err := sandboxpolicy.ProtectedPaths()
 	require.NoError(t, err)
-	require.Len(t, protected, 3, "the advertised protected set")
+	require.Len(t, protected, 2, "the advertised protected set")
 
 	t.Run("claude", func(t *testing.T) {
 		var decoded struct {
@@ -395,6 +394,8 @@ func TestEveryProtectedRootIsDeniedOnBothHarnessesBeforeBreakGlass(t *testing.T)
 			assert.Containsf(t, content, `"`+root+`" = "none"`,
 				"the managed Codex profile must deny protected root %s", root)
 		}
+		assert.NotContains(t, content, `"`+filepath.Join(canonicalHome, ".codex")+`" = "none"`,
+			"the Codex home contains the runtime executable and must remain readable")
 	})
 }
 

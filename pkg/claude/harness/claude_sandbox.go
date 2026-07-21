@@ -48,11 +48,6 @@ const (
 	tclaudeLegacyRootSocketTilde  = "~/.tclaude/agentd.sock"
 	tclaudePrivateStateDirTilde   = "~/.tclaude/data"
 	tclaudeClaudeSessionsDirTilde = "~/.claude/sessions"
-	// codexHomeDirTilde is the third protected root. tclaude advertises all
-	// three as denied-by-default and gates break-glass on that promise, so the
-	// Claude policy must deny it too — otherwise a Claude agent could read
-	// Codex credentials and session state with no acknowledgement at all.
-	codexHomeDirTilde = "~/.codex"
 )
 
 // tclaudeAgentdSocketTildes lists every agentd socket a sandboxed agent may need
@@ -144,8 +139,10 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // agent needs: the agent-reachable agentd Unix socket (~/.tclaude/api/…) stays
 // reachable (network allowlist + filesystem read allowance) so the agent can
 // still run `tclaude agent`, and
-// ~/.tclaude/data / ~/.claude/sessions are denied (read + write) so a sandboxed
-// agent can neither tamper with nor snoop on the shared daemon state. The
+// ~/.tclaude/data and ~/.claude/sessions are denied (read + write) so a
+// sandboxed agent can neither tamper with nor snoop on shared daemon/Claude
+// session state. ~/.codex remains readable because it also contains the Codex
+// runtime itself; denying that whole root can strand the harness.
 // block is cross-platform: macOS honors per-path `allowUnixSockets`, Linux/WSL2
 // the broader `allowAllUnixSockets` — listing both keeps one block valid on
 // either (the inert key is harmless).
@@ -163,8 +160,8 @@ func ClaudeSandboxOnBlock() map[string]any {
 			"allowAllUnixSockets": true,
 		},
 		"filesystem": map[string]any{
-			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde, codexHomeDirTilde},
-			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde, codexHomeDirTilde},
+			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
+			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
 			"allowRead": tclaudeAgentdSocketTildes(),
 		},
 	}

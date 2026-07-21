@@ -144,8 +144,8 @@ func TestResolveRevalidatesPersistedCanonicalPath(t *testing.T) {
 	persisted, err := Normalize(Profile{Name: "saved", Filesystem: []FilesystemGrant{{Path: mount, Access: AccessWrite}}})
 	require.NoError(t, err)
 	require.NoError(t, os.Rename(mount, filepath.Join(home, "old-mount")))
-	protected := filepath.Join(home, ".codex")
-	require.NoError(t, os.Mkdir(protected, 0o755))
+	protected := filepath.Join(home, ".claude", "sessions")
+	require.NoError(t, os.MkdirAll(protected, 0o755))
 	require.NoError(t, os.Symlink(protected, mount))
 
 	_, err = Resolve(Scopes{Global: &persisted})

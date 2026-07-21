@@ -17,10 +17,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// protectedTestDirs materializes the three protected roots inside the flow
-// harness's per-test HOME. Every protected-path assertion below therefore
-// operates on temporary state; production ~/.tclaude, ~/.claude and ~/.codex
-// are never read or written by these tests.
+// protectedTestDirs materializes the protected roots and an ordinary ~/.codex
+// tree inside the flow harness's per-test HOME. Every assertion therefore
+// operates on temporary state; production harness state is never touched.
 func protectedTestDirs(t *testing.T) (tclaudeData, claudeSessions, codexHome string) {
 	t.Helper()
 	home := os.Getenv("HOME")
@@ -73,7 +72,7 @@ func TestOrdinaryFilesystemRuleStillRejectsProtectedPath(t *testing.T) {
 	f := newFlow(t)
 	tclaudeData, claudeSessions, codexHome := protectedTestDirs(t)
 
-	for _, path := range []string{tclaudeData, claudeSessions, codexHome} {
+	for _, path := range []string{tclaudeData, claudeSessions} {
 		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
 			"name":       "sneaky",
 			"filesystem": []map[string]any{{"path": path, "access": "read"}},
@@ -81,6 +80,11 @@ func TestOrdinaryFilesystemRuleStillRejectsProtectedPath(t *testing.T) {
 		require.Equalf(t, http.StatusBadRequest, rec.Code, "path %s body=%s", path, rec.Body.String())
 		assert.Contains(t, rec.Body.String(), "intersects protected directory")
 	}
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":       "codex-runtime",
+		"filesystem": []map[string]any{{"path": codexHome, "access": "read"}},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "~/.codex should be an ordinary readable root: %s", rec.Body.String())
 }
 
 func TestBreakGlassProfileRequiresAcknowledgementAtEverySurface(t *testing.T) {

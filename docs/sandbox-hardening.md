@@ -181,8 +181,8 @@ rule there cannot be weakened by any project's `.claude/settings.json`:
       "allowAllUnixSockets": true
     },
     "filesystem": {
-      "denyWrite": ["~/.tclaude/data", "~/.claude/sessions", "~/.codex"],
-      "denyRead":  ["~/.tclaude/data", "~/.claude/sessions", "~/.codex"],
+      "denyWrite": ["~/.tclaude/data", "~/.claude/sessions"],
+      "denyRead":  ["~/.tclaude/data", "~/.claude/sessions"],
       "allowRead": ["~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"]
     }
   },
@@ -191,9 +191,7 @@ rule there cannot be weakened by any project's `.claude/settings.json`:
       "Edit(~/.tclaude/data/**)",
       "Read(~/.tclaude/data/**)",
       "Edit(~/.claude/sessions/**)",
-      "Read(~/.claude/sessions/**)",
-      "Edit(~/.codex/**)",
-      "Read(~/.codex/**)"
+      "Read(~/.claude/sessions/**)"
     ]
   }
 }
@@ -212,6 +210,10 @@ Notes:
   required; see "Keeping the daemon socket reachable" below for why, the
   trade-off, and the verification. `~/.claude/sessions` holds no socket
   and needs neither.
+- **Do not deny the whole `~/.codex` tree.** Standalone Codex installs its
+  executable below `~/.codex/packages` and re-executes it for tool commands;
+  a whole-tree deny strands managed Codex agents. Narrower state boundaries
+  require separate runtime/state analysis.
 - **Check for paths that re-open these.** The sandbox's writable set is
   your working directory plus `permissions.additionalDirectories` plus
   `sandbox.filesystem.allowWrite`. Make sure none of those lists contains

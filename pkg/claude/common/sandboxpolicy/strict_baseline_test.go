@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// protectedHome installs an isolated $HOME containing the three protected
-// roots so every protected-path test operates on temporary state. Production
-// tclaude/harness state is never read or written by these tests.
+// protectedHome installs an isolated $HOME containing the protected roots plus
+// an ordinary ~/.codex tree so every boundary test operates on temporary
+// state. Production tclaude/harness state is never read or written.
 func protectedHome(t *testing.T) (home, tclaudeData, claudeSessions, codexHome string) {
 	t.Helper()
 	home = t.TempDir()
@@ -156,7 +156,7 @@ func TestReadBaselineComposesStrictestWinsAcrossIncludes(t *testing.T) {
 
 func TestOrdinaryFilesystemStillRejectsProtectedPaths(t *testing.T) {
 	_, tclaudeData, claudeSessions, codexHome := protectedHome(t)
-	for _, path := range []string{tclaudeData, claudeSessions, codexHome} {
+	for _, path := range []string{tclaudeData, claudeSessions} {
 		for _, access := range []Access{AccessRead, AccessWrite} {
 			_, _, err := NormalizeForPersistence(Profile{
 				Name:       "p",
@@ -166,6 +166,11 @@ func TestOrdinaryFilesystemStillRejectsProtectedPaths(t *testing.T) {
 			assert.Contains(t, err.Error(), "intersects protected directory")
 		}
 	}
+	_, _, err := NormalizeForPersistence(Profile{
+		Name:       "codex-runtime",
+		Filesystem: []FilesystemGrant{{Path: codexHome, Access: AccessRead}},
+	})
+	require.NoError(t, err, "~/.codex is ordinary harness state, not a protected root")
 }
 
 func TestBreakGlassAcceptsProtectedPathsOnly(t *testing.T) {
@@ -279,7 +284,7 @@ func TestBreakGlassCanonicalizesSymlinkAliases(t *testing.T) {
 }
 
 func TestBreakGlassResolvesAsUnionWithVisibleProvenance(t *testing.T) {
-	_, tclaudeData, _, codexHome := protectedHome(t)
+	_, tclaudeData, claudeSessions, _ := protectedHome(t)
 	global := &Profile{
 		Name:                 "global-debug",
 		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}},
@@ -288,13 +293,13 @@ func TestBreakGlassResolvesAsUnionWithVisibleProvenance(t *testing.T) {
 		Name: "explicit-debug",
 		BreakGlassFilesystem: []BreakGlassGrant{
 			{Path: tclaudeData, Access: AccessWrite},
-			{Path: codexHome, Access: AccessRead},
+			{Path: claudeSessions, Access: AccessRead},
 		},
 	}
 	got, err := Resolve(Scopes{Global: global, Explicit: explicit})
 	require.NoError(t, err)
 	assert.Equal(t, []BreakGlassGrant{
-		{Path: codexHome, Access: AccessRead},
+		{Path: claudeSessions, Access: AccessRead},
 		{Path: tclaudeData, Access: AccessWrite},
 	}, got.BreakGlassFilesystem)
 	assert.Equal(t, []ProfileSource{
