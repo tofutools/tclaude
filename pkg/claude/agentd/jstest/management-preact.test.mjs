@@ -450,10 +450,10 @@ test('sandbox editor keeps Home and external leaves distinct and lets owners rem
   const inheritedUnknown = unknownRows.find((row) => row.textContent.includes('future.inherited-store'));
   assert.notEqual(ownedUnknown.querySelector('input').disabled, true, 'direct owner can recover on an older catalog');
   assert.equal(inheritedUnknown.querySelector('input').disabled, true, 'inherited unknown remains locked at its consumer');
-  let choices = host.querySelectorAll('.sbx-exclusion-list input');
+  let choices = host.querySelectorAll('.sbx-exclusion-row:not(.unknown) input');
   assert.equal(choices.length, 2); assert.notEqual(choices[0].disabled, true); assert.notEqual(choices[1].checked, true);
   choices[1].checked = true; choices[1].dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  choices = host.querySelectorAll('.sbx-exclusion-list input');
+  choices = host.querySelectorAll('.sbx-exclusion-row:not(.unknown) input');
   assert.notEqual(choices[0].checked, true, 'Home does not claim coverage for a leaf that may resolve outside Home');
   assert.notEqual(choices[0].disabled, true);
   ownedUnknown.querySelector('input').checked = false;
@@ -461,6 +461,73 @@ test('sandbox editor keeps Home and external leaves distinct and lets owners rem
   await harness.act(() => Promise.resolve());
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
   assert.deepEqual(saved.draft.read_baseline_exclusions, ['home.directory']);
+  cleanups.reverse().forEach((fn) => fn());
+});
+
+test('sandbox exclusion rows stay compact and keep their copy behind [?]', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
+    name: 'base', filesystem: [], environment: [], includes: [], agent_directories: [],
+    read_baseline_exclusions: ['home.directory'],
+  }]);
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'hardened', filesystem: [], environment: [], includes: ['base'], agent_directories: [] },
+    options: {},
+  });
+  const actions = {
+    async loadReadExclusionCatalog() {
+      return {
+        version: 1,
+        categories: [
+          { id: 'secrets.ssh', label: 'Deny SSH', description: 'SSH credentials and known hosts.', warning: 'Breaks git over SSH.', tier: 'portable', paths: ['/home/op/.ssh'] },
+          { id: 'home.directory', label: 'Deny Home', description: 'Home baseline.', tier: 'home', paths: ['/home/op'] },
+        ],
+        informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
+      };
+    },
+    async inspectDirectories() { return { missing: [], creatable: [] }; },
+    async createDirectories() {},
+    async saveSandbox() {},
+    configureSandboxWithAgent() {},
+  };
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  const rows = [...host.querySelectorAll('.sbx-exclusion-row')];
+  assert.equal(rows.length, 2);
+  const ssh = rows[0];
+  // Compact: the row itself carries only the short label, never the long copy.
+  assert.equal(ssh.querySelector('.sbx-exclusion-name').textContent, 'Deny SSH');
+  assert.equal(ssh.querySelector('.spawn-field-description').textContent.includes('SSH credentials'), true);
+  assert.equal(ssh.querySelector('.sbx-exclusion-choice').textContent.includes('SSH credentials'), false);
+  assert.equal(ssh.querySelector('.sbx-exclusion-badge'), null, 'a freely toggleable row carries no lock badge');
+  // The checkbox is still labelled by the visible text and described by the help.
+  const box = ssh.querySelector('input');
+  assert.equal(ssh.querySelector('label').getAttribute('for'), box.id);
+  assert.equal(box.getAttribute('aria-describedby'), ssh.querySelector('.spawn-field-description').id);
+  // [?] toggles the disclosure, and only one row's help is open at a time.
+  const trigger = ssh.querySelector('.spawn-field-help-trigger');
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+  trigger.click(); await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('.sbx-exclusion-row .spawn-field-help-trigger').getAttribute('aria-expanded'), 'true');
+  const inherited = [...host.querySelectorAll('.sbx-exclusion-row')][1];
+  inherited.querySelector('.spawn-field-help-trigger').click(); await harness.act(() => Promise.resolve());
+  const expanded = [...host.querySelectorAll('.sbx-exclusion-row .spawn-field-help-trigger')].map((node) => node.getAttribute('aria-expanded'));
+  assert.deepEqual(expanded, ['false', 'true'], 'opening one disclosure closes the other');
+  // Inherited rows stay visibly locked, with the provenance behind the help.
+  assert.equal(inherited.querySelector('input').disabled, true);
+  assert.equal(inherited.classList.contains('locked'), true);
+  assert.equal(inherited.querySelector('.sbx-exclusion-badge').textContent, 'inherited');
+  assert.match(inherited.querySelector('.spawn-field-description').textContent, /From .*base/);
+  // Section-level guidance is behind its own [?] rather than an inline paragraph.
+  const intro = host.querySelector('.sbx-exclusion-intro');
+  assert.ok(intro.querySelector('.spawn-field-help-trigger'));
+  assert.match(intro.querySelector('.spawn-field-description').textContent, /compose by union/);
   cleanups.reverse().forEach((fn) => fn());
 });
 

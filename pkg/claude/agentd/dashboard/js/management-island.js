@@ -14,7 +14,7 @@ import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
-import { HelpField } from './help-field.js';
+import { HelpDisclosure, HelpField } from './help-field.js';
 import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
 
 const html = htm.bind(h);
@@ -22,6 +22,32 @@ const html = htm.bind(h);
 function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
+
+/* The exclusion catalog is long, and every entry carries a paragraph of
+   rationale plus its audited paths. Kept inline, the section drowned the rest
+   of the sandbox editor, so the copy lives behind the same [?] disclosure the
+   spawn dialog uses and only the section's one-line gist stays on screen. */
+const EXCLUSION_SECTION_HELP = 'Deny reads of sensitive locations on top of the read baseline. '
+  + 'Default still broadly reads the filesystem root and this catalog is not exhaustive; '
+  + 'Minimal is the true Codex-only allowlist posture. Restrictions compose by union across '
+  + 'includes and the global/group/explicit scopes, so a restriction contributed by another '
+  + 'profile cannot be unchecked here — remove it where it is owned.';
+
+/* One compact exclusion choice: checkbox plus a short label, with the long
+   description, warning, audited paths and inherited provenance reachable
+   through the adjacent [?]. `disabled` doubles as the locked treatment; the
+   badge names why (inherited from another profile, or locked by Minimal). */
+function ExclusionRow({ id, label, badge, help, content, checked, disabled, unknown, onChange, helpOpen, setHelpOpen }) {
+  const inputID = `sandbox-exclusion-${id}`;
+  const helpID = `${inputID}-help`;
+  return html`<div class=${`sbx-exclusion-row${disabled ? ' locked' : ''}${unknown ? ' unknown' : ''}`}>
+    <label class="sbx-exclusion-choice" for=${inputID}><input id=${inputID} type="checkbox" checked=${checked}
+      disabled=${disabled} aria-describedby=${`${helpID}-hint`} onChange=${onChange}/><span class="sbx-exclusion-name">${label}</span></label>
+    ${badge && html`<span class="sbx-exclusion-badge">${badge}</span>`}
+    <${HelpDisclosure} id=${helpID} label=${label} help=${help} content=${content}
+      open=${helpOpen === helpID} setOpen=${setHelpOpen}/>
+  </div>`;
+}
 
 function RequestList({ request, label, retry, children }) {
   if ((request.phase === 'idle' || request.phase === 'loading') && !request.data?.length) return html`<div class="template-empty">Loading ${label}…</div>`;
@@ -160,6 +186,8 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: seed?.network_access || '', read_baseline: seed?.read_baseline === 'minimal' ? 'minimal' : '', read_baseline_exclusions: clone(seed?.read_baseline_exclusions || []), break_glass_filesystem: clone(breakGlassRules(seed)) }), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawBreakGlass, setRawBreakGlass] = useState(() => JSON.stringify(baseline.break_glass_filesystem, null, 2));
   const [readExclusionCatalog, setReadExclusionCatalog] = useState({ version: 0, categories: [], informational: [] });
+  // Lifted so only one exclusion disclosure is open at a time, keyed by row id.
+  const [exclusionHelpOpen, setExclusionHelpOpen] = useState('');
   useEffect(() => { let active = true; if (typeof actions.loadReadExclusionCatalog !== 'function') return () => { active = false; }; actions.loadReadExclusionCatalog().then((value) => { if (active) setReadExclusionCatalog(value || { version: 0, categories: [], informational: [] }); }).catch((error) => { if (active) state.error.value = `Could not load filesystem restriction catalog: ${error.message || String(error)}`; }); return () => { active = false; }; }, []);
   // The acknowledgement is deliberately NOT part of the draft: it never
   // persists, and every editor session must collect it afresh.
@@ -241,10 +269,34 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const unknownExclusions = effectiveReadExclusions.filter((entry) => !knownExclusionIDs.has(entry.id));
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network policies control external IP connectivity while retaining the tclaude agent socket. Managed Codex profiles block the host tmux server independently. Environment values are ordinary configuration, not secrets.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}><${Row} label="Network"><${Select} id="sandbox-profile-editor-network" value=${draft.network_access} onChange=${(value) => change(setDraft, 'network_access', value)} options=${[['', 'No override (inherit profile layers)'], ['internet', 'Internet access'], ['none', 'Offline (macOS; unavailable on Linux/WSL)']]}/></${Row}>
     <${Row} label="Read baseline" title="Strictest-wins across includes and global/group/explicit layers: if any applied profile says minimal, the effective read scope is minimal. Requires harness support; launch fails with a typed capability error where it cannot be enforced."><${Select} id="sandbox-profile-editor-read-baseline" value=${draft.read_baseline} onChange=${(value) => change(setDraft, 'read_baseline', value)} options=${[['', "Default — harness baseline (broad reads, today's behavior)"], ['minimal', 'Minimal — strict opt-in: only workspace, required runtime paths, and explicit grants']]}/></${Row}>
-    <fieldset class="sbx-section sbx-read-exclusions" hidden=${advanced}><legend>Additional filesystem restrictions</legend><div class="sbx-bg-intro"><strong>Deny sensitive locations.</strong> Default still broadly reads the filesystem root; this catalog is not exhaustive. Minimal is the true Codex-only allowlist posture. Restrictions compose by union across includes/scopes.</div>
-      ${draft.read_baseline === 'minimal' && html`<div class="sbx-bg-intro">These rows are retained but locked because Minimal already removes the broad Default read baseline.</div>`}
-      <div class="sbx-exclusion-list">${(readExclusionCatalog.categories || []).map((category) => { const own = candidate.read_baseline_exclusions?.includes(category.id); const effective = effectiveExclusionByID.get(category.id); const locked = draft.read_baseline === 'minimal' || (!!effective && !own); const origins = effective?.origins || []; return html`<label key=${category.id} class=${`sbx-exclusion-row${locked ? ' locked' : ''}`}><input type="checkbox" checked=${!!effective} disabled=${locked} onChange=${() => toggleReadExclusion(category.id)}/><span><strong>${category.label}</strong>${!own && effective ? ' — inherited/locked' : ''}<small>${category.description}${category.warning ? ` ⚠ ${category.warning}` : ''}</small><code>${(category.paths || []).join(' · ') || '(no audited paths on this platform)'}</code>${origins.length ? html`<small>From ${origins.join(', ')}</small>` : null}</span></label>`; })}</div>
-      ${unknownExclusions.map((entry) => { const own = candidate.read_baseline_exclusions?.includes(entry.id); return html`<label key=${entry.id} class=${`sbx-exclusion-row unknown${own ? '' : ' locked'}`}><input type="checkbox" checked disabled=${!own} onChange=${() => toggleReadExclusion(entry.id)}/><span><strong>Unknown restriction: ${entry.id}</strong><small>${own ? 'Directly owned by this profile; uncheck it to recover on this older catalog.' : 'Inherited and locked; remove it from the profile that owns it.'} It will fail launch closed until this tclaude understands it. From ${entry.origins.join(', ')}</small></span></label>`; })}
+    <fieldset class="sbx-section sbx-read-exclusions" hidden=${advanced}><legend>Additional filesystem restrictions</legend>
+      <div class="sbx-exclusion-intro"><span>Deny reads of sensitive locations. Restrictions compose by union across includes and scopes.</span><${HelpDisclosure} id="sandbox-exclusions-section-help" label="Additional filesystem restrictions" help=${EXCLUSION_SECTION_HELP} open=${exclusionHelpOpen === 'sandbox-exclusions-section-help'} setOpen=${setExclusionHelpOpen}/></div>
+      ${draft.read_baseline === 'minimal' && html`<div class="sbx-exclusion-note">Locked: Minimal already removes the broad Default read baseline. These choices are retained.</div>`}
+      <div class="sbx-exclusion-list">${(readExclusionCatalog.categories || []).map((category) => {
+        const own = candidate.read_baseline_exclusions?.includes(category.id);
+        const effective = effectiveExclusionByID.get(category.id);
+        const locked = draft.read_baseline === 'minimal' || (!!effective && !own);
+        const origins = effective?.origins || [];
+        const paths = (category.paths || []).join(' · ');
+        const help = [category.description, category.warning ? `⚠ ${category.warning}` : '', `Audited paths: ${paths || '(none on this platform)'}`, origins.length ? `From ${origins.join(', ')}` : ''].filter(Boolean).join(' ');
+        const content = [
+          html`<span key="descr">${category.description}</span>`,
+          category.warning ? html`<span key="warn" class="sbx-exclusion-help-warn">⚠ ${category.warning}</span>` : null,
+          html`<code key="paths">${paths || '(no audited paths on this platform)'}</code>`,
+          origins.length ? html`<span key="origins">From ${origins.join(', ')}</span>` : null,
+        ];
+        return html`<${ExclusionRow} key=${category.id} id=${category.id} label=${category.label}
+          badge=${draft.read_baseline === 'minimal' ? 'locked' : (locked ? 'inherited' : '')} help=${help} content=${content}
+          checked=${!!effective} disabled=${locked} onChange=${() => toggleReadExclusion(category.id)}
+          helpOpen=${exclusionHelpOpen} setHelpOpen=${setExclusionHelpOpen}/>`;
+      })}
+      ${unknownExclusions.map((entry) => {
+        const own = candidate.read_baseline_exclusions?.includes(entry.id);
+        const help = `${own ? 'Directly owned by this profile; uncheck it to recover on this older catalog.' : 'Inherited and locked; remove it from the profile that owns it.'} It will fail launch closed until this tclaude understands it. From ${entry.origins.join(', ')}`;
+        return html`<${ExclusionRow} key=${entry.id} id=${entry.id} label=${`Unknown restriction: ${entry.id}`}
+          badge=${own ? 'unknown' : 'unknown · inherited'} help=${help} checked=${true} disabled=${!own} unknown=${true}
+          onChange=${() => toggleReadExclusion(entry.id)} helpOpen=${exclusionHelpOpen} setHelpOpen=${setExclusionHelpOpen}/>`;
+      })}</div>
       <details><summary>Required, non-removable access</summary>${(readExclusionCatalog.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-bg-intro"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>
     </fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend><div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button></fieldset>
