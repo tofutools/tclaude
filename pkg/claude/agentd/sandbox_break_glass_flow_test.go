@@ -594,3 +594,281 @@ func TestResumeCannotWidenMinimalBaselineToDefault(t *testing.T) {
 	assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
 		"minimal -> default is widening and must not happen implicitly on resume")
 }
+
+// A bundle-internal NESTED include chain must be evaluated against the exact
+// post-import graph: A includes B (also in the bundle), B includes D (an
+// existing dangerous local profile). Nothing in the bundle declares
+// break-glass, and resolving against the pre-import registry cannot see the
+// A -> B -> D chain at all.
+func TestImportNestedBundleIncludeToExistingDangerousProfileIsGated(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":                     "D",
+		"filesystem":               []map[string]any{},
+		"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "write"}},
+		"break_glass_acknowledged": true,
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	bundle := map[string]any{
+		"format":            "tclaude-sandbox-profiles",
+		"format_version":    3,
+		"on_conflict":       "overwrite",
+		"apply_assignments": true,
+		"profiles": []map[string]any{
+			{"name": "A", "filesystem": []map[string]any{}, "includes": []string{"B"}},
+			{"name": "B", "filesystem": []map[string]any{}, "includes": []string{"D"}},
+		},
+		"assignments": map[string]any{"global": "A"},
+	}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"a nested bundle-internal chain to an existing dangerous profile must be gated; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+	assert.Contains(t, rec.Body.String(), tclaudeData)
+
+	// The refusal is total: neither profiles nor assignments were applied.
+	missing, err := db.GetSandboxProfile("A")
+	require.NoError(t, err)
+	assert.Nil(t, missing, "a refused import must not write any profile")
+	global, err := db.GetGlobalSandboxProfile()
+	require.NoError(t, err)
+	assert.Nil(t, global, "a refused import must not apply any assignment")
+
+	bundle["break_glass_acknowledged"] = true
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+}
+
+// skip and overwrite must be judged against the row that will actually survive.
+// The bundle profile is harmless and the local one is dangerous, so the two
+// policies genuinely diverge — and the gate has to follow.
+func TestImportConflictPolicyDecidesWhichRowTheGateJudges(t *testing.T) {
+	tclaudeDataOf := func(t *testing.T) string {
+		p, _, _ := protectedTestDirs(t)
+		return p
+	}
+
+	// skip: the DANGEROUS local row survives, so the assignment is gated.
+	t.Run("skip keeps the dangerous local row", func(t *testing.T) {
+		f := newFlow(t)
+		tclaudeData := tclaudeDataOf(t)
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+			"name":                     "shared",
+			"filesystem":               []map[string]any{},
+			"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "read"}},
+			"break_glass_acknowledged": true,
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+		rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+			"format": "tclaude-sandbox-profiles", "format_version": 3,
+			"on_conflict": "skip", "apply_assignments": true,
+			"profiles":    []map[string]any{{"name": "shared", "filesystem": []map[string]any{}}},
+			"assignments": map[string]any{"global": "shared"},
+		})
+		require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+			"skip keeps the dangerous local profile, so the assignment is dangerous; body=%s", rec.Body.String())
+	})
+
+	// overwrite: the HARMLESS bundle row replaces it, so no gate applies.
+	t.Run("overwrite replaces it with the harmless row", func(t *testing.T) {
+		f := newFlow(t)
+		tclaudeData := tclaudeDataOf(t)
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+			"name":                     "shared",
+			"filesystem":               []map[string]any{},
+			"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "read"}},
+			"break_glass_acknowledged": true,
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+		rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+			"format": "tclaude-sandbox-profiles", "format_version": 3,
+			"on_conflict": "overwrite", "apply_assignments": true,
+			"profiles":    []map[string]any{{"name": "shared", "filesystem": []map[string]any{}}},
+			"assignments": map[string]any{"global": "shared"},
+		})
+		require.Equalf(t, http.StatusOK, rec.Code,
+			"overwrite replaces it with a harmless profile, so nothing dangerous is assigned; body=%s", rec.Body.String())
+		stored, err := db.GetSandboxProfile("shared")
+		require.NoError(t, err)
+		assert.Empty(t, stored.BreakGlassFilesystem)
+	})
+}
+
+// setupAcknowledgedBreakGlassAgent launches an agent that legitimately holds an
+// acknowledged protected grant, under a mode that can actually enforce it.
+func setupAcknowledgedBreakGlassAgent(t *testing.T, f *testharness.Flow, access string) (convID, tmuxSession, tclaudeData string) {
+	t.Helper()
+	tclaudeData, _, _ = protectedTestDirs(t)
+	f.HaveGroup("crew")
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":                     "dbg",
+		"filesystem":               []map[string]any{},
+		"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": access}},
+		"break_glass_acknowledged": true,
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile",
+		map[string]any{"name": "dbg", "break_glass_acknowledged": true})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "approval": "bypassPermissions",
+		"break_glass_acknowledged": true, "sandbox": harness.ClaudeSandboxOn,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	return spawn.ConvID, spawn.TmuxSession, tclaudeData
+}
+
+// A legitimately acknowledged grant must actually be able to relaunch. Before
+// the mode was preserved, relaunch reset Claude to `inherit`, the capability
+// gate correctly refused to re-open protected denies under it, and the agent
+// became unresumable.
+func TestAcknowledgedBreakGlassAgentCanResume(t *testing.T) {
+	f := newFlow(t)
+	convID, tmuxSession, tclaudeData := setupAcknowledgedBreakGlassAgent(t, f, "read")
+
+	f.MarkOffline(tmuxSession)
+	resumed := f.AsHuman().Resume(convID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "resume body=%s", resumed.Raw)
+	assert.NotContains(t, string(resumed.Raw), "sandbox_profile_changed",
+		"an acknowledged grant must remain relaunchable")
+
+	after, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	require.Len(t, after.Effective.BreakGlassFilesystem, 1,
+		"the acknowledged grant survives the relaunch")
+	assert.Equal(t, tclaudeData, after.Effective.BreakGlassFilesystem[0].Path)
+	assert.Equal(t, sandboxpolicy.AccessRead, after.Effective.BreakGlassFilesystem[0].Access)
+
+	// And the enforceable mode was preserved, not reset to the harness default.
+	row, err := db.FindSessionByConvID(convID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, harness.ClaudeSandboxOn, row.SandboxMode)
+}
+
+// Prior READ plus ambient WRITE must remain read: resume may never widen.
+func TestResumeKeepsPriorReadWhenAmbientProfileWidensToWrite(t *testing.T) {
+	f := newFlow(t)
+	convID, tmuxSession, tclaudeData := setupAcknowledgedBreakGlassAgent(t, f, "read")
+
+	rec := profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/dbg", map[string]any{
+		"name": "dbg", "filesystem": []map[string]any{},
+		"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "write"}},
+		"break_glass_acknowledged": true,
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	f.MarkOffline(tmuxSession)
+	resumed := f.AsHuman().Resume(convID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "resume body=%s", resumed.Raw)
+	assert.NotContains(t, string(resumed.Raw), "sandbox_profile_changed")
+
+	after, err := db.AgentEffectiveSandboxConfigForConv(convID)
+	require.NoError(t, err)
+	require.Len(t, after.Effective.BreakGlassFilesystem, 1)
+	assert.Equal(t, sandboxpolicy.AccessRead, after.Effective.BreakGlassFilesystem[0].Access,
+		"a recorded read must not become a write because the ambient profile changed")
+}
+
+// Self-reincarnation is a relaunch too, and must obey the same boundary in
+// both directions: none -> write and read -> write.
+func TestSelfReincarnateCannotAcquireOrWidenAmbientBreakGlass(t *testing.T) {
+	t.Run("none to write", func(t *testing.T) {
+		f := newFlow(t)
+		tclaudeData, _, _ := protectedTestDirs(t)
+		f.HaveGroup("crew")
+		rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+			"name": "grp", "filesystem": []map[string]any{},
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+		rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "grp"})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": "worker", "approval": "bypassPermissions", "sandbox": harness.ClaudeSandboxOn,
+		})
+		require.Equalf(t, http.StatusOK, spawn.Code, "body=%s", spawn.Raw)
+
+		rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/grp", map[string]any{
+			"name": "grp", "filesystem": []map[string]any{},
+			"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "write"}},
+			"break_glass_acknowledged": true,
+		})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermAgentReincarnate, "test"))
+		require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermAgentReincarnate, "test"))
+	r := f.AsAgent(spawn.ConvID).Reincarnate(spawn.ConvID, "carry on")
+		require.Equalf(t, http.StatusOK, r.Code, "reincarnate body=%s", r.Raw)
+		after, err := db.AgentEffectiveSandboxConfigForConv(r.NewConv)
+		require.NoError(t, err)
+		if after != nil {
+			assert.Empty(t, after.Effective.BreakGlassFilesystem,
+				"a successor must not acquire protected access its predecessor never had")
+		}
+	})
+
+	t.Run("read to write", func(t *testing.T) {
+		f := newFlow(t)
+		convID, _, tclaudeData := setupAcknowledgedBreakGlassAgent(t, f, "read")
+
+		rec := profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/dbg", map[string]any{
+			"name": "dbg", "filesystem": []map[string]any{},
+			"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "write"}},
+			"break_glass_acknowledged": true,
+		})
+		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+		require.NoError(t, db.GrantAgentPermission(convID, agentd.PermAgentReincarnate, "test"))
+		r := f.AsAgent(convID).Reincarnate(convID, "carry on")
+		require.Equalf(t, http.StatusOK, r.Code, "reincarnate body=%s", r.Raw)
+		after, err := db.AgentEffectiveSandboxConfigForConv(r.NewConv)
+		require.NoError(t, err)
+		if after != nil && len(after.Effective.BreakGlassFilesystem) > 0 {
+			assert.Equal(t, sandboxpolicy.AccessRead, after.Effective.BreakGlassFilesystem[0].Access,
+				"a successor must not widen a recorded read into a write")
+		}
+	})
+}
+
+// The baseline boundary must hold on reincarnation as well as resume.
+func TestSelfReincarnateCannotWidenMinimalBaselineToDefault(t *testing.T) {
+	f := newFlow(t)
+	protectedTestDirs(t)
+	f.HaveGroup("crew")
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "grp", "filesystem": []map[string]any{}, "read_baseline": "minimal",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "grp"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "approval": "never",
+		"harness": harness.CodexName, "sandbox": harness.SandboxManagedProfile,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "body=%s", spawn.Raw)
+
+	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/grp", map[string]any{
+		"name": "grp", "filesystem": []map[string]any{},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermAgentReincarnate, "test"))
+	r := f.AsAgent(spawn.ConvID).Reincarnate(spawn.ConvID, "carry on")
+	require.Equalf(t, http.StatusOK, r.Code, "reincarnate body=%s", r.Raw)
+	after, err := db.AgentEffectiveSandboxConfigForConv(r.NewConv)
+	require.NoError(t, err)
+	if after != nil {
+		assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
+			"minimal -> default is widening and must not happen on reincarnation either")
+	}
+}

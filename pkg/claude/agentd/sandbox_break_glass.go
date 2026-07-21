@@ -74,41 +74,89 @@ func requirePayloadBreakGlassAck(what string, acknowledged bool, p *db.SandboxPr
 	return requireBreakGlassAck(what, acknowledged, grants)
 }
 
-// postImportBreakGlassForName reports the protected access an assignment to
-// name will carry AFTER the import commits. The bundle may be about to replace
-// the local profile of that name (or create it), so resolving against the
-// pre-import registry alone would miss or misjudge the danger. The active
-// conflict policy decides which payload wins: "skip" keeps the local one.
-func postImportBreakGlassForName(name string, incoming []*db.SandboxProfile, conflict string) ([]sandboxpolicy.BreakGlassGrant, error) {
-	local, err := db.GetSandboxProfile(name)
+// plannedSandboxRegistry is the EXACT registry state an import will produce.
+//
+// Gating on the pre-import registry (or a one-level fallback) is not sound: a
+// bundle can carry a nested chain A -> B -> D where B is bundle-internal and D
+// is an existing dangerous local profile, and a skip/overwrite collision means
+// the row that will actually be assigned may be the local one or the bundle's.
+// Resolving the acknowledgement against anything other than the true planned
+// result leaves a bypass. This builds that planned state once, and both the
+// gate and the assignment check flatten against it.
+type plannedSandboxRegistry map[string]*db.SandboxProfile
+
+// planSandboxImport computes the post-transaction registry for a conflict
+// policy. "error" is planned as though it succeeds — if it would actually
+// collide, the import fails later on its own terms, and planning it
+// optimistically only ever makes the gate stricter.
+func planSandboxImport(incoming []*db.SandboxProfile, conflict string) (plannedSandboxRegistry, error) {
+	locals, err := db.ListSandboxProfiles()
 	if err != nil {
 		return nil, err
 	}
-	var effective *db.SandboxProfile
+	planned := make(plannedSandboxRegistry, len(locals)+len(incoming))
+	for _, local := range locals {
+		planned[local.Name] = local
+	}
 	for _, candidate := range incoming {
-		if candidate.Name != name {
+		if _, collides := planned[candidate.Name]; collides && conflict == "skip" {
+			// skip keeps the local row, so the local payload is what any
+			// assignment will point at.
 			continue
 		}
-		// "skip" leaves an existing local profile untouched, so the local
-		// payload — not the bundle's — is what the assignment will point at.
-		if local != nil && conflict == "skip" {
-			break
-		}
-		effective = candidate
-		break
+		planned[candidate.Name] = candidate
 	}
-	if effective == nil {
-		effective = local
-	}
-	if effective == nil {
+	return planned, nil
+}
+
+// breakGlassInPlan flattens name against the planned registry, so bundle-internal
+// nested includes resolve exactly as they will after the commit.
+func (planned plannedSandboxRegistry) breakGlassFor(name string) ([]sandboxpolicy.BreakGlassGrant, error) {
+	profile, ok := planned[name]
+	if !ok || profile == nil {
 		// The assignment names a profile that will not exist; the import's own
 		// validation reports that. No protected access to acknowledge here.
 		return nil, nil
 	}
-	// Resolve includes against the registry. Bundle-internal includes may not
-	// be written yet, so fall back to the conservative one-level union rather
-	// than reporting nothing.
-	return flattenBreakGlassForPayload(effective)
+	flattened, err := sandboxpolicy.Flatten(sandboxProfileToPolicy(profile), func(include string) (*sandboxpolicy.Profile, error) {
+		included, ok := planned[include]
+		if !ok || included == nil {
+			return nil, nil
+		}
+		policy := sandboxProfileToPolicy(included)
+		return &policy, nil
+	})
+	if err != nil {
+		// A graph that cannot be flattened must not become a bypass. Report
+		// every protected grant reachable in the plan under this name so the
+		// gate stays conservative; the import reports the real graph error.
+		return planned.reachableBreakGlass(name), nil //nolint:nilerr // conservative fallback; the import reports the graph error
+	}
+	return flattened.BreakGlassFilesystem, nil
+}
+
+// reachableBreakGlass walks the include graph inside the plan without depth or
+// cycle assumptions, collecting every protected grant it can reach.
+func (planned plannedSandboxRegistry) reachableBreakGlass(name string) []sandboxpolicy.BreakGlassGrant {
+	seen := map[string]bool{}
+	out := []sandboxpolicy.BreakGlassGrant{}
+	var walk func(string)
+	walk = func(n string) {
+		if seen[n] {
+			return
+		}
+		seen[n] = true
+		profile, ok := planned[n]
+		if !ok || profile == nil {
+			return
+		}
+		out = append(out, profile.BreakGlassFilesystem...)
+		for _, include := range profile.Includes {
+			walk(include)
+		}
+	}
+	walk(name)
+	return out
 }
 
 // flattenBreakGlassForPayload resolves a not-yet-persisted profile payload

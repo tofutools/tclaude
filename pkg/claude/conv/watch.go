@@ -2382,9 +2382,19 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
+		resumeWriteDirs := writeDirs
+		if readBaseline == sandboxpolicy.ReadBaselineMinimal {
+			// Same invariant as the spawn path: without `extends = ":workspace"`
+			// nothing grants the launch directory, and GitWorktreeWriteDirs is
+			// empty outside a Git repository. Resume must not strand a minimal
+			// agent with no workspace.
+			if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
+				resumeWriteDirs = appendUniqueResumeDir(resumeWriteDirs, workspace)
+			}
+		}
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 			ReadDirs:            readDirs,
-			WriteDirs:           writeDirs,
+			WriteDirs:           resumeWriteDirs,
 			DenyDirs:            denyDirs,
 			ReadBaseline:        readBaseline,
 			BreakGlassReadDirs:  breakGlassReadDirs,
@@ -2404,6 +2414,29 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
 	return cmd, cleanupPath, h, nil
+}
+
+// canonicalResumeWorkspace mirrors the spawn path's minimal-workspace grant.
+// Symlink-resolved so the emitted rule names the path the sandbox will see.
+func canonicalResumeWorkspace(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(cwd))
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(resolved)
+}
+
+func appendUniqueResumeDir(dirs []string, dir string) []string {
+	for _, existing := range dirs {
+		if existing == dir {
+			return dirs
+		}
+	}
+	return append(dirs, dir)
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {

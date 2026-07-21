@@ -150,30 +150,37 @@ func ValidateSandboxBreakGlass(harnessName, sandboxMode string, grants []sandbox
 // Neither is acceptable, so the launch is refused with an actionable message.
 // (Claude has the opposite precedence and handles this shape natively.)
 func validateCodexBreakGlassShape(grants []sandboxpolicy.BreakGlassGrant) error {
-	_, privateStateDir, _, err := codexAgentSandboxPaths()
+	// EVERY protected root the managed profile denies, not just the
+	// private-state directory: the renderer now denies all three, so a child
+	// beneath ~/.codex or ~/.claude/sessions would be masked exactly the same
+	// way. Sourcing the list from sandboxpolicy means a future root cannot be
+	// added without this validation covering it.
+	roots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
 		return err
 	}
-	privateStateDir = filepath.Clean(privateStateDir)
-	if resolved, rerr := filepath.EvalSymlinks(privateStateDir); rerr == nil {
-		privateStateDir = filepath.Clean(resolved)
-	}
 	for _, grant := range grants {
 		path := filepath.Clean(grant.Path)
-		if path == privateStateDir || !pathIsUnder(privateStateDir, path) {
-			continue
-		}
-		return &SandboxCapabilityError{
-			Harness: CodexName,
-			Kind:    SandboxCapabilityBreakGlass,
-			Message: fmt.Sprintf(
-				"Codex cannot grant break-glass %s access to %q: it is inside the denied private-state directory %q, "+
-					"and Codex denies dominate any narrower grant regardless of path specificity, so the rule would be "+
-					"silently discarded. Reaching it would require dropping the deny on the whole directory, which would "+
-					"also expose every sibling you did not ask for. Either request %q itself (accepting the wider access) "+
-					"or run this debugging agent under Claude Code, whose allow rules re-open a child path without "+
-					"widening its parent.",
-				grant.Access, grant.Path, privateStateDir, privateStateDir),
+		for _, root := range roots {
+			root = filepath.Clean(root)
+			// At or above the root is representable: tclaude suppresses its own
+			// deny for exactly that path, and the operator acknowledged a grant
+			// covering everything the deny protected.
+			if path == root || !pathIsUnder(root, path) {
+				continue
+			}
+			return &SandboxCapabilityError{
+				Harness: CodexName,
+				Kind:    SandboxCapabilityBreakGlass,
+				Message: fmt.Sprintf(
+					"Codex cannot grant break-glass %s access to %q: it is inside the denied protected directory %q, "+
+						"and Codex denies dominate any narrower grant regardless of path specificity, so the rule would be "+
+						"silently discarded. Reaching it would require dropping the deny on the whole directory, which would "+
+						"also expose every sibling you did not ask for. Either request %q itself (accepting the wider access) "+
+						"or run this debugging agent under Claude Code, whose allow rules re-open a child path without "+
+						"widening its parent.",
+					grant.Access, grant.Path, root, root),
+			}
 		}
 	}
 	return nil

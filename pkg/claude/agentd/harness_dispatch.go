@@ -86,6 +86,46 @@ func harnessNativeTitle(convID string) (string, bool) {
 // (a relaunch tightening, never loosening, the sandbox), so it is intentional,
 // not a dropped-state bug. Per-conv mode persistence, if ever wanted, would be
 // a separate feature.
+// relaunchSandboxForConv returns the sandbox mode a resume, reincarnation, or
+// clone of convID must relaunch under: the mode that conversation was actually
+// recorded with, falling back to the harness default only when there is none.
+//
+// sandboxForHarness alone returns the harness DEFAULT, which for Claude Code is
+// the `inherit` sentinel. Using it for a relaunch silently downgraded an agent
+// that had been launched under `sandbox on` — its OS sandbox simply stopped
+// being enforced on the next resume. It also made an acknowledged break-glass
+// grant impossible to relaunch, because the capability gate correctly refuses
+// to re-open protected denies under a mode that cannot guarantee them.
+//
+// Preserving the recorded mode is the same principle the rest of relaunch
+// follows: replay the decision that was made, do not re-derive a new one.
+func relaunchSandboxForConv(convID, harnessName string) string {
+	fallback := sandboxForHarness(harnessName)
+	convID = strings.TrimSpace(convID)
+	if convID == "" {
+		return fallback
+	}
+	row, err := db.FindSessionByConvID(convID)
+	if err != nil || row == nil {
+		return fallback
+	}
+	recorded := strings.TrimSpace(row.SandboxMode)
+	if recorded == "" {
+		return fallback
+	}
+	h, err := harness.Resolve(strings.TrimSpace(harnessName))
+	if err != nil || !h.SupportsSandbox() {
+		return fallback
+	}
+	mode, err := h.Sandbox.ValidateMode(recorded)
+	if err != nil {
+		// An unrecognized stored value is not authority; fall back rather than
+		// threading an unvalidated string into a launch.
+		return fallback
+	}
+	return mode
+}
+
 func sandboxForHarness(name string) string {
 	if strings.TrimSpace(name) == harness.CodexName {
 		return harness.SandboxManagedProfile

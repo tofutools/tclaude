@@ -610,12 +610,26 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 	// Import is a fresh acknowledgement point by design: a bundle authored
 	// elsewhere carries the danger marker across machines, and the paths were
 	// only just canonicalized against THIS host's protected roots.
+	// Build the EXACT post-transaction registry once, and judge both the
+	// incoming profiles and the assignments against it. Anything less lets a
+	// bundle-internal nested include, or a skip/overwrite collision resolved
+	// against the wrong row, slip protected access past the gate.
+	planned, planErr := planSandboxImport(profiles, conflict)
+	if planErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", "plan sandbox profile import: "+planErr.Error())
+		return
+	}
 	var incoming []sandboxpolicy.BreakGlassGrant
 	var carriers []string
 	for _, p := range profiles {
-		if p.HasBreakGlass() {
+		grants, err := planned.breakGlassFor(p.Name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", "inspect imported sandbox profile: "+err.Error())
+			return
+		}
+		if len(grants) > 0 {
 			carriers = append(carriers, p.Name)
-			incoming = append(incoming, p.BreakGlassFilesystem...)
+			incoming = append(incoming, grants...)
 		}
 	}
 	// An import can introduce protected access WITHOUT any incoming profile
@@ -634,7 +648,7 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 			// Resolve against the registry as it will look AFTER this import,
 			// i.e. including any bundle profile of the same name that is about
 			// to be written under the active conflict policy.
-			grants, err := postImportBreakGlassForName(name, profiles, conflict)
+			grants, err := planned.breakGlassFor(name)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "io", "inspect imported assignment: "+err.Error())
 				return

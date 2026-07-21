@@ -321,7 +321,10 @@ func TestBreakGlassSurvivesIncludeComposition(t *testing.T) {
 		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}},
 	}, func(name string) (*Profile, error) { return registry[name], nil })
 	require.NoError(t, err)
-	assert.Equal(t, []BreakGlassGrant{{Path: tclaudeData, Access: AccessWrite, Origin: "danger"}}, got.BreakGlassFilesystem,
+	require.Len(t, got.BreakGlassFilesystem, 1)
+	assert.Equal(t, tclaudeData, got.BreakGlassFilesystem[0].Path)
+	assert.Equal(t, AccessWrite, got.BreakGlassFilesystem[0].Access)
+	assert.Equal(t, "danger", got.BreakGlassFilesystem[0].Attribution(),
 		"the authoring profile must survive flattening, not be replaced by the wrapper")
 }
 
@@ -340,8 +343,10 @@ func TestBreakGlassOriginSurvivesNestedIncludes(t *testing.T) {
 	flattened, err := Flatten(Profile{Name: "assigned", Includes: []string{"outer"}}, lookup)
 	require.NoError(t, err)
 	require.Len(t, flattened.BreakGlassFilesystem, 1)
-	assert.Equal(t, "leaf", flattened.BreakGlassFilesystem[0].Origin,
+	assert.Equal(t, "leaf", flattened.BreakGlassFilesystem[0].Attribution(),
 		"three levels down, the leaf still owns the rule")
+	assert.Equal(t, [][]string{{"leaf", "middle", "outer", "assigned"}},
+		flattened.BreakGlassFilesystem[0].Chains, "the exact include route is preserved")
 
 	effective, err := Resolve(Scopes{Explicit: &flattened})
 	require.NoError(t, err)
@@ -370,8 +375,12 @@ func TestBreakGlassOriginSurvivesDiamondIncludes(t *testing.T) {
 		byPath[grant.Path] = grant
 	}
 	require.Len(t, byPath, 2)
-	assert.Equal(t, "shared", byPath[tclaudeData].Origin, "both diamond arms attribute to the shared author")
-	assert.Equal(t, "right", byPath[claudeSessions].Origin)
+	assert.Equal(t, "shared", byPath[tclaudeData].Attribution(), "both diamond arms attribute to the shared author")
+	assert.Equal(t, [][]string{
+		{"shared", "left", "assigned"},
+		{"shared", "right", "assigned"},
+	}, byPath[tclaudeData].Chains, "BOTH diamond arms are preserved, not just one")
+	assert.Equal(t, "right", byPath[claudeSessions].Attribution())
 }
 
 // A rule the assigned profile authored itself keeps an empty Origin, so a
@@ -387,7 +396,8 @@ func TestBreakGlassOriginEmptyForDirectlyAuthoredRule(t *testing.T) {
 	}, func(name string) (*Profile, error) { return registry[name], nil })
 	require.NoError(t, err)
 	require.Len(t, flattened.BreakGlassFilesystem, 1)
-	assert.Empty(t, flattened.BreakGlassFilesystem[0].Origin)
+	assert.Empty(t, flattened.BreakGlassFilesystem[0].Chains)
+	assert.Empty(t, flattened.BreakGlassFilesystem[0].Attribution())
 
 	effective, err := Resolve(Scopes{Explicit: &flattened})
 	require.NoError(t, err)
@@ -553,3 +563,89 @@ func TestSnapshotVersionsOneAndTwoUpgradeToCurrent(t *testing.T) {
 }
 
 func itoa(v int) string { return strconv.Itoa(v) }
+
+// Provenance is DERIVED, never authored. If a caller could supply it, an
+// operator auditing a dangerous grant could be shown an attribution the
+// attacker chose — worse than no attribution at all.
+func TestBreakGlassProvenanceIsNotAcceptedFromInput(t *testing.T) {
+	_, tclaudeData, _, _ := protectedHome(t)
+
+	// Even when set directly on the in-memory struct, normalization strips it.
+	profile, _, err := NormalizeForPersistence(Profile{
+		Name: "attacker",
+		BreakGlassFilesystem: []BreakGlassGrant{{
+			Path: tclaudeData, Access: AccessWrite,
+			Chains: [][]string{{"some-trusted-profile", "another"}},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, profile.BreakGlassFilesystem, 1)
+	assert.Empty(t, profile.BreakGlassFilesystem[0].Chains,
+		"caller-supplied provenance must never survive an authoring boundary")
+	assert.Empty(t, profile.BreakGlassFilesystem[0].Attribution())
+
+	// And it is not part of the wire shape at all, so it cannot arrive by JSON.
+	encoded, err := json.Marshal(profile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "chain")
+	assert.NotContains(t, string(encoded), "origin")
+
+	var decoded Profile
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"name":"attacker","break_glass_filesystem":[{"path":`+mustJSON(t, tclaudeData)+
+			`,"access":"write","chains":[["trusted"]],"origin":"trusted"}]}`), &decoded))
+	require.Len(t, decoded.BreakGlassFilesystem, 1)
+	assert.Empty(t, decoded.BreakGlassFilesystem[0].Chains,
+		"a forged origin in JSON must be ignored, not decoded")
+}
+
+// The resolved audit record must survive the same attack: a forged chain on an
+// input profile cannot reach provenance.
+func TestResolveIgnoresForgedProvenanceOnInput(t *testing.T) {
+	_, tclaudeData, _, _ := protectedHome(t)
+	effective, err := Resolve(Scopes{Explicit: &Profile{
+		Name: "attacker",
+		BreakGlassFilesystem: []BreakGlassGrant{{
+			Path: tclaudeData, Access: AccessWrite,
+			Chains: [][]string{{"innocent-victim"}},
+		}},
+	}})
+	require.NoError(t, err)
+	sources := effective.Provenance.BreakGlassFilesystem[tclaudeData]
+	require.Len(t, sources, 1)
+	// The chain claims "innocent-victim", but Resolve only honors chains that
+	// Flatten derived — and Flatten was never run here, so the assigned
+	// profile is correctly named as the author.
+	assert.Equal(t, "attacker", sources[0].Profile)
+	assert.NotContains(t, sources[0].Chain, "innocent-victim")
+}
+
+// A profile that never touches break-glass must serialize with neither key,
+// including after a flatten/resolve round trip — the compatibility guarantee
+// the whole feature rests on.
+func TestDirectAndLegacyProfilesSerializeWithoutProvenanceKeys(t *testing.T) {
+	home, tclaudeData, _, _ := protectedHome(t)
+	workspace := filepath.Join(home, "workspace")
+	require.NoError(t, os.Mkdir(workspace, 0o755))
+
+	legacy, _, err := NormalizeForPersistence(Profile{
+		Name: "legacy", Filesystem: []FilesystemGrant{{Path: workspace, Access: AccessWrite}},
+	})
+	require.NoError(t, err)
+	encoded, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "break_glass")
+	assert.NotContains(t, string(encoded), "chain")
+
+	// A directly-authored break-glass profile carries the rule but no chain.
+	direct, _, err := NormalizeForPersistence(Profile{
+		Name:                 "direct",
+		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}},
+	})
+	require.NoError(t, err)
+	encoded, err = json.Marshal(direct)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), "break_glass_filesystem")
+	assert.NotContains(t, string(encoded), "chain")
+	assert.NotContains(t, string(encoded), "origin")
+}

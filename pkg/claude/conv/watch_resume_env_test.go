@@ -249,3 +249,41 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 	assert.NotContains(t, cmd, "CLAUDE_CODE_RESUME_THRESHOLD_MINUTES=525600000",
 		"an unconfigured override must not inject the suppress sentinel")
 }
+
+// The resume renderer must grant the launch directory under a minimal baseline
+// exactly as the spawn path does — GitWorktreeWriteDirs is empty outside a Git
+// repository, so without it a resumed minimal agent has no workspace at all.
+func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", t.TempDir())
+
+	// Deliberately not a Git repository.
+	workspace := filepath.Join(home, "plain-workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	sibling := filepath.Join(home, "sibling")
+	require.NoError(t, os.MkdirAll(sibling, 0o755))
+
+	writeDirs := []string{}
+	rules := harness.CodexSandboxRules{
+		WriteDirs:    writeDirs,
+		ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+	}
+	if ws := canonicalResumeWorkspace(workspace); ws != "" {
+		rules.WriteDirs = appendUniqueResumeDir(rules.WriteDirs, ws)
+	}
+	_, path, err := harness.EnsureCodexAgentLaunchProfileForRules(rules,
+		sandboxpolicy.NetworkAccessInherit, "1234567890abcdef")
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(raw)
+
+	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`,
+		"a resumed minimal agent must still be able to work in its launch directory")
+	assert.Contains(t, content, `":minimal" = "read"`)
+	assert.NotContains(t, content, `extends = ":workspace"`)
+	assert.NotContains(t, content, sibling, "nothing outside the workspace is granted")
+}

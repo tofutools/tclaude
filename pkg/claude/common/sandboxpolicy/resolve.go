@@ -3,6 +3,7 @@ package sandboxpolicy
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Scope identifies one tier in sandbox-profile resolution. Resolution always
@@ -25,6 +26,17 @@ type ProfileSource struct {
 	// both directions: which profile authored the rule, and which assignment
 	// actually caused it to apply. Omitted for a directly-authored rule.
 	IncludedBy string `json:"included_by,omitempty"`
+	// Chain is the exact include route, author → … → assigned profile. A
+	// diamond produces one ProfileSource per arm, so no route is hidden.
+	// Derived during resolution and never accepted from input.
+	Chain []string `json:"chain,omitempty"`
+}
+
+// DedupeKey is a canonical, comparable identity for a ProfileSource. The type
+// itself is not comparable (Chain is a slice), so callers that need set
+// semantics key on this instead.
+func (s ProfileSource) DedupeKey() string {
+	return string(s.Scope) + "\x00" + s.Profile + "\x00" + s.IncludedBy + "\x00" + strings.Join(s.Chain, "\x01")
 }
 
 // Scopes is the complete harness-neutral input to Resolve. Nil means that tier
@@ -130,6 +142,26 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if len(normalized.Includes) > 0 {
 			return EffectiveProfile{}, fmt.Errorf("%s sandbox profile %q still has unresolved includes at resolution time; flatten it first", tier.scope, normalized.Name)
 		}
+		// Normalization strips derived provenance by design, so recover the
+		// chains Flatten computed and match them back on by canonical path.
+		// Nothing outside Flatten can populate Chains (it is json:"-" and
+		// stripped at every authoring/import boundary), so this cannot be used
+		// to inject a forged origin.
+		chainsByPath := map[string][][]string{}
+		for _, grant := range tier.profile.BreakGlassFilesystem {
+			// Only honor provenance this package computed. A caller-built
+			// Profile carrying hand-written Chains is ignored and attributed to
+			// the assigned profile instead, so a forged origin can never be
+			// presented as audit truth.
+			if !tier.profile.ChainsAreDerived() || len(grant.Chains) == 0 {
+				continue
+			}
+			canonical, cerr := CanonicalBreakGlassPath(grant.Path)
+			if cerr != nil {
+				continue
+			}
+			chainsByPath[canonical] = unionChains(chainsByPath[canonical], grant.Chains)
+		}
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
 		for _, grant := range normalized.Filesystem {
@@ -153,20 +185,32 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			// that happened to include it. Without this an operator auditing a
 			// dangerous grant would be pointed at an innocent-looking profile
 			// whose own payload contains nothing dangerous at all.
-			grantSource := source
-			if grant.Origin != "" {
-				grantSource.Profile = grant.Origin
-				grantSource.IncludedBy = normalized.Name
+			// One source per distinct include chain, so a diamond reports both
+			// routes rather than collapsing to one. A directly-authored rule
+			// has no chain and reports the assigned profile itself.
+			grantSources := []ProfileSource{}
+			for _, chain := range chainsByPath[grant.Path] {
+				if len(chain) == 0 {
+					continue
+				}
+				chainSource := source
+				chainSource.Profile = chain[0]
+				chainSource.IncludedBy = normalized.Name
+				chainSource.Chain = append([]string(nil), chain...)
+				grantSources = append(grantSources, chainSource)
+			}
+			if len(grantSources) == 0 {
+				grantSources = append(grantSources, source)
 			}
 			current, exists := breakGlass[grant.Path]
 			if !exists {
-				breakGlass[grant.Path] = resolvedBreakGlassGrant{access: grant.Access, sources: []ProfileSource{grantSource}}
+				breakGlass[grant.Path] = resolvedBreakGlassGrant{access: grant.Access, sources: grantSources}
 				continue
 			}
 			if accessRank(grant.Access) > accessRank(current.access) {
 				current.access = grant.Access
 			}
-			current.sources = append(current.sources, grantSource)
+			current.sources = append(current.sources, grantSources...)
 			breakGlass[grant.Path] = current
 		}
 		if normalized.ReadBaseline == ReadBaselineMinimal && result.ReadBaseline != ReadBaselineMinimal {
@@ -296,13 +340,16 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 
 func canonicalSources(in []ProfileSource) []ProfileSource {
 	rank := map[Scope]int{ScopeGlobal: 0, ScopeGroup: 1, ScopeExplicit: 2}
-	seen := make(map[ProfileSource]struct{}, len(in))
+	// ProfileSource carries a Chain slice and is therefore not comparable, so
+	// dedupe on a derived key rather than the struct itself.
+	seen := make(map[string]struct{}, len(in))
 	out := make([]ProfileSource, 0, len(in))
 	for _, source := range in {
-		if _, exists := seen[source]; exists {
+		key := source.DedupeKey()
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[source] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, source)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Scope] < rank[out[j].Scope] })

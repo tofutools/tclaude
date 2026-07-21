@@ -367,7 +367,9 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
-	reincarnateSandbox := sandboxForHarness(oldSess.Harness)
+	// A successor inherits the predecessor's recorded sandbox posture, not the
+	// harness default — reincarnation must not weaken the sandbox.
+	reincarnateSandbox := relaunchSandboxForConv(oldSess.ConvID, oldSess.Harness)
 	if fail := sandboxProfileCapabilityFailure(oldSess.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return

@@ -550,21 +550,39 @@ shallowest-first. Any other harness/mode combination is rejected with the typed
 `unsupported_sandbox_profile_break_glass` error.
 
 **Composition and audit.** Break-glass merges as a privilege-monotonic union
-(write dominating read on one canonical path). The profile that *authored* each
-rule survives include flattening, so the resolved launch echo and audit record
-name the authoring profile and the assignment that pulled it in — an
-innocent-looking wrapper can never take the blame or the credit for a rule it
-inherited. Creating, editing, importing, or assigning a profile that inherits
-break-glass through an include requires the same acknowledgement as one that
-declares it directly.
+(write dominating read on one canonical path). Each rule records the exact
+include route it arrived by — author → … → assigned profile — and a diamond
+keeps *both* arms, so the resolved launch echo and audit record show every path
+by which dangerous authority reached an agent. An innocent-looking wrapper can
+never take the blame or the credit for a rule it inherited.
 
-**Resume never gains authority.** Resume re-resolves ordinary rules from the
-current registry, but the protected-access decision and the read baseline are
-clamped to what was recorded at launch: break-glass is intersected with the
-frozen snapshot (never added, never widened read → write) and the baseline
-takes the stricter of the two. There is no human in the loop on resume to
-acknowledge new protected access, so it is never granted implicitly. To widen a
-running agent's protected access, spawn a fresh one and acknowledge it.
+That provenance is **derived, never authored**: it is not part of the profile
+wire shape, is stripped at every authoring and import boundary, and is honored
+only on values this package computed. A caller cannot supply an attribution and
+have tclaude present it as audit truth.
+
+Creating, editing, importing, or assigning a profile that inherits break-glass
+through an include requires the same acknowledgement as one that declares it
+directly. Import evaluates the exact registry state the transaction will
+produce — including bundle-internal nested includes, and honoring the
+`skip`/`overwrite` conflict policy — so the gate always judges the row that
+will actually be assigned.
+
+**Resume and reincarnation never gain authority.** Both re-resolve ordinary
+rules from the current registry, but the protected-access decision and the read
+baseline are clamped to what was recorded at launch: break-glass is intersected
+with the frozen snapshot (never added, never widened read → write) and the
+baseline takes the stricter of the two. There is no human in the loop on a
+relaunch to acknowledge new protected access, so it is never granted
+implicitly. To widen a running agent's protected access, spawn a fresh one and
+acknowledge it.
+
+A relaunch also **preserves the sandbox mode the agent was launched under**
+rather than re-deriving the harness default. This keeps an enforced `sandbox
+on` posture from being silently dropped on resume, and it is what allows a
+legitimately acknowledged break-glass agent to be resumed or reincarnated at
+all — the capability gate correctly refuses to re-open protected denies under a
+mode that cannot guarantee them.
 
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private

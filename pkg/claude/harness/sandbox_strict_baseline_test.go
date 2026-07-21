@@ -298,32 +298,41 @@ func TestClaudeBreakGlassChildPathReachableWhileSiblingsStayDenied(t *testing.T)
 // child-path reopen is unrepresentable. Rather than silently discarding the
 // acknowledged access (or suppressing the parent deny and exposing every
 // sibling), the launch is refused with a typed, actionable error.
+// The renderer denies EVERY protected root, so the child-path refusal has to
+// cover every one of them — a child beneath ~/.codex or ~/.claude/sessions
+// would be masked exactly like one beneath ~/.tclaude/data. Iterating the
+// sandboxpolicy set means a future root cannot regress this.
 func TestCodexBreakGlassChildPathIsTypedCapabilityErrorNotOvergrant(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	require.NoError(t, os.MkdirAll(home+"/.tclaude/data/processes", 0o755))
-	canonicalHome, err := filepath.EvalSymlinks(home)
-	require.NoError(t, err)
-
-	for _, access := range []sandboxpolicy.Access{sandboxpolicy.AccessRead, sandboxpolicy.AccessWrite} {
-		err := ValidateSandboxBreakGlass(CodexName, SandboxManagedProfile, []sandboxpolicy.BreakGlassGrant{
-			{Path: canonicalHome + "/.tclaude/data/processes", Access: access},
-		})
-		require.Errorf(t, err, "access %s", access)
-		var capErr *SandboxCapabilityError
-		require.True(t, errors.As(err, &capErr))
-		assert.Equal(t, SandboxCapabilityBreakGlass, capErr.Kind)
-		assert.Contains(t, capErr.Message, "silently discarded")
-		assert.Contains(t, capErr.Message, "expose every sibling",
-			"the refusal must say why suppressing the parent deny is not an option")
+	for _, dir := range []string{".tclaude/data", ".claude/sessions", ".codex"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, dir, "child"), 0o755))
 	}
+	roots, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.Len(t, roots, 3)
 
-	// The root itself stays representable — that is the shape Codex CAN do.
-	require.NoError(t, ValidateSandboxBreakGlass(CodexName, SandboxManagedProfile,
-		[]sandboxpolicy.BreakGlassGrant{{Path: canonicalHome + "/.tclaude/data", Access: sandboxpolicy.AccessWrite}}))
-	// So do the protected roots the Codex adapter does not itself deny.
-	require.NoError(t, ValidateSandboxBreakGlass(CodexName, SandboxManagedProfile,
-		[]sandboxpolicy.BreakGlassGrant{{Path: canonicalHome + "/.codex", Access: sandboxpolicy.AccessRead}}))
+	for _, root := range roots {
+		for _, access := range []sandboxpolicy.Access{sandboxpolicy.AccessRead, sandboxpolicy.AccessWrite} {
+			err := ValidateSandboxBreakGlass(CodexName, SandboxManagedProfile, []sandboxpolicy.BreakGlassGrant{
+				{Path: filepath.Join(root, "child"), Access: access},
+			})
+			require.Errorf(t, err, "root %s access %s must be refused, not silently masked", root, access)
+			var capErr *SandboxCapabilityError
+			require.True(t, errors.As(err, &capErr))
+			assert.Equal(t, SandboxCapabilityBreakGlass, capErr.Kind)
+			assert.Contains(t, capErr.Message, "silently discarded")
+			assert.Contains(t, capErr.Message, "expose every sibling",
+				"the refusal must say why suppressing the parent deny is not an option")
+		}
+
+		// The root itself stays representable — that is the shape Codex CAN do.
+		for _, access := range []sandboxpolicy.Access{sandboxpolicy.AccessRead, sandboxpolicy.AccessWrite} {
+			require.NoErrorf(t, ValidateSandboxBreakGlass(CodexName, SandboxManagedProfile,
+				[]sandboxpolicy.BreakGlassGrant{{Path: root, Access: access}}),
+				"an exact-root grant must remain allowed (root %s access %s)", root, access)
+		}
+	}
 }
 
 // Suppressing the private-state deny for an at-or-above grant must not disturb
