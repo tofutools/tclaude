@@ -36,14 +36,20 @@ const EXCLUSION_SECTION_HELP = 'Deny reads of sensitive locations on top of the 
 /* One compact exclusion choice: checkbox plus a short label, with the long
    description, warning, audited paths and inherited provenance reachable
    through the adjacent [?]. `disabled` doubles as the locked treatment; the
-   badge names why (inherited from another profile, or locked by Minimal). */
+   badge names why (inherited from another profile, or locked by Minimal).
+
+   The badge cell is always emitted, empty badge included: it is a grid column,
+   and dropping the element for unbadged rows would auto-place their [?] into
+   the badge's content-sized column instead of the reserved trigger column, so
+   the triggers would not line up down a mixed list. */
 function ExclusionRow({ id, label, badge, help, content, checked, disabled, unknown, onChange, helpOpen, setHelpOpen }) {
   const inputID = `sandbox-exclusion-${id}`;
   const helpID = `${inputID}-help`;
+  const described = help || content;
   return html`<div class=${`sbx-exclusion-row${disabled ? ' locked' : ''}${unknown ? ' unknown' : ''}`}>
     <label class="sbx-exclusion-choice" for=${inputID}><input id=${inputID} type="checkbox" checked=${checked}
-      disabled=${disabled} aria-describedby=${`${helpID}-hint`} onChange=${onChange}/><span class="sbx-exclusion-name">${label}</span></label>
-    ${badge && html`<span class="sbx-exclusion-badge">${badge}</span>`}
+      disabled=${disabled} aria-describedby=${described ? `${helpID}-hint` : null} onChange=${onChange}/><span class="sbx-exclusion-name">${label}</span></label>
+    <span class="sbx-exclusion-badge">${badge}</span>
     <${HelpDisclosure} id=${helpID} label=${label} help=${help} content=${content}
       open=${helpOpen === helpID} setOpen=${setHelpOpen}/>
   </div>`;
@@ -285,8 +291,12 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
           html`<code key="paths">${paths || '(no audited paths on this platform)'}</code>`,
           origins.length ? html`<span key="origins">From ${origins.join(', ')}</span>` : null,
         ];
+        // Minimal locks every row, but that must not erase the separate fact
+        // that a row is also contributed by another profile — provenance is
+        // what tells the operator where to go to remove it.
+        const badge = [effective && !own ? 'inherited' : '', draft.read_baseline === 'minimal' ? 'locked' : ''].filter(Boolean).join(' · ');
         return html`<${ExclusionRow} key=${category.id} id=${category.id} label=${category.label}
-          badge=${draft.read_baseline === 'minimal' ? 'locked' : (locked ? 'inherited' : '')} help=${help} content=${content}
+          badge=${badge} help=${help} content=${content}
           checked=${!!effective} disabled=${locked} onChange=${() => toggleReadExclusion(category.id)}
           helpOpen=${exclusionHelpOpen} setHelpOpen=${setExclusionHelpOpen}/>`;
       })}

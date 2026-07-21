@@ -3913,6 +3913,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
   color: #8b949e; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap;
   border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px;
 }
+/* An unbadged row still emits its badge cell so the [?] column stays aligned;
+   the chrome is what has to disappear, not the grid item. */
+.sbx-exclusion-badge:empty { border-color: transparent; padding: 0; }
 .sbx-exclusion-row.locked { opacity: .78; }
 .sbx-exclusion-row.unknown { border-color: rgba(248, 81, 73, 0.55); }
 .sbx-exclusion-row.unknown .sbx-exclusion-badge { color: #ffa198; border-color: rgba(248, 81, 73, 0.55); }

@@ -505,7 +505,9 @@ test('sandbox exclusion rows stay compact and keep their copy behind [?]', async
   assert.equal(ssh.querySelector('.sbx-exclusion-name').textContent, 'Deny SSH');
   assert.equal(ssh.querySelector('.spawn-field-description').textContent.includes('SSH credentials'), true);
   assert.equal(ssh.querySelector('.sbx-exclusion-choice').textContent.includes('SSH credentials'), false);
-  assert.equal(ssh.querySelector('.sbx-exclusion-badge'), null, 'a freely toggleable row carries no lock badge');
+  // The badge cell is always emitted so the [?] column stays aligned; a freely
+  // toggleable row simply leaves it empty.
+  assert.equal(ssh.querySelector('.sbx-exclusion-badge').textContent, '', 'a freely toggleable row carries no lock badge');
   // The checkbox is still labelled by the visible text and described by the help.
   const box = ssh.querySelector('input');
   assert.equal(ssh.querySelector('label').getAttribute('for'), box.id);
@@ -524,6 +526,15 @@ test('sandbox exclusion rows stay compact and keep their copy behind [?]', async
   assert.equal(inherited.classList.contains('locked'), true);
   assert.equal(inherited.querySelector('.sbx-exclusion-badge').textContent, 'inherited');
   assert.match(inherited.querySelector('.spawn-field-description').textContent, /From .*base/);
+  // Minimal locks every row, but must not erase the inherited provenance that
+  // tells the operator which profile to go remove the restriction from.
+  const baseline = host.querySelector('#sandbox-profile-editor-read-baseline');
+  baseline.querySelector('option[value="minimal"]').selected = true;
+  baseline.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  const badges = [...host.querySelectorAll('.sbx-exclusion-row .sbx-exclusion-badge')].map((node) => node.textContent);
+  assert.deepEqual(badges, ['locked', 'inherited · locked']);
+  assert.deepEqual([...host.querySelectorAll('.sbx-exclusion-row input')].map((node) => node.disabled), [true, true]);
   // Section-level guidance is behind its own [?] rather than an inline paragraph.
   const intro = host.querySelector('.sbx-exclusion-intro');
   assert.ok(intro.querySelector('.spawn-field-help-trigger'));
