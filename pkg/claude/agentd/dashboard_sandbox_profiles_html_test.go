@@ -19,6 +19,9 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`actions.openSandboxClone(item)`:                                             "clone action opens the guarded sandbox editor",
 		`options: { editExisting: false, cloneSourceName: source.name }`:             "clone editor retains create semantics and source context",
 		`options.editExisting === false`:                                             "clone save cannot patch its source profile",
+		`const MAX_SANDBOX_PROFILE_NAME_BYTES = 200`:                                 "clone suggestions obey the server name limit",
+		`{ editExisting }`:                                                           "scribe handoff carries explicit create/edit mode",
+		`{ ...editorOptions, targetName, onCreate, notice:`:                          "returned scribe drafts preserve clone-create mode",
 		`class="sbx-agent-name"`:                                                     "structured agent-owned directory row",
 		`.sbx-section input:not([type])`:                                             "Preact structured inputs retain dark modal styling",
 		`.sbx-section select`:                                                        "Preact structured selects retain dark modal styling",
@@ -112,7 +115,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`Agent draft loaded. Review every field`:                                     "explicit human preview",
 		"fetch(`/api/sandbox-profile-drafts/":                                        "draft handoff polling",
 		`createSandboxDraftQueue`:                                                    "parallel draft queue",
-		`sandboxDraftQueue.enqueue({ draft, targetName, onCreate })`:                 "completed drafts are retained",
+		`sandboxDraftQueue.enqueue({ draft, targetName, onCreate, editorOptions })`:  "completed drafts retain their editor mode",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard missing %q (%s)", needle, why)
@@ -145,9 +148,9 @@ func TestDashboardSandboxCreateCapturesAssignmentTarget(t *testing.T) {
 
 func TestDashboardNamedNewSandboxScribeDraftRemainsCreate(t *testing.T) {
 	for needle, why := range map[string]string{
-		`openSandboxProfileEditor(draft.profile, { targetName, onCreate, notice:`: "scribe preserves the explicit target",
-		`openSandboxProfileEditor(seed, { targetName, onCreate, notice:`:          "scribe failure preserves the explicit target",
-		`targetName || seed?.name || ''`:                                          "management action forwards the intended edit target",
+		`openSandboxProfileEditor(draft.profile, { ...editorOptions, targetName, onCreate, notice:`: "scribe preserves the explicit target and create mode",
+		`openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice:`:          "scribe failure preserves the explicit target and create mode",
+		`editExisting ? options.targetName || seed?.name || '' : ''`:                                "management action distinguishes a named create draft from an edit target",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("missing %q (%s)", needle, why)

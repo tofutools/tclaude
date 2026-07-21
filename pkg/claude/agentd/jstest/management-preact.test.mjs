@@ -265,10 +265,12 @@ test('sandbox manager clones a full profile through the guarded create editor', 
     { name: 'base' }, source, { name: 'restricted-copy' }, { name: 'restricted-copy-2' },
   ]);
   state.openManager('sandbox');
+  let scribeCall = null;
   const actions = createManagementActions({
     state,
     confirm: async () => true,
     notify() {},
+    summonSandboxScribe: async (...args) => { scribeCall = args; },
     sandboxAPI: {
       loadSandboxReadExclusionCatalog: async () => ({ version: 1, categories: [], informational: [] }),
       inspectSandboxDirectories: async () => ({ missing: [], creatable: [] }),
@@ -290,7 +292,69 @@ test('sandbox manager clones a full profile through the guarded create editor', 
   assert.match(host.querySelector('#sandbox-profile-editor-title').textContent, /Clone sandbox profile: restricted/);
   assert.equal(host.querySelector('#sandbox-profile-editor-modal input').value, 'restricted-copy-3');
   assert.ok(host.querySelector('#sandbox-profile-editor-break-glass-ack'), 'cloned authority still demands a fresh acknowledgement');
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-scribe'), 'click'));
+  assert.equal(scribeCall[1], '', 'the clone scribe handoff has no edit target');
+  assert.deepEqual(scribeCall[3], { editExisting: false }, 'the clone scribe handoff explicitly preserves create mode');
   cleanups.reverse().forEach((fn) => fn());
+});
+
+test('sandbox clone suggestions stay within the UTF-8 server limit across collisions', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+  ]);
+  const state = createManagementState();
+  const source = { name: 'é'.repeat(100), filesystem: [], environment: [] };
+  state.sandboxProfiles.value = [source];
+  const actions = createManagementActions({ state, confirm: async () => true, notify() {} });
+  actions.openSandboxClone(source);
+  const first = state.dialog.value.seed.name;
+  assert.ok(new TextEncoder().encode(first).length <= 200);
+  assert.equal(first.endsWith('-copy'), true);
+  assert.equal(first.includes('\uFFFD'), false, 'truncation never splits a Unicode code point');
+
+  state.sandboxProfiles.value = [source, { name: first }];
+  actions.openSandboxClone(source);
+  const second = state.dialog.value.seed.name;
+  assert.ok(new TextEncoder().encode(second).length <= 200);
+  assert.equal(second.endsWith('-copy-2'), true);
+  assert.notEqual(second, first);
+});
+
+test('sandbox scribe return reopens clone drafts in explicit create mode', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/refresh.js', 'export function toast() {}');
+  await harness.replaceDashboardModule('js/terminals-tab.js', 'export function openTermModal() {}');
+  const [{ registerManagementController }, { summonSandboxScribe }] = await Promise.all([
+    harness.importDashboardModule('js/management-controller.js'),
+    harness.importDashboardModule('js/sandbox-profiles.js'),
+  ]);
+  let opened = null;
+  const unregister = registerManagementController({
+    openSandboxProfileEditor(seed, options) { opened = { seed, options }; },
+  });
+  t.after(unregister);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (path) => {
+    if (path === '/api/scribe') return { ok: true, json: async () => ({ name: 'sandbox-scribe' }) };
+    if (String(path).startsWith('/api/sandbox-profile-drafts/')) {
+      return { ok: true, json: async () => ({ profile: { name: 'restricted-copy', filesystem: [] } }) };
+    }
+    throw new Error(`unexpected fetch: ${path}`);
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  await summonSandboxScribe(
+    { name: 'restricted-copy', filesystem: [] },
+    '',
+    null,
+    { editExisting: false },
+  );
+  await harness.act(() => Promise.resolve());
+  assert.equal(opened.seed.name, 'restricted-copy');
+  assert.equal(opened.options.targetName, '');
+  assert.equal(opened.options.editExisting, false, 'the returned named draft remains a create');
 });
 
 test('profile editor Escape follows the visual stack over a later spawn dialog', async (t) => {

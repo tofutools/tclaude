@@ -22,6 +22,27 @@ import {
   createSandboxDirectories,
 } from './sandbox-profiles-data.js';
 
+const MAX_SANDBOX_PROFILE_NAME_BYTES = 200;
+
+function utf8Length(value) {
+  return new TextEncoder().encode(value).length;
+}
+
+function sandboxCloneName(sourceName, existingNames) {
+  const names = new Set(existingNames);
+  for (let suffix = 1; ; suffix += 1) {
+    const tail = suffix === 1 ? '-copy' : `-copy-${suffix}`;
+    const budget = MAX_SANDBOX_PROFILE_NAME_BYTES - utf8Length(tail);
+    let prefix = '';
+    for (const char of sourceName) {
+      if (utf8Length(prefix + char) > budget) break;
+      prefix += char;
+    }
+    const candidate = prefix + tail;
+    if (!names.has(candidate)) return candidate;
+  }
+}
+
 function downloadJSON(name, value) {
   const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], {
     type: 'application/json',
@@ -342,10 +363,10 @@ export function createManagementActions({
       notify('sandbox profile not found', true);
       return false;
     }
-    const base = `${source.name}-copy`;
-    const names = new Set((state.sandboxProfiles.value || []).map((profile) => profile.name));
-    let name = base;
-    for (let suffix = 2; names.has(name); suffix += 1) name = `${base}-${suffix}`;
+    const name = sandboxCloneName(
+      source.name,
+      (state.sandboxProfiles.value || []).map((profile) => profile.name),
+    );
     // Keep clone creation in the normal sandbox editor. Besides making the
     // copy reviewable, this preserves its normalized diff and the mandatory
     // fresh acknowledgement when break-glass authority is carried over.
@@ -942,10 +963,13 @@ export function createManagementActions({
     return result;
   }
   async function configureSandboxWithAgent(seed, options = {}) {
+    const editExisting = options.editExisting !== false
+      && !!(options.targetName || seed?.name);
     await summonSandboxScribe(
       seed,
-      options.targetName || seed?.name || '',
+      editExisting ? options.targetName || seed?.name || '' : '',
       options.onCreate || null,
+      { editExisting },
     );
   }
   function inspectDirectories(filesystem) {
