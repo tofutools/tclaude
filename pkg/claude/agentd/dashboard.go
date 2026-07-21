@@ -1703,8 +1703,10 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// is only trustworthy because of this step, since the hook stream
 		// announces a background shell's launch but never its exit.
 		out.BgShellCount = bgShellCountOnRead(pick, alive)
-		// Keep the status consistent with the reconciled counts, in both
-		// directions:
+		// Keep the status consistent with the reconciled counts. The stored
+		// row's status_detail was written by whichever hook last fired, off
+		// the counts AS THEY WERE THEN — so any of the three cases below can
+		// leave it disagreeing with the badges rendered beside it.
 		//
 		// Settling DOWN: a row can be stuck at main_agent_idle / "N
 		// subagents running" when a ledger emptied without a stop event
@@ -1717,14 +1719,27 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// Notification, for one, sets a bare idle without consulting any
 		// ledger. Rendering that agent as plain idle is exactly the bug
 		// this feature exists to fix: it is not finished, it is waiting on
-		// a command. Either way only the DISPLAY is adjusted; the stored
-		// row converges on the session's next hook.
+		// a command.
+		//
+		// PARTIAL change: two shells reconciled down to one moves neither
+		// boundary, so without the last case the pill would keep reading
+		// "2 background shells running" next to a ⚙+1 badge. Re-rendering
+		// the detail from the reconciled counts costs nothing and cannot
+		// drift — it is the same formatter the hook uses, so a row whose
+		// counts did NOT change is rewritten to the identical string.
+		//
+		// Only the DISPLAY is adjusted in every case; the stored row
+		// converges on the session's next hook.
 		switch {
-		case out.SubagentCount == 0 && out.BgShellCount == 0 && out.Status == session.StatusMainAgentIdle:
-			out.Status = session.StatusIdle
-			out.StatusDetail = ""
+		case out.SubagentCount == 0 && out.BgShellCount == 0:
+			if out.Status == session.StatusMainAgentIdle {
+				out.Status = session.StatusIdle
+				out.StatusDetail = ""
+			}
 		case out.BgShellCount > 0 && out.Status == session.StatusIdle:
 			out.Status = session.StatusMainAgentIdle
+			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount)
+		case out.Status == session.StatusMainAgentIdle:
 			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount)
 		}
 	}

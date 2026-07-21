@@ -540,9 +540,23 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 	// phantom "🤖+N" badge until the TTL sweeps it. A background sub-agent
 	// that genuinely survives the interrupt re-adds itself via Sight() on
 	// its next hook (see SubagentSet in subagents.go).
+	//
+	// The BACKGROUND-SHELL ledger is deliberately NOT cleared here, and the
+	// asymmetry is the point. An interrupt ends the TURN, not the harness
+	// process — and a background shell is a child of that process, so it
+	// keeps running right through an Esc (that is precisely the state the
+	// "⚙+N" badge exists to show). The two ledgers also differ in what
+	// recovery is available: a surviving sub-agent re-announces itself via
+	// Sight() on its next hook, whereas NOTHING ever re-announces a running
+	// background shell — the launch hook already fired, and there is no
+	// periodic signal. Deleting an entry here would therefore be permanent,
+	// and the liveness reconcile cannot undo it: the reconcile only confirms
+	// or retires entries the ledger already holds, it never invents them.
+	// Leaving them alone costs nothing, since the reconcile retires whatever
+	// the interrupt really did kill on the very next dashboard poll.
 	res, err := d.Exec(`UPDATE sessions
 		SET status = 'idle', status_detail = '', updated_at = ?,
-			subagent_count = 0, subagents_json = '', bg_shells_json = ''
+			subagent_count = 0, subagents_json = ''
 		WHERE conv_id = ? AND status = 'working'`,
 		time.Now().Format(time.RFC3339Nano), convID)
 	if err != nil {
