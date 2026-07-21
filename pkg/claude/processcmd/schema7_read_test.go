@@ -55,7 +55,7 @@ nodes:
 	if err := runShow(cmd, &showParams{RunID: "schema7-cli-reads", StoreRoot: root}, &out); err != nil {
 		t.Fatalf("show schema 7: %v\n%s", err, out.String())
 	}
-	for _, want := range []string{"Run: schema7-cli-reads", "State schema: 8", "Epochs: 1", "Authorities: 1"} {
+	for _, want := range []string{"Run: schema7-cli-reads", "State schema: 8", "Epochs: 1", "Authorities: 4"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("schema-7 show output missing %q:\n%s", want, out.String())
 		}

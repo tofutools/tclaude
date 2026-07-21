@@ -197,6 +197,13 @@ func verifyExecutionInput(ctx context.Context, checkpointBytes, templateSource [
 	if parsed.Ref != event.UpgradeNeeded.TemplateRef || parsed.SemanticHash != event.TemplateHash || parsed.SourceHash != event.UpgradeNeeded.TemplateSourceHash {
 		return nil, fmt.Errorf("%w: exact template ref/source binding mismatch", ErrExclusiveInputInvalid)
 	}
+	genesisNode := parsed.Template.Start
+	if event.Kind == RuntimeGenesisEventKind {
+		if event.RuntimeGenesis == nil || parsed.Template.Nodes[event.RuntimeGenesis.NodeID].Type == "" {
+			return nil, fmt.Errorf("%w: runtime genesis node is absent from owner template", ErrExclusiveInputInvalid)
+		}
+		genesisNode = event.RuntimeGenesis.NodeID
+	}
 	current, err := CurrentAggregateCheckpoint(checkpoint)
 	if err != nil {
 		return nil, fmt.Errorf("%w: current aggregate: %v", ErrExclusiveInputInvalid, err)
@@ -204,6 +211,9 @@ func verifyExecutionInput(ctx context.Context, checkpointBytes, templateSource [
 	view := current.View()
 	if view.RunID != event.UpgradeNeeded.RunID || view.TemplateRef != parsed.SemanticHash || view.TemplateSourceHash != parsed.SourceHash {
 		return nil, fmt.Errorf("%w: exact run/template aggregate binding mismatch", ErrExclusiveInputInvalid)
+	}
+	if view.Authority == nil || view.Authority.Genesis.StartNodeID != genesisNode {
+		return nil, fmt.Errorf("%w: genesis node differs from sealed owner authority", ErrExclusiveInputInvalid)
 	}
 	return &VerifiedExclusiveInput{
 		checkpointBytes: checkpointCopy,

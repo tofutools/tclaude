@@ -542,6 +542,82 @@ nodes:
 	t.Fatal("settlement command not found")
 }
 
+func TestAuditedSettlementRetryRevivesExactFailedGeneration(t *testing.T) {
+	source := []byte(`apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: audited-runtime-retry
+start: work
+nodes:
+  work:
+    type: task
+    performer: {kind: agent, prompt: work}
+    next: {pass: done}
+  done: {type: end}
+`)
+	current := initializedExclusiveCheckpoint(t, source)
+	input, err := VerifyExecutionInput(t.Context(), current, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCheckpointV7(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, _ := CurrentAggregateCheckpoint(decoded)
+	plan, err := PlanExclusiveAttempt(t.Context(), input, aggregate.Authority.Genesis.OutputPathID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := ClaimExclusiveAttempt(t.Context(), input, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, current, _, err = ValidateExecutionTransitionForAppend(t.Context(), current, source, claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, _ = VerifyExecutionInput(t.Context(), current, source)
+	recovered, found, err := RecoverExclusiveAttempt(t.Context(), input)
+	if err != nil || !found {
+		t.Fatalf("recover: found=%v err=%v", found, err)
+	}
+	observed, err := ObserveExclusiveAttempt(t.Context(), input, recovered, ExclusiveObservation{Outcome: "fail", Actor: "human:operator"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, current, _, err = ValidateExecutionTransitionForAppend(t.Context(), current, source, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, _ = VerifyExecutionInput(t.Context(), current, source)
+	settlement, err := SettleExclusiveAttempt(t.Context(), input, AuditedSettlementInput{
+		NodeID: "work", BlockedAttempt: 1, Decision: "retry", Actor: "human:operator",
+		Reason: "operator approved rescue", EvidenceRef: "ticket:TCL-604", Timestamp: time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolution, ok := settlement.AuditedResolution()
+	if !ok || resolution.Decision != "retry" {
+		t.Fatalf("sealed settlement metadata = %#v, %v", resolution, ok)
+	}
+	_, nextBytes, next, err := ValidateExecutionTransitionForAppend(t.Context(), current, source, settlement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate, _ = CurrentAggregateCheckpoint(next)
+	if aggregate.Routing.Paths[aggregate.Authority.Genesis.OutputPathID].State != PathLive || len(aggregate.AdminResolutions) != 1 {
+		t.Fatalf("retry did not revive exact inner path")
+	}
+	nextInput, err := VerifyExecutionInput(t.Context(), nextBytes, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanExclusiveAttempt(t.Context(), nextInput, aggregate.Authority.Genesis.OutputPathID, 2, nil); err != nil {
+		t.Fatalf("second attempt was not made plannable: %v", err)
+	}
+}
+
 func observedExclusiveAttemptForTest(t *testing.T, checkpointBytes, source []byte, observation ExclusiveObservation) []byte {
 	t.Helper()
 	input, err := VerifyExclusiveInput(t.Context(), checkpointBytes, source)

@@ -408,10 +408,11 @@ type LeaseRecord struct {
 	Holder string `json:"holder"`
 	// Kind is omitted by legacy engine leases. An empty persisted kind is
 	// therefore interpreted as LeaseKindEngine, never as an untyped domain.
-	Kind      LeaseKind `json:"kind,omitempty"`
-	Token     string    `json:"token,omitempty"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Kind       LeaseKind `json:"kind,omitempty"`
+	Token      string    `json:"token,omitempty"`
+	Generation uint64    `json:"generation,omitempty"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type LeaseKind string
@@ -425,10 +426,19 @@ const (
 )
 
 type MaintenanceLease struct {
-	RunID     string
-	Holder    string
-	Token     string
-	ExpiresAt time.Time
+	RunID      string
+	Holder     string
+	Token      string
+	Generation uint64
+	ExpiresAt  time.Time
+}
+
+type EngineLease struct {
+	RunID      string
+	Holder     string
+	Token      string
+	Generation uint64
+	ExpiresAt  time.Time
 }
 
 const (
@@ -460,6 +470,17 @@ type EpochV8RunSnapshot struct {
 	CheckpointJSON []byte
 	Checkpoint     *epochv8.CheckpointV8
 	EpochSources   map[epochv8.EpochID][]byte
+	RuntimeJSON    []byte
+	Runtime        *epochv8.RuntimeArtifactV1
+}
+
+type EpochV8ExecutionView struct {
+	Run            RunRecord
+	CheckpointJSON []byte
+	Checkpoint     *epochv8.CheckpointV8
+	EpochSources   map[epochv8.EpochID][]byte
+	RuntimeJSON    []byte
+	Runtime        *epochv8.RuntimeArtifactV1
 }
 
 func (snapshot EpochV8RunSnapshot) SourceForOwner(owner epochv8.OwnerIdentity) ([]byte, error) {

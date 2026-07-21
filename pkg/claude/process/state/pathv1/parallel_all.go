@@ -53,7 +53,7 @@ func AdvanceParallelAll(ctx context.Context, input *VerifiedExclusiveInput) (*Ex
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, "parallel_all")
+		return newExecutionTransition(input.checkpoint, next, TransitionParallelAll)
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -135,7 +135,7 @@ func AdvanceParallelRoute(ctx context.Context, input *VerifiedExclusiveInput) (*
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "parallel_route")
+	return newExecutionTransition(input.checkpoint, next, TransitionParallelRoute)
 }
 
 // AdvanceParallelExclusiveArrival activates the first fully settled exclusive
@@ -209,7 +209,7 @@ func AdvanceParallelExclusiveArrival(ctx context.Context, input *VerifiedExclusi
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, "parallel_exclusive_arrival")
+		return newExecutionTransition(input.checkpoint, next, TransitionParallelExclusiveArrival)
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -254,7 +254,7 @@ func AdvanceParallelEnd(ctx context.Context, input *VerifiedExclusiveInput, sour
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "parallel_end")
+	return newExecutionTransition(input.checkpoint, next, TransitionParallelEnd)
 }
 
 // AdvanceParallelPropagation advances exactly one immutable frontier entry.
@@ -375,7 +375,7 @@ func AdvanceParallelPropagation(ctx context.Context, input *VerifiedExclusiveInp
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, "parallel_propagation")
+		return newExecutionTransition(input.checkpoint, next, TransitionParallelPropagation)
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -491,7 +491,7 @@ func advanceParallelPropagationSeed(ctx context.Context, input *VerifiedExclusiv
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, "parallel_propagation_seed")
+		return newExecutionTransition(input.checkpoint, next, TransitionParallelPropagationSeed)
 	}
 	return nil, ErrParallelAllNotReady
 }
@@ -670,7 +670,7 @@ func AdvanceParallelTerminalClosure(ctx context.Context, input *VerifiedExclusiv
 		if nextErr != nil {
 			return nil, nextErr
 		}
-		return newExecutionTransition(input.checkpoint, next, "parallel_terminal_closure")
+		return newExecutionTransition(input.checkpoint, next, TransitionParallelTerminalClosure)
 	}
 	return nil, ErrParallelAllNotReady
 }

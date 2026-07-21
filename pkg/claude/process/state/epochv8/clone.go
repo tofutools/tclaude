@@ -76,6 +76,12 @@ func cloneHistory(events []HistoryEvent) []HistoryEvent {
 			finish := *event.Finish
 			result[i].Finish = &finish
 		}
+		if event.Runtime != nil {
+			runtime := *event.Runtime
+			runtime.Before = cloneAuthorities(runtime.Before)
+			runtime.After = cloneAuthorities(runtime.After)
+			result[i].Runtime = &runtime
+		}
 	}
 	return result
 }

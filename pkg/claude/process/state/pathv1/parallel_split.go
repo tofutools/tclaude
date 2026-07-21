@@ -173,7 +173,7 @@ func AdvanceParallelSplit(ctx context.Context, input *VerifiedExclusiveInput, so
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "parallel_split")
+	return newExecutionTransition(input.checkpoint, next, TransitionParallelSplit)
 }
 
 // encodeParallelProjectionCheckpoint uses the exact schema-7 persistence

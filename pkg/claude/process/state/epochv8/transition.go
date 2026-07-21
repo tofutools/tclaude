@@ -75,7 +75,7 @@ func Initialize(runID string, candidate *TemplateCandidate, seeds []AuthoritySee
 	sortAuthorities(authorities)
 	anchor := InitializationAnchor{
 		RunID: runID, Capabilities: productionCapabilities(), OriginalEpoch: cloneEpoch(epoch),
-		InitialAuthorities: cloneAuthorities(authorities),
+		InitialAuthorities: cloneAuthorities(authorities), RuntimeBinding: RuntimeBinding{},
 	}
 	anchor.Digest, err = anchorDigest(anchor)
 	if err != nil {
@@ -84,7 +84,7 @@ func Initialize(runID string, candidate *TemplateCandidate, seeds []AuthoritySee
 	wire := checkpointWire{
 		StateSchemaVersion: StateSchemaVersion, Protocol: Protocol, Encoding: Encoding,
 		Anchor: anchor, CurrentEpochID: epoch.ID, Epochs: []TemplateEpoch{cloneEpoch(epoch)},
-		History: []HistoryEvent{}, Authorities: authorities,
+		History: []HistoryEvent{}, Authorities: authorities, RuntimeBinding: RuntimeBinding{},
 	}
 	wire.Digest, err = checkpointDigest(wire)
 	if err != nil {
@@ -114,6 +114,7 @@ func (checkpoint *CheckpointV8) View() CheckpointView {
 		Binding: checkpoint.Binding(), RunID: wire.Anchor.RunID,
 		OriginalEpoch: wire.Anchor.OriginalEpoch.ID, CurrentEpoch: wire.CurrentEpochID,
 		Epochs: wire.Epochs, Authorities: wire.Authorities, ProtectedAuthorities: protected, History: wire.History,
+		RuntimeBinding: wire.RuntimeBinding,
 	}
 }
 
@@ -229,6 +230,9 @@ func Apply(checkpoint *CheckpointV8, plan *ApplyPlan) (TransitionResult, error) 
 	if plan == nil {
 		return TransitionResult{}, fmt.Errorf("%w: apply plan is required", ErrInvalid)
 	}
+	if checkpoint.wire.RuntimeBinding != (RuntimeBinding{}) {
+		return TransitionResult{}, fmt.Errorf("%w: attached runtime requires typed apply-retain or apply-transfer", ErrInvalid)
+	}
 	core := cloneApplyCore(plan.core)
 	if err := validateApplyCoreStatic(checkpoint.wire.Anchor.RunID, core); err != nil {
 		return TransitionResult{}, err
@@ -296,6 +300,9 @@ func FinishClaimed(checkpoint *CheckpointV8, claim FinishClaim) (TransitionResul
 	}
 	if !claim.Result.valid() || !canonicalDigest(claim.EvidenceDigest) || !canonicalDigest(string(claim.Identity)) {
 		return TransitionResult{}, fmt.Errorf("%w: finish claim is invalid", ErrInvalid)
+	}
+	if checkpoint.wire.RuntimeBinding != (RuntimeBinding{}) {
+		return TransitionResult{}, fmt.Errorf("%w: attached runtime requires typed finish-claimed-head", ErrInvalid)
 	}
 	authority, ok := authorityByID(checkpoint.wire.Authorities, claim.Identity)
 	ownerEpoch := EpochID("")

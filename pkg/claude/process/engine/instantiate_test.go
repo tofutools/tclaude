@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
@@ -229,6 +231,41 @@ func TestInstantiateRoutesEligibleTemplateDirectlyToSchema8(t *testing.T) {
 		TemplateRef: record.Ref, RunID: run.ID, ReplayExisting: true,
 	}); !errors.Is(err, store.ErrRunExists) {
 		t.Fatalf("tampered schema-8 replay = %v, want ErrRunExists", err)
+	}
+}
+
+func TestHostDrivesEligibleSchema8ThroughOwnerRuntime(t *testing.T) {
+	fs, err := store.NewFS(filepath.Join(t.TempDir(), "store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "epoch-drive", Start: "work",
+		Nodes: map[string]model.Node{
+			"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "work"}, Next: model.Next{"pass": "done"}},
+			"done": {Type: model.NodeTypeEnd, Result: "completed"},
+		},
+	}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := Instantiate(t.Context(), fs, InstantiateRequest{TemplateRef: record.Ref, RunID: "epoch-drive-run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &countingReleaseAdapter{}
+	host := New(fs, "epoch-engine", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: adapter})
+	results, err := host.Tick(t.Context())
+	if err != nil || len(results) != 1 || results[0].Error != "" || results[0].Status != state.RunStatusCompleted {
+		t.Fatalf("schema-8 tick = %#v, %v", results, err)
+	}
+	if adapter.calls != 2 {
+		t.Fatalf("adapter calls = %d, want validate+perform", adapter.calls)
+	}
+	snapshot, err := fs.LoadEpochV8RunView(t.Context(), run.ID)
+	if err != nil || snapshot.Runtime == nil {
+		t.Fatalf("runtime snapshot = %#v, %v", snapshot.Runtime, err)
 	}
 }
 

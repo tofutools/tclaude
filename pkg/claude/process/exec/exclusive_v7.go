@@ -3,6 +3,8 @@ package processexec
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -13,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
@@ -22,9 +25,11 @@ import (
 // durably appended and after the coherent view callback has released all store
 // locks.
 type ExclusiveV7Executor struct {
-	Store    *store.FS
-	Adapters map[model.PerformerKind]Adapter
-	Now      func() time.Time
+	Store         *store.FS
+	Adapters      map[model.PerformerKind]Adapter
+	Now           func() time.Time
+	epochLease    *store.EngineLease
+	epochExternal bool
 }
 
 func NewExclusiveV7(st *store.FS, adapters map[model.PerformerKind]Adapter) *ExclusiveV7Executor {
@@ -33,6 +38,16 @@ func NewExclusiveV7(st *store.FS, adapters map[model.PerformerKind]Adapter) *Exc
 		copied[kind] = adapter
 	}
 	return &ExclusiveV7Executor{Store: st, Adapters: copied, Now: time.Now}
+}
+
+func NewEpochV8(st *store.FS, lease store.EngineLease, adapters map[model.PerformerKind]Adapter) *ExclusiveV7Executor {
+	executor := NewExclusiveV7(st, adapters)
+	executor.epochLease = &lease
+	return executor
+}
+
+func NewEpochV8External(st *store.FS) *ExclusiveV7Executor {
+	return &ExclusiveV7Executor{Store: st, Adapters: map[model.PerformerKind]Adapter{}, Now: time.Now, epochExternal: true}
 }
 
 type exclusiveV7Action struct {
@@ -56,7 +71,7 @@ func (e *ExclusiveV7Executor) Drive(ctx context.Context, runID string) (*pathv1.
 			return nil, err
 		}
 		if action.terminal != nil {
-			checkpoint, err := e.Store.ReconfirmPathV1Durability(ctx, runID, *action.terminal)
+			checkpoint, err := e.reconfirmDurability(ctx, runID, *action.terminal)
 			if store.IsConflict(err) {
 				continue
 			}
@@ -78,7 +93,7 @@ func (e *ExclusiveV7Executor) Drive(ctx context.Context, runID string) (*pathv1.
 		if action.transition == nil {
 			return nil, fmt.Errorf("path-v1 exclusive executor produced no exact action")
 		}
-		if _, err := e.Store.AppendPathV1(ctx, runID, action.transition); err != nil {
+		if _, err := e.appendTransition(ctx, runID, action.transition); err != nil {
 			if store.IsConflict(err) {
 				continue
 			}
@@ -90,7 +105,7 @@ func (e *ExclusiveV7Executor) Drive(ctx context.Context, runID string) (*pathv1.
 
 func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exclusiveV7Action, error) {
 	var action exclusiveV7Action
-	err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+	err := e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 		if status := pathv1.CurrentRunStatus(view.Checkpoint); status == "completed" || status == "failed" || status == "canceled" {
 			binding := view.Binding
 			action.terminal = &binding
@@ -269,7 +284,7 @@ func (e *ExclusiveV7Executor) nextAction(ctx context.Context, runID string) (exc
 }
 
 func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, action exclusiveV7Action) (*pathv1.CheckpointV7, bool, error) {
-	request, adapter, err := e.exclusiveRequest(action.plan)
+	request, adapter, err := e.exclusiveRequest(runID, action.plan)
 	if err != nil {
 		return nil, false, err
 	}
@@ -286,7 +301,7 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 		}
 	}
 	if !action.recover {
-		appended, err := e.Store.AppendPathV1(ctx, runID, action.transition)
+		appended, err := e.appendTransition(ctx, runID, action.transition)
 		if err != nil {
 			return nil, false, err
 		}
@@ -354,7 +369,7 @@ func (e *ExclusiveV7Executor) executeAttempt(ctx context.Context, runID string, 
 	return e.appendExclusiveObservation(ctx, runID, action.plan, observation, false)
 }
 
-func (e *ExclusiveV7Executor) exclusiveRequest(attempt *pathv1.ExclusiveAttemptPlan) (Request, Adapter, error) {
+func (e *ExclusiveV7Executor) exclusiveRequest(publicRunID string, attempt *pathv1.ExclusiveAttemptPlan) (Request, Adapter, error) {
 	command := attempt.Command()
 	performer := attempt.Performer()
 	if performer == nil || command.Identity.Attempt > math.MaxInt {
@@ -368,16 +383,27 @@ func (e *ExclusiveV7Executor) exclusiveRequest(attempt *pathv1.ExclusiveAttemptP
 		return Request{}, nil, fmt.Errorf("no process performer adapter registered for kind %q", performer.Kind)
 	}
 	params := attempt.Params()
+	commandID, idempotencyKey, requestRunID := exclusiveExternalCommandID(command.ID), command.IdempotencyKey, command.Identity.RunID
+	if e.epochLease != nil || e.epochExternal {
+		commandID = epochExternalCommandID(publicRunID, command.ID)
+		idempotencyKey = epochExternalCommandID(publicRunID, command.IdempotencyKey)
+		requestRunID = publicRunID
+	}
 	request := Request{
 		Command: plan.Command{
-			ID: exclusiveExternalCommandID(command.ID), IdempotencyKey: command.IdempotencyKey, Kind: plan.CommandKindStartAttempt,
-			RunID: command.Identity.RunID, NodeID: attempt.NodeID(), Attempt: int(command.Identity.Attempt),
+			ID: commandID, IdempotencyKey: idempotencyKey, Kind: plan.CommandKindStartAttempt,
+			RunID: requestRunID, NodeID: attempt.NodeID(), Attempt: int(command.Identity.Attempt),
 			Performer: performer, Params: params, ParamsBound: true,
 		},
 		Performer: *performer,
-		Input:     Input{RunID: command.Identity.RunID, NodeID: attempt.NodeID(), Attempt: int(command.Identity.Attempt), Params: params},
+		Input:     Input{RunID: requestRunID, NodeID: attempt.NodeID(), Attempt: int(command.Identity.Attempt), Params: params},
 	}
 	return request, adapter, nil
+}
+
+func epochExternalCommandID(publicRunID, pathCommandID string) string {
+	digest := sha256.Sum256([]byte("tclaude:path-v1:epoch-command:v1\x00" + publicRunID + "\x00" + pathCommandID))
+	return "cmd_" + hex.EncodeToString(digest[:])[:24]
 }
 
 func exclusiveExternalCommandID(pathCommandID string) string {
@@ -388,11 +414,103 @@ func exclusiveExternalCommandID(pathCommandID string) string {
 	return "cmd_" + pathCommandID[:digestChars]
 }
 
+func (e *ExclusiveV7Executor) externalCommandID(runID, pathCommandID string) string {
+	if e != nil && (e.epochLease != nil || e.epochExternal) {
+		return epochExternalCommandID(runID, pathCommandID)
+	}
+	return exclusiveExternalCommandID(pathCommandID)
+}
+
 func (e *ExclusiveV7Executor) now() time.Time {
 	if e != nil && e.Now != nil {
 		return e.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+func (e *ExclusiveV7Executor) withExecutionView(ctx context.Context, runID string, callback func(store.PathV1ExecutionView) error) error {
+	if e.epochLease == nil && !e.epochExternal {
+		return e.Store.WithPathV1ExecutionView(ctx, runID, callback)
+	}
+	return e.Store.WithEpochV8ExecutionView(ctx, runID, func(view store.EpochV8ExecutionView) error {
+		if view.Runtime == nil {
+			return fmt.Errorf("schema-8 runtime is not attached")
+		}
+		source := view.EpochSources[view.Runtime.EpochID]
+		parsed, err := model.ParseExactSource(source)
+		if err != nil || parsed == nil || parsed.Template == nil || parsed.Diagnostics.HasErrors() {
+			return fmt.Errorf("schema-8 owner template is invalid")
+		}
+		checkpoint, err := pathv1.DecodeCheckpointV7(view.Runtime.Checkpoint)
+		if err != nil {
+			return err
+		}
+		input, err := pathv1.VerifyExecutionInput(ctx, view.Runtime.Checkpoint, source)
+		if err != nil {
+			return err
+		}
+		return callback(store.PathV1ExecutionView{
+			Run: view.Run, Template: parsed.Template, TemplateSource: bytes.Clone(source),
+			CheckpointJSON: bytes.Clone(view.Runtime.Checkpoint), Checkpoint: checkpoint,
+			Binding: pathv1.CurrentCheckpointBinding(checkpoint), Input: input,
+		})
+	})
+}
+
+func (e *ExclusiveV7Executor) appendTransition(ctx context.Context, runID string, transition *pathv1.ExecutionTransition) (store.PathV1AppendResult, error) {
+	if e.epochLease == nil && !e.epochExternal {
+		return e.Store.AppendPathV1(ctx, runID, transition)
+	}
+	var result epochv8.RuntimeTransitionResult
+	var err error
+	if e.epochExternal {
+		switch transition.Kind() {
+		case pathv1.TransitionObserveWait:
+			result, err = e.Store.AppendEpochV8Signal(ctx, runID, transition)
+		case pathv1.TransitionObserveAttempt:
+			result, err = e.Store.AppendEpochV8FinishExternal(ctx, runID, transition, transition.PostBinding().Digest)
+		case pathv1.TransitionAuditedSettlement:
+			result, err = e.Store.AppendEpochV8Settlement(ctx, runID, transition)
+		default:
+			return store.PathV1AppendResult{}, fmt.Errorf("external schema-8 append kind %q is not authorized", transition.Kind())
+		}
+	} else {
+		switch transition.Kind() {
+		case pathv1.TransitionClaimAttempt:
+			result, err = e.Store.AppendEpochV8ClaimExternal(ctx, *e.epochLease, transition)
+		case pathv1.TransitionObserveAttempt:
+			result, err = e.Store.AppendEpochV8FinishClaimed(ctx, *e.epochLease, transition, transition.PostBinding().Digest)
+		default:
+			result, err = e.Store.AppendEpochV8Advance(ctx, *e.epochLease, transition)
+		}
+	}
+	if err != nil {
+		return store.PathV1AppendResult{}, err
+	}
+	checkpoint, err := pathv1.DecodeCheckpointV7(result.Artifact.Checkpoint)
+	if err != nil {
+		return store.PathV1AppendResult{}, err
+	}
+	disposition := store.PathV1AppendApplied
+	if result.Disposition == epochv8.DispositionReplayed {
+		disposition = store.PathV1AppendAlreadyApplied
+	}
+	return store.PathV1AppendResult{Disposition: disposition, Binding: pathv1.CurrentCheckpointBinding(checkpoint), Checkpoint: checkpoint}, nil
+}
+
+func (e *ExclusiveV7Executor) reconfirmDurability(ctx context.Context, runID string, binding pathv1.CheckpointBinding) (*pathv1.CheckpointV7, error) {
+	if e.epochLease == nil && !e.epochExternal {
+		return e.Store.ReconfirmPathV1Durability(ctx, runID, binding)
+	}
+	var checkpoint *pathv1.CheckpointV7
+	err := e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+		if view.Binding != binding {
+			return &store.ConflictError{RunID: runID, ExpectedSeq: int64(binding.Generation), ActualSeq: int64(view.Binding.Generation)}
+		}
+		checkpoint = view.Checkpoint
+		return nil
+	})
+	return checkpoint, err
 }
 
 // RecordObservation is the live report boundary for a claimed schema-7 task
@@ -432,14 +550,14 @@ func (e *ExclusiveV7Executor) recordObservation(ctx context.Context, runID, node
 		var attempt *pathv1.ExclusiveAttemptPlan
 		var checkpoint *pathv1.CheckpointV7
 		var replayCommand string
-		err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+		err := e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 			checkpoint = view.Checkpoint
 			current, found, recoverErr := pathv1.RecoverExclusiveAttempt(ctx, view.Input)
 			if recoverErr != nil {
 				return recoverErr
 			}
 			if found {
-				alias := exclusiveExternalCommandID(current.Command().ID)
+				alias := e.externalCommandID(runID, current.Command().ID)
 				if current.NodeID() != nodeID || (commandID != "" && alias != commandID) {
 					return fmt.Errorf("path-v1 report command does not belong to the requested run/node")
 				}
@@ -448,6 +566,9 @@ func (e *ExclusiveV7Executor) recordObservation(ctx context.Context, runID, node
 				return nil
 			}
 			commandPrefix := strings.TrimPrefix(commandID, "cmd_")
+			if e.epochLease != nil || e.epochExternal {
+				commandPrefix = ""
+			}
 			recorded, exact, exactErr := pathv1.ExactExclusiveAttemptObserved(ctx, view.Input, nodeID, commandPrefix, pathv1.ExclusiveObservation{
 				Outcome: strings.TrimSpace(observation.Verdict), Actor: string(observation.Actor), Feedback: observation.Feedback,
 				EvidenceRef: observation.EvidenceRef, EvidenceHash: observation.EvidenceHash, ExternalRef: observation.ExternalRef,
@@ -458,7 +579,7 @@ func (e *ExclusiveV7Executor) recordObservation(ctx context.Context, runID, node
 			if !exact {
 				return fmt.Errorf("node %q has no pending schema-7 obligation", nodeID)
 			}
-			replayCommand = exclusiveExternalCommandID(recorded.ID)
+			replayCommand = e.externalCommandID(runID, recorded.ID)
 			if commandID != "" && replayCommand != commandID {
 				return fmt.Errorf("path-v1 report command does not belong to the requested run/node")
 			}
@@ -489,7 +610,7 @@ func (e *ExclusiveV7Executor) SatisfySignal(ctx context.Context, runID, nodeID, 
 	for attempt := 0; attempt < maxObservationCASAttempts; attempt++ {
 		var transition *pathv1.ExecutionTransition
 		var current *pathv1.CheckpointV7
-		err := e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+		err := e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 			current = view.Checkpoint
 			waits, waitErr := pathv1.RecoverExclusiveWaits(ctx, view.Input)
 			if waitErr != nil {
@@ -523,7 +644,7 @@ func (e *ExclusiveV7Executor) SatisfySignal(ctx context.Context, runID, nodeID, 
 		if transition == nil {
 			return current, nil
 		}
-		appended, err := e.Store.AppendPathV1(ctx, runID, transition)
+		appended, err := e.appendTransition(ctx, runID, transition)
 		if store.IsConflict(err) {
 			continue
 		}
@@ -545,7 +666,7 @@ func (e *ExclusiveV7Executor) appendExclusiveObservation(ctx context.Context, ru
 		return nil, false, err
 	}
 	var transition *pathv1.ExecutionTransition
-	err = e.Store.WithPathV1ExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
+	err = e.withExecutionView(ctx, runID, func(view store.PathV1ExecutionView) error {
 		current, found, err := pathv1.RecoverExclusiveAttempt(ctx, view.Input)
 		if err != nil {
 			return err
@@ -562,7 +683,7 @@ func (e *ExclusiveV7Executor) appendExclusiveObservation(ctx context.Context, ru
 	if err != nil {
 		return nil, false, err
 	}
-	appended, err := e.Store.AppendPathV1(ctx, runID, transition)
+	appended, err := e.appendTransition(ctx, runID, transition)
 	if err != nil {
 		return nil, false, err
 	}

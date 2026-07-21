@@ -14,14 +14,57 @@ import (
 	legacy "github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
+// Execution transition kinds are persisted by the schema-8 owner-runtime
+// protocol. Keep this set closed: new planner/reducer transitions must be
+// explicitly admitted before they can execute there.
+const (
+	TransitionClaimWait                = "claim_wait"
+	TransitionObserveWait              = "observe_wait"
+	TransitionClaimAttempt             = "claim_attempt"
+	TransitionObserveAttempt           = "observe_attempt"
+	TransitionRouteObservation         = "route_observation"
+	TransitionClaimCompletion          = "claim_completion"
+	TransitionObserveCompletion        = "observe_completion"
+	TransitionParallelSplit            = "parallel_split"
+	TransitionParallelAll              = "parallel_all"
+	TransitionParallelAny              = "parallel_any"
+	TransitionParallelRoute            = "parallel_route"
+	TransitionParallelExclusiveArrival = "parallel_exclusive_arrival"
+	TransitionParallelEnd              = "parallel_end"
+	TransitionParallelPropagation      = "parallel_propagation"
+	TransitionParallelPropagationSeed  = "parallel_propagation_seed"
+	TransitionParallelTerminalClosure  = "parallel_terminal_closure"
+	TransitionParallelDetachedSink     = "parallel_detached_sink"
+	TransitionParallelDetachmentIntern = "parallel_detachment_intern"
+	TransitionScheduleContact          = "schedule_contact"
+	TransitionMarkContactDue           = "mark_contact_due"
+	TransitionNudgeContact             = "nudge_contact"
+	TransitionEscalateContact          = "escalate_contact"
+	TransitionPauseContact             = "pause_contact"
+	TransitionLatchContactHuman        = "latch_contact_human"
+	TransitionClearContactHumanLatch   = "clear_contact_human_latch"
+	TransitionRecoverContact           = "recover_contact"
+	TransitionAuditedSettlement        = "audited_settlement"
+)
+
 // ExecutionTransition is a sealed exact successor. Its bytes can only be
 // created by path-v1 planner/reducer constructors; callers cannot inject an
 // aggregate into the persistence boundary.
 type ExecutionTransition struct {
-	pre       CheckpointBinding
-	post      CheckpointBinding
-	postBytes []byte
-	kind      string
+	pre        CheckpointBinding
+	post       CheckpointBinding
+	postBytes  []byte
+	kind       string
+	resolution *BlockResolution
+}
+
+// AuditedResolution returns the immutable operator authority carried by an
+// audited-settlement transition. Other transition kinds return false.
+func (t *ExecutionTransition) AuditedResolution() (BlockResolution, bool) {
+	if t == nil || t.kind != TransitionAuditedSettlement || t.resolution == nil {
+		return BlockResolution{}, false
+	}
+	return *t.resolution, true
 }
 
 func (t *ExecutionTransition) PreBinding() CheckpointBinding {
@@ -328,7 +371,7 @@ func ClaimExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, plan
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "claim_wait")
+	return newExecutionTransition(input.checkpoint, next, TransitionClaimWait)
 }
 
 // RecoverExclusiveWaits returns every exact pending wait claim in stable
@@ -435,7 +478,7 @@ func ObserveExclusiveWait(ctx context.Context, input *VerifiedExclusiveInput, pl
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "observe_wait")
+	return newExecutionTransition(input.checkpoint, next, TransitionObserveWait)
 }
 
 // ExactExclusiveSignalObserved recognizes only an already-settled replay of
@@ -700,7 +743,7 @@ func ClaimExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput, p
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "claim_attempt")
+	return newExecutionTransition(input.checkpoint, next, TransitionClaimAttempt)
 }
 
 // RecoverExclusiveAttempt returns the sole durable active performer request.
@@ -901,7 +944,7 @@ func ObserveExclusiveAttempt(ctx context.Context, input *VerifiedExclusiveInput,
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "observe_attempt")
+	return newExecutionTransition(input.checkpoint, next, TransitionObserveAttempt)
 }
 
 // ExactExclusiveAttemptObserved recognizes an already-settled task or
@@ -1041,6 +1084,19 @@ func PendingExclusiveObservation(ctx context.Context, input *VerifiedExclusiveIn
 			Actor: payload.Actor, EvidenceRef: payload.EvidenceRef, EvidenceHash: payload.EvidenceHash,
 			ResolutionDigest: payload.ResolutionDigest, ExternalRef: payload.ExternalRef, Feedback: payload.Feedback,
 		}
+		if candidate.ResolutionDigest == "" {
+			reservation := aggregate.Routing.Reservations[activation.ReservationID]
+			for recordID, resolution := range aggregate.AdminResolutions {
+				if resolution.NodeID != reservation.NodeID || resolution.BlockedAttempt != candidate.Attempt {
+					continue
+				}
+				digest, digestErr := ValidateBlockResolution(resolution)
+				if digestErr != nil || aggregate.AdminRecords[recordID].ResolutionDigest != digest || candidate.ResolutionDigest != "" {
+					return ExclusiveObservation{}, false, fmt.Errorf("%w: audited settlement generation is invalid or ambiguous", ErrMutationInconsistent)
+				}
+				candidate.ResolutionDigest = digest
+			}
+		}
 		disposition, err := classifyExclusiveObservation(aggregate.View(), input.template, candidate, input.parallel != nil)
 		if err != nil {
 			return ExclusiveObservation{}, false, err
@@ -1112,7 +1168,7 @@ func advanceExclusiveRoute(ctx context.Context, input *VerifiedExclusiveInput, o
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "route_observation")
+	return newExecutionTransition(input.checkpoint, next, TransitionRouteObservation)
 }
 
 func aggregateLogicalLastSeq(aggregate AggregateCheckpoint) (uint64, error) {
@@ -1265,7 +1321,7 @@ func ClaimExclusiveCompletion(ctx context.Context, input *VerifiedExclusiveInput
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "claim_completion")
+	return newExecutionTransition(input.checkpoint, next, TransitionClaimCompletion)
 }
 
 // ObserveExclusiveCompletion atomically marks the completion self-command and
@@ -1306,7 +1362,7 @@ func ObserveExclusiveCompletion(ctx context.Context, input *VerifiedExclusiveInp
 	if err != nil {
 		return nil, err
 	}
-	return newExecutionTransition(input.checkpoint, next, "observe_completion")
+	return newExecutionTransition(input.checkpoint, next, TransitionObserveCompletion)
 }
 
 func cloneExclusivePerformer(performer *model.Performer) *model.Performer {

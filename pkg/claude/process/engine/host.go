@@ -14,6 +14,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 )
@@ -27,6 +28,8 @@ type Host struct {
 	Store             store.Store
 	Executor          *processexec.Executor
 	releaseStore      schema7ReleaseStore
+	epochStore        *store.FS
+	epochAdapters     map[model.PerformerKind]processexec.Adapter
 	Holder            string
 	LeaseTTL          time.Duration
 	MaxConcurrentRuns int
@@ -85,6 +88,10 @@ func New(st store.Store, holder string, adapters map[model.PerformerKind]process
 		MaxConcurrentRuns: DefaultMaxConcurrentRuns,
 		Now:               time.Now,
 		heartbeatTimer:    startHeartbeatTimer,
+		epochAdapters:     limited,
+	}
+	if fs, ok := st.(*store.FS); ok {
+		host.epochStore = fs
 	}
 	if release, ok := st.(schema7ReleaseStore); ok {
 		host.releaseStore = release
@@ -261,8 +268,7 @@ func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 			result.Error = fmt.Sprintf("%v: process run %q", store.ErrRunResetRequired, runID)
 			return result
 		case store.RunSchemaEpochV8:
-			result.Waiting = "epoch-v8 scheduling is not released"
-			return result
+			return h.tickEpochV8(ctx, runID)
 		case store.RunSchemaLegacy:
 		default:
 			result.Error = fmt.Sprintf("process run %q has unsupported state schema", runID)
@@ -384,6 +390,94 @@ func (h *Host) tickRun(ctx context.Context, runID string) RunResult {
 	}
 	result.Error = fmt.Sprintf("process run %q exceeded engine tick rounds", runID)
 	return result
+}
+
+func (h *Host) tickEpochV8(ctx context.Context, runID string) RunResult {
+	result := RunResult{RunID: runID}
+	if h.epochStore == nil {
+		result.Error = "schema-8 execution requires the concrete filesystem store"
+		return result
+	}
+	ttl := h.LeaseTTL
+	if ttl <= 0 {
+		ttl = DefaultLeaseTTL
+	}
+	lease, err := h.epochStore.AcquireEngineLease(ctx, runID, h.Holder, ttl)
+	if err != nil {
+		result.LeaseContended = errors.Is(err, store.ErrLeaseHeld)
+		result.Error = err.Error()
+		return result
+	}
+	runCtx, cancel, heartbeatErr, heartbeatDone := h.epochHeartbeat(ctx, lease, ttl)
+	defer func() {
+		cancel()
+		<-heartbeatDone
+		_ = h.epochStore.ReleaseEngineLease(context.WithoutCancel(ctx), lease)
+	}()
+	if _, err := h.epochStore.EnsureEpochV8Runtime(runCtx, lease); err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	executor := processexec.NewEpochV8(h.epochStore, lease, h.epochAdapters)
+	executor.Now = h.Now
+	checkpoint, err := executor.Drive(runCtx, runID)
+	select {
+	case heartbeatFailure := <-heartbeatErr:
+		result.Error = heartbeatFailure.Error()
+		return result
+	default:
+	}
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	switch pathv1.CurrentRunStatus(checkpoint) {
+	case "completed":
+		result.Status = state.RunStatusCompleted
+	case "failed":
+		result.Status = state.RunStatusFailed
+	case "canceled":
+		result.Status = state.RunStatusCanceled
+	default:
+		result.Status = state.RunStatusRunning
+		result.Waiting = "owner-epoch runtime is waiting"
+	}
+	return result
+}
+
+func (h *Host) epochHeartbeat(parent context.Context, lease store.EngineLease, ttl time.Duration) (context.Context, context.CancelFunc, <-chan error, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	errs := make(chan error, 1)
+	done := make(chan struct{})
+	interval := ttl / 3
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	go func() {
+		defer close(done)
+		startTimer := h.heartbeatTimer
+		if startTimer == nil {
+			startTimer = startHeartbeatTimer
+		}
+		ticks, stopTimer := startTimer(interval)
+		defer stopTimer()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticks:
+				if _, err := h.epochStore.RenewEngineLease(ctx, lease, ttl); err != nil {
+					select {
+					case errs <- fmt.Errorf("process run %q lease heartbeat lost: %w", lease.RunID, err):
+					default:
+					}
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return ctx, cancel, errs, done
 }
 
 func exclusiveV7Eligible(tmpl *model.Template) bool {
