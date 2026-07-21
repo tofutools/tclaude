@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -204,14 +205,30 @@ func TestReconcileBgShells_DuplicateCommandsClaimOneProcessEach(t *testing.T) {
 // process, at whatever depth. This is the property the whole reconcile
 // rests on, and the one the issue flagged as unverified.
 func TestDescendantCommandLines_FindsARealGrandchild(t *testing.T) {
+	// markerVar carries the marker into the GRANDCHILD only. The outer
+	// shell's own argv holds the name `$TCL613_MARKER` unexpanded — it is
+	// the inner shell that expands it — so the marker exists nowhere above
+	// depth 2. That is what makes this a real test of recursion: with the
+	// marker inlined into the outer script (where it textually embeds the
+	// inner command) a walk that only looked at DIRECT children would
+	// still pass, proving nothing.
+	const markerVar = "TCL613_MARKER"
 	marker := fmt.Sprintf("tcl613-marker-%d", os.Getpid())
-	// A grandchild, not a direct child: a real background shell runs under
-	// one or more wrapper processes (`bwrap` under a sandboxed Claude
-	// Code), so the walk must recurse rather than check direct children.
-	cmd := exec.Command("sh", "-c", "sh -c 'sleep 30 #"+marker+"' ; true")
+
+	// `: <marker>; sleep 30` rather than `sleep 30 #<marker>`: a shell
+	// handed one SIMPLE command exec()s into it and drops its own argv, so
+	// a marker in a trailing comment would vanish (macOS's /bin/sh does
+	// this). The `:` no-op carries the marker as a real argument and makes
+	// the script compound, so the process survives carrying it.
+	cmd := exec.Command("sh", "-c", `sh -c ": $`+markerVar+`; sleep 30" ; true`)
+	cmd.Env = append(os.Environ(), markerVar+"="+marker)
+	// Own process group, killed as a group: killing just the outer shell
+	// would orphan the inner shell and its `sleep`, leaking processes that
+	// linger for the full 30s.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		_, _ = cmd.Process.Wait()
 	})
 
@@ -230,10 +247,31 @@ func TestDescendantCommandLines_FindsARealGrandchild(t *testing.T) {
 	assert.Contains(t, strings.Join(cmdlines, "\n"), marker,
 		"a descendant's full argv must be visible, at any depth")
 
+	// The direct child is identifiable by the UNEXPANDED placeholder. It
+	// must not carry the marker itself, or the assertion above would hold
+	// for a depth-1 walk too and this test would be vacuous.
+	var direct string
+	for _, c := range cmdlines {
+		if strings.Contains(c, "$"+markerVar) {
+			direct = c
+		}
+	}
+	require.NotEmpty(t, direct, "the direct child should be visible, placeholder unexpanded")
+	require.NotContains(t, direct, marker,
+		"the marker must reach only the grandchild, or a direct-children-only walk would pass this test")
+
+	// Rooted at the direct child, the marker is still visible — it lives
+	// strictly BELOW it, so only a recursive walk from this process could
+	// have found it above.
+	below, ok := DescendantCommandLines(cmd.Process.Pid)
+	require.True(t, ok)
+	assert.Contains(t, strings.Join(below, "\n"), marker,
+		"the marker-bearing process is a grandchild, not the direct child")
+
 	// And the matcher must join a ledger entry to it the same way the
 	// daemon does.
 	got := ReconcileBgShells(map[string]db.BgShellSeen{
-		"task-1": {Command: "sleep 30 #" + marker, Seen: time.Now()},
+		"task-1": {Command: ": " + marker + "; sleep 30", Seen: time.Now()},
 	}, cmdlines)
 	assert.Equal(t, []string{"task-1"}, got.Alive, "the recorded command matched a live process")
 }
