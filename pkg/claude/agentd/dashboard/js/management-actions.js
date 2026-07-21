@@ -337,6 +337,25 @@ export function createManagementActions({
     state.openDialog({ kind: 'sandbox-editor', seed, options });
     if (options.notice) state.error.value = options.notice;
   }
+  function openSandboxClone(source) {
+    if (!source?.name) {
+      notify('sandbox profile not found', true);
+      return false;
+    }
+    const base = `${source.name}-copy`;
+    const names = new Set((state.sandboxProfiles.value || []).map((profile) => profile.name));
+    let name = base;
+    for (let suffix = 2; names.has(name); suffix += 1) name = `${base}-${suffix}`;
+    // Keep clone creation in the normal sandbox editor. Besides making the
+    // copy reviewable, this preserves its normalized diff and the mandatory
+    // fresh acknowledgement when break-glass authority is carried over.
+    state.openDialog({
+      kind: 'sandbox-editor',
+      seed: { ...source, name },
+      options: { editExisting: false, cloneSourceName: source.name },
+    });
+    return true;
+  }
   function openTemplateEditor(seed = null, options = {}) {
     state.openTemplateDialog({ kind: 'template-editor', seed, options });
     void load('profiles');
@@ -802,7 +821,9 @@ export function createManagementActions({
         break_glass_filesystem: draft.break_glass_filesystem || [],
       };
       if (!body.name) throw new Error('name is required');
-      const targetName = options.targetName || original?.name || '';
+      const targetName = options.editExisting === false
+        ? ''
+        : options.targetName || original?.name || '';
       const preview = await sandbox.previewSandboxProfile(targetName, body);
       if (
         preview.before &&
@@ -952,6 +973,7 @@ export function createManagementActions({
     openProfileEditor,
     openRoleEditor,
     openSandboxEditor,
+    openSandboxClone,
     openTemplateManager,
     openTemplateEditor,
     updateTemplates,

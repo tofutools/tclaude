@@ -316,7 +316,7 @@ reincarnation, are fresh for clones, and are deleted when the owning agent is
 retired. A later reinstate and resume recreates them empty. A deny
 blocks both reads and writes and dominates an exact-path grant from another
 applied profile. Open the
-manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create/edit/delete named
+manager from **Groups → ⚙ → 🛡 sandbox profiles…** to create, clone, edit, or delete named
 profiles and assign one global default or one default to each group. The spawn
 dialog also offers a human-controlled explicit profile selector.
 

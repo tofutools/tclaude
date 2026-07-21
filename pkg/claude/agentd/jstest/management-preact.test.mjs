@@ -239,6 +239,60 @@ test('sandbox manager renders included profiles and static environment bindings'
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('sandbox manager clones a full profile through the guarded create editor', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { createManagementActions }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-actions.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const source = {
+    id: 7,
+    name: 'restricted',
+    filesystem: [{ path: '/work', access: 'write' }],
+    environment: [{ name: 'CACHE', value: '/cache' }],
+    includes: ['base'],
+    agent_directories: ['GOCACHE'],
+    network_access: 'internet',
+    read_baseline: 'minimal',
+    read_baseline_exclusions: ['secrets.ssh'],
+    break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }],
+    created_at: 'old',
+    updated_at: 'old',
+  };
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'base' }, source, { name: 'restricted-copy' }, { name: 'restricted-copy-2' },
+  ]);
+  state.openManager('sandbox');
+  const actions = createManagementActions({
+    state,
+    confirm: async () => true,
+    notify() {},
+    sandboxAPI: {
+      loadSandboxReadExclusionCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+      inspectSandboxDirectories: async () => ({ missing: [], creatable: [] }),
+    },
+  });
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+
+  const card = [...host.querySelectorAll('.sandbox-profile-card')]
+    .find((item) => item.querySelector('.tc-name').textContent === source.name);
+  await harness.act(() => harness.fireEvent(card.querySelector('.sandbox-profile-clone'), 'click'));
+  assert.equal(state.dialog.value.kind, 'sandbox-editor');
+  assert.equal(state.dialog.value.options.editExisting, false, 'a clone must POST a new row, never PATCH its source');
+  assert.equal(state.dialog.value.options.cloneSourceName, source.name);
+  assert.equal(state.dialog.value.seed.name, 'restricted-copy-3', 'the suggested name skips existing copies');
+  assert.deepEqual(state.dialog.value.seed.filesystem, source.filesystem);
+  assert.deepEqual(state.dialog.value.seed.break_glass_filesystem, source.break_glass_filesystem);
+  assert.match(host.querySelector('#sandbox-profile-editor-title').textContent, /Clone sandbox profile: restricted/);
+  assert.equal(host.querySelector('#sandbox-profile-editor-modal input').value, 'restricted-copy-3');
+  assert.ok(host.querySelector('#sandbox-profile-editor-break-glass-ack'), 'cloned authority still demands a fresh acknowledgement');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('profile editor Escape follows the visual stack over a later spawn dialog', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }, { isTopmostOverlay }] = await Promise.all([
@@ -323,6 +377,8 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   assert.deepEqual(calls[0], ['preview', '', body]); assert.deepEqual(calls[1], ['save', '', body, 'r1']); assert.equal(refreshed, 1);
   const replacement = { ...draft, name: 'renamed' }; const replacementBody = { ...body, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
   assert.deepEqual(calls[2], ['preview', 'safe', replacementBody]); assert.deepEqual(calls[3], ['save', 'safe', replacementBody, 'r1']);
+  const copied = { ...draft, name: 'safe-copy' }; const copiedBody = { ...body, name: 'safe-copy' }; const clone = actions.saveSandbox({ draft: copied, original: draft, options: { editExisting: false } }); await Promise.resolve(); state.cancelSandboxDiff(true); await clone;
+  assert.deepEqual(calls[4], ['preview', '', copiedBody]); assert.deepEqual(calls[5], ['save', '', copiedBody, 'r1']);
   assert.equal(genericConfirms, 0, 'sandbox saves use the dedicated diff instead of the generic JSON confirmation blob');
   await actions.removeSandbox('safe'); assert.deepEqual(calls.find((call) => call[0] === 'delete'), ['delete', 'safe']);
   assert.equal(genericConfirms, 1, 'ordinary destructive confirmations still use the shared prompt');
