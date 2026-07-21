@@ -60,6 +60,8 @@ function sandboxPolicyKey(group, sandboxProfile, revision) {
   return JSON.stringify([group, sandboxProfile, revision]);
 }
 
+const STALE_POLICY_ERROR = 'the sandbox policy changed while spawning — review the refreshed preview and submit again';
+
 function Words({ plain, wizard, prefix = 'theme-copy' }) {
   return html`<span class=${`${prefix}-regular`}>${plain}</span><span class=${`${prefix}-wizard`}>${wizard}</span>`;
 }
@@ -132,6 +134,10 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     worktrees: [], branches: [], defaultBranch: '', subRepos: [],
   });
   const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', breakGlass: [], key: '' });
+  // Live mirror for the submit closure: after its awaits, the captured
+  // sandboxPolicy binding is stale, but revalidation must see the latest.
+  const sandboxPolicyRef = useRef(sandboxPolicy);
+  sandboxPolicyRef.current = sandboxPolicy;
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -505,9 +511,17 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     // explicit pick) needs an explicit operator acknowledgement; the daemon
     // rejects unacknowledged spawns with a typed 422 either way. The policy
     // must belong to the selection being submitted — a stale one could
-    // describe profile A while the request selects profile B.
-    if (!view.sandboxProfilesDisabled
-      && sandboxPolicy.key !== sandboxPolicyKey(next.group, next.sandboxProfile, current.sandboxRevision)) {
+    // describe profile A while the request selects profile B — and it must
+    // STAY valid across every await in this closure: a policy refresh or a
+    // failed replacement load while confirmation, worktree resolution, or
+    // uploads are pending would otherwise let the old policy's
+    // acknowledgement ride the request. policyMismatch reads live state (the
+    // ref and the dialog signal), so it revalidates rather than re-checking
+    // captured values.
+    const policyMismatch = () => !view.sandboxProfilesDisabled
+      && sandboxPolicyRef.current.key
+        !== sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
+    if (policyMismatch()) {
       setError('wait for the sandbox policy preview to finish loading');
       submitLock.current = false;
       return;
@@ -517,6 +531,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       const proceed = await actions.confirmBreakGlassSpawn(spawnBreakGlass);
       if (!state.isCurrent(current.generation)) return;
       if (!proceed) {
+        submitLock.current = false;
+        return;
+      }
+      if (policyMismatch()) {
+        setError(STALE_POLICY_ERROR);
         submitLock.current = false;
         return;
       }
@@ -538,6 +557,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         resolvedWorktree.current = { key: worktreeKey, value: worktreeSelection };
       }
       if (!state.isCurrent(current.generation)) return;
+      if (policyMismatch()) throw new Error(STALE_POLICY_ERROR);
       const uploadKey = attachments.map((attachment) => `${attachment.id}:${attachKey(attachment.file)}`).join('|');
       let attachmentPaths = uploaded.current.key === uploadKey ? uploaded.current.paths : null;
       if (!attachmentPaths) {
@@ -546,6 +566,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }
       if (!state.isCurrent(current.generation)) return;
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
+      if (policyMismatch()) throw new Error(STALE_POLICY_ERROR);
       if (spawnBreakGlass.length) request.body.break_glass_acknowledged = true;
       const payload = await actions.spawn(request);
       if (!state.isCurrent(current.generation)) return;

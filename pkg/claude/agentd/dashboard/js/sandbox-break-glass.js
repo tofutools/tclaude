@@ -35,10 +35,15 @@ export function assignedBreakGlass(name, profiles, scope) {
 // it is being edited under (a rename in progress), never the stale stored
 // version. Origins use the "profile" scope.
 export function resolvedBreakGlass(candidate, profiles, priorName = '') {
-  const profile = { ...candidate, name: candidate?.name || priorName || '(draft)' };
+  const name = candidate?.name || priorName || '(draft)';
+  const profile = { ...candidate, name };
   const byName = Object.fromEntries((profiles || []).map((entry) => [entry.name, entry]));
-  byName[profile.name] = profile;
-  if (priorName) byName[priorName] = profile;
+  byName[name] = profile;
+  // A rename in progress: includes may still reference the prior name, so it
+  // aliases to the draft — but under its OWN name. Cycle detection is keyed
+  // by profile name, so aliasing the identical object under a second name
+  // would defeat it and recurse forever on a self-include of the prior name.
+  if (priorName && priorName !== name) byName[priorName] = { ...profile, name: priorName };
   return composeSandboxProfilePolicy([{ scope: 'profile', profile }], byName).breakGlass;
 }
 

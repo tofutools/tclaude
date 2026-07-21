@@ -532,3 +532,61 @@ test('import under skip never demands acknowledgement for discarded incoming bre
   assert.deepEqual([imports[0][1], imports[0][2]], ['overwrite', true]);
   unmount();
 });
+
+test('resolvedBreakGlass survives a rename whose includes still reference the prior self-name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { resolvedBreakGlass } = await harness.importDashboardModule('js/sandbox-break-glass.js');
+  const registry = [{ name: 'old', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] }];
+  // Renaming "old" → "new" while the draft still includes "old": the prior
+  // name aliases to the draft itself, which must terminate as a cycle rather
+  // than recurse until RangeError.
+  const entries = resolvedBreakGlass({ name: 'new', includes: ['old'], break_glass_filesystem: [] }, registry, 'old');
+  assert.deepEqual(entries, [], 'the self-referential include contributes nothing rather than crashing');
+  // The prior-name alias still resolves OTHER profiles' references to the
+  // draft: a wrapper including "old" sees the draft's rules, not the stale
+  // stored version's.
+  const viaOther = resolvedBreakGlass(
+    { name: 'new', includes: ['wrapper'], break_glass_filesystem: [] },
+    [...registry, { name: 'wrapper', includes: ['old'] }],
+    'old',
+  );
+  assert.deepEqual(viaOther, [], 'the stored pre-rename rules are not resurrected through an indirect include');
+  const mutual = resolvedBreakGlass(
+    { name: 'new', includes: ['loop'], break_glass_filesystem: [{ path: '/home/op/.codex', access: 'read' }] },
+    [{ name: 'loop', includes: ['old'] }],
+    'old',
+  );
+  assert.equal(mutual.length, 1, 'a mutual cycle through the prior name terminates and keeps own rules');
+});
+
+test('the editor survives an advanced rename whose raw includes reference the prior self-name', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'old', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+  ]);
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'old', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  const { host, unmount } = await mountManagement(harness, state, {
+    async inspectDirectories() { return { missing: [], creatable: [] }; },
+    async createDirectories() {},
+    saveSandbox() {},
+    configureSandboxWithAgent() {},
+  });
+  await harness.act(() => Promise.resolve());
+
+  host.querySelector('.sbx-advanced-toggle').click();
+  await harness.act(() => Promise.resolve());
+  const nameInput = host.querySelector('#sandbox-profile-editor-modal .cron-create-row input');
+  nameInput.value = 'new';
+  nameInput.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  const includes = host.querySelector('#sandbox-profile-editor-includes');
+  includes.value = '["old"]';
+  includes.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+
+  assert.ok(host.querySelector('#sandbox-profile-editor-modal'), 'the editor renders instead of crashing on the self-referential rename');
+  assert.ok(host.querySelector('#sandbox-profile-editor-submit'), 'the editor stays interactive so normal validation can run on save');
+  unmount();
+});
