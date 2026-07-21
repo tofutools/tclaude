@@ -254,6 +254,7 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 		Status          state.RunStatus      `json:"status"`
 		Started         time.Time            `json:"started"`
 		CurrentActivity string               `json:"currentActivity,omitempty"`
+		Adapted         bool                 `json:"adapted,omitempty"`
 		Verification    processverify.Report `json:"verification"`
 	}
 	views := make([]runView, 0, len(runs))
@@ -273,7 +274,7 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 			}
 			status := epochV8EffectiveStatus(snapshot)
 			verification := processverify.Report{RunID: run.ID, EffectiveStatus: status}
-			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: status, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Verification: verification})
+			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: status, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Adapted: len(snapshot.Checkpoint.View().Epochs) > 1, Verification: verification})
 			continue
 		}
 		if kind == store.RunSchemaResetRequired {

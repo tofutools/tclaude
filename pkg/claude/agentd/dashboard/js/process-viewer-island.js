@@ -4,7 +4,7 @@ import htm from 'htm';
 import { ProcessGraph } from './process-graph.js';
 import {
   VIEWER_DETAIL_TABS, VIEWER_PAGE_LIMIT, buildViewerGraph, detailPage,
-  detailRowCells, sanitizedTimeline, shortViewerID, viewerStateChips, viewerUnavailable,
+  detailRowCells, epochV8Summary, sanitizedTimeline, shortViewerID, viewerStateChips, viewerUnavailable,
 } from './process-viewer-core.js';
 
 const html = htm.bind(h);
@@ -85,6 +85,30 @@ function EvidenceTimeline({ envelope }) {
   </section>`;
 }
 
+// EpochSummaryPanel renders the schema-8 safe summary: lineage, structural
+// totals, per-state authority counts, the outstanding owner-epoch work
+// entries, and the bounded history timeline. Everything shown is counts,
+// refs, and bounded labels from the safe envelope — exact diffs and reasons
+// stay behind the permissioned artifact route and are never fetched here.
+function EpochSummaryPanel({ epoch }) {
+  return html`<section class="process-epoch-summary" aria-labelledby="process-epoch-summary-title">
+    <div class="process-viewer-section-head"><h4 id="process-epoch-summary-title">Adaptation summary</h4><span>binding rev ${epoch.binding.revision}</span></div>
+    <dl class="process-epoch-lineage">
+      <div><dt>Original template</dt><dd><span class="process-hash" title=${epoch.originalTemplateRef}>${shortViewerID(epoch.originalTemplateRef, 36)}</span></dd></div>
+      <div><dt>Current template</dt><dd><span class="process-hash" title=${epoch.currentTemplateRef}>${shortViewerID(epoch.currentTemplateRef, 36)}</span></dd></div>
+      <div><dt>Epochs</dt><dd>${epoch.totalEpochs}${epoch.lineageTruncated ? ' (oldest and newest shown)' : ''}</dd></div>
+      <div><dt>Current structure</dt><dd>${epoch.structural.nodes} nodes · ${epoch.structural.edges} edges${epoch.structural.changedFromOriginal ? ' · changed from original' : ''}</dd></div>
+    </dl>
+    ${epoch.adapted && html`<ol class="process-epoch-list" aria-label="Epoch lineage">${epoch.epochs.map((entry) => html`<li key=${entry.ordinal}><strong>epoch ${entry.ordinal}</strong> <span class="process-hash" title=${entry.templateRef}>${shortViewerID(entry.templateRef, 28)}</span></li>`)}</ol>`}
+    <div class="process-viewer-state-chips" aria-label="Authority state counts">${epoch.stateChips.map(([label, value]) => html`<span key=${label}><strong>${label}</strong> ${value}</span>`)}</div>
+    <h5 class="process-epoch-subhead" id="process-epoch-work-title">Outstanding work</h5>
+    ${epoch.entries.length ? html`<ul class="process-epoch-entries" aria-labelledby="process-epoch-work-title">${epoch.entries.map((entry) => html`<li key=${entry.id}><span class="wl-epoch-badge">◈ epoch ${entry.ownerEpochOrdinal}</span> <strong>${entry.nodeId}</strong> ${entry.kind} · ${entry.status}${entry.attempt > 1 ? ` · attempt ${entry.attempt}` : ''}</li>`)}</ul>` : html`<p class="process-viewer-empty">No outstanding owner-epoch work.</p>`}
+    <h5 class="process-epoch-subhead" id="process-epoch-timeline-title">History</h5>
+    ${epoch.timeline.length ? html`<ol class="process-epoch-timeline" aria-labelledby="process-epoch-timeline-title">${epoch.timeline.map((event) => html`<li key=${event.revision}>rev ${event.revision} · ${event.kind} · epoch ${event.epochOrdinal}${event.reasonCode ? ` · ${event.reasonCode}` : ''}${event.actorClass ? ` · by ${event.actorClass}` : ''}${event.appliedAt ? ` · ${event.appliedAt}` : ''}</li>`)}</ol>` : html`<p class="process-viewer-empty">No recorded history events.</p>`}
+    ${epoch.timelineTruncated && html`<p class="process-secondary">Showing the newest ${epoch.timeline.length} of ${epoch.timelineTotal} events.</p>`}
+  </section>`;
+}
+
 export function ProcessViewerBoundary({
   spec, actions, active = true,
   setTimeoutImpl = globalThis.setTimeout,
@@ -118,6 +142,7 @@ export function ProcessViewerBoundary({
   }, [spec.key, offset, reload, actions, active, setTimeoutImpl, clearTimeoutImpl]);
 
   const envelope = request.envelope;
+  const epoch = epochV8Summary(envelope);
   const viewer = envelope?.viewerV2;
   const routing = viewer?.routingAvailable ? viewer.routing : null;
   const graph = useMemo(() => buildViewerGraph(envelope), [envelope]);
@@ -151,11 +176,12 @@ export function ProcessViewerBoundary({
     ${request.phase === 'error' && html`<div class="island-error" role="alert">Refresh failed: ${request.error}</div>`}
     <header class="process-viewer-header">
       <div><span class="process-viewer-kicker">Live process view</span><h3>${envelope.run?.id || spec.id}</h3><div class="process-viewer-ref" title=${envelope.run?.templateRef || ''}>${shortViewerID(envelope.run?.templateRef, 36)}</div></div>
-      <div class="process-viewer-run-state"><span class="process-status">${envelope.run?.effectiveStatus || 'unknown'}</span><span>schema ${viewer?.stateSchemaVersion || '—'}</span><span>${viewer?.pathProtocol || 'no path protocol'}</span></div>
+      <div class="process-viewer-run-state"><span class="process-status">${envelope.run?.effectiveStatus || 'unknown'}</span>${epoch?.adapted && html`<span class="process-adapted-badge">⟳ adapted</span>`}<span>schema ${viewer?.stateSchemaVersion || '—'}</span><span>${viewer?.pathProtocol || 'no path protocol'}</span></div>
     </header>
     <div class="process-viewer-authority-strip"><strong>Authority boundary:</strong> graph topology is the exact pinned template; routing decorations and counts are the current checkpoint. Evidence is rendered only in the timeline below.</div>
     ${unavailable && html`<div class=${`process-viewer-unavailable reason-${unavailable.reason}`} role="status"><span class="process-viewer-unavailable-glyph">⚠</span><div><strong>${unavailable.title}</strong><p>${unavailable.detail}</p><code>${unavailable.reason}</code></div></div>`}
     <div class="process-viewer-state-chips" aria-label="Checkpoint state counts">${viewerStateChips(routing).map(([label, value]) => html`<span key=${label}><strong>${label}</strong> ${value}</span>`)}</div>
+    ${epoch && html`<${EpochSummaryPanel} epoch=${epoch} />`}
     <div class="process-viewer-main">
       <section class="process-viewer-graph-panel" aria-label="Exact process topology">${graph ? html`<${ViewerGraph} graph=${graph} runID=${spec.id} />` : html`<div class="process-placeholder"><h3>Exact topology unavailable</h3><p>The viewer failed closed and will not fall back to evidence-derived graph data.</p></div>`}</section>
       <section class="process-viewer-details" aria-labelledby="process-viewer-details-title">
