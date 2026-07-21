@@ -73,7 +73,7 @@ func TestNormalizeFilesystemDenyWinsAndMayCoverProtectedPaths(t *testing.T) {
 	dir := filepath.Join(home, "cache")
 	protected := filepath.Join(home, ".claude", "sessions")
 	require.NoError(t, os.Mkdir(dir, 0o755))
-	require.NoError(t, os.Mkdir(protected, 0o755))
+	require.NoError(t, os.MkdirAll(protected, 0o755))
 	canonicalDir, err := filepath.EvalSymlinks(dir)
 	require.NoError(t, err)
 	canonicalProtected, err := filepath.EvalSymlinks(protected)

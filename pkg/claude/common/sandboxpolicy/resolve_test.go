@@ -145,7 +145,7 @@ func TestResolveRevalidatesPersistedCanonicalPath(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Rename(mount, filepath.Join(home, "old-mount")))
 	protected := filepath.Join(home, ".claude", "sessions")
-	require.NoError(t, os.Mkdir(protected, 0o755))
+	require.NoError(t, os.MkdirAll(protected, 0o755))
 	require.NoError(t, os.Symlink(protected, mount))
 
 	_, err = Resolve(Scopes{Global: &persisted})
