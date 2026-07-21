@@ -181,8 +181,8 @@ rule there cannot be weakened by any project's `.claude/settings.json`:
       "allowAllUnixSockets": true
     },
     "filesystem": {
-      "denyWrite": ["~/.tclaude/data", "~/.claude/sessions"],
-      "denyRead":  ["~/.tclaude/data", "~/.claude/sessions"],
+      "denyWrite": ["~/.tclaude/data", "~/.claude/sessions", "~/.codex"],
+      "denyRead":  ["~/.tclaude/data", "~/.claude/sessions", "~/.codex"],
       "allowRead": ["~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"]
     }
   },
@@ -191,7 +191,9 @@ rule there cannot be weakened by any project's `.claude/settings.json`:
       "Edit(~/.tclaude/data/**)",
       "Read(~/.tclaude/data/**)",
       "Edit(~/.claude/sessions/**)",
-      "Read(~/.claude/sessions/**)"
+      "Read(~/.claude/sessions/**)",
+      "Edit(~/.codex/**)",
+      "Read(~/.codex/**)"
     ]
   }
 }

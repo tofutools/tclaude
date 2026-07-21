@@ -979,7 +979,14 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 	}
 	// Relaunch never re-engages the experimental guardian (auto-review is an
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
-	relaunchSandbox := sandboxForHarness(harnessName)
+	// Preserve the mode this conversation was launched under; the harness
+	// default would silently drop an enforced `sandbox on` posture on resume.
+	relaunchSandbox, sandboxErr := relaunchSandboxForSession(sourceSession)
+	if sandboxErr != nil {
+		res.Action = "error"
+		res.Detail = sandboxErr.Error()
+		return res
+	}
 	if fail := sandboxProfileCapabilityFailure(harnessName, relaunchSandbox, effectiveSandbox); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
@@ -2509,6 +2516,19 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				writeError(w, http.StatusForbidden, "sandbox_profile_restricted", err.Error())
 				return
 			}
+		}
+	}
+	// Selecting a launch whose RESOLVED policy carries protected access is one
+	// of the acknowledgement surfaces. It is checked after containment so an
+	// agent-initiated spawn is refused by lineage first (agents can never
+	// introduce or widen break-glass), and it applies to the human caller who
+	// is actually making the dangerous choice. An agent inheriting exactly the
+	// access its parent already holds needs no new acknowledgement: the human
+	// acknowledged it when the parent was launched.
+	if spawnerConvID == "" && effectiveSandbox.Effective.HasBreakGlass() {
+		if fail := requireBreakGlassAck("launch an agent under", body.BreakGlassAcknowledged, effectiveSandbox.Effective.BreakGlassFilesystem); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
+			return
 		}
 	}
 	if fail := sandboxProfileCapabilityFailure(h.Name, sandboxMode, &effectiveSandbox); fail != nil {

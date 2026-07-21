@@ -718,7 +718,7 @@ CREATE TABLE sandbox_profiles (
 			environment_json TEXT NOT NULL DEFAULT '[]',
 			created_at       TEXT NOT NULL,
 			updated_at       TEXT NOT NULL
-		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '');
+		, includes_json TEXT NOT NULL DEFAULT '[]', agent_directories_json TEXT NOT NULL DEFAULT '[]', network_access TEXT NOT NULL DEFAULT '', read_baseline TEXT NOT NULL DEFAULT '', break_glass_filesystem_json TEXT NOT NULL DEFAULT '[]');
 
 CREATE TABLE sandbox_profile_global_assignment (
 			id           INTEGER PRIMARY KEY CHECK (id = 1),

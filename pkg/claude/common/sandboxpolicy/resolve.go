@@ -2,7 +2,9 @@ package sandboxpolicy
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
+	"strings"
 )
 
 // Scope identifies one tier in sandbox-profile resolution. Resolution always
@@ -20,6 +22,22 @@ const (
 type ProfileSource struct {
 	Scope   Scope  `json:"scope"`
 	Profile string `json:"profile"`
+	// IncludedBy names the assigned profile that pulled Profile in through an
+	// include chain, when the two differ. It keeps the audit trail complete in
+	// both directions: which profile authored the rule, and which assignment
+	// actually caused it to apply. Omitted for a directly-authored rule.
+	IncludedBy string `json:"included_by,omitempty"`
+	// Chain is the exact include route, author → … → assigned profile. A
+	// diamond produces one ProfileSource per arm, so no route is hidden.
+	// Derived during resolution and never accepted from input.
+	Chain []string `json:"chain,omitempty"`
+}
+
+// DedupeKey is a canonical, comparable identity for a ProfileSource. The type
+// itself is not comparable (Chain is a slice), so callers that need set
+// semantics key on this instead.
+func (s ProfileSource) DedupeKey() string {
+	return string(s.Scope) + "\x00" + s.Profile + "\x00" + s.IncludedBy + "\x00" + strings.Join(s.Chain, "\x01")
 }
 
 // Scopes is the complete harness-neutral input to Resolve. Nil means that tier
@@ -36,25 +54,44 @@ type Scopes struct {
 // deny-dominates-write-dominates-read, while Environment names the single
 // last-scope winner.
 type ResolutionProvenance struct {
-	Applied          []ProfileSource            `json:"applied"`
-	Filesystem       map[string][]ProfileSource `json:"filesystem"`
-	Environment      map[string]ProfileSource   `json:"environment"`
-	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
-	Network          *ProfileSource             `json:"network,omitempty"`
+	Applied    []ProfileSource            `json:"applied"`
+	Filesystem map[string][]ProfileSource `json:"filesystem"`
+	// BreakGlassFilesystem lists EVERY scope that contributed each protected
+	// path, so composition can never hide where dangerous authority came from.
+	// ReadBaseline names the scope that first imposed minimal.
+	BreakGlassFilesystem map[string][]ProfileSource `json:"break_glass_filesystem,omitempty"`
+	ReadBaseline         *ProfileSource             `json:"read_baseline,omitempty"`
+	Environment          map[string]ProfileSource   `json:"environment"`
+	AgentDirectories     map[string][]ProfileSource `json:"agent_directories"`
+	Network              *ProfileSource             `json:"network,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
 // its provenance. Its slices and provenance maps are non-nil even when no
 // scope is assigned.
 type EffectiveProfile struct {
-	Filesystem       []FilesystemGrant    `json:"filesystem"`
-	Environment      []EnvironmentEntry   `json:"environment"`
-	AgentDirectories []string             `json:"agent_directories"`
-	NetworkAccess    NetworkAccess        `json:"network_access,omitempty"`
-	Provenance       ResolutionProvenance `json:"provenance"`
+	Filesystem []FilesystemGrant `json:"filesystem"`
+	// ReadBaseline and BreakGlassFilesystem stay omitempty so a resolved
+	// payload for profiles that use neither is byte-identical to a pre-TCL-609
+	// snapshot, keeping stored snapshots and dashboard output compatible.
+	ReadBaseline         ReadBaseline         `json:"read_baseline,omitempty"`
+	BreakGlassFilesystem []BreakGlassGrant    `json:"break_glass_filesystem,omitempty"`
+	Environment          []EnvironmentEntry   `json:"environment"`
+	AgentDirectories     []string             `json:"agent_directories"`
+	NetworkAccess        NetworkAccess        `json:"network_access,omitempty"`
+	Provenance           ResolutionProvenance `json:"provenance"`
 }
 
+// HasBreakGlass reports whether a resolved policy carries protected-path
+// authority. Acknowledgement gates and audit rendering key off this.
+func (e EffectiveProfile) HasBreakGlass() bool { return len(e.BreakGlassFilesystem) > 0 }
+
 type resolvedFilesystemGrant struct {
+	access  Access
+	sources []ProfileSource
+}
+
+type resolvedBreakGlassGrant struct {
 	access  Access
 	sources []ProfileSource
 }
@@ -83,6 +120,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	}
 
 	filesystem := map[string]resolvedFilesystemGrant{}
+	breakGlass := map[string]resolvedBreakGlassGrant{}
 	environment := map[string]string{}
 	agentDirectories := map[string][]ProfileSource{}
 	for _, tier := range []struct {
@@ -105,6 +143,17 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if len(normalized.Includes) > 0 {
 			return EffectiveProfile{}, fmt.Errorf("%s sandbox profile %q still has unresolved includes at resolution time; flatten it first", tier.scope, normalized.Name)
 		}
+		// Authored profile data and effective provenance are separate. Flatten's
+		// opaque companion is trusted only while the entire public break-glass
+		// payload is exactly the slice it sealed; any mutation invalidates it.
+		chainsByPath := map[string][][]string{}
+		derived := tier.profile.derivedBreakGlass
+		if derived != nil && derived.profile == tier.profile.Name && len(tier.profile.Includes) == 0 &&
+			reflect.DeepEqual(derived.grants, tier.profile.BreakGlassFilesystem) {
+			for path, chains := range derived.chains {
+				chainsByPath[path] = cloneChains(chains)
+			}
+		}
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
 		for _, grant := range normalized.Filesystem {
@@ -118,6 +167,54 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			}
 			current.sources = append(current.sources, source)
 			filesystem[grant.Path] = current
+		}
+		// Break-glass and the read baseline are privilege-monotonic across
+		// scopes rather than last-scope-wins: every contributing scope is kept
+		// in provenance, write dominates read on one canonical path, and the
+		// first scope that imposes minimal owns that decision.
+		for _, grant := range normalized.BreakGlassFilesystem {
+			// Attribute to the profile that AUTHORED the rule, not the wrapper
+			// that happened to include it. Without this an operator auditing a
+			// dangerous grant would be pointed at an innocent-looking profile
+			// whose own payload contains nothing dangerous at all.
+			// One source per distinct include chain, so a diamond reports both
+			// routes rather than collapsing to one. A directly-authored rule
+			// has no chain and reports the assigned profile itself.
+			grantSources := []ProfileSource{}
+			for _, chain := range chainsByPath[grant.Path] {
+				if len(chain) == 0 {
+					continue
+				}
+				if len(chain) == 1 && chain[0] == normalized.Name {
+					// Preserve v2/direct compatibility: direct authorship is the
+					// ordinary source shape, with no redundant chain fields.
+					grantSources = append(grantSources, source)
+					continue
+				}
+				chainSource := source
+				chainSource.Profile = chain[0]
+				chainSource.IncludedBy = normalized.Name
+				chainSource.Chain = append([]string(nil), chain...)
+				grantSources = append(grantSources, chainSource)
+			}
+			if len(grantSources) == 0 {
+				grantSources = append(grantSources, source)
+			}
+			current, exists := breakGlass[grant.Path]
+			if !exists {
+				breakGlass[grant.Path] = resolvedBreakGlassGrant{access: grant.Access, sources: grantSources}
+				continue
+			}
+			if accessRank(grant.Access) > accessRank(current.access) {
+				current.access = grant.Access
+			}
+			current.sources = append(current.sources, grantSources...)
+			breakGlass[grant.Path] = current
+		}
+		if normalized.ReadBaseline == ReadBaselineMinimal && result.ReadBaseline != ReadBaselineMinimal {
+			result.ReadBaseline = ReadBaselineMinimal
+			baselineSource := source
+			result.Provenance.ReadBaseline = &baselineSource
 		}
 		for _, entry := range normalized.Environment {
 			if _, exists := agentDirectories[entry.Name]; exists {
@@ -178,6 +275,47 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		result.Provenance.Filesystem[path] = canonicalSources(grant.sources)
 	}
 
+	// Re-resolve the merged protected-path set for the same reason as the
+	// filesystem set above, and to re-prove every surviving rule still lands on
+	// a protected root after canonicalization.
+	if len(breakGlass) > 0 {
+		revalidatedBreakGlass := map[string]resolvedBreakGlassGrant{}
+		breakGlassPaths := make([]string, 0, len(breakGlass))
+		for path := range breakGlass {
+			breakGlassPaths = append(breakGlassPaths, path)
+		}
+		sort.Strings(breakGlassPaths)
+		for _, path := range breakGlassPaths {
+			grant := breakGlass[path]
+			normalized, _, err := normalizeBreakGlass([]BreakGlassGrant{{Path: path, Access: grant.access}}, true)
+			if err != nil {
+				return EffectiveProfile{}, fmt.Errorf("revalidate effective break-glass path %q: %w", path, err)
+			}
+			canonical := normalized[0]
+			current, exists := revalidatedBreakGlass[canonical.Path]
+			if !exists {
+				revalidatedBreakGlass[canonical.Path] = resolvedBreakGlassGrant{access: canonical.Access, sources: append([]ProfileSource(nil), grant.sources...)}
+				continue
+			}
+			if accessRank(canonical.Access) > accessRank(current.access) {
+				current.access = canonical.Access
+			}
+			current.sources = append(current.sources, grant.sources...)
+			revalidatedBreakGlass[canonical.Path] = current
+		}
+		breakGlassPaths = breakGlassPaths[:0]
+		for path := range revalidatedBreakGlass {
+			breakGlassPaths = append(breakGlassPaths, path)
+		}
+		sort.Strings(breakGlassPaths)
+		result.Provenance.BreakGlassFilesystem = map[string][]ProfileSource{}
+		for _, path := range breakGlassPaths {
+			grant := revalidatedBreakGlass[path]
+			result.BreakGlassFilesystem = append(result.BreakGlassFilesystem, BreakGlassGrant{Path: path, Access: grant.access})
+			result.Provenance.BreakGlassFilesystem[path] = canonicalSources(grant.sources)
+		}
+	}
+
 	mergedEnvironment := make([]EnvironmentEntry, 0, len(environment))
 	for name, value := range environment {
 		mergedEnvironment = append(mergedEnvironment, EnvironmentEntry{Name: name, Value: value})
@@ -200,13 +338,16 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 
 func canonicalSources(in []ProfileSource) []ProfileSource {
 	rank := map[Scope]int{ScopeGlobal: 0, ScopeGroup: 1, ScopeExplicit: 2}
-	seen := make(map[ProfileSource]struct{}, len(in))
+	// ProfileSource carries a Chain slice and is therefore not comparable, so
+	// dedupe on a derived key rather than the struct itself.
+	seen := make(map[string]struct{}, len(in))
 	out := make([]ProfileSource, 0, len(in))
 	for _, source := range in {
-		if _, exists := seen[source]; exists {
+		key := source.DedupeKey()
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[source] = struct{}{}
+		seen[key] = struct{}{}
 		out = append(out, source)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Scope] < rank[out[j].Scope] })

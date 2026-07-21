@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -192,10 +193,10 @@ func TestSandboxProfileImportRetainsMissingPathsAndResolutionKeepsRule(t *testin
 	canonicalHome, err := filepath.EvalSymlinks(os.Getenv("HOME"))
 	require.NoError(t, err)
 	missing := filepath.Join(canonicalHome, "shared-from-another-machine", "cache")
-	result, err := ImportSandboxProfiles([]*SandboxProfile{{
+	result, err := ImportSandboxProfilesWithOptions([]*SandboxProfile{{
 		Name:       "portable",
 		Filesystem: []SandboxFilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}},
-	}}, "error", nil)
+	}}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"portable"}, result.Imported)
 	require.Len(t, result.Warnings, 1)
@@ -220,14 +221,98 @@ func TestSandboxProfileImportRetainsMissingPathsAndResolutionKeepsRule(t *testin
 
 func TestSandboxProfileImportRejectsInvalidNetworkAccess(t *testing.T) {
 	setupTestDB(t)
-	_, err := ImportSandboxProfiles([]*SandboxProfile{{
+	_, err := ImportSandboxProfilesWithOptions([]*SandboxProfile{{
 		Name: "invalid-network", NetworkAccess: sandboxpolicy.NetworkAccess("lan-only"),
-	}}, "error", nil)
+	}}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.ErrorContains(t, err, "network_access")
 
 	stored, getErr := GetSandboxProfile("invalid-network")
 	require.NoError(t, getErr)
 	assert.Nil(t, stored)
+}
+
+func TestSandboxProfileImportReturnsStructuredBreakGlassAcknowledgementError(t *testing.T) {
+	setupTestDB(t)
+	protected := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(protected, 0o755))
+	canonical, err := filepath.EvalSymlinks(protected)
+	require.NoError(t, err)
+	profiles := []*SandboxProfile{{
+		Name: "danger",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
+			Path: canonical, Access: sandboxpolicy.AccessWrite,
+		}},
+	}}
+
+	_, err = ImportSandboxProfilesWithOptions(profiles, SandboxProfileImportOptions{OnConflict: "error"})
+	var ackErr *SandboxProfileAcknowledgementRequiredError
+	require.True(t, errors.As(err, &ackErr), "error=%v", err)
+	require.Equal(t, []SandboxProfileBreakGlassExposure{{
+		Profile: "danger", Path: canonical, Access: sandboxpolicy.AccessWrite,
+	}}, ackErr.Exposures)
+	stored, getErr := GetSandboxProfile("danger")
+	require.NoError(t, getErr)
+	assert.Nil(t, stored, "the acknowledgement error must precede every mutation")
+
+	_, err = ImportSandboxProfilesWithOptions(profiles, SandboxProfileImportOptions{
+		OnConflict: "error", BreakGlassAcknowledged: true,
+	})
+	require.NoError(t, err)
+}
+
+func TestSandboxProfileImportAssignmentPlanMatchesAppliedMutations(t *testing.T) {
+	setupTestDB(t)
+	protected := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(protected, 0o755))
+	canonical, err := filepath.EvalSymlinks(protected)
+	require.NoError(t, err)
+	_, err = CreateSandboxProfile(&SandboxProfile{
+		Name: "dangerous",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
+			Path: canonical, Access: sandboxpolicy.AccessWrite,
+		}},
+	})
+	require.NoError(t, err)
+
+	result, err := ImportSandboxProfilesWithOptions(nil, SandboxProfileImportOptions{
+		OnConflict: "error",
+		Assignments: &SandboxProfileAssignments{Groups: map[string]string{
+			"does-not-exist": "dangerous",
+		}},
+	})
+	require.NoError(t, err, "a skipped assignment is not an acknowledgement carrier")
+	assert.Equal(t, []string{`group assignment skipped: no group "does-not-exist"`}, result.Warnings)
+
+	_, err = CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+	assignments := &SandboxProfileAssignments{Groups: map[string]string{"crew": "dangerous"}}
+	_, err = ImportSandboxProfilesWithOptions(nil, SandboxProfileImportOptions{
+		OnConflict: "error", Assignments: assignments,
+	})
+	var ackErr *SandboxProfileAcknowledgementRequiredError
+	require.True(t, errors.As(err, &ackErr), "an applied dangerous assignment is gated: %v", err)
+	require.Equal(t, []SandboxProfileBreakGlassExposure{{
+		Profile: "dangerous", Path: canonical, Access: sandboxpolicy.AccessWrite, Assignment: true,
+	}}, ackErr.Exposures)
+
+	_, err = ImportSandboxProfilesWithOptions(nil, SandboxProfileImportOptions{
+		OnConflict: "error", Assignments: assignments, BreakGlassAcknowledged: true,
+	})
+	require.NoError(t, err)
+	assigned, err := GetAgentGroupSandboxProfile("crew")
+	require.NoError(t, err)
+	require.NotNil(t, assigned)
+	assert.Equal(t, "dangerous", assigned.Name)
+}
+
+func TestImportSandboxProfilesLegacyCallShapeStillWorks(t *testing.T) {
+	setupTestDB(t)
+	result, err := ImportSandboxProfiles([]*SandboxProfile{{Name: "legacy-call"}}, "error", nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"legacy-call"}, result.Imported)
+	stored, err := GetSandboxProfile("legacy-call")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
 }
 
 func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testing.T) {

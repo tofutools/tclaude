@@ -2265,6 +2265,12 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
 	}
 	var readDirs, writeDirs, denyDirs []string
+	// Resume carries the RECORDED decision forward from the frozen snapshot and
+	// never consults a later ambient profile change, so an agent cannot gain
+	// protected access or a widened read baseline by being restarted.
+	var breakGlassReadDirs, breakGlassWriteDirs []string
+	var breakGlassGrants []sandboxpolicy.BreakGlassGrant
+	readBaseline := sandboxpolicy.ReadBaselineDefault
 	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
@@ -2291,6 +2297,21 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 				denyDirs = append(denyDirs, grant.Path)
 			}
 		}
+		readBaseline = validated.Effective.ReadBaseline
+		breakGlassGrants = validated.Effective.BreakGlassFilesystem
+		if len(breakGlassGrants) > 0 {
+			breakGlass, err := sandboxpolicy.BreakGlassForLaunch(validated.Effective)
+			if err != nil {
+				return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
+			}
+			for _, grant := range breakGlass {
+				if grant.Access == sandboxpolicy.AccessWrite {
+					breakGlassWriteDirs = append(breakGlassWriteDirs, grant.Path)
+				} else {
+					breakGlassReadDirs = append(breakGlassReadDirs, grant.Path)
+				}
+			}
+		}
 	}
 	// Mirror the spawn path: keep Claude Code's "Resume from summary" chooser
 	// from interrupting this resume. No-op for non-Claude harnesses. See
@@ -2310,6 +2331,16 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {
 		return "", "", nil, err
+	}
+	if readBaseline != sandboxpolicy.ReadBaselineDefault {
+		if err := harness.ValidateSandboxReadBaseline(h.Name, sandboxMode, readBaseline); err != nil {
+			return "", "", nil, err
+		}
+	}
+	if len(breakGlassGrants) > 0 {
+		if err := harness.ValidateSandboxBreakGlass(h.Name, sandboxMode, breakGlassGrants); err != nil {
+			return "", "", nil, err
+		}
 	}
 	if h.Name == harness.DefaultName && len(denyDirs) > 0 && sandboxMode != harness.ClaudeSandboxOn {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
@@ -2344,10 +2375,31 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxDenyDirs:  denyDirs,
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
+
+		SandboxReadBaseline:        string(readBaseline),
+		SandboxBreakGlassReadDirs:  breakGlassReadDirs,
+		SandboxBreakGlassWriteDirs: breakGlassWriteDirs,
 	}
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
-		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyDirs, networkAccess, session.GenerateSessionID())
+		resumeWriteDirs := writeDirs
+		if readBaseline == sandboxpolicy.ReadBaselineMinimal {
+			// Same invariant as the spawn path: without `extends = ":workspace"`
+			// nothing grants the launch directory, and GitWorktreeWriteDirs is
+			// empty outside a Git repository. Resume must not strand a minimal
+			// agent with no workspace.
+			if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
+				resumeWriteDirs = appendUniqueResumeDir(resumeWriteDirs, workspace)
+			}
+		}
+		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
+			ReadDirs:            readDirs,
+			WriteDirs:           resumeWriteDirs,
+			DenyDirs:            denyDirs,
+			ReadBaseline:        readBaseline,
+			BreakGlassReadDirs:  breakGlassReadDirs,
+			BreakGlassWriteDirs: breakGlassWriteDirs,
+		}, networkAccess, session.GenerateSessionID())
 		if err != nil {
 			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)
 		}
@@ -2362,6 +2414,29 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		cmd = resumeCommandWithFileCleanup(cmd, cleanupPath)
 	}
 	return cmd, cleanupPath, h, nil
+}
+
+// canonicalResumeWorkspace mirrors the spawn path's minimal-workspace grant.
+// Symlink-resolved so the emitted rule names the path the sandbox will see.
+func canonicalResumeWorkspace(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(cwd))
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(resolved)
+}
+
+func appendUniqueResumeDir(dirs []string, dir string) []string {
+	for _, existing := range dirs {
+		if existing == dir {
+			return dirs
+		}
+	}
+	return append(dirs, dir)
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {

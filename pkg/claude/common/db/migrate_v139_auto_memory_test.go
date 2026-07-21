@@ -10,7 +10,6 @@ import (
 )
 
 func TestMigrateV138toV139AddsAutoMemoryColumns(t *testing.T) {
-	require.Equal(t, 139, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v139?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

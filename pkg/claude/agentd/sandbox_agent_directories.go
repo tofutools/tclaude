@@ -86,15 +86,15 @@ func unionFilesystemProvenance(effective *sandboxpolicy.EffectiveProfile, path s
 		return
 	}
 	existing := effective.Provenance.Filesystem[path]
-	seen := make(map[sandboxpolicy.ProfileSource]bool, len(existing))
+	seen := make(map[string]bool, len(existing))
 	for _, source := range existing {
-		seen[source] = true
+		seen[source.DedupeKey()] = true
 	}
 	for _, source := range sources {
-		if seen[source] {
+		if seen[source.DedupeKey()] {
 			continue
 		}
-		seen[source] = true
+		seen[source.DedupeKey()] = true
 		existing = append(existing, source)
 	}
 	effective.Provenance.Filesystem[path] = existing

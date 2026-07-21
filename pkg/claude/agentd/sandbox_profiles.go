@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 
 const (
 	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 2
+	sandboxProfileExportVersion = 3
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -23,14 +24,23 @@ const (
 var sandboxProfileBeforeMkdir = func(string) {}
 
 type sandboxProfileJSON struct {
-	Name             string                           `json:"name"`
-	Filesystem       []sandboxpolicy.FilesystemGrant  `json:"filesystem"`
-	Environment      []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	AgentDirectories []string                         `json:"agent_directories,omitempty"`
-	NetworkAccess    sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
-	Includes         []string                         `json:"includes,omitempty"`
-	CreatedAt        string                           `json:"created_at,omitempty"`
-	UpdatedAt        string                           `json:"updated_at,omitempty"`
+	Name       string                          `json:"name"`
+	Filesystem []sandboxpolicy.FilesystemGrant `json:"filesystem"`
+	// ReadBaseline and BreakGlassFilesystem are omitempty so a profile using
+	// neither serializes exactly as it did before TCL-609.
+	ReadBaseline         sandboxpolicy.ReadBaseline       `json:"read_baseline,omitempty"`
+	BreakGlassFilesystem []sandboxpolicy.BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
+	Environment          []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	AgentDirectories     []string                         `json:"agent_directories,omitempty"`
+	NetworkAccess        sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
+	Includes             []string                         `json:"includes,omitempty"`
+	CreatedAt            string                           `json:"created_at,omitempty"`
+	UpdatedAt            string                           `json:"updated_at,omitempty"`
+	// BreakGlassAcknowledged is a TRANSIENT request-only field. It is never
+	// stored and never emitted: the durable danger marker is
+	// BreakGlassFilesystem itself, so a cross-machine import or a later
+	// assignment must acknowledge the risk again.
+	BreakGlassAcknowledged bool `json:"break_glass_acknowledged,omitempty"`
 }
 
 type sandboxProfileExportEnvelope struct {
@@ -41,6 +51,10 @@ type sandboxProfileExportEnvelope struct {
 	Assignments      *sandboxProfileAssignmentsJSON `json:"assignments,omitempty"`
 	OnConflict       string                         `json:"on_conflict,omitempty"`       // import only: error|skip|overwrite
 	ApplyAssignments bool                           `json:"apply_assignments,omitempty"` // import only; explicit to avoid cross-machine surprises
+	// BreakGlassAcknowledged is import-only and transient. Export never emits
+	// it: the danger marker travels as break_glass_filesystem, and the
+	// receiving operator must acknowledge it on THIS machine.
+	BreakGlassAcknowledged bool `json:"break_glass_acknowledged,omitempty"`
 }
 
 type sandboxProfileAssignmentsJSON struct {
@@ -58,7 +72,8 @@ type sandboxProfilePreviewJSON struct {
 
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
-		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+		Name: p.Name, Filesystem: p.Filesystem, ReadBaseline: p.ReadBaseline, BreakGlassFilesystem: p.BreakGlassFilesystem,
+		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
 	}
 	if localFields {
 		if !p.CreatedAt.IsZero() {
@@ -73,25 +88,29 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
+		Name: body.Name, Filesystem: body.Filesystem, ReadBaseline: body.ReadBaseline, BreakGlassFilesystem: body.BreakGlassFilesystem,
+		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, ReadBaseline: normalized.ReadBaseline, BreakGlassFilesystem: normalized.BreakGlassFilesystem,
+		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
 	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
+		Name: body.Name, Filesystem: body.Filesystem, ReadBaseline: body.ReadBaseline, BreakGlassFilesystem: body.BreakGlassFilesystem,
+		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, ReadBaseline: normalized.ReadBaseline, BreakGlassFilesystem: normalized.BreakGlassFilesystem,
+		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
 	}, missing, nil
 }
 
@@ -138,6 +157,10 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, sandboxProfilePreviewJSON{
 				After: sandboxProfileToJSON(p, false),
 			})
+			return
+		}
+		if fail := requirePayloadBreakGlassAck("save", body.BreakGlassAcknowledged, p); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		id, err := db.CreateSandboxProfile(p)
@@ -223,6 +246,10 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 				After:    sandboxProfileToJSON(p, false),
 				Revision: existing.UpdatedAt.Format(time.RFC3339Nano),
 			})
+			return
+		}
+		if fail := requirePayloadBreakGlassAck("save", body.BreakGlassAcknowledged, p); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		var updateErr error
@@ -357,7 +384,8 @@ func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name string `json:"name"`
+			Name                   string `json:"name"`
+			BreakGlassAcknowledged bool   `json:"break_glass_acknowledged"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -366,6 +394,10 @@ func handleGlobalSandboxProfile(w http.ResponseWriter, r *http.Request) {
 		body.Name = strings.TrimSpace(body.Name)
 		if body.Name == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "sandbox profile name is required")
+			return
+		}
+		if fail := requireAssignmentBreakGlassAck("global", body.Name, body.BreakGlassAcknowledged); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		if err := db.SetGlobalSandboxProfile(body.Name); errors.Is(err, db.ErrSandboxProfileNotFound) {
@@ -420,7 +452,8 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"group": g.Name, "name": name})
 	case http.MethodPut:
 		var body struct {
-			Name string `json:"name"`
+			Name                   string `json:"name"`
+			BreakGlassAcknowledged bool   `json:"break_glass_acknowledged"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -429,6 +462,10 @@ func handleGroupSandboxProfile(w http.ResponseWriter, r *http.Request) {
 		body.Name = strings.TrimSpace(body.Name)
 		if body.Name == "" {
 			writeError(w, http.StatusBadRequest, "invalid_arg", "sandbox profile name is required")
+			return
+		}
+		if fail := requireAssignmentBreakGlassAck(fmt.Sprintf("group %q", g.Name), body.Name, body.BreakGlassAcknowledged); fail != nil {
+			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 		if _, err := db.SetAgentGroupSandboxProfile(g.Name, body.Name); errors.Is(err, db.ErrSandboxProfileNotFound) {
@@ -574,7 +611,40 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 	if env.ApplyAssignments && env.Assignments != nil {
 		assignments = &db.SandboxProfileAssignments{Global: env.Assignments.Global, Groups: env.Assignments.Groups}
 	}
-	result, err := db.ImportSandboxProfiles(profiles, conflict, assignments)
+	// Import is a fresh acknowledgement point by design: a bundle authored
+	// elsewhere carries the danger marker across machines, and the paths were
+	// only just canonicalized against THIS host's protected roots. The DB call
+	// below is deliberately the first place that inspects acknowledgement: its
+	// transaction owns graph validation, conflict/error precedence, and the
+	// exact assignment mutation plan.
+	sandboxImportBeforeTransactionForTest()
+	result, err := db.ImportSandboxProfilesWithOptions(profiles, db.SandboxProfileImportOptions{
+		OnConflict: conflict, Assignments: assignments,
+		BreakGlassAcknowledged: env.BreakGlassAcknowledged,
+	})
+	var ackErr *db.SandboxProfileAcknowledgementRequiredError
+	if errors.As(err, &ackErr) {
+		carriers := make([]string, 0, len(ackErr.Exposures))
+		grants := make([]sandboxpolicy.BreakGlassGrant, 0, len(ackErr.Exposures))
+		seenCarriers := map[string]bool{}
+		for _, exposure := range ackErr.Exposures {
+			carrier := exposure.Profile
+			if exposure.Assignment {
+				carrier += " (assigned)"
+			}
+			if !seenCarriers[carrier] {
+				seenCarriers[carrier] = true
+				carriers = append(carriers, carrier)
+			}
+			grants = append(grants, sandboxpolicy.BreakGlassGrant{Path: exposure.Path, Access: exposure.Access})
+		}
+		sort.Strings(carriers)
+		writeError(w, http.StatusUnprocessableEntity, breakGlassAckErrorKind, fmt.Sprintf(
+			"sandbox profile(s) %s in this bundle carry break-glass protected access (%s). %s "+
+				"Re-send with break_glass_acknowledged: true (CLI: --i-understand-break-glass-risk).",
+			strings.Join(carriers, ", "), describeBreakGlass(grants), BreakGlassRiskSummary))
+		return
+	}
 	if errors.Is(err, db.ErrSandboxProfileNameTaken) {
 		writeError(w, http.StatusConflict, "exists", err.Error())
 		return
@@ -588,6 +658,19 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"imported": result.Imported, "skipped": result.Skipped, "warnings": result.Warnings})
+}
+
+var sandboxImportBeforeTransactionForTest = func() {}
+
+// SetSandboxImportBeforeTransactionForTest installs the deterministic seam
+// immediately before the authoritative DB transaction.
+func SetSandboxImportBeforeTransactionForTest(fn func()) func() {
+	previous := sandboxImportBeforeTransactionForTest
+	if fn == nil {
+		fn = func() {}
+	}
+	sandboxImportBeforeTransactionForTest = fn
+	return func() { sandboxImportBeforeTransactionForTest = previous }
 }
 
 type sandboxProfileImportPathWarning struct {
@@ -662,13 +745,28 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 	if inspection.SkipError != "" {
 		includeErrors["skip"] = inspection.SkipError
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles, "warnings": warnings, "include_errors": includeErrors})
+	// The preview is deliberately ack-free, but it must tell the operator which
+	// incoming profiles will demand an acknowledgement, and why.
+	breakGlassCarriers := []string{}
+	for _, p := range built {
+		if p.HasBreakGlass() {
+			breakGlassCarriers = append(breakGlassCarriers, p.Name)
+		}
+	}
+	response := map[string]any{"profiles": profiles, "warnings": warnings, "include_errors": includeErrors}
+	if len(breakGlassCarriers) > 0 {
+		response["break_glass_profiles"] = breakGlassCarriers
+		response["break_glass_risk"] = BreakGlassRiskSummary
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
-// Version 2 adds network_access. Keeping v1 readable preserves imports from
-// older installations; exporting only v2 prevents an older importer from
-// silently dropping a security-significant offline policy as an unknown JSON
-// field.
+// Version 2 adds network_access; version 3 adds read_baseline and
+// break_glass_filesystem. Keeping older versions readable preserves imports
+// from older installations; exporting only the newest prevents an older
+// importer from silently dropping a security-significant offline policy,
+// strict read baseline, or protected-path grant as an unknown JSON field.
 func supportedSandboxProfileExport(format string, version int) bool {
-	return format == sandboxProfileExportFormat && (version == 1 || version == sandboxProfileExportVersion)
+	return format == sandboxProfileExportFormat &&
+		(version == 1 || version == 2 || version == sandboxProfileExportVersion)
 }

@@ -59,7 +59,91 @@ func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
+	current = clampResumeProtectedAuthority(current, *previous)
 	return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
+}
+
+// clampResumeProtectedAuthority preserves the protected-access decision and the
+// read-baseline boundary that were recorded when the agent launched.
+//
+// Resume deliberately re-resolves the ordinary rules from the current registry
+// so an operator can fix a profile and relaunch. That is fine for grants a
+// human re-confirms implicitly by editing them — but break-glass and the strict
+// read baseline are different: the ticket requires that resume never silently
+// gains protected access from a later ambient profile change, and never widens
+// minimal back to the broad default. Neither can be re-acknowledged here,
+// because resume has no human in the loop.
+//
+// So this clamps rather than refuses: protected access is intersected with what
+// the previous snapshot already held (never added, never widened read→write),
+// and the baseline takes the strictest of the two. Both directions are
+// fail-safe — a resumed agent can only ever end up with less authority than the
+// ambient registry would grant it. An operator who genuinely wants to widen a
+// running agent's protected access spawns a fresh one, which goes through the
+// acknowledgement gate.
+func clampResumeProtectedAuthority(current, previous sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
+	current.Effective.ReadBaseline = sandboxpolicy.StrictestReadBaseline(
+		current.Effective.ReadBaseline, previous.Effective.ReadBaseline)
+
+	if len(current.Effective.BreakGlassFilesystem) == 0 {
+		// Nothing to clamp, and dropping access the profile no longer grants is
+		// always safe.
+		return current
+	}
+	kept := make([]sandboxpolicy.BreakGlassGrant, 0, len(current.Effective.BreakGlassFilesystem))
+	for _, grant := range current.Effective.BreakGlassFilesystem {
+		if allowed, ok := previousBreakGlassAccess(previous, grant); ok {
+			grant.Access = allowed
+			kept = append(kept, grant)
+		}
+	}
+	if len(kept) == 0 {
+		kept = nil
+	}
+	current.Effective.BreakGlassFilesystem = kept
+	if current.Effective.Provenance.BreakGlassFilesystem != nil {
+		retained := map[string][]sandboxpolicy.ProfileSource{}
+		for _, grant := range kept {
+			if sources, ok := current.Effective.Provenance.BreakGlassFilesystem[grant.Path]; ok {
+				retained[grant.Path] = sources
+			}
+		}
+		if len(retained) == 0 {
+			retained = nil
+		}
+		current.Effective.Provenance.BreakGlassFilesystem = retained
+	}
+	return current
+}
+
+// previousBreakGlassAccess reports the strongest access the parent snapshot
+// already held for a path, capped at what is being requested now. Coverage is
+// segment-aware: an ancestor grant covers its descendants, and a recorded read
+// never satisfies a newly-requested write.
+func previousBreakGlassAccess(previous sandboxpolicy.Snapshot, want sandboxpolicy.BreakGlassGrant) (sandboxpolicy.Access, bool) {
+	best := sandboxpolicy.Access("")
+	for _, held := range previous.Effective.BreakGlassFilesystem {
+		if !sandboxpolicy.PathContainsOrEqual(held.Path, want.Path) {
+			continue
+		}
+		if held.Access == sandboxpolicy.AccessWrite {
+			best = sandboxpolicy.AccessWrite
+			break
+		}
+		best = sandboxpolicy.AccessRead
+	}
+	if best == "" {
+		return "", false
+	}
+	if want.Access == sandboxpolicy.AccessRead {
+		// Requesting less than was held is always fine.
+		return sandboxpolicy.AccessRead, true
+	}
+	if best != sandboxpolicy.AccessWrite {
+		// A recorded read must not become a write on resume.
+		return sandboxpolicy.AccessRead, true
+	}
+	return sandboxpolicy.AccessWrite, true
 }
 
 // resumeSandboxGroupID recovers the launch group for agents created before a

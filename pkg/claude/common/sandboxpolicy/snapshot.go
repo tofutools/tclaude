@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-const SnapshotVersion = 2
+// SnapshotVersion 3 adds the read baseline and break-glass rules. The bump is
+// deliberate even though both fields are omitempty: an OLDER binary reading a
+// v3 snapshot would silently ignore read_baseline: minimal and launch with the
+// broad harness baseline, which fails OPEN. Rejecting the unknown version
+// instead makes a downgrade fail closed and loudly.
+const SnapshotVersion = 3
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -85,6 +90,54 @@ func RequireContained(parent, child Snapshot) error {
 	if !networkAccessContained(parent.Effective.NetworkAccess, child.Effective.NetworkAccess) {
 		return fmt.Errorf("network access %q is not contained by parent access %q", child.Effective.NetworkAccess, parent.Effective.NetworkAccess)
 	}
+	if err := breakGlassContained(parent.Effective, child.Effective); err != nil {
+		return err
+	}
+	if !readBaselineContained(parent.Effective.ReadBaseline, child.Effective.ReadBaseline) {
+		return fmt.Errorf("read baseline %q is wider than the parent's %q", displayReadBaseline(child.Effective.ReadBaseline), displayReadBaseline(parent.Effective.ReadBaseline))
+	}
+	return nil
+}
+
+// readBaselineContained treats minimal → default as WIDENING. A parent that
+// only sees its workspace must not be able to hand a child the broad
+// harness-inherited read baseline it does not itself possess.
+func readBaselineContained(parent, child ReadBaseline) bool {
+	if parent == ReadBaselineMinimal {
+		return child == ReadBaselineMinimal
+	}
+	return true
+}
+
+func displayReadBaseline(in ReadBaseline) string {
+	if in == ReadBaselineDefault {
+		return string(readBaselineDefaultAlias)
+	}
+	return string(in)
+}
+
+// breakGlassContained refuses any protected-path authority the parent does not
+// already hold. Coverage is segment-aware like ordinary filesystem
+// containment, and protected read → protected write is widening: a debugging
+// agent granted read access to the daemon database must not be able to mint a
+// child that can corrupt it.
+func breakGlassContained(parent, child EffectiveProfile) error {
+	for _, childGrant := range child.BreakGlassFilesystem {
+		covered := false
+		for _, parentGrant := range parent.BreakGlassFilesystem {
+			if !pathContainsOrEqual(parentGrant.Path, childGrant.Path) {
+				continue
+			}
+			if childGrant.Access == AccessWrite && parentGrant.Access != AccessWrite {
+				continue
+			}
+			covered = true
+			break
+		}
+		if !covered {
+			return fmt.Errorf("break-glass %s access to protected path %q is not contained by the parent snapshot", childGrant.Access, childGrant.Path)
+		}
+	}
 	return nil
 }
 
@@ -109,8 +162,13 @@ func HasCapabilities(snapshot Snapshot) bool {
 			return true
 		}
 	}
+	// Break-glass is always inherited host authority. The read baseline is not
+	// listed here: minimal is a restriction, and default is today's status quo
+	// rather than an added capability — RequireContained is what stops a
+	// minimal parent from handing a child the broader default.
 	return len(snapshot.Effective.Environment) > 0 ||
-		snapshot.Effective.NetworkAccess == NetworkAccessInternet
+		snapshot.Effective.NetworkAccess == NetworkAccessInternet ||
+		snapshot.Effective.HasBreakGlass()
 }
 
 // Snapshot is the immutable, versioned value passed across launch and
@@ -158,16 +216,27 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:          "effective-sandbox-snapshot",
-		Filesystem:    in.Effective.Filesystem,
-		Environment:   in.Effective.Environment,
-		NetworkAccess: in.Effective.NetworkAccess,
+		Name:                 "effective-sandbox-snapshot",
+		Filesystem:           in.Effective.Filesystem,
+		ReadBaseline:         in.Effective.ReadBaseline,
+		BreakGlassFilesystem: in.Effective.BreakGlassFilesystem,
+		Environment:          in.Effective.Environment,
+		NetworkAccess:        in.Effective.NetworkAccess,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
 	}
 	if !reflect.DeepEqual(normalized.Filesystem, in.Effective.Filesystem) {
 		return Snapshot{}, fmt.Errorf("effective sandbox filesystem changed since resolution")
+	}
+	// A protected-path rule that no longer canonicalizes to the same bytes, or
+	// no longer lands on a protected root, must fail the launch closed rather
+	// than silently redirect dangerous authority somewhere else.
+	if !reflect.DeepEqual(normalized.BreakGlassFilesystem, in.Effective.BreakGlassFilesystem) {
+		return Snapshot{}, fmt.Errorf("effective sandbox break-glass rules changed since resolution")
+	}
+	if normalized.ReadBaseline != in.Effective.ReadBaseline {
+		return Snapshot{}, fmt.Errorf("effective sandbox read baseline changed since resolution")
 	}
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
@@ -193,7 +262,11 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 // RevalidateSnapshot before applying the result.
 func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	switch in.Version {
-	case 1, SnapshotVersion:
+	// v1 and v2 are structurally compatible: they simply carry neither TCL-609
+	// field, which decodes to the zero value that means "today's behavior".
+	// v2 is what current main persists, so rejecting it here would break every
+	// existing session, actor, and pending spawn on upgrade.
+	case 1, 2, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -228,35 +301,100 @@ func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 	return out, nil
 }
 
+// BreakGlassForLaunch returns the protected-path rules safe to hand to a
+// harness now. Unlike ordinary grants, a missing break-glass path fails the
+// launch closed instead of being skipped: an operator who acknowledged access
+// to a specific protected directory must be told when that directory is not
+// there, rather than silently launching with less authority than the audit
+// record claims. Re-canonicalizing also catches an ancestor symlink
+// substitution in the window after snapshot revalidation.
+func BreakGlassForLaunch(in EffectiveProfile) ([]BreakGlassGrant, error) {
+	if len(in.BreakGlassFilesystem) == 0 {
+		return nil, nil
+	}
+	out := make([]BreakGlassGrant, 0, len(in.BreakGlassFilesystem))
+	for _, grant := range in.BreakGlassFilesystem {
+		canonical, missing, err := canonicalDirectory(grant.Path, true)
+		if err != nil {
+			return nil, fmt.Errorf("prepare break-glass %s rule %q for launch: %w", grant.Access, grant.Path, err)
+		}
+		if canonical != grant.Path {
+			return nil, fmt.Errorf("break-glass rule %q changed canonical target before launch", grant.Path)
+		}
+		if missing {
+			return nil, fmt.Errorf("break-glass %s rule %q does not exist; refusing to launch with less protected access than was acknowledged", grant.Access, grant.Path)
+		}
+		out = append(out, grant)
+	}
+	return out, nil
+}
+
 func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
-		Filesystem:       append([]FilesystemGrant{}, in.Filesystem...),
+		Filesystem: append([]FilesystemGrant{}, in.Filesystem...),
+		// Break-glass stays nil when empty (unlike the always-materialized
+		// slices above) so an unused capability serializes as an absent field
+		// and revalidation's exact comparison against a fresh normalization
+		// keeps matching.
+		ReadBaseline:     in.ReadBaseline,
 		Environment:      append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories: append([]string{}, in.AgentDirectories...),
 		NetworkAccess:    in.NetworkAccess,
 		Provenance: ResolutionProvenance{
-			Applied:          append([]ProfileSource(nil), in.Provenance.Applied...),
+			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
 			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			Network:          nil,
 		},
 	}
+	if len(in.BreakGlassFilesystem) > 0 {
+		out.BreakGlassFilesystem = append([]BreakGlassGrant{}, in.BreakGlassFilesystem...)
+		sort.Slice(out.BreakGlassFilesystem, func(i, j int) bool {
+			return out.BreakGlassFilesystem[i].Path < out.BreakGlassFilesystem[j].Path
+		})
+	}
+	if len(in.Provenance.BreakGlassFilesystem) > 0 {
+		out.Provenance.BreakGlassFilesystem = make(map[string][]ProfileSource, len(in.Provenance.BreakGlassFilesystem))
+		for path, sources := range in.Provenance.BreakGlassFilesystem {
+			out.Provenance.BreakGlassFilesystem[path] = cloneProfileSources(sources)
+		}
+	}
+	if in.Provenance.ReadBaseline != nil {
+		source := cloneProfileSource(*in.Provenance.ReadBaseline)
+		out.Provenance.ReadBaseline = &source
+	}
 	for path, sources := range in.Provenance.Filesystem {
-		out.Provenance.Filesystem[path] = append([]ProfileSource(nil), sources...)
+		out.Provenance.Filesystem[path] = cloneProfileSources(sources)
 	}
 	for name, source := range in.Provenance.Environment {
-		out.Provenance.Environment[name] = source
+		out.Provenance.Environment[name] = cloneProfileSource(source)
 	}
 	for name, sources := range in.Provenance.AgentDirectories {
-		out.Provenance.AgentDirectories[name] = append([]ProfileSource(nil), sources...)
+		out.Provenance.AgentDirectories[name] = cloneProfileSources(sources)
 	}
 	if in.Provenance.Network != nil {
-		source := *in.Provenance.Network
+		source := cloneProfileSource(*in.Provenance.Network)
 		out.Provenance.Network = &source
 	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
+	return out
+}
+
+func cloneProfileSource(in ProfileSource) ProfileSource {
+	in.Chain = append([]string(nil), in.Chain...)
+	return in
+}
+
+func cloneProfileSources(in []ProfileSource) []ProfileSource {
+	if in == nil {
+		return nil
+	}
+	out := make([]ProfileSource, len(in))
+	for i, source := range in {
+		out[i] = cloneProfileSource(source)
+	}
 	return out
 }

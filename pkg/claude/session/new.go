@@ -415,6 +415,34 @@ func runNew(params *NewParams) error {
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
+	// TCL-609 capability gates. Both refuse loudly rather than launching with
+	// a weaker policy than the operator asked for: a strict-looking profile
+	// that silently kept today's broad read baseline, or an acknowledged
+	// protected grant the harness quietly dropped, would both be worse than an
+	// error, because the operator would trust isolation that is not there.
+	codexManagedProfile := h.Name == harness.CodexName && params.PermissionProfile == harness.CodexAgentProfile
+	effectiveSandboxMode := sandboxMode
+	if codexManagedProfile {
+		// The managed profile is selected via -p rather than --sandbox, so
+		// sandboxMode was cleared above; restore the logical mode for the gates.
+		effectiveSandboxMode = harness.SandboxManagedProfile
+	}
+	if baseline := sandboxSnapshotReadBaseline(launchSandbox); baseline != sandboxpolicy.ReadBaselineDefault {
+		if err := harness.ValidateSandboxReadBaseline(h.Name, effectiveSandboxMode, baseline); err != nil {
+			return err
+		}
+	}
+	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
+		if err := harness.ValidateSandboxBreakGlass(h.Name, effectiveSandboxMode, breakGlass); err != nil {
+			return err
+		}
+		// A missing protected path fails the launch closed: the operator
+		// acknowledged access to something specific, so silently launching
+		// with less than the audit record claims is not acceptable.
+		if _, err := sandboxpolicy.BreakGlassForLaunch(launchSandbox.Effective); err != nil {
+			return err
+		}
+	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
 	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
 		return fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
@@ -818,24 +846,27 @@ func runNew(params *NewParams) error {
 	}
 
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
-		EnvExports:             envExports,
-		ShellEnvironment:       sandboxSnapshotEnvironment(effectiveSandbox),
-		ResumeID:               fullConvID,
-		SessionID:              params.SessionID,
-		Name:                   params.Name,
-		Effort:                 effort,
-		Model:                  model,
-		ExtraArgs:              extraArgs,
-		SandboxMode:            sandboxMode,
-		SandboxWriteDirs:       append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
-		SandboxReadDirs:        sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead),
-		SandboxDenyDirs:        sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny),
-		AskUserQuestionTimeout: askTimeout,
-		PermissionProfile:      launchPermissionProfile,
-		ApprovalPolicy:         approvalPolicy,
-		AutoReview:             autoReview,
-		RemoteControl:          remoteControl,
-		InitialPrompt:          params.InitialPrompt,
+		EnvExports:                 envExports,
+		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
+		ResumeID:                   fullConvID,
+		SessionID:                  params.SessionID,
+		Name:                       params.Name,
+		Effort:                     effort,
+		Model:                      model,
+		ExtraArgs:                  extraArgs,
+		SandboxMode:                sandboxMode,
+		SandboxWriteDirs:           append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
+		SandboxReadDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead),
+		SandboxDenyDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny),
+		SandboxReadBaseline:        string(sandboxSnapshotReadBaseline(launchSandbox)),
+		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessRead),
+		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessWrite),
+		AskUserQuestionTimeout:     askTimeout,
+		PermissionProfile:          launchPermissionProfile,
+		ApprovalPolicy:             approvalPolicy,
+		AutoReview:                 autoReview,
+		RemoteControl:              remoteControl,
+		InitialPrompt:              params.InitialPrompt,
 	})
 	if launchProfilePath != "" {
 		// The launch-specific profile must remain present until Codex exits: it
@@ -1090,11 +1121,61 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
-	profileName, path, err := harness.EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyDirs, networkAccess, launchID)
+	readBaseline := sandboxSnapshotReadBaseline(effectiveSandbox)
+	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
+		// Without `extends = ":workspace"` nothing grants the launch directory:
+		// GitWorktreeWriteDirs returns nothing outside a Git repository, so a
+		// minimal agent in a plain directory would have no workspace at all.
+		// The workspace is an invariant launch requirement, not an optional
+		// grant, so it is added explicitly here.
+		if workspace := canonicalMinimalWorkspace(cwd); workspace != "" {
+			writeDirs = appendUniqueDir(writeDirs, workspace)
+		}
+	}
+	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
+		ReadDirs:            readDirs,
+		WriteDirs:           writeDirs,
+		DenyDirs:            denyDirs,
+		ReadBaseline:        readBaseline,
+		BreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
+		BreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
+	}, networkAccess, launchID)
 	if err != nil {
 		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
 	}
 	return profileName, path, nil
+}
+
+// canonicalMinimalWorkspace resolves the launch directory for a minimal-baseline
+// grant. It is symlink-resolved so the emitted rule names the same path the
+// sandbox will see, and returns "" when the directory cannot be resolved (the
+// launch then fails on the ordinary cwd checks rather than here).
+func canonicalMinimalWorkspace(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(cwd))
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(resolved)
+}
+
+func appendUniqueDir(dirs []string, dir string) []string {
+	for _, existing := range dirs {
+		if existing == dir {
+			return dirs
+		}
+	}
+	return append(dirs, dir)
+}
+
+func sandboxSnapshotBreakGlass(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.BreakGlassGrant {
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot.Effective.BreakGlassFilesystem
 }
 
 func sandboxSnapshotNetworkAccess(snapshot *sandboxpolicy.Snapshot) sandboxpolicy.NetworkAccess {
@@ -1113,6 +1194,29 @@ func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]str
 		out[entry.Name] = entry.Value
 	}
 	return out
+}
+
+// sandboxSnapshotBreakGlassDirs returns the acknowledged protected paths for
+// one access. Read and write are reported separately because read must never
+// imply write, and the adapters need to know which deny to suppress.
+func sandboxSnapshotBreakGlassDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
+	if snapshot == nil {
+		return nil
+	}
+	out := make([]string, 0, len(snapshot.Effective.BreakGlassFilesystem))
+	for _, grant := range snapshot.Effective.BreakGlassFilesystem {
+		if grant.Access == access {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
+}
+
+func sandboxSnapshotReadBaseline(snapshot *sandboxpolicy.Snapshot) sandboxpolicy.ReadBaseline {
+	if snapshot == nil {
+		return sandboxpolicy.ReadBaselineDefault
+	}
+	return snapshot.Effective.ReadBaseline
 }
 
 func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
