@@ -70,11 +70,36 @@ func TestEpochV8ApplyPermissionFirstDomainReplayAndProvenance(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, blocked.Code, blocked.Body.String())
 	var blockedBody struct {
 		Blockers []struct {
-			Token string `json:"token"`
+			Token             string   `json:"token"`
+			NodeID            string   `json:"nodeId"`
+			OwnerEpochOrdinal *uint64  `json:"ownerEpochOrdinal"`
+			KindClass         string   `json:"kindClass"`
+			StateClass        string   `json:"stateClass"`
+			HandoffClass      string   `json:"handoffClass"`
+			AllowedActions    []string `json:"allowedActions"`
 		} `json:"blockers"`
 	}
 	testharness.DecodeJSON(t, blocked, &blockedBody)
 	require.Len(t, blockedBody.Blockers, 1)
+	// The safe descriptor is sufficient to render the handoff affordance:
+	// owner epoch, safe kind/state class, and the legal actions — the UI never
+	// infers affordances from the code/token alone, and no authority identity
+	// or restricted content leaves the daemon.
+	descriptor := blockedBody.Blockers[0]
+	require.NotNil(t, descriptor.OwnerEpochOrdinal)
+	assert.Equal(t, uint64(0), *descriptor.OwnerEpochOrdinal)
+	assert.NotEmpty(t, descriptor.NodeID)
+	assert.NotEmpty(t, descriptor.KindClass)
+	assert.NotEmpty(t, descriptor.StateClass)
+	require.Contains(t, []string{"retain_only", "transferable"}, descriptor.HandoffClass)
+	assert.Contains(t, descriptor.AllowedActions, string(epochv8.HandoffRetain))
+	if descriptor.HandoffClass == "retain_only" {
+		assert.NotContains(t, descriptor.AllowedActions, string(epochv8.HandoffTransfer))
+	} else {
+		assert.Contains(t, descriptor.AllowedActions, string(epochv8.HandoffTransfer))
+	}
+	assert.NotContains(t, blocked.Body.String(), "initial-private-source")
+	assert.NotContains(t, blocked.Body.String(), "candidate-private-source")
 	handoff := map[string]any{"token": blockedBody.Blockers[0].Token, "action": epochv8.HandoffRetain}
 	valid := preview([]map[string]any{handoff})
 	require.Equal(t, http.StatusOK, valid.Code, valid.Body.String())

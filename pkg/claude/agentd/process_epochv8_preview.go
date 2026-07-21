@@ -75,10 +75,14 @@ type epochV8GraphSummaryDTO struct {
 	Changed   bool                  `json:"changed"`
 }
 
+// epochV8LineageEntryDTO carries refs and ordinals only. EpochID is the
+// opaque epoch digest: it names the epoch for the permission-gated exact
+// artifact route and reveals no content by itself.
 type epochV8LineageEntryDTO struct {
-	Ordinal            uint64  `json:"ordinal"`
-	PredecessorOrdinal *uint64 `json:"predecessorOrdinal,omitempty"`
-	TemplateRef        string  `json:"templateRef"`
+	Ordinal            uint64          `json:"ordinal"`
+	PredecessorOrdinal *uint64         `json:"predecessorOrdinal,omitempty"`
+	TemplateRef        string          `json:"templateRef"`
+	EpochID            epochv8.EpochID `json:"epochId,omitempty"`
 }
 
 type epochV8LineageDTO struct {
@@ -114,9 +118,48 @@ type epochV8StructuralSummaryDTO struct {
 	ChangedFromOriginal bool `json:"changedFromOriginal"`
 }
 
+// epochV8BlockerDTO names one preview blocker. The descriptor fields are the
+// bounded safe affordance surface: owner epoch ordinal, safe kind/state
+// class, the node, and which handoff actions are legal. The UI must render
+// affordances from these fields, never by inferring from code/token alone.
+// Authority identities never leave the daemon; Token stays the opaque
+// binding-scoped handoff token.
 type epochV8BlockerDTO struct {
-	Code  epochv8.BlockerCode `json:"code"`
-	Token string              `json:"token,omitempty"`
+	Code              epochv8.BlockerCode `json:"code"`
+	Token             string              `json:"token,omitempty"`
+	NodeID            string              `json:"nodeId,omitempty"`
+	OwnerEpochOrdinal *uint64             `json:"ownerEpochOrdinal,omitempty"`
+	KindClass         string              `json:"kindClass,omitempty"`
+	StateClass        string              `json:"stateClass,omitempty"`
+	HandoffClass      string              `json:"handoffClass,omitempty"`
+	AllowedActions    []string            `json:"allowedActions,omitempty"`
+}
+
+// epochV8DescribeBlocker fills the safe descriptor for a blocker bound to one
+// authority. Transferable means what the engine itself accepts: a bare
+// verified-unclaimed frontier; everything else is retain-only protected work.
+func epochV8DescribeBlocker(view epochv8.CheckpointView, authorityID epochv8.OwnerIdentity, dto *epochV8BlockerDTO) {
+	ordinals := make(map[epochv8.EpochID]uint64, len(view.Epochs))
+	for _, epoch := range view.Epochs {
+		ordinals[epoch.ID] = epoch.Ordinal
+	}
+	for _, authority := range view.Authorities {
+		if authority.Identity != authorityID {
+			continue
+		}
+		ordinal := ordinals[authority.EpochID]
+		dto.NodeID = authority.NodeID
+		dto.OwnerEpochOrdinal = &ordinal
+		dto.KindClass = string(authority.Kind)
+		dto.StateClass = string(authority.State)
+		dto.HandoffClass = "retain_only"
+		dto.AllowedActions = []string{string(epochv8.HandoffRetain)}
+		if authority.Kind == epochv8.AuthorityFrontier && authority.State == epochv8.AuthorityVerifiedUnclaimed {
+			dto.HandoffClass = "transferable"
+			dto.AllowedActions = append(dto.AllowedActions, string(epochv8.HandoffTransfer))
+		}
+		return
+	}
 }
 
 type epochV8GuidanceDTO struct {
@@ -235,6 +278,7 @@ func buildEpochV8Preview(r *http.Request, view store.EpochV8ExecutionView, body 
 	if len(preview.Blockers) != 0 {
 		response.Status = "blocked"
 		response.Blockers = make([]epochV8BlockerDTO, 0, len(preview.Blockers))
+		checkpointView := view.Checkpoint.View()
 		for _, blocker := range preview.Blockers {
 			projected := epochV8BlockerDTO{Code: blocker.Code}
 			if blocker.AuthorityID != "" {
@@ -243,6 +287,7 @@ func buildEpochV8Preview(r *http.Request, view store.EpochV8ExecutionView, body 
 				if tokenErr != nil {
 					return tokenErr
 				}
+				epochV8DescribeBlocker(checkpointView, blocker.AuthorityID, &projected)
 			}
 			response.Blockers = append(response.Blockers, projected)
 		}
@@ -621,7 +666,7 @@ func epochV8Lineage(checkpoint *epochv8.CheckpointV8) epochV8LineageDTO {
 	result := epochV8LineageDTO{OriginalTemplateRef: view.Epochs[0].TemplateRef, CurrentTemplateRef: view.Epochs[len(view.Epochs)-1].TemplateRef, TotalEpochs: len(view.Epochs)}
 	entries := make([]epochV8LineageEntryDTO, 0, len(view.Epochs))
 	for index, epoch := range view.Epochs {
-		entry := epochV8LineageEntryDTO{Ordinal: epoch.Ordinal, TemplateRef: epoch.TemplateRef}
+		entry := epochV8LineageEntryDTO{Ordinal: epoch.Ordinal, TemplateRef: epoch.TemplateRef, EpochID: epoch.ID}
 		if index > 0 {
 			predecessor := view.Epochs[index-1].Ordinal
 			entry.PredecessorOrdinal = &predecessor
