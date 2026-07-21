@@ -3896,6 +3896,17 @@ body.wizard .group-pending-title-wizard { display: inline; }
    warning, audited paths and provenance. The row is the containing block for
    that popover, and it opens downward — the first row sits directly under the
    section legend, so the spawn dialog's upward placement would clip. */
+/* Most profiles never set a restriction, so the catalog stays folded and the
+   summary carries the counts — collapsing hides the controls, never the fact
+   that restrictions are in force. */
+.sbx-exclusion-summary {
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  cursor: pointer; color: #c9d1d9; font-size: 12px; padding: 2px 0;
+}
+.sbx-exclusion-summary:hover { color: #e6edf3; }
+.sbx-exclusion-summary-count { color: #8b949e; }
+.sbx-exclusion-summary-count.unknown { color: #ffa198; }
+.sbx-exclusion-fold[open] .sbx-exclusion-summary { margin-bottom: 4px; }
 .sbx-exclusion-intro {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 24px;
   gap: 6px; align-items: center; color: #8b949e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px;
