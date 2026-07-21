@@ -91,6 +91,8 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   const composed = [];
   const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
   const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const { terminalTabReorderOffset } =
+    await harness.importDashboardModule('js/terminal-shell-island.js');
   const cleanup = await mountTerminalsFeature({
     widgetFactory: fake.factory,
     confirm: async () => true,
@@ -186,6 +188,84 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(fake.widgets[1].calls.length, inactiveCalls,
     'reveal never fits or focuses an inactive widget');
 
+  const tabsBeforeDrag = [...host.querySelectorAll('[role="tab"]')];
+  const oneTab = tabsBeforeDrag.find((tab) => tab.querySelector('.mux-tab-label').textContent === 'one');
+  const twoTab = tabsBeforeDrag.find((tab) => tab.querySelector('.mux-tab-label').textContent === 'two');
+  oneTab.getBoundingClientRect = () => ({ left: 10, width: 100 });
+  const transfer = {
+    data: {}, effectAllowed: '', dropEffect: '',
+    setData(type, value) { this.data[type] = value; },
+    getData(type) { return this.data[type] || ''; },
+  };
+  await harness.act(() => harness.fireEvent(twoTab.querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  assert.equal(transfer.data['application/x-tclaude-terminal-tab'], 'two');
+  assert.equal(transfer.data['text/plain'], undefined,
+    'terminal-tab drag stays isolated from the dashboard member drag router');
+  assert.ok(twoTab.classList.contains('dragging'), 'source tab shows its drag state');
+  await harness.act(() => harness.fireEvent(oneTab, 'dragover', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  assert.ok(oneTab.classList.contains('drop-before'), 'target tab shows the exact insertion edge');
+  await harness.act(() => harness.fireEvent(oneTab, 'drop', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['two', 'one']);
+  assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one',
+    'drag reorder preserves the active terminal');
+  assert.equal(fake.widgets[0].child, opaqueChild, 'reorder keeps the keyed xterm host intact');
+  assert.equal(fake.widgets[0].disposeCount, 0);
+  assert.equal(fake.widgets[1].disposeCount, 0, 'reorder neither closes nor reconnects a terminal');
+  assert.equal(host.querySelector('.drop-before,.drop-after,.dragging'), null,
+    'drop clears every transient drag marker');
+
+  const movedOneTab = [...host.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'one');
+  assert.equal(movedOneTab.getAttribute('aria-keyshortcuts'),
+    'Alt+Shift+ArrowLeft Alt+Shift+ArrowRight');
+  assert.equal(terminalTabReorderOffset({
+    type: 'keydown', key: 'ArrowLeft', altKey: true, shiftKey: true,
+    target: { closest: (selector) => selector === 'button' ? {} : null },
+  }), null, 'a reorder shortcut from the nested Close button is ignored');
+  await harness.act(() => harness.fireEvent(movedOneTab, 'keydown', {
+    key: 'ArrowLeft', altKey: true, shiftKey: true,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['one', 'two'], 'keyboard reordering follows the same state path');
+  assert.match(host.querySelector('.mux-tab-a11y[role="status"]').textContent,
+    /Moved one to position 1 of 2/);
+  assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one');
+
+  twoTab.getBoundingClientRect = () => ({ left: 10, width: 100 });
+  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  await harness.act(() => harness.fireEvent(twoTab, 'dragover', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  assert.ok(twoTab.classList.contains('drop-before'));
+  await harness.act(() => harness.fireEvent(twoTab, 'drop', {
+    dataTransfer: transfer, clientX: 100,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['two', 'one'], 'drop coordinates, not a stale hover render, choose the committed edge');
+
+  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  await harness.act(() => harness.fireEvent(twoTab, 'dragover', {
+    dataTransfer: transfer, clientX: 20,
+  }));
+  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragend', {
+    dataTransfer: transfer,
+  }));
+  assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
+    ['two', 'one'], 'a cancelled drag leaves order unchanged');
+  assert.equal(host.querySelector('.drop-before,.drop-after,.dragging'), null,
+    'drag cancellation clears source and target state');
+
   const closeOne = getByRole(host, 'button', { name: 'Close one' });
   await harness.act(() => harness.fireEvent(closeOne, 'click'));
   assert.equal(fake.widgets[0].disposeCount, 1);
@@ -259,6 +339,118 @@ test('background pane open and focus leave the current dashboard tab visible', a
     'background focus selects an existing pane without revealing Terminals');
   assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one');
 
+  cleanup();
+});
+
+test('terminal tab context menu supports pointer and keyboard detach and close actions', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const requests = [];
+  const opened = [];
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+    windowRef: {
+      open(url, target) {
+        const tab = { opened: [url, target], location: { replace: (next) => opened.push(next) } };
+        opened.push(tab);
+        return tab;
+      },
+    },
+  });
+  const open = async (key) => harness.act(async () => {
+    controller.openTerminalPane({
+      ws: `/${key}`, key, label: key, agent: `agt_${key}`, hideConv: `agt_${key}`,
+    });
+    await Promise.resolve();
+  });
+  const tab = (name) => [...host.querySelectorAll('[role="tab"]')]
+    .find((candidate) => candidate.querySelector('.mux-tab-label')?.textContent === name);
+
+  await open('one');
+  await open('two');
+  await open('three');
+
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const pointerMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  assert.equal(tab('two').getAttribute('aria-expanded'), 'true');
+  assert.equal(pointerMenu.querySelectorAll('[role="menuitem"]').length, 4);
+  assert.equal(pointerMenu.querySelectorAll('[role="separator"]').length, 1);
+  assert.equal(harness.document.activeElement.textContent, 'Detach tab', 'opening focuses the first action');
+  await harness.act(() => harness.fireEvent(pointerMenu, 'keydown', { key: 'Escape' }));
+  assert.equal(host.querySelector('[role="menu"]'), null);
+  assert.equal(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab');
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const tabMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  await harness.act(async () => {
+    harness.fireEvent(tabMenu, 'keydown', { key: 'Tab' });
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelector('[role="menu"]'), null, 'Tab dismisses the floating menu');
+  assert.equal(tab('two').getAttribute('aria-expanded'), 'false');
+  assert.equal(harness.document.activeElement, host.querySelector('.mux-pane.active button'),
+    'forward Tab moves into the active pane controls');
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const reverseMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  await harness.act(async () => {
+    harness.fireEvent(reverseMenu, 'keydown', { key: 'Tab', shiftKey: true });
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelector('[role="menu"]'), null, 'Shift+Tab dismisses the floating menu');
+  assert.equal(harness.document.activeElement, tab('two'), 'reverse Tab restores the invoking tab');
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const reopenedMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  await harness.act(() => harness.fireEvent(getByRole(reopenedMenu, 'menuitem', { name: 'Close tab' }), 'click'));
+  assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['one', 'three']);
+  assert.equal(tab('three').getAttribute('aria-selected'), 'true', 'closing an inactive tab preserves active selection');
+  assert.equal(harness.document.activeElement, tab('three'), 'close tab focuses the surviving active tab');
+
+  await open('detached');
+  await harness.act(() => harness.fireEvent(tab('detached'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const detachMenu = getByRole(host, 'menu', { name: 'Actions for detached' });
+  await harness.act(async () => {
+    harness.fireEvent(getByRole(detachMenu, 'menuitem', { name: 'Detach tab' }), 'click');
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['one', 'three']);
+  assert.equal(fake.widgets.at(-1).disposeCount, 1, 'detach disposes the dashboard widget');
+  assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/,
+    'detach uses the same standalone terminal handoff as the pane header button');
+  assert.equal(harness.document.activeElement, tab('three'), 'detach focuses the surviving active tab');
+
+  await open('two');
+  let keyboardOpen;
+  await harness.act(() => {
+    keyboardOpen = harness.fireEvent(tab('three'), 'keydown', { key: 'F10', shiftKey: true });
+  });
+  assert.equal(keyboardOpen.defaultPrevented, true, 'Shift+F10 is the keyboard context-menu gesture');
+  const keyboardMenu = getByRole(host, 'menu', { name: 'Actions for three' });
+  harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
+  assert.equal(harness.document.activeElement.textContent, 'Close tab');
+  harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
+  assert.equal(harness.document.activeElement.textContent, 'Close other tabs');
+  await harness.act(() => harness.fireEvent(harness.document.activeElement, 'click'));
+  assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['three']);
+  assert.equal(tab('three').getAttribute('aria-selected'), 'true');
+  assert.equal(harness.document.activeElement, tab('three'), 'close others focuses the kept tab');
+
+  await open('four');
+  await open('five');
+  await harness.act(() => harness.fireEvent(tab('four'), 'keydown', { key: 'ContextMenu' }));
+  const allMenu = getByRole(host, 'menu', { name: 'Actions for four' });
+  await harness.act(() => harness.fireEvent(getByRole(allMenu, 'menuitem', { name: 'Close all tabs' }), 'click'));
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 0);
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
+  assert.equal(harness.document.activeElement, harness.document.querySelector('nav [data-tab="groups"]'),
+    'close all moves focus to the selected Groups navigation tab');
+  assert.deepEqual(requests.sort(), [
+    '/api/hide/agt_detached', '/api/hide/agt_five', '/api/hide/agt_four', '/api/hide/agt_one',
+    '/api/hide/agt_three', '/api/hide/agt_two', '/api/hide/agt_two',
+  ]);
   cleanup();
 });
 

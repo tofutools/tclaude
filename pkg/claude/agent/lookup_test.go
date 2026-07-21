@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	commonTable "github.com/tofutools/tclaude/pkg/claude/common/table"
 )
 
 func setupTestDB(t *testing.T) {
@@ -621,12 +622,58 @@ func TestRenderPeers_ShowsShortAgentID(t *testing.T) {
 		ConvID:  "abcd1234-2222-3333-4444-555555555555",
 		Title:   "worker",
 		Online:  true,
+		State: peerState{
+			Harness:       "codex",
+			Model:         "gpt-5.6-sol",
+			EffortLevel:   "high",
+			Status:        "working",
+			SubagentCount: 2,
+		},
 	}}
 	var out bytes.Buffer
 	renderPeers(&lsParams{}, peers, &out)
 	s := out.String()
 	assert.Contains(t, s, "agt_01234567", "ID column should show the short agent_id")
 	assert.NotContains(t, s, "abcd1234", "conv-id should not appear in the ls table")
+	assert.Contains(t, s, "HARNESS")
+	assert.Contains(t, s, "MODEL")
+	assert.Contains(t, s, "STATE")
+	assert.Contains(t, s, "SUB")
+	assert.Contains(t, s, "codex")
+	assert.Contains(t, s, "gpt-5.6", "model should remain recognizable in a narrow table")
+	assert.Contains(t, s, "working", "dashboard state label should be shown")
+	assert.Contains(t, s, "2", "live sub-agent count should be shown")
+	for _, line := range strings.Split(strings.TrimSuffix(s, "\n"), "\n") {
+		assert.LessOrEqual(t, commonTable.StringWidth(line), 80, "default narrow-table line must fit: %q", line)
+	}
+	assert.NotContains(t, s, "BRANCH", "lower-priority columns are hidden at 80 cells")
+	assert.NotContains(t, s, "DESCR", "lower-priority columns are hidden at 80 cells")
+
+	out.Reset()
+	renderPeersAtWidth(&lsParams{}, peers, &out, 65)
+	narrow := out.String()
+	for _, line := range strings.Split(strings.TrimSuffix(narrow, "\n"), "\n") {
+		assert.LessOrEqual(t, commonTable.StringWidth(line), 65, "compact-table line must fit: %q", line)
+	}
+	assert.Contains(t, narrow, "GROUPS", "group identity remains visible at the prior 65-cell floor")
+	assert.NotContains(t, narrow, "ROLE", "role yields to runtime data below 77 cells")
+}
+
+func TestPeerStatus_UsesDashboardLivenessLabels(t *testing.T) {
+	assert.Equal(t, "offline", peerStatus(&peerEntry{
+		Online: false,
+		State:  peerState{Status: "idle"},
+	}), "a dead pane must not masquerade as its frozen hook state")
+	assert.Equal(t, "crashed", peerStatus(&peerEntry{
+		Online: false,
+		State:  peerState{ExitReason: "unexpected"},
+	}), "an abnormal exit uses the dashboard's crashed label")
+	assert.Equal(t, "online", peerStatus(&peerEntry{Online: true}),
+		"a live session before its first hook has the dashboard's online fallback")
+	assert.Equal(t, "working", peerStatus(&peerEntry{
+		Online: true,
+		State:  peerState{Status: "working"},
+	}))
 }
 
 // TestShortAgentID covers the narrow-table form and the conv-id fallback.

@@ -668,7 +668,7 @@ func markSessionExitedAndRecordObservationOnce(
 
 	res, err := tx.Exec(`UPDATE sessions
 		SET status = 'exited', status_detail = '', updated_at = ?,
-			subagent_count = 0, subagents_json = '',
+			subagent_count = 0, subagents_json = '', bg_shells_json = '',
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?
 			AND exit_callback_generation = ?`,
@@ -732,7 +732,7 @@ func recordSessionEndExitObservationOnce(o AgentExitObservation) (bool, AgentExi
 	defer func() { _ = tx.Rollback() }()
 
 	res, err := tx.Exec(`UPDATE sessions SET status = 'exited', status_detail = '',
-		updated_at = ?, subagent_count = 0, subagents_json = '',
+		updated_at = ?, subagent_count = 0, subagents_json = '', bg_shells_json = '',
 		exit_reason = CASE WHEN ? <> '' THEN ? ELSE exit_reason END
 		WHERE id = ? AND exit_callback_generation = ?`,
 		time.Now().Format(time.RFC3339Nano), o.Reason, o.Reason,

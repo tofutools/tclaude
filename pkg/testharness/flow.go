@@ -1283,6 +1283,14 @@ type PeerView struct {
 	Descr  string   `json:"descr,omitempty"`
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
+	State  struct {
+		Harness       string `json:"harness,omitempty"`
+		Model         string `json:"model,omitempty"`
+		EffortLevel   string `json:"effort_level,omitempty"`
+		Status        string `json:"status,omitempty"`
+		SubagentCount int    `json:"subagent_count"`
+		ExitReason    string `json:"exit_reason,omitempty"`
+	} `json:"state"`
 }
 
 // ListGroupMembers calls GET /v1/groups/{name}/members and returns

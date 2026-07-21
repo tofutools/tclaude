@@ -157,6 +157,34 @@ type peerEntry struct {
 	agentLocationView
 	Online bool     `json:"online"`
 	Groups []string `json:"groups"`
+	// State is the intentionally lean activity/runtime subset agent peers may
+	// see. Do not embed agentState here: it also carries context and cost data,
+	// whose cross-agent read is separately permission-gated.
+	State peerState `json:"state"`
+}
+
+// peerState is the runtime summary `tclaude agent ls` needs. Its values come
+// from stateForConvInSessions, the same settled-state resolver that feeds the
+// dashboard, so sub-agent TTL reconciliation and offline handling cannot drift
+// between the two surfaces.
+type peerState struct {
+	Harness       string `json:"harness,omitempty"`
+	Model         string `json:"model,omitempty"`
+	EffortLevel   string `json:"effort_level,omitempty"`
+	Status        string `json:"status,omitempty"`
+	SubagentCount int    `json:"subagent_count"`
+	ExitReason    string `json:"exit_reason,omitempty"`
+}
+
+func peerStateFromAgentState(state agentState) peerState {
+	return peerState{
+		Harness:       state.Harness,
+		Model:         state.Model,
+		EffortLevel:   state.EffortLevel,
+		Status:        state.Status,
+		SubagentCount: state.SubagentCount,
+		ExitReason:    state.ExitReason,
+	}
 }
 
 // handlePeers returns the conversations the caller can see.
@@ -259,6 +287,17 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 				Online:            isConvOnlineIn(conv, aliveSessions),
 			}
 		}
+	}
+	// Resolve every peer's runtime state in one sessions-table read. The
+	// per-peer settlement still goes through the dashboard's canonical helper,
+	// including live sub-agent reconciliation and Codex telemetry read-through.
+	convIDs := make([]string, 0, len(byConv))
+	for conv := range byConv {
+		convIDs = append(convIDs, conv)
+	}
+	sessionsByConv, _ := db.FindSessionsByConvIDs(convIDs)
+	for conv, pe := range byConv {
+		pe.State = peerStateFromAgentState(stateForConvInSessions(sessionsByConv[conv], aliveSessions))
 	}
 	out := make([]*peerEntry, 0, len(byConv))
 	for _, pe := range byConv {

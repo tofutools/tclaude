@@ -333,6 +333,18 @@ func SetPopupBaseURLForTest(url string) func() {
 	return func() { popupBaseURL = prev }
 }
 
+// ResetBgShellReconcileCacheForTest drops every cached background-shell
+// liveness verdict. The reconcile is throttled per session
+// (bgShellReconcileMinInterval) so a dashboard poll does not re-walk the
+// host's process table on every tick; a flow test drives several distinct
+// ledger states through one session id far faster than that, and would
+// otherwise read a stale count.
+func ResetBgShellReconcileCacheForTest() {
+	bgShellReconcileMu.Lock()
+	defer bgShellReconcileMu.Unlock()
+	bgShellReconcileMu.last = nil
+}
+
 // SetAccessRequestNotifyForTest captures the production access-request
 // notification arguments without invoking a host desktop notifier.
 func SetAccessRequestNotifyForTest(notify func(string, string, string, string, string)) func() {

@@ -64,13 +64,37 @@ export function createTerminalShellActions({
     return !disposed && state.activatePane(key);
   }
 
-  async function closePane(key, { skipDetach = false } = {}) {
+  function reorderPane(key, targetKey, options) {
+    return disposed ? null : state.reorderPane(key, targetKey, options);
+  }
+
+  function movePaneByOffset(key, offset) {
+    return disposed ? null : state.movePaneByOffset(key, offset);
+  }
+
+  async function closePanes(keys, { skipDetach = false } = {}) {
     if (disposed) return;
-    const pane = state.panes.value.find((candidate) => candidate.key === key);
-    if (!pane) return;
-    widgetFor(pane.id)?.dispose();
-    state.removePane(key);
-    if (!skipDetach) await hideSeed(pane.seed);
+    const wanted = new Set(keys || []);
+    const panes = state.panes.value.filter((candidate) => wanted.has(candidate.key));
+    if (!panes.length) return;
+    for (const pane of panes) widgetFor(pane.id)?.dispose();
+    state.removePanes(panes.map((pane) => pane.key));
+    if (!skipDetach) await Promise.all(panes.map((pane) => hideSeed(pane.seed)));
+  }
+
+  function closePane(key, options) {
+    return closePanes([key], options);
+  }
+
+  function closeOtherPanes(key) {
+    if (!state.panes.value.some((pane) => pane.key === key)) return Promise.resolve();
+    return closePanes(state.panes.value
+      .filter((pane) => pane.key !== key)
+      .map((pane) => pane.key));
+  }
+
+  function closeAllPanes() {
+    return closePanes(state.panes.value.map((pane) => pane.key));
   }
 
   function closeForHide(selectors) {
@@ -216,7 +240,11 @@ export function createTerminalShellActions({
     openPane,
     receiveHandoffPane,
     activatePane,
+    reorderPane,
+    movePaneByOffset,
     closePane,
+    closeOtherPanes,
+    closeAllPanes,
     closeForHide,
     closeForAgents,
     focusForSelectors,

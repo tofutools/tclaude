@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
+function memoryPrefs(initial = {}) {
+  const values = new Map(Object.entries(initial));
+  const writes = [];
+  return {
+    writes,
+    getItem(key) { return values.get(key) ?? null; },
+    setItem(key, value) { values.set(key, String(value)); writes.push([key, String(value)]); },
+    removeItem(key) { values.delete(key); },
+  };
+}
+
 test('terminal shell state owns stable pane, active, reveal, and modal descriptors', async (t) => {
   const harness = await createPreactHarness(t);
   const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
@@ -53,6 +64,106 @@ test('terminal shell state owns stable pane, active, reveal, and modal descripto
   assert.deepEqual(state.panes.value, []);
   assert.equal(state.activeKey.value, null);
   assert.equal(state.modal.value, null);
+});
+
+test('terminal pane order persists, restores known keys, appends new keys, and never changes active identity', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTerminalShellState, TERMINAL_PANE_ORDER_KEY } =
+    await harness.importDashboardModule('js/terminal-shell-state.js');
+  const prefs = memoryPrefs({
+    'tclaude.dash.terminals.order': JSON.stringify(['two', 'one', 'closed']),
+  });
+  const state = createTerminalShellState({ prefs });
+
+  const one = state.openPane({ ws: '/one', key: 'one', label: 'one' });
+  const two = state.openPane({ ws: '/two', key: 'two', label: 'two' });
+  const three = state.openPane({ ws: '/three', key: 'three', label: 'three' });
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'one', 'three'],
+    'known keys use remembered order and a genuinely new key appends');
+  assert.equal(state.activeKey.value, 'three');
+  assert.equal(prefs.writes.length, 0,
+    'ordinary opens cannot overwrite an explicit order written by another dashboard client');
+
+  const moved = state.reorderPane('three', 'two');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['three', 'two', 'one']);
+  assert.deepEqual(moved, { pane: three, index: 0, count: 3 });
+  assert.equal(state.activeKey.value, 'three', 'moving the active pane never switches terminals');
+  assert.equal(state.panes.value.find((pane) => pane.key === 'one'), one,
+    'reordering preserves stable pane descriptors');
+  assert.equal(state.panes.value.find((pane) => pane.key === 'two'), two);
+  assert.deepEqual(JSON.parse(prefs.getItem(TERMINAL_PANE_ORDER_KEY)),
+    ['three', 'two', 'one', 'closed'], 'closed remembered keys remain behind the visible order');
+
+  state.movePaneByOffset('three', 1);
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'three', 'one']);
+  assert.equal(state.activeKey.value, 'three');
+  assert.equal(state.movePaneByOffset('two', -1), null, 'moving past the first position is inert');
+
+  state.removePane('three');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'one']);
+  assert.equal(state.activeKey.value, 'one', 'closing a reordered active pane selects its right neighbor');
+  const reopened = state.openPane({ ws: '/three-again', key: 'three', label: 'three again' });
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['two', 'three', 'one'],
+    'reopening a known key restores its remembered relative position');
+  assert.equal(state.activeKey.value, 'three');
+  assert.notEqual(reopened, three, 'closing and reopening still creates a fresh terminal lifecycle');
+});
+
+test('terminal order retention is bounded and solo shells never persist dashboard order', async (t) => {
+  const harness = await createPreactHarness(t);
+  const {
+    createTerminalShellState, MAX_REMEMBERED_TERMINAL_PANES, MAX_TERMINAL_PANE_ORDER_BYTES,
+    TERMINAL_PANE_ORDER_KEY,
+  } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  const remembered = Array.from({ length: MAX_REMEMBERED_TERMINAL_PANES + 80 }, (_, index) => `key-${index}`);
+  const prefs = memoryPrefs({ [TERMINAL_PANE_ORDER_KEY]: JSON.stringify(remembered) });
+  const state = createTerminalShellState({ prefs });
+  state.openPane({ ws: '/first', key: 'key-0' });
+  state.openPane({ ws: '/last', key: remembered.at(-1) });
+  state.reorderPane(remembered.at(-1), 'key-0');
+  assert.equal(JSON.parse(prefs.getItem(TERMINAL_PANE_ORDER_KEY)).length,
+    MAX_REMEMBERED_TERMINAL_PANES, 'the persisted preference cannot grow without bound');
+
+  const longKeys = Array.from({ length: MAX_REMEMBERED_TERMINAL_PANES },
+    (_, index) => `long-${index}-${'å'.repeat(180)}`);
+  const longPrefs = memoryPrefs({ [TERMINAL_PANE_ORDER_KEY]: JSON.stringify(longKeys) });
+  const longState = createTerminalShellState({ prefs: longPrefs });
+  longState.openPane({ ws: '/long-one', key: longKeys[0] });
+  longState.openPane({ ws: '/long-two', key: longKeys[1] });
+  longState.reorderPane(longKeys[1], longKeys[0]);
+  const persistedBytes = new TextEncoder()
+    .encode(longPrefs.getItem(TERMINAL_PANE_ORDER_KEY)).byteLength;
+  assert.ok(persistedBytes <= MAX_TERMINAL_PANE_ORDER_BYTES,
+    `persisted order uses ${persistedBytes} bytes, above ${MAX_TERMINAL_PANE_ORDER_BYTES}`);
+  assert.ok(JSON.parse(longPrefs.getItem(TERMINAL_PANE_ORDER_KEY)).length
+    < MAX_REMEMBERED_TERMINAL_PANES, 'byte retention is independent of the entry-count cap');
+
+  const soloPrefs = memoryPrefs({ [TERMINAL_PANE_ORDER_KEY]: JSON.stringify(['dashboard-pane']) });
+  const solo = createTerminalShellState({ prefs: soloPrefs, persistOrder: false });
+  solo.openPane({ ws: '/solo-one', key: 'solo-one' });
+  solo.openPane({ ws: '/solo-two', key: 'solo-two' });
+  solo.reorderPane('solo-two', 'solo-one');
+  assert.deepEqual(soloPrefs.writes, [], 'a standalone pop-out never writes dashboard tab order');
+});
+
+test('terminal shell state selects the next surviving neighbor after batch removal', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createTerminalShellState } = await harness.importDashboardModule('js/terminal-shell-state.js');
+  const state = createTerminalShellState();
+  const first = state.openPane({ ws: '/one', key: 'one' });
+  const second = state.openPane({ ws: '/two', key: 'two' });
+  const third = state.openPane({ ws: '/three', key: 'three' });
+  const fourth = state.openPane({ ws: '/four', key: 'four' });
+
+  state.activatePane(second.key);
+  assert.deepEqual(state.removePanes([second.key]), [second]);
+  assert.equal(state.activeKey.value, third.key, 'an active middle tab selects its right neighbor');
+
+  assert.deepEqual(state.removePanes([first.key, third.key]), [first, third]);
+  assert.equal(state.activeKey.value, fourth.key, 'batch removal skips every removed neighbor');
+
+  assert.deepEqual(state.removePanes([fourth.key]), [fourth]);
+  assert.equal(state.activeKey.value, null, 'removing the final tab clears the active key');
 });
 
 function fakeWidget() {
@@ -129,6 +240,53 @@ test('terminal actions sequence socket disposal, detach, pop-out, and external h
 
   actions.dispose();
   actions.dispose();
+});
+
+test('terminal actions close one, other, and all panes through detach-only semantics', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createTerminalShellState }, { createTerminalShellActions }] = await Promise.all([
+    harness.importDashboardModule('js/terminal-shell-state.js'),
+    harness.importDashboardModule('js/terminal-shell-actions.js'),
+  ]);
+  const state = createTerminalShellState();
+  const requests = [];
+  const actions = createTerminalShellActions({
+    state,
+    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+    documentRef: harness.document,
+    windowRef: harness.window,
+  });
+  const open = (key) => {
+    const pane = actions.openPane({ ws: `/${key}`, key, hideConv: `agt_${key}` });
+    const widget = fakeWidget();
+    actions.registerWidget(pane.id, widget);
+    return { pane, widget };
+  };
+
+  const one = open('one');
+  const two = open('two');
+  const three = open('three');
+  await actions.closePane(two.pane.key);
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one', 'three']);
+  assert.equal(state.activeKey.value, three.pane.key, 'closing an inactive tab preserves the active tab');
+  assert.equal(two.widget.disposeCount, 1);
+  assert.deepEqual(requests, ['/api/hide/agt_two']);
+
+  const four = open('four');
+  await actions.closeOtherPanes(one.pane.key);
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['one']);
+  assert.equal(state.activeKey.value, one.pane.key, 'close others keeps and activates the invoked tab');
+  assert.equal(three.widget.disposeCount, 1);
+  assert.equal(four.widget.disposeCount, 1);
+  assert.deepEqual(requests.slice(1).sort(), ['/api/hide/agt_four', '/api/hide/agt_three']);
+
+  const five = open('five');
+  await actions.closeAllPanes();
+  assert.deepEqual(state.panes.value, []);
+  assert.equal(state.activeKey.value, null);
+  assert.equal(one.widget.disposeCount, 1);
+  assert.equal(five.widget.disposeCount, 1);
+  assert.deepEqual(requests.slice(3).sort(), ['/api/hide/agt_five', '/api/hide/agt_one']);
 });
 
 test('modal confirmation keeps reconnect and close mutually exclusive and preserves view semantics', async (t) => {

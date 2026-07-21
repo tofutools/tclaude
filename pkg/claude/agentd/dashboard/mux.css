@@ -22,19 +22,59 @@
   background: #161b22; border-bottom: 1px solid #2a3340;
 }
 .mux-tab {
-  display: flex; align-items: center; gap: 6px;
+  position: relative; display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;
   border-radius: 6px 6px 0 0; background: #0d1117; color: #7d8590;
   cursor: pointer; white-space: nowrap; max-width: 240px;
 }
 .mux-tab:hover { color: #c9d1d9; }
 .mux-tab.active { background: #21262d; color: #c9d1d9; border-color: #3d4451; }
-.mux-tab-label { overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+.mux-tab-label {
+  overflow: hidden; text-overflow: ellipsis; max-width: 200px;
+  cursor: grab; user-select: none;
+}
+.mux-tab.dragging { opacity: 0.48; }
+.mux-tab.dragging .mux-tab-label { cursor: grabbing; }
+.mux-tab.drop-before::before,
+.mux-tab.drop-after::after {
+  content: ""; position: absolute; top: 2px; bottom: 1px; width: 3px;
+  border-radius: 2px; background: #58a6ff; box-shadow: 0 0 7px rgba(88, 166, 255, 0.75);
+}
+.mux-tab.drop-before::before { left: -3px; }
+.mux-tab.drop-after::after { right: -3px; }
+.mux-tab-a11y {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .mux-tab-close {
   background: none; border: none; color: inherit; cursor: pointer;
   font-size: 15px; line-height: 1; padding: 0 2px; opacity: 0.6;
 }
 .mux-tab-close:hover { opacity: 1; color: #f85149; }
+
+.mux-tab-menu {
+  position: fixed; z-index: 1000; display: flex; flex-direction: column;
+  min-width: 170px; padding: 4px;
+  border: 1px solid #3d4451; border-radius: 6px;
+  background: #161b22; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.mux-tab-menu-item {
+  border: 1px solid transparent; border-radius: 4px; padding: 6px 9px;
+  background: transparent; color: #c9d1d9; cursor: pointer; text-align: left;
+  font: inherit;
+}
+.mux-tab-menu-item:hover,
+.mux-tab-menu-item:focus-visible {
+  outline: none; border-color: #58a6ff; background: #1f2935; color: #f0f6fc;
+}
+.mux-tab-menu-separator {
+  height: 1px; margin: 4px 5px; background: #30363d;
+}
+.mux-tab-menu-item.danger { color: #f0a3a0; }
+.mux-tab-menu-item.danger:hover,
+.mux-tab-menu-item.danger:focus-visible {
+  border-color: #f85149; background: #2b1516; color: #ff7b72;
+}
 
 /* Pane area — every terminal is absolutely positioned and stacked; only the
    active one is shown. Background panes stay live (their WebSocket keeps
@@ -110,7 +150,27 @@ body.wizard .mux-tab.active {
   color: #f3e6c0; border-color: #d9b45a;
   box-shadow: 0 -2px 8px rgba(169, 123, 214, 0.28);
 }
+body.wizard .mux-tab.drop-before::before,
+body.wizard .mux-tab.drop-after::after {
+  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+}
 body.wizard .mux-tab-close:hover { color: #f0a868; }
+body.wizard .mux-tab-menu {
+  border-color: #7a5db0;
+  background: linear-gradient(180deg, #2a1c43 0%, #171024 100%);
+  box-shadow: 0 8px 28px rgba(8, 3, 18, 0.72), inset 0 0 0 1px rgba(217, 180, 90, 0.12);
+}
+body.wizard .mux-tab-menu-item { color: #e7d9f5; }
+body.wizard .mux-tab-menu-item:hover,
+body.wizard .mux-tab-menu-item:focus-visible {
+  border-color: #d9b45a; background: #3a2a63; color: #f3e6c0;
+}
+body.wizard .mux-tab-menu-separator { background: rgba(217, 180, 90, 0.38); }
+body.wizard .mux-tab-menu-item.danger { color: #e6a3ad; }
+body.wizard .mux-tab-menu-item.danger:hover,
+body.wizard .mux-tab-menu-item.danger:focus-visible {
+  border-color: #f0a868; background: #4a2433; color: #ffd09a;
+}
 body.wizard .mux-pane-header {
   background: linear-gradient(180deg, #211832 0%, #171024 100%);
   border-bottom-color: #4a3a6b;

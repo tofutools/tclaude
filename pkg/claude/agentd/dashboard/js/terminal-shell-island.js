@@ -11,6 +11,15 @@ import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
+const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
+
+export function terminalTabReorderOffset(event) {
+  if (event?.type !== 'keydown' || event.target?.closest?.('button')) return null;
+  if (!event.shiftKey || !event.altKey) return null;
+  if (event.key === 'ArrowLeft') return -1;
+  if (event.key === 'ArrowRight') return 1;
+  return null;
+}
 
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
@@ -171,30 +180,156 @@ function TerminalPane({
   `;
 }
 
-function PaneTab({ pane, active, actions }) {
+function PaneTab({
+  pane, active, menuOpen, actions, openMenu, dragging, dropSide, onDragStart, onDragEnd,
+  onDragOver, onDragLeave, onDrop, onReordered,
+}) {
   const activate = (event) => {
+    if (event.type === 'keydown' && event.target.closest('button')) return;
+    const reorderOffset = terminalTabReorderOffset(event);
+    if (reorderOffset !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      const moved = actions.movePaneByOffset(pane.key, reorderOffset);
+      if (moved) onReordered(moved);
+      return;
+    }
     if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
     if (event.type === 'keydown') event.preventDefault();
     actions.activatePane(pane.key);
   };
+  const openContextMenu = (event) => {
+    const keyboard = event.type === 'keydown';
+    if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu({
+      key: pane.key,
+      label: pane.label,
+      trigger: event.currentTarget,
+      x: keyboard ? rect.left : event.clientX,
+      y: keyboard ? rect.bottom : event.clientY,
+    });
+    return true;
+  };
+  const onKeyDown = (event) => {
+    if (!openContextMenu(event)) activate(event);
+  };
   return html`
     <div
-      class=${`mux-tab${active ? ' active' : ''}`}
+      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
       role="tab"
       tabIndex="0"
       aria-selected=${active ? 'true' : 'false'}
       aria-controls=${pane.id}
+      aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+      aria-describedby="terminal-tab-reorder-help"
+      aria-haspopup="menu"
+      aria-expanded=${menuOpen ? 'true' : 'false'}
+      title="Right-click or press Shift+F10 for terminal tab actions"
       onClick=${activate}
-      onKeyDown=${activate}
+      onKeyDown=${onKeyDown}
+      onContextMenu=${openContextMenu}
+      onDragOver=${(event) => onDragOver(event, pane.key)}
+      onDragLeave=${(event) => onDragLeave(event, pane.key)}
+      onDrop=${(event) => onDrop(event, pane.key)}
     >
-      <span class="mux-tab-label">${pane.label}</span>
+      <span
+        class="mux-tab-label"
+        draggable="true"
+        title="Drag to reorder · Alt+Shift+Left/Right to move with the keyboard"
+        onDragStart=${(event) => onDragStart(event, pane.key)}
+        onDragEnd=${onDragEnd}
+      >${pane.label}</span>
       <button
         type="button"
         class="mux-tab-close"
+        draggable="false"
         title="Close this terminal"
         aria-label=${`Close ${pane.label}`}
         onClick=${(event) => { event.stopPropagation(); void actions.closePane(pane.key); }}
       >×</button>
+    </div>
+  `;
+}
+
+function PaneContextMenu({ menu, actions, closeMenu, focusAfterAction, focusAfterDismiss }) {
+  const menuRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const viewportWidth = Number.isFinite(window.innerWidth) ? window.innerWidth : rect.right;
+    const viewportHeight = Number.isFinite(window.innerHeight) ? window.innerHeight : rect.bottom;
+    const left = Math.max(4, Math.min(menu.x, viewportWidth - rect.width - 4));
+    const top = Math.max(4, Math.min(menu.y, viewportHeight - rect.height - 4));
+    node.style.left = `${left}px`;
+    node.style.top = `${top}px`;
+    node.querySelector('[role="menuitem"]')?.focus();
+  }, [menu]);
+
+  useEffect(() => {
+    const onMouseDown = (event) => {
+      if (!menuRef.current?.contains(event.target)) closeMenu(false);
+    };
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      closeMenu(true);
+    };
+    const onFocusIn = (event) => {
+      if (!menuRef.current?.contains(event.target)) closeMenu(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('focusin', onFocusIn);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('focusin', onFocusIn);
+    };
+  }, [closeMenu]);
+
+  const onMenuKeyDown = (event) => {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      closeMenu(false);
+      focusAfterDismiss(event.shiftKey);
+      return;
+    }
+    const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')];
+    const index = items.indexOf(document.activeElement);
+    let next = null;
+    if (event.key === 'ArrowDown') next = items[(index + 1) % items.length];
+    else if (event.key === 'ArrowUp') next = items[(index - 1 + items.length) % items.length];
+    else if (event.key === 'Home') next = items[0];
+    else if (event.key === 'End') next = items.at(-1);
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  };
+  const run = (action) => {
+    closeMenu(false);
+    void action();
+    focusAfterAction();
+  };
+
+  return html`
+    <div
+      ref=${menuRef}
+      class="mux-tab-menu"
+      role="menu"
+      aria-label=${`Actions for ${menu.label}`}
+      style=${{ left: `${menu.x}px`, top: `${menu.y}px` }}
+      onKeyDown=${onMenuKeyDown}
+    >
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.popOutPane(menu.key))}>Detach tab</button>
+      <div class="mux-tab-menu-separator" role="separator"></div>
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closePane(menu.key))}>Close tab</button>
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closeOtherPanes(menu.key))}>Close other tabs</button>
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item danger" onClick=${() => run(() => actions.closeAllPanes())}>Close all tabs</button>
     </div>
   `;
 }
@@ -205,6 +340,84 @@ function TerminalTabs({
 }) {
   const current = state.view.value;
   const hasPanes = current.panes.length > 0;
+  const shellRef = useRef(null);
+  const dragKeyRef = useRef(null);
+  const [dragKey, setDragKey] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('');
+  const [tabMenu, setTabMenu] = useState(null);
+  const [menuFocusRequest, setMenuFocusRequest] = useState(0);
+
+  const clearDrag = () => {
+    dragKeyRef.current = null;
+    setDragKey(null);
+    setDropTarget(null);
+  };
+  const announceReorder = ({ pane, index, count }) => {
+    setReorderAnnouncement(`Moved ${pane.label} to position ${index + 1} of ${count}.`);
+  };
+  const startTabDrag = (event, key) => {
+    event.stopPropagation();
+    event.dataTransfer.setData(TERMINAL_TAB_DRAG_MIME, key);
+    event.dataTransfer.effectAllowed = 'move';
+    dragKeyRef.current = key;
+    setDragKey(key);
+    setDropTarget(null);
+  };
+  const tabDragOver = (event, targetKey) => {
+    const sourceKey = dragKeyRef.current;
+    if (!sourceKey || sourceKey === targetKey) {
+      setDropTarget(null);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    if (dropTarget?.key !== targetKey || dropTarget.side !== side) {
+      setDropTarget({ key: targetKey, side });
+    }
+  };
+  const tabDragLeave = (event, targetKey) => {
+    if (dropTarget?.key !== targetKey || event.currentTarget.contains(event.relatedTarget)) return;
+    setDropTarget(null);
+  };
+  const dropTab = (event, targetKey) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    const moved = key && actions.reorderPane(key, targetKey, { after: side === 'after' });
+    clearDrag();
+    if (moved) announceReorder(moved);
+  };
+  const closeTabMenu = (restoreFocus = false) => {
+    const trigger = tabMenu?.trigger;
+    setTabMenu(null);
+    if (restoreFocus) queueMicrotask(() => trigger?.focus());
+  };
+  const focusAfterTabMenuAction = () => setMenuFocusRequest((value) => value + 1);
+  useLayoutEffect(() => {
+    if (!menuFocusRequest) return;
+    const activeTab = shellRef.current?.querySelector('.mux-tab[aria-selected="true"]');
+    if (activeTab) activeTab.focus();
+    else document.querySelector('nav [data-tab="groups"]')?.focus();
+  }, [menuFocusRequest]);
+  const focusAfterTabMenuDismiss = (reverse) => {
+    const trigger = tabMenu?.trigger;
+    queueMicrotask(() => {
+      const paneControl = shellRef.current?.querySelector(
+        '.mux-pane.active button:not([disabled]), .mux-pane.active input:not([disabled]), .mux-pane.active [tabindex]:not([tabindex="-1"])',
+      );
+      (reverse ? trigger : paneControl || trigger)?.focus();
+    });
+  };
+
+  useEffect(() => {
+    if (tabMenu && !current.panes.some((pane) => pane.key === tabMenu.key)) setTabMenu(null);
+  }, [current.panes, tabMenu]);
 
   useLayoutEffect(() => {
     if (solo) return undefined;
@@ -282,12 +495,34 @@ function TerminalTabs({
   }, [actions, composeMessageDialogKind, current.activeKey, current.panes, onComposeMessage, solo]);
 
   return html`
-    <div class="terminal-shell-root">
+    <div ref=${shellRef} class="terminal-shell-root">
       ${!solo ? html`
+        <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
+          Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
+        </span>
+        <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div class="mux-tabs" role="tablist" aria-label="Open terminals">
-          ${current.panes.map((pane) => html`<${PaneTab} key=${pane.key} pane=${pane} active=${current.activeKey === pane.key} actions=${actions} />`)}
+          ${current.panes.map((pane) => html`
+            <${PaneTab}
+              key=${pane.key}
+              pane=${pane}
+              active=${current.activeKey === pane.key}
+              menuOpen=${tabMenu?.key === pane.key}
+              actions=${actions}
+              openMenu=${setTabMenu}
+              dragging=${dragKey === pane.key}
+              dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
+              onDragStart=${startTabDrag}
+              onDragEnd=${clearDrag}
+              onDragOver=${tabDragOver}
+              onDragLeave=${tabDragLeave}
+              onDrop=${dropTab}
+              onReordered=${announceReorder}
+            />
+          `)}
         </div>
       ` : null}
+      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction} focusAfterDismiss=${focusAfterTabMenuDismiss} />` : null}
       ${hasPanes || !empty ? html`
         <div class="mux-panes">
           ${current.panes.map((pane) => html`
