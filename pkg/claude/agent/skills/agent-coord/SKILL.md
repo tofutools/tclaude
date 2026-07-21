@@ -96,6 +96,7 @@ The fastest path is `tclaude agent reply <id>`:
 
 ```bash
 tclaude agent reply 42 "Got it, will look at the diff this afternoon."
+tclaude agent reply 42 --body "Got it."         # equivalent flag form
 tclaude agent reply 42 --file reply.md          # body from a file
 tclaude agent reply 42 --stdin <<EOF
 multi-line reply
@@ -105,6 +106,9 @@ EOF
 
 `reply` looks up message 42, sends the body to its sender, and inherits
 the original subject as `Re: <subject>` (override with `--subject`).
+
+The body comes from exactly one of: positional text, `--body`, `--stdin`,
+or `--file` — the same four sources `message` accepts.
 
 For a long, multi-line, or code-heavy reply, prefer `--file` — see
 "Long or code-heavy bodies" below.

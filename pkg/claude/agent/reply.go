@@ -15,7 +15,8 @@ import (
 
 type replyParams struct {
 	ID      string `pos:"true" help:"Message ID to reply to (from inbox ls)"`
-	Body    string `pos:"true" optional:"true" help:"Reply body (or use --stdin / --file)"`
+	Text    string `pos:"true" optional:"true" help:"Reply body (or use --body / --stdin / --file)"`
+	Body    string `long:"body" optional:"true" help:"Reply body as a flag instead of positional text"`
 	Subject string `long:"subject" short:"s" optional:"true" help:"Override the auto-generated 'Re: …' subject"`
 	Stdin   bool   `long:"stdin" help:"Read body from stdin"`
 	File    string `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
@@ -46,10 +47,11 @@ func runReply(p *replyParams, stdout, stderr io.Writer, stdin io.Reader) int {
 
 	// Reuse readBody by adapting params (it is shared with `message`).
 	body, status := readBody(&messageParams{
-		Text:  p.Body,
+		Text:  p.Text,
+		Body:  p.Body,
 		Stdin: p.Stdin,
 		File:  p.File,
-	}, false, stdin, stderr)
+	}, stdin, stderr)
 	if status != rcOK {
 		return status
 	}

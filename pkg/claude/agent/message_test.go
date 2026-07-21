@@ -118,7 +118,7 @@ func TestReadBody(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			body, rc := readBody(&tt.params, true, strings.NewReader(tt.stdin), &stderr)
+			body, rc := readBody(&tt.params, strings.NewReader(tt.stdin), &stderr)
 			assert.Equal(t, tt.wantRC, rc)
 			assert.Equal(t, tt.wantBody, body)
 			if tt.wantErrSub != "" {
