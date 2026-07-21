@@ -747,14 +747,14 @@ func TestImportConflictPolicyDecidesWhichRowTheGateJudges(t *testing.T) {
 	})
 }
 
-func TestImportTransactionRejectsBreakGlassCreatedAfterSafePreview(t *testing.T) {
+func TestImportTransactionRejectsBreakGlassCreatedBeforeTransaction(t *testing.T) {
 	// This test mutates a package-global deterministic hook and must not run in
 	// parallel. The mutation happens before the DB transaction, never inside a
 	// live SQLite transaction.
 	f := newFlow(t)
 	tclaudeData, _, _ := protectedTestDirs(t)
 	f.HaveGroup("crew")
-	t.Cleanup(agentd.SetSandboxImportAfterPreviewForTest(func() {
+	t.Cleanup(agentd.SetSandboxImportBeforeTransactionForTest(func() {
 		_, err := db.CreateSandboxProfile(&db.SandboxProfile{
 			Name: "shared",
 			BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
@@ -771,7 +771,7 @@ func TestImportTransactionRejectsBreakGlassCreatedAfterSafePreview(t *testing.T)
 		"assignments": map[string]any{"global": "shared", "groups": map[string]string{"crew": "shared"}},
 	})
 	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
-		"the DB transaction must reject the dangerous current row despite a safe handler preview; body=%s", rec.Body.String())
+		"the DB transaction must reject the dangerous row created after request parsing; body=%s", rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
 	assert.Contains(t, rec.Body.String(), tclaudeData)
 
@@ -786,6 +786,52 @@ func TestImportTransactionRejectsBreakGlassCreatedAfterSafePreview(t *testing.T)
 	group, err := db.GetAgentGroupSandboxProfile("crew")
 	require.NoError(t, err)
 	assert.Nil(t, group, "the rejected transaction must not apply the group assignment")
+}
+
+func TestImportDanglingGraphPrecedesBreakGlassAcknowledgement(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 3,
+		"profiles": []map[string]any{{
+			"name": "orphan", "includes": []string{"missing"},
+			"break_glass_filesystem": []map[string]any{{"path": tclaudeData, "access": "write"}},
+		}},
+	})
+	require.Equalf(t, http.StatusBadRequest, rec.Code,
+		"the authoritative transaction must report the invalid graph before acknowledgement; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "invalid sandbox profile import")
+	assert.Contains(t, rec.Body.String(), `included sandbox profile \"missing\" was not found`)
+	assert.NotContains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+	stored, err := db.GetSandboxProfile("orphan")
+	require.NoError(t, err)
+	assert.Nil(t, stored)
+}
+
+func TestImportSkipsNonexistentGroupBeforeAcknowledgementPlanning(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "dangerous",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
+			Path: tclaudeData, Access: sandboxpolicy.AccessWrite,
+		}},
+	})
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 3,
+		"apply_assignments": true,
+		"profiles":          []map[string]any{},
+		"assignments": map[string]any{
+			"groups": map[string]string{"does-not-exist": "dangerous"},
+		},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code,
+		"an assignment the transaction skips applies no authority; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `group assignment skipped: no group \"does-not-exist\"`)
+	assert.NotContains(t, rec.Body.String(), "break_glass_acknowledgement_required")
 }
 
 func TestImportErrorConflictReturns409BeforeAcknowledgementGate(t *testing.T) {

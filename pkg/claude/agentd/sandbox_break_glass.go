@@ -1,7 +1,6 @@
 package agentd
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -73,96 +72,6 @@ func requirePayloadBreakGlassAck(what string, acknowledged bool, p *db.SandboxPr
 		return &spawnFailure{http.StatusInternalServerError, "io", "inspect sandbox profile break-glass access: " + err.Error()}
 	}
 	return requireBreakGlassAck(what, acknowledged, grants)
-}
-
-// plannedSandboxRegistry is the EXACT registry state an import will produce.
-//
-// Gating on the pre-import registry (or a one-level fallback) is not sound: a
-// bundle can carry a nested chain A -> B -> D where B is bundle-internal and D
-// is an existing dangerous local profile, and a skip/overwrite collision means
-// the row that will actually be assigned may be the local one or the bundle's.
-// Resolving the acknowledgement against anything other than the true planned
-// result leaves a bypass. This builds that planned state once, and both the
-// gate and the assignment check flatten against it.
-type plannedSandboxRegistry map[string]*db.SandboxProfile
-
-var errSandboxImportPreviewConflict = errors.New("sandbox import preview found an error-policy collision")
-
-// planSandboxImport computes a best-effort preview for the handler UX. An
-// error-policy collision deliberately stops previewing so the authoritative DB
-// transaction can return the real 409 before considering acknowledgement.
-func planSandboxImport(incoming []*db.SandboxProfile, conflict string) (plannedSandboxRegistry, map[string]bool, error) {
-	locals, err := db.ListSandboxProfiles()
-	if err != nil {
-		return nil, nil, err
-	}
-	planned := make(plannedSandboxRegistry, len(locals)+len(incoming))
-	changed := make(map[string]bool, len(incoming))
-	for _, local := range locals {
-		planned[local.Name] = local
-	}
-	for _, candidate := range incoming {
-		if _, collides := planned[candidate.Name]; collides && conflict == "error" {
-			return planned, changed, errSandboxImportPreviewConflict
-		} else if collides && conflict == "skip" {
-			// skip keeps the local row, so the local payload is what any
-			// assignment will point at.
-			continue
-		}
-		planned[candidate.Name] = candidate
-		changed[candidate.Name] = true
-	}
-	return planned, changed, nil
-}
-
-// breakGlassInPlan flattens name against the planned registry, so bundle-internal
-// nested includes resolve exactly as they will after the commit.
-func (planned plannedSandboxRegistry) breakGlassFor(name string) ([]sandboxpolicy.BreakGlassGrant, error) {
-	profile, ok := planned[name]
-	if !ok || profile == nil {
-		// The assignment names a profile that will not exist; the import's own
-		// validation reports that. No protected access to acknowledge here.
-		return nil, nil
-	}
-	flattened, err := sandboxpolicy.Flatten(sandboxProfileToPolicy(profile), func(include string) (*sandboxpolicy.Profile, error) {
-		included, ok := planned[include]
-		if !ok || included == nil {
-			return nil, nil
-		}
-		policy := sandboxProfileToPolicy(included)
-		return &policy, nil
-	})
-	if err != nil {
-		// A graph that cannot be flattened must not become a bypass. Report
-		// every protected grant reachable in the plan under this name so the
-		// gate stays conservative; the import reports the real graph error.
-		return planned.reachableBreakGlass(name), nil //nolint:nilerr // conservative fallback; the import reports the graph error
-	}
-	return flattened.BreakGlassFilesystem, nil
-}
-
-// reachableBreakGlass walks the include graph inside the plan without depth or
-// cycle assumptions, collecting every protected grant it can reach.
-func (planned plannedSandboxRegistry) reachableBreakGlass(name string) []sandboxpolicy.BreakGlassGrant {
-	seen := map[string]bool{}
-	out := []sandboxpolicy.BreakGlassGrant{}
-	var walk func(string)
-	walk = func(n string) {
-		if seen[n] {
-			return
-		}
-		seen[n] = true
-		profile, ok := planned[n]
-		if !ok || profile == nil {
-			return
-		}
-		out = append(out, profile.BreakGlassFilesystem...)
-		for _, include := range profile.Includes {
-			walk(include)
-		}
-	}
-	walk(name)
-	return out
 }
 
 // flattenBreakGlassForPayload resolves a not-yet-persisted profile payload

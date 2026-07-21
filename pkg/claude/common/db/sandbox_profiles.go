@@ -79,6 +79,18 @@ type sandboxProfileImportPlan struct {
 	skipped    bool
 }
 
+type sandboxProfileGroupAssignmentPlan struct {
+	group   string
+	groupID int64
+	profile string
+}
+
+type sandboxProfileAssignmentPlan struct {
+	global   string
+	groups   []sandboxProfileGroupAssignmentPlan
+	warnings []string
+}
+
 // SandboxProfileImportOptions keeps every import decision together at the DB
 // authority boundary. In particular, acknowledgement is consumed inside the
 // same transaction that reads the conflict rows and applies the mutations.
@@ -567,11 +579,20 @@ func ListSandboxProfiles() ([]*SandboxProfile, error) {
 	return out, rows.Err()
 }
 
-// ImportSandboxProfiles validates and applies a portable profile bundle in one
-// transaction. Expected conflicts are resolved before the first write, and
-// optional assignment restoration rides the same commit, so an error never
-// leaves a partially imported registry.
-func ImportSandboxProfiles(profiles []*SandboxProfile, opts SandboxProfileImportOptions) (SandboxProfileImportResult, error) {
+// ImportSandboxProfiles preserves the original source-compatible import API.
+// Callers that need to pass a break-glass acknowledgement use
+// ImportSandboxProfilesWithOptions.
+func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assignments *SandboxProfileAssignments) (SandboxProfileImportResult, error) {
+	return ImportSandboxProfilesWithOptions(profiles, SandboxProfileImportOptions{
+		OnConflict: onConflict, Assignments: assignments,
+	})
+}
+
+// ImportSandboxProfilesWithOptions validates and applies a portable profile
+// bundle in one transaction. Expected conflicts, acknowledgement exposure, and
+// optional assignment restoration all use the same plan before the first
+// write, so an error never leaves a partially imported registry.
+func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxProfileImportOptions) (SandboxProfileImportResult, error) {
 	result := SandboxProfileImportResult{Imported: []string{}, Skipped: []string{}, Warnings: []string{}}
 	onConflict := opts.OnConflict
 	onConflict = strings.ToLower(strings.TrimSpace(onConflict))
@@ -646,8 +667,12 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, opts SandboxProfileImport
 	if err := validateSandboxProfileRegistry(registry); err != nil {
 		return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
 	}
+	assignmentPlan, err := planSandboxProfileAssignments(tx, registry, opts.Assignments)
+	if err != nil {
+		return result, err
+	}
 	if !opts.BreakGlassAcknowledged {
-		exposures, err := sandboxImportBreakGlassExposures(registry, plans, opts.Assignments)
+		exposures, err := sandboxImportBreakGlassExposures(registry, plans, assignmentPlan)
 		if err != nil {
 			return result, fmt.Errorf("%w: inspect break-glass exposure: %v", ErrSandboxProfileInvalidImport, err)
 		}
@@ -692,40 +717,23 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, opts SandboxProfileImport
 		return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
 	}
 
-	if opts.Assignments != nil {
-		if opts.Assignments.Global != "" {
-			var id int64
-			if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, opts.Assignments.Global).Scan(&id); errors.Is(err, sql.ErrNoRows) {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("global assignment references missing sandbox profile %q", opts.Assignments.Global))
-			} else if err != nil {
-				return result, err
-			} else if _, err := tx.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, opts.Assignments.Global, id); err != nil {
-				return result, err
-			}
+	result.Warnings = append(result.Warnings, assignmentPlan.warnings...)
+	if assignmentPlan.global != "" {
+		var id int64
+		if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, assignmentPlan.global).Scan(&id); err != nil {
+			return result, fmt.Errorf("resolve planned global sandbox profile %q: %w", assignmentPlan.global, err)
 		}
-		groups := make([]string, 0, len(opts.Assignments.Groups))
-		for group := range opts.Assignments.Groups {
-			groups = append(groups, group)
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, assignmentPlan.global, id); err != nil {
+			return result, err
 		}
-		sort.Strings(groups)
-		for _, group := range groups {
-			profile := opts.Assignments.Groups[group]
-			var groupID, profileID int64
-			if err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, group).Scan(&groupID); errors.Is(err, sql.ErrNoRows) {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("group assignment skipped: no group %q", group))
-				continue
-			} else if err != nil {
-				return result, err
-			}
-			if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, profile).Scan(&profileID); errors.Is(err, sql.ErrNoRows) {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("group %q assignment references missing sandbox profile %q", group, profile))
-				continue
-			} else if err != nil {
-				return result, err
-			}
-			if _, err := tx.Exec(`UPDATE agent_groups SET sandbox_profile = ?, sandbox_profile_id = ? WHERE id = ?`, profile, profileID, groupID); err != nil {
-				return result, err
-			}
+	}
+	for _, assignment := range assignmentPlan.groups {
+		var profileID int64
+		if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, assignment.profile).Scan(&profileID); err != nil {
+			return result, fmt.Errorf("resolve planned sandbox profile %q for group %q: %w", assignment.profile, assignment.group, err)
+		}
+		if _, err := tx.Exec(`UPDATE agent_groups SET sandbox_profile = ?, sandbox_profile_id = ? WHERE id = ?`, assignment.profile, profileID, assignment.groupID); err != nil {
+			return result, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -778,10 +786,57 @@ func flattenSandboxProfileInRegistry(profile *SandboxProfile, registry map[strin
 	})
 }
 
+// planSandboxProfileAssignments decides exactly which requested assignments
+// can mutate authority in this transaction. Exposure calculation and writes
+// consume this same value; missing groups or profiles are warnings, never
+// acknowledgement carriers that the mutation path would later discard.
+func planSandboxProfileAssignments(
+	tx *sql.Tx,
+	registry map[string]*SandboxProfile,
+	assignments *SandboxProfileAssignments,
+) (sandboxProfileAssignmentPlan, error) {
+	var plan sandboxProfileAssignmentPlan
+	if assignments == nil {
+		return plan, nil
+	}
+	if assignments.Global != "" {
+		if registry[assignments.Global] == nil {
+			plan.warnings = append(plan.warnings, fmt.Sprintf(
+				"global assignment references missing sandbox profile %q", assignments.Global))
+		} else {
+			plan.global = assignments.Global
+		}
+	}
+	groups := make([]string, 0, len(assignments.Groups))
+	for group := range assignments.Groups {
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	for _, group := range groups {
+		profile := assignments.Groups[group]
+		var groupID int64
+		if err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, group).Scan(&groupID); errors.Is(err, sql.ErrNoRows) {
+			plan.warnings = append(plan.warnings, fmt.Sprintf("group assignment skipped: no group %q", group))
+			continue
+		} else if err != nil {
+			return plan, err
+		}
+		if registry[profile] == nil {
+			plan.warnings = append(plan.warnings, fmt.Sprintf(
+				"group %q assignment references missing sandbox profile %q", group, profile))
+			continue
+		}
+		plan.groups = append(plan.groups, sandboxProfileGroupAssignmentPlan{
+			group: group, groupID: groupID, profile: profile,
+		})
+	}
+	return plan, nil
+}
+
 func sandboxImportBreakGlassExposures(
 	registry map[string]*SandboxProfile,
 	plans []sandboxProfileImportPlan,
-	assignments *SandboxProfileAssignments,
+	assignments sandboxProfileAssignmentPlan,
 ) ([]SandboxProfileBreakGlassExposure, error) {
 	type carrier struct {
 		name       string
@@ -793,18 +848,11 @@ func sandboxImportBreakGlassExposures(
 			carriers = append(carriers, carrier{name: item.profile.Name})
 		}
 	}
-	if assignments != nil {
-		if assignments.Global != "" {
-			carriers = append(carriers, carrier{name: assignments.Global, assignment: true})
-		}
-		groups := make([]string, 0, len(assignments.Groups))
-		for group := range assignments.Groups {
-			groups = append(groups, group)
-		}
-		sort.Strings(groups)
-		for _, group := range groups {
-			carriers = append(carriers, carrier{name: assignments.Groups[group], assignment: true})
-		}
+	if assignments.global != "" {
+		carriers = append(carriers, carrier{name: assignments.global, assignment: true})
+	}
+	for _, assignment := range assignments.groups {
+		carriers = append(carriers, carrier{name: assignment.profile, assignment: true})
 	}
 	seen := map[string]bool{}
 	var exposures []SandboxProfileBreakGlassExposure

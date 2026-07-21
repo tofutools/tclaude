@@ -140,7 +140,7 @@ func TestImportSandboxProfilesValidatesIncludeGraph(t *testing.T) {
 
 	// A self-contained bundle whose profiles reference each other imports fine
 	// regardless of ordering within the bundle.
-	result, err := ImportSandboxProfiles([]*SandboxProfile{
+	result, err := ImportSandboxProfilesWithOptions([]*SandboxProfile{
 		{Name: "team", Includes: []string{"base"}},
 		{Name: "base"},
 	}, SandboxProfileImportOptions{OnConflict: "error"})
@@ -151,13 +151,13 @@ func TestImportSandboxProfilesValidatesIncludeGraph(t *testing.T) {
 	assert.Equal(t, []string{"base"}, team.Includes)
 
 	// A bundle include may also point at an already-local profile.
-	_, err = ImportSandboxProfiles([]*SandboxProfile{
+	_, err = ImportSandboxProfilesWithOptions([]*SandboxProfile{
 		{Name: "extension", Includes: []string{"team"}},
 	}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.NoError(t, err)
 
 	// A dangling include rolls the whole import back.
-	_, err = ImportSandboxProfiles([]*SandboxProfile{
+	_, err = ImportSandboxProfilesWithOptions([]*SandboxProfile{
 		{Name: "orphan", Includes: []string{"nowhere"}},
 	}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.ErrorIs(t, err, ErrSandboxProfileInvalidImport)
@@ -248,10 +248,10 @@ func TestInspectSandboxProfileImportGraphPolicyShapesDiverge(t *testing.T) {
 	assert.Empty(t, inspection.SkipError, "skipping the clash keeps local A includes-free, so B→A is acyclic")
 
 	// The real import agrees with both verdicts.
-	_, err = ImportSandboxProfiles(bundle(), SandboxProfileImportOptions{OnConflict: "overwrite"})
+	_, err = ImportSandboxProfilesWithOptions(bundle(), SandboxProfileImportOptions{OnConflict: "overwrite"})
 	require.ErrorIs(t, err, ErrSandboxProfileInvalidImport)
 
-	result, err := ImportSandboxProfiles(bundle(), SandboxProfileImportOptions{OnConflict: "skip"})
+	result, err := ImportSandboxProfilesWithOptions(bundle(), SandboxProfileImportOptions{OnConflict: "skip"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"A"}, result.Skipped)
 	assert.Equal(t, []string{"B"}, result.Imported)

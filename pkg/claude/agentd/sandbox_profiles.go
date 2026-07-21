@@ -607,72 +607,18 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		}
 		profiles = append(profiles, p)
 	}
-	// Import is a fresh acknowledgement point by design: a bundle authored
-	// elsewhere carries the danger marker across machines, and the paths were
-	// only just canonicalized against THIS host's protected roots.
-	// This preview is a UX fast path only. The DB transaction repeats the plan
-	// from rows read inside that transaction and is the sole authority.
-	planned, changed, planErr := planSandboxImport(profiles, conflict)
-	if planErr != nil && !errors.Is(planErr, errSandboxImportPreviewConflict) {
-		writeError(w, http.StatusInternalServerError, "io", "plan sandbox profile import: "+planErr.Error())
-		return
-	}
-	var incoming []sandboxpolicy.BreakGlassGrant
-	var carriers []string
-	for _, p := range profiles {
-		if planErr != nil || !changed[p.Name] {
-			continue
-		}
-		grants, err := planned.breakGlassFor(p.Name)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", "inspect imported sandbox profile: "+err.Error())
-			return
-		}
-		if len(grants) > 0 {
-			carriers = append(carriers, p.Name)
-			incoming = append(incoming, grants...)
-		}
-	}
-	// An import can introduce protected access WITHOUT any incoming profile
-	// carrying it: applying an assignment that points at a dangerous profile
-	// already in the local registry has exactly the same effect. Fold those in.
-	if planErr == nil && env.ApplyAssignments && env.Assignments != nil {
-		assignedNames := []string{}
-		if env.Assignments.Global != "" {
-			assignedNames = append(assignedNames, env.Assignments.Global)
-		}
-		for _, name := range env.Assignments.Groups {
-			assignedNames = append(assignedNames, name)
-		}
-		sort.Strings(assignedNames)
-		for _, name := range assignedNames {
-			// Resolve against the registry as it will look AFTER this import,
-			// i.e. including any bundle profile of the same name that is about
-			// to be written under the active conflict policy.
-			grants, err := planned.breakGlassFor(name)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "io", "inspect imported assignment: "+err.Error())
-				return
-			}
-			if len(grants) > 0 {
-				carriers = append(carriers, name+" (assigned)")
-				incoming = append(incoming, grants...)
-			}
-		}
-	}
-	if len(incoming) > 0 && !env.BreakGlassAcknowledged {
-		writeError(w, http.StatusUnprocessableEntity, breakGlassAckErrorKind, fmt.Sprintf(
-			"sandbox profile(s) %s in this bundle carry break-glass protected access (%s). %s "+
-				"Re-send with break_glass_acknowledged: true (CLI: --i-understand-break-glass-risk).",
-			strings.Join(carriers, ", "), describeBreakGlass(incoming), BreakGlassRiskSummary))
-		return
-	}
 	var assignments *db.SandboxProfileAssignments
 	if env.ApplyAssignments && env.Assignments != nil {
 		assignments = &db.SandboxProfileAssignments{Global: env.Assignments.Global, Groups: env.Assignments.Groups}
 	}
-	sandboxImportAfterPreviewForTest()
-	result, err := db.ImportSandboxProfiles(profiles, db.SandboxProfileImportOptions{
+	// Import is a fresh acknowledgement point by design: a bundle authored
+	// elsewhere carries the danger marker across machines, and the paths were
+	// only just canonicalized against THIS host's protected roots. The DB call
+	// below is deliberately the first place that inspects acknowledgement: its
+	// transaction owns graph validation, conflict/error precedence, and the
+	// exact assignment mutation plan.
+	sandboxImportBeforeTransactionForTest()
+	result, err := db.ImportSandboxProfilesWithOptions(profiles, db.SandboxProfileImportOptions{
 		OnConflict: conflict, Assignments: assignments,
 		BreakGlassAcknowledged: env.BreakGlassAcknowledged,
 	})
@@ -714,17 +660,17 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"imported": result.Imported, "skipped": result.Skipped, "warnings": result.Warnings})
 }
 
-var sandboxImportAfterPreviewForTest = func() {}
+var sandboxImportBeforeTransactionForTest = func() {}
 
-// SetSandboxImportAfterPreviewForTest installs the deterministic seam between
-// the handler preview and the authoritative DB transaction.
-func SetSandboxImportAfterPreviewForTest(fn func()) func() {
-	previous := sandboxImportAfterPreviewForTest
+// SetSandboxImportBeforeTransactionForTest installs the deterministic seam
+// immediately before the authoritative DB transaction.
+func SetSandboxImportBeforeTransactionForTest(fn func()) func() {
+	previous := sandboxImportBeforeTransactionForTest
 	if fn == nil {
 		fn = func() {}
 	}
-	sandboxImportAfterPreviewForTest = fn
-	return func() { sandboxImportAfterPreviewForTest = previous }
+	sandboxImportBeforeTransactionForTest = fn
+	return func() { sandboxImportBeforeTransactionForTest = previous }
 }
 
 type sandboxProfileImportPathWarning struct {
