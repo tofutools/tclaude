@@ -249,10 +249,15 @@ function ContextMeter({ state }) {
 }
 
 function ActivityBadges({ state }) {
-  const count = Number(state?.subagent_count || 0);
-  if (count <= 0) return null;
-  const title = `${count} sub-agent${count === 1 ? '' : 's'} still running under this agent`;
-  return html`<span class="activity-badges"><span class="activity-badge badge-subagents" title=${title}>🤖+${count}</span></span>`;
+  const subagents = Number(state?.subagent_count || 0);
+  const shells = Number(state?.bg_shell_count || 0);
+  if (subagents <= 0 && shells <= 0) return null;
+  const subagentTitle = `${subagents} sub-agent${subagents === 1 ? '' : 's'} still running under this agent`;
+  // Background shells are the other reason an "idle" agent isn't done:
+  // a `Bash` launched with run_in_background outlives the turn, and the
+  // count is reconciled against the agent's live descendant processes.
+  const shellTitle = `${shells} background shell command${shells === 1 ? '' : 's'} still running under this agent`;
+  return html`<span class="activity-badges">${subagents > 0 ? html`<span class="activity-badge badge-subagents" title=${subagentTitle}>🤖+${subagents}</span>` : null}${shells > 0 ? html`<span class="activity-badge badge-bg-shells" title=${shellTitle}>⚙+${shells}</span>` : null}</span>`;
 }
 
 function StateCell({ member }) {

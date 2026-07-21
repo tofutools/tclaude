@@ -175,6 +175,7 @@ type dashState struct {
 	Status            string  `json:"status,omitempty"`
 	StatusDetail      string  `json:"status_detail,omitempty"`
 	SubagentCount     int     `json:"subagent_count,omitempty"`
+	BgShellCount      int     `json:"bg_shell_count,omitempty"`
 	LastHook          string  `json:"last_hook,omitempty"`
 	ContextPct        float64 `json:"context_pct,omitempty"`
 	TokensInput       int64   `json:"tokens_input,omitempty"`

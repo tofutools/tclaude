@@ -27,7 +27,14 @@ type SessionRow struct {
 	// SubagentsJSON is the persisted sub-agent ledger (SubagentSet JSON,
 	// "" = empty/never written). Owned by the hook callback; cleared at
 	// known-zero boundaries (session exit, the .jsonl interrupt marker).
-	SubagentsJSON  string
+	SubagentsJSON string
+	// BgShellsJSON is the persisted background-shell ledger (BgShellSet
+	// JSON, "" = empty/never written) — Claude Code `Bash` tool calls with
+	// run_in_background. Owned by the hook callback and by the daemon's
+	// liveness reconcile; cleared at the same known-zero boundaries as
+	// SubagentsJSON, since a background shell is a child of the harness
+	// process and cannot outlive it. See BgShellSet in bgshells.go.
+	BgShellsJSON   string
 	AutoRegistered bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
@@ -144,10 +151,10 @@ func SaveSession(s *SessionRow) error {
 	// boundaries update it through SetSessionResumeProvenance; allowing generic
 	// hook UPSERTs to update it could resurrect a value invalidated during stop.
 	_, err = db.Exec(`INSERT INTO sessions
-		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
+		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
 		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
 		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+agentForConvExpr+`,
 		 ?, '', '', NULL, '', '', '', NULL, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tmux_session = excluded.tmux_session,
@@ -158,6 +165,7 @@ func SaveSession(s *SessionRow) error {
 			status_detail = excluded.status_detail,
 			subagent_count = excluded.subagent_count,
 			subagents_json = excluded.subagents_json,
+			bg_shells_json = excluded.bg_shells_json,
 			auto_registered = excluded.auto_registered,
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
@@ -179,7 +187,7 @@ func SaveSession(s *SessionRow) error {
 			exit_intent_at = CASE WHEN excluded.exit_callback_generation <> '' THEN NULL ELSE sessions.exit_intent_at END,
 			exit_launch_gate_state = CASE WHEN excluded.exit_callback_generation <> '' THEN excluded.exit_launch_gate_state ELSE sessions.exit_launch_gate_state END`,
 		s.ID, s.TmuxSession, s.PID, s.Cwd, s.ConvID,
-		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, boolToInt(s.AutoRegistered),
+		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, boolToInt(s.AutoRegistered),
 		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
 	return err
@@ -191,7 +199,7 @@ func LoadSession(id string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
@@ -230,7 +238,7 @@ func ListSessions() ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
 	if err != nil {
 		return nil, err
@@ -248,7 +256,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
@@ -273,7 +281,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
@@ -333,7 +341,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
@@ -398,7 +406,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var autoReg, remoteCtl, autoMemory, approvalAutoReview int
 	var createdStr, updatedStr, lastHookStr, effectiveSandbox string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &autoReg, &createdStr, &updatedStr, &lastHookStr, &row.Harness, &row.SandboxMode, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -480,7 +488,7 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 	}
 	res, err := d.Exec(`UPDATE sessions
 		SET status = 'exited', status_detail = '', updated_at = ?,
-			subagent_count = 0, subagents_json = '',
+			subagent_count = 0, subagents_json = '', bg_shells_json = '',
 			exit_reason = COALESCE(exit_reason, NULLIF(?, ''))
 		WHERE id = ? AND status = ? AND updated_at = ?`,
 		time.Now().Format(time.RFC3339Nano),
@@ -534,7 +542,7 @@ func MarkSessionsIdleAfterInterrupt(convID string) (int64, error) {
 	// its next hook (see SubagentSet in subagents.go).
 	res, err := d.Exec(`UPDATE sessions
 		SET status = 'idle', status_detail = '', updated_at = ?,
-			subagent_count = 0, subagents_json = ''
+			subagent_count = 0, subagents_json = '', bg_shells_json = ''
 		WHERE conv_id = ? AND status = 'working'`,
 		time.Now().Format(time.RFC3339Nano), convID)
 	if err != nil {
@@ -720,6 +728,41 @@ func UpdateStatuslineSnapshot(sessionID, rawJSON string) error {
 	}
 	_, err = db.Exec(`UPDATE sessions SET last_statusline_json = ? WHERE id = ?`, rawJSON, sessionID)
 	return err
+}
+
+// SetSessionBgShellsIfUnchanged writes the background-shell ledger for a
+// session, but only while the stored value still matches `prev` — the
+// compare-and-set form of "persist what the liveness reconcile concluded".
+//
+// The reconcile runs on the daemon's dashboard read path while the hook
+// callback keeps writing the same column from the agent's own process. A
+// blind UPDATE would race: a reconcile that started before a hook added a
+// freshly launched shell would write its pre-launch view back over it and
+// the new shell would never appear. Guarding on the value the reconcile
+// actually read makes the loser of that race a no-op instead, and the next
+// poll (a second later) re-derives from the winner's state.
+//
+// Reports whether the write landed. A false return is normal contention,
+// not an error.
+func SetSessionBgShellsIfUnchanged(sessionID, prev, next string) (bool, error) {
+	if sessionID == "" || prev == next {
+		return false, nil
+	}
+	db, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := db.Exec(
+		`UPDATE sessions SET bg_shells_json = ? WHERE id = ? AND bg_shells_json = ?`,
+		next, sessionID, prev)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // SetSessionRemoteControl records tclaude's best-known remote-control state

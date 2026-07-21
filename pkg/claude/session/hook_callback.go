@@ -30,21 +30,26 @@ var agentMessagePromptRe = regexp.MustCompile(`\[system: new agent message #([0-
 
 // HookCallbackInput represents the JSON input from any Claude Code hook
 type HookCallbackInput struct {
-	ConvID               string          `json:"session_id"` // claude's session id, what we call conv_id
-	TranscriptPath       string          `json:"transcript_path"`
-	Cwd                  string          `json:"cwd"`
-	PermissionMode       string          `json:"permission_mode,omitempty"`
-	HookEventName        string          `json:"hook_event_name"`
-	NotificationType     string          `json:"notification_type,omitempty"`
-	Reason               string          `json:"reason,omitempty"`  // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
-	Source               string          `json:"source,omitempty"`  // SessionStart: startup | resume | clear | compact
-	Trigger              string          `json:"trigger,omitempty"` // PreCompact: auto | manual
-	Message              string          `json:"message,omitempty"`
-	Prompt               string          `json:"prompt,omitempty"`
-	Model                string          `json:"model,omitempty"`
-	StopHookActive       bool            `json:"stop_hook_active,omitempty"`
-	ToolName             string          `json:"tool_name,omitempty"`
-	ToolInput            json.RawMessage `json:"tool_input,omitempty"`
+	ConvID           string          `json:"session_id"` // claude's session id, what we call conv_id
+	TranscriptPath   string          `json:"transcript_path"`
+	Cwd              string          `json:"cwd"`
+	PermissionMode   string          `json:"permission_mode,omitempty"`
+	HookEventName    string          `json:"hook_event_name"`
+	NotificationType string          `json:"notification_type,omitempty"`
+	Reason           string          `json:"reason,omitempty"`  // SessionEnd: clear | resume | logout | prompt_input_exit | bypass_permissions_disabled | other
+	Source           string          `json:"source,omitempty"`  // SessionStart: startup | resume | clear | compact
+	Trigger          string          `json:"trigger,omitempty"` // PreCompact: auto | manual
+	Message          string          `json:"message,omitempty"`
+	Prompt           string          `json:"prompt,omitempty"`
+	Model            string          `json:"model,omitempty"`
+	StopHookActive   bool            `json:"stop_hook_active,omitempty"`
+	ToolName         string          `json:"tool_name,omitempty"`
+	ToolInput        json.RawMessage `json:"tool_input,omitempty"`
+	// ToolResponse is the structured tool RESULT a PostToolUse carries.
+	// Its shape is per-tool; the only field tclaude reads today is Bash's
+	// backgroundTaskId, the handle for a `run_in_background` launch (see
+	// bgshell.go). Kept raw so an unknown/changed shape costs nothing.
+	ToolResponse         json.RawMessage `json:"tool_response,omitempty"`
 	AgentType            string          `json:"agent_type,omitempty"`
 	AgentID              string          `json:"agent_id,omitempty"`
 	LastAssistantMessage string          `json:"last_assistant_message,omitempty"`
@@ -635,6 +640,29 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		state.Subagents = state.Subagents.Sight(input.AgentID, input.AgentType, state.LastHook)
 	}
 
+	// ---- Background-shell ledger (db.BgShellSet) ----
+	// Strictly lossier than the sub-agent ledger above: Claude Code
+	// announces a background shell's LAUNCH (this PostToolUse) and never
+	// its exit, so hooks alone can only ever grow the set. What actually
+	// retires an entry is the daemon's process-liveness reconcile on the
+	// dashboard read path; the two removals available here are the
+	// explicit ones — a TaskStop naming the task, and the known-zero
+	// boundaries handled in the SessionStart/SessionEnd arms below.
+	//
+	// Deliberately placed BEFORE the sub-agent gate below: a shell
+	// backgrounded by a SUB-agent is a child of the same harness process
+	// and keeps running past the parent's turn just the same, so it
+	// belongs in the session's ledger. The gate's early return persists
+	// full state, so the mutation is not lost.
+	if harnessTracksBackgroundShells(state.Harness) {
+		state.BgShells.Sweep(state.LastHook)
+		if id, command, ok := bgShellLaunch(input); ok {
+			state.BgShells = state.BgShells.Add(id, command, state.LastHook)
+		} else if id, ok := bgShellStop(input); ok {
+			state.BgShells.Remove(id)
+		}
+	}
+
 	// Hooks fired from INSIDE a sub-agent (agent_id set) must not drive
 	// the main thread's status machine: before this gate, a background
 	// sub-agent's PreToolUse flipped an idle parent to "working" — and
@@ -666,7 +694,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			// repaints "working"; both states style as busy either way.
 			if state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
 				state.Status = StatusMainAgentIdle
-				state.StatusDetail = fmt.Sprintf("%d subagents running", len(state.Subagents))
+				state.StatusDetail = state.backgroundActivityDetail()
 			}
 			state.SubagentCount = len(state.Subagents)
 			return SaveSessionState(state)
@@ -737,19 +765,38 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 
 	case "SubagentStop":
 		if len(state.Subagents) == 0 && state.Status == StatusMainAgentIdle {
-			state.Status = StatusIdle
-			state.StatusDetail = ""
 			stopped = true
+			if state.hasBackgroundActivity() {
+				state.StatusDetail = state.backgroundActivityDetail()
+			} else {
+				state.Status = StatusIdle
+				state.StatusDetail = ""
+			}
 		}
 
 	case "Stop":
+		// The turn is over, but a sub-agent or a background shell can
+		// outlive it — settling to plain idle then would report an agent
+		// as finished while work it launched is still running. Either
+		// ledger therefore holds the session at main_agent_idle; the
+		// dashboard badges the counts, and for background shells the
+		// daemon's liveness reconcile is what eventually settles it.
+		//
+		// `stopped` stays keyed on the SUB-AGENT ledger alone. It drives
+		// the context nudge, and a background shell is genuinely not the
+		// agent working: the main thread really has finished its turn and
+		// can act on a nudge. Gating it on background shells too would
+		// mute the nudge for as long as the agent keeps a dev server or a
+		// test watch running — potentially hours.
 		if len(state.Subagents) == 0 {
+			stopped = true
+		}
+		if state.hasBackgroundActivity() {
+			state.Status = StatusMainAgentIdle
+			state.StatusDetail = state.backgroundActivityDetail()
+		} else {
 			state.Status = StatusIdle
 			state.StatusDetail = ""
-			stopped = true
-		} else {
-			state.Status = StatusMainAgentIdle
-			state.StatusDetail = fmt.Sprintf("%d subagents running", len(state.Subagents))
 		}
 
 	case "StopFailure":
@@ -806,6 +853,16 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		// that somehow survives one re-adds itself via Sight() on its
 		// next hook.
 		state.Subagents = nil
+		// Background shells are children of the harness PROCESS, which a
+		// /clear or /resume does not restart — so unlike sub-agents they
+		// can genuinely outlive this boundary, and only a startup
+		// SessionStart (a new process) is a true known-zero for them.
+		// Clearing on every SessionStart would blank the ledger on every
+		// /clear while the shells kept running; the liveness reconcile
+		// retires them honestly instead.
+		if input.Source == "startup" || input.Source == "" {
+			state.BgShells = nil
+		}
 		state.Status = StatusIdle
 		state.StatusDetail = ""
 		// The conversation is alive again — drop any exit_reason a
@@ -850,10 +907,12 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			}
 			return nil
 		}
-		// The process is going away — sub-agents run inside it, so none
-		// can survive. Known-zero boundary, same as the reaper's
+		// The process is going away — sub-agents run inside it and
+		// background shells are its children, so neither can survive.
+		// Known-zero boundary, same as the reaper's
 		// MarkSessionExitedIfUnchanged.
 		state.Subagents = nil
+		state.BgShells = nil
 		state.Status = StatusExited
 		state.StatusDetail = ""
 		accepted, _, err := db.RecordSessionEndExitObservation(db.AgentExitObservation{

@@ -140,21 +140,43 @@ for Codex sessions, the dashboard additionally replays the rollout's
 `sub_agent_activity` events, so an explicitly interrupted child disappears on
 the next refresh instead of waiting for that timeout.
 
-> **No background-shell count.** tclaude deliberately does *not* show an
-> equivalent badge for background shell commands (`Bash` with
-> `run_in_background: true`). Claude Code fires a hook when such a shell
-> *launches* but none when it *exits*, so any count tclaude tried to keep
-> could only ever grow — it would display long-finished "ghost" shells for
-> the whole idle window, which is precisely when the badge would be read.
-> Sub-agents have both `SubagentStart` and `SubagentStop` hooks, but even
-> that pair is lossy — Claude Code fires no hooks at all on a user
-> interrupt, for one — so `🤖+N` is not a raw event tally: tclaude keeps a
-> self-healing per-`agent_id` ledger (any hook fired from inside a
-> sub-agent re-adds/refreshes it, a staleness TTL ages out entries whose
-> Stop was lost, and process (re)starts, interrupts, and exits reset it to
-> zero). (A future process-tree liveness reconcile in `agentd` — counting
-> an agent's live shell descendants instead of relying on hooks — could
-> make a trustworthy background-shell badge feasible.)
+Alongside it sits a **background-shell badge** — `⚙+N`, shown when the agent
+has *N* background shell commands (`Bash` with `run_in_background: true`)
+still running. It answers the same question for the other kind of work that
+outlives a turn: an agent waiting on a background dev server, test watch, or
+build is not finished, and without the badge it renders as plain `idle`.
+While at least one is running the state pill also holds at
+`main_agent_idle` ("waiting on a background command") rather than settling
+to `idle`. Claude Code only; Codex has no equivalent mechanism and never
+shows the badge.
+
+> **How the background-shell count stays honest.** Claude Code fires a hook
+> when such a shell *launches* (`PostToolUse` for `Bash`, carrying the
+> `backgroundTaskId`) but **none when it exits** — so a hook-fed count could
+> only ever grow, and would display long-finished "ghost" shells for the
+> whole idle window, which is precisely when the badge is read. tclaude
+> therefore keeps a ledger, not a counter, and reconciles it against
+> reality: when the dashboard renders a live agent, `agentd` enumerates the
+> processes running *below* that agent and re-matches each ledger entry's
+> recorded command against them. Claude Code exposes no PID for a background
+> task anywhere, so the command string is the join key — the wrapper shell it
+> launches carries the command inside its own argv. Entries whose process is
+> gone are retired immediately; entries still running are re-stamped, so a
+> command that legitimately runs for hours never ages out. A `TaskStop`
+> removes its task by id, and process (re)starts and exits clear the ledger
+> outright (background shells are children of the harness process). Two
+> deliberate degradations: on a host whose process table cannot be read, and
+> for a command too short or too heavily quoted to match on, the reconcile
+> has no opinion and a generous staleness TTL is the only bound — the count
+> then falls back to the hook's view rather than to zero, since silently
+> hiding real work is the worse failure.
+>
+> The sub-agent badge rests on the same ledger discipline for a different
+> reason: `SubagentStart`/`SubagentStop` both exist, but the pair is lossy —
+> Claude Code fires no hooks at all on a user interrupt, for one — so `🤖+N`
+> is not a raw event tally either. Any hook fired from inside a sub-agent
+> re-adds/refreshes it, a staleness TTL ages out entries whose Stop was lost,
+> and process (re)starts, interrupts, and exits reset it to zero.
 
 The **working-directory** cell is clickable — clicking a path opens a terminal
 window there (the same out-of-sandbox spawn the **term** button does, minus the

@@ -40,7 +40,13 @@ type SessionState struct {
 	// this session, keyed by agent_id — see db.SubagentSet for the full
 	// self-healing story (why not a bare counter).
 	Subagents db.SubagentSet `json:"subagents,omitempty"`
-	Created   time.Time      `json:"created"`
+	// BgShells is the ledger of background shell commands (Claude Code
+	// `Bash` with run_in_background) believed to be running under this
+	// session, keyed by backgroundTaskId — see db.BgShellSet for the
+	// self-healing story (hooks announce a launch but never an exit, so
+	// process liveness is the authoritative reconcile).
+	BgShells db.BgShellSet `json:"bgShells,omitempty"`
+	Created  time.Time     `json:"created"`
 	Updated   time.Time      `json:"updated"`
 	LastHook  time.Time      `json:"lastHook"`
 	Attached  int            `json:"-"` // Number of attached clients (runtime only, not persisted)
@@ -179,6 +185,7 @@ func toRow(s *SessionState) *db.SessionRow {
 		StatusDetail:           s.StatusDetail,
 		SubagentCount:          s.SubagentCount,
 		SubagentsJSON:          s.Subagents.Encode(),
+		BgShellsJSON:           s.BgShells.Encode(),
 		CreatedAt:              s.Created,
 		UpdatedAt:              s.Updated,
 		LastHook:               s.LastHook,
@@ -204,6 +211,7 @@ func fromRow(r *db.SessionRow) *SessionState {
 		StatusDetail:           r.StatusDetail,
 		SubagentCount:          r.SubagentCount,
 		Subagents:              db.ParseSubagentSet(r.SubagentsJSON),
+		BgShells:               db.ParseBgShellSet(r.BgShellsJSON),
 		Created:                r.CreatedAt,
 		Updated:                r.UpdatedAt,
 		LastHook:               r.LastHook,
@@ -503,15 +511,17 @@ func FormatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 }
 
-// MarkStateExited flips an in-memory state to exited and clears the
-// sub-agent ledger — sub-agents run inside the (now dead) harness
-// process, so none can survive it. Mirrors what the hook callback's
-// SessionEnd arm and the reaper's MarkSessionExitedIfUnchanged do; the
-// caller persists via SaveSessionState when needed.
+// MarkStateExited flips an in-memory state to exited and clears both
+// activity ledgers — sub-agents run inside the (now dead) harness
+// process and background shells are its children, so neither can
+// survive it. Mirrors what the hook callback's SessionEnd arm and the
+// reaper's MarkSessionExitedIfUnchanged do; the caller persists via
+// SaveSessionState when needed.
 func MarkStateExited(state *SessionState) {
 	state.Status = StatusExited
 	state.Subagents = nil
 	state.SubagentCount = 0
+	state.BgShells = nil
 }
 
 // RefreshSessionStatus updates the session status based on actual state

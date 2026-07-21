@@ -1523,8 +1523,16 @@ type agentState struct {
 	Status        string `json:"status,omitempty"`
 	StatusDetail  string `json:"status_detail,omitempty"`
 	SubagentCount int    `json:"subagent_count,omitempty"`
-	LastHook      string `json:"last_hook,omitempty"`
-	Cwd           string `json:"cwd,omitempty"`
+	// BgShellCount is how many background shell commands (Claude Code
+	// `Bash` with run_in_background) the agent still has running — the
+	// dashboard's "⚙+N" badge. Like SubagentCount it is only ever
+	// non-zero for a live agent, and it is reconciled against the agent's
+	// actual descendant processes at read time rather than trusted from
+	// the hook stream, which announces launches but never exits. See
+	// bgShellCountOnRead / db.BgShellSet.
+	BgShellCount int    `json:"bg_shell_count,omitempty"`
+	LastHook     string `json:"last_hook,omitempty"`
+	Cwd          string `json:"cwd,omitempty"`
 	// Context-window usage, read from the same sessions row the hook
 	// callbacks update — no new data source, one extra indexed read.
 	// ContextPct is Claude Code's authoritative "how full" figure from
@@ -1689,16 +1697,35 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
-		// Keep the status consistent with the TTL-filtered count: a row
-		// can be stuck at main_agent_idle / "N subagents running" when
-		// the ledger emptied without a SubagentStop (TTL expiry with no
-		// later hook to re-settle it). The badge already reads 0 then —
-		// showing a busy "N subagents running" next to it would be
-		// self-contradicting, so settle the DISPLAY to idle; the stored
+		// Background shells are children of the harness process, so a dead
+		// session has none either. For a live row this re-derives the
+		// ledger from the agent's actual descendant processes — the badge
+		// is only trustworthy because of this step, since the hook stream
+		// announces a background shell's launch but never its exit.
+		out.BgShellCount = bgShellCountOnRead(pick, alive)
+		// Keep the status consistent with the reconciled counts, in both
+		// directions:
+		//
+		// Settling DOWN: a row can be stuck at main_agent_idle / "N
+		// subagents running" when a ledger emptied without a stop event
+		// (TTL expiry, or a background shell whose process is simply gone)
+		// and no later hook re-settled it. The badges already read 0 then,
+		// so a busy detail next to them would be self-contradicting.
+		//
+		// Holding UP: a background shell can outlive not just the turn but
+		// the hook that would have recorded it — Claude Code's idle_prompt
+		// Notification, for one, sets a bare idle without consulting any
+		// ledger. Rendering that agent as plain idle is exactly the bug
+		// this feature exists to fix: it is not finished, it is waiting on
+		// a command. Either way only the DISPLAY is adjusted; the stored
 		// row converges on the session's next hook.
-		if out.SubagentCount == 0 && out.Status == session.StatusMainAgentIdle {
+		switch {
+		case out.SubagentCount == 0 && out.BgShellCount == 0 && out.Status == session.StatusMainAgentIdle:
 			out.Status = session.StatusIdle
 			out.StatusDetail = ""
+		case out.BgShellCount > 0 && out.Status == session.StatusIdle:
+			out.Status = session.StatusMainAgentIdle
+			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount)
 		}
 	}
 	if !pick.LastHook.IsZero() {

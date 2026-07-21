@@ -113,6 +113,7 @@ instead of slash-command injection).
 | **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
 | **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
+| **Background shell tracking** ([dashboard](dashboard.md)) | ✅ `Bash` with `run_in_background` — tracked per task id and reconciled against live descendant processes, so an agent waiting on one shows `⚙+N` instead of `idle` | ➖ no background-shell mechanism |
 | **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) |
 
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·

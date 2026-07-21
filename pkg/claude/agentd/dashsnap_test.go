@@ -221,6 +221,11 @@ const (
 	retireErrorConv    = "e4910000-0000-4000-8000-000000000001"
 	retireDanglingConv = "da491000-0000-4000-8000-000000000001"
 
+	// badgesConv is the TCL-613 activity-badge row: an agent whose turn has
+	// ended but which still has a sub-agent and two background shell
+	// commands running, so the Groups roster draws both 🤖+N and ⚙+N.
+	badgesConv = "b6130000-0000-4000-8000-000000000001"
+
 	retireWorktreeDir = "/tmp/lbl-in-wt"
 	retireBusyDir     = "/tmp/lbl-in-busy"
 	retireErrorDir    = "/tmp/lbl-retire-err"
@@ -258,6 +263,13 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 			tags: []string{"tf:" + tfTemplate}},
 		{convID: "f1000000-0000-4000-8000-000000000004", label: "lbl-fe-off", tmux: "tmux-fe-off",
 			title: "fe-dev-legacy", role: "dev", online: false,
+			tags: []string{"tf:" + tfTemplate}},
+		// TCL-613 — the activity-badge row: an agent whose own turn has
+		// ended but which still has a sub-agent AND background shell
+		// commands running. Its ledgers are stamped by
+		// seedActivityBadgesDashSnap below.
+		{convID: badgesConv, label: "lbl-fe-bg", tmux: "tmux-fe-bg",
+			title: "fe-dev-watcher", role: "dev", status: "main_agent_idle", online: true,
 			tags: []string{"tf:" + tfTemplate}},
 	}
 	infraMembers := []dashMemberSpec{
@@ -323,10 +335,42 @@ func seedDashSnapFixture(t *testing.T, f *testharness.Flow) {
 		t.Fatalf("set deploy meta on %s: %v", tfTemplate, err)
 	}
 
+	seedActivityBadgesDashSnap(t)
 	seedPalette(t, f)
 	seedProcessDashSnap(t, f)
 	seedUsageHistoryDashSnap(t)
 	seedRetireDialogDashSnap(t, f)
+}
+
+// seedActivityBadgesDashSnap stamps the two activity ledgers onto the
+// fe-dev-watcher row (TCL-613), so the Groups roster renders 🤖+1 and ⚙+2
+// beside an agent whose own turn has ended — the case the badges exist for.
+//
+// The ledgers are written straight onto the session row rather than driven
+// through hooks because a fixture must be deterministic: the row's pid stays
+// 0, so the daemon's background-shell liveness reconcile reports "cannot
+// tell" and falls back to the ledger's own TTL-filtered view instead of
+// retiring entries whose processes never existed on this host.
+func seedActivityBadgesDashSnap(t *testing.T) {
+	t.Helper()
+	row, err := db.LoadSession("lbl-fe-bg")
+	if err != nil || row == nil {
+		t.Fatalf("seedActivityBadgesDashSnap: load session: %v", err)
+	}
+	now := time.Now()
+	row.SubagentCount = 1
+	row.SubagentsJSON = db.SubagentSet{
+		"ag-explore": {Type: "Explore", Seen: now},
+	}.Encode()
+	row.BgShellsJSON = db.BgShellSet(nil).
+		Add("task-dev", "npm run dev --port 4321", now).
+		Add("task-watch", "go test ./... -run TestWatch -count=1", now).
+		Encode()
+	row.Status = "main_agent_idle"
+	row.StatusDetail = "1 subagents, 2 background shells running"
+	if err := db.SaveSession(row); err != nil {
+		t.Fatalf("seedActivityBadgesDashSnap: save session: %v", err)
+	}
 }
 
 // seedRetireDialogDashSnap stages the single-agent retire dialog states
@@ -2240,6 +2284,38 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   if (det2.querySelector(':scope > .subtable > .group-force-block')) throw new Error('force-folded: card still present after folding');
   var btn2 = det2.querySelector('.force-fold-btn.folded');
   if (!btn2) throw new Error('force-folded: toggle did not enter its .folded state');
+})();`,
+		},
+		{
+			// TCL-613 — the activity badges. fe-dev-watcher's own turn has
+			// ended, but it still has a sub-agent and two background shell
+			// commands running, so its state cell must carry BOTH 🤖+1 and
+			// ⚙+2 and a busy (not idle) pill. Self-checking (throws) so a
+			// regression to a plain "idle" row — the exact bug TCL-613 fixes
+			// — fails the run instead of passing as a silent "ok".
+			Key:     "groups-activity-badges",
+			Title:   "Groups tab — sub-agent + background-shell badges",
+			Caption: "TCL-613 (self-checked): an agent whose turn ended while a sub-agent and two background shell commands keep running — 🤖+1 and ⚙+2 beside a busy main_agent_idle pill, so it never reads as plain idle.",
+			JS: showGroups + expandGroups + `(function(){
+  var row = document.querySelector('tr[data-dnd-conv="` + badgesConv + `"]');
+  if (!row) throw new Error('activity-badges: fe-dev-watcher row not found');
+  var sub = row.querySelector('.activity-badge.badge-subagents');
+  var shells = row.querySelector('.activity-badge.badge-bg-shells');
+  if (!sub) throw new Error('activity-badges: no sub-agent badge');
+  if (!shells) throw new Error('activity-badges: no background-shell badge');
+  if (sub.textContent.indexOf('+1') < 0) throw new Error('activity-badges: sub-agent badge reads ' + sub.textContent);
+  if (shells.textContent.indexOf('+2') < 0) throw new Error('activity-badges: shell badge reads ' + shells.textContent);
+  if (!/background shell command/.test(shells.title)) throw new Error('activity-badges: shell badge tooltip missing');
+  // The pill must read busy, not idle: an agent waiting on background
+  // work is exactly what TCL-613 stops rendering as plain idle.
+  var pill = row.querySelector('.state-pill');
+  if (!pill) throw new Error('activity-badges: no state pill');
+  if (!pill.classList.contains('state-working')) {
+    throw new Error('activity-badges: expected a busy pill, got "' + pill.textContent + '"');
+  }
+  if (pill.textContent.indexOf('background shell') < 0) {
+    throw new Error('activity-badges: pill does not name the background shells: ' + pill.textContent);
+  }
 })();`,
 		},
 		{

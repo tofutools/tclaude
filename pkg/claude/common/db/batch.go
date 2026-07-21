@@ -233,7 +233,7 @@ func FindSessionsByConvIDs(convIDs []string) (map[string][]*SessionRow, error) {
 	}
 	for _, chunk := range chunkStrings(convIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
-		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance
 			FROM sessions WHERE conv_id `+clause+`
 			ORDER BY conv_id, updated_at DESC`, args...)
@@ -274,7 +274,7 @@ func LoadSessionsByIDs(sessionIDs []string) (map[string]*SessionRow, error) {
 	}
 	for _, chunk := range chunkStrings(sessionIDs, batchChunkSize) {
 		clause, args := inClause(chunk)
-		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json,
+		rows, err := d.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json,
 			auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, approval_policy, approval_auto_review, resume_provenance
 			FROM sessions WHERE id `+clause, args...)
 		if err != nil {
