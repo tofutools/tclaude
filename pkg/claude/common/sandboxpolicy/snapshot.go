@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// SnapshotVersion 3 adds the read baseline and break-glass rules. The bump is
-// deliberate even though both fields are omitempty: an OLDER binary reading a
-// v3 snapshot would silently ignore read_baseline: minimal and launch with the
-// broad harness baseline, which fails OPEN. Rejecting the unknown version
-// instead makes a downgrade fail closed and loudly.
-const SnapshotVersion = 3
+// SnapshotVersion 4 adds semantic read-baseline exclusions. Like v3's minimal
+// baseline and break-glass fields, the bump is deliberate even though the new
+// field is omitempty: an older binary would otherwise ignore a restriction and
+// launch with a broader policy. Rejecting the unknown version makes a
+// downgrade fail closed and loudly.
+const SnapshotVersion = 4
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -96,7 +96,29 @@ func RequireContained(parent, child Snapshot) error {
 	if !readBaselineContained(parent.Effective.ReadBaseline, child.Effective.ReadBaseline) {
 		return fmt.Errorf("read baseline %q is wider than the parent's %q", displayReadBaseline(child.Effective.ReadBaseline), displayReadBaseline(parent.Effective.ReadBaseline))
 	}
+	if !readExclusionsContained(parent.Effective.ReadBaselineExclusions, child.Effective.ReadBaselineExclusions) {
+		return fmt.Errorf("read baseline exclusions are wider than the parent's restrictions")
+	}
 	return nil
+}
+
+func readExclusionsContained(parent, child []string) bool {
+	childSet := make(map[string]bool, len(child))
+	for _, id := range child {
+		childSet[id] = true
+	}
+	for _, id := range parent {
+		if id == ReadExclusionHome {
+			if !childSet[id] {
+				return false
+			}
+			continue
+		}
+		if !childSet[id] && !childSet[ReadExclusionHome] {
+			return false
+		}
+	}
+	return true
 }
 
 // readBaselineContained treats minimal → default as WIDENING. A parent that
@@ -216,12 +238,13 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:                 "effective-sandbox-snapshot",
-		Filesystem:           in.Effective.Filesystem,
-		ReadBaseline:         in.Effective.ReadBaseline,
-		BreakGlassFilesystem: in.Effective.BreakGlassFilesystem,
-		Environment:          in.Effective.Environment,
-		NetworkAccess:        in.Effective.NetworkAccess,
+		Name:                   "effective-sandbox-snapshot",
+		Filesystem:             in.Effective.Filesystem,
+		ReadBaseline:           in.Effective.ReadBaseline,
+		ReadBaselineExclusions: in.Effective.ReadBaselineExclusions,
+		BreakGlassFilesystem:   in.Effective.BreakGlassFilesystem,
+		Environment:            in.Effective.Environment,
+		NetworkAccess:          in.Effective.NetworkAccess,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -237,6 +260,9 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if normalized.ReadBaseline != in.Effective.ReadBaseline {
 		return Snapshot{}, fmt.Errorf("effective sandbox read baseline changed since resolution")
+	}
+	if !slices.Equal(normalized.ReadBaselineExclusions, in.Effective.ReadBaselineExclusions) {
+		return Snapshot{}, fmt.Errorf("effective sandbox read baseline exclusions changed since resolution")
 	}
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
@@ -266,7 +292,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// field, which decodes to the zero value that means "today's behavior".
 	// v2 is what current main persists, so rejecting it here would break every
 	// existing session, actor, and pending spawn on upgrade.
-	case 1, 2, SnapshotVersion:
+	case 1, 2, 3, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -336,10 +362,11 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		// slices above) so an unused capability serializes as an absent field
 		// and revalidation's exact comparison against a fresh normalization
 		// keeps matching.
-		ReadBaseline:     in.ReadBaseline,
-		Environment:      append([]EnvironmentEntry{}, in.Environment...),
-		AgentDirectories: append([]string{}, in.AgentDirectories...),
-		NetworkAccess:    in.NetworkAccess,
+		ReadBaseline:           in.ReadBaseline,
+		ReadBaselineExclusions: append([]string(nil), in.ReadBaselineExclusions...),
+		Environment:            append([]EnvironmentEntry{}, in.Environment...),
+		AgentDirectories:       append([]string{}, in.AgentDirectories...),
+		NetworkAccess:          in.NetworkAccess,
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
@@ -347,6 +374,9 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			Network:          nil,
 		},
+	}
+	if len(in.Provenance.ReadBaselineExclusions) > 0 {
+		out.Provenance.ReadBaselineExclusions = make(map[string][]ProfileSource, len(in.Provenance.ReadBaselineExclusions))
 	}
 	if len(in.BreakGlassFilesystem) > 0 {
 		out.BreakGlassFilesystem = append([]BreakGlassGrant{}, in.BreakGlassFilesystem...)
@@ -363,6 +393,9 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	if in.Provenance.ReadBaseline != nil {
 		source := cloneProfileSource(*in.Provenance.ReadBaseline)
 		out.Provenance.ReadBaseline = &source
+	}
+	for id, sources := range in.Provenance.ReadBaselineExclusions {
+		out.Provenance.ReadBaselineExclusions[id] = cloneProfileSources(sources)
 	}
 	for path, sources := range in.Provenance.Filesystem {
 		out.Provenance.Filesystem[path] = cloneProfileSources(sources)

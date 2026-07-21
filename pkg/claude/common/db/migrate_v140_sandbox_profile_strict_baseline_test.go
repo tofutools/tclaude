@@ -22,7 +22,6 @@ func newV139DB(t *testing.T, name string) *sql.DB {
 // A pre-TCL-609 row must survive the upgrade with defaults that mean exactly
 // "behave as before": inherited harness read baseline, no protected access.
 func TestMigrateV140AddsStrictBaselineColumnsWithCompatibleDefaults(t *testing.T) {
-	require.Equal(t, 140, currentVersion, "tripwire: bump this with the next migration")
 	d := newV139DB(t, "migrate-v140-defaults")
 	mustExec(t, d, `CREATE TABLE sandbox_profiles (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,

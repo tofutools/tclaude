@@ -214,7 +214,7 @@ func TestBreakGlassExportImportRequiresFreshAcknowledgement(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var envelope map[string]any
 	testharness.DecodeJSON(t, rec, &envelope)
-	assert.EqualValues(t, 3, envelope["format_version"], "the new fields bump the portable format")
+	assert.EqualValues(t, 4, envelope["format_version"], "semantic exclusions use the newest portable format")
 	assert.Contains(t, rec.Body.String(), "break_glass_filesystem")
 	assert.NotContains(t, rec.Body.String(), "break_glass_acknowledged",
 		"an export must never carry an acknowledgement to the next machine")

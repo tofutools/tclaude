@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -2271,6 +2272,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	var breakGlassReadDirs, breakGlassWriteDirs []string
 	var breakGlassGrants []sandboxpolicy.BreakGlassGrant
 	readBaseline := sandboxpolicy.ReadBaselineDefault
+	var readExclusions []string
 	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
@@ -2298,6 +2300,20 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			}
 		}
 		readBaseline = validated.Effective.ReadBaseline
+		readExclusions = append([]string(nil), validated.Effective.ReadBaselineExclusions...)
+		if len(readExclusions) > 0 {
+			home, homeErr := os.UserHomeDir()
+			if homeErr != nil {
+				return "", "", nil, fmt.Errorf("resolve home for sandbox read exclusions: %w", homeErr)
+			}
+			exclusionDirs, unknown, resolveErr := sandboxpolicy.ReadExclusionDenyPathsForOS(readExclusions, home, runtime.GOOS)
+			if resolveErr != nil {
+				return "", "", nil, resolveErr
+			}
+			if len(unknown) == 0 {
+				denyDirs = append(denyDirs, exclusionDirs...)
+			}
+		}
 		breakGlassGrants = validated.Effective.BreakGlassFilesystem
 		if len(breakGlassGrants) > 0 {
 			breakGlass, err := sandboxpolicy.BreakGlassForLaunch(validated.Effective)
@@ -2336,6 +2352,9 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		if err := harness.ValidateSandboxReadBaseline(h.Name, sandboxMode, readBaseline); err != nil {
 			return "", "", nil, err
 		}
+	}
+	if err := harness.ValidateSandboxReadExclusions(h.Name, sandboxMode, readExclusions); err != nil {
+		return "", "", nil, err
 	}
 	if len(breakGlassGrants) > 0 {
 		if err := harness.ValidateSandboxBreakGlass(h.Name, sandboxMode, breakGlassGrants); err != nil {
@@ -2383,6 +2402,20 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	cleanupPath := ""
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
+		requireSplitPolicy := false
+		for _, id := range readExclusions {
+			if id == sandboxpolicy.ReadExclusionHome {
+				requireSplitPolicy = true
+				break
+			}
+		}
+		if requireSplitPolicy {
+			runtimeReadDirs, runtimeErr := harness.CodexHomeRuntimeReadPaths()
+			if runtimeErr != nil {
+				return "", "", nil, runtimeErr
+			}
+			readDirs = append(readDirs, runtimeReadDirs...)
+		}
 		if readBaseline == sandboxpolicy.ReadBaselineMinimal {
 			// Same invariant as the spawn path: without `extends = ":workspace"`
 			// nothing grants the launch directory, and GitWorktreeWriteDirs is
@@ -2399,6 +2432,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			ReadBaseline:        readBaseline,
 			BreakGlassReadDirs:  breakGlassReadDirs,
 			BreakGlassWriteDirs: breakGlassWriteDirs,
+			RequireSplitPolicy:  requireSplitPolicy,
 		}, networkAccess, session.GenerateSessionID())
 		if err != nil {
 			return "", "", nil, fmt.Errorf("prepare managed Codex resume profile: %w", err)

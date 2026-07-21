@@ -11,6 +11,7 @@ import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
 import {
   loadSandboxProfiles,
+  loadSandboxReadExclusionCatalog,
   previewSandboxProfile,
   saveSandboxProfile,
   deleteSandboxProfile,
@@ -67,6 +68,7 @@ export function createManagementActions({
   const roles = { loadRoles, createRole, updateRole, deleteRole, ...roleAPI };
   const sandbox = {
     loadSandboxProfiles,
+    loadSandboxReadExclusionCatalog,
     previewSandboxProfile,
     saveSandboxProfile,
     deleteSandboxProfile,
@@ -796,6 +798,7 @@ export function createManagementActions({
         agent_directories: draft.agent_directories,
         network_access: draft.network_access || '',
         read_baseline: draft.read_baseline || '',
+        read_baseline_exclusions: draft.read_baseline_exclusions || [],
         break_glass_filesystem: draft.break_glass_filesystem || [],
       };
       if (!body.name) throw new Error('name is required');
@@ -939,6 +942,10 @@ export function createManagementActions({
     });
   }
 
+  function loadReadExclusionCatalog() {
+    return sandbox.loadSandboxReadExclusionCatalog();
+  }
+
   return Object.freeze({
     load,
     openManager,
@@ -987,6 +994,7 @@ export function createManagementActions({
     configureSandboxWithAgent,
     inspectDirectories,
     createDirectories,
+    loadReadExclusionCatalog,
   });
 }
 // dashboard-imperative-boundary: browser-io

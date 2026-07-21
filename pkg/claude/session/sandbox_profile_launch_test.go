@@ -231,3 +231,23 @@ func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
 	assert.NotContains(t, string(raw), `"`+workspace+`" = "write"`,
 		"today's behavior is unchanged: :workspace already covers the cwd")
 }
+
+func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ssh := filepath.Join(home, ".ssh")
+	require.NoError(t, os.MkdirAll(ssh, 0o700))
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "no-ssh", ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
+	_, path, err := ensureCodexManagedProfileWithSnapshot(params, t.TempDir(), "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"`+ssh+`" = "none"`)
+	assert.Contains(t, string(raw), `extends = ":workspace"`)
+}

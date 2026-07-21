@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -431,6 +432,10 @@ func runNew(params *NewParams) error {
 		if err := harness.ValidateSandboxReadBaseline(h.Name, effectiveSandboxMode, baseline); err != nil {
 			return err
 		}
+	}
+	readExclusions := sandboxSnapshotReadExclusions(launchSandbox)
+	if err := harness.ValidateSandboxReadExclusions(h.Name, effectiveSandboxMode, readExclusions); err != nil {
+		return err
 	}
 	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
 		if err := harness.ValidateSandboxBreakGlass(h.Name, effectiveSandboxMode, breakGlass); err != nil {
@@ -857,7 +862,7 @@ func runNew(params *NewParams) error {
 		SandboxMode:                sandboxMode,
 		SandboxWriteDirs:           append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
 		SandboxReadDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead),
-		SandboxDenyDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny),
+		SandboxDenyDirs:            append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny), sandboxSnapshotReadExclusionDenyDirs(launchSandbox)...),
 		SandboxReadBaseline:        string(sandboxSnapshotReadBaseline(launchSandbox)),
 		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessRead),
 		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessWrite),
@@ -1119,7 +1124,15 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	}
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
-	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	denyDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny), sandboxSnapshotReadExclusionDenyDirs(effectiveSandbox)...)
+	requireSplitPolicy := sandboxSnapshotHasReadExclusion(effectiveSandbox, sandboxpolicy.ReadExclusionHome)
+	if requireSplitPolicy {
+		runtimeReadDirs, err := harness.CodexHomeRuntimeReadPaths()
+		if err != nil {
+			return "", "", err
+		}
+		readDirs = append(readDirs, runtimeReadDirs...)
+	}
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
 	readBaseline := sandboxSnapshotReadBaseline(effectiveSandbox)
 	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
@@ -1139,6 +1152,7 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		ReadBaseline:        readBaseline,
 		BreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		BreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
+		RequireSplitPolicy:  requireSplitPolicy,
 	}, networkAccess, launchID)
 	if err != nil {
 		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
@@ -1217,6 +1231,38 @@ func sandboxSnapshotReadBaseline(snapshot *sandboxpolicy.Snapshot) sandboxpolicy
 		return sandboxpolicy.ReadBaselineDefault
 	}
 	return snapshot.Effective.ReadBaseline
+}
+
+func sandboxSnapshotReadExclusions(snapshot *sandboxpolicy.Snapshot) []string {
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot.Effective.ReadBaselineExclusions
+}
+
+func sandboxSnapshotHasReadExclusion(snapshot *sandboxpolicy.Snapshot, wanted string) bool {
+	for _, id := range sandboxSnapshotReadExclusions(snapshot) {
+		if id == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func sandboxSnapshotReadExclusionDenyDirs(snapshot *sandboxpolicy.Snapshot) []string {
+	ids := sandboxSnapshotReadExclusions(snapshot)
+	if len(ids) == 0 {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil // the capability boundary already returns the actionable error
+	}
+	paths, _, err := sandboxpolicy.ReadExclusionDenyPathsForOS(ids, home, runtime.GOOS)
+	if err != nil {
+		return nil
+	}
+	return paths
 }
 
 func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {

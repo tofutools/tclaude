@@ -34,8 +34,9 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 			{Name: "ZED", Value: "last"},
 			{Name: "ALPHA", Value: "first"},
 		},
-		AgentDirectories: []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
-		NetworkAccess:    sandboxpolicy.NetworkAccessInternet,
+		AgentDirectories:       []string{"GOLANGCI_LINT_CACHE", "GOCACHE"},
+		NetworkAccess:          sandboxpolicy.NetworkAccessInternet,
+		ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH, "future.secret"},
 	})
 	require.NoError(t, err)
 
@@ -62,6 +63,7 @@ func TestSandboxProfileCRUDRoundTrip(t *testing.T) {
 	}, got.Environment)
 	assert.Equal(t, []string{"GOCACHE", "GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
 	assert.Equal(t, sandboxpolicy.NetworkAccessInternet, got.NetworkAccess)
+	assert.Equal(t, []string{"future.secret", sandboxpolicy.ReadExclusionSSH}, got.ReadBaselineExclusions)
 	assert.False(t, got.CreatedAt.IsZero())
 	assert.False(t, got.UpdatedAt.IsZero())
 

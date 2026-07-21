@@ -78,11 +78,13 @@ type ResolvedSandboxPolicy struct {
 	// contributed each protected path, so composition can never hide where
 	// dangerous authority came from. Both are omitempty, so a launch that uses
 	// neither echoes exactly what it echoed before.
-	ReadBaseline       sandboxpolicy.ReadBaseline               `json:"read_baseline,omitempty"`
-	ReadBaselineSource *sandboxpolicy.ProfileSource             `json:"read_baseline_source,omitempty"`
-	BreakGlass         []sandboxpolicy.BreakGlassGrant          `json:"break_glass_filesystem,omitempty"`
-	BreakGlassSources  map[string][]sandboxpolicy.ProfileSource `json:"break_glass_sources,omitempty"`
-	Environment        []string                                 `json:"environment"`
+	ReadBaseline                 sandboxpolicy.ReadBaseline               `json:"read_baseline,omitempty"`
+	ReadBaselineSource           *sandboxpolicy.ProfileSource             `json:"read_baseline_source,omitempty"`
+	ReadBaselineExclusions       []string                                 `json:"read_baseline_exclusions,omitempty"`
+	ReadBaselineExclusionSources map[string][]sandboxpolicy.ProfileSource `json:"read_baseline_exclusion_sources,omitempty"`
+	BreakGlass                   []sandboxpolicy.BreakGlassGrant          `json:"break_glass_filesystem,omitempty"`
+	BreakGlassSources            map[string][]sandboxpolicy.ProfileSource `json:"break_glass_sources,omitempty"`
+	Environment                  []string                                 `json:"environment"`
 }
 
 func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {
@@ -93,11 +95,18 @@ func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPol
 	environment = append(environment, snapshot.Effective.AgentDirectories...)
 	sort.Strings(environment)
 	out := &ResolvedSandboxPolicy{
-		Version:      snapshot.Version,
-		Applied:      append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
-		Filesystem:   append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
-		ReadBaseline: snapshot.Effective.ReadBaseline,
-		Environment:  environment,
+		Version:                snapshot.Version,
+		Applied:                append([]sandboxpolicy.AppliedProfile(nil), snapshot.Applied...),
+		Filesystem:             append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
+		ReadBaseline:           snapshot.Effective.ReadBaseline,
+		ReadBaselineExclusions: append([]string(nil), snapshot.Effective.ReadBaselineExclusions...),
+		Environment:            environment,
+	}
+	if len(snapshot.Effective.Provenance.ReadBaselineExclusions) > 0 {
+		out.ReadBaselineExclusionSources = make(map[string][]sandboxpolicy.ProfileSource, len(snapshot.Effective.Provenance.ReadBaselineExclusions))
+		for id, sources := range snapshot.Effective.Provenance.ReadBaselineExclusions {
+			out.ReadBaselineExclusionSources[id] = append([]sandboxpolicy.ProfileSource(nil), sources...)
+		}
 	}
 	if snapshot.Effective.Provenance.ReadBaseline != nil {
 		source := *snapshot.Effective.Provenance.ReadBaseline

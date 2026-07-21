@@ -14,10 +14,11 @@ import (
 )
 
 type wireSandboxProfile struct {
-	Name             string   `json:"name"`
-	AgentDirectories []string `json:"agent_directories"`
-	NetworkAccess    string   `json:"network_access"`
-	Filesystem       []struct {
+	Name                   string   `json:"name"`
+	AgentDirectories       []string `json:"agent_directories"`
+	NetworkAccess          string   `json:"network_access"`
+	ReadBaselineExclusions []string `json:"read_baseline_exclusions"`
+	Filesystem             []struct {
 		Path   string `json:"path"`
 		Access string `json:"access"`
 	} `json:"filesystem"`
@@ -34,6 +35,7 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 	_, err := db.CreateAgentGroup("exists", "")
 	require.NoError(t, err)
 	for _, req := range []*http.Request{
+		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/anything", nil),
 		testharness.JSONRequest(t, http.MethodGet, "/v1/sandbox-profiles/export", nil),
@@ -44,6 +46,26 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(req, peer))
 		assert.Equalf(t, http.StatusForbidden, rec.Code, "%s %s body=%s", req.Method, req.URL.Path, rec.Body.String())
 	}
+}
+
+func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
+	f := newFlow(t)
+	rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	var catalog struct {
+		Version       int `json:"version"`
+		Platform      string
+		Categories    []map[string]any `json:"categories"`
+		Informational []map[string]any `json:"informational"`
+	}
+	testharness.DecodeJSON(t, rec, &catalog)
+	assert.Equal(t, 1, catalog.Version)
+	assert.NotEmpty(t, catalog.Platform)
+	require.Len(t, catalog.Categories, 7)
+	assert.Equal(t, "secrets.ssh", catalog.Categories[0]["id"])
+	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
+	assert.NotEmpty(t, catalog.Categories[6]["paths"])
+	assert.NotEmpty(t, catalog.Informational)
 }
 
 func TestSandboxProfileDraftPermissionCanOnlySubmitValidatedDraft(t *testing.T) {
@@ -97,8 +119,9 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 			{"name": "GOCACHE", "value": cache},
 			{"name": "GOCACHE", "value": cache},
 		},
-		"agent_directories": []string{"GOLANGCI_LINT_CACHE"},
-		"network_access":    "internet",
+		"agent_directories":        []string{"GOLANGCI_LINT_CACHE"},
+		"network_access":           "internet",
+		"read_baseline_exclusions": []string{"secrets.ssh"},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
 
@@ -113,6 +136,7 @@ func TestSandboxProfilesCRUDValidationAndAssignments(t *testing.T) {
 	assert.Equal(t, "GOCACHE", got.Environment[0].Name)
 	assert.Equal(t, []string{"GOLANGCI_LINT_CACHE"}, got.AgentDirectories)
 	assert.Equal(t, "internet", got.NetworkAccess)
+	assert.Equal(t, []string{"secrets.ssh"}, got.ReadBaselineExclusions)
 
 	for _, body := range []map[string]any{
 		{"name": "export"},
@@ -167,10 +191,11 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	_, err = db.CreateAgentGroup("portable-group", "")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name":           "portable",
-		"filesystem":     []map[string]any{{"path": cache, "access": "write"}},
-		"environment":    []map[string]any{{"name": "GOCACHE", "value": cache}},
-		"network_access": "none",
+		"name":                     "portable",
+		"filesystem":               []map[string]any{{"path": cache, "access": "write"}},
+		"environment":              []map[string]any{{"name": "GOCACHE", "value": cache}},
+		"network_access":           "none",
+		"read_baseline_exclusions": []string{"secrets.vcs-tokens"},
 	}).Code)
 	require.Equal(t, http.StatusOK, profileReq(t, f, http.MethodPut,
 		"/v1/sandbox-profile-default", map[string]any{"name": "portable"}).Code)
@@ -182,10 +207,10 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
-	// v3 adds read_baseline and break_glass_filesystem. Exporting only the
+	// v4 adds semantic read_baseline_exclusions. Exporting only the
 	// newest version keeps an older importer from silently dropping a
 	// security-significant field as an unknown key; v1/v2 stay importable.
-	assert.Equal(t, float64(3), bundle["format_version"])
+	assert.Equal(t, float64(4), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)
@@ -199,6 +224,7 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	require.Len(t, got.Filesystem, 1)
 	assert.Equal(t, canonicalCache, got.Filesystem[0].Path)
 	assert.Equal(t, "none", got.NetworkAccess)
+	assert.Equal(t, []string{"secrets.vcs-tokens"}, got.ReadBaselineExclusions)
 	for _, path := range []string{"/v1/sandbox-profile-default", "/v1/groups/portable-group/sandbox-profile"} {
 		rec = profileReq(t, f, http.MethodGet, path, nil)
 		var ref struct {
