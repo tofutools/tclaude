@@ -2,7 +2,9 @@ package agentd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -386,11 +388,42 @@ func AutoGrantableSlugs() []string {
 // the rotation-immune id (`name (agt_xxxxxxxx)`) while the maps stay
 // conv-keyed on the wire (JOH-325). Absent for a conv that doesn't (yet)
 // resolve to an actor; readers fall back to the conv prefix then.
+//
+// Titles is the display-name projection of the same keys (conv-id →
+// display title). It exists so an agent-side CLI can render the roster
+// without reading ~/.tclaude/data itself — a sandboxed agent is denied
+// that directory by design, so decoration has to arrive over the wire
+// (TCL-611). Absent for a conv with no index row; readers render blank.
 type permissionsState struct {
 	Defaults  []string                     `json:"defaults"`
 	Grants    map[string][]string          `json:"grants"`
 	Overrides map[string]map[string]string `json:"overrides"`
 	AgentIDs  map[string]string            `json:"agent_ids"`
+	Titles    map[string]string            `json:"titles"`
+}
+
+// permissionsEffectiveResp is the daemon-resolved answer to
+// `GET /v1/permissions?target=<selector>` — everything
+// `tclaude agent permissions ls <target>` renders, with selector
+// resolution and the effective/owner-implied calculation done here
+// rather than in the CLI (TCL-611).
+type permissionsEffectiveResp struct {
+	// Target echoes the selector as typed.
+	Target string `json:"target"`
+	// TargetKey is the resolved conv-id; empty for the "default" sentinel.
+	TargetKey string `json:"target_key,omitempty"`
+	// AgentID is the stable actor key behind TargetKey, for leading the
+	// rendered "who" (JOH-325); empty when the conv is not an agent.
+	AgentID string `json:"agent_id,omitempty"`
+	// Title is the resolved conv's display title, when known.
+	Title string `json:"title,omitempty"`
+	// Effective is ((defaults ∪ grants ∪ owner-implied) − denies), sorted.
+	Effective []string `json:"effective"`
+	// Source names the matched inputs, e.g. "defaults+grants:<conv> +owner".
+	Source string `json:"source"`
+	// OwnerImplied is the subset of Effective contributed SOLELY by group
+	// ownership, so the CLI can annotate those rows "(via ownership)".
+	OwnerImplied []string `json:"owner_implied"`
 }
 
 // targetSentinelDefault is the magic target string that means "modify
@@ -436,6 +469,7 @@ func snapshotPermissions() (permissionsState, error) {
 		Grants:    map[string][]string{},
 		Overrides: map[string]map[string]string{},
 		AgentIDs:  map[string]string{},
+		Titles:    map[string]string{},
 	}
 	if cfg != nil && cfg.Agent != nil {
 		out.Defaults = append(out.Defaults, cfg.Agent.DefaultPermissions...)
@@ -459,11 +493,39 @@ func snapshotPermissions() (permissionsState, error) {
 	// each conv once; a key that doesn't map to an actor is simply absent.
 	for conv := range out.Grants {
 		addAgentIDProjection(out.AgentIDs, conv)
+		addTitleProjection(out.Titles, conv)
 	}
 	for conv := range out.Overrides {
 		addAgentIDProjection(out.AgentIDs, conv)
+		addTitleProjection(out.Titles, conv)
 	}
 	return out, nil
+}
+
+// addTitleProjection records conv → display title in dst so the CLI can
+// decorate the roster without its own conv_index read (TCL-611 — a
+// sandboxed agent cannot open the private DB). Accepts full conv-ids and
+// the prefixes that occasionally show up as grant keys, mirroring what
+// the CLI used to try locally. Best-effort: an unresolvable key is simply
+// left out and renders blank.
+func addTitleProjection(dst map[string]string, conv string) {
+	if len(conv) < 8 {
+		return
+	}
+	if _, ok := dst[conv]; ok {
+		return
+	}
+	if row, err := db.GetConvIndex(conv); err == nil && row != nil {
+		if title := agent.DisplayTitle(row); title != "" {
+			dst[conv] = title
+		}
+		return
+	}
+	if row, err := db.FindConvIndexByPrefix(conv); err == nil && row != nil {
+		if title := agent.DisplayTitle(row); title != "" {
+			dst[conv] = title
+		}
+	}
 }
 
 // addAgentIDProjection records conv → agent_id in dst, skipping convs
@@ -524,6 +586,14 @@ func removeDefaultPermission(slug string) error {
 // handlePermissions dispatches GET /v1/permissions. Read-only: anyone
 // (including agents with no granted slugs) can introspect the current
 // state. Writing happens at /v1/permissions/grant and .../revoke.
+//
+// With `?target=<selector>` the daemon additionally resolves the selector
+// and returns the effective view for that one target
+// (permissionsEffectiveResp). That branch exists so the CLI never has to
+// touch ~/.tclaude/data itself: a sandboxed agent is denied that
+// directory, and the client-side fallback used to degrade into a
+// conversation-index rescan, a warning storm and a raw filesystem path in
+// the error (TCL-611).
 func handlePermissions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
@@ -531,10 +601,175 @@ func handlePermissions(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := snapshotPermissions()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		// The underlying error can carry private DB paths; keep those
+		// server-side and hand the caller a generic typed failure.
+		slog.Error("permissions: snapshot failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "server", "permission state unavailable")
+		return
+	}
+	if target := strings.TrimSpace(r.URL.Query().Get("target")); target != "" {
+		writeEffectivePermissions(w, state, target)
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+// writeEffectivePermissions resolves target and writes the effective
+// permission view for it. Unknown selectors get a concise typed
+// `not_found`; ambiguous ones a typed `ambiguous` with candidates, the
+// same envelope /v1/lookup and /v1/messages already use.
+func writeEffectivePermissions(w http.ResponseWriter, state permissionsState, target string) {
+	if target == targetSentinelDefault {
+		defs := append([]string{}, state.Defaults...)
+		sort.Strings(defs)
+		writeJSON(w, http.StatusOK, permissionsEffectiveResp{
+			Target:       targetSentinelDefault,
+			Effective:    defs,
+			Source:       "defaults",
+			OwnerImplied: []string{},
+		})
+		return
+	}
+	res, matches, err := agent.ResolveSelector(target)
+	if errors.Is(err, agent.ErrAmbiguous) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":      fmt.Sprintf("selector %q matches multiple conversations", target),
+			"code":       "ambiguous",
+			"candidates": peerEntriesFromResolved(matches),
+		})
+		return
+	}
+	if err != nil {
+		// err may wrap an internal DB/filesystem error; log it with context
+		// and answer with the domain fact the caller is entitled to.
+		slog.Warn("permissions: selector did not resolve", "target", target, "error", err)
+		writeError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("no conversation or agent matches %q", target))
+		return
+	}
+	resp := permissionsEffectiveResp{
+		Target:    target,
+		TargetKey: res.ConvID,
+		AgentID:   res.AgentID,
+	}
+	if res.Row != nil {
+		resp.Title = agent.DisplayTitle(res.Row)
+	}
+	effective, ownerAdded, source := effectivePermsFor(state, res.ConvID, ownerImpliedSlugsFor(res.ConvID))
+	sort.Strings(effective)
+	sort.Strings(ownerAdded)
+	resp.Effective = effective
+	resp.OwnerImplied = ownerAdded
+	resp.Source = source
+	if resp.Effective == nil {
+		resp.Effective = []string{}
+	}
+	if resp.OwnerImplied == nil {
+		resp.OwnerImplied = []string{}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ownerImpliedSlugsFor returns the owner-conferred slug set for convID —
+// non-empty only when the conv owns at least one group. Ownership is a
+// structural bypass (PermSlug.OwnerImplied), so an owner effectively holds
+// these without an explicit grant. A DB error degrades to "not an owner":
+// owner perms go un-annotated rather than failing the whole listing.
+func ownerImpliedSlugsFor(convID string) []string {
+	owned, err := db.ListGroupsOwnedBy(convID)
+	if err != nil {
+		slog.Warn("permissions: owned-group lookup failed", "conv", convID, "error", err)
+		return nil
+	}
+	if len(owned) == 0 {
+		return nil
+	}
+	return OwnerImpliedSlugs()
+}
+
+// effectivePermsFor returns the slug list the daemon would consult for
+// this agent. Per-conv overrides live in SQLite keyed by full conv-id:
+// a grant override ADDS a slug on top of the global defaults, a deny
+// override SUBTRACTS one. Group ownership ADDS the owner-conferred slugs
+// (ownerImplied, empty for a non-owner) — the structural owner-bypass,
+// which a deny still suppresses. So the effective set is
+// ((defaults ∪ grants ∪ owner-implied) − denies).
+//
+// ownerAdded reports the subset contributed SOLELY by ownership (not
+// already held via defaults/grants and not denied), so the caller can
+// annotate those rows "(via ownership)".
+//
+// The returned label names the matched sources ("defaults",
+// "defaults+grants:<conv>", "+owner", with " −denies" appended when any
+// deny override applies).
+func effectivePermsFor(state permissionsState, convID string, ownerImplied []string) (effective, ownerAdded []string, source string) {
+	effective = append([]string{}, state.Defaults...)
+	source = "defaults"
+	if grants, ok := state.Grants[convID]; ok && len(grants) > 0 {
+		effective = mergeUniqueSlugs(effective, grants)
+		source = "defaults+grants:" + convID
+	}
+	if len(ownerImplied) > 0 {
+		held := map[string]bool{}
+		for _, s := range effective {
+			held[s] = true
+		}
+		for _, s := range ownerImplied {
+			if !held[s] {
+				ownerAdded = append(ownerAdded, s)
+			}
+		}
+		if len(ownerAdded) > 0 {
+			effective = mergeUniqueSlugs(effective, ownerImplied)
+			source += "+owner"
+		}
+	}
+	denied := map[string]bool{}
+	for slug, effect := range state.Overrides[convID] {
+		if effect == db.PermEffectDeny {
+			denied[slug] = true
+		}
+	}
+	if len(denied) > 0 {
+		effective = dropDeniedSlugs(effective, denied)
+		ownerAdded = dropDeniedSlugs(ownerAdded, denied)
+		source += " −denies"
+	}
+	return effective, ownerAdded, source
+}
+
+// dropDeniedSlugs returns slugs with every denied entry removed,
+// preserving order. Shared by the effective set and its owner-conferred
+// projection so a deny override suppresses a slug in both — deny is
+// authoritative over the owner-bypass, mirroring resolvePermission.
+func dropDeniedSlugs(slugs []string, denied map[string]bool) []string {
+	kept := make([]string, 0, len(slugs))
+	for _, s := range slugs {
+		if !denied[s] {
+			kept = append(kept, s)
+		}
+	}
+	return kept
+}
+
+// mergeUniqueSlugs appends b to a, skipping duplicates and preserving
+// first-seen order.
+func mergeUniqueSlugs(a, b []string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, v := range a {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	for _, v := range b {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // handlePermissionsSlugs returns the registry of known slugs +

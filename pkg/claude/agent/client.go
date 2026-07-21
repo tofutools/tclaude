@@ -261,8 +261,13 @@ type DaemonOpts struct {
 
 // DaemonGet performs a GET against the daemon and decodes the JSON body
 // into out. Pass nil for out to ignore the response body.
+//
+// Routed through DaemonRequestImpl like DaemonRequest, so a CLI flow test
+// can drive a read-only command against the real daemon mux without a
+// live socket. Production behaviour is unchanged — the default impl is
+// daemonReq.
 func DaemonGet(path string, out any) error {
-	return daemonReq(http.MethodGet, path, nil, out, DaemonOpts{})
+	return DaemonRequestImpl(http.MethodGet, path, nil, out, DaemonOpts{})
 }
 
 // DaemonPost performs a POST with a JSON body.
