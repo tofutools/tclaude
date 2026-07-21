@@ -37,19 +37,14 @@ func sandboxHardeningSpec() map[string]any {
 	return map[string]any{
 		"sandbox": harness.ClaudeSandboxOnBlock(),
 		"permissions": map[string]any{
-			// The tool-permission layer mirrors the OS-sandbox denies above. It
+			// The tool-permission layer mirrors the OS-sandbox deny above. It
 			// matters independently: it still blocks the Read/Edit tools when
-			// the OS sandbox is disabled. ~/.codex is included for the same
-			// reason it is denied in the sandbox block — it holds Codex
-			// credentials and session state, and tclaude advertises it as a
-			// protected root on every harness.
+			// the OS sandbox is disabled.
 			"deny": []any{
 				"Edit(~/.tclaude/data/**)",
 				"Read(~/.tclaude/data/**)",
 				"Edit(~/.claude/sessions/**)",
 				"Read(~/.claude/sessions/**)",
-				"Edit(~/.codex/**)",
-				"Read(~/.codex/**)",
 			},
 		},
 	}

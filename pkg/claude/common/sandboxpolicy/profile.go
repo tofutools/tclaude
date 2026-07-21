@@ -67,9 +67,9 @@ const (
 )
 
 // BreakGlassGrant is one exceptional, operator-acknowledged rule that reaches
-// a normally protected tclaude/harness directory (~/.tclaude/data,
-// ~/.claude/sessions, ~/.codex). It exists so a human can launch a tightly
-// scoped agent to debug tclaude itself.
+// normally protected tclaude/Claude state (~/.tclaude/data or
+// ~/.claude/sessions). It exists so a human can launch a tightly scoped agent
+// to debug tclaude itself.
 //
 // Access is read or write only: deny is already the default for these paths,
 // and read must never imply write. Every rule must actually intersect a
@@ -602,7 +602,6 @@ func protectedPaths() ([]string, error) {
 	paths := []string{
 		tclcommon.TclaudeDataDir(),
 		filepath.Join(home, ".claude", "sessions"),
-		filepath.Join(home, ".codex"),
 	}
 	for i, path := range paths {
 		path = filepath.Clean(path)

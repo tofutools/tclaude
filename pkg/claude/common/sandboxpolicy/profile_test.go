@@ -71,7 +71,7 @@ func TestNormalizeFilesystemDenyWinsAndMayCoverProtectedPaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, "cache")
-	protected := filepath.Join(home, ".codex")
+	protected := filepath.Join(home, ".claude", "sessions")
 	require.NoError(t, os.Mkdir(dir, 0o755))
 	require.NoError(t, os.Mkdir(protected, 0o755))
 	canonicalDir, err := filepath.EvalSymlinks(dir)
@@ -97,7 +97,6 @@ func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 	protected := []string{
 		filepath.Join(home, ".tclaude", "data"),
 		filepath.Join(home, ".claude", "sessions"),
-		filepath.Join(home, ".codex"),
 	}
 	for _, path := range protected {
 		require.NoError(t, os.MkdirAll(filepath.Join(path, "child"), 0o755))
@@ -124,7 +123,7 @@ func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 		})
 	}
 
-	lookalike := filepath.Join(home, ".codex-cache")
+	lookalike := filepath.Join(home, ".claude", "sessions-cache")
 	require.NoError(t, os.Mkdir(lookalike, 0o755))
 	_, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: lookalike, Access: AccessWrite}}})
 	require.NoError(t, err, "shared string prefixes are not path ancestry")
@@ -205,7 +204,7 @@ func TestNormalizeForImportStillRejectsUnsafeOrMalformedMissingPaths(t *testing.
 	t.Setenv("HOME", home)
 	for _, path := range []string{
 		"relative/missing",
-		filepath.Join(home, ".codex", "missing"),
+		filepath.Join(home, ".claude", "sessions", "missing"),
 		filepath.Join(home, ".tclaude", "data", "missing"),
 	} {
 		_, _, err := NormalizeForImport(Profile{Name: "portable", Filesystem: []FilesystemGrant{{Path: path, Access: AccessRead}}})
