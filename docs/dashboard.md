@@ -558,6 +558,10 @@ documents the schema-8 (owner-epoch) run surfaces.
 
 #### Schema-8 runs and unlock
 
+Schema-8 unlock is implemented for development and testing but is not
+released or supported for operational use — see the status note at the top of
+[Processes](processes.md).
+
 A schema-8 run renders the **safe summary envelope** only — counts, refs, and
 bounded labels; never exact topology, raw runtime state, or restricted
 artifacts. The viewer names that restriction honestly with an

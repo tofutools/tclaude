@@ -5,6 +5,19 @@ workflows. With the feature enabled, `tclaude agentd` continuously advances
 runs in the filesystem store at `~/.tclaude/data/processes`. The manual CLI remains
 available for instantiation, inspection, verification, and repair workflows.
 
+**Status: the schema-8 unlock surfaces are not released.** The owner-epoch
+execution, preview/apply, restricted-artifact, and dashboard unlock surfaces
+documented below are implemented for continued development and testing, but
+schema-8 unlock is not release-ready and not supported for operational use.
+The reviewed reason is a measured verification/lease limit: a cold first
+verification replays the complete runtime receipt chain, and on longer run
+histories (roughly 150–200 receipts, reachable by a 50–65 node run with
+retries) that single replay can outlast the engine's 30-second lease renewal
+window while holding the run lock. Repeated verifications of an already-seen
+checkpoint are memoized, which keeps short histories fast, but the cold-path
+limit stands until the verification/lease architecture is reworked on the
+graduation track. Keep `features.processes` off outside development.
+
 Enable the feature:
 
 ```json
