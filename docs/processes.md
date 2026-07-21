@@ -418,9 +418,18 @@ With Processes enabled, `GET /v1/process/runs/{id}/view` returns a dedicated,
 read-only viewer projection. For schemas 1–7, the existing
 `GET /v1/process/runs/{id}` contract continues to return the persisted run,
 state, and verification result unchanged. Schema 8 returns the same safe
-summary envelope from both routes: run status, schema/lineage metadata,
-authority counts, and the current preview binding. It deliberately omits raw
-runtime state and exact topology.
+summary envelope from both routes: run status, schema/lineage metadata, an
+`adapted` flag, a bounded structural summary (current-epoch node/edge totals
+plus a changed-from-original bit), per-state authority counts, and the current
+preview binding. The lineage list is bounded: chains longer than 32 epochs keep
+their oldest and newest halves and report `totalEpochs` with `truncated:true`.
+The envelope deliberately omits raw runtime state and exact topology; its
+`viewerV2` names that restriction with the `epoch_v8_summary` reason rather
+than claiming the schema is unsupported. Schema-8-bearing run, view, verify,
+worklist, unlock preview/apply, and unblock responses — including their error
+and denial paths — carry `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`; schema 1–7 response bodies on the mixed
+routes are unchanged.
 
 ```json
 {
@@ -526,6 +535,7 @@ Every unavailable condition is explicit and fail-closed:
 | Reason | Condition | Safe result |
 | --- | --- | --- |
 | `legacy_schema` | State schema is 1–6. | Show a verified exact topology when available; never infer routing from history. |
+| `epoch_v8_summary` | State schema is 8: the run serves the safe summary envelope; exact topology and routing are restricted surfaces. | Render the adapted/lineage/authority summary; drill into exact artifacts only through the permissioned epoch artifact route. |
 | `routing_absent` | A schema-7 aggregate has no routing state. | Show exact topology without an overlay. |
 | `unsupported_schema` | State schema is unknown or newer than this viewer. | Omit topology/routing claims that cannot be interpreted safely. |
 | `unsupported_protocol` | Routing protocol or encoding is not the supported path-v1 pair. | Preserve exact topology; omit the routing overlay. |

@@ -404,6 +404,7 @@ func currentProcessActivity(st *state.State) string {
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
+	setProcessNoStoreHeaders(w)
 	runID := r.PathValue("id")
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
@@ -449,6 +450,7 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
+	setProcessNoStoreHeaders(w)
 	runID := r.PathValue("id")
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {

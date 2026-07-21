@@ -111,6 +111,8 @@ func TestEpochV8ApplyPermissionFirstDomainReplayAndProvenance(t *testing.T) {
 	deniedMissing := agentReq(t, f, caller, http.MethodPost, missingPath, map[string]any{"different": "body"})
 	require.Equal(t, http.StatusForbidden, deniedExisting.Code, deniedExisting.Body.String())
 	assert.Equal(t, deniedExisting.Body.String(), deniedMissing.Body.String())
+	requireProcessNoStoreHeaders(t, deniedExisting)
+	requireProcessNoStoreHeaders(t, deniedMissing)
 	// A peer with no resolved identity remains the requirePermission 401 case.
 	unidentified := testharness.Serve(f.Mux, testharness.JSONRequest(t, http.MethodPost, path, map[string]any{"secret": "unread"}))
 	require.Equal(t, http.StatusUnauthorized, unidentified.Code, unidentified.Body.String())
@@ -155,6 +157,7 @@ func TestEpochV8ApplyPermissionFirstDomainReplayAndProvenance(t *testing.T) {
 	var appliedBody struct {
 		Status      string `json:"status"`
 		Disposition string `json:"disposition"`
+		ApplyToken  string `json:"applyToken"`
 		EpochID     string `json:"epochId"`
 		ReasonCode  string `json:"reasonCode"`
 		Actor       string `json:"actor"`
@@ -163,9 +166,24 @@ func TestEpochV8ApplyPermissionFirstDomainReplayAndProvenance(t *testing.T) {
 	testharness.DecodeJSON(t, applied, &appliedBody)
 	assert.Equal(t, "applied", appliedBody.Status)
 	assert.Equal(t, string(epochv8.DispositionApplied), appliedBody.Disposition)
+	// Deliberate S6 disposition: the S5 apply response keeps echoing the merged
+	// applyToken. Its exposure is protected by the no-store/nosniff contract
+	// and memory-only client handling, not by removal from the response.
+	assert.Equal(t, previewBody.ApplyToken, appliedBody.ApplyToken)
+	requireProcessNoStoreHeaders(t, applied)
 	assert.Equal(t, epochv8.ApplyReasonUnlock, appliedBody.ReasonCode)
 	assert.Equal(t, "agent:"+agentID, appliedBody.Actor)
 	assert.NotEmpty(t, appliedBody.AppliedAt)
+
+	// The adapted run's ordinary envelope reflects the second epoch without
+	// exposing restricted material.
+	adaptedView := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/runs/apply-flow-run/view", nil)))
+	require.Equal(t, http.StatusOK, adaptedView.Code, adaptedView.Body.String())
+	requireProcessNoStoreHeaders(t, adaptedView)
+	assert.Contains(t, adaptedView.Body.String(), `"adapted":true`)
+	assert.Contains(t, adaptedView.Body.String(), `"totalEpochs":2`)
+	assert.NotContains(t, adaptedView.Body.String(), "candidate-private-source")
+	assert.NotContains(t, adaptedView.Body.String(), "restricted-reason-sentinel")
 	audits, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.unlock.apply", Outcome: "success"})
 	require.NoError(t, err)
 	require.Len(t, audits, 1)

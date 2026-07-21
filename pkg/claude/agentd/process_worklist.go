@@ -18,6 +18,7 @@ import (
 )
 
 func handleProcessWorklist(w http.ResponseWriter, r *http.Request) {
+	setProcessNoStoreHeaders(w)
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
