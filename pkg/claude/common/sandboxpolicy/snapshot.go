@@ -262,7 +262,11 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 // RevalidateSnapshot before applying the result.
 func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	switch in.Version {
-	case 1, SnapshotVersion:
+	// v1 and v2 are structurally compatible: they simply carry neither TCL-609
+	// field, which decodes to the zero value that means "today's behavior".
+	// v2 is what current main persists, so rejecting it here would break every
+	// existing session, actor, and pending spawn on upgrade.
+	case 1, 2, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:

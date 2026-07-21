@@ -169,3 +169,65 @@ func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
 	assert.Equal(t, []string{agentRoot}, generatedDirs,
 		"the mounted parent root is daemon-generated and must skip the caller marker")
 }
+
+// A minimal profile drops `extends = ":workspace"`, which is what used to make
+// the launch directory writable for free. GitWorktreeWriteDirs yields nothing
+// outside a Git repository, so without an explicit grant a minimal agent in a
+// plain directory would have no workspace at all.
+func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Deliberately NOT a Git repository.
+	workspace := filepath.Join(home, "plain-workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	require.NoError(t, err)
+	outside := filepath.Join(home, "elsewhere")
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
+		Name: "strict", ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+
+	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
+	_, path, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(raw)
+
+	// The workspace is readable and writable...
+	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`,
+		"a minimal agent must still be able to work in its launch directory")
+	// ...the runtime baseline is present so tools can actually run...
+	assert.Contains(t, content, `":minimal" = "read"`)
+	// ...the broad read baseline is gone...
+	assert.NotContains(t, content, `extends = ":workspace"`)
+	// ...and nothing granted the sibling directory.
+	assert.NotContains(t, content, outside)
+}
+
+// The default baseline must keep relying on :workspace, unchanged.
+func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "plain-workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
+	_, path, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `extends = ":workspace"`)
+	assert.NotContains(t, string(raw), `"`+workspace+`" = "write"`,
+		"today's behavior is unchanged: :workspace already covers the cwd")
+}

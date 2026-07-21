@@ -63,6 +63,117 @@ func requireBreakGlassAck(what string, acknowledged bool, grants []sandboxpolicy
 	return breakGlassAckFailure(what, grants)
 }
 
+// requirePayloadBreakGlassAck gates a create/edit on the FLATTENED payload, so
+// an include-only edit of an innocent-looking wrapper cannot add protected
+// access without an acknowledgement.
+func requirePayloadBreakGlassAck(what string, acknowledged bool, p *db.SandboxProfile) *spawnFailure {
+	grants, err := flattenBreakGlassForPayload(p)
+	if err != nil {
+		return &spawnFailure{http.StatusInternalServerError, "io", "inspect sandbox profile break-glass access: " + err.Error()}
+	}
+	return requireBreakGlassAck(what, acknowledged, grants)
+}
+
+// postImportBreakGlassForName reports the protected access an assignment to
+// name will carry AFTER the import commits. The bundle may be about to replace
+// the local profile of that name (or create it), so resolving against the
+// pre-import registry alone would miss or misjudge the danger. The active
+// conflict policy decides which payload wins: "skip" keeps the local one.
+func postImportBreakGlassForName(name string, incoming []*db.SandboxProfile, conflict string) ([]sandboxpolicy.BreakGlassGrant, error) {
+	local, err := db.GetSandboxProfile(name)
+	if err != nil {
+		return nil, err
+	}
+	var effective *db.SandboxProfile
+	for _, candidate := range incoming {
+		if candidate.Name != name {
+			continue
+		}
+		// "skip" leaves an existing local profile untouched, so the local
+		// payload — not the bundle's — is what the assignment will point at.
+		if local != nil && conflict == "skip" {
+			break
+		}
+		effective = candidate
+		break
+	}
+	if effective == nil {
+		effective = local
+	}
+	if effective == nil {
+		// The assignment names a profile that will not exist; the import's own
+		// validation reports that. No protected access to acknowledge here.
+		return nil, nil
+	}
+	// Resolve includes against the registry. Bundle-internal includes may not
+	// be written yet, so fall back to the conservative one-level union rather
+	// than reporting nothing.
+	return flattenBreakGlassForPayload(effective)
+}
+
+// flattenBreakGlassForPayload resolves a not-yet-persisted profile payload
+// against the CURRENT registry, so a create or edit that carries no direct
+// break-glass but includes a profile that does still demands an
+// acknowledgement. Gating on the direct field alone let an operator (or a
+// draft-submitting agent) launder dangerous authority behind a wrapper.
+//
+// A dangling include cannot be resolved yet; that is the write path's error to
+// report, so this reports no break-glass and lets the normal validation run.
+func flattenBreakGlassForPayload(p *db.SandboxProfile) ([]sandboxpolicy.BreakGlassGrant, error) {
+	if p == nil {
+		return nil, nil
+	}
+	if len(p.Includes) == 0 {
+		return p.BreakGlassFilesystem, nil
+	}
+	flattened, err := sandboxpolicy.Flatten(sandboxProfileToPolicy(p), registryLookupForFlatten())
+	if err != nil {
+		// Fail OPEN on resolution here would be a bypass, so fall back to the
+		// union of the direct field and every include we can still read.
+		return unresolvedIncludeBreakGlass(p), nil //nolint:nilerr // best-effort danger detection; the write path reports the real include error
+	}
+	return flattened.BreakGlassFilesystem, nil
+}
+
+// unresolvedIncludeBreakGlass is the conservative fallback when the include
+// graph cannot be flattened: report any protected access reachable one level
+// down so an unresolvable graph cannot be used to skip the acknowledgement.
+func unresolvedIncludeBreakGlass(p *db.SandboxProfile) []sandboxpolicy.BreakGlassGrant {
+	out := append([]sandboxpolicy.BreakGlassGrant(nil), p.BreakGlassFilesystem...)
+	for _, include := range p.Includes {
+		included, err := db.GetSandboxProfile(include)
+		if err != nil || included == nil {
+			continue
+		}
+		out = append(out, included.BreakGlassFilesystem...)
+	}
+	return out
+}
+
+func sandboxProfileToPolicy(p *db.SandboxProfile) sandboxpolicy.Profile {
+	return sandboxpolicy.Profile{
+		Name:                 p.Name,
+		Filesystem:           p.Filesystem,
+		ReadBaseline:         p.ReadBaseline,
+		BreakGlassFilesystem: p.BreakGlassFilesystem,
+		Environment:          p.Environment,
+		AgentDirectories:     p.AgentDirectories,
+		NetworkAccess:        p.NetworkAccess,
+		Includes:             p.Includes,
+	}
+}
+
+func registryLookupForFlatten() sandboxpolicy.LookupProfile {
+	return func(include string) (*sandboxpolicy.Profile, error) {
+		included, err := db.GetSandboxProfile(include)
+		if err != nil || included == nil {
+			return nil, err
+		}
+		policy := sandboxProfileToPolicy(included)
+		return &policy, nil
+	}
+}
+
 // flattenedBreakGlassForProfile resolves a registry profile's INCLUDES before
 // reporting its protected access, so a profile that inherits break-glass from
 // an included profile still demands an acknowledgement at assignment time.
@@ -76,31 +187,7 @@ func flattenedBreakGlassForProfile(name string) ([]sandboxpolicy.BreakGlassGrant
 	if profile == nil {
 		return nil, nil
 	}
-	flattened, err := sandboxpolicy.Flatten(sandboxpolicy.Profile{
-		Name:                 profile.Name,
-		Filesystem:           profile.Filesystem,
-		ReadBaseline:         profile.ReadBaseline,
-		BreakGlassFilesystem: profile.BreakGlassFilesystem,
-		Environment:          profile.Environment,
-		AgentDirectories:     profile.AgentDirectories,
-		NetworkAccess:        profile.NetworkAccess,
-		Includes:             profile.Includes,
-	}, func(include string) (*sandboxpolicy.Profile, error) {
-		included, err := db.GetSandboxProfile(include)
-		if err != nil || included == nil {
-			return nil, err
-		}
-		return &sandboxpolicy.Profile{
-			Name:                 included.Name,
-			Filesystem:           included.Filesystem,
-			ReadBaseline:         included.ReadBaseline,
-			BreakGlassFilesystem: included.BreakGlassFilesystem,
-			Environment:          included.Environment,
-			AgentDirectories:     included.AgentDirectories,
-			NetworkAccess:        included.NetworkAccess,
-			Includes:             included.Includes,
-		}, nil
-	})
+	flattened, err := sandboxpolicy.Flatten(sandboxProfileToPolicy(profile), registryLookupForFlatten())
 	if err != nil {
 		return nil, err
 	}

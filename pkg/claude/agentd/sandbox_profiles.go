@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -158,7 +159,7 @@ func handleSandboxProfiles(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if fail := requireBreakGlassAck("save", body.BreakGlassAcknowledged, p.BreakGlassFilesystem); fail != nil {
+		if fail := requirePayloadBreakGlassAck("save", body.BreakGlassAcknowledged, p); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
@@ -247,7 +248,7 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if fail := requireBreakGlassAck("save", body.BreakGlassAcknowledged, p.BreakGlassFilesystem); fail != nil {
+		if fail := requirePayloadBreakGlassAck("save", body.BreakGlassAcknowledged, p); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
@@ -615,6 +616,33 @@ func handleSandboxProfilesImport(w http.ResponseWriter, r *http.Request) {
 		if p.HasBreakGlass() {
 			carriers = append(carriers, p.Name)
 			incoming = append(incoming, p.BreakGlassFilesystem...)
+		}
+	}
+	// An import can introduce protected access WITHOUT any incoming profile
+	// carrying it: applying an assignment that points at a dangerous profile
+	// already in the local registry has exactly the same effect. Fold those in.
+	if env.ApplyAssignments && env.Assignments != nil {
+		assignedNames := []string{}
+		if env.Assignments.Global != "" {
+			assignedNames = append(assignedNames, env.Assignments.Global)
+		}
+		for _, name := range env.Assignments.Groups {
+			assignedNames = append(assignedNames, name)
+		}
+		sort.Strings(assignedNames)
+		for _, name := range assignedNames {
+			// Resolve against the registry as it will look AFTER this import,
+			// i.e. including any bundle profile of the same name that is about
+			// to be written under the active conflict policy.
+			grants, err := postImportBreakGlassForName(name, profiles, conflict)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "io", "inspect imported assignment: "+err.Error())
+				return
+			}
+			if len(grants) > 0 {
+				carriers = append(carriers, name+" (assigned)")
+				incoming = append(incoming, grants...)
+			}
 		}
 	}
 	if len(incoming) > 0 && !env.BreakGlassAcknowledged {

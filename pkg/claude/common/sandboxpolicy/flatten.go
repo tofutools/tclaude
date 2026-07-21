@@ -83,6 +83,9 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 		out.Filesystem = append(out.Filesystem, grant)
 	}
 	for _, grant := range parts.breakGlass {
+		if grant.Origin == root.Name {
+			grant.Origin = ""
+		}
 		out.BreakGlassFilesystem = append(out.BreakGlassFilesystem, grant)
 	}
 	if len(out.BreakGlassFilesystem) == 0 {
@@ -112,7 +115,7 @@ func mergeBreakGlass(into map[string]BreakGlassGrant, grant BreakGlassGrant, pat
 	if previous, exists := into[path]; exists && accessRank(previous.Access) >= accessRank(grant.Access) {
 		return
 	}
-	into[path] = BreakGlassGrant{Path: path, Access: grant.Access}
+	into[path] = BreakGlassGrant{Path: path, Access: grant.Access, Origin: grant.Origin}
 }
 
 type flattenedParts struct {
@@ -224,6 +227,15 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		out.filesystem[grant.Path] = grant
 	}
 	for _, grant := range p.BreakGlassFilesystem {
+		// Stamp the authoring profile the first time a rule is seen. compose()
+		// runs bottom-up, so an included profile stamps itself before the
+		// including profile ever sees the rule, and the attribution then rides
+		// unchanged through arbitrarily nested or diamond-shaped graphs. A rule
+		// the root authored itself keeps Origin empty: self-attribution would
+		// be noise, and the root's own name is already the profile being shown.
+		if grant.Origin == "" {
+			grant.Origin = p.Name
+		}
 		mergeBreakGlass(out.breakGlass, grant, grant.Path)
 	}
 	out.readBaseline = StrictestReadBaseline(out.readBaseline, p.ReadBaseline)

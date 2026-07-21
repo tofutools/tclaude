@@ -48,6 +48,11 @@ const (
 	tclaudeLegacyRootSocketTilde  = "~/.tclaude/agentd.sock"
 	tclaudePrivateStateDirTilde   = "~/.tclaude/data"
 	tclaudeClaudeSessionsDirTilde = "~/.claude/sessions"
+	// codexHomeDirTilde is the third protected root. tclaude advertises all
+	// three as denied-by-default and gates break-glass on that promise, so the
+	// Claude policy must deny it too — otherwise a Claude agent could read
+	// Codex credentials and session state with no acknowledgement at all.
+	codexHomeDirTilde = "~/.codex"
 )
 
 // tclaudeAgentdSocketTildes lists every agentd socket a sandboxed agent may need
@@ -158,8 +163,8 @@ func ClaudeSandboxOnBlock() map[string]any {
 			"allowAllUnixSockets": true,
 		},
 		"filesystem": map[string]any{
-			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
-			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
+			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde, codexHomeDirTilde},
+			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde, codexHomeDirTilde},
 			"allowRead": tclaudeAgentdSocketTildes(),
 		},
 	}
@@ -180,7 +185,7 @@ func ClaudeSandboxOffBlock() map[string]any {
 // merged `--settings` payload (claudeSettingsJSON) and the single-key
 // claudeSandboxSettingsJSON both draw from, so the two can never drift.
 func claudeSandboxBlock(mode string) map[string]any {
-	return claudeSandboxBlockWithBreakGlass(mode, nil)
+	return claudeSandboxBlockWithBreakGlass(mode, nil, nil)
 }
 
 // claudeSandboxBlockWithBreakGlass builds the `on`/`off` block, omitting any
@@ -192,23 +197,35 @@ func claudeSandboxBlock(mode string) map[string]any {
 // Dropping exactly the covered deny leaves an unambiguous policy: the operator
 // acknowledged this path, so tclaude stops denying it — and keeps denying the
 // protected paths they did NOT acknowledge.
-func claudeSandboxBlockWithBreakGlass(mode string, breakGlass []string) map[string]any {
+func claudeSandboxBlockWithBreakGlass(mode string, breakGlassRead, breakGlassWrite []string) map[string]any {
 	switch strings.TrimSpace(mode) {
 	case ClaudeSandboxOn:
 		block := ClaudeSandboxOnBlock()
-		if len(breakGlass) == 0 {
+		if len(breakGlassRead) == 0 && len(breakGlassWrite) == 0 {
 			return block
 		}
 		filesystem, _ := block["filesystem"].(map[string]any)
 		if filesystem == nil {
 			return block
 		}
-		for _, key := range []string{"denyRead", "denyWrite"} {
+		// Read and write are suppressed INDEPENDENTLY. Dropping denyWrite for a
+		// read-only acknowledgement would be a silent privilege escalation: the
+		// deny is what stops an unrelated allowWrite root (a workspace or Git
+		// grant that happens to contain the protected path) from making it
+		// writable, since Claude's write policy is allowlist-shaped and allows
+		// win over denies. A read acknowledgement must never enable a write.
+		for key, grants := range map[string][]string{
+			"denyRead":  append(append([]string{}, breakGlassRead...), breakGlassWrite...),
+			"denyWrite": breakGlassWrite,
+		} {
+			if len(grants) == 0 {
+				continue
+			}
 			existing, _ := filesystem[key].([]any)
 			kept := make([]any, 0, len(existing))
 			for _, value := range existing {
 				path, ok := value.(string)
-				if ok && breakGlassCoversTilde(breakGlass, path) {
+				if ok && breakGlassCoversTilde(grants, path) {
 					continue
 				}
 				kept = append(kept, value)

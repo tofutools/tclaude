@@ -78,6 +78,13 @@ const (
 type BreakGlassGrant struct {
 	Path   string `json:"path"`
 	Access Access `json:"access"`
+	// Origin names the profile that actually authored this rule. It survives
+	// include flattening so composition can never hide where dangerous
+	// authority came from — the guarantee the whole mechanism rests on. It is
+	// omitempty and populated only when a rule arrives through an include, so
+	// a directly-authored profile round-trips byte-identically and operators
+	// never see redundant self-attribution.
+	Origin string `json:"origin,omitempty"`
 }
 
 type EnvironmentEntry struct {
@@ -254,7 +261,7 @@ func normalizeBreakGlass(in []BreakGlassGrant, allowMissing bool) ([]BreakGlassG
 	if err != nil {
 		return nil, nil, err
 	}
-	byPath := make(map[string]Access, len(in))
+	byPath := make(map[string]BreakGlassGrant, len(in))
 	missingPaths := map[string]bool{}
 	for i, grant := range in {
 		if grant.Access != AccessRead && grant.Access != AccessWrite {
@@ -284,13 +291,13 @@ func normalizeBreakGlass(in []BreakGlassGrant, allowMissing bool) ([]BreakGlassG
 		if missing {
 			missingPaths[path] = true
 		}
-		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous) {
-			byPath[path] = grant.Access
+		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous.Access) {
+			byPath[path] = BreakGlassGrant{Path: path, Access: grant.Access, Origin: strings.TrimSpace(grant.Origin)}
 		}
 	}
 	out := make([]BreakGlassGrant, 0, len(byPath))
-	for path, access := range byPath {
-		out = append(out, BreakGlassGrant{Path: path, Access: access})
+	for _, grant := range byPath {
+		out = append(out, grant)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	missing := make([]string, 0, len(missingPaths))
@@ -586,6 +593,11 @@ func protectedPaths() ([]string, error) {
 func pathsIntersect(a, b string) bool {
 	return pathContainsOrEqual(a, b) || pathContainsOrEqual(b, a)
 }
+
+// PathContainsOrEqual reports whether target is dir or lies beneath it, by
+// path segment rather than string prefix. Exported for the lineage and resume
+// boundaries, which need the same containment rule this package enforces.
+func PathContainsOrEqual(dir, target string) bool { return pathContainsOrEqual(dir, target) }
 
 func pathContainsOrEqual(dir, target string) bool {
 	rel, err := filepath.Rel(dir, target)

@@ -66,12 +66,13 @@ func runMerge(tree map[string]any) *hardeningReport {
 	return r
 }
 
-// The spec has 16 leaf values: 2 scalars (sandbox.enabled,
-// sandbox.network.allowAllUnixSockets) and 14 array elements
-// (allowUnixSockets 3, denyWrite 2, denyRead 2, allowRead 3,
-// permissions.deny 4). The socket lists carry the canonical api/ socket
-// plus the two retained pre-split sockets.
-const specLeafCount = 16
+// The spec has 20 leaf values: 2 scalars (sandbox.enabled,
+// sandbox.network.allowAllUnixSockets) and 18 array elements
+// (allowUnixSockets 3, denyWrite 3, denyRead 3, allowRead 3,
+// permissions.deny 6). The socket lists carry the canonical api/ socket
+// plus the two retained pre-split sockets. The deny lists cover all three
+// protected roots — ~/.tclaude/data, ~/.claude/sessions and ~/.codex.
+const specLeafCount = 20
 
 // --- merge engine: the risky part, tested hard --------------------------------
 
@@ -140,7 +141,7 @@ func TestMergeHardening_PreservesUnknownFields(t *testing.T) {
 	assert.Equal(t, []any{"Bash(ls:*)"}, perms["allow"], "unknown sibling key preserved")
 
 	// The hardening still landed alongside the unknowns.
-	assert.Equal(t, []any{"~/.tclaude/data", "~/.claude/sessions"}, fs["denyWrite"])
+	assert.Equal(t, []any{"~/.tclaude/data", "~/.claude/sessions", "~/.codex"}, fs["denyWrite"])
 	// permissions.deny kept its pre-existing element and got the new ones.
 	assert.Equal(t, []any{
 		"Edit(/etc/**)",
@@ -148,6 +149,8 @@ func TestMergeHardening_PreservesUnknownFields(t *testing.T) {
 		"Read(~/.tclaude/data/**)",
 		"Edit(~/.claude/sessions/**)",
 		"Read(~/.claude/sessions/**)",
+		"Edit(~/.codex/**)",
+		"Read(~/.codex/**)",
 	}, perms["deny"])
 }
 
@@ -166,8 +169,8 @@ func TestMergeHardening_ArrayAppendAndDedupe(t *testing.T) {
 	r := runMerge(tree)
 
 	fs := tree["sandbox"].(map[string]any)["filesystem"].(map[string]any)
-	assert.Equal(t, []any{"/custom/path", "~/.tclaude/data", "~/.claude/sessions"},
-		fs["denyWrite"], "custom + existing kept, only the missing element appended")
+	assert.Equal(t, []any{"/custom/path", "~/.tclaude/data", "~/.claude/sessions", "~/.codex"},
+		fs["denyWrite"], "custom + existing kept, only the missing elements appended")
 
 	// "~/.tclaude/data" was already there -> reported as already-present, not added.
 	assert.NotContains(t, strings.Join(r.added, "\n"), `denyWrite += "~/.tclaude/data"`)

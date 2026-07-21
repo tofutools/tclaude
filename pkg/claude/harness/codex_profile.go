@@ -279,6 +279,20 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	for _, dir := range rules.BreakGlassWriteDirs {
 		grants[dir] = "write"
 	}
+	// Protected roots are denied unless an acknowledged break-glass rule covers
+	// them. Applied BEFORE the tmux deny below and AFTER the operator rules, so
+	// an ordinary profile can never reopen them (the validator already rejects
+	// that) and an acknowledged grant survives.
+	protectedRoots, err := codexProtectedRootDenies(privateStateDir)
+	if err != nil {
+		return "", err
+	}
+	for _, root := range protectedRoots {
+		if breakGlassCoversPath(breakGlass, root) {
+			continue
+		}
+		grants[root] = "none"
+	}
 	if tmuxSocketDir != "" {
 		// The tmux socket directory is host-control authority — a strictly more
 		// severe class than protected state — and is NOT reachable through
@@ -355,6 +369,44 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	fmt.Fprintf(&b, "[permissions.%s.network.unix_sockets]\n", p)
 	fmt.Fprintf(&b, "%q = \"allow\"\n", socketPath)
 	return b.String(), nil
+}
+
+// codexProtectedRootDenies returns the protected roots the managed Codex
+// profile must deny beyond the private-state directory it already handled.
+//
+// tclaude advertises three protected roots and gates the entire break-glass
+// mechanism on them being denied by default. Codex's `:workspace` baseline
+// makes the filesystem root readable, so without these explicit denies a Codex
+// agent could read ~/.claude/sessions and ~/.codex — harness session
+// transcripts and credentials — with no acknowledgement at all. The promise
+// has to be true on every harness for break-glass to mean anything.
+//
+// privateStateDir is excluded because the caller emits it separately (and may
+// suppress it for an acknowledged grant).
+func codexProtectedRootDenies(privateStateDir string) ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory for protected sandbox roots: %w", err)
+	}
+	out := make([]string, 0, 2)
+	for _, path := range []string{
+		filepath.Join(home, ".claude", "sessions"),
+		filepath.Join(home, ".codex"),
+	} {
+		path = filepath.Clean(path)
+		// Resolve through symlinks so an aliased home cannot dodge the deny.
+		if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
+			path = filepath.Clean(resolved)
+		}
+		if path == filepath.Clean(privateStateDir) {
+			continue
+		}
+		if err := validateCodexProfilePath("protected root", path); err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	return out, nil
 }
 
 // codexTmuxSocketDir returns the private directory holding tclaude's named

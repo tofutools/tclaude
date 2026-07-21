@@ -23,10 +23,11 @@ import (
 // json.Marshal sorts map keys, so the output is deterministic (testable).
 func claudeSettingsJSON(spec SpawnSpec) string {
 	settings := map[string]any{}
-	// The block builder is given the acknowledged break-glass paths so it can
-	// drop exactly the protected denies those paths reopen.
-	breakGlass := append(append([]string{}, spec.SandboxBreakGlassReadDirs...), spec.SandboxBreakGlassWriteDirs...)
-	if block := claudeSandboxBlockWithBreakGlass(spec.SandboxMode, breakGlass); block != nil {
+	// The block builder is given the acknowledged read and write paths
+	// SEPARATELY so it can drop exactly the protected denies each one reopens —
+	// a read acknowledgement must not clear denyWrite.
+	if block := claudeSandboxBlockWithBreakGlass(spec.SandboxMode,
+		spec.SandboxBreakGlassReadDirs, spec.SandboxBreakGlassWriteDirs); block != nil {
 		settings["sandbox"] = block
 	}
 	if dirs := normalizedSandboxWriteDirs(spec.SandboxWriteDirs); len(dirs) > 0 &&

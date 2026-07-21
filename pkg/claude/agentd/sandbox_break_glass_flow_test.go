@@ -168,10 +168,21 @@ func TestIncludedBreakGlassStillRequiresAssignmentAcknowledgement(t *testing.T) 
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
-	// The wrapper itself declares no break-glass at all.
-	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+	// The wrapper declares no break-glass of its own, but INHERITS it. Creating
+	// it is therefore already an acknowledgement point: gating on the direct
+	// field alone would let an operator launder dangerous authority behind a
+	// wrapper that looks empty.
+	wrapper := map[string]any{
 		"name": "innocent-looking", "filesystem": []map[string]any{}, "includes": []string{"danger-base"},
-	})
+	}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", wrapper)
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"an include-derived dangerous profile must require acknowledgement on create; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+	assert.Contains(t, rec.Body.String(), tclaudeData)
+
+	wrapper["break_glass_acknowledged"] = true
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", wrapper)
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
 	rec = profileReq(t, f, http.MethodPut, "/v1/sandbox-profile-default", map[string]any{"name": "innocent-looking"})
@@ -398,4 +409,188 @@ func TestSpawnRejectsMinimalReadBaselineOnClaudeWithTypedError(t *testing.T) {
 	require.Equalf(t, http.StatusUnprocessableEntity, spawn.Code, "body=%s", spawn.Raw)
 	assert.Contains(t, string(spawn.Raw), "unsupported_sandbox_profile_read_baseline")
 	assert.Contains(t, string(spawn.Raw), "denylist-shaped")
+}
+
+// An EDIT that only adds an include must be gated too: an already-assigned
+// safe wrapper could otherwise be pointed at a dangerous profile without any
+// acknowledgement, silently granting protected access to everything in scope.
+func TestIncludeOnlyEditOfAssignedWrapperRequiresAcknowledgement(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":                     "danger-base",
+		"filesystem":               []map[string]any{},
+		"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "write"}},
+		"break_glass_acknowledged": true,
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	// A genuinely safe wrapper, assigned to the group with no acknowledgement.
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "wrapper", "filesystem": []map[string]any{},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "wrapper"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// Now edit the wrapper to include the dangerous profile. Its own payload
+	// still declares no break-glass at all.
+	edit := map[string]any{
+		"name": "wrapper", "filesystem": []map[string]any{}, "includes": []string{"danger-base"},
+	}
+	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/wrapper", edit)
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"an include-only edit must not smuggle protected access past the gate; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+
+	// The registry is unchanged: the wrapper still carries no protected access.
+	stored, err := db.GetSandboxProfile("wrapper")
+	require.NoError(t, err)
+	assert.Empty(t, stored.Includes, "the refused edit must not have been applied")
+}
+
+// An import whose PROFILES are all harmless can still introduce protected
+// access by applying an assignment that points at a dangerous profile already
+// in the local registry.
+func TestImportAssignmentToExistingDangerousProfileRequiresAcknowledgement(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateAgentGroup("crew", "")
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name":                     "local-danger",
+		"filesystem":               []map[string]any{},
+		"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "read"}},
+		"break_glass_acknowledged": true,
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+
+	// Every profile in the bundle is empty and harmless; only the assignment
+	// is dangerous.
+	bundle := map[string]any{
+		"format":            "tclaude-sandbox-profiles",
+		"format_version":    3,
+		"on_conflict":       "overwrite",
+		"apply_assignments": true,
+		"profiles":          []map[string]any{{"name": "harmless", "filesystem": []map[string]any{}}},
+		"assignments":       map[string]any{"global": "local-danger", "groups": map[string]string{"crew": "local-danger"}},
+	}
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"an assignment to an existing dangerous profile must be gated; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+	assert.Contains(t, rec.Body.String(), "local-danger")
+
+	// Nothing was assigned.
+	global, err := db.GetGlobalSandboxProfile()
+	require.NoError(t, err)
+	assert.Nil(t, global, "the refused import must not have applied its assignments")
+
+	bundle["break_glass_acknowledged"] = true
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", bundle)
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	global, err = db.GetGlobalSandboxProfile()
+	require.NoError(t, err)
+	require.NotNil(t, global)
+	assert.Equal(t, "local-danger", global.Name)
+}
+
+// Resume must replay the RECORDED decision. A later edit to an ambient profile
+// cannot hand a running agent protected access it was never launched with,
+// because resume has no human in the loop to acknowledge it.
+func TestResumeCannotAcquireLaterAmbientBreakGlass(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	f.HaveGroup("crew")
+
+	// A harmless group profile at launch time.
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "group-policy", "filesystem": []map[string]any{},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "group-policy"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// Launch under sandbox `on` deliberately: that is the mode in which Claude
+	// CAN enforce break-glass, so the harness capability gate would pass and
+	// only the resume clamp stands between a later profile edit and a running
+	// agent silently gaining protected access.
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "approval": "bypassPermissions", "sandbox": harness.ClaudeSandboxOn,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "body=%s", spawn.Raw)
+	launched, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, launched)
+	require.Empty(t, launched.Effective.BreakGlassFilesystem, "launched with no protected access")
+
+	// The human now edits that same profile to add break-glass (acknowledged
+	// as an edit — but nobody acknowledged it for THIS running agent).
+	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/group-policy", map[string]any{
+		"name":                     "group-policy",
+		"filesystem":               []map[string]any{},
+		"break_glass_filesystem":   []map[string]any{{"path": tclaudeData, "access": "write"}},
+		"break_glass_acknowledged": true,
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	f.MarkOffline(spawn.TmuxSession)
+	resumed := f.AsHuman().Resume(spawn.ConvID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "resume body=%s", resumed.Raw)
+	// The resume must actually succeed, not merely be blocked by some later
+	// capability gate — otherwise this would pass for the wrong reason.
+	assert.NotContains(t, string(resumed.Raw), "sandbox_profile_changed",
+		"the resume itself must succeed so the clamp is what prevents the escalation")
+
+	after, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	assert.Empty(t, after.Effective.BreakGlassFilesystem,
+		"resume must not pick up protected access added to an ambient profile after launch")
+}
+
+// The same boundary in the other direction: a minimal launch must not be
+// widened back to the broad default by a later profile edit.
+func TestResumeCannotWidenMinimalBaselineToDefault(t *testing.T) {
+	f := newFlow(t)
+	protectedTestDirs(t)
+	f.HaveGroup("crew")
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "group-policy", "filesystem": []map[string]any{}, "read_baseline": "minimal",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
+	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "group-policy"})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	// Codex managed-profile is the harness that can actually enforce minimal.
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "approval": "never",
+		"harness": harness.CodexName, "sandbox": harness.SandboxManagedProfile,
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "body=%s", spawn.Raw)
+	launched, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, launched)
+	require.Equal(t, sandboxpolicy.ReadBaselineMinimal, launched.Effective.ReadBaseline)
+
+	// Widen the profile back to the default baseline.
+	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/group-policy", map[string]any{
+		"name": "group-policy", "filesystem": []map[string]any{},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	f.MarkOffline(spawn.TmuxSession)
+	resumed := f.AsHuman().Resume(spawn.ConvID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "resume body=%s", resumed.Raw)
+
+	after, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, after)
+	assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
+		"minimal -> default is widening and must not happen implicitly on resume")
 }

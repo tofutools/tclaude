@@ -230,7 +230,7 @@ func TestClaudeBreakGlassWriteAlsoGrantsRead(t *testing.T) {
 // Without break-glass the Claude block must be exactly what it was before.
 func TestClaudeSandboxBlockUnchangedWithoutBreakGlass(t *testing.T) {
 	want := ClaudeSandboxOnBlock()
-	got := claudeSandboxBlockWithBreakGlass(ClaudeSandboxOn, nil)
+	got := claudeSandboxBlockWithBreakGlass(ClaudeSandboxOn, nil, nil)
 	assert.Equal(t, want, got)
 	assert.Equal(t, want, claudeSandboxBlock(ClaudeSandboxOn))
 }
@@ -338,4 +338,105 @@ func TestCodexBreakGlassSuppressionLeavesOtherDeniesIntact(t *testing.T) {
 	assert.Contains(t, content, `"/home/u/.tclaude/data" = "read"`)
 	assert.Contains(t, content, `"/home/u/secrets" = "none"`,
 		"suppressing one acknowledged deny must not drop unrelated restrictions")
+}
+
+// tclaude advertises three protected roots and gates the whole break-glass
+// mechanism on them being denied BEFORE any acknowledgement. That promise has
+// to hold on every harness, or break-glass is theatre.
+func TestEveryProtectedRootIsDeniedOnBothHarnessesBeforeBreakGlass(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TMUX_TMPDIR", "/tmp")
+	for _, dir := range []string{".tclaude/data", ".claude/sessions", ".codex"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(home, dir), 0o755))
+	}
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+
+	protected, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.Len(t, protected, 3, "the advertised protected set")
+
+	t.Run("claude", func(t *testing.T) {
+		var decoded struct {
+			Sandbox struct {
+				Filesystem map[string][]string `json:"filesystem"`
+			} `json:"sandbox"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(claudeSettingsJSON(SpawnSpec{SandboxMode: ClaudeSandboxOn})), &decoded))
+		for _, key := range []string{"denyRead", "denyWrite"} {
+			// Compare on resolved paths: the block spells them with "~/".
+			denied := map[string]bool{}
+			for _, entry := range decoded.Sandbox.Filesystem[key] {
+				denied[strings.Replace(entry, "~", canonicalHome, 1)] = true
+			}
+			for _, root := range protected {
+				assert.Truef(t, denied[root], "%s must deny protected root %s (got %v)",
+					key, root, decoded.Sandbox.Filesystem[key])
+			}
+		}
+	})
+
+	t.Run("codex", func(t *testing.T) {
+		privateStateDir := filepath.Join(canonicalHome, ".tclaude", "data")
+		content, err := codexAgentProfileContentForRules("tclaude-agent-test", "/run/agentd.sock", privateStateDir,
+			CodexSandboxRules{}, sandboxpolicy.NetworkAccessInherit, "linux")
+		require.NoError(t, err)
+		for _, root := range protected {
+			assert.Containsf(t, content, `"`+root+`" = "none"`,
+				"the managed Codex profile must deny protected root %s", root)
+		}
+	})
+}
+
+// Adversarial: an acknowledged READ of a protected path, while an unrelated
+// allowWrite root (a workspace or Git grant) contains that same path. Claude's
+// write policy is allowlist-shaped and allows beat denies, so clearing
+// denyWrite for a read-only acknowledgement would silently make it writable.
+func TestClaudeReadOnlyBreakGlassCannotBecomeWritableViaOverlappingWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	protectedPath := home + "/.tclaude/data"
+
+	var decoded struct {
+		Sandbox struct {
+			Filesystem map[string][]string `json:"filesystem"`
+		} `json:"sandbox"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(claudeSettingsJSON(SpawnSpec{
+		SandboxMode: ClaudeSandboxOn,
+		// The workspace write root CONTAINS the protected path.
+		SandboxWriteDirs:          []string{home},
+		SandboxBreakGlassReadDirs: []string{protectedPath},
+	})), &decoded))
+	fs := decoded.Sandbox.Filesystem
+
+	assert.Contains(t, fs["allowRead"], protectedPath, "the acknowledged read must work")
+	assert.NotContains(t, fs["allowWrite"], protectedPath, "a read acknowledgement must not add a write allow")
+	// The critical assertion: denyWrite must SURVIVE, because it is the only
+	// thing stopping the overlapping allowWrite root from making the protected
+	// path writable under an acknowledgement that only asked for read.
+	assert.Contains(t, fs["denyWrite"], tclaudePrivateStateDirTilde,
+		"a read-only acknowledgement must not clear denyWrite")
+	// denyRead is correctly suppressed — that is what was acknowledged.
+	assert.NotContains(t, fs["denyRead"], tclaudePrivateStateDirTilde)
+}
+
+// The write acknowledgement, by contrast, must clear denyWrite — otherwise the
+// operator's explicit write grant would be masked.
+func TestClaudeWriteBreakGlassClearsDenyWrite(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var decoded struct {
+		Sandbox struct {
+			Filesystem map[string][]string `json:"filesystem"`
+		} `json:"sandbox"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(claudeSettingsJSON(SpawnSpec{
+		SandboxMode:                ClaudeSandboxOn,
+		SandboxBreakGlassWriteDirs: []string{home + "/.tclaude/data"},
+	})), &decoded))
+	assert.NotContains(t, decoded.Sandbox.Filesystem["denyWrite"], tclaudePrivateStateDirTilde)
+	assert.NotContains(t, decoded.Sandbox.Filesystem["denyRead"], tclaudePrivateStateDirTilde)
 }

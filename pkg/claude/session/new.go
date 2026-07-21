@@ -1121,11 +1121,22 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
+	readBaseline := sandboxSnapshotReadBaseline(effectiveSandbox)
+	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
+		// Without `extends = ":workspace"` nothing grants the launch directory:
+		// GitWorktreeWriteDirs returns nothing outside a Git repository, so a
+		// minimal agent in a plain directory would have no workspace at all.
+		// The workspace is an invariant launch requirement, not an optional
+		// grant, so it is added explicitly here.
+		if workspace := canonicalMinimalWorkspace(cwd); workspace != "" {
+			writeDirs = appendUniqueDir(writeDirs, workspace)
+		}
+	}
 	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 		ReadDirs:            readDirs,
 		WriteDirs:           writeDirs,
 		DenyDirs:            denyDirs,
-		ReadBaseline:        sandboxSnapshotReadBaseline(effectiveSandbox),
+		ReadBaseline:        readBaseline,
 		BreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		BreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
 	}, networkAccess, launchID)
@@ -1133,6 +1144,31 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
 	}
 	return profileName, path, nil
+}
+
+// canonicalMinimalWorkspace resolves the launch directory for a minimal-baseline
+// grant. It is symlink-resolved so the emitted rule names the same path the
+// sandbox will see, and returns "" when the directory cannot be resolved (the
+// launch then fails on the ordinary cwd checks rather than here).
+func canonicalMinimalWorkspace(cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(cwd))
+	if err != nil {
+		return ""
+	}
+	return filepath.Clean(resolved)
+}
+
+func appendUniqueDir(dirs []string, dir string) []string {
+	for _, existing := range dirs {
+		if existing == dir {
+			return dirs
+		}
+	}
+	return append(dirs, dir)
 }
 
 func sandboxSnapshotBreakGlass(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.BreakGlassGrant {

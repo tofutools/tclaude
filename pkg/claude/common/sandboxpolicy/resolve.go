@@ -20,6 +20,11 @@ const (
 type ProfileSource struct {
 	Scope   Scope  `json:"scope"`
 	Profile string `json:"profile"`
+	// IncludedBy names the assigned profile that pulled Profile in through an
+	// include chain, when the two differ. It keeps the audit trail complete in
+	// both directions: which profile authored the rule, and which assignment
+	// actually caused it to apply. Omitted for a directly-authored rule.
+	IncludedBy string `json:"included_by,omitempty"`
 }
 
 // Scopes is the complete harness-neutral input to Resolve. Nil means that tier
@@ -144,15 +149,24 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		// in provenance, write dominates read on one canonical path, and the
 		// first scope that imposes minimal owns that decision.
 		for _, grant := range normalized.BreakGlassFilesystem {
+			// Attribute to the profile that AUTHORED the rule, not the wrapper
+			// that happened to include it. Without this an operator auditing a
+			// dangerous grant would be pointed at an innocent-looking profile
+			// whose own payload contains nothing dangerous at all.
+			grantSource := source
+			if grant.Origin != "" {
+				grantSource.Profile = grant.Origin
+				grantSource.IncludedBy = normalized.Name
+			}
 			current, exists := breakGlass[grant.Path]
 			if !exists {
-				breakGlass[grant.Path] = resolvedBreakGlassGrant{access: grant.Access, sources: []ProfileSource{source}}
+				breakGlass[grant.Path] = resolvedBreakGlassGrant{access: grant.Access, sources: []ProfileSource{grantSource}}
 				continue
 			}
 			if accessRank(grant.Access) > accessRank(current.access) {
 				current.access = grant.Access
 			}
-			current.sources = append(current.sources, source)
+			current.sources = append(current.sources, grantSource)
 			breakGlass[grant.Path] = current
 		}
 		if normalized.ReadBaseline == ReadBaselineMinimal && result.ReadBaseline != ReadBaselineMinimal {

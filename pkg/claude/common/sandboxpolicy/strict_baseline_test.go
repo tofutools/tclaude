@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -320,7 +321,80 @@ func TestBreakGlassSurvivesIncludeComposition(t *testing.T) {
 		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}},
 	}, func(name string) (*Profile, error) { return registry[name], nil })
 	require.NoError(t, err)
-	assert.Equal(t, []BreakGlassGrant{{Path: tclaudeData, Access: AccessWrite}}, got.BreakGlassFilesystem)
+	assert.Equal(t, []BreakGlassGrant{{Path: tclaudeData, Access: AccessWrite, Origin: "danger"}}, got.BreakGlassFilesystem,
+		"the authoring profile must survive flattening, not be replaced by the wrapper")
+}
+
+// Include provenance must survive arbitrary nesting: an operator auditing a
+// dangerous grant has to be pointed at the profile that actually authored it,
+// not at whichever innocent-looking wrapper happens to be assigned.
+func TestBreakGlassOriginSurvivesNestedIncludes(t *testing.T) {
+	_, tclaudeData, _, _ := protectedHome(t)
+	registry := map[string]*Profile{
+		"leaf":   {Name: "leaf", BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessWrite}}},
+		"middle": {Name: "middle", Includes: []string{"leaf"}},
+		"outer":  {Name: "outer", Includes: []string{"middle"}},
+	}
+	lookup := func(name string) (*Profile, error) { return registry[name], nil }
+
+	flattened, err := Flatten(Profile{Name: "assigned", Includes: []string{"outer"}}, lookup)
+	require.NoError(t, err)
+	require.Len(t, flattened.BreakGlassFilesystem, 1)
+	assert.Equal(t, "leaf", flattened.BreakGlassFilesystem[0].Origin,
+		"three levels down, the leaf still owns the rule")
+
+	effective, err := Resolve(Scopes{Explicit: &flattened})
+	require.NoError(t, err)
+	sources := effective.Provenance.BreakGlassFilesystem[tclaudeData]
+	require.Len(t, sources, 1)
+	assert.Equal(t, "leaf", sources[0].Profile, "audit must name the author")
+	assert.Equal(t, "assigned", sources[0].IncludedBy, "and the assignment that pulled it in")
+	assert.Equal(t, ScopeExplicit, sources[0].Scope)
+}
+
+// A diamond graph must not lose or duplicate attribution.
+func TestBreakGlassOriginSurvivesDiamondIncludes(t *testing.T) {
+	_, tclaudeData, claudeSessions, _ := protectedHome(t)
+	registry := map[string]*Profile{
+		"shared": {Name: "shared", BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}}},
+		"left":   {Name: "left", Includes: []string{"shared"}},
+		"right": {Name: "right", Includes: []string{"shared"},
+			BreakGlassFilesystem: []BreakGlassGrant{{Path: claudeSessions, Access: AccessRead}}},
+	}
+	lookup := func(name string) (*Profile, error) { return registry[name], nil }
+
+	flattened, err := Flatten(Profile{Name: "assigned", Includes: []string{"left", "right"}}, lookup)
+	require.NoError(t, err)
+	byPath := map[string]BreakGlassGrant{}
+	for _, grant := range flattened.BreakGlassFilesystem {
+		byPath[grant.Path] = grant
+	}
+	require.Len(t, byPath, 2)
+	assert.Equal(t, "shared", byPath[tclaudeData].Origin, "both diamond arms attribute to the shared author")
+	assert.Equal(t, "right", byPath[claudeSessions].Origin)
+}
+
+// A rule the assigned profile authored itself keeps an empty Origin, so a
+// directly-authored profile round-trips byte-identically and operators are not
+// shown redundant self-attribution.
+func TestBreakGlassOriginEmptyForDirectlyAuthoredRule(t *testing.T) {
+	_, tclaudeData, _, _ := protectedHome(t)
+	registry := map[string]*Profile{"other": {Name: "other"}}
+	flattened, err := Flatten(Profile{
+		Name:                 "assigned",
+		Includes:             []string{"other"},
+		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}},
+	}, func(name string) (*Profile, error) { return registry[name], nil })
+	require.NoError(t, err)
+	require.Len(t, flattened.BreakGlassFilesystem, 1)
+	assert.Empty(t, flattened.BreakGlassFilesystem[0].Origin)
+
+	effective, err := Resolve(Scopes{Explicit: &flattened})
+	require.NoError(t, err)
+	sources := effective.Provenance.BreakGlassFilesystem[tclaudeData]
+	require.Len(t, sources, 1)
+	assert.Equal(t, "assigned", sources[0].Profile)
+	assert.Empty(t, sources[0].IncludedBy)
 }
 
 func TestSnapshotCapabilitiesIncludeBreakGlass(t *testing.T) {
@@ -440,3 +514,42 @@ func TestBreakGlassCountIsBounded(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too many entries")
 }
+
+// Snapshot v2 is what the current release persists. Rejecting it would break
+// every existing session, actor, and pending-spawn row on upgrade, so the
+// version bump must UPGRADE v1/v2 rather than fail closed on them.
+func TestSnapshotVersionsOneAndTwoUpgradeToCurrent(t *testing.T) {
+	home, _, _, _ := protectedHome(t)
+	workspace := filepath.Join(home, "workspace")
+	require.NoError(t, os.Mkdir(workspace, 0o755))
+
+	for _, version := range []int{1, 2, SnapshotVersion} {
+		// Decode from real persisted JSON, not a hand-built struct, so this
+		// exercises the same path a stored row takes.
+		raw := `{"version":` + itoa(version) + `,"effective":{` +
+			`"filesystem":[{"path":` + mustJSON(t, workspace) + `,"access":"write"}],` +
+			`"environment":[],"agent_directories":[],` +
+			`"provenance":{"applied":[],"filesystem":{},"environment":{},"agent_directories":{}}},"applied":[]}`
+		var snapshot Snapshot
+		require.NoError(t, json.Unmarshal([]byte(raw), &snapshot), "version %d", version)
+
+		upgraded, err := NormalizeSnapshotVersion(snapshot)
+		require.NoErrorf(t, err, "version %d must upgrade, not fail closed", version)
+		assert.Equal(t, SnapshotVersion, upgraded.Version)
+		assert.Equal(t, ReadBaselineDefault, upgraded.Effective.ReadBaseline,
+			"a pre-TCL-609 snapshot means today's behavior")
+		assert.Empty(t, upgraded.Effective.BreakGlassFilesystem)
+
+		// And it must still be usable as launch authority.
+		revalidated, err := RevalidateSnapshot(snapshot)
+		require.NoErrorf(t, err, "version %d", version)
+		assert.Equal(t, SnapshotVersion, revalidated.Version)
+		assert.Len(t, revalidated.Effective.Filesystem, 1)
+	}
+
+	// A genuinely unknown future version still fails closed.
+	_, err := NormalizeSnapshotVersion(Snapshot{Version: SnapshotVersion + 1})
+	require.Error(t, err)
+}
+
+func itoa(v int) string { return strconv.Itoa(v) }

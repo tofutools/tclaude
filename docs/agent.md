@@ -536,6 +536,11 @@ an ambient profile afterwards. A recorded protected path that has since been
 removed or retargeted fails the launch closed rather than launching with
 different authority than was acknowledged.
 
+**Protected roots are denied on every harness.** Both the Claude settings block
+and the managed Codex permission profile explicitly deny all three roots, so
+"denied by default" is true regardless of which harness an agent runs under —
+that promise is what the acknowledgement is protecting.
+
 **Harness support.** Both supported harnesses can represent break-glass, but
 only in their policy-rendering modes (Codex `managed-profile`, Claude
 `sandbox on`), and each requires tclaude to suppress its own protected deny for
@@ -543,6 +548,23 @@ exactly the acknowledged path: on Codex a deny dominates any narrower grant
 regardless of order, and on Claude deny directories are applied
 shallowest-first. Any other harness/mode combination is rejected with the typed
 `unsupported_sandbox_profile_break_glass` error.
+
+**Composition and audit.** Break-glass merges as a privilege-monotonic union
+(write dominating read on one canonical path). The profile that *authored* each
+rule survives include flattening, so the resolved launch echo and audit record
+name the authoring profile and the assignment that pulled it in — an
+innocent-looking wrapper can never take the blame or the credit for a rule it
+inherited. Creating, editing, importing, or assigning a profile that inherits
+break-glass through an include requires the same acknowledgement as one that
+declares it directly.
+
+**Resume never gains authority.** Resume re-resolves ordinary rules from the
+current registry, but the protected-access decision and the read baseline are
+clamped to what was recorded at launch: break-glass is intersected with the
+frozen snapshot (never added, never widened read → write) and the baseline
+takes the stricter of the two. There is no human in the loop on resume to
+acknowledge new protected access, so it is never granted implicitly. To widen a
+running agent's protected access, spawn a fresh one and acknowledge it.
 
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private
