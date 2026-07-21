@@ -338,6 +338,28 @@ tclaude process unblock RUN_ID GUIDANCE_TOKEN \
   --evidence incident:123
 ```
 
+A valid preview also returns an opaque apply token. Apply that exact preview
+atomically by repeating its base, candidate, optional reason, and handoffs:
+
+```bash
+tclaude process apply RUN_ID \
+  --store-root "$STORE" \
+  --candidate-file candidate.yaml \
+  --reason-file reason.txt \
+  --base-revision REVISION \
+  --base-digest DIGEST \
+  --apply-token APPLY_TOKEN \
+  --handoff TOKEN=retain \
+  --ask-human 30s
+```
+
+Apply requires the non-default `process.runs.unlock` permission. `--ask-human`
+can request one bounded approval; timeout or denial fails closed, and this
+permission cannot be made persistent through the popup. Agentd derives the
+actor, UTC timestamp, and fixed `unlock_apply` reason code. Retrying the exact
+committed draft after a lost response returns the original provenance, but
+authorization is evaluated again on every request.
+
 Agentd derives the schema-8 settlement actor and timestamp; `--actor` remains a
 legacy-run option. Exact applied artifacts are restricted reads and require
 the `process.runs.unlock.read` permission:

@@ -96,14 +96,22 @@ func (s *FS) appendEpochV8Settlement(ctx context.Context, runID string, expected
 }
 
 func (s *FS) PublishEpochV8Retain(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, candidateSource, reason []byte) (epochv8.RuntimeTransitionResult, error) {
-	return s.publishEpochV8RuntimeApply(ctx, lease, plan, candidateSource, reason, false)
+	return s.publishEpochV8RuntimeApply(ctx, lease, plan, candidateSource, reason, false, nil)
 }
 
 func (s *FS) PublishEpochV8Transfer(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, candidateSource, reason []byte) (epochv8.RuntimeTransitionResult, error) {
-	return s.publishEpochV8RuntimeApply(ctx, lease, plan, candidateSource, reason, true)
+	return s.publishEpochV8RuntimeApply(ctx, lease, plan, candidateSource, reason, true, nil)
 }
 
-func (s *FS) publishEpochV8RuntimeApply(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, candidateSource, reason []byte, transfer bool) (epochv8.RuntimeTransitionResult, error) {
+func (s *FS) PublishEpochV8RetainAuthorized(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, candidateSource, reason []byte, authorization epochv8.ApplyAuthorization) (epochv8.RuntimeTransitionResult, error) {
+	return s.publishEpochV8RuntimeApply(ctx, lease, plan, candidateSource, reason, false, &authorization)
+}
+
+func (s *FS) PublishEpochV8TransferAuthorized(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, candidateSource, reason []byte, authorization epochv8.ApplyAuthorization) (epochv8.RuntimeTransitionResult, error) {
+	return s.publishEpochV8RuntimeApply(ctx, lease, plan, candidateSource, reason, true, &authorization)
+}
+
+func (s *FS) publishEpochV8RuntimeApply(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, candidateSource, reason []byte, transfer bool, authorization *epochv8.ApplyAuthorization) (epochv8.RuntimeTransitionResult, error) {
 	if err := validateMaintenanceLeaseInput(lease); err != nil {
 		return epochv8.RuntimeTransitionResult{}, err
 	}
@@ -115,7 +123,8 @@ func (s *FS) publishEpochV8RuntimeApply(ctx context.Context, lease MaintenanceLe
 	if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
 		return epochv8.RuntimeTransitionResult{}, err
 	}
-	snapshot, err := s.loadEpochV8RunViewUnlocked(ctx, lease.RunID, s.newEpochV8Budget(ctx))
+	budget := s.newEpochV8Budget(ctx)
+	snapshot, err := s.loadEpochV8RunViewUnlocked(ctx, lease.RunID, budget)
 	if err != nil {
 		return epochv8.RuntimeTransitionResult{}, err
 	}
@@ -125,9 +134,17 @@ func (s *FS) publishEpochV8RuntimeApply(ctx context.Context, lease MaintenanceLe
 	ownerSource := snapshot.EpochSources[snapshot.Runtime.EpochID]
 	var result epochv8.RuntimeTransitionResult
 	if transfer {
-		result, err = epochv8.ApplyTransferHead(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, ownerSource, candidateSource, plan)
+		if authorization == nil {
+			result, err = epochv8.ApplyTransferHead(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, ownerSource, candidateSource, plan)
+		} else {
+			result, err = epochv8.ApplyTransferHeadAuthorized(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, ownerSource, candidateSource, plan, *authorization)
+		}
 	} else {
-		result, err = epochv8.ApplyRetainHead(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, ownerSource, plan)
+		if authorization == nil {
+			result, err = epochv8.ApplyRetainHead(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, ownerSource, plan)
+		} else {
+			result, err = epochv8.ApplyRetainHeadAuthorized(ctx, snapshot.Checkpoint, snapshot.RuntimeJSON, ownerSource, plan, *authorization)
+		}
 	}
 	if err != nil {
 		return epochv8.RuntimeTransitionResult{}, err
@@ -150,6 +167,17 @@ func (s *FS) publishEpochV8RuntimeApply(ctx context.Context, lease MaintenanceLe
 	nextJSON, err := epochv8.EncodeCheckpointV8(result.Checkpoint)
 	if err != nil {
 		return epochv8.RuntimeTransitionResult{}, err
+	}
+	prospectiveBytes := budget.bytes - int64(len(snapshot.CheckpointJSON)) + int64(len(nextJSON)) +
+		int64(len(candidateSource)) + int64(len(diff)) + int64(len(reason))
+	if transfer {
+		prospectiveBytes = prospectiveBytes - int64(len(snapshot.RuntimeJSON)) + int64(len(result.ArtifactJSON))
+	}
+	if prospectiveBytes > budget.maxTotal {
+		return epochv8.RuntimeTransitionResult{}, &ExecutionViewOverBudgetError{
+			Limit: "total_bytes", Component: "published schema-8 coherent view",
+			Value: prospectiveBytes, Maximum: budget.maxTotal,
+		}
 	}
 	if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
 		return epochv8.RuntimeTransitionResult{}, err

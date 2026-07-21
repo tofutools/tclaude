@@ -936,6 +936,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/process/runs/{id}/view", processRoute(handleProcessRunView))
 	mux.HandleFunc("GET /v1/process/runs/{id}/verify", processRoute(handleProcessEpochV8Verify))
 	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/preview", processRoute(handleProcessEpochV8Preview))
+	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/apply", processRoute(handleProcessEpochV8Apply))
 	mux.HandleFunc("POST /v1/process/runs/{id}/unblock", processRoute(handleProcessEpochV8Settlement))
 	mux.HandleFunc("GET /v1/process/runs/{id}/epochs/{epoch}/{artifact}", processRoute(handleProcessEpochV8Artifact))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))
@@ -973,6 +974,8 @@ func projectSafeHTTPLogPath(path string) (string, bool) {
 			switch {
 			case segments[index] == "unlock" && index+1 < len(segments) && segments[index+1] == "preview":
 				return "/v1/process/runs/{id}/unlock/preview", true
+			case segments[index] == "unlock" && index+1 < len(segments) && segments[index+1] == "apply":
+				return "/v1/process/runs/{id}/unlock/apply", true
 			case segments[index] == "unblock":
 				return "/v1/process/runs/{id}/unblock", true
 			case segments[index] == "epochs":

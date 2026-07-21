@@ -440,6 +440,66 @@ func templateMatchesRef(tmpl *model.Template, ref string) bool {
 }
 
 func (s *FS) PublishEpochV8(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, source, reason []byte) (EpochV8PublicationResult, error) {
+	return s.publishEpochV8(ctx, lease, plan, source, reason, nil)
+}
+
+// PublishEpochV8Authorized is the unattached-runtime S5 publication boundary.
+// It refuses missing or client-shaped provenance before any artifact write.
+func (s *FS) PublishEpochV8Authorized(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, source, reason []byte, authorization epochv8.ApplyAuthorization) (EpochV8PublicationResult, error) {
+	return s.publishEpochV8(ctx, lease, plan, source, reason, &authorization)
+}
+
+// VerifyCommittedEpochV8Apply is the maintenance-lease-bound lost-ack path.
+// It never invokes a constructor: later runtime attachment or progression
+// cannot invalidate a committed epoch transition. Loading the coherent view
+// verifies every currently referenced epoch/runtime artifact, then the exact
+// submitted source/reason bytes are checked against the committed epoch.
+func (s *FS) VerifyCommittedEpochV8Apply(ctx context.Context, lease MaintenanceLease, base epochv8.Binding, applyToken string, source, reason []byte, handoffDirectiveDigest string) (EpochV8CommittedApplyResult, bool, error) {
+	if err := validateMaintenanceLeaseInput(lease); err != nil {
+		return EpochV8CommittedApplyResult{}, false, err
+	}
+	if len(source) == 0 || len(source) > EpochV8MaxSourceBytes || len(reason) > EpochV8MaxReasonBytes {
+		return EpochV8CommittedApplyResult{}, false, fmt.Errorf("%w: committed apply artifacts exceed a budget", epochv8.ErrOverBudget)
+	}
+	unlock, err := s.lockRun(ctx, lease.RunID)
+	if err != nil {
+		return EpochV8CommittedApplyResult{}, false, err
+	}
+	defer unlock()
+	if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
+		return EpochV8CommittedApplyResult{}, false, err
+	}
+	snapshot, err := s.loadEpochV8RunViewUnlocked(ctx, lease.RunID, s.newEpochV8Budget(ctx))
+	if err != nil {
+		return EpochV8CommittedApplyResult{}, false, err
+	}
+	reasonDigest := ""
+	if reason != nil {
+		reasonDigest = digestBytes(reason)
+	}
+	committed, found, err := epochv8.FindCommittedAuthorizedApply(
+		snapshot.Checkpoint, base, applyToken, digestBytes(source), reasonDigest, handoffDirectiveDigest,
+	)
+	if err != nil || !found {
+		return EpochV8CommittedApplyResult{}, found, err
+	}
+	diff, committedReasonDigest, err := epochv8.EncodeAppliedEpochDiff(snapshot.Checkpoint, committed.EpochID)
+	if err != nil || committedReasonDigest != reasonDigest {
+		return EpochV8CommittedApplyResult{}, false, fmt.Errorf("%w: committed apply reason identity differs", ErrContentMismatch)
+	}
+	if err := s.verifyEpochV8ArtifactDirUnlocked(ctx, lease.RunID, committed.EpochID, source, diff, reason, s.newEpochV8Budget(ctx)); err != nil {
+		return EpochV8CommittedApplyResult{}, false, err
+	}
+	if _, err := s.requireMaintenanceLeaseUnlocked(lease); err != nil {
+		return EpochV8CommittedApplyResult{}, false, err
+	}
+	return EpochV8CommittedApplyResult{
+		Binding: snapshot.Checkpoint.Binding(), EpochID: committed.EpochID,
+		Kind: committed.Kind, Provenance: committed.Provenance,
+	}, true, nil
+}
+
+func (s *FS) publishEpochV8(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, source, reason []byte, authorization *epochv8.ApplyAuthorization) (EpochV8PublicationResult, error) {
 	if err := validateMaintenanceLeaseInput(lease); err != nil {
 		return EpochV8PublicationResult{}, err
 	}
@@ -456,11 +516,16 @@ func (s *FS) PublishEpochV8(ctx context.Context, lease MaintenanceLease, plan *e
 	if err != nil {
 		return EpochV8PublicationResult{}, err
 	}
-	transition, err := epochv8.Apply(snapshot.Checkpoint, plan)
+	var transition epochv8.TransitionResult
+	if authorization == nil {
+		transition, err = epochv8.Apply(snapshot.Checkpoint, plan)
+	} else {
+		transition, err = epochv8.ApplyAuthorized(snapshot.Checkpoint, plan, *authorization)
+	}
 	if err != nil {
 		return EpochV8PublicationResult{}, err
 	}
-	result := EpochV8PublicationResult{Disposition: transition.Disposition, Binding: transition.Binding, Checkpoint: transition.Checkpoint}
+	result := EpochV8PublicationResult{Disposition: transition.Disposition, Binding: transition.Binding, Checkpoint: transition.Checkpoint, Provenance: transition.Provenance}
 	if transition.Disposition == epochv8.DispositionStale {
 		return result, nil
 	}

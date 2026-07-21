@@ -509,6 +509,16 @@ type EpochV8PublicationResult struct {
 	Disposition epochv8.Disposition
 	Binding     epochv8.Binding
 	Checkpoint  *epochv8.CheckpointV8
+	Provenance  epochv8.ApplyAuthorization
+}
+
+// EpochV8CommittedApplyResult is the read-only lost-ack result for an exact
+// authorized apply already present in the checkpoint history.
+type EpochV8CommittedApplyResult struct {
+	Binding    epochv8.Binding
+	EpochID    epochv8.EpochID
+	Kind       epochv8.RuntimeTransitionKind
+	Provenance epochv8.ApplyAuthorization
 }
 
 type EpochV8GCResult struct {

@@ -26,6 +26,7 @@ type accessReqSnapshot struct {
 		TitleStatus   string `json:"title_status"`
 		AutoGrantable bool   `json:"auto_grantable"`
 		Path          string `json:"path"`
+		Body          string `json:"body"`
 		CreatedAt     string `json:"created_at"`
 		Deadline      string `json:"deadline"`
 		Status        string `json:"status"`

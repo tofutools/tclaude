@@ -8,8 +8,10 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	processstate "github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
 
@@ -98,6 +100,9 @@ func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
 				return fmt.Errorf("%w: apply event base binding is not the exact predecessor", ErrInvalid)
 			}
 			if err := validateApplyCoreStatic(wire.Anchor.RunID, event.Apply.applyCore); err != nil {
+				return err
+			}
+			if err := validateStoredApplyAuthorization(*event.Apply); err != nil {
 				return err
 			}
 			wantRecordDigest, recordErr := applyRecordDigest(*event.Apply)
@@ -246,6 +251,9 @@ func replayRuntimeApply(prefix *checkpointWire, record *ApplyRecord, base Bindin
 	if err := validateApplyCoreStatic(prefix.Anchor.RunID, record.applyCore); err != nil {
 		return err
 	}
+	if err := validateStoredApplyAuthorization(*record); err != nil {
+		return err
+	}
 	if !capabilitySubset(record.CandidateEpoch.RequiredCapabilities, prefix.Anchor.Capabilities) {
 		return fmt.Errorf("%w: runtime apply candidate escalates capabilities", ErrInvalid)
 	}
@@ -273,6 +281,42 @@ func replayRuntimeApply(prefix *checkpointWire, record *ApplyRecord, base Bindin
 	prefix.Authorities = authorities
 	prefix.Epochs = append(prefix.Epochs, cloneEpoch(record.CandidateEpoch))
 	prefix.CurrentEpochID = record.CandidateEpoch.ID
+	return nil
+}
+
+func applyAuthorization(record ApplyRecord) ApplyAuthorization {
+	return ApplyAuthorization{
+		HandoffDirectiveDigest: record.HandoffDirectiveDigest,
+		ReasonCode:             record.ReasonCode,
+		Actor:                  record.Actor,
+		AppliedAt:              record.AppliedAt,
+	}
+}
+
+func validateStoredApplyAuthorization(record ApplyRecord) error {
+	authorization := applyAuthorization(record)
+	if authorization == (ApplyAuthorization{}) {
+		// Schema-8 foundations predate the authorized S5 publication surface.
+		// Their low-level fixtures remain readable, but authorized entry points
+		// below never accept or create this legacy shape.
+		return nil
+	}
+	return validateAuthorizedApplyAuthorization(authorization)
+}
+
+func validateAuthorizedApplyAuthorization(authorization ApplyAuthorization) error {
+	if !canonicalDigest(authorization.HandoffDirectiveDigest) || authorization.ReasonCode != ApplyReasonUnlock {
+		return fmt.Errorf("%w: authorized apply reason/directive provenance is invalid", ErrInvalid)
+	}
+	actor := processstate.ActorRef(authorization.Actor)
+	if !processstate.ValidateActorRef(actor) || processstate.IsEngineActor(actor) ||
+		(!strings.HasPrefix(authorization.Actor, "human:") && !strings.HasPrefix(authorization.Actor, "agent:")) {
+		return fmt.Errorf("%w: authorized apply actor is invalid", ErrInvalid)
+	}
+	appliedAt, err := time.Parse(time.RFC3339Nano, authorization.AppliedAt)
+	if err != nil || appliedAt.Location() != time.UTC || appliedAt.Format(time.RFC3339Nano) != authorization.AppliedAt {
+		return fmt.Errorf("%w: authorized apply timestamp is not canonical UTC", ErrInvalid)
+	}
 	return nil
 }
 

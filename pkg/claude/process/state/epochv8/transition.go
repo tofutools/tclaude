@@ -224,6 +224,20 @@ func PreviewApply(checkpoint *CheckpointV8, draft ApplyDraft) (PreviewResult, er
 
 // Apply validates plan integrity before making the replay/stale/CAS decision.
 func Apply(checkpoint *CheckpointV8, plan *ApplyPlan) (TransitionResult, error) {
+	return apply(checkpoint, plan, nil)
+}
+
+// ApplyAuthorized applies a sealed plan with server-derived S5 provenance.
+// The authorization is deliberately outside applyCore, preserving the exact
+// proposal identity returned by preview.
+func ApplyAuthorized(checkpoint *CheckpointV8, plan *ApplyPlan, authorization ApplyAuthorization) (TransitionResult, error) {
+	if err := validateAuthorizedApplyAuthorization(authorization); err != nil {
+		return TransitionResult{}, err
+	}
+	return apply(checkpoint, plan, &authorization)
+}
+
+func apply(checkpoint *CheckpointV8, plan *ApplyPlan, authorization *ApplyAuthorization) (TransitionResult, error) {
 	if err := VerifyCheckpointV8(checkpoint); err != nil {
 		return TransitionResult{}, err
 	}
@@ -237,9 +251,19 @@ func Apply(checkpoint *CheckpointV8, plan *ApplyPlan) (TransitionResult, error) 
 	if err := validateApplyCoreStatic(checkpoint.wire.Anchor.RunID, core); err != nil {
 		return TransitionResult{}, err
 	}
+	if authorization != nil && checkpoint.wire.RuntimeBinding == (RuntimeBinding{}) && planTransfersAuthority(plan) {
+		return TransitionResult{}, fmt.Errorf("%w: authorized transfer requires an attached runtime", ErrInvalid)
+	}
 	for _, event := range checkpoint.wire.History {
 		if event.Apply != nil && reflect.DeepEqual(event.Apply.applyCore, core) {
-			return TransitionResult{Checkpoint: checkpoint, Disposition: DispositionReplayed, Binding: checkpoint.Binding()}, nil
+			provenance := applyAuthorization(*event.Apply)
+			if authorization != nil {
+				if err := validateAuthorizedApplyAuthorization(provenance); err != nil ||
+					provenance.HandoffDirectiveDigest != authorization.HandoffDirectiveDigest {
+					return TransitionResult{}, fmt.Errorf("%w: committed apply authorization differs", ErrInvalid)
+				}
+			}
+			return TransitionResult{Checkpoint: checkpoint, Disposition: DispositionReplayed, Binding: checkpoint.Binding(), Provenance: provenance}, nil
 		}
 	}
 	if core.BaseBinding != checkpoint.Binding() {
@@ -265,6 +289,12 @@ func Apply(checkpoint *CheckpointV8, plan *ApplyPlan) (TransitionResult, error) 
 		return TransitionResult{}, err
 	}
 	record := &ApplyRecord{applyCore: core}
+	if authorization != nil {
+		record.HandoffDirectiveDigest = authorization.HandoffDirectiveDigest
+		record.ReasonCode = authorization.ReasonCode
+		record.Actor = authorization.Actor
+		record.AppliedAt = authorization.AppliedAt
+	}
 	record.RecordDigest, err = applyRecordDigest(*record)
 	if err != nil {
 		return TransitionResult{}, err
@@ -289,7 +319,62 @@ func Apply(checkpoint *CheckpointV8, plan *ApplyPlan) (TransitionResult, error) 
 	if err := VerifyCheckpointV8(next); err != nil {
 		return TransitionResult{}, err
 	}
-	return TransitionResult{Checkpoint: next, Disposition: DispositionApplied, Binding: next.Binding()}, nil
+	return TransitionResult{Checkpoint: next, Disposition: DispositionApplied, Binding: next.Binding(), Provenance: applyAuthorization(*record)}, nil
+}
+
+// CommittedApply is the bounded authority needed to replay an S5 apply after
+// an acknowledgement loss. Plan remains opaque and can only be passed back
+// into the typed transition/store boundary.
+type CommittedApply struct {
+	Plan       *ApplyPlan
+	Kind       RuntimeTransitionKind
+	EpochID    EpochID
+	Provenance ApplyAuthorization
+}
+
+// FindCommittedAuthorizedApply locates exactly one committed apply using the
+// complete public replay identity. The source digest is over exact candidate
+// bytes; a present empty reason therefore differs from an absent reason.
+func FindCommittedAuthorizedApply(checkpoint *CheckpointV8, base Binding, applyToken, sourceDigest, reasonDigest, handoffDirectiveDigest string) (CommittedApply, bool, error) {
+	if err := VerifyCheckpointV8(checkpoint); err != nil {
+		return CommittedApply{}, false, err
+	}
+	if base.validate() != nil || !canonicalDigest(applyToken) || !canonicalDigest(sourceDigest) ||
+		!canonicalDigest(handoffDirectiveDigest) || reasonDigest != "" && !canonicalDigest(reasonDigest) {
+		return CommittedApply{}, false, fmt.Errorf("%w: committed apply lookup identity is invalid", ErrInvalid)
+	}
+	var found CommittedApply
+	matches := 0
+	for _, event := range checkpoint.wire.History {
+		record := event.Apply
+		if record == nil || record.BaseBinding != base || record.ProposalDigest != applyToken ||
+			record.CandidateEpoch.TemplateSourceDigest != sourceDigest || record.ReasonDigest != reasonDigest ||
+			record.HandoffDirectiveDigest != handoffDirectiveDigest {
+			continue
+		}
+		provenance := applyAuthorization(*record)
+		if err := validateAuthorizedApplyAuthorization(provenance); err != nil {
+			return CommittedApply{}, false, err
+		}
+		kind := RuntimeTransitionKind("")
+		if event.Runtime != nil {
+			kind = event.Runtime.Kind
+			if kind != RuntimeApplyRetain && kind != RuntimeApplyTransfer {
+				return CommittedApply{}, false, fmt.Errorf("%w: committed apply kind is invalid", ErrInvalid)
+			}
+		} else if event.Kind != HistoryApply {
+			return CommittedApply{}, false, fmt.Errorf("%w: committed unattached apply shape is invalid", ErrInvalid)
+		}
+		matches++
+		found = CommittedApply{
+			Plan: &ApplyPlan{core: cloneApplyCore(record.applyCore)}, Kind: kind,
+			EpochID: record.CandidateEpoch.ID, Provenance: provenance,
+		}
+	}
+	if matches > 1 {
+		return CommittedApply{}, false, fmt.Errorf("%w: committed apply identity is ambiguous", ErrInvalid)
+	}
+	return found, matches == 1, nil
 }
 
 // FinishClaimed settles claimed work on its immutable owner epoch. It neither

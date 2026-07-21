@@ -250,6 +250,7 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"permissions.grant", "Grant agent permissions"},
 			{"permissions.revoke", "Revoke agent permissions"},
 			{"process.runs.unlock.read", "Read exact applied schema-8 unlock artifacts"},
+			{"process.runs.unlock", "Atomically apply a preview-bound schema-8 unlock"},
 		}
 	}
 	out := []string{}
