@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -114,6 +115,125 @@ func TestSchema8CustomRootCLIIsRejectedBeforeDaemon(t *testing.T) {
 	err := runShowDispatch(cmd, &showParams{RunID: runID, StoreRoot: customRoot}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "canonical process store") {
 		t.Fatalf("unexpected custom-root result: %v", err)
+	}
+}
+
+func TestSchema8ApplyCLIUsesDaemonOnlyAndCarriesAskHuman(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := store.DefaultRoot()
+	candidate := []byte("exact-candidate-source\n")
+	reason := []byte{}
+	dir := t.TempDir()
+	candidatePath := filepath.Join(dir, "candidate.yaml")
+	reasonPath := filepath.Join(dir, "reason.txt")
+	if err := os.WriteFile(candidatePath, candidate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reasonPath, reason, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	previous := agent.DaemonRequestImpl
+	t.Cleanup(func() { agent.DaemonRequestImpl = previous })
+	var gotMethod, gotPath string
+	var gotOpts agent.DaemonOpts
+	var gotWire []byte
+	agent.DaemonRequestImpl = func(method, path string, in, out any, opts agent.DaemonOpts) error {
+		gotMethod, gotPath, gotOpts = method, path, opts
+		gotWire, _ = json.Marshal(in)
+		return json.Unmarshal([]byte(`{
+			"status":"applied","disposition":"applied","epochId":"`+strings.Repeat("e", 64)+`",
+			"reasonCode":"unlock_apply","actor":"agent:agt_cli","appliedAt":"2026-07-21T08:00:00Z"
+		}`), out)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	var out bytes.Buffer
+	err := runApply(cmd, &applyParams{
+		RunID: "schema8/apply", StoreRoot: root, CandidateFile: candidatePath, ReasonFile: reasonPath,
+		BaseRevision: 7, BaseDigest: strings.Repeat("b", 64), ApplyToken: strings.Repeat("c", 64),
+		Handoff: []string{
+			strings.Repeat("d", 64) + "=retain",
+			strings.Repeat("f", 64) + "=transfer:next-frontier:next-reservation:work",
+		},
+		AskHuman: "30s",
+	}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/process/runs/schema8%2Fapply/unlock/apply" {
+		t.Fatalf("daemon target = %s %s", gotMethod, gotPath)
+	}
+	if gotOpts.Timeout != schema8DaemonTimeout || gotOpts.AskHuman != 30*time.Second {
+		t.Fatalf("daemon opts = %+v", gotOpts)
+	}
+	if bytes.Contains(gotWire, []byte(`"actor"`)) || bytes.Contains(gotWire, []byte(`"appliedAt"`)) ||
+		bytes.Contains(gotWire, []byte(`"reasonCode"`)) {
+		t.Fatalf("client provenance leaked into apply request: %s", gotWire)
+	}
+	var body struct {
+		BaseBinding struct {
+			Revision uint64 `json:"revision"`
+			Digest   string `json:"digest"`
+		} `json:"baseBinding"`
+		ApplyToken      string  `json:"applyToken"`
+		CandidateSource string  `json:"candidateSource"`
+		Reason          *string `json:"reason"`
+		Handoffs        []struct {
+			Token  string `json:"token"`
+			Action string `json:"action"`
+			Target *struct {
+				LocalID       string `json:"localId"`
+				ReservationID string `json:"reservationId"`
+				NodeID        string `json:"nodeId"`
+			} `json:"target"`
+		} `json:"handoffs"`
+	}
+	if err := json.Unmarshal(gotWire, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.BaseBinding.Revision != 7 || body.BaseBinding.Digest != strings.Repeat("b", 64) ||
+		body.ApplyToken != strings.Repeat("c", 64) || body.CandidateSource != string(candidate) {
+		t.Fatalf("apply identity changed: %+v", body)
+	}
+	if body.Reason == nil || *body.Reason != "" {
+		t.Fatalf("present empty reason lost: %#v", body.Reason)
+	}
+	if len(body.Handoffs) != 2 || body.Handoffs[0].Action != "retain_owner_epoch" || body.Handoffs[0].Target != nil ||
+		body.Handoffs[1].Action != "transfer_verified_unclaimed" || body.Handoffs[1].Target == nil ||
+		body.Handoffs[1].Target.LocalID != "next-frontier" {
+		t.Fatalf("handoff DTO changed: %+v", body.Handoffs)
+	}
+	if !strings.Contains(out.String(), "Schema-8 unlock applied") || strings.Contains(out.String(), string(candidate)) {
+		t.Fatalf("unsafe or incomplete apply output: %s", out.String())
+	}
+}
+
+func TestSchema8ApplyCLIRejectsCustomRootAndInvalidAskBeforeDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previous := agent.DaemonRequestImpl
+	t.Cleanup(func() { agent.DaemonRequestImpl = previous })
+	agent.DaemonRequestImpl = func(string, string, any, any, agent.DaemonOpts) error {
+		t.Fatal("rejected apply reached daemon")
+		return nil
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	base := applyParams{
+		RunID: "run", CandidateFile: filepath.Join(t.TempDir(), "missing"), BaseDigest: strings.Repeat("a", 64),
+		ApplyToken: strings.Repeat("b", 64),
+	}
+	custom := base
+	custom.StoreRoot = filepath.Join(t.TempDir(), "portable")
+	if err := runApply(cmd, &custom, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "canonical process store") {
+		t.Fatalf("custom root result = %v", err)
+	}
+	invalidAsk := base
+	invalidAsk.StoreRoot = store.DefaultRoot()
+	invalidAsk.AskHuman = "not-a-duration"
+	if err := runApply(cmd, &invalidAsk, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "invalid --ask-human") {
+		t.Fatalf("invalid ask result = %v", err)
 	}
 }
 

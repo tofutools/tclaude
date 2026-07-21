@@ -1,12 +1,14 @@
 package agentd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +28,7 @@ const (
 	maxEpochV8PreviewHandoffs  = 256
 	maxEpochV8SettlementWire   = 1 << 20
 	maxEpochV8SettlementText   = 64 << 10
+	epochV8ApplyLeaseTTL       = 2 * time.Minute
 )
 
 type epochV8BindingDTO struct {
@@ -112,6 +115,7 @@ type epochV8PreviewResponse struct {
 	AuthorityCounts epochV8AuthorityCountsDTO `json:"authorityCounts"`
 	Blockers        []epochV8BlockerDTO       `json:"blockers,omitempty"`
 	Guidance        *epochV8GuidanceDTO       `json:"guidance,omitempty"`
+	ApplyToken      string                    `json:"applyToken,omitempty"`
 }
 
 func handleProcessEpochV8Preview(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +228,7 @@ func buildEpochV8Preview(r *http.Request, view store.EpochV8ExecutionView, body 
 	if _, err := epochv8.EncodeApplyPlan(preview.Plan); err != nil {
 		return err
 	}
+	response.ApplyToken = preview.Plan.ProposalDigest()
 	ownerSource := []byte(nil)
 	if view.Runtime != nil {
 		ownerSource = view.EpochSources[view.Runtime.EpochID]
@@ -244,6 +249,267 @@ func buildEpochV8Preview(r *http.Request, view store.EpochV8ExecutionView, body 
 	}
 	response.Classification = "cannot_affect_without_later_intervention"
 	return nil
+}
+
+type epochV8ApplyRequest struct {
+	BaseBinding     epochV8BindingDTO              `json:"baseBinding"`
+	ApplyToken      string                         `json:"applyToken"`
+	CandidateSource string                         `json:"candidateSource"`
+	Reason          *string                        `json:"reason,omitempty"`
+	Handoffs        []epochV8PreviewHandoffRequest `json:"handoffs"`
+}
+
+type epochV8ApplyResponse struct {
+	Status         string            `json:"status"`
+	Disposition    string            `json:"disposition"`
+	ApplyToken     string            `json:"applyToken"`
+	EpochID        epochv8.EpochID   `json:"epochId"`
+	CurrentBinding epochV8BindingDTO `json:"currentBinding"`
+	ReasonCode     string            `json:"reasonCode"`
+	Actor          string            `json:"actor"`
+	AppliedAt      string            `json:"appliedAt"`
+}
+
+var errEpochV8ApplyStale = errors.New("schema-8 apply binding is stale")
+
+func handleProcessEpochV8Apply(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermProcessRunsUnlock)
+	if !ok {
+		return
+	}
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "forbidden", "caller has no stable apply identity")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxEpochV8PreviewWireBytes)
+	var body epochV8ApplyRequest
+	if err := decodeOneStrictJSON(r.Body, &body); err != nil {
+		writeEpochV8DecodeError(w, err)
+		return
+	}
+	if len(body.CandidateSource) == 0 || len(body.CandidateSource) > model.MaxProcessTemplateSourceBytes ||
+		len(body.Handoffs) > maxEpochV8PreviewHandoffs || body.Reason != nil && len(*body.Reason) > store.EpochV8MaxReasonBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "process_unlock_budget", "process unlock exceeds a request budget")
+		return
+	}
+	if !lowerHexDigest(body.BaseBinding.Digest) || !lowerHexDigest(body.ApplyToken) {
+		writeError(w, http.StatusUnprocessableEntity, "process_unlock_invalid", "process unlock binding or token is invalid")
+		return
+	}
+	handoffDigest, err := epochV8HandoffDirectiveDigest(body.Handoffs)
+	if err != nil {
+		writeEpochV8ApplyError(w, err, epochV8BindingDTO{})
+		return
+	}
+	classification, err := epochv8.ClassifyTemplateSource([]byte(body.CandidateSource))
+	if err != nil || classification.Candidate() == nil {
+		writeError(w, http.StatusUnprocessableEntity, "process_unlock_unsupported", "candidate is not supported by schema 8")
+		return
+	}
+	reason := []byte(nil)
+	reasonDigest := ""
+	if body.Reason != nil {
+		reason = []byte(*body.Reason)
+		digest := sha256.Sum256(reason)
+		reasonDigest = hex.EncodeToString(digest[:])
+	}
+	sourceDigest := sha256.Sum256([]byte(body.CandidateSource))
+
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "process_unlock_unavailable", "process unlock is unavailable")
+		return
+	}
+	lease, err := fs.AcquireMaintenanceLease(r.Context(), r.PathValue("id"), processEngineHolder()+":unlock", epochV8ApplyLeaseTTL)
+	if err != nil {
+		writeEpochV8ApplyError(w, err, epochV8BindingDTO{})
+		return
+	}
+	defer func() { _ = fs.ReleaseMaintenanceLease(context.WithoutCancel(r.Context()), lease) }()
+
+	requestedAuthorization := epochv8.ApplyAuthorization{
+		HandoffDirectiveDigest: handoffDigest,
+		ReasonCode:             epochv8.ApplyReasonUnlock,
+		Actor:                  string(actor),
+		AppliedAt:              time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	var plan *epochv8.ApplyPlan
+	var kind epochv8.RuntimeTransitionKind
+	var currentBinding epochv8.Binding
+	err = fs.WithEpochV8ExecutionView(r.Context(), r.PathValue("id"), func(view store.EpochV8ExecutionView) error {
+		currentBinding = view.Checkpoint.Binding()
+		committed, found, findErr := epochv8.FindCommittedAuthorizedApply(
+			view.Checkpoint, body.BaseBinding.engine(), body.ApplyToken,
+			hex.EncodeToString(sourceDigest[:]), reasonDigest, handoffDigest,
+		)
+		if findErr != nil {
+			return findErr
+		}
+		if found {
+			plan, kind = committed.Plan, committed.Kind
+			return nil
+		}
+		if currentBinding != body.BaseBinding.engine() {
+			return errEpochV8ApplyStale
+		}
+		directives, directiveErr := epochV8ResolveHandoffDirectives(view.Checkpoint, body.Handoffs)
+		if directiveErr != nil {
+			return directiveErr
+		}
+		preview, previewErr := epochv8.PreviewApply(view.Checkpoint, epochv8.ApplyDraft{
+			BaseBinding: currentBinding, Candidate: classification.Candidate(), ReasonDigest: reasonDigest, Handoffs: directives,
+		})
+		if previewErr != nil {
+			return previewErr
+		}
+		if preview.Plan == nil || len(preview.Blockers) != 0 || preview.Plan.ProposalDigest() != body.ApplyToken {
+			return epochv8.ErrInvalid
+		}
+		plan = preview.Plan
+		if view.Runtime == nil {
+			kind = ""
+			return nil
+		}
+		ownerSource := view.EpochSources[view.Runtime.EpochID]
+		preflight, preflightErr := epochv8.PreflightRuntimeApply(r.Context(), view.Checkpoint, view.RuntimeJSON, ownerSource, []byte(body.CandidateSource), plan)
+		if preflightErr != nil {
+			return preflightErr
+		}
+		switch preflight {
+		case epochv8.RuntimeApplyRetainReady:
+			kind = epochv8.RuntimeApplyRetain
+		case epochv8.RuntimeApplyTransferReady:
+			kind = epochv8.RuntimeApplyTransfer
+		default:
+			return epochv8.ErrInvalid
+		}
+		return nil
+	})
+	if err != nil {
+		writeEpochV8ApplyError(w, err, bindingDTO(currentBinding))
+		return
+	}
+
+	var disposition epochv8.Disposition
+	var binding epochv8.Binding
+	var provenance epochv8.ApplyAuthorization
+	switch kind {
+	case "":
+		published, publishErr := fs.PublishEpochV8Authorized(r.Context(), lease, plan, []byte(body.CandidateSource), reason, requestedAuthorization)
+		if publishErr != nil {
+			writeEpochV8ApplyError(w, publishErr, bindingDTO(currentBinding))
+			return
+		}
+		disposition, binding, provenance = published.Disposition, published.Binding, published.Provenance
+	case epochv8.RuntimeApplyRetain:
+		published, publishErr := fs.PublishEpochV8RetainAuthorized(r.Context(), lease, plan, []byte(body.CandidateSource), reason, requestedAuthorization)
+		if publishErr != nil {
+			writeEpochV8ApplyError(w, publishErr, bindingDTO(currentBinding))
+			return
+		}
+		disposition, binding, provenance = published.Disposition, published.Binding, published.Provenance
+	case epochv8.RuntimeApplyTransfer:
+		published, publishErr := fs.PublishEpochV8TransferAuthorized(r.Context(), lease, plan, []byte(body.CandidateSource), reason, requestedAuthorization)
+		if publishErr != nil {
+			writeEpochV8ApplyError(w, publishErr, bindingDTO(currentBinding))
+			return
+		}
+		disposition, binding, provenance = published.Disposition, published.Binding, published.Provenance
+	default:
+		writeError(w, http.StatusConflict, "process_unlock_conflict", "process unlock constructor is inconsistent")
+		return
+	}
+	status := "applied"
+	if disposition == epochv8.DispositionReplayed {
+		status = "already_applied"
+	}
+	setAuditDetail(r, "reason_code="+epochv8.ApplyReasonUnlock+";disposition="+string(disposition)+";revision="+strconv.FormatUint(binding.Revision, 10))
+	writeProcessJSON(w, http.StatusOK, epochV8ApplyResponse{
+		Status: status, Disposition: string(disposition), ApplyToken: body.ApplyToken,
+		EpochID: plan.CandidateEpoch().ID, CurrentBinding: bindingDTO(binding),
+		ReasonCode: provenance.ReasonCode, Actor: provenance.Actor, AppliedAt: provenance.AppliedAt,
+	})
+}
+
+func epochV8ResolveHandoffDirectives(checkpoint *epochv8.CheckpointV8, handoffs []epochV8PreviewHandoffRequest) ([]epochv8.HandoffDirective, error) {
+	directives := make([]epochv8.HandoffDirective, 0, len(handoffs))
+	for _, handoff := range handoffs {
+		owner, err := epochv8.ResolveHandoffToken(checkpoint, handoff.Token)
+		if err != nil {
+			return nil, err
+		}
+		directive := epochv8.HandoffDirective{Source: owner, Action: handoff.Action}
+		if handoff.Target != nil {
+			directive.TargetLocalID = handoff.Target.LocalID
+			directive.TargetReservationID = handoff.Target.ReservationID
+			directive.TargetNodeID = handoff.Target.NodeID
+		}
+		directives = append(directives, directive)
+	}
+	return directives, nil
+}
+
+func epochV8HandoffDirectiveDigest(handoffs []epochV8PreviewHandoffRequest) (string, error) {
+	canonical := append([]epochV8PreviewHandoffRequest(nil), handoffs...)
+	seen := make(map[string]struct{}, len(canonical))
+	for _, handoff := range canonical {
+		if !lowerHexDigest(handoff.Token) {
+			return "", epochv8.ErrInvalid
+		}
+		if _, duplicate := seen[handoff.Token]; duplicate {
+			return "", epochv8.ErrInvalid
+		}
+		seen[handoff.Token] = struct{}{}
+		switch handoff.Action {
+		case epochv8.HandoffRetain:
+			if handoff.Target != nil {
+				return "", epochv8.ErrInvalid
+			}
+		case epochv8.HandoffTransfer:
+			if handoff.Target == nil || !boundedEpochV8Identifier(handoff.Target.LocalID) ||
+				!boundedEpochV8Identifier(handoff.Target.ReservationID) || !boundedEpochV8Identifier(handoff.Target.NodeID) {
+				return "", epochv8.ErrInvalid
+			}
+		default:
+			return "", epochv8.ErrInvalid
+		}
+	}
+	sort.Slice(canonical, func(i, j int) bool { return canonical[i].Token < canonical[j].Token })
+	wire, err := json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	_, _ = io.WriteString(digest, "process-unlock-handoffs/v1\x00")
+	_, _ = digest.Write(wire)
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func writeEpochV8ApplyError(w http.ResponseWriter, err error, current epochV8BindingDTO) {
+	var budget *store.ExecutionViewOverBudgetError
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "process run was not found")
+	case errors.Is(err, errEpochV8ApplyStale):
+		writeProcessJSON(w, http.StatusConflict, struct {
+			Code           string            `json:"code"`
+			Status         string            `json:"status"`
+			CurrentBinding epochV8BindingDTO `json:"currentBinding"`
+		}{"process_unlock_stale", "stale", current})
+	case errors.Is(err, store.ErrLeaseHeld):
+		writeError(w, http.StatusConflict, "process_unlock_busy", "process run is busy")
+	case errors.Is(err, epochv8.ErrOverBudget), errors.As(err, &budget):
+		writeError(w, http.StatusRequestEntityTooLarge, "process_unlock_budget", "process unlock exceeds a budget")
+	case errors.Is(err, epochv8.ErrInvalid), errors.Is(err, epochv8.ErrNonCanonical):
+		writeError(w, http.StatusUnprocessableEntity, "process_unlock_invalid", "process unlock input is invalid")
+	case errors.Is(err, store.ErrWriterInProgress), errors.Is(err, store.ErrRunInconsistent),
+		errors.Is(err, store.ErrContentMismatch), errors.Is(err, store.ErrUnsafeRunPath):
+		writeError(w, http.StatusConflict, "process_unlock_conflict", "process unlock preconditions are inconsistent")
+	default:
+		writeError(w, http.StatusInternalServerError, "process_unlock_unavailable", "process unlock is unavailable")
+	}
 }
 
 func boundedEpochV8Identifier(value string) bool {

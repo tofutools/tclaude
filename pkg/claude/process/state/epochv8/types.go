@@ -240,7 +240,25 @@ type ApplyPlan struct{ core applyCore }
 
 type ApplyRecord struct {
 	applyCore
-	RecordDigest string `json:"recordDigest"`
+	// HandoffDirectiveDigest binds the exact transport-level opaque tokens,
+	// actions, and targets that authorized the apply. It deliberately lives
+	// outside applyCore so it cannot change the preview's ProposalDigest.
+	HandoffDirectiveDigest string `json:"handoffDirectiveDigest,omitempty"`
+	ReasonCode             string `json:"reasonCode,omitempty"`
+	Actor                  string `json:"actor,omitempty"`
+	AppliedAt              string `json:"appliedAt,omitempty"`
+	RecordDigest           string `json:"recordDigest"`
+}
+
+const ApplyReasonUnlock = "unlock_apply"
+
+// ApplyAuthorization is trusted server input for an authorized S5 apply.
+// Callers cannot place any of these fields in the public apply request.
+type ApplyAuthorization struct {
+	HandoffDirectiveDigest string
+	ReasonCode             string
+	Actor                  string
+	AppliedAt              string
 }
 
 type FinishResult string
@@ -385,6 +403,7 @@ type TransitionResult struct {
 	Checkpoint  *CheckpointV8
 	Disposition Disposition
 	Binding     Binding
+	Provenance  ApplyAuthorization
 }
 
 type OverBudgetError struct {

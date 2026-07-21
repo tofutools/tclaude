@@ -440,6 +440,16 @@ func templateMatchesRef(tmpl *model.Template, ref string) bool {
 }
 
 func (s *FS) PublishEpochV8(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, source, reason []byte) (EpochV8PublicationResult, error) {
+	return s.publishEpochV8(ctx, lease, plan, source, reason, nil)
+}
+
+// PublishEpochV8Authorized is the unattached-runtime S5 publication boundary.
+// It refuses missing or client-shaped provenance before any artifact write.
+func (s *FS) PublishEpochV8Authorized(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, source, reason []byte, authorization epochv8.ApplyAuthorization) (EpochV8PublicationResult, error) {
+	return s.publishEpochV8(ctx, lease, plan, source, reason, &authorization)
+}
+
+func (s *FS) publishEpochV8(ctx context.Context, lease MaintenanceLease, plan *epochv8.ApplyPlan, source, reason []byte, authorization *epochv8.ApplyAuthorization) (EpochV8PublicationResult, error) {
 	if err := validateMaintenanceLeaseInput(lease); err != nil {
 		return EpochV8PublicationResult{}, err
 	}
@@ -456,11 +466,16 @@ func (s *FS) PublishEpochV8(ctx context.Context, lease MaintenanceLease, plan *e
 	if err != nil {
 		return EpochV8PublicationResult{}, err
 	}
-	transition, err := epochv8.Apply(snapshot.Checkpoint, plan)
+	var transition epochv8.TransitionResult
+	if authorization == nil {
+		transition, err = epochv8.Apply(snapshot.Checkpoint, plan)
+	} else {
+		transition, err = epochv8.ApplyAuthorized(snapshot.Checkpoint, plan, *authorization)
+	}
 	if err != nil {
 		return EpochV8PublicationResult{}, err
 	}
-	result := EpochV8PublicationResult{Disposition: transition.Disposition, Binding: transition.Binding, Checkpoint: transition.Checkpoint}
+	result := EpochV8PublicationResult{Disposition: transition.Disposition, Binding: transition.Binding, Checkpoint: transition.Checkpoint, Provenance: transition.Provenance}
 	if transition.Disposition == epochv8.DispositionStale {
 		return result, nil
 	}

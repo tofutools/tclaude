@@ -23,6 +23,7 @@ func Cmd() *cobra.Command {
 			runsCmd(),
 			runCmd(),
 			previewCmd(),
+			applyCmd(),
 			showCmd(),
 			worklistCmd(),
 			advanceCmd(),

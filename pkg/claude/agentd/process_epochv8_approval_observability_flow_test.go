@@ -73,6 +73,16 @@ func TestEpochV8ApprovalObservabilityUsesOnlyRouteTemplates(t *testing.T) {
 			path:     "/v1/process/runs/%7Bid%7D/epochs/%7Bepoch%7D/%7Bartifact%7D?ref=private-artifact-query-encoded",
 			wantPath: "/v1/process/runs/{id}/epochs/{epoch}/{artifact}", perm: agentd.PermProcessRunsUnlockRead,
 		},
+		{
+			name: "unlock-apply", method: http.MethodPost,
+			path:     "/v1/process/runs/private-apply-run/unlock/apply?ref=private-apply-query",
+			wantPath: "/v1/process/runs/{id}/unlock/apply", perm: agentd.PermProcessRunsUnlock,
+			body: map[string]any{
+				"baseBinding": map[string]any{"revision": 1, "digest": strings.Repeat("a", 64)},
+				"applyToken":  strings.Repeat("b", 64), "candidateSource": "private-apply-source",
+				"reason": "private-apply-reason", "handoffs": []any{"private-apply-handoff"},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
@@ -140,6 +150,7 @@ func TestEpochV8ApprovalObservabilityUsesOnlyRouteTemplates(t *testing.T) {
 			for _, sentinel := range []string{
 				"private-settlement-run", "private-settlement-query", "private-settlement-reason", "private-settlement-evidence",
 				"private-artifact-run", "private-artifact-epoch", "private-artifact-query",
+				"private-apply-run", "private-apply-query", "private-apply-source", "private-apply-reason", "private-apply-handoff",
 			} {
 				assert.NotContains(t, observed, sentinel)
 			}

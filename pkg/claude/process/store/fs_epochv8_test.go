@@ -104,6 +104,54 @@ func TestEpochV8InitializeReadPublishAndExactReplay(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), reasonInfo.Mode().Perm())
 }
 
+func TestEpochV8AuthorizedPublicationLostAckReturnsOriginalProvenance(t *testing.T) {
+	fs, err := store.NewFS(t.TempDir())
+	require.NoError(t, err)
+	record, source0 := putEpochV8Template(t, fs, "epoch-authorized-store", "zero")
+	initialized, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{
+		ID: "epoch-authorized-store", TemplateRef: record.Ref,
+	}, source0)
+	require.NoError(t, err)
+	_, source1 := putEpochV8Template(t, fs, "epoch-authorized-store", "one")
+	plan := previewEpochV8Apply(t, initialized.Checkpoint, source1, digestText("restricted reason"))
+	lease, err := fs.AcquireMaintenanceLease(t.Context(), initialized.Run.ID, "authorized-maintainer", time.Minute)
+	require.NoError(t, err)
+	authorization := epochv8.ApplyAuthorization{
+		HandoffDirectiveDigest: strings.Repeat("a", 64), ReasonCode: epochv8.ApplyReasonUnlock,
+		Actor: "agent:agt_store", AppliedAt: "2026-07-21T08:00:00.123Z",
+	}
+
+	for _, invalid := range []epochv8.ApplyAuthorization{
+		{},
+		{HandoffDirectiveDigest: strings.Repeat("a", 64), ReasonCode: "client_reason", Actor: authorization.Actor, AppliedAt: authorization.AppliedAt},
+	} {
+		_, publishErr := fs.PublishEpochV8Authorized(t.Context(), lease, plan, source1, []byte("restricted reason"), invalid)
+		assert.ErrorIs(t, publishErr, epochv8.ErrInvalid)
+	}
+	loaded, err := fs.LoadEpochV8RunView(t.Context(), initialized.Run.ID)
+	require.NoError(t, err)
+	assert.Equal(t, initialized.Checkpoint.Binding(), loaded.Checkpoint.Binding(), "invalid provenance must publish nothing")
+	_, err = fs.ReadEpochV8AppliedArtifacts(t.Context(), initialized.Run.ID, plan.CandidateEpoch().ID)
+	assert.ErrorIs(t, err, store.ErrNotFound)
+
+	lostAck := errors.New("lost authorized acknowledgement")
+	restore := fs.SetEpochV8PublishHooksForTest(nil, nil, nil, func() error { return lostAck })
+	_, err = fs.PublishEpochV8Authorized(t.Context(), lease, plan, source1, []byte("restricted reason"), authorization)
+	restore()
+	assert.ErrorIs(t, err, lostAck)
+
+	retryAuthorization := authorization
+	retryAuthorization.AppliedAt = "2026-07-21T08:01:00Z"
+	replayed, err := fs.PublishEpochV8Authorized(t.Context(), lease, plan, source1, []byte("restricted reason"), retryAuthorization)
+	require.NoError(t, err)
+	assert.Equal(t, epochv8.DispositionReplayed, replayed.Disposition)
+	assert.Equal(t, authorization, replayed.Provenance, "lost-ack replay must return the original server provenance")
+	artifacts, err := fs.ReadEpochV8AppliedArtifacts(t.Context(), initialized.Run.ID, plan.CandidateEpoch().ID)
+	require.NoError(t, err)
+	assert.True(t, artifacts.HasReason)
+	assert.Equal(t, []byte("restricted reason"), artifacts.Reason)
+}
+
 func TestEpochV8RuntimePublicationAndDurableEngineLeaseGeneration(t *testing.T) {
 	root := t.TempDir()
 	fs, err := store.NewFS(root)
@@ -425,11 +473,19 @@ func TestEpochV8MaintenanceRetainThenTransferPublishesOneRuntimeHead(t *testing.
 	require.NoError(t, err)
 	maintenance1, err := fs.AcquireMaintenanceLease(t.Context(), "epoch-runtime-apply", "maintainer", time.Minute)
 	require.NoError(t, err)
-	retained, err := fs.PublishEpochV8Retain(t.Context(), maintenance1, preview1.Plan, source1, nil)
+	retainAuthorization := epochv8.ApplyAuthorization{
+		HandoffDirectiveDigest: strings.Repeat("b", 64), ReasonCode: epochv8.ApplyReasonUnlock,
+		Actor: "human:operator", AppliedAt: "2026-07-21T08:10:00Z",
+	}
+	retained, err := fs.PublishEpochV8RetainAuthorized(t.Context(), maintenance1, preview1.Plan, source1, nil, retainAuthorization)
 	require.NoError(t, err)
-	retainedReplay, err := fs.PublishEpochV8Retain(t.Context(), maintenance1, preview1.Plan, source1, nil)
+	retainRetry := retainAuthorization
+	retainRetry.AppliedAt = "2026-07-21T08:11:00Z"
+	retainedReplay, err := fs.PublishEpochV8RetainAuthorized(t.Context(), maintenance1, preview1.Plan, source1, nil, retainRetry)
 	require.NoError(t, err)
 	assert.Equal(t, epochv8.DispositionReplayed, retainedReplay.Disposition)
+	assert.Equal(t, retainAuthorization, retained.Provenance)
+	assert.Equal(t, retainAuthorization, retainedReplay.Provenance)
 	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), maintenance1))
 	assert.Equal(t, claimed.Artifact.Digest, retained.Artifact.Digest)
 
@@ -456,11 +512,19 @@ func TestEpochV8MaintenanceRetainThenTransferPublishesOneRuntimeHead(t *testing.
 	plan2 := previewEpochV8Apply(t, routed.Checkpoint, source2, "")
 	maintenance2, err := fs.AcquireMaintenanceLease(t.Context(), "epoch-runtime-apply", "maintainer", time.Minute)
 	require.NoError(t, err)
-	transferred, err := fs.PublishEpochV8Transfer(t.Context(), maintenance2, plan2, source2, nil)
+	transferAuthorization := epochv8.ApplyAuthorization{
+		HandoffDirectiveDigest: strings.Repeat("c", 64), ReasonCode: epochv8.ApplyReasonUnlock,
+		Actor: "agent:agt_store", AppliedAt: "2026-07-21T08:20:00Z",
+	}
+	transferred, err := fs.PublishEpochV8TransferAuthorized(t.Context(), maintenance2, plan2, source2, nil, transferAuthorization)
 	require.NoError(t, err)
-	transferredReplay, err := fs.PublishEpochV8Transfer(t.Context(), maintenance2, plan2, source2, nil)
+	transferRetry := transferAuthorization
+	transferRetry.AppliedAt = "2026-07-21T08:21:00Z"
+	transferredReplay, err := fs.PublishEpochV8TransferAuthorized(t.Context(), maintenance2, plan2, source2, nil, transferRetry)
 	require.NoError(t, err)
 	assert.Equal(t, epochv8.DispositionReplayed, transferredReplay.Disposition)
+	assert.Equal(t, transferAuthorization, transferred.Provenance)
+	assert.Equal(t, transferAuthorization, transferredReplay.Provenance)
 	require.NoError(t, fs.ReleaseMaintenanceLease(t.Context(), maintenance2))
 	assert.NotEqual(t, retained.Artifact.Digest, transferred.Artifact.Digest)
 	assert.Equal(t, plan2.CandidateEpoch().ID, transferred.Artifact.EpochID)

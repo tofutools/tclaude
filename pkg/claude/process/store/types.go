@@ -509,6 +509,7 @@ type EpochV8PublicationResult struct {
 	Disposition epochv8.Disposition
 	Binding     epochv8.Binding
 	Checkpoint  *epochv8.CheckpointV8
+	Provenance  epochv8.ApplyAuthorization
 }
 
 type EpochV8GCResult struct {

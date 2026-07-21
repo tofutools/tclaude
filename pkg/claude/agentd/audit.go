@@ -224,6 +224,9 @@ var auditRoutes = []auditRoute{
 	// nil so the signal body is never copied into the audit detail.
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "nodes", "{node}", "signal"}, verb: "process.signal"},
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "unblock"}, verb: "process.unblock"},
+	// Unlock apply carries exact source, reason, and handoff material. A nil
+	// describer is load-bearing: the audit middleware must never buffer it.
+	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "unlock", "apply"}, verb: "process.unlock.apply"},
 	// Template deletion is the most destructive operation on this surface: it
 	// discards every version, the editor source, and the authorship trail for an
 	// id, irreversibly. No describer is needed — the path already carries the id,
@@ -449,10 +452,7 @@ func recordAuditRow(r *http.Request, route *auditRoute, vars map[string]string, 
 	if fields.Verb == "" {
 		return // unclassifiable — nothing useful to record
 	}
-	auditPath := r.URL.Path
-	if fields.Verb == "process.unblock" {
-		auditPath = "/v1/process/runs/{id}/unblock"
-	}
+	auditPath := safeHTTPLogPath(r.URL.Path)
 
 	kind, conv, label := auditActor(r, source)
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{

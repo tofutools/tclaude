@@ -40,6 +40,7 @@ type RuntimeTransitionResult struct {
 	ArtifactJSON []byte
 	Disposition  Disposition
 	Binding      Binding
+	Provenance   ApplyAuthorization
 }
 
 // RuntimeInternalRunID returns the full domain-separated nested path-v1 run
@@ -205,14 +206,25 @@ func addedVerifiedFrontiers(before, after []AuthorityRecord) []OwnerIdentity {
 }
 
 func ApplyRetainHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource []byte, plan *ApplyPlan) (RuntimeTransitionResult, error) {
-	if replay, ok, err := replayPublishedRuntimeApply(ctx, checkpoint, artifactJSON, ownerSource, plan, RuntimeApplyRetain); ok || err != nil {
+	return applyRetainHead(ctx, checkpoint, artifactJSON, ownerSource, plan, nil)
+}
+
+func ApplyRetainHeadAuthorized(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource []byte, plan *ApplyPlan, authorization ApplyAuthorization) (RuntimeTransitionResult, error) {
+	if err := validateAuthorizedApplyAuthorization(authorization); err != nil {
+		return RuntimeTransitionResult{}, err
+	}
+	return applyRetainHead(ctx, checkpoint, artifactJSON, ownerSource, plan, &authorization)
+}
+
+func applyRetainHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource []byte, plan *ApplyPlan, authorization *ApplyAuthorization) (RuntimeTransitionResult, error) {
+	if replay, ok, err := replayPublishedRuntimeApply(ctx, checkpoint, artifactJSON, ownerSource, plan, RuntimeApplyRetain, authorization); ok || err != nil {
 		return replay, err
 	}
 	current, err := verifyCurrentRuntime(ctx, checkpoint, artifactJSON, ownerSource)
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
-	record, authorities, err := prepareRuntimeApply(checkpoint, plan)
+	record, authorities, err := prepareRuntimeApply(checkpoint, plan, authorization)
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
@@ -233,13 +245,24 @@ func ApplyRetainHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON
 }
 
 func ApplyTransferHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource, candidateSource []byte, plan *ApplyPlan) (RuntimeTransitionResult, error) {
-	if replay, ok, err := replayPublishedRuntimeApply(ctx, checkpoint, artifactJSON, ownerSource, plan, RuntimeApplyTransfer); ok || err != nil {
+	return applyTransferHead(ctx, checkpoint, artifactJSON, ownerSource, candidateSource, plan, nil)
+}
+
+func ApplyTransferHeadAuthorized(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource, candidateSource []byte, plan *ApplyPlan, authorization ApplyAuthorization) (RuntimeTransitionResult, error) {
+	if err := validateAuthorizedApplyAuthorization(authorization); err != nil {
+		return RuntimeTransitionResult{}, err
+	}
+	return applyTransferHead(ctx, checkpoint, artifactJSON, ownerSource, candidateSource, plan, &authorization)
+}
+
+func applyTransferHead(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource, candidateSource []byte, plan *ApplyPlan, authorization *ApplyAuthorization) (RuntimeTransitionResult, error) {
+	if replay, ok, err := replayPublishedRuntimeApply(ctx, checkpoint, artifactJSON, ownerSource, plan, RuntimeApplyTransfer, authorization); ok || err != nil {
 		return replay, err
 	}
 	if _, err := verifyCurrentRuntime(ctx, checkpoint, artifactJSON, ownerSource); err != nil {
 		return RuntimeTransitionResult{}, err
 	}
-	record, authorities, err := prepareRuntimeApply(checkpoint, plan)
+	record, authorities, err := prepareRuntimeApply(checkpoint, plan, authorization)
 	if err != nil {
 		return RuntimeTransitionResult{}, err
 	}
@@ -408,7 +431,7 @@ func exactRuntimeReplay(checkpoint *CheckpointV8, artifact *RuntimeArtifactV1, a
 	return RuntimeTransitionResult{}, fmt.Errorf("%w: runtime replay receipt is absent", ErrInvalid)
 }
 
-func replayPublishedRuntimeApply(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, source []byte, plan *ApplyPlan, kind RuntimeTransitionKind) (RuntimeTransitionResult, bool, error) {
+func replayPublishedRuntimeApply(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, source []byte, plan *ApplyPlan, kind RuntimeTransitionKind, authorization *ApplyAuthorization) (RuntimeTransitionResult, bool, error) {
 	if plan == nil {
 		return RuntimeTransitionResult{}, false, nil
 	}
@@ -418,7 +441,14 @@ func replayPublishedRuntimeApply(ctx context.Context, checkpoint *CheckpointV8, 
 	}
 	for _, event := range checkpoint.wire.History {
 		if event.Apply != nil && event.Runtime != nil && event.Runtime.Kind == kind && reflect.DeepEqual(event.Apply.applyCore, plan.core) {
-			return RuntimeTransitionResult{Checkpoint: checkpoint, Artifact: current, ArtifactJSON: bytes.Clone(artifactJSON), Disposition: DispositionReplayed, Binding: checkpoint.Binding()}, true, nil
+			provenance := applyAuthorization(*event.Apply)
+			if authorization != nil {
+				if err := validateAuthorizedApplyAuthorization(provenance); err != nil ||
+					provenance.HandoffDirectiveDigest != authorization.HandoffDirectiveDigest {
+					return RuntimeTransitionResult{}, true, fmt.Errorf("%w: committed runtime apply authorization differs", ErrInvalid)
+				}
+			}
+			return RuntimeTransitionResult{Checkpoint: checkpoint, Artifact: current, ArtifactJSON: bytes.Clone(artifactJSON), Disposition: DispositionReplayed, Binding: checkpoint.Binding(), Provenance: provenance}, true, nil
 		}
 	}
 	return RuntimeTransitionResult{}, false, nil
@@ -454,7 +484,7 @@ func appendRuntimeReceipt(checkpoint *CheckpointV8, artifact *RuntimeArtifactV1,
 	return RuntimeTransitionResult{Checkpoint: next, Artifact: cloneRuntimeArtifact(artifact), ArtifactJSON: bytes.Clone(artifactJSON), Disposition: DispositionApplied, Binding: next.Binding()}, nil
 }
 
-func prepareRuntimeApply(checkpoint *CheckpointV8, plan *ApplyPlan) (*ApplyRecord, []AuthorityRecord, error) {
+func prepareRuntimeApply(checkpoint *CheckpointV8, plan *ApplyPlan, authorization *ApplyAuthorization) (*ApplyRecord, []AuthorityRecord, error) {
 	if err := VerifyCheckpointV8(checkpoint); err != nil {
 		return nil, nil, err
 	}
@@ -481,6 +511,12 @@ func prepareRuntimeApply(checkpoint *CheckpointV8, plan *ApplyPlan) (*ApplyRecor
 		return nil, nil, err
 	}
 	record := &ApplyRecord{applyCore: core}
+	if authorization != nil {
+		record.HandoffDirectiveDigest = authorization.HandoffDirectiveDigest
+		record.ReasonCode = authorization.ReasonCode
+		record.Actor = authorization.Actor
+		record.AppliedAt = authorization.AppliedAt
+	}
 	record.RecordDigest, err = applyRecordDigest(*record)
 	if err != nil {
 		return nil, nil, err
@@ -520,7 +556,7 @@ func appendRuntimeApplyReceipt(checkpoint *CheckpointV8, record *ApplyRecord, ar
 	if err := VerifyCheckpointV8(next); err != nil {
 		return RuntimeTransitionResult{}, err
 	}
-	return RuntimeTransitionResult{Checkpoint: next, Artifact: cloneRuntimeArtifact(artifact), ArtifactJSON: bytes.Clone(artifactJSON), Disposition: DispositionApplied, Binding: next.Binding()}, nil
+	return RuntimeTransitionResult{Checkpoint: next, Artifact: cloneRuntimeArtifact(artifact), ArtifactJSON: bytes.Clone(artifactJSON), Disposition: DispositionApplied, Binding: next.Binding(), Provenance: applyAuthorization(*record)}, nil
 }
 
 func runtimeHistoryCounts(events []HistoryEvent) (epochEvents, runtimeEvents int) {
