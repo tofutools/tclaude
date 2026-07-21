@@ -78,29 +78,21 @@ const (
 type BreakGlassGrant struct {
 	Path   string `json:"path"`
 	Access Access `json:"access"`
-	// Chains records how this rule reached the profile being resolved: one
-	// entry per distinct include path, each running author → … → assigned
-	// profile. A diamond keeps BOTH arms, so the audit shows every route by
-	// which dangerous authority arrived.
-	//
-	// It is `json:"-"` on purpose. Provenance is DERIVED by Flatten, never
-	// authored: if it were part of the profile wire shape a caller could POST a
-	// forged origin and have tclaude present it as audit truth. It is therefore
-	// neither accepted from input, nor persisted, nor exported — it exists only
-	// on in-memory flattened/effective values, and is carried into the frozen
-	// snapshot's provenance where it cannot be edited.
-	Chains [][]string `json:"-"`
 }
 
-// Attribution returns the profile that authored this rule (the first element of
-// any chain), or "" when the resolved profile authored it directly.
-func (g BreakGlassGrant) Attribution() string {
-	for _, chain := range g.Chains {
-		if len(chain) > 0 {
-			return chain[0]
-		}
-	}
-	return ""
+// derivedBreakGlassProvenance is Flatten's opaque companion to the authored
+// Profile shape. Provenance must not live on BreakGlassGrant itself: that value
+// is public and mutable, so a caller could otherwise flatten an empty profile,
+// mutate the returned grants/chains, and retain a stale "trusted" marker.
+//
+// The exact emitted grant slice is sealed alongside the chains. Resolve trusts
+// the chains only while the public break-glass payload is byte-for-byte the one
+// Flatten produced. Any caller mutation drops back to honest direct
+// attribution rather than reusing stale provenance.
+type derivedBreakGlassProvenance struct {
+	profile string
+	grants  []BreakGlassGrant
+	chains  map[string][][]string
 }
 
 type EnvironmentEntry struct {
@@ -142,24 +134,24 @@ type Profile struct {
 	NetworkAccess        NetworkAccess      `json:"network_access,omitempty"`
 	Includes             []string           `json:"includes,omitempty"`
 
-	// chainsDerived marks a profile whose BreakGlassGrant.Chains were computed
-	// by Flatten. It is unexported AND unserializable, so it cannot be set from
-	// outside this package or by any wire payload — which is precisely the
-	// point: Resolve honors chains ONLY on a value carrying this marker, so a
-	// hand-built Profile cannot inject a forged attribution into the audit
-	// record. Trust is structural rather than a matter of caller discipline.
-	chainsDerived bool
+	// derivedBreakGlass is opaque effective provenance computed by Flatten. It
+	// is deliberately separate from the public authored fields; see
+	// derivedBreakGlassProvenance above.
+	derivedBreakGlass *derivedBreakGlassProvenance
 }
 
-// markChainsDerived is the single place that vouches for computed provenance.
-func (p Profile) markChainsDerived() Profile {
-	p.chainsDerived = true
+func (p Profile) withDerivedBreakGlass(chains map[string][][]string) Profile {
+	sealed := &derivedBreakGlassProvenance{
+		profile: p.Name,
+		grants:  append([]BreakGlassGrant(nil), p.BreakGlassFilesystem...),
+		chains:  make(map[string][][]string, len(chains)),
+	}
+	for path, pathChains := range chains {
+		sealed.chains[path] = cloneChains(pathChains)
+	}
+	p.derivedBreakGlass = sealed
 	return p
 }
-
-// ChainsAreDerived reports whether this profile's break-glass provenance was
-// computed by Flatten rather than supplied by a caller.
-func (p Profile) ChainsAreDerived() bool { return p.chainsDerived }
 
 // HasBreakGlass reports whether a profile carries the dangerous protected-path
 // capability class. Management and assignment surfaces use it to decide
@@ -325,9 +317,8 @@ func normalizeBreakGlass(in []BreakGlassGrant, allowMissing bool) ([]BreakGlassG
 		if missing {
 			missingPaths[path] = true
 		}
-		// Chains is deliberately NOT copied from the caller: normalization is
-		// an authoring/import boundary, and provenance must only ever be
-		// derived by Flatten. Dropping it here is what makes it unforgeable.
+		// Provenance is not part of the authored grant shape. Flatten derives it
+		// separately in an opaque effective representation.
 		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous.Access) {
 			byPath[path] = BreakGlassGrant{Path: path, Access: grant.Access}
 		}
@@ -343,16 +334,6 @@ func normalizeBreakGlass(in []BreakGlassGrant, allowMissing bool) ([]BreakGlassG
 	}
 	sort.Strings(missing)
 	return out, missing, nil
-}
-
-// CanonicalBreakGlassPath canonicalizes one protected path exactly as
-// normalization does. Resolve uses it to re-attach DERIVED provenance to the
-// normalized grants: normalization deliberately strips Chains (that is what
-// makes them unforgeable at authoring boundaries), so the chains computed by
-// Flatten must be matched back on by canonical path.
-func CanonicalBreakGlassPath(path string) (string, error) {
-	canonical, _, err := canonicalDirectory(path, true)
-	return canonical, err
 }
 
 func mergeMissingPaths(a, b []string) []string {

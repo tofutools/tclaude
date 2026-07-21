@@ -981,7 +981,12 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	// Preserve the mode this conversation was launched under; the harness
 	// default would silently drop an enforced `sandbox on` posture on resume.
-	relaunchSandbox := relaunchSandboxForConv(convID, harnessName)
+	relaunchSandbox, sandboxErr := relaunchSandboxForSession(sourceSession)
+	if sandboxErr != nil {
+		res.Action = "error"
+		res.Detail = sandboxErr.Error()
+		return res
+	}
 	if fail := sandboxProfileCapabilityFailure(harnessName, relaunchSandbox, effectiveSandbox); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg

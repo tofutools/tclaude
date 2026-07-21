@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -85,28 +86,33 @@ func requirePayloadBreakGlassAck(what string, acknowledged bool, p *db.SandboxPr
 // gate and the assignment check flatten against it.
 type plannedSandboxRegistry map[string]*db.SandboxProfile
 
-// planSandboxImport computes the post-transaction registry for a conflict
-// policy. "error" is planned as though it succeeds — if it would actually
-// collide, the import fails later on its own terms, and planning it
-// optimistically only ever makes the gate stricter.
-func planSandboxImport(incoming []*db.SandboxProfile, conflict string) (plannedSandboxRegistry, error) {
+var errSandboxImportPreviewConflict = errors.New("sandbox import preview found an error-policy collision")
+
+// planSandboxImport computes a best-effort preview for the handler UX. An
+// error-policy collision deliberately stops previewing so the authoritative DB
+// transaction can return the real 409 before considering acknowledgement.
+func planSandboxImport(incoming []*db.SandboxProfile, conflict string) (plannedSandboxRegistry, map[string]bool, error) {
 	locals, err := db.ListSandboxProfiles()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planned := make(plannedSandboxRegistry, len(locals)+len(incoming))
+	changed := make(map[string]bool, len(incoming))
 	for _, local := range locals {
 		planned[local.Name] = local
 	}
 	for _, candidate := range incoming {
-		if _, collides := planned[candidate.Name]; collides && conflict == "skip" {
+		if _, collides := planned[candidate.Name]; collides && conflict == "error" {
+			return planned, changed, errSandboxImportPreviewConflict
+		} else if collides && conflict == "skip" {
 			// skip keeps the local row, so the local payload is what any
 			// assignment will point at.
 			continue
 		}
 		planned[candidate.Name] = candidate
+		changed[candidate.Name] = true
 	}
-	return planned, nil
+	return planned, changed, nil
 }
 
 // breakGlassInPlan flattens name against the planned registry, so bundle-internal
@@ -184,17 +190,28 @@ func flattenBreakGlassForPayload(p *db.SandboxProfile) ([]sandboxpolicy.BreakGla
 }
 
 // unresolvedIncludeBreakGlass is the conservative fallback when the include
-// graph cannot be flattened: report any protected access reachable one level
-// down so an unresolvable graph cannot be used to skip the acknowledgement.
+// graph cannot be flattened. It recursively walks every still-readable include
+// with cycle and node-count guards, so nested danger cannot disappear merely
+// because another branch is dangling or cyclic.
 func unresolvedIncludeBreakGlass(p *db.SandboxProfile) []sandboxpolicy.BreakGlassGrant {
-	out := append([]sandboxpolicy.BreakGlassGrant(nil), p.BreakGlassFilesystem...)
-	for _, include := range p.Includes {
-		included, err := db.GetSandboxProfile(include)
-		if err != nil || included == nil {
-			continue
+	const maxVisited = 4096
+	seen := map[string]bool{}
+	out := []sandboxpolicy.BreakGlassGrant{}
+	var walk func(*db.SandboxProfile)
+	walk = func(profile *db.SandboxProfile) {
+		if profile == nil || seen[profile.Name] || len(seen) >= maxVisited {
+			return
 		}
-		out = append(out, included.BreakGlassFilesystem...)
+		seen[profile.Name] = true
+		out = append(out, profile.BreakGlassFilesystem...)
+		for _, include := range profile.Includes {
+			included, err := db.GetSandboxProfile(include)
+			if err == nil {
+				walk(included)
+			}
+		}
 	}
+	walk(p)
 	return out
 }
 

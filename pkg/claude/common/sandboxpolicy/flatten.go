@@ -43,9 +43,7 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 		return Profile{}, err
 	}
 	if len(root.Includes) == 0 {
-		// No includes means no attribution to compute, but the result is still
-		// a Flatten output and is marked as such so Resolve treats it uniformly.
-		return root.markChainsDerived(), nil
+		return root, nil
 	}
 	if lookup == nil {
 		return Profile{}, fmt.Errorf("sandbox profile %q has includes but no registry lookup was provided", root.Name)
@@ -86,11 +84,9 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 		out.Filesystem = append(out.Filesystem, grant)
 	}
 	for _, grant := range parts.breakGlass {
-		// A chain of just the root means the root authored the rule itself;
-		// self-attribution is noise, so it is dropped and the grant serializes
-		// exactly like a directly-authored one.
-		grant.Chains = trimSelfChains(grant.Chains, root.Name)
-		out.BreakGlassFilesystem = append(out.BreakGlassFilesystem, grant)
+		out.BreakGlassFilesystem = append(out.BreakGlassFilesystem, BreakGlassGrant{
+			Path: grant.Path, Access: grant.Access,
+		})
 	}
 	if len(out.BreakGlassFilesystem) == 0 {
 		out.BreakGlassFilesystem = nil
@@ -107,7 +103,11 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
-	return out.markChainsDerived(), nil
+	chains := make(map[string][][]string, len(parts.breakGlass))
+	for path, grant := range parts.breakGlass {
+		chains[path] = cloneChains(grant.chains)
+	}
+	return out.withDerivedBreakGlass(chains), nil
 }
 
 // mergeBreakGlass folds one protected-path rule into an accumulator, keeping
@@ -119,17 +119,23 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 // takes the stronger of the two, and the chain sets UNION rather than replace:
 // a diamond where the same rule arrives by two include routes must keep both,
 // and a weaker duplicate must not erase the route it came by.
-func mergeBreakGlass(into map[string]BreakGlassGrant, grant BreakGlassGrant, path string) {
+type flattenedBreakGlassGrant struct {
+	Path   string
+	Access Access
+	chains [][]string
+}
+
+func mergeBreakGlass(into map[string]flattenedBreakGlassGrant, grant flattenedBreakGlassGrant, path string) {
 	previous, exists := into[path]
 	if !exists {
-		into[path] = BreakGlassGrant{Path: path, Access: grant.Access, Chains: cloneChains(grant.Chains)}
+		into[path] = flattenedBreakGlassGrant{Path: path, Access: grant.Access, chains: cloneChains(grant.chains)}
 		return
 	}
 	merged := previous
 	if accessRank(grant.Access) > accessRank(previous.Access) {
 		merged.Access = grant.Access
 	}
-	merged.Chains = unionChains(previous.Chains, grant.Chains)
+	merged.chains = unionChains(previous.chains, grant.chains)
 	into[path] = merged
 }
 
@@ -179,22 +185,6 @@ func extendChains(in [][]string, owner string) [][]string {
 	return out
 }
 
-// trimSelfChains drops a chain that is exactly [root], i.e. the resolved
-// profile authored the rule directly and has nothing to attribute elsewhere.
-func trimSelfChains(in [][]string, root string) [][]string {
-	out := make([][]string, 0, len(in))
-	for _, chain := range in {
-		if len(chain) == 1 && chain[0] == root {
-			continue
-		}
-		out = append(out, chain)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 type flattenedParts struct {
 	filesystem map[string]FilesystemGrant
 	// breakGlass and readBaseline deliberately do NOT follow the last-layer-wins
@@ -202,7 +192,7 @@ type flattenedParts struct {
 	// privilege-monotonic union (write dominating read on one canonical path)
 	// and the read baseline composes strictest-wins, so an include can never
 	// quietly widen either one — the sources stay visible to provenance.
-	breakGlass       map[string]BreakGlassGrant
+	breakGlass       map[string]flattenedBreakGlassGrant
 	readBaseline     ReadBaseline
 	environment      map[string]EnvironmentEntry
 	agentDirectories map[string]struct{}
@@ -273,7 +263,7 @@ func (f *flattener) chainDepth(name string) (int, error) {
 func (f *flattener) compose(p Profile) *flattenedParts {
 	out := &flattenedParts{
 		filesystem:       map[string]FilesystemGrant{},
-		breakGlass:       map[string]BreakGlassGrant{},
+		breakGlass:       map[string]flattenedBreakGlassGrant{},
 		environment:      map[string]EnvironmentEntry{},
 		agentDirectories: map[string]struct{}{},
 	}
@@ -290,7 +280,7 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			// so a memoized include shared by several parents attributes
 			// correctly to each of them (both arms of a diamond survive).
 			inherited := grant
-			inherited.Chains = extendChains(grant.Chains, p.Name)
+			inherited.chains = extendChains(grant.chains, p.Name)
 			mergeBreakGlass(out.breakGlass, inherited, path)
 		}
 		out.readBaseline = StrictestReadBaseline(out.readBaseline, parts.readBaseline)
@@ -311,8 +301,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	}
 	for _, grant := range p.BreakGlassFilesystem {
 		// A rule this profile authored itself starts its chain here.
-		authored := grant
-		authored.Chains = [][]string{{p.Name}}
+		authored := flattenedBreakGlassGrant{
+			Path: grant.Path, Access: grant.Access, chains: [][]string{{p.Name}},
+		}
 		mergeBreakGlass(out.breakGlass, authored, grant.Path)
 	}
 	out.readBaseline = StrictestReadBaseline(out.readBaseline, p.ReadBaseline)

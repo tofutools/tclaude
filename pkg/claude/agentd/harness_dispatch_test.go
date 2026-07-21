@@ -72,3 +72,25 @@ func TestHarnessForConv_DefaultsToClaude(t *testing.T) {
 
 	assert.Equal(t, harness.DefaultName, harnessForConv("conv-no-row").Name, "no session row → default claude")
 }
+
+func TestRelaunchSandboxUsesAuthoritativeSelectedSession(t *testing.T) {
+	mode, err := relaunchSandboxForSession(&db.SessionRow{
+		Harness: harness.DefaultName, SandboxMode: harness.ClaudeSandboxOn,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, harness.ClaudeSandboxOn, mode)
+
+	_, err = relaunchSandboxForSession(nil)
+	require.ErrorContains(t, err, "source session is missing")
+	_, err = relaunchSandboxForSession(&db.SessionRow{
+		Harness: harness.DefaultName, SandboxMode: "not-a-mode",
+	})
+	require.ErrorContains(t, err, "invalid recorded sandbox mode")
+
+	// Preserve the established Codex behavior for genuinely legacy rows whose
+	// mode predates persistence; that explicit absence still means the managed
+	// tclaude profile, not a less capable workspace fallback.
+	mode, err = relaunchSandboxForSession(&db.SessionRow{Harness: harness.CodexName})
+	require.NoError(t, err)
+	assert.Equal(t, harness.SandboxManagedProfile, mode)
+}

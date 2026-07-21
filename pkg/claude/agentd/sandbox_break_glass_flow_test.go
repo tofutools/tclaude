@@ -452,6 +452,54 @@ func TestIncludeOnlyEditOfAssignedWrapperRequiresAcknowledgement(t *testing.T) {
 	assert.Empty(t, stored.Includes, "the refused edit must not have been applied")
 }
 
+func TestCreateFallbackFindsNestedBreakGlassBehindDanglingInclude(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:                 "danger",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{Path: tclaudeData, Access: sandboxpolicy.AccessRead}},
+	})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "middle", Includes: []string{"danger"}})
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "wrapper", "filesystem": []map[string]any{},
+		"includes": []string{"missing", "middle"},
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"the conservative fallback must recursively find nested danger even when flattening fails; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+	assert.Contains(t, rec.Body.String(), tclaudeData)
+}
+
+func TestCreateFallbackIsCycleSafeAndStillFindsBreakGlass(t *testing.T) {
+	// Corrupt only this isolated test registry to model a transient/pathological
+	// graph that normal write paths would refuse.
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:                 "danger",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{Path: tclaudeData, Access: sandboxpolicy.AccessWrite}},
+	})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "A"})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "B", Includes: []string{"A", "danger"}})
+	require.NoError(t, err)
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`UPDATE sandbox_profiles SET includes_json = '["B"]' WHERE name = 'A'`)
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
+		"name": "wrapper", "filesystem": []map[string]any{}, "includes": []string{"A"},
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"the fallback must terminate on the cycle and retain reachable danger; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+}
+
 // An import whose PROFILES are all harmless can still introduce protected
 // access by applying an assignment that points at a dangerous profile already
 // in the local registry.
@@ -699,6 +747,87 @@ func TestImportConflictPolicyDecidesWhichRowTheGateJudges(t *testing.T) {
 	})
 }
 
+func TestImportTransactionRejectsBreakGlassCreatedAfterSafePreview(t *testing.T) {
+	// This test mutates a package-global deterministic hook and must not run in
+	// parallel. The mutation happens before the DB transaction, never inside a
+	// live SQLite transaction.
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetSandboxImportAfterPreviewForTest(func() {
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+			Name: "shared",
+			BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
+				Path: tclaudeData, Access: sandboxpolicy.AccessWrite,
+			}},
+		})
+		require.NoError(t, err)
+	}))
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 3,
+		"on_conflict": "skip", "apply_assignments": true,
+		"profiles":    []map[string]any{{"name": "shared", "filesystem": []map[string]any{}}},
+		"assignments": map[string]any{"global": "shared", "groups": map[string]string{"crew": "shared"}},
+	})
+	require.Equalf(t, http.StatusUnprocessableEntity, rec.Code,
+		"the DB transaction must reject the dangerous current row despite a safe handler preview; body=%s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+	assert.Contains(t, rec.Body.String(), tclaudeData)
+
+	stored, err := db.GetSandboxProfile("shared")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Len(t, stored.BreakGlassFilesystem, 1,
+		"skip must retain the concurrent row; the import must not write its harmless payload")
+	global, err := db.GetGlobalSandboxProfile()
+	require.NoError(t, err)
+	assert.Nil(t, global, "the rejected transaction must not apply the global assignment")
+	group, err := db.GetAgentGroupSandboxProfile("crew")
+	require.NoError(t, err)
+	assert.Nil(t, group, "the rejected transaction must not apply the group assignment")
+}
+
+func TestImportErrorConflictReturns409BeforeAcknowledgementGate(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name:                 "shared",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{Path: tclaudeData, Access: sandboxpolicy.AccessRead}},
+	})
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 3,
+		"on_conflict": "error",
+		"profiles":    []map[string]any{{"name": "shared", "filesystem": []map[string]any{}}},
+	})
+	require.Equalf(t, http.StatusConflict, rec.Code,
+		"error policy must report the real collision instead of a synthetic 422; body=%s", rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "break_glass_acknowledgement_required")
+}
+
+func TestImportSkipIgnoresUnreferencedIncomingBreakGlassCandidate(t *testing.T) {
+	f := newFlow(t)
+	tclaudeData, _, _ := protectedTestDirs(t)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "shared"})
+	require.NoError(t, err)
+
+	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import", map[string]any{
+		"format": "tclaude-sandbox-profiles", "format_version": 3,
+		"on_conflict": "skip",
+		"profiles": []map[string]any{{
+			"name": "shared", "filesystem": []map[string]any{},
+			"break_glass_filesystem": []map[string]any{{"path": tclaudeData, "access": "write"}},
+		}},
+	})
+	require.Equalf(t, http.StatusOK, rec.Code,
+		"an unreferenced candidate that skip will discard introduces no authority; body=%s", rec.Body.String())
+	stored, err := db.GetSandboxProfile("shared")
+	require.NoError(t, err)
+	assert.Empty(t, stored.BreakGlassFilesystem)
+}
+
 // setupAcknowledgedBreakGlassAgent launches an agent that legitimately holds an
 // acknowledged protected grant, under a mode that can actually enforce it.
 func setupAcknowledgedBreakGlassAgent(t *testing.T, f *testharness.Flow, access string) (convID, tmuxSession, tclaudeData string) {
@@ -722,6 +851,19 @@ func setupAcknowledgedBreakGlassAgent(t *testing.T, f *testharness.Flow, access 
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	return spawn.ConvID, spawn.TmuxSession, tclaudeData
+}
+
+func selfReincarnate(t *testing.T, f *testharness.Flow, convID string) string {
+	t.Helper()
+	rec := agentReq(t, f, convID, http.MethodPost, "/v1/whoami/reincarnate",
+		map[string]any{"follow_up": "carry on"})
+	require.Equalf(t, http.StatusOK, rec.Code, "self-reincarnate body=%s", rec.Body.String())
+	var response struct {
+		NewConv string `json:"new_conv"`
+	}
+	testharness.DecodeJSON(t, rec, &response)
+	require.NotEmpty(t, response.NewConv)
+	return response.NewConv
 }
 
 // A legitimately acknowledged grant must actually be able to relaunch. Before
@@ -803,16 +945,12 @@ func TestSelfReincarnateCannotAcquireOrWidenAmbientBreakGlass(t *testing.T) {
 		})
 		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-		require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermAgentReincarnate, "test"))
-		require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermAgentReincarnate, "test"))
-	r := f.AsAgent(spawn.ConvID).Reincarnate(spawn.ConvID, "carry on")
-		require.Equalf(t, http.StatusOK, r.Code, "reincarnate body=%s", r.Raw)
-		after, err := db.AgentEffectiveSandboxConfigForConv(r.NewConv)
+		newConv := selfReincarnate(t, f, spawn.ConvID)
+		after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
 		require.NoError(t, err)
-		if after != nil {
-			assert.Empty(t, after.Effective.BreakGlassFilesystem,
-				"a successor must not acquire protected access its predecessor never had")
-		}
+		require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
+		assert.Empty(t, after.Effective.BreakGlassFilesystem,
+			"a successor must not acquire protected access its predecessor never had")
 	})
 
 	t.Run("read to write", func(t *testing.T) {
@@ -826,15 +964,13 @@ func TestSelfReincarnateCannotAcquireOrWidenAmbientBreakGlass(t *testing.T) {
 		})
 		require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-		require.NoError(t, db.GrantAgentPermission(convID, agentd.PermAgentReincarnate, "test"))
-		r := f.AsAgent(convID).Reincarnate(convID, "carry on")
-		require.Equalf(t, http.StatusOK, r.Code, "reincarnate body=%s", r.Raw)
-		after, err := db.AgentEffectiveSandboxConfigForConv(r.NewConv)
+		newConv := selfReincarnate(t, f, convID)
+		after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
 		require.NoError(t, err)
-		if after != nil && len(after.Effective.BreakGlassFilesystem) > 0 {
-			assert.Equal(t, sandboxpolicy.AccessRead, after.Effective.BreakGlassFilesystem[0].Access,
-				"a successor must not widen a recorded read into a write")
-		}
+		require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
+		require.Len(t, after.Effective.BreakGlassFilesystem, 1)
+		assert.Equal(t, sandboxpolicy.AccessRead, after.Effective.BreakGlassFilesystem[0].Access,
+			"a successor must not widen a recorded read into a write")
 	})
 }
 
@@ -862,13 +998,23 @@ func TestSelfReincarnateCannotWidenMinimalBaselineToDefault(t *testing.T) {
 	})
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermAgentReincarnate, "test"))
-	r := f.AsAgent(spawn.ConvID).Reincarnate(spawn.ConvID, "carry on")
-	require.Equalf(t, http.StatusOK, r.Code, "reincarnate body=%s", r.Raw)
-	after, err := db.AgentEffectiveSandboxConfigForConv(r.NewConv)
+	newConv := selfReincarnate(t, f, spawn.ConvID)
+	after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
 	require.NoError(t, err)
-	if after != nil {
-		assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
-			"minimal -> default is widening and must not happen on reincarnation either")
-	}
+	require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
+	assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
+		"minimal -> default is widening and must not happen on reincarnation either")
+}
+
+func TestSelfReincarnatePreservesLegitimateAcknowledgedAuthority(t *testing.T) {
+	f := newFlow(t)
+	convID, _, tclaudeData := setupAcknowledgedBreakGlassAgent(t, f, "read")
+
+	newConv := selfReincarnate(t, f, convID)
+	after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
+	require.NoError(t, err)
+	require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
+	require.Equal(t, []sandboxpolicy.BreakGlassGrant{{
+		Path: tclaudeData, Access: sandboxpolicy.AccessRead,
+	}}, after.Effective.BreakGlassFilesystem)
 }

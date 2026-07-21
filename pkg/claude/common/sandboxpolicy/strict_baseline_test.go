@@ -324,8 +324,13 @@ func TestBreakGlassSurvivesIncludeComposition(t *testing.T) {
 	require.Len(t, got.BreakGlassFilesystem, 1)
 	assert.Equal(t, tclaudeData, got.BreakGlassFilesystem[0].Path)
 	assert.Equal(t, AccessWrite, got.BreakGlassFilesystem[0].Access)
-	assert.Equal(t, "danger", got.BreakGlassFilesystem[0].Attribution(),
-		"the authoring profile must survive flattening, not be replaced by the wrapper")
+	effective, err := Resolve(Scopes{Explicit: &got})
+	require.NoError(t, err)
+	assert.Equal(t, []ProfileSource{
+		{Scope: ScopeExplicit, Profile: "child"},
+		{Scope: ScopeExplicit, Profile: "danger", IncludedBy: "child", Chain: []string{"danger", "child"}},
+	}, effective.Provenance.BreakGlassFilesystem[tclaudeData],
+		"direct same-path authorship and the included route must both survive")
 }
 
 // Include provenance must survive arbitrary nesting: an operator auditing a
@@ -343,10 +348,6 @@ func TestBreakGlassOriginSurvivesNestedIncludes(t *testing.T) {
 	flattened, err := Flatten(Profile{Name: "assigned", Includes: []string{"outer"}}, lookup)
 	require.NoError(t, err)
 	require.Len(t, flattened.BreakGlassFilesystem, 1)
-	assert.Equal(t, "leaf", flattened.BreakGlassFilesystem[0].Attribution(),
-		"three levels down, the leaf still owns the rule")
-	assert.Equal(t, [][]string{{"leaf", "middle", "outer", "assigned"}},
-		flattened.BreakGlassFilesystem[0].Chains, "the exact include route is preserved")
 
 	effective, err := Resolve(Scopes{Explicit: &flattened})
 	require.NoError(t, err)
@@ -355,6 +356,7 @@ func TestBreakGlassOriginSurvivesNestedIncludes(t *testing.T) {
 	assert.Equal(t, "leaf", sources[0].Profile, "audit must name the author")
 	assert.Equal(t, "assigned", sources[0].IncludedBy, "and the assignment that pulled it in")
 	assert.Equal(t, ScopeExplicit, sources[0].Scope)
+	assert.Equal(t, []string{"leaf", "middle", "outer", "assigned"}, sources[0].Chain)
 }
 
 // A diamond graph must not lose or duplicate attribution.
@@ -370,17 +372,16 @@ func TestBreakGlassOriginSurvivesDiamondIncludes(t *testing.T) {
 
 	flattened, err := Flatten(Profile{Name: "assigned", Includes: []string{"left", "right"}}, lookup)
 	require.NoError(t, err)
-	byPath := map[string]BreakGlassGrant{}
-	for _, grant := range flattened.BreakGlassFilesystem {
-		byPath[grant.Path] = grant
-	}
-	require.Len(t, byPath, 2)
-	assert.Equal(t, "shared", byPath[tclaudeData].Attribution(), "both diamond arms attribute to the shared author")
-	assert.Equal(t, [][]string{
-		{"shared", "left", "assigned"},
-		{"shared", "right", "assigned"},
-	}, byPath[tclaudeData].Chains, "BOTH diamond arms are preserved, not just one")
-	assert.Equal(t, "right", byPath[claudeSessions].Attribution())
+	effective, err := Resolve(Scopes{Explicit: &flattened})
+	require.NoError(t, err)
+	assert.Equal(t, []ProfileSource{
+		{Scope: ScopeExplicit, Profile: "shared", IncludedBy: "assigned", Chain: []string{"shared", "left", "assigned"}},
+		{Scope: ScopeExplicit, Profile: "shared", IncludedBy: "assigned", Chain: []string{"shared", "right", "assigned"}},
+	}, effective.Provenance.BreakGlassFilesystem[tclaudeData],
+		"BOTH diamond arms are preserved, not just one")
+	assert.Equal(t, []ProfileSource{{
+		Scope: ScopeExplicit, Profile: "right", IncludedBy: "assigned", Chain: []string{"right", "assigned"},
+	}}, effective.Provenance.BreakGlassFilesystem[claudeSessions])
 }
 
 // A rule the assigned profile authored itself keeps an empty Origin, so a
@@ -396,8 +397,6 @@ func TestBreakGlassOriginEmptyForDirectlyAuthoredRule(t *testing.T) {
 	}, func(name string) (*Profile, error) { return registry[name], nil })
 	require.NoError(t, err)
 	require.Len(t, flattened.BreakGlassFilesystem, 1)
-	assert.Empty(t, flattened.BreakGlassFilesystem[0].Chains)
-	assert.Empty(t, flattened.BreakGlassFilesystem[0].Attribution())
 
 	effective, err := Resolve(Scopes{Explicit: &flattened})
 	require.NoError(t, err)
@@ -405,6 +404,62 @@ func TestBreakGlassOriginEmptyForDirectlyAuthoredRule(t *testing.T) {
 	require.Len(t, sources, 1)
 	assert.Equal(t, "assigned", sources[0].Profile)
 	assert.Empty(t, sources[0].IncludedBy)
+}
+
+func TestBreakGlassProvenanceSnapshotIsDeepFrozenAndRoundTrips(t *testing.T) {
+	_, tclaudeData, claudeSessions, _ := protectedHome(t)
+	registry := map[string]*Profile{
+		"shared": {Name: "shared", BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}}},
+		"left":   {Name: "left", Includes: []string{"shared"}},
+		"right":  {Name: "right", Includes: []string{"shared"}},
+		"leaf":   {Name: "leaf", BreakGlassFilesystem: []BreakGlassGrant{{Path: claudeSessions, Access: AccessWrite}}},
+		"middle": {Name: "middle", Includes: []string{"leaf"}},
+	}
+	flattened, err := Flatten(Profile{
+		Name: "assigned", Includes: []string{"left", "right", "middle"},
+		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}},
+	}, func(name string) (*Profile, error) { return registry[name], nil })
+	require.NoError(t, err)
+	effective, err := Resolve(Scopes{Explicit: &flattened})
+	require.NoError(t, err)
+
+	wantDiamondAndDirect := []ProfileSource{
+		{Scope: ScopeExplicit, Profile: "assigned"},
+		{Scope: ScopeExplicit, Profile: "shared", IncludedBy: "assigned", Chain: []string{"shared", "left", "assigned"}},
+		{Scope: ScopeExplicit, Profile: "shared", IncludedBy: "assigned", Chain: []string{"shared", "right", "assigned"}},
+	}
+	wantNested := []ProfileSource{{
+		Scope: ScopeExplicit, Profile: "leaf", IncludedBy: "assigned", Chain: []string{"leaf", "middle", "assigned"},
+	}}
+	assert.Equal(t, wantDiamondAndDirect, effective.Provenance.BreakGlassFilesystem[tclaudeData])
+	assert.Equal(t, wantNested, effective.Provenance.BreakGlassFilesystem[claudeSessions])
+
+	snapshot := NewSnapshot(effective, nil)
+	effective.Provenance.BreakGlassFilesystem[tclaudeData][1].Chain[0] = "mutated-after-freeze"
+	assert.Equal(t, wantDiamondAndDirect, snapshot.Effective.Provenance.BreakGlassFilesystem[tclaudeData],
+		"NewSnapshot must deep-copy nested ProfileSource.Chain slices")
+
+	raw, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	var roundTrip Snapshot
+	require.NoError(t, json.Unmarshal(raw, &roundTrip))
+	assert.Equal(t, wantDiamondAndDirect, roundTrip.Effective.Provenance.BreakGlassFilesystem[tclaudeData])
+	assert.Equal(t, wantNested, roundTrip.Effective.Provenance.BreakGlassFilesystem[claudeSessions])
+}
+
+func TestV2DirectBreakGlassProvenanceUpgradesWithoutSyntheticChain(t *testing.T) {
+	_, tclaudeData, _, _ := protectedHome(t)
+	raw := `{"version":2,"effective":{"filesystem":[],"break_glass_filesystem":[{"path":` +
+		mustJSON(t, tclaudeData) + `,"access":"read"}],"environment":[],"agent_directories":[],"provenance":{` +
+		`"applied":[{"scope":"explicit","profile":"direct"}],"filesystem":{},` +
+		`"break_glass_filesystem":{` + mustJSON(t, tclaudeData) + `:[{"scope":"explicit","profile":"direct"}]},` +
+		`"environment":{},"agent_directories":{}}},"applied":[]}`
+	var snapshot Snapshot
+	require.NoError(t, json.Unmarshal([]byte(raw), &snapshot))
+	upgraded, err := NormalizeSnapshotVersion(snapshot)
+	require.NoError(t, err)
+	assert.Equal(t, []ProfileSource{{Scope: ScopeExplicit, Profile: "direct"}},
+		upgraded.Effective.Provenance.BreakGlassFilesystem[tclaudeData])
 }
 
 func TestSnapshotCapabilitiesIncludeBreakGlass(t *testing.T) {
@@ -564,25 +619,17 @@ func TestSnapshotVersionsOneAndTwoUpgradeToCurrent(t *testing.T) {
 
 func itoa(v int) string { return strconv.Itoa(v) }
 
-// Provenance is DERIVED, never authored. If a caller could supply it, an
-// operator auditing a dangerous grant could be shown an attribution the
-// attacker chose — worse than no attribution at all.
+// Provenance is DERIVED, never authored. The public grant shape has no
+// provenance field, and unknown wire keys are ignored.
 func TestBreakGlassProvenanceIsNotAcceptedFromInput(t *testing.T) {
 	_, tclaudeData, _, _ := protectedHome(t)
 
-	// Even when set directly on the in-memory struct, normalization strips it.
 	profile, _, err := NormalizeForPersistence(Profile{
-		Name: "attacker",
-		BreakGlassFilesystem: []BreakGlassGrant{{
-			Path: tclaudeData, Access: AccessWrite,
-			Chains: [][]string{{"some-trusted-profile", "another"}},
-		}},
+		Name:                 "attacker",
+		BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessWrite}},
 	})
 	require.NoError(t, err)
 	require.Len(t, profile.BreakGlassFilesystem, 1)
-	assert.Empty(t, profile.BreakGlassFilesystem[0].Chains,
-		"caller-supplied provenance must never survive an authoring boundary")
-	assert.Empty(t, profile.BreakGlassFilesystem[0].Attribution())
 
 	// And it is not part of the wire shape at all, so it cannot arrive by JSON.
 	encoded, err := json.Marshal(profile)
@@ -595,29 +642,26 @@ func TestBreakGlassProvenanceIsNotAcceptedFromInput(t *testing.T) {
 		`{"name":"attacker","break_glass_filesystem":[{"path":`+mustJSON(t, tclaudeData)+
 			`,"access":"write","chains":[["trusted"]],"origin":"trusted"}]}`), &decoded))
 	require.Len(t, decoded.BreakGlassFilesystem, 1)
-	assert.Empty(t, decoded.BreakGlassFilesystem[0].Chains,
-		"a forged origin in JSON must be ignored, not decoded")
 }
 
-// The resolved audit record must survive the same attack: a forged chain on an
-// input profile cannot reach provenance.
-func TestResolveIgnoresForgedProvenanceOnInput(t *testing.T) {
+// Mutating a public Profile returned by Flatten invalidates its opaque derived
+// provenance. Resolve must not trust stale authorship for the changed rule.
+func TestResolveIgnoresStaleFlattenedProvenanceAfterMutation(t *testing.T) {
 	_, tclaudeData, _, _ := protectedHome(t)
-	effective, err := Resolve(Scopes{Explicit: &Profile{
-		Name: "attacker",
-		BreakGlassFilesystem: []BreakGlassGrant{{
-			Path: tclaudeData, Access: AccessWrite,
-			Chains: [][]string{{"innocent-victim"}},
-		}},
-	}})
+	registry := map[string]*Profile{
+		"leaf": {Name: "leaf", BreakGlassFilesystem: []BreakGlassGrant{{Path: tclaudeData, Access: AccessRead}}},
+	}
+	flattened, err := Flatten(Profile{Name: "assigned", Includes: []string{"leaf"}},
+		func(name string) (*Profile, error) { return registry[name], nil })
+	require.NoError(t, err)
+	flattened.BreakGlassFilesystem[0].Access = AccessWrite
+
+	effective, err := Resolve(Scopes{Explicit: &flattened})
 	require.NoError(t, err)
 	sources := effective.Provenance.BreakGlassFilesystem[tclaudeData]
 	require.Len(t, sources, 1)
-	// The chain claims "innocent-victim", but Resolve only honors chains that
-	// Flatten derived — and Flatten was never run here, so the assigned
-	// profile is correctly named as the author.
-	assert.Equal(t, "attacker", sources[0].Profile)
-	assert.NotContains(t, sources[0].Chain, "innocent-victim")
+	assert.Equal(t, "assigned", sources[0].Profile)
+	assert.Empty(t, sources[0].Chain)
 }
 
 // A profile that never touches break-glass must serialize with neither key,

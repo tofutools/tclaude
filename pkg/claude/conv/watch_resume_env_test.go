@@ -254,6 +254,7 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 // exactly as the spawn path does — GitWorktreeWriteDirs is empty outside a Git
 // repository, so without it a resumed minimal agent has no workspace at all.
 func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
+	setupTestDB(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", t.TempDir())
@@ -266,16 +267,20 @@ func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
 	sibling := filepath.Join(home, "sibling")
 	require.NoError(t, os.MkdirAll(sibling, 0o755))
 
-	writeDirs := []string{}
-	rules := harness.CodexSandboxRules{
-		WriteDirs:    writeDirs,
-		ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
-	}
-	if ws := canonicalResumeWorkspace(workspace); ws != "" {
-		rules.WriteDirs = appendUniqueResumeDir(rules.WriteDirs, ws)
-	}
-	_, path, err := harness.EnsureCodexAgentLaunchProfileForRules(rules,
-		sandboxpolicy.NetworkAccessInherit, "1234567890abcdef")
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "strict", ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+	}))
+
+	_, path, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
 	require.NoError(t, err)
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -286,4 +291,33 @@ func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
 	assert.Contains(t, content, `":minimal" = "read"`)
 	assert.NotContains(t, content, `extends = ":workspace"`)
 	assert.NotContains(t, content, sibling, "nothing outside the workspace is granted")
+}
+
+func TestResumeDefaultBaselineKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
+	setupTestDB(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	workspace := filepath.Join(home, "plain-workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{Name: "default"}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+	}))
+
+	_, path, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(raw)
+	assert.Contains(t, content, `extends = ":workspace"`)
+	assert.NotContains(t, content, `"`+workspace+`" = "write"`,
+		"default resumes keep relying on the unchanged workspace baseline")
 }

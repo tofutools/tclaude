@@ -143,7 +143,7 @@ func TestImportSandboxProfilesValidatesIncludeGraph(t *testing.T) {
 	result, err := ImportSandboxProfiles([]*SandboxProfile{
 		{Name: "team", Includes: []string{"base"}},
 		{Name: "base"},
-	}, "error", nil)
+	}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"team", "base"}, result.Imported)
 	team, err := GetSandboxProfile("team")
@@ -153,13 +153,13 @@ func TestImportSandboxProfilesValidatesIncludeGraph(t *testing.T) {
 	// A bundle include may also point at an already-local profile.
 	_, err = ImportSandboxProfiles([]*SandboxProfile{
 		{Name: "extension", Includes: []string{"team"}},
-	}, "error", nil)
+	}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.NoError(t, err)
 
 	// A dangling include rolls the whole import back.
 	_, err = ImportSandboxProfiles([]*SandboxProfile{
 		{Name: "orphan", Includes: []string{"nowhere"}},
-	}, "error", nil)
+	}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.ErrorIs(t, err, ErrSandboxProfileInvalidImport)
 	missing, err := GetSandboxProfile("orphan")
 	require.NoError(t, err)
@@ -248,10 +248,10 @@ func TestInspectSandboxProfileImportGraphPolicyShapesDiverge(t *testing.T) {
 	assert.Empty(t, inspection.SkipError, "skipping the clash keeps local A includes-free, so B→A is acyclic")
 
 	// The real import agrees with both verdicts.
-	_, err = ImportSandboxProfiles(bundle(), "overwrite", nil)
+	_, err = ImportSandboxProfiles(bundle(), SandboxProfileImportOptions{OnConflict: "overwrite"})
 	require.ErrorIs(t, err, ErrSandboxProfileInvalidImport)
 
-	result, err := ImportSandboxProfiles(bundle(), "skip", nil)
+	result, err := ImportSandboxProfiles(bundle(), SandboxProfileImportOptions{OnConflict: "skip"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"A"}, result.Skipped)
 	assert.Equal(t, []string{"B"}, result.Imported)

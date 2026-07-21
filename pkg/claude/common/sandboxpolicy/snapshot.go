@@ -341,7 +341,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		AgentDirectories: append([]string{}, in.AgentDirectories...),
 		NetworkAccess:    in.NetworkAccess,
 		Provenance: ResolutionProvenance{
-			Applied:          append([]ProfileSource(nil), in.Provenance.Applied...),
+			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
 			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
@@ -357,28 +357,44 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	if len(in.Provenance.BreakGlassFilesystem) > 0 {
 		out.Provenance.BreakGlassFilesystem = make(map[string][]ProfileSource, len(in.Provenance.BreakGlassFilesystem))
 		for path, sources := range in.Provenance.BreakGlassFilesystem {
-			out.Provenance.BreakGlassFilesystem[path] = append([]ProfileSource(nil), sources...)
+			out.Provenance.BreakGlassFilesystem[path] = cloneProfileSources(sources)
 		}
 	}
 	if in.Provenance.ReadBaseline != nil {
-		source := *in.Provenance.ReadBaseline
+		source := cloneProfileSource(*in.Provenance.ReadBaseline)
 		out.Provenance.ReadBaseline = &source
 	}
 	for path, sources := range in.Provenance.Filesystem {
-		out.Provenance.Filesystem[path] = append([]ProfileSource(nil), sources...)
+		out.Provenance.Filesystem[path] = cloneProfileSources(sources)
 	}
 	for name, source := range in.Provenance.Environment {
-		out.Provenance.Environment[name] = source
+		out.Provenance.Environment[name] = cloneProfileSource(source)
 	}
 	for name, sources := range in.Provenance.AgentDirectories {
-		out.Provenance.AgentDirectories[name] = append([]ProfileSource(nil), sources...)
+		out.Provenance.AgentDirectories[name] = cloneProfileSources(sources)
 	}
 	if in.Provenance.Network != nil {
-		source := *in.Provenance.Network
+		source := cloneProfileSource(*in.Provenance.Network)
 		out.Provenance.Network = &source
 	}
 	sort.Slice(out.Filesystem, func(i, j int) bool { return out.Filesystem[i].Path < out.Filesystem[j].Path })
 	sort.Slice(out.Environment, func(i, j int) bool { return out.Environment[i].Name < out.Environment[j].Name })
 	sort.Strings(out.AgentDirectories)
+	return out
+}
+
+func cloneProfileSource(in ProfileSource) ProfileSource {
+	in.Chain = append([]string(nil), in.Chain...)
+	return in
+}
+
+func cloneProfileSources(in []ProfileSource) []ProfileSource {
+	if in == nil {
+		return nil
+	}
+	out := make([]ProfileSource, len(in))
+	for i, source := range in {
+		out[i] = cloneProfileSource(source)
+	}
 	return out
 }

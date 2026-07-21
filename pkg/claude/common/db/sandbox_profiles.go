@@ -73,6 +73,42 @@ type SandboxProfileImportResult struct {
 	Warnings []string
 }
 
+type sandboxProfileImportPlan struct {
+	profile    *SandboxProfile
+	existingID int64
+	skipped    bool
+}
+
+// SandboxProfileImportOptions keeps every import decision together at the DB
+// authority boundary. In particular, acknowledgement is consumed inside the
+// same transaction that reads the conflict rows and applies the mutations.
+type SandboxProfileImportOptions struct {
+	OnConflict             string
+	Assignments            *SandboxProfileAssignments
+	BreakGlassAcknowledged bool
+}
+
+// SandboxProfileBreakGlassExposure identifies one protected-path capability
+// that an import would introduce or assign in its conflict-policy-aware final
+// registry.
+type SandboxProfileBreakGlassExposure struct {
+	Profile    string
+	Path       string
+	Access     sandboxpolicy.Access
+	Assignment bool
+}
+
+// SandboxProfileAcknowledgementRequiredError is returned before any import
+// mutation when the transaction's authoritative plan contains unacknowledged
+// protected access.
+type SandboxProfileAcknowledgementRequiredError struct {
+	Exposures []SandboxProfileBreakGlassExposure
+}
+
+func (e *SandboxProfileAcknowledgementRequiredError) Error() string {
+	return "sandbox profile import requires break-glass acknowledgement"
+}
+
 func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	p, err := normalizeSandboxProfileForStore(p)
 	if err != nil {
@@ -535,8 +571,9 @@ func ListSandboxProfiles() ([]*SandboxProfile, error) {
 // transaction. Expected conflicts are resolved before the first write, and
 // optional assignment restoration rides the same commit, so an error never
 // leaves a partially imported registry.
-func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assignments *SandboxProfileAssignments) (SandboxProfileImportResult, error) {
+func ImportSandboxProfiles(profiles []*SandboxProfile, opts SandboxProfileImportOptions) (SandboxProfileImportResult, error) {
 	result := SandboxProfileImportResult{Imported: []string{}, Skipped: []string{}, Warnings: []string{}}
+	onConflict := opts.OnConflict
 	onConflict = strings.ToLower(strings.TrimSpace(onConflict))
 	if onConflict == "" {
 		onConflict = "error"
@@ -584,26 +621,44 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		return result, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	type planned struct {
-		profile    *SandboxProfile
-		existingID int64
+	registry, err := sandboxProfileRegistryInTx(tx)
+	if err != nil {
+		return result, err
 	}
-	plans := make([]planned, 0, len(normalized))
+	plans := make([]sandboxProfileImportPlan, 0, len(normalized))
 	for _, profile := range normalized {
-		var id int64
-		err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, profile.Name).Scan(&id)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return result, err
-		}
-		if err == nil && onConflict == "error" {
+		existing := registry[profile.Name]
+		if existing != nil && onConflict == "error" {
 			return result, fmt.Errorf("%w: %q", ErrSandboxProfileNameTaken, profile.Name)
 		}
-		plans = append(plans, planned{profile: profile, existingID: id})
+		item := sandboxProfileImportPlan{profile: profile}
+		if existing != nil {
+			item.existingID = existing.ID
+			item.skipped = onConflict == "skip"
+		}
+		plans = append(plans, item)
+		if !item.skipped {
+			plannedProfile := *profile
+			plannedProfile.ID = item.existingID
+			registry[profile.Name] = &plannedProfile
+		}
+	}
+	if err := validateSandboxProfileRegistry(registry); err != nil {
+		return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
+	}
+	if !opts.BreakGlassAcknowledged {
+		exposures, err := sandboxImportBreakGlassExposures(registry, plans, opts.Assignments)
+		if err != nil {
+			return result, fmt.Errorf("%w: inspect break-glass exposure: %v", ErrSandboxProfileInvalidImport, err)
+		}
+		if len(exposures) > 0 {
+			return result, &SandboxProfileAcknowledgementRequiredError{Exposures: exposures}
+		}
 	}
 
 	now := time.Now().Format(time.RFC3339Nano)
 	for _, item := range plans {
-		if item.existingID != 0 && onConflict == "skip" {
+		if item.skipped {
 			result.Skipped = append(result.Skipped, item.profile.Name)
 			continue
 		}
@@ -637,24 +692,24 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		return result, fmt.Errorf("%w: %v", ErrSandboxProfileInvalidImport, err)
 	}
 
-	if assignments != nil {
-		if assignments.Global != "" {
+	if opts.Assignments != nil {
+		if opts.Assignments.Global != "" {
 			var id int64
-			if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, assignments.Global).Scan(&id); errors.Is(err, sql.ErrNoRows) {
-				result.Warnings = append(result.Warnings, fmt.Sprintf("global assignment references missing sandbox profile %q", assignments.Global))
+			if err := tx.QueryRow(`SELECT id FROM sandbox_profiles WHERE name = ?`, opts.Assignments.Global).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("global assignment references missing sandbox profile %q", opts.Assignments.Global))
 			} else if err != nil {
 				return result, err
-			} else if _, err := tx.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, assignments.Global, id); err != nil {
+			} else if _, err := tx.Exec(`INSERT OR REPLACE INTO sandbox_profile_global_assignment (id, profile_name, profile_id) VALUES (1, ?, ?)`, opts.Assignments.Global, id); err != nil {
 				return result, err
 			}
 		}
-		groups := make([]string, 0, len(assignments.Groups))
-		for group := range assignments.Groups {
+		groups := make([]string, 0, len(opts.Assignments.Groups))
+		for group := range opts.Assignments.Groups {
 			groups = append(groups, group)
 		}
 		sort.Strings(groups)
 		for _, group := range groups {
-			profile := assignments.Groups[group]
+			profile := opts.Assignments.Groups[group]
 			var groupID, profileID int64
 			if err := tx.QueryRow(`SELECT id FROM agent_groups WHERE name = ?`, group).Scan(&groupID); errors.Is(err, sql.ErrNoRows) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("group assignment skipped: no group %q", group))
@@ -677,6 +732,115 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		return result, err
 	}
 	return result, nil
+}
+
+func sandboxProfileRegistryInTx(tx *sql.Tx) (map[string]*SandboxProfile, error) {
+	rows, err := tx.Query(sandboxProfileSelect + ` ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	registry := map[string]*SandboxProfile{}
+	for rows.Next() {
+		profile, err := scanSandboxProfile(rows)
+		if err != nil {
+			return nil, err
+		}
+		registry[profile.Name] = profile
+	}
+	return registry, rows.Err()
+}
+
+func validateSandboxProfileRegistry(registry map[string]*SandboxProfile) error {
+	for name, profile := range registry {
+		if _, err := flattenSandboxProfileInRegistry(profile, registry); err != nil {
+			return fmt.Errorf("sandbox profile %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func flattenSandboxProfileInRegistry(profile *SandboxProfile, registry map[string]*SandboxProfile) (sandboxpolicy.Profile, error) {
+	toPolicy := func(p *SandboxProfile) sandboxpolicy.Profile {
+		return sandboxpolicy.Profile{
+			Name: p.Name, Filesystem: p.Filesystem, ReadBaseline: p.ReadBaseline,
+			BreakGlassFilesystem: p.BreakGlassFilesystem, Environment: p.Environment,
+			AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+		}
+	}
+	return sandboxpolicy.Flatten(toPolicy(profile), func(name string) (*sandboxpolicy.Profile, error) {
+		included := registry[name]
+		if included == nil {
+			return nil, nil
+		}
+		policy := toPolicy(included)
+		return &policy, nil
+	})
+}
+
+func sandboxImportBreakGlassExposures(
+	registry map[string]*SandboxProfile,
+	plans []sandboxProfileImportPlan,
+	assignments *SandboxProfileAssignments,
+) ([]SandboxProfileBreakGlassExposure, error) {
+	type carrier struct {
+		name       string
+		assignment bool
+	}
+	carriers := make([]carrier, 0, len(plans)+1)
+	for _, item := range plans {
+		if !item.skipped {
+			carriers = append(carriers, carrier{name: item.profile.Name})
+		}
+	}
+	if assignments != nil {
+		if assignments.Global != "" {
+			carriers = append(carriers, carrier{name: assignments.Global, assignment: true})
+		}
+		groups := make([]string, 0, len(assignments.Groups))
+		for group := range assignments.Groups {
+			groups = append(groups, group)
+		}
+		sort.Strings(groups)
+		for _, group := range groups {
+			carriers = append(carriers, carrier{name: assignments.Groups[group], assignment: true})
+		}
+	}
+	seen := map[string]bool{}
+	var exposures []SandboxProfileBreakGlassExposure
+	for _, carrier := range carriers {
+		profile := registry[carrier.name]
+		if profile == nil {
+			continue
+		}
+		flattened, err := flattenSandboxProfileInRegistry(profile, registry)
+		if err != nil {
+			return nil, err
+		}
+		for _, grant := range flattened.BreakGlassFilesystem {
+			key := carrier.name + "\x00" + grant.Path + "\x00" + string(grant.Access) + fmt.Sprint(carrier.assignment)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			exposures = append(exposures, SandboxProfileBreakGlassExposure{
+				Profile: carrier.name, Path: grant.Path, Access: grant.Access, Assignment: carrier.assignment,
+			})
+		}
+	}
+	sort.Slice(exposures, func(i, j int) bool {
+		if exposures[i].Profile != exposures[j].Profile {
+			return exposures[i].Profile < exposures[j].Profile
+		}
+		if exposures[i].Assignment != exposures[j].Assignment {
+			return !exposures[i].Assignment
+		}
+		if exposures[i].Path != exposures[j].Path {
+			return exposures[i].Path < exposures[j].Path
+		}
+		return exposures[i].Access < exposures[j].Access
+	})
+	return exposures, nil
 }
 
 func DeleteSandboxProfile(name string) (int64, error) {

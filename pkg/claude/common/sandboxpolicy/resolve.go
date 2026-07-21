@@ -2,6 +2,7 @@ package sandboxpolicy
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -142,25 +143,16 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if len(normalized.Includes) > 0 {
 			return EffectiveProfile{}, fmt.Errorf("%s sandbox profile %q still has unresolved includes at resolution time; flatten it first", tier.scope, normalized.Name)
 		}
-		// Normalization strips derived provenance by design, so recover the
-		// chains Flatten computed and match them back on by canonical path.
-		// Nothing outside Flatten can populate Chains (it is json:"-" and
-		// stripped at every authoring/import boundary), so this cannot be used
-		// to inject a forged origin.
+		// Authored profile data and effective provenance are separate. Flatten's
+		// opaque companion is trusted only while the entire public break-glass
+		// payload is exactly the slice it sealed; any mutation invalidates it.
 		chainsByPath := map[string][][]string{}
-		for _, grant := range tier.profile.BreakGlassFilesystem {
-			// Only honor provenance this package computed. A caller-built
-			// Profile carrying hand-written Chains is ignored and attributed to
-			// the assigned profile instead, so a forged origin can never be
-			// presented as audit truth.
-			if !tier.profile.ChainsAreDerived() || len(grant.Chains) == 0 {
-				continue
+		derived := tier.profile.derivedBreakGlass
+		if derived != nil && derived.profile == tier.profile.Name && len(tier.profile.Includes) == 0 &&
+			reflect.DeepEqual(derived.grants, tier.profile.BreakGlassFilesystem) {
+			for path, chains := range derived.chains {
+				chainsByPath[path] = cloneChains(chains)
 			}
-			canonical, cerr := CanonicalBreakGlassPath(grant.Path)
-			if cerr != nil {
-				continue
-			}
-			chainsByPath[canonical] = unionChains(chainsByPath[canonical], grant.Chains)
 		}
 		source := ProfileSource{Scope: tier.scope, Profile: normalized.Name}
 		result.Provenance.Applied = append(result.Provenance.Applied, source)
@@ -191,6 +183,12 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			grantSources := []ProfileSource{}
 			for _, chain := range chainsByPath[grant.Path] {
 				if len(chain) == 0 {
+					continue
+				}
+				if len(chain) == 1 && chain[0] == normalized.Name {
+					// Preserve v2/direct compatibility: direct authorship is the
+					// ordinary source shape, with no redundant chain fields.
+					grantSources = append(grantSources, source)
 					continue
 				}
 				chainSource := source

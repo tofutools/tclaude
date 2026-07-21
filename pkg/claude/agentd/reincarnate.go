@@ -369,7 +369,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
 	// A successor inherits the predecessor's recorded sandbox posture, not the
 	// harness default — reincarnation must not weaken the sandbox.
-	reincarnateSandbox := relaunchSandboxForConv(oldSess.ConvID, oldSess.Harness)
+	reincarnateSandbox, sandboxErr := relaunchSandboxForSession(oldSess)
+	if sandboxErr != nil {
+		writeError(w, http.StatusConflict, "sandbox_profile_changed", sandboxErr.Error())
+		return
+	}
 	if fail := sandboxProfileCapabilityFailure(oldSess.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return

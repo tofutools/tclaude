@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -70,25 +71,10 @@ func harnessNativeTitle(convID string) (string, bool) {
 	return title, true
 }
 
-// sandboxForHarness returns the launch containment token the daemon re-applies
-// when it relaunches an existing conv (resume / clone / reincarnate). The
-// mode/profile is not persisted per-conv, so a Codex agent must be
-// re-defaulted to tclaude's managed permission profile on relaunch rather than
-// coming back unsandboxed or with a plain workspace-write sandbox that cannot
-// reach the agentd socket. A harness with no launch sandbox/profile flag
-// (Claude Code) or an unknown tag yields "" (omit the flag). A $HOME cwd is
-// still re-checked by the forked `tclaude session new`'s own guard, so this
-// needn't repeat it.
-//
-// Deliberate: this always re-defaults to the secure mode and does NOT
-// preserve a per-conv override — an agent originally spawned with an explicit
-// danger-full-access comes back sandboxed. That is the fail-closed direction
-// (a relaunch tightening, never loosening, the sandbox), so it is intentional,
-// not a dropped-state bug. Per-conv mode persistence, if ever wanted, would be
-// a separate feature.
-// relaunchSandboxForConv returns the sandbox mode a resume, reincarnation, or
-// clone of convID must relaunch under: the mode that conversation was actually
-// recorded with, falling back to the harness default only when there is none.
+// relaunchSandboxForSession returns the already-selected source generation's
+// recorded sandbox mode. Callers must pass the same authoritative row they use
+// for cwd, harness, and model inheritance; re-querying by conv-id can select a
+// newer/different row and silently weaken the launch.
 //
 // sandboxForHarness alone returns the harness DEFAULT, which for Claude Code is
 // the `inherit` sentinel. Using it for a relaunch silently downgraded an agent
@@ -99,31 +85,29 @@ func harnessNativeTitle(convID string) (string, bool) {
 //
 // Preserving the recorded mode is the same principle the rest of relaunch
 // follows: replay the decision that was made, do not re-derive a new one.
-func relaunchSandboxForConv(convID, harnessName string) string {
-	fallback := sandboxForHarness(harnessName)
-	convID = strings.TrimSpace(convID)
-	if convID == "" {
-		return fallback
+func relaunchSandboxForSession(row *db.SessionRow) (string, error) {
+	if row == nil {
+		return "", fmt.Errorf("relaunch source session is missing")
 	}
-	row, err := db.FindSessionByConvID(convID)
-	if err != nil || row == nil {
-		return fallback
-	}
+	harnessName := strings.TrimSpace(row.Harness)
 	recorded := strings.TrimSpace(row.SandboxMode)
 	if recorded == "" {
-		return fallback
+		// Legacy rows did not persist the field. Preserve the established Codex
+		// managed-profile/default behavior only for that explicit legacy case.
+		return sandboxForHarness(harnessName), nil
 	}
 	h, err := harness.Resolve(strings.TrimSpace(harnessName))
-	if err != nil || !h.SupportsSandbox() {
-		return fallback
+	if err != nil {
+		return "", fmt.Errorf("resolve recorded harness %q: %w", harnessName, err)
+	}
+	if !h.SupportsSandbox() {
+		return "", fmt.Errorf("harness %q has recorded sandbox mode %q but no sandbox contract", h.Name, recorded)
 	}
 	mode, err := h.Sandbox.ValidateMode(recorded)
 	if err != nil {
-		// An unrecognized stored value is not authority; fall back rather than
-		// threading an unvalidated string into a launch.
-		return fallback
+		return "", fmt.Errorf("invalid recorded sandbox mode %q for %s: %w", recorded, h.Name, err)
 	}
-	return mode
+	return mode, nil
 }
 
 func sandboxForHarness(name string) string {

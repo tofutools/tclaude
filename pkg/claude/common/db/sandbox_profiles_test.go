@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -195,7 +196,7 @@ func TestSandboxProfileImportRetainsMissingPathsAndResolutionKeepsRule(t *testin
 	result, err := ImportSandboxProfiles([]*SandboxProfile{{
 		Name:       "portable",
 		Filesystem: []SandboxFilesystemGrant{{Path: missing, Access: sandboxpolicy.AccessWrite}},
-	}}, "error", nil)
+	}}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"portable"}, result.Imported)
 	require.Len(t, result.Warnings, 1)
@@ -222,12 +223,41 @@ func TestSandboxProfileImportRejectsInvalidNetworkAccess(t *testing.T) {
 	setupTestDB(t)
 	_, err := ImportSandboxProfiles([]*SandboxProfile{{
 		Name: "invalid-network", NetworkAccess: sandboxpolicy.NetworkAccess("lan-only"),
-	}}, "error", nil)
+	}}, SandboxProfileImportOptions{OnConflict: "error"})
 	require.ErrorContains(t, err, "network_access")
 
 	stored, getErr := GetSandboxProfile("invalid-network")
 	require.NoError(t, getErr)
 	assert.Nil(t, stored)
+}
+
+func TestSandboxProfileImportReturnsStructuredBreakGlassAcknowledgementError(t *testing.T) {
+	setupTestDB(t)
+	protected := filepath.Join(os.Getenv("HOME"), ".tclaude", "data")
+	require.NoError(t, os.MkdirAll(protected, 0o755))
+	canonical, err := filepath.EvalSymlinks(protected)
+	require.NoError(t, err)
+	profiles := []*SandboxProfile{{
+		Name: "danger",
+		BreakGlassFilesystem: []sandboxpolicy.BreakGlassGrant{{
+			Path: canonical, Access: sandboxpolicy.AccessWrite,
+		}},
+	}}
+
+	_, err = ImportSandboxProfiles(profiles, SandboxProfileImportOptions{OnConflict: "error"})
+	var ackErr *SandboxProfileAcknowledgementRequiredError
+	require.True(t, errors.As(err, &ackErr), "error=%v", err)
+	require.Equal(t, []SandboxProfileBreakGlassExposure{{
+		Profile: "danger", Path: canonical, Access: sandboxpolicy.AccessWrite,
+	}}, ackErr.Exposures)
+	stored, getErr := GetSandboxProfile("danger")
+	require.NoError(t, getErr)
+	assert.Nil(t, stored, "the acknowledgement error must precede every mutation")
+
+	_, err = ImportSandboxProfiles(profiles, SandboxProfileImportOptions{
+		OnConflict: "error", BreakGlassAcknowledged: true,
+	})
+	require.NoError(t, err)
 }
 
 func TestSandboxProfileCreateRetainsMissingPathsAndResolutionKeepsRule(t *testing.T) {
