@@ -39,15 +39,27 @@ type SandboxEnvironmentEntry = sandboxpolicy.EnvironmentEntry
 // paths keep the reference graph dangling-free and acyclic, and resolution
 // flattens it before any value becomes launch authority.
 type SandboxProfile struct {
-	ID               int64                       `json:"id"`
-	Name             string                      `json:"name"`
-	Filesystem       []SandboxFilesystemGrant    `json:"filesystem"`
-	Environment      []SandboxEnvironmentEntry   `json:"environment"`
-	AgentDirectories []string                    `json:"agent_directories"`
-	NetworkAccess    sandboxpolicy.NetworkAccess `json:"network_access,omitempty"`
-	Includes         []string                    `json:"includes"`
-	CreatedAt        time.Time                   `json:"created_at"`
-	UpdatedAt        time.Time                   `json:"updated_at"`
+	ID         int64                    `json:"id"`
+	Name       string                   `json:"name"`
+	Filesystem []SandboxFilesystemGrant `json:"filesystem"`
+	// ReadBaseline and BreakGlassFilesystem are the TCL-609 opt-ins. Both stay
+	// omitempty/zero-valued for existing rows, which is exactly today's
+	// behavior: an inherited harness read baseline and no protected access.
+	ReadBaseline         sandboxpolicy.ReadBaseline      `json:"read_baseline,omitempty"`
+	BreakGlassFilesystem []sandboxpolicy.BreakGlassGrant `json:"break_glass_filesystem,omitempty"`
+	Environment          []SandboxEnvironmentEntry       `json:"environment"`
+	AgentDirectories     []string                        `json:"agent_directories"`
+	NetworkAccess        sandboxpolicy.NetworkAccess     `json:"network_access,omitempty"`
+	Includes             []string                        `json:"includes"`
+	CreatedAt            time.Time                       `json:"created_at"`
+	UpdatedAt            time.Time                       `json:"updated_at"`
+}
+
+// HasBreakGlass reports whether this registry row carries protected-path
+// authority, so management and assignment surfaces know to demand an explicit
+// operator acknowledgement.
+func (p *SandboxProfile) HasBreakGlass() bool {
+	return p != nil && len(p.BreakGlassFilesystem) > 0
 }
 
 type SandboxProfileAssignments struct {
@@ -66,7 +78,7 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, err := marshalSandboxProfilePayload(p)
+	filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, breakGlassJSON, err := marshalSandboxProfilePayload(p)
 	if err != nil {
 		return 0, err
 	}
@@ -81,8 +93,8 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(`INSERT INTO sandbox_profiles
-		(name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, p.NetworkAccess, includesJSON, now, now)
+		(name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, read_baseline, break_glass_filesystem_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, p.NetworkAccess, includesJSON, p.ReadBaseline, breakGlassJSON, now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrSandboxProfileNameTaken
@@ -121,7 +133,7 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 	if err != nil {
 		return err
 	}
-	filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, err := marshalSandboxProfilePayload(p)
+	filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, breakGlassJSON, err := marshalSandboxProfilePayload(p)
 	if err != nil {
 		return err
 	}
@@ -142,8 +154,8 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 		return err
 	}
 	now := time.Now().Format(time.RFC3339Nano)
-	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, includes_json = ?, updated_at = ? WHERE id = ?`
-	args := []any{p.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, p.NetworkAccess, includesJSON, now, p.ID}
+	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, includes_json = ?, read_baseline = ?, break_glass_filesystem_json = ?, updated_at = ? WHERE id = ?`
+	args := []any{p.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, p.NetworkAccess, includesJSON, p.ReadBaseline, breakGlassJSON, now, p.ID}
 	if revision != "" {
 		query += ` AND updated_at = ?`
 		args = append(args, revision)
@@ -357,7 +369,7 @@ func validateIncludeGraphMap(graph map[string][]string) error {
 	return nil
 }
 
-func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, string, string, error) {
+func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, string, string, string, error) {
 	filesystem := p.Filesystem
 	if filesystem == nil {
 		filesystem = []SandboxFilesystemGrant{}
@@ -374,23 +386,31 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (string, string, string, st
 	if includes == nil {
 		includes = []string{}
 	}
+	breakGlass := p.BreakGlassFilesystem
+	if breakGlass == nil {
+		breakGlass = []sandboxpolicy.BreakGlassGrant{}
+	}
 	filesystemJSON, err := json.Marshal(filesystem)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile filesystem: %w", err)
+		return "", "", "", "", "", fmt.Errorf("marshal sandbox profile filesystem: %w", err)
 	}
 	environmentJSON, err := json.Marshal(environment)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile environment: %w", err)
+		return "", "", "", "", "", fmt.Errorf("marshal sandbox profile environment: %w", err)
 	}
 	agentDirectoriesJSON, err := json.Marshal(agentDirectories)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile agent directories: %w", err)
+		return "", "", "", "", "", fmt.Errorf("marshal sandbox profile agent directories: %w", err)
 	}
 	includesJSON, err := json.Marshal(includes)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("marshal sandbox profile includes: %w", err)
+		return "", "", "", "", "", fmt.Errorf("marshal sandbox profile includes: %w", err)
 	}
-	return string(filesystemJSON), string(environmentJSON), string(agentDirectoriesJSON), string(includesJSON), nil
+	breakGlassJSON, err := json.Marshal(breakGlass)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("marshal sandbox profile break-glass filesystem: %w", err)
+	}
+	return string(filesystemJSON), string(environmentJSON), string(agentDirectoriesJSON), string(includesJSON), string(breakGlassJSON), nil
 }
 
 // normalizeSandboxProfileForStore is the single defensive persistence seam
@@ -405,7 +425,8 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 		return nil, errors.New("sandbox profile is nil")
 	}
 	normalized, _, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+		Name: p.Name, Filesystem: p.Filesystem, ReadBaseline: p.ReadBaseline, BreakGlassFilesystem: p.BreakGlassFilesystem,
+		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
 	})
 	if err != nil {
 		return nil, err
@@ -413,6 +434,8 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	out := *p
 	out.Name = normalized.Name
 	out.Filesystem = normalized.Filesystem
+	out.ReadBaseline = normalized.ReadBaseline
+	out.BreakGlassFilesystem = normalized.BreakGlassFilesystem
 	out.Environment = normalized.Environment
 	out.AgentDirectories = normalized.AgentDirectories
 	out.NetworkAccess = normalized.NetworkAccess
@@ -436,12 +459,12 @@ func GetSandboxProfileByID(id int64) (*SandboxProfile, error) {
 	return scanSandboxProfile(d.QueryRow(sandboxProfileSelect+` WHERE id = ?`, id))
 }
 
-const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, created_at, updated_at FROM sandbox_profiles`
+const sandboxProfileSelect = `SELECT id, name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, read_baseline, break_glass_filesystem_json, created_at, updated_at FROM sandbox_profiles`
 
 func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	var p SandboxProfile
-	var filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, createdAt, updatedAt string
-	if err := row.Scan(&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &agentDirectoriesJSON, &p.NetworkAccess, &includesJSON, &createdAt, &updatedAt); errors.Is(err, sql.ErrNoRows) {
+	var filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, breakGlassJSON, createdAt, updatedAt string
+	if err := row.Scan(&p.ID, &p.Name, &filesystemJSON, &environmentJSON, &agentDirectoriesJSON, &p.NetworkAccess, &includesJSON, &p.ReadBaseline, &breakGlassJSON, &createdAt, &updatedAt); errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
@@ -457,6 +480,14 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	}
 	if err := json.Unmarshal([]byte(includesJSON), &p.Includes); err != nil {
 		return nil, fmt.Errorf("decode sandbox profile %q includes: %w", p.Name, err)
+	}
+	if err := json.Unmarshal([]byte(breakGlassJSON), &p.BreakGlassFilesystem); err != nil {
+		return nil, fmt.Errorf("decode sandbox profile %q break-glass filesystem: %w", p.Name, err)
+	}
+	// Left nil (not an empty slice) when unused, so a profile without the
+	// capability serializes without the dangerous key at every surface.
+	if len(p.BreakGlassFilesystem) == 0 {
+		p.BreakGlassFilesystem = nil
 	}
 	if p.Filesystem == nil {
 		p.Filesystem = []SandboxFilesystemGrant{}
@@ -521,7 +552,8 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 			return result, fmt.Errorf("%w: profile #%d: sandbox profile is nil", ErrSandboxProfileInvalidImport, i+1)
 		}
 		p, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-			Name: profile.Name, Filesystem: profile.Filesystem, Environment: profile.Environment, AgentDirectories: profile.AgentDirectories, NetworkAccess: profile.NetworkAccess, Includes: profile.Includes,
+			Name: profile.Name, Filesystem: profile.Filesystem, ReadBaseline: profile.ReadBaseline, BreakGlassFilesystem: profile.BreakGlassFilesystem,
+			Environment: profile.Environment, AgentDirectories: profile.AgentDirectories, NetworkAccess: profile.NetworkAccess, Includes: profile.Includes,
 		})
 		if err != nil {
 			return result, fmt.Errorf("%w: profile #%d: %v", ErrSandboxProfileInvalidImport, i+1, err)
@@ -529,6 +561,8 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 		normalizedProfile := *profile
 		normalizedProfile.Name = p.Name
 		normalizedProfile.Filesystem = p.Filesystem
+		normalizedProfile.ReadBaseline = p.ReadBaseline
+		normalizedProfile.BreakGlassFilesystem = p.BreakGlassFilesystem
 		normalizedProfile.Environment = p.Environment
 		normalizedProfile.AgentDirectories = p.AgentDirectories
 		normalizedProfile.NetworkAccess = p.NetworkAccess
@@ -577,18 +611,18 @@ func ImportSandboxProfiles(profiles []*SandboxProfile, onConflict string, assign
 			result.Warnings = append(result.Warnings, fmt.Sprintf(
 				"sandbox profile %q path %q does not exist locally; the rule will target it if created", item.profile.Name, path))
 		}
-		filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, err := marshalSandboxProfilePayload(item.profile)
+		filesystemJSON, environmentJSON, agentDirectoriesJSON, includesJSON, breakGlassJSON, err := marshalSandboxProfilePayload(item.profile)
 		if err != nil {
 			return result, err
 		}
 		if item.existingID != 0 {
-			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
-				filesystemJSON, environmentJSON, agentDirectoriesJSON, item.profile.NetworkAccess, includesJSON, now, item.existingID); err != nil {
+			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, environment_json = ?, agent_directories_json = ?, network_access = ?, includes_json = ?, read_baseline = ?, break_glass_filesystem_json = ?, updated_at = ? WHERE id = ?`,
+				filesystemJSON, environmentJSON, agentDirectoriesJSON, item.profile.NetworkAccess, includesJSON, item.profile.ReadBaseline, breakGlassJSON, now, item.existingID); err != nil {
 				return result, err
 			}
 		} else if _, err := tx.Exec(`INSERT INTO sandbox_profiles
-			(name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			item.profile.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, item.profile.NetworkAccess, includesJSON, now, now); err != nil {
+			(name, filesystem_json, environment_json, agent_directories_json, network_access, includes_json, read_baseline, break_glass_filesystem_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			item.profile.Name, filesystemJSON, environmentJSON, agentDirectoriesJSON, item.profile.NetworkAccess, includesJSON, item.profile.ReadBaseline, breakGlassJSON, now, now); err != nil {
 			if isUniqueViolation(err) {
 				return result, ErrSandboxProfileNameTaken
 			}
@@ -876,7 +910,10 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		if p == nil {
 			return nil
 		}
-		return &sandboxpolicy.Profile{Name: p.Name, Filesystem: p.Filesystem, Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes}
+		return &sandboxpolicy.Profile{
+			Name: p.Name, Filesystem: p.Filesystem, ReadBaseline: p.ReadBaseline, BreakGlassFilesystem: p.BreakGlassFilesystem,
+			Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
+		}
 	}
 	// Includes are expanded inside the same transaction that read the
 	// assignments, so the flattened values and the applied provenance describe

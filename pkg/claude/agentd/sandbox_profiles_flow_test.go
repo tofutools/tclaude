@@ -182,7 +182,10 @@ func TestSandboxProfilesExportImportRoundTrip(t *testing.T) {
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
 	assert.Equal(t, "tclaude-sandbox-profiles", bundle["format"])
-	assert.Equal(t, float64(2), bundle["format_version"])
+	// v3 adds read_baseline and break_glass_filesystem. Exporting only the
+	// newest version keeps an older importer from silently dropping a
+	// security-significant field as an unknown key; v1/v2 stay importable.
+	assert.Equal(t, float64(3), bundle["format_version"])
 
 	require.Equal(t, http.StatusNoContent,
 		profileReq(t, f, http.MethodDelete, "/v1/sandbox-profiles/portable", nil).Code)

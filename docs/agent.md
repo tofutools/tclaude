@@ -425,6 +425,125 @@ the agentd control channel. The profile value remains portable so this can be
 enabled when Codex gains a compatible Linux boundary. Existing profiles omit
 the field and therefore remain backward-compatible.
 
+#### `read_baseline` — opt-in strict read visibility
+
+By default a sandboxed agent inherits its harness's read baseline, which is
+broad: ordinary files across the operator's home and system are readable even
+though writes are confined. That includes ambient credential locations such as
+`~/.ssh`, `~/.aws`, and `~/.config/gh`. tclaude does not construct that
+baseline — it comes from the harness — so narrowing it needs an explicit
+opt-in.
+
+`read_baseline` accepts `minimal`, or may be omitted to inherit today's
+behavior. **Omitting it is fully backward-compatible**: existing profiles,
+launches, resumes, imports, and defaults keep exactly the effective sandbox
+they have now.
+
+`minimal` requests an allowlist-shaped read posture: the workspace, the paths
+tclaude must grant for the launch contract, and paths the profile grants
+explicitly. It is a mode, not another entry in the `deny > write > read` path
+lattice, and it composes **strictest-wins** across includes and across the
+global → group → explicit scopes: once any layer asks for `minimal`, no later
+layer widens it back.
+
+Invariant launch requirements survive `minimal`: the agentd Unix socket stays
+readable so `tclaude agent …` keeps working, and the workspace/worktree and
+proof-pinned Git write grants are retained. Without those an agent could not
+do its job or coordinate.
+
+Harness support is **not** symmetric, and tclaude does not pretend otherwise:
+
+* **Codex (managed `tclaude-agent` sandbox) — supported.** Codex permission
+  profiles make `extends` optional, and an `extends`-less profile resolves to a
+  deny-all filesystem baseline. A `minimal` profile therefore drops
+  `extends = ":workspace"` (whose resolved policy makes the filesystem root
+  readable) and enumerates the runtime grants instead — Codex's purpose-built
+  `":minimal"` set plus the temp roots and the profile's own rules.
+* **Claude Code — not supported.** Its `sandbox.filesystem` block exposes only
+  `allowRead`/`denyRead`/`allowWrite`/`denyWrite`, so its read policy is always
+  denylist-shaped; there is no per-session way to make it allowlist-shaped.
+  A `minimal` profile on a Claude launch is rejected with the typed
+  `unsupported_sandbox_profile_read_baseline` error rather than launching with
+  today's broad baseline under a strict-looking profile.
+
+For sandbox lineage, `minimal → default` is **widening**: an agent whose own
+launch was minimal cannot spawn a child with the broader default baseline.
+
+#### `break_glass_filesystem` — exceptional protected-path access
+
+tclaude denies every sandboxed agent access to `~/.tclaude/data` (daemon
+database, authorization state, private runtime state), `~/.claude/sessions`,
+and `~/.codex` (Codex configuration, credentials, session state). Ordinary
+`filesystem` rules that intersect those locations are rejected, and that does
+not change.
+
+`break_glass_filesystem` is the narrow, operator-controlled exception, for one
+legitimate case: launching a tightly scoped agent to **debug tclaude itself** —
+inspecting daemon state, diagnosing a migration, deliberately testing state
+repair. It is an exception mechanism, **not a recommended profile posture**.
+
+```json
+{
+  "name": "debug-daemon-state",
+  "break_glass_filesystem": [
+    { "path": "~/.tclaude/data", "access": "read" }
+  ]
+}
+```
+
+Rules are exact-path and access-specific. `access` is `read` or `write` only —
+`deny` is already the default, and **read never implies write**. Read-only
+inspection of the daemon database is materially less dangerous than write
+access; prefer it. Each path must sit at or inside a protected root: a path
+that merely *contains* one (`~`, `/`) is rejected, so the hatch cannot become a
+whole-host grant wearing a danger label.
+
+**What it can actually do to you.** Read access can disclose daemon secrets,
+agent authorization state, and harness session transcripts and credentials.
+Write access can additionally corrupt the SQLite database, harness
+configuration, and runtime state; invalidate the assumptions agent
+authorization relies on; and break the daemon or the harness. tclaude's tmux
+server socket directory is a **distinct and more severe class** — host control
+over other sessions — and is *not* reachable through break-glass at all; it
+stays denied unconditionally.
+
+**Acknowledgement.** Creating, editing, importing, assigning, and selecting a
+launch for a profile carrying protected access all require an explicit operator
+acknowledgement — `break_glass_acknowledged: true` on the API, or
+`--i-understand-break-glass-risk` on the CLI. Without it the surface returns
+`break_glass_acknowledgement_required` listing the exact path/access pairs.
+Dry-run previews and import inspection are deliberately ack-free so an operator
+can look before deciding.
+
+The acknowledgement is **transient**: it is never stored on the profile and
+never exported. The durable danger marker is the `break_glass_filesystem` field
+itself, so an import or an assignment on another machine must acknowledge again
+after paths are canonicalized against that machine's protected roots. Global
+and group assignment carry the strongest warning, because every agent launched
+under that scope inherits the access for as long as the assignment stands.
+
+**Composition never hides it.** Break-glass merges as a privilege-monotonic
+union (write dominating read on one canonical path) rather than last-layer-wins,
+and the resolved launch echo, audit record, and dashboard all name every
+profile and scope that contributed each protected path — including through
+includes.
+
+**Lineage.** Agent-initiated launches can neither introduce nor widen protected
+access: a child may inherit no more than its parent's recorded authority, and
+protected `read → write` is widening. Resume and relaunch replay the recorded
+decision from the frozen snapshot and never pick up protected access added to
+an ambient profile afterwards. A recorded protected path that has since been
+removed or retargeted fails the launch closed rather than launching with
+different authority than was acknowledged.
+
+**Harness support.** Both supported harnesses can represent break-glass, but
+only in their policy-rendering modes (Codex `managed-profile`, Claude
+`sandbox on`), and each requires tclaude to suppress its own protected deny for
+exactly the acknowledged path: on Codex a deny dominates any narrower grant
+regardless of order, and on Claude deny directories are applied
+shallowest-first. Any other harness/mode combination is rejected with the typed
+`unsupported_sandbox_profile_break_glass` error.
+
 `agent_directories` is a JSON array of environment-variable names, for example
 `["GOCACHE", "GOLANGCI_LINT_CACHE"]`. At spawn, agentd creates a fresh private
 directory for each name under tclaude's cache tree, adds it to that agent's

@@ -85,6 +85,21 @@ type SpawnSpec struct {
 	// all filesystem access to. Claude renders both denyRead and denyWrite;
 	// Codex renders permission-profile "none" entries.
 	SandboxDenyDirs []string
+	// SandboxReadBaseline is the effective profile's opt-in read posture
+	// (sandboxpolicy.ReadBaseline). "" keeps each harness's existing broad,
+	// denylist-shaped read default — today's behavior. "minimal" requests an
+	// allowlist-shaped read posture; an adapter that cannot faithfully enforce
+	// it must reject the launch with a typed capability error rather than
+	// approximate it, because a fake strict posture is worse than none.
+	SandboxReadBaseline string
+	// SandboxBreakGlassReadDirs and SandboxBreakGlassWriteDirs are the
+	// operator-acknowledged exceptions that reach normally protected
+	// tclaude/harness state. They are kept SEPARATE from the ordinary
+	// read/write/deny dirs because an adapter must suppress its own protected
+	// deny for exactly these paths: on both harnesses a deny at or above the
+	// path would otherwise mask the grant. Read never implies write.
+	SandboxBreakGlassReadDirs  []string
+	SandboxBreakGlassWriteDirs []string
 	// AskUserQuestionTimeout is the per-session Claude Code AskUserQuestion
 	// idle-timeout override (`never|60s|5m|10m`), delivered as part of the SAME
 	// `--settings` payload as SandboxMode (both are settings.json overrides, and

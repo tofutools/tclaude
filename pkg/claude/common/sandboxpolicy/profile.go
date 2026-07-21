@@ -21,6 +21,10 @@ const (
 	MaxEnvironmentBytes    = 64 * 1024
 	MaxAgentDirectoryCount = 128
 	MaxIncludeCount        = 32
+	// MaxBreakGlassCount bounds the exceptional protected-path rules on one
+	// profile. It is deliberately small: break-glass is a narrow debugging
+	// mechanism, not a second filesystem section.
+	MaxBreakGlassCount = 16
 	// MaxIncludeDepth bounds the longest include-EDGE chain reachable from a
 	// profile (a profile with no includes has depth 0). Registry write paths
 	// and launch-time flattening enforce the same unit and bound, so a policy
@@ -37,6 +41,41 @@ const (
 )
 
 type FilesystemGrant struct {
+	Path   string `json:"path"`
+	Access Access `json:"access"`
+}
+
+// ReadBaseline selects how much of the host an agent may read before the
+// profile's own filesystem rules are applied. The empty value inherits each
+// harness's existing (denylist-shaped, broadly readable) baseline, so an
+// omitted field reproduces today's behavior exactly.
+//
+// Minimal requests an allowlist-shaped read posture: only the workspace, the
+// paths tclaude must grant for the launch contract, and paths the profile
+// grants explicitly. It is a mode, not another entry in the deny > write >
+// read path lattice, and it composes strictest-wins rather than last-wins:
+// once any layer asks for minimal, no later layer can widen it back.
+type ReadBaseline string
+
+const (
+	ReadBaselineDefault ReadBaseline = ""
+	ReadBaselineMinimal ReadBaseline = "minimal"
+	// readBaselineDefaultAlias is accepted on input as an explicit spelling of
+	// the omitted default so a UI selector can post a non-empty value. It is
+	// normalized away, so every persisted or emitted value is "" or "minimal".
+	readBaselineDefaultAlias = "default"
+)
+
+// BreakGlassGrant is one exceptional, operator-acknowledged rule that reaches
+// a normally protected tclaude/harness directory (~/.tclaude/data,
+// ~/.claude/sessions, ~/.codex). It exists so a human can launch a tightly
+// scoped agent to debug tclaude itself.
+//
+// Access is read or write only: deny is already the default for these paths,
+// and read must never imply write. Every rule must actually intersect a
+// protected root — an ordinary path belongs in Filesystem, where it does not
+// carry a danger marker or demand an acknowledgement.
+type BreakGlassGrant struct {
 	Path   string `json:"path"`
 	Access Access `json:"access"`
 }
@@ -69,13 +108,22 @@ const (
 // the override semantics. Flatten expands Includes; Resolve refuses profiles
 // that still carry them.
 type Profile struct {
-	Name             string             `json:"name"`
-	Filesystem       []FilesystemGrant  `json:"filesystem,omitempty"`
-	Environment      []EnvironmentEntry `json:"environment,omitempty"`
-	AgentDirectories []string           `json:"agent_directories,omitempty"`
-	NetworkAccess    NetworkAccess      `json:"network_access,omitempty"`
-	Includes         []string           `json:"includes,omitempty"`
+	Name       string            `json:"name"`
+	Filesystem []FilesystemGrant `json:"filesystem,omitempty"`
+	// ReadBaseline and BreakGlassFilesystem are both omitempty so a profile
+	// that uses neither serializes byte-identically to a pre-TCL-609 profile.
+	ReadBaseline         ReadBaseline       `json:"read_baseline,omitempty"`
+	BreakGlassFilesystem []BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
+	Environment          []EnvironmentEntry `json:"environment,omitempty"`
+	AgentDirectories     []string           `json:"agent_directories,omitempty"`
+	NetworkAccess        NetworkAccess      `json:"network_access,omitempty"`
+	Includes             []string           `json:"includes,omitempty"`
 }
+
+// HasBreakGlass reports whether a profile carries the dangerous protected-path
+// capability class. Management and assignment surfaces use it to decide
+// whether an explicit operator acknowledgement is required.
+func (p Profile) HasBreakGlass() bool { return len(p.BreakGlassFilesystem) > 0 }
 
 var environmentNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
@@ -132,6 +180,15 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	readBaseline, err := NormalizeReadBaseline(in.ReadBaseline)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	breakGlass, breakGlassMissing, err := normalizeBreakGlass(in.BreakGlassFilesystem, allowMissing)
+	if err != nil {
+		return Profile{}, nil, err
+	}
+	missing = mergeMissingPaths(missing, breakGlassMissing)
 	environment, err := normalizeEnvironment(in.Environment)
 	if err != nil {
 		return Profile{}, nil, err
@@ -148,7 +205,117 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	return Profile{Name: name, Filesystem: filesystem, Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes}, missing, nil
+	return Profile{
+		Name: name, Filesystem: filesystem, ReadBaseline: readBaseline, BreakGlassFilesystem: breakGlass,
+		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes,
+	}, missing, nil
+}
+
+// NormalizeReadBaseline validates one baseline value without requiring a
+// complete profile. Harness adapters use it at their final rendering seam.
+// The explicit "default" spelling is accepted and folded to the omitted value
+// so persisted and emitted profiles only ever carry "" or "minimal".
+func NormalizeReadBaseline(in ReadBaseline) (ReadBaseline, error) {
+	switch in {
+	case ReadBaselineDefault, ReadBaselineMinimal:
+		return in, nil
+	case readBaselineDefaultAlias:
+		return ReadBaselineDefault, nil
+	default:
+		return "", fmt.Errorf("read_baseline %q is invalid (want minimal, or omitted to inherit the harness default)", in)
+	}
+}
+
+// StrictestReadBaseline composes two baselines privilege-monotonically: once
+// any layer asks for minimal the result stays minimal. Both include expansion
+// and cross-scope resolution use it, so a broad global profile cannot widen a
+// stricter group or explicit one, and vice versa.
+func StrictestReadBaseline(a, b ReadBaseline) ReadBaseline {
+	if a == ReadBaselineMinimal || b == ReadBaselineMinimal {
+		return ReadBaselineMinimal
+	}
+	return ReadBaselineDefault
+}
+
+// normalizeBreakGlass canonicalizes the exceptional protected-path rules. Each
+// rule must name read or write access (deny is the default and read must not
+// imply write) and must genuinely intersect a protected root: an ordinary path
+// belongs in Filesystem, which stays free of the danger marker. Duplicate
+// canonical paths fold with write dominating read, so composition is
+// privilege-monotonic rather than order-dependent.
+func normalizeBreakGlass(in []BreakGlassGrant, allowMissing bool) ([]BreakGlassGrant, []string, error) {
+	if len(in) == 0 {
+		return nil, nil, nil
+	}
+	if len(in) > MaxBreakGlassCount {
+		return nil, nil, fmt.Errorf("break_glass_filesystem has too many entries (maximum %d)", MaxBreakGlassCount)
+	}
+	protected, err := protectedPaths()
+	if err != nil {
+		return nil, nil, err
+	}
+	byPath := make(map[string]Access, len(in))
+	missingPaths := map[string]bool{}
+	for i, grant := range in {
+		if grant.Access != AccessRead && grant.Access != AccessWrite {
+			return nil, nil, fmt.Errorf("break_glass_filesystem[%d].access %q is invalid (want read or write; protected paths are already denied by default)", i, grant.Access)
+		}
+		path, missing, err := canonicalDirectory(grant.Path, allowMissing)
+		if err != nil {
+			return nil, nil, fmt.Errorf("break_glass_filesystem[%d].path: %w", i, err)
+		}
+		// Containment, NOT mere intersection: a path that merely intersects a
+		// protected root can be an ancestor of it, so "~" or "/" would qualify
+		// and turn the narrow debugging hatch into a whole-host grant wearing a
+		// break-glass label. Requiring the rule to sit AT or BELOW a protected
+		// root also implements "prefer the narrowest useful debugging grant".
+		contained := false
+		for _, denied := range protected {
+			if pathContainsOrEqual(denied, path) {
+				contained = true
+				break
+			}
+		}
+		if !contained {
+			return nil, nil, fmt.Errorf(
+				"break_glass_filesystem[%d].path %q is not inside a protected directory (%s); grant ordinary paths through filesystem instead",
+				i, path, strings.Join(protected, ", "))
+		}
+		if missing {
+			missingPaths[path] = true
+		}
+		if previous, exists := byPath[path]; !exists || accessRank(grant.Access) > accessRank(previous) {
+			byPath[path] = grant.Access
+		}
+	}
+	out := make([]BreakGlassGrant, 0, len(byPath))
+	for path, access := range byPath {
+		out = append(out, BreakGlassGrant{Path: path, Access: access})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	missing := make([]string, 0, len(missingPaths))
+	for path := range missingPaths {
+		missing = append(missing, path)
+	}
+	sort.Strings(missing)
+	return out, missing, nil
+}
+
+func mergeMissingPaths(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, path := range append(append([]string{}, a...), b...) {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // NormalizeNetworkAccess validates one network posture without requiring a
@@ -385,6 +552,12 @@ func canonicalMissingDirectory(path string) (string, error) {
 		ancestor = parent
 	}
 }
+
+// ProtectedPaths returns the canonical tclaude/harness state directories that
+// ordinary filesystem rules may never touch and that only an acknowledged
+// break-glass rule may reach. Adapters and CLI/API surfaces use it to explain
+// exactly which protected root a rule reaches.
+func ProtectedPaths() ([]string, error) { return protectedPaths() }
 
 func protectedPaths() ([]string, error) {
 	home, err := os.UserHomeDir()

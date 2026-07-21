@@ -145,7 +145,14 @@ func TestRunSandboxProfileDefaultAndGroupAssignments(t *testing.T) {
 	stderr.Reset()
 	stdout.Reset()
 	require.Equal(t, rcOK, runSandboxProfilesDefaultSet(&sandboxProfilesNameParams{Name: " dev "}, &stdout, &stderr))
-	assert.Equal(t, map[string]string{"name": "dev"}, calls[len(calls)-1].body)
+	// An ordinary assignment sends exactly the name: the break-glass
+	// acknowledgement key is omitted unless the operator actually gave it.
+	assert.Equal(t, map[string]any{"name": "dev"}, calls[len(calls)-1].body)
+	stdout.Reset()
+	require.Equal(t, rcOK, runSandboxProfilesDefaultSet(
+		&sandboxProfilesNameParams{Name: "dev", IUnderstandBreakGlassRisk: true}, &stdout, &stderr))
+	assert.Equal(t, map[string]any{"name": "dev", "break_glass_acknowledged": true}, calls[len(calls)-1].body,
+		"--i-understand-break-glass-risk must reach the daemon's assignment gate")
 	stdout.Reset()
 	require.Equal(t, rcOK, runSandboxProfilesGroupSet(&sandboxProfilesGroupSetParams{Group: "crew", Name: "dev"}, &stdout, &stderr))
 	assert.Equal(t, "/v1/groups/crew/sandbox-profile", calls[len(calls)-1].path)

@@ -36,25 +36,44 @@ type Scopes struct {
 // deny-dominates-write-dominates-read, while Environment names the single
 // last-scope winner.
 type ResolutionProvenance struct {
-	Applied          []ProfileSource            `json:"applied"`
-	Filesystem       map[string][]ProfileSource `json:"filesystem"`
-	Environment      map[string]ProfileSource   `json:"environment"`
-	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
-	Network          *ProfileSource             `json:"network,omitempty"`
+	Applied    []ProfileSource            `json:"applied"`
+	Filesystem map[string][]ProfileSource `json:"filesystem"`
+	// BreakGlassFilesystem lists EVERY scope that contributed each protected
+	// path, so composition can never hide where dangerous authority came from.
+	// ReadBaseline names the scope that first imposed minimal.
+	BreakGlassFilesystem map[string][]ProfileSource `json:"break_glass_filesystem,omitempty"`
+	ReadBaseline         *ProfileSource             `json:"read_baseline,omitempty"`
+	Environment          map[string]ProfileSource   `json:"environment"`
+	AgentDirectories     map[string][]ProfileSource `json:"agent_directories"`
+	Network              *ProfileSource             `json:"network,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
 // its provenance. Its slices and provenance maps are non-nil even when no
 // scope is assigned.
 type EffectiveProfile struct {
-	Filesystem       []FilesystemGrant    `json:"filesystem"`
-	Environment      []EnvironmentEntry   `json:"environment"`
-	AgentDirectories []string             `json:"agent_directories"`
-	NetworkAccess    NetworkAccess        `json:"network_access,omitempty"`
-	Provenance       ResolutionProvenance `json:"provenance"`
+	Filesystem []FilesystemGrant `json:"filesystem"`
+	// ReadBaseline and BreakGlassFilesystem stay omitempty so a resolved
+	// payload for profiles that use neither is byte-identical to a pre-TCL-609
+	// snapshot, keeping stored snapshots and dashboard output compatible.
+	ReadBaseline         ReadBaseline         `json:"read_baseline,omitempty"`
+	BreakGlassFilesystem []BreakGlassGrant    `json:"break_glass_filesystem,omitempty"`
+	Environment          []EnvironmentEntry   `json:"environment"`
+	AgentDirectories     []string             `json:"agent_directories"`
+	NetworkAccess        NetworkAccess        `json:"network_access,omitempty"`
+	Provenance           ResolutionProvenance `json:"provenance"`
 }
 
+// HasBreakGlass reports whether a resolved policy carries protected-path
+// authority. Acknowledgement gates and audit rendering key off this.
+func (e EffectiveProfile) HasBreakGlass() bool { return len(e.BreakGlassFilesystem) > 0 }
+
 type resolvedFilesystemGrant struct {
+	access  Access
+	sources []ProfileSource
+}
+
+type resolvedBreakGlassGrant struct {
 	access  Access
 	sources []ProfileSource
 }
@@ -83,6 +102,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	}
 
 	filesystem := map[string]resolvedFilesystemGrant{}
+	breakGlass := map[string]resolvedBreakGlassGrant{}
 	environment := map[string]string{}
 	agentDirectories := map[string][]ProfileSource{}
 	for _, tier := range []struct {
@@ -118,6 +138,27 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			}
 			current.sources = append(current.sources, source)
 			filesystem[grant.Path] = current
+		}
+		// Break-glass and the read baseline are privilege-monotonic across
+		// scopes rather than last-scope-wins: every contributing scope is kept
+		// in provenance, write dominates read on one canonical path, and the
+		// first scope that imposes minimal owns that decision.
+		for _, grant := range normalized.BreakGlassFilesystem {
+			current, exists := breakGlass[grant.Path]
+			if !exists {
+				breakGlass[grant.Path] = resolvedBreakGlassGrant{access: grant.Access, sources: []ProfileSource{source}}
+				continue
+			}
+			if accessRank(grant.Access) > accessRank(current.access) {
+				current.access = grant.Access
+			}
+			current.sources = append(current.sources, source)
+			breakGlass[grant.Path] = current
+		}
+		if normalized.ReadBaseline == ReadBaselineMinimal && result.ReadBaseline != ReadBaselineMinimal {
+			result.ReadBaseline = ReadBaselineMinimal
+			baselineSource := source
+			result.Provenance.ReadBaseline = &baselineSource
 		}
 		for _, entry := range normalized.Environment {
 			if _, exists := agentDirectories[entry.Name]; exists {
@@ -176,6 +217,47 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		grant := revalidated[path]
 		result.Filesystem = append(result.Filesystem, FilesystemGrant{Path: path, Access: grant.access})
 		result.Provenance.Filesystem[path] = canonicalSources(grant.sources)
+	}
+
+	// Re-resolve the merged protected-path set for the same reason as the
+	// filesystem set above, and to re-prove every surviving rule still lands on
+	// a protected root after canonicalization.
+	if len(breakGlass) > 0 {
+		revalidatedBreakGlass := map[string]resolvedBreakGlassGrant{}
+		breakGlassPaths := make([]string, 0, len(breakGlass))
+		for path := range breakGlass {
+			breakGlassPaths = append(breakGlassPaths, path)
+		}
+		sort.Strings(breakGlassPaths)
+		for _, path := range breakGlassPaths {
+			grant := breakGlass[path]
+			normalized, _, err := normalizeBreakGlass([]BreakGlassGrant{{Path: path, Access: grant.access}}, true)
+			if err != nil {
+				return EffectiveProfile{}, fmt.Errorf("revalidate effective break-glass path %q: %w", path, err)
+			}
+			canonical := normalized[0]
+			current, exists := revalidatedBreakGlass[canonical.Path]
+			if !exists {
+				revalidatedBreakGlass[canonical.Path] = resolvedBreakGlassGrant{access: canonical.Access, sources: append([]ProfileSource(nil), grant.sources...)}
+				continue
+			}
+			if accessRank(canonical.Access) > accessRank(current.access) {
+				current.access = canonical.Access
+			}
+			current.sources = append(current.sources, grant.sources...)
+			revalidatedBreakGlass[canonical.Path] = current
+		}
+		breakGlassPaths = breakGlassPaths[:0]
+		for path := range revalidatedBreakGlass {
+			breakGlassPaths = append(breakGlassPaths, path)
+		}
+		sort.Strings(breakGlassPaths)
+		result.Provenance.BreakGlassFilesystem = map[string][]ProfileSource{}
+		for _, path := range breakGlassPaths {
+			grant := revalidatedBreakGlass[path]
+			result.BreakGlassFilesystem = append(result.BreakGlassFilesystem, BreakGlassGrant{Path: path, Access: grant.access})
+			result.Provenance.BreakGlassFilesystem[path] = canonicalSources(grant.sources)
+		}
 	}
 
 	mergedEnvironment := make([]EnvironmentEntry, 0, len(environment))

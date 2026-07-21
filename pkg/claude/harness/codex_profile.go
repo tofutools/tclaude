@@ -180,7 +180,55 @@ func validateCodexAgentNetworkAccessForOS(networkAccess sandboxpolicy.NetworkAcc
 	return nil
 }
 
+// CodexSandboxRules is the complete filesystem/posture input the managed Codex
+// permission profile renders. It exists because the parameter list grew past
+// the point where positional arguments were safe: read, write, deny, and the
+// two break-glass classes are all []string, and transposing two of them would
+// silently produce a wrong-but-valid sandbox.
+type CodexSandboxRules struct {
+	ReadDirs  []string
+	WriteDirs []string
+	DenyDirs  []string
+	// ReadBaseline "minimal" drops `extends = ":workspace"` (whose resolved
+	// policy makes the filesystem root readable) in favor of an enumerated
+	// allowlist. Codex permission profiles make `extends` optional and an
+	// extends-less profile resolves to a deny-all baseline, so this is a real
+	// allowlist read posture rather than an approximation.
+	ReadBaseline sandboxpolicy.ReadBaseline
+	// BreakGlassReadDirs/BreakGlassWriteDirs are acknowledged protected-path
+	// exceptions. They must suppress the baseline private-state deny they
+	// cover: on Codex a deny dominates any narrower grant regardless of
+	// declaration order, so leaving the deny in place would silently discard
+	// the operator's acknowledged access.
+	BreakGlassReadDirs  []string
+	BreakGlassWriteDirs []string
+}
+
+// codexMinimalRuntimeGrants are the special paths a minimal (extends-less)
+// profile must still grant for tools to run at all. ":minimal" is Codex's
+// purpose-built runtime baseline and expands to the system binary/library
+// roots (/bin, /etc, /lib, /lib64, /sbin, /usr); without it an extends-less
+// profile cannot execute even /usr/bin/true. The temp roots replace the
+// writable /tmp and $TMPDIR that ":workspace" supplied for free.
+//
+// Note what is deliberately NOT restored: ":root" = "read". That single entry
+// is the broad read baseline this whole feature exists to remove.
+var codexMinimalRuntimeGrants = []struct {
+	key    string
+	access string
+}{
+	{":minimal", "read"},
+	{":slash_tmp", "write"},
+	{":tmpdir", "write"},
+}
+
 func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketPath, privateStateDir string, readDirs, writeDirs, denyDirs []string, networkAccess sandboxpolicy.NetworkAccess, goos string) (string, error) {
+	return codexAgentProfileContentForRules(profileName, socketPath, privateStateDir,
+		CodexSandboxRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs}, networkAccess, goos)
+}
+
+func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir string, rules CodexSandboxRules, networkAccess sandboxpolicy.NetworkAccess, goos string) (string, error) {
+	readDirs, writeDirs, denyDirs := rules.ReadDirs, rules.WriteDirs, rules.DenyDirs
 	profileName, err := ValidateCodexProfileName(profileName)
 	if err != nil {
 		return "", err
@@ -201,13 +249,18 @@ func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketP
 	if err != nil {
 		return "", err
 	}
-	allDirs := append(append(append([]string{}, readDirs...), writeDirs...), denyDirs...)
+	readBaseline, err := sandboxpolicy.NormalizeReadBaseline(rules.ReadBaseline)
+	if err != nil {
+		return "", err
+	}
+	breakGlass := append(append([]string{}, rules.BreakGlassReadDirs...), rules.BreakGlassWriteDirs...)
+	allDirs := append(append(append(append([]string{}, readDirs...), writeDirs...), denyDirs...), breakGlass...)
 	for _, dir := range allDirs {
 		if err := validateCodexProfilePath("sandbox profile directory", dir); err != nil {
 			return "", err
 		}
 	}
-	grants := make(map[string]string, len(readDirs)+len(writeDirs)+len(denyDirs))
+	grants := make(map[string]string, len(allDirs))
 	for _, dir := range readDirs {
 		grants[dir] = "read"
 	}
@@ -217,14 +270,29 @@ func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketP
 	for _, dir := range denyDirs {
 		grants[dir] = "none"
 	}
+	// Break-glass is applied AFTER the ordinary rules and write after read, so
+	// an acknowledged protected grant is never downgraded by an ordinary deny
+	// that happens to name the same path. Read still does not imply write.
+	for _, dir := range rules.BreakGlassReadDirs {
+		grants[dir] = "read"
+	}
+	for _, dir := range rules.BreakGlassWriteDirs {
+		grants[dir] = "write"
+	}
 	if tmuxSocketDir != "" {
+		// The tmux socket directory is host-control authority — a strictly more
+		// severe class than protected state — and is NOT reachable through
+		// break-glass. It stays denied unconditionally, after every other rule.
 		grants[tmuxSocketDir] = "none"
 	}
 	// The private-state baseline deny is emitted separately below. Avoid a
-	// duplicate TOML key when an operator profile repeats it explicitly. The
-	// tmux socket-directory deny remains in grants and overrides any operator
-	// rule for that exact path.
-	delete(grants, privateStateDir)
+	// duplicate TOML key when an operator profile repeats it explicitly, UNLESS
+	// an acknowledged break-glass rule targets that exact path — in which case
+	// the grant must survive and the baseline deny must be suppressed.
+	suppressPrivateStateDeny := breakGlassCoversPath(breakGlass, privateStateDir)
+	if !suppressPrivateStateDeny {
+		delete(grants, privateStateDir)
+	}
 	grantPaths := make([]string, 0, len(grants))
 	for dir := range grants {
 		grantPaths = append(grantPaths, dir)
@@ -253,9 +321,26 @@ func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketP
 		fmt.Fprintf(&b, "network_proxy = %s\n\n", featureNetworkProxy)
 	}
 	fmt.Fprintf(&b, "[permissions.%s]\n", p)
-	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
+	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
+		// No `extends` at all: Codex resolves an extends-less profile to a
+		// deny-all filesystem baseline, which is precisely the allowlist read
+		// posture a minimal profile asks for. The enumerated runtime grants
+		// below replace what ":workspace" used to supply, minus its readable
+		// filesystem root.
+		fmt.Fprintf(&b, "# read_baseline = minimal: no `extends`, so the filesystem baseline is deny-all\n")
+		fmt.Fprintf(&b, "# and only the enumerated grants below are readable.\n\n")
+	} else {
+		fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
+	}
 	fmt.Fprintf(&b, "[permissions.%s.filesystem]\n", p)
-	fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
+	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
+		for _, grant := range codexMinimalRuntimeGrants {
+			fmt.Fprintf(&b, "%q = %q\n", grant.key, grant.access)
+		}
+	}
+	if !suppressPrivateStateDeny {
+		fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
+	}
 	fmt.Fprintf(&b, "%q = \"read\"\n", socketPath)
 	if len(grantPaths) > 0 {
 		for _, dir := range grantPaths {
@@ -401,6 +486,13 @@ func EnsureCodexAgentLaunchProfileWithRules(readDirs, writeDirs, denyDirs []stri
 // plus an optional network posture. Every managed profile also denies the
 // tclaude tmux server socket while preserving agentd's separate Unix socket.
 func EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyDirs []string, networkAccess sandboxpolicy.NetworkAccess, launchID string) (profileName, path string, err error) {
+	return EnsureCodexAgentLaunchProfileForRules(CodexSandboxRules{ReadDirs: readDirs, WriteDirs: writeDirs, DenyDirs: denyDirs}, networkAccess, launchID)
+}
+
+// EnsureCodexAgentLaunchProfileForRules is the full-fidelity entry point: it
+// carries the read baseline and the acknowledged break-glass exceptions in
+// addition to the ordinary filesystem rules.
+func EnsureCodexAgentLaunchProfileForRules(rules CodexSandboxRules, networkAccess sandboxpolicy.NetworkAccess, launchID string) (profileName, path string, err error) {
 	launchID = strings.TrimSpace(launchID)
 	if launchID == "" {
 		return "", "", fmt.Errorf("managed Codex launch profile requires a launch ID")
@@ -419,7 +511,11 @@ func EnsureCodexAgentLaunchProfileWithRulesAndNetwork(readDirs, writeDirs, denyD
 	if err != nil {
 		return "", "", err
 	}
-	path, err = ensureCodexAgentProfileForRulesAndNetworkNamed(profileName, sock, privateStateDir, readDirs, writeDirs, denyDirs, networkAccess)
+	content, err := codexAgentProfileContentForRules(profileName, sock, privateStateDir, rules, networkAccess, runtime.GOOS)
+	if err != nil {
+		return "", "", err
+	}
+	path, err = writeCodexAgentProfile(profileName, content)
 	return profileName, path, err
 }
 
@@ -517,6 +613,10 @@ func ensureCodexAgentProfileForRulesAndNetworkNamed(profileName, socketPath, pri
 	if err != nil {
 		return "", err
 	}
+	return writeCodexAgentProfile(profileName, content)
+}
+
+func writeCodexAgentProfile(profileName, content string) (string, error) {
 	path, err := codexAgentProfilePath(profileName)
 	if err != nil {
 		return "", err

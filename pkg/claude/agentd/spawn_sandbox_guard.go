@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -41,6 +42,23 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
+	}
+	// TCL-609 capability gates run FIRST and unconditionally: a minimal read
+	// baseline or an acknowledged protected grant must be refused by a harness
+	// that cannot enforce it even when the profile carries no other rules.
+	// Approximating either one would hand the operator a false guarantee.
+	if baseline := snapshot.Effective.ReadBaseline; baseline != sandboxpolicy.ReadBaselineDefault {
+		if err := harness.ValidateSandboxReadBaseline(harnessOrDefault(harnessName), sandboxMode, baseline); err != nil {
+			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReadBaseline)
+		}
+	}
+	if grants := snapshot.Effective.BreakGlassFilesystem; len(grants) > 0 {
+		if err := harness.ValidateSandboxBreakGlass(harnessOrDefault(harnessName), sandboxMode, grants); err != nil {
+			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityBreakGlass)
+		}
+		if _, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective); err != nil {
+			return &spawnFailure{http.StatusUnprocessableEntity, harness.SandboxCapabilityBreakGlass, err.Error()}
+		}
 	}
 	hasNetworkPolicy := snapshot.Effective.NetworkAccess != sandboxpolicy.NetworkAccessInherit
 	if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && !hasNetworkPolicy {
@@ -96,6 +114,17 @@ func filesystemHasDeny(filesystem []sandboxpolicy.FilesystemGrant) bool {
 		}
 	}
 	return false
+}
+
+// sandboxCapabilitySpawnFailure converts an adapter capability refusal into
+// the daemon's typed HTTP failure, preserving the adapter's stable error kind
+// so the CLI and dashboard can render the specific remedy.
+func sandboxCapabilitySpawnFailure(err error, fallbackKind string) *spawnFailure {
+	var capErr *harness.SandboxCapabilityError
+	if errors.As(err, &capErr) {
+		return &spawnFailure{http.StatusUnprocessableEntity, capErr.Kind, capErr.Message}
+	}
+	return &spawnFailure{http.StatusUnprocessableEntity, fallbackKind, err.Error()}
 }
 
 type spawnLineageSandbox struct {
