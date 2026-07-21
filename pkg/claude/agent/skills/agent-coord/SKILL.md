@@ -47,11 +47,12 @@ tclaude agent whoami      # who am I (stable agent_id and display name)?
 tclaude agent ls          # peers reachable via shared groups
 ```
 
-`ls` shows name, role, description, the peer's **agent_id** (short form),
-and which groups you share with each peer. The `agent_id` (`agt_…`) is the
+`ls` shows name, harness/model, dashboard-aligned activity state, live
+sub-agent count, role, description, the peer's **agent_id** (short form), and
+which groups you share with each peer. The `agent_id` (`agt_…`) is the
 **stable, canonical handle** — unlike a conv-id it never changes when the
 agent reincarnates or clones, so it's the right thing to copy when you want
-to address a peer.
+to address a peer. Use `--json` for the full runtime summary under `state`.
 
 ## Receiving a message nudge
 
