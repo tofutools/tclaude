@@ -42,6 +42,21 @@
 }
 .mux-tab.drop-before::before { left: -3px; }
 .mux-tab.drop-after::after { right: -3px; }
+/* Drag-out gesture: the strip (dashboard) or the pane header (solo pop-out) is
+   the terminal's home region. Once the pointer is clear of it, releasing hands
+   the terminal to the other surface, so the region dims and states what will
+   happen — the same geometry that decides the gesture on dragend. */
+.mux-tabs.drag-out-armed,
+.mux-pane-header.drag-out-armed {
+  outline: 1px dashed #1f6feb; outline-offset: -2px; opacity: 0.72;
+}
+.mux-pane-title-drag { cursor: grab; user-select: none; }
+.mux-pane-title-drag.dragging { cursor: grabbing; opacity: 0.48; }
+.mux-drag-out-hint {
+  flex: none; padding: 3px 8px; font-size: 11px; color: #58a6ff;
+  background: #161b22; border-bottom: 1px solid #2a3340; white-space: nowrap;
+}
+.mux-pane-header .mux-drag-out-hint { border-bottom: none; background: none; }
 .mux-tab-a11y {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -179,6 +194,11 @@ body.wizard .mux-pane-header {
 body.wizard .mux-pane-title {
   color: #f3e6c0;
   text-shadow: 0 0 7px rgba(169, 123, 214, 0.45);
+}
+body.wizard .mux-tabs.drag-out-armed,
+body.wizard .mux-pane-header.drag-out-armed { outline-color: #d9b45a; }
+body.wizard .mux-drag-out-hint {
+  color: #f0a868; background: #171024; border-bottom-color: #4a3a6b;
 }
 body.wizard .mux-pane-status,
 body.wizard .terminal-interaction-hint { color: #a997ca; }

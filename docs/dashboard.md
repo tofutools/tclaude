@@ -852,6 +852,18 @@ For a keyboard path, focus a terminal tab and press **Alt-Shift-Left Arrow** or
 **Alt-Shift-Right Arrow**. Reordering leaves the active terminal and every live
 terminal connection unchanged.
 
+Dragging a terminal tab *off* the strip detaches it, and dragging the standalone
+header's title off that header reattaches it — the drag equivalents of **⧉ tab**
+and **↩ dashboard**, running the exact same handoff. A browser never tells a page
+that a drag ended over some other window, so the gesture is inferred from where
+the drag was released: clear of the tab strip (or the standalone header) by a
+margin wide enough that a sloppy reorder cannot trigger it. Once the pointer is
+past that margin the region dims and states what releasing will do; a drag
+cancelled with **Escape**, or released inside the margin, changes nothing.
+Because the rule is conservative rather than clever, anything it does not
+recognise simply falls through to the explicit buttons and the tab context
+menu, which remain the dependable and keyboard-accessible path.
+
 An explicitly reordered tab sequence is stored as a dashboard presentation
 preference in the same server-backed preferences as the other sticky view
 settings. A terminal key already in that stored sequence returns to its
