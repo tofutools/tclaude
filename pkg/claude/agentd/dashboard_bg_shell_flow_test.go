@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -26,6 +28,39 @@ import (
 // process-liveness reconcile that makes it honest enough to be worth
 // showing (which is what the earlier "no background-shell count" decision
 // concluded was impossible).
+
+// startWrapperShell launches a stand-in for the wrapper shell Claude Code
+// puts a background command under, and returns a stop func that takes the
+// whole subtree down.
+//
+// The `; true` is load-bearing. A shell handed one SIMPLE command
+// (`sh -c 'sleep 120 #marker'`) exec()s straight into it, replacing its own
+// argv — so the marker, which lives in a comment, disappears from the
+// process table. macOS's /bin/sh does this and Linux's happened not to,
+// which is exactly the kind of accident a test must not depend on. Making
+// the script compound keeps the wrapper process alive with the command
+// inside its argv — which is also what the real thing looks like: Claude
+// Code's wrapper sources a shell snapshot and `eval`s the command, so it is
+// never a single simple command either.
+//
+// Its own process group, killed as a group, for the same reason: killing
+// only the wrapper would orphan the `sleep` it started, leaving a stray
+// process behind and making "the command finished" a half-truth.
+func startWrapperShell(t *testing.T, command string) (stop func()) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", command+"; true")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_, _ = cmd.Process.Wait()
+		})
+	}
+	t.Cleanup(stop)
+	return stop
+}
 
 // bgLaunchHook builds the PostToolUse payload for a backgrounded Bash, in
 // the shape verified against a live Claude Code session.
@@ -144,12 +179,7 @@ func TestDashboardSnapshot_BgShellReconcileRetiresAFinishedCommand(t *testing.T)
 	marker := fmt.Sprintf("tcl613-flow-%d", os.Getpid())
 	alive := "sleep 120 #" + marker + "-alive"
 	finished := "sleep 120 #" + marker + "-finished"
-	cmd := exec.Command("sh", "-c", alive)
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
+	stopAlive := startWrapperShell(t, alive)
 
 	apply := func(in session.HookCallbackInput) {
 		t.Helper()
@@ -196,8 +226,7 @@ func TestDashboardSnapshot_BgShellReconcileRetiresAFinishedCommand(t *testing.T)
 
 	// Now the survivor exits too. With no hook to announce it, the
 	// reconcile is the ONLY thing that can clear the badge.
-	require.NoError(t, cmd.Process.Kill())
-	_, _ = cmd.Process.Wait()
+	stopAlive()
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if got = member(); got.State.BgShellCount == 0 {
@@ -229,12 +258,7 @@ func TestDashboardSnapshot_BgShellReconcileIsStableAcrossPolls(t *testing.T) {
 
 	marker := fmt.Sprintf("tcl613-stable-%d", os.Getpid())
 	command := "sleep 120 #" + marker
-	cmd := exec.Command("sh", "-c", command)
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
+	startWrapperShell(t, command)
 
 	require.NoError(t, session.ApplyHook(
 		bgLaunchHook(conv, f.TestCwd("bgst"), command, "task-1"), label))
