@@ -86,13 +86,17 @@ func TestAgentRecoverySweep_ConfirmsSameSessionRowWithNewGeneration(t *testing.T
 	row.Status = "working"
 	require.NoError(t, db.SaveSession(row))
 	require.NoError(t, db.SetSessionExitLaunchGeneration(row.ID, successorGeneration))
-	runAgentRecoverySweep(time.Now().UTC())
+	runAgentRecoverySweep(time.Now().UTC().Add(-2 * time.Minute))
 	confirmed, err := db.AgentRecoveryForAgent(agentID)
 	require.NoError(t, err)
 	require.NotNil(t, confirmed)
 	assert.Equal(t, db.AgentRecoveryStatusRecovered, confirmed.Status)
 	assert.Equal(t, row.ID, confirmed.SuccessorSessionID)
 	assert.Equal(t, successorGeneration, confirmed.SuccessorGeneration)
+	assert.True(t, confirmed.RecoveredAt.After(row.UpdatedAt),
+		"confirmation time must reflect the transition, not a stale ticker timestamp")
+	assert.True(t, recoveryStatusVisible(*confirmed, row.UpdatedAt, true, time.Now()),
+		"a hook before actual confirmation must not hide the new recovered badge")
 }
 
 func TestManualResumeCancelsPendingAutomaticRetry(t *testing.T) {

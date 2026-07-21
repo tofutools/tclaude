@@ -131,11 +131,12 @@ func reconcileAgentRecovery(r db.AgentRecovery, now time.Time) {
 			cancelStaleRecovery(r, now, "successor_race")
 			return
 		}
-		if changed, err := db.ConfirmAgentRecovery(r, successor.ID, generation, now); err != nil {
+		confirmedAt := time.Now()
+		if changed, err := db.ConfirmAgentRecovery(r, successor.ID, generation, confirmedAt); err != nil {
 			slog.Warn("agent recovery: confirm live successor failed", "agent_id", r.AgentID, "error", err)
 		} else if changed {
 			if latest, _ := db.AgentRecoveryForAgent(r.AgentID); latest != nil {
-				_ = db.RecordAgentRecoveryAudit(*latest, db.AuditVerbAgentRecoveryConfirmed, "live_confirmed", now)
+				_ = db.RecordAgentRecoveryAudit(*latest, db.AuditVerbAgentRecoveryConfirmed, "live_confirmed", confirmedAt)
 			}
 		}
 		return

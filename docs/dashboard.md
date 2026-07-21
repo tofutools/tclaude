@@ -251,7 +251,9 @@ backoff** (with restart count and next retry), **recovered automatically**, or
 **recovery suppressed**. A scheduled retry is therefore never reduced to a
 generic offline label. The recovery view is deliberately bounded to status,
 safe reason codes, launch identifiers, counts, exit code/signal evidence, and
-timestamps.
+timestamps. The **recovered automatically** pill clears on the first later
+session hook, or after one minute without another hook; durable recovery
+transitions remain available in the audit log.
 
 Retired conversations are kept **forever** by default — retire is the
 non-destructive half of cleanup. If you'd rather reclaim the long tail
