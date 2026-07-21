@@ -194,6 +194,11 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const [readExclusionCatalog, setReadExclusionCatalog] = useState({ version: 0, categories: [], informational: [] });
   // Lifted so only one exclusion disclosure is open at a time, keyed by row id.
   const [exclusionHelpOpen, setExclusionHelpOpen] = useState('');
+  // The restriction catalog is the longest section in the dialog and most
+  // profiles never touch it, so it stays folded until asked for. The summary
+  // carries the active/inherited/unknown counts, so folding hides the controls
+  // but never the fact that restrictions are in force.
+  const [exclusionsOpen, setExclusionsOpen] = useState(false);
   useEffect(() => { let active = true; if (typeof actions.loadReadExclusionCatalog !== 'function') return () => { active = false; }; actions.loadReadExclusionCatalog().then((value) => { if (active) setReadExclusionCatalog(value || { version: 0, categories: [], informational: [] }); }).catch((error) => { if (active) state.error.value = `Could not load filesystem restriction catalog: ${error.message || String(error)}`; }); return () => { active = false; }; }, []);
   // The acknowledgement is deliberately NOT part of the draft: it never
   // persists, and every editor session must collect it afresh.
@@ -272,10 +277,37 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const effectiveReadExclusions = composeSandboxProfilePolicy([{ scope: 'profile', profile: candidate }], exclusionProfiles).readExclusions || [];
   const effectiveExclusionByID = new Map(effectiveReadExclusions.map((entry) => [entry.id, entry]));
   const knownExclusionIDs = new Set((readExclusionCatalog.categories || []).map((entry) => entry.id));
-  const unknownExclusions = effectiveReadExclusions.filter((entry) => !knownExclusionIDs.has(entry.id));
+  // Nothing is "unknown" until the catalog has actually arrived (the daemon
+  // always sends version >= 1). Classifying against the empty initial catalog
+  // would flash every restriction as unknown and — because the auto-open below
+  // latches — leave the section permanently unfolded for any profile that has
+  // restrictions at all.
+  const exclusionCatalogLoaded = (readExclusionCatalog.version || 0) > 0;
+  const unknownExclusions = exclusionCatalogLoaded
+    ? effectiveReadExclusions.filter((entry) => !knownExclusionIDs.has(entry.id)) : [];
+  // An unknown restriction fails launch closed until this tclaude understands
+  // it, so it must never sit unseen behind the fold: its arrival opens the
+  // section. The operator can still collapse it again afterwards.
+  // Keyed on the ID set, not merely on "any unknown": a second unknown
+  // arriving while the first is still present must re-reveal the section, even
+  // if the operator collapsed it in between.
+  const hasUnknownExclusions = unknownExclusions.length > 0;
+  const unknownExclusionKey = unknownExclusions.map((entry) => entry.id).sort().join('\0');
+  useEffect(() => { if (unknownExclusionKey) setExclusionsOpen(true); }, [unknownExclusionKey]);
+  const inheritedExclusionCount = effectiveReadExclusions.filter((entry) => !candidate.read_baseline_exclusions?.includes(entry.id)).length;
+  const exclusionSummary = effectiveReadExclusions.length
+    ? [`${effectiveReadExclusions.length} active`, inheritedExclusionCount ? `${inheritedExclusionCount} inherited` : '', hasUnknownExclusions ? `⚠ ${unknownExclusions.length} unknown` : ''].filter(Boolean).join(' · ')
+    : 'none — reads follow the read baseline';
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network policies control external IP connectivity while retaining the tclaude agent socket. Managed Codex profiles block the host tmux server independently. Environment values are ordinary configuration, not secrets.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}><${Row} label="Network"><${Select} id="sandbox-profile-editor-network" value=${draft.network_access} onChange=${(value) => change(setDraft, 'network_access', value)} options=${[['', 'No override (inherit profile layers)'], ['internet', 'Internet access'], ['none', 'Offline (macOS; unavailable on Linux/WSL)']]}/></${Row}>
     <${Row} label="Read baseline" title="Strictest-wins across includes and global/group/explicit layers: if any applied profile says minimal, the effective read scope is minimal. Requires harness support; launch fails with a typed capability error where it cannot be enforced."><${Select} id="sandbox-profile-editor-read-baseline" value=${draft.read_baseline} onChange=${(value) => change(setDraft, 'read_baseline', value)} options=${[['', "Default — harness baseline (broad reads, today's behavior)"], ['minimal', 'Minimal — strict opt-in: only workspace, required runtime paths, and explicit grants']]}/></${Row}>
     <fieldset class="sbx-section sbx-read-exclusions" hidden=${advanced}><legend>Additional filesystem restrictions</legend>
+      ${/* `|| null` rather than a bare boolean: where `open` is not a settable
+           DOM property, Preact falls back to setAttribute, and setting it to
+           `false` still leaves the attribute present (i.e. open). null removes
+           it on both paths. */ ''}
+      <details class="sbx-exclusion-fold" id="sandbox-profile-editor-exclusions-fold" open=${exclusionsOpen || null}
+        onToggle=${(event) => setExclusionsOpen(event.currentTarget.open)}>
+      <summary class="sbx-exclusion-summary"><span class="sbx-exclusion-summary-label">Restrictions</span><span class=${`sbx-exclusion-summary-count${hasUnknownExclusions ? ' unknown' : ''}`}>${exclusionSummary}</span></summary>
       <div class="sbx-exclusion-intro"><span>Deny reads of sensitive locations. Restrictions compose by union across includes and scopes.</span><${HelpDisclosure} id="sandbox-exclusions-section-help" label="Additional filesystem restrictions" help=${EXCLUSION_SECTION_HELP} open=${exclusionHelpOpen === 'sandbox-exclusions-section-help'} setOpen=${setExclusionHelpOpen}/></div>
       ${draft.read_baseline === 'minimal' && html`<div class="sbx-exclusion-note">Locked: Minimal already removes the broad Default read baseline. These choices are retained.</div>`}
       <div class="sbx-exclusion-list">${(readExclusionCatalog.categories || []).map((category) => {
@@ -308,6 +340,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
           onChange=${() => toggleReadExclusion(entry.id)} helpOpen=${exclusionHelpOpen} setHelpOpen=${setExclusionHelpOpen}/>`;
       })}</div>
       <details><summary>Required, non-removable access</summary>${(readExclusionCatalog.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-bg-intro"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>
+      </details>
     </fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend><div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>

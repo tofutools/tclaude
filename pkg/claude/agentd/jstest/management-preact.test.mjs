@@ -443,6 +443,10 @@ test('sandbox editor keeps Home and external leaves distinct and lets owners rem
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
   const exclusions = host.querySelector('.sbx-read-exclusions');
+  // Unknown restrictions fail launch closed, so they unfold the otherwise
+  // collapsed catalog rather than sitting unseen behind the summary.
+  assert.equal(host.querySelector('#sandbox-profile-editor-exclusions-fold').hasAttribute('open'), true,
+    'an unknown restriction unfolds the catalog once it loads');
   assert.match(exclusions.textContent, /Unknown restriction: future\.secret-store/);
   assert.match(exclusions.textContent, /Unknown restriction: future\.inherited-store/);
   const unknownRows = [...exclusions.querySelectorAll('.sbx-exclusion-row.unknown')];
@@ -498,6 +502,15 @@ test('sandbox exclusion rows stay compact and keep their copy behind [?]', async
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  // The catalog ships folded, and the summary carries the counts so collapsing
+  // never hides the fact that a restriction is in force.
+  const fold = host.querySelector('#sandbox-profile-editor-exclusions-fold');
+  assert.equal(fold.hasAttribute('open'), false, 'the restriction catalog is folded by default');
+  assert.match(fold.querySelector('summary').textContent, /1 active · 1 inherited/);
+  // The browser flips .open itself and then fires `toggle`; drive that same
+  // sequence so the component's state stays in sync with the real element.
+  fold.open = true; fold.dispatchEvent(new harness.window.Event('toggle'));
+  await harness.act(() => Promise.resolve());
   const rows = [...host.querySelectorAll('.sbx-exclusion-row')];
   assert.equal(rows.length, 2);
   const ssh = rows[0];
