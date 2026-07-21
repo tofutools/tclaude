@@ -118,14 +118,27 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     return true;
   }
 
-  function removePane(key) {
+  function removePanes(keys) {
     const current = panes.value;
-    const pane = current.find((candidate) => candidate.key === key);
-    if (!pane) return null;
-    const next = current.filter((candidate) => candidate.key !== key);
+    const wanted = new Set(keys || []);
+    const removed = current.filter((candidate) => wanted.has(candidate.key));
+    if (!removed.length) return [];
+    const next = current.filter((candidate) => !wanted.has(candidate.key));
+    const previousActive = activeKey.value;
     panes.value = next;
-    if (activeKey.value === key) activeKey.value = next[0]?.key || null;
-    return pane;
+    if (!next.some((candidate) => candidate.key === previousActive)) {
+      const previousIndex = current.findIndex((candidate) => candidate.key === previousActive);
+      const successor = previousIndex < 0 ? null : current.slice(previousIndex + 1)
+        .find((candidate) => !wanted.has(candidate.key));
+      const predecessor = previousIndex < 0 ? null : current.slice(0, previousIndex).reverse()
+        .find((candidate) => !wanted.has(candidate.key));
+      activeKey.value = successor?.key || predecessor?.key || next[0]?.key || null;
+    }
+    return removed;
+  }
+
+  function removePane(key) {
+    return removePanes([key])[0] || null;
   }
 
   function movePane(key, toIndex) {
@@ -203,6 +216,7 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     openPane,
     activatePane,
     removePane,
+    removePanes,
     movePane,
     reorderPane,
     movePaneByOffset,
