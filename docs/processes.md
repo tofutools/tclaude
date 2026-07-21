@@ -5,6 +5,19 @@ workflows. With the feature enabled, `tclaude agentd` continuously advances
 runs in the filesystem store at `~/.tclaude/data/processes`. The manual CLI remains
 available for instantiation, inspection, verification, and repair workflows.
 
+**Status: the schema-8 unlock surfaces are not released.** The owner-epoch
+execution, preview/apply, restricted-artifact, and dashboard unlock surfaces
+documented below are implemented for continued development and testing, but
+schema-8 unlock is not release-ready and not supported for operational use.
+The reviewed reason is a measured verification/lease limit: a cold first
+verification replays the complete runtime receipt chain, and on longer run
+histories (roughly 150–200 receipts, reachable by a 50–65 node run with
+retries) that single replay can outlast the engine's 30-second lease renewal
+window while holding the run lock. Repeated verifications of an already-seen
+checkpoint are memoized, which keeps short histories fast, but the cold-path
+limit stands until the verification/lease architecture is reworked on the
+graduation track. Keep `features.processes` off outside development.
+
 Enable the feature:
 
 ```json
@@ -322,7 +335,12 @@ tclaude process preview RUN_ID \
   --base-digest DIGEST
 ```
 
-The preview is read-only. If it returns opaque handoff blockers, repeat it with
+The preview is read-only, and the preview route deliberately requires no
+dedicated permission: it returns only bounded, redacted projections — status,
+bindings, graph totals, lineage refs, authority counts, and opaque
+blocker/guidance tokens — never exact topology, template source, or reason
+text, so it cannot serve as an oracle for the restricted artifacts. If it
+returns opaque handoff blockers, repeat it with
 one `--handoff TOKEN=retain` or
 `--handoff TOKEN=transfer:LOCAL:RESERVATION:NODE` per blocker. If it returns
 audited-settlement guidance, pass that guidance token as the second positional
@@ -369,8 +387,13 @@ tclaude process show RUN_ID --store-root "$STORE" --epoch EPOCH_ID --diff
 tclaude process show RUN_ID --store-root "$STORE" --epoch EPOCH_ID --reason
 ```
 
-Schema-8 daemon commands intentionally reject custom store roots. Schemas 1–7
-retain their existing direct/custom-root CLI behavior.
+These artifact reads are permission-gated but not audit-logged: the audit log
+records mutations (an apply's `unlock_apply` provenance, audited settlements),
+never reads.
+
+Schema-8 daemon commands intentionally reject custom store roots. Schemas 1–6
+retain their existing direct/custom-root CLI behavior; a schema-7 run gets the
+same reset-required refusal from any store root.
 
 `--evidence-hash` records the content hash of the settle's evidence — on a
 work stage it is the hash later gate verdicts evaluate, which powers the
@@ -415,9 +438,11 @@ recovery, and the terminal result without consulting SQLite or a live daemon.
 ## Run viewer API
 
 With Processes enabled, `GET /v1/process/runs/{id}/view` returns a dedicated,
-read-only viewer projection. For schemas 1–7, the existing
+read-only viewer projection. For schemas 1–6, the existing
 `GET /v1/process/runs/{id}` contract continues to return the persisted run,
-state, and verification result unchanged. Schema 8 returns the same safe
+state, and verification result unchanged. Schema-7 runs are refused on both
+routes with a `409 process_run_reset_required` conflict (see the capability
+and migration matrix below). Schema 8 returns the same safe
 summary envelope from both routes: run status, schema/lineage metadata, an
 `adapted` flag, a bounded structural summary (current-epoch node/edge totals
 plus a changed-from-original bit), per-state authority counts, and the current
@@ -508,7 +533,7 @@ only.
 The additive `viewerV2` discriminator does not change the schema-v1 history
 report. It publishes the declared checkpoint schema, the path protocol, an
 exact-template topology with canonical path-v1 edge IDs, and one authoritative
-`routingAvailable` decision. Schema-7 routing includes unpaged graph edges,
+`routingAvailable` decision. Path-v1 routing includes unpaged graph edges,
 join policy/winner/count summaries, aggregate counts, and state counts. Rich
 generations, scopes, candidate closures, complete cause sets and causes,
 reservation-relative detachments, and detached sinks are typed pages. Request
@@ -524,11 +549,10 @@ Totals, state counts, topology, and edge/join overlays remain complete and do
 not shrink with the selected detail page. The complete routing DTO is capped at
 16 MiB, independently of the exact topology's 16-MiB encoded ceiling.
 
-Schema-v6 runs report `legacy_schema` and omit the routing payload. Eligible
-quiescent runs migrate atomically before new planning to the schema-7 path-v1
-executor; runs with active legacy commands, waits, obligations, or blocks drain
-on their legacy schema first. Schema-7 views expose only a bounded overlay
-derived from the validated current checkpoint aggregate. Evidence and the
+Schema 1–6 runs report `legacy_schema` and omit the routing payload; they
+continue to drain and execute on their legacy executor and are not migrated in
+place. Path-v1 views expose only a bounded overlay derived from the validated
+current checkpoint aggregate. Evidence and the
 schema-v1 `traversedEdges` history are never routing fallbacks. Evidence may be
 absent, reordered, or extended without changing viewer topology or overlays;
 the dashboard renders its sanitized projection only as a separate timeline.
@@ -539,7 +563,7 @@ Every unavailable condition is explicit and fail-closed:
 | --- | --- | --- |
 | `legacy_schema` | State schema is 1–6. | Show a verified exact topology when available; never infer routing from history. |
 | `epoch_v8_summary` | State schema is 8: the run serves the safe summary envelope; exact topology and routing are restricted surfaces. | Render the adapted/lineage/authority summary; drill into exact artifacts only through the permissioned epoch artifact route. |
-| `routing_absent` | A schema-7 aggregate has no routing state. | Show exact topology without an overlay. |
+| `routing_absent` | A path-v1 aggregate has no routing state. | Show exact topology without an overlay. |
 | `unsupported_schema` | State schema is unknown or newer than this viewer. | Omit topology/routing claims that cannot be interpreted safely. |
 | `unsupported_protocol` | Routing protocol or encoding is not the supported path-v1 pair. | Preserve exact topology; omit the routing overlay. |
 | `over_budget` | Exact topology, aggregate, or encoded routing DTO exceeds its limit. | Omit the over-budget surface instead of returning a partial view. |
@@ -549,8 +573,9 @@ The dashboard names the reason, keeps topology and overlay authority visible,
 offers next/previous controls for the typed pages, and uses the same semantics
 in its regular and wizard skins.
 
-The schema-7 release supports direct task and decision performers, retries,
-start/end routing, and duration, `until`, and signal waits. Timer schedules and
+The path-v1 executor — which now runs inside schema-8 owner epochs — supports
+direct task and decision performers, retries, start/end routing, and duration,
+`until`, and signal waits. Timer schedules and
 performer claims are persisted before external action. Signal satisfaction is
 available at `POST /v1/process/runs/{id}/nodes/{node}/signal`, requires the
 `process.advance` permission for agent callers, and is audited without copying
@@ -558,8 +583,8 @@ the signal body into audit detail. Exact observation and signal retries after
 an ambiguous commit are idempotent; a changed command, node, actor, outcome, or
 evidence binding is rejected.
 
-For a serial task without an authored failure edge, schema 7 matches the
-legacy terminal contract: task action aliases are normalized first, pass
+For a serial task without an authored failure edge, the path-v1 executor
+matches the legacy terminal contract: task action aliases are normalized first, pass
 outcomes succeed, and every other non-empty result consumes the retry budget.
 An exhausted result becomes a `failed` / `performer_failed` terminal path and
 fails the run without inventing an edge or end-node activation. Decision
@@ -573,7 +598,7 @@ reconstructed. A conversation reference contains only the durable agent ID
 recorded on the process command. The dashboard separately decides whether that
 agent currently has an online conversation.
 
-Schema-7 worklist rows are derived from verified performer commands and real
+Path-v1 worklist rows are derived from verified performer commands and real
 wait/obligation/block side effects. A live parallel-any loser remains visible
 when it still has an outstanding external wait; the row is marked `detached`
 with its reservation-relative detachment count. A join reservation is routing
@@ -619,8 +644,8 @@ worklist semantics would create runs the engine could not explain or settle.
 | Host capability set | Serial/exclusive template | Parallel + `join: all` | Parallel + `join: any` |
 | --- | --- | --- | --- |
 | `foundation_v1` | admitted | rejected | rejected |
-| `foundation_v1`, `parallel_all_v1` | admitted | admitted in the executable schema-7 subset | rejected |
-| `foundation_v1`, `parallel_all_v1`, `parallel_any_v1` (production) | admitted | admitted in the executable schema-7 subset | admitted in the executable schema-7 subset |
+| `foundation_v1`, `parallel_all_v1` | admitted | admitted in the executable path-v1 subset | rejected |
+| `foundation_v1`, `parallel_all_v1`, `parallel_any_v1` (production) | admitted | admitted in the executable path-v1 subset | admitted in the executable path-v1 subset |
 
 Production rejects incoherent capability combinations and parallel templates
 outside the released executor subset before creating a run. The supported
@@ -633,12 +658,12 @@ winner/detachment semantics. Compound nodes, program performers, and unsafe
 nested-fork shapes remain outside that parallel subset and are rejected rather
 than silently falling back.
 
-Schema-7 contact state (reminders and escalation for deferred agent/human
+Path-v1 contact state (reminders and escalation for deferred agent/human
 performers) lives in the checkpoint's `contacts` registry beside its
 side-effect marker. Nil contact configuration means engine defaults, exactly
 as on legacy v6, and used budgets survive restart, replay, and recovery.
 Rollback limitation: binaries older than contact parity cannot read a
-contact-bearing schema-7 checkpoint — the strict decoder refuses it
+contact-bearing path-v1 checkpoint — the strict decoder refuses it
 (fail-closed) rather than silently dropping the schedule; contact-less
 checkpoints remain byte-identical and readable either way.
 
@@ -651,20 +676,25 @@ all non-test Go sources outside that package, including aliases, wrappers,
 subpackages, and generated registration files, and fails closed when the pure
 file gains an unclassified export.
 
-Migration is checkpoint-bound:
+The schema-8 cutover is initialization-bound, not migration-bound:
 
-- New production runs that match the executable subset initialize schema 7
-  before their first path-v1 plan.
-- A pristine or completely drained eligible schema-1–6 run upgrades atomically
-  to a bound schema-7 checkpoint. Exact template ref, template-source hash,
-  generation, routing authority, commands, and side effects move together.
-- A legacy run with active commands, waits, obligations, blocks, admin work, or
-  ambiguous progress remains on its legacy executor until those records drain.
-  It is never partially converted and never uses viewer evidence as migration
-  input.
-- Unsupported templates continue on their compatible legacy path when that is
-  safe; new parallel syntax that the production capability/subset gate cannot
+- New production runs whose exact template source is in the path-v1
+  eligibility subset initialize directly as schema 8: instantiation routes
+  them through the store's schema-8 initializer, which pins the exact template
+  source and mints the original epoch atomically. The engine then executes
+  them through owner epochs.
+- Templates outside that subset (compound nodes, program performers, and the
+  other ineligible shapes) instantiate through the legacy route as before;
+  new parallel syntax that the production capability/subset gate cannot
   execute is rejected at instantiation.
+- Existing schema 1–6 runs stay on their legacy execution route and are never
+  upgraded in place — pristine, drained, or otherwise.
+- Schema-7 runs are classified `reset_required`. The engine tick and the
+  daemon run routes refuse them with `process run schema 7 requires reset`;
+  they are never auto-migrated and never auto-deleted, and there is
+  deliberately no v7→v8 migrator. Recovering one is an explicit operator
+  action: back up the run directory, reset (remove) it, and reinstantiate the
+  template as a new schema-8 run.
 
 The runnable parallel-any example is
 [`parallel-any-review`](examples/parallel-any-review.yaml). It starts two cold
@@ -687,7 +717,7 @@ canceled; any real outstanding wait remains visible in the worklist.
   intentional human override; the paused command's own running node remains
   protected from manual advancement.
 - Production advertises the complete foundation/all/any capability chain and
-  admits only the corresponding executable schema-7 subset described above.
+  admits only the corresponding executable path-v1 subset described above.
 - End nodes default to completed runs; set `result: failed` on a failure
   terminal node when that path should fail the run.
 - A poison-resolution `cancel` settles the run directly; the authored canceled

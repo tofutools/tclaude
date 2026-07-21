@@ -18,7 +18,22 @@ import (
 // VerifyCheckpointV8 reconstructs the checkpoint from the immutable epoch-zero
 // anchor and ordered history. Any missing, reordered, or internally coherent
 // but unauthorized final summary fails closed.
+//
+// Verification is a pure function of the checkpoint wire content: no I/O,
+// clock, caller context, store root, or mutable registry participates in the
+// replay. Successful results are therefore memoized process-locally on the
+// exact canonical wire bytes (see verify_cache.go); failures are never
+// memoized. The memo does not attest runtime artifact bytes or epoch source
+// files — VerifyRuntimeArtifact and the store's exact-artifact checks remain
+// authoritative for those.
 func VerifyCheckpointV8(checkpoint *CheckpointV8) error {
+	return checkpointVerifyCache.verify(checkpoint)
+}
+
+// verifyCheckpointV8Uncached performs the complete uncached replay. All
+// verification entry points must go through VerifyCheckpointV8 so repeated
+// structural verifications of the same checkpoint bytes stay cheap.
+func verifyCheckpointV8Uncached(checkpoint *CheckpointV8) error {
 	if checkpoint == nil {
 		return fmt.Errorf("%w: checkpoint is nil", ErrInvalid)
 	}
