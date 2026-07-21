@@ -257,7 +257,12 @@ tclaude agent message group:reviewer-team "PR #42 ready for eyes"
 # reply (looks up the sender from the original message id; no need to
 # copy conv-ids out of the headers)
 tclaude agent reply <id> "got it"
+tclaude agent reply <id> --body "got it"  # equivalent flag form
 ```
+
+`reply` takes its body from the same four interchangeable sources as
+`message`: positional text, `--body`, `--stdin`, or `--file`. Exactly one
+may be given.
 
 For direct messages the sender and target must share a group (or be
 bridged by an inter-group [link](#groups)), otherwise the daemon

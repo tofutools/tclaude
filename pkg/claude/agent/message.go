@@ -74,7 +74,7 @@ func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int
 		fmt.Fprintf(stderr, "Error: --gen is only valid on a direct (non-group, non-cc) send\n")
 		return rcInvalidArg
 	}
-	body, status := readBody(p, true, stdin, stderr)
+	body, status := readBody(p, stdin, stderr)
 	if status != rcOK {
 		return status
 	}
@@ -227,7 +227,10 @@ func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) i
 	return rcOK
 }
 
-func readBody(p *messageParams, allowBodyFlag bool, stdin io.Reader, stderr io.Writer) (string, int) {
+// readBody resolves the single body source a send may carry: positional
+// text, --body, --stdin, or --file. It is shared by `message` and `reply`,
+// which expose the same four sources.
+func readBody(p *messageParams, stdin io.Reader, stderr io.Writer) (string, int) {
 	count := 0
 	if p.Text != "" {
 		count++
@@ -242,19 +245,11 @@ func readBody(p *messageParams, allowBodyFlag bool, stdin io.Reader, stderr io.W
 		count++
 	}
 	if count == 0 {
-		if allowBodyFlag {
-			fmt.Fprintf(stderr, "Error: provide positional text, --body, --stdin, or --file\n")
-		} else {
-			fmt.Fprintf(stderr, "Error: provide a body, --stdin, or --file\n")
-		}
+		fmt.Fprintf(stderr, "Error: provide positional text, --body, --stdin, or --file\n")
 		return "", rcInvalidArg
 	}
 	if count > 1 {
-		if allowBodyFlag {
-			fmt.Fprintf(stderr, "Error: pass only one of positional text / --body / --stdin / --file\n")
-		} else {
-			fmt.Fprintf(stderr, "Error: pass only one of body / --stdin / --file\n")
-		}
+		fmt.Fprintf(stderr, "Error: pass only one of positional text / --body / --stdin / --file\n")
 		return "", rcInvalidArg
 	}
 	switch {
