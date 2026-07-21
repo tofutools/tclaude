@@ -21,6 +21,8 @@ a clean, contained rewrite point.
 
 ## Build and test
 
+Common commands:
+
 ```bash
 go build ./...
 go test ./...
@@ -30,9 +32,10 @@ go install .
 ```
 
 CI runs `go test ./...` and `golangci-lint run ./...`. Prefer pushing PRs
-early and letting CI do that work; there is no need to duplicate the full
-build/test/lint set locally before pushing. Run focused local builds/tests
-when they help your own iteration on the code you are changing.
+early and letting CI do that work; do not duplicate the full test/lint suite
+locally before pushing. Do make sure your changes at least build, and run
+focused local tests when they help your own iteration on the code you are
+changing.
 
 Platform target: Linux and macOS. WSL is treated as Linux for practical use.
 Native Windows is not a supported development target; do not design new
@@ -120,10 +123,13 @@ PR descriptions should start with a short `Background / Purpose` section that
 explains why the PR exists. Then summarize the implementation and list tests or
 verification.
 
-Every PR needs a real cold review, but do not let that delay getting the PR
-up: open the PR first, then trigger the cold review against it. Apply fixes
-once the review completes — push them directly to the PR if it is still open;
-if the operator chose to merge early, address the findings in a follow-up PR.
+Every PR needs a real cold review, but the review must not delay the PR
+itself. Open the PR first, then trigger the cold review against it. When
+presenting a PR to the operator while the review is still pending, say so.
+Apply fixes once the review completes: push them directly to the PR if it is
+still open; if the operator chose to merge early, address findings in a
+follow-up PR, and escalate anything serious (such as a security regression)
+to the operator directly rather than only filing the follow-up.
 CodeRabbit is enough for small/routine PRs only when it produced actual review
 feedback; a green CodeRabbit check that skipped because of quota is not a
 review. Larger, riskier, or more judgment-heavy PRs should get an independent
