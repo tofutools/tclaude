@@ -29,8 +29,10 @@ golangci-lint run ./...
 go install .
 ```
 
-CI runs `go test ./...` and `golangci-lint run ./...`. For local pre-flight,
-prefer the full build/test/lint set before opening or updating a PR.
+CI runs `go test ./...` and `golangci-lint run ./...`. Prefer pushing PRs
+early and letting CI do that work; there is no need to duplicate the full
+build/test/lint set locally before pushing. Run focused local builds/tests
+when they help your own iteration on the code you are changing.
 
 Platform target: Linux and macOS. WSL is treated as Linux for practical use.
 Native Windows is not a supported development target; do not design new
@@ -118,11 +120,14 @@ PR descriptions should start with a short `Background / Purpose` section that
 explains why the PR exists. Then summarize the implementation and list tests or
 verification.
 
-Before presenting a PR to the operator as ready, make sure it has had a real
-cold review. CodeRabbit is enough for small/routine PRs only when it produced
-actual review feedback; a green CodeRabbit check that skipped because of quota
-is not a review. Larger, riskier, or more judgment-heavy PRs should get an
-independent fresh-agent review even if CodeRabbit commented.
+Every PR needs a real cold review, but do not let that delay getting the PR
+up: open the PR first, then trigger the cold review against it. Apply fixes
+once the review completes — push them directly to the PR if it is still open;
+if the operator chose to merge early, address the findings in a follow-up PR.
+CodeRabbit is enough for small/routine PRs only when it produced actual review
+feedback; a green CodeRabbit check that skipped because of quota is not a
+review. Larger, riskier, or more judgment-heavy PRs should get an independent
+fresh-agent review even if CodeRabbit commented.
 
 An independent review must be done by a fresh agent that sees the PR diff cold:
 give it the diff and a review instruction, not the design backstory or how the
