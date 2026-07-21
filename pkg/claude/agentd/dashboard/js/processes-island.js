@@ -39,12 +39,21 @@ function InlineTemplateField({
 }) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef(null);
+  // The edit session is frozen when it OPENS. The list keeps refreshing under
+  // an open editor -- the snapshot poll observes moved heads and reloads the
+  // rows -- so both the commit callback (which carries the CAS baseline the
+  // operator was looking at) and the value it compares against would otherwise
+  // be silently replaced mid-typing. Committing through the re-rendered
+  // callback would save against the NEW head, which the server then accepts:
+  // the concurrent writer's change is overwritten instead of conflicting.
+  const session = useRef(null);
+  const open = () => { session.current = { value: value || '', save }; setEditing(true); };
   useLayoutEffect(() => {
     if (!editing) return;
     const input = inputRef.current;
     if (!input) return;
     // Seed explicitly; see EditableTitle.
-    input.value = value || '';
+    input.value = session.current?.value || '';
     input.focus();
     // Not every DOM implementation provides select() (the linkedom test DOM
     // does not); selecting the existing text is a convenience, not a contract.
@@ -60,12 +69,16 @@ function InlineTemplateField({
     if (settled.current) return;
     const input = inputRef.current;
     if (!input) return;
+    const started = session.current;
+    if (!started) return;
     settled.current = true;
     const next = String(input.value ?? '').trim();
     setEditing(false);
-    if (next === (value || '')) return;
+    // Compare against what the operator opened on, not against a value the
+    // list may have refreshed underneath them.
+    if (next === started.value) return;
     try {
-      await save(next);
+      await started.save(next);
     } catch {
       // The action already surfaced the failure through the notice line.
     }
@@ -74,7 +87,7 @@ function InlineTemplateField({
     return html`<input
       ref=${inputRef} class=${`${className}-input`} type="text" spellcheck="false"
       placeholder=${placeholder} aria-label=${editLabel}
-      ...${{ [inputAttr]: id }} defaultValue=${value || ''}
+      ...${{ [inputAttr]: id }} defaultValue=${session.current?.value || ''}
       onBlur=${() => commit()}
       onKeyDown=${(event) => {
         if (event.isComposing || event.keyCode === 229) return;
@@ -87,7 +100,7 @@ function InlineTemplateField({
     class=${`${className}-edit${value ? '' : ' process-unnamed'}`}
     type="button" ...${{ [editAttr]: id }} disabled=${busy}
     title=${editTitle} aria-label=${editLabel}
-    onClick=${() => setEditing(true)}
+    onClick=${open}
   >${value || emptyLabel}</button>`;
 }
 

@@ -1469,6 +1469,79 @@ test('an inline description losing the CAS race reports a description-specific c
   await mounted.unmount();
 });
 
+// The list keeps refreshing under an open editor: the snapshot poll observes
+// moved heads and reloads the rows. If the open editor tracked those refreshed
+// props, Enter would save against the NEW head -- which the server accepts --
+// and the concurrent writer's change would be overwritten instead of
+// conflicting. The edit session must stay pinned to what the operator opened on.
+test('a list refresh under an open description editor cannot substitute a newer CAS baseline', async (t) => {
+  const { harness, state, mounted, posts, settle } = await mountDescribableList(t, {
+    post: () => ({ ok: false, status: 409, json: async () => ({ code: 'process_template_conflict' }) }),
+  });
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-description-edit="described"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-description-input="described"]');
+  input.value = 'my stale draft';
+
+  // A concurrent writer moves the head while the operator is still typing, and
+  // the ordinary refresh publishes the newer row.
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), {
+    templates: [{ id: 'described', name: 'Release train', description: 'concurrent description', latestVersion: { sourceHash: 'row-v2' } }],
+  });
+  await harness.act(() => Promise.resolve());
+  const live = mounted.container.querySelector('[data-process-description-input="described"]');
+  assert.equal(live, input, 'the refresh does not tear down the open editor');
+  assert.equal(live.value, 'my stale draft', 'nor does it discard the operator draft');
+
+  await harness.act(() => harness.fireEvent(live, 'keydown', { key: 'Enter' }));
+  await settle();
+
+  assert.equal(posts().length, 1);
+  const body = JSON.parse(posts()[0].options.body);
+  assert.equal(body.sourceHash, 'row-v1',
+    'committing against the refreshed head would silently overwrite the concurrent description instead of conflicting');
+  assert.equal(body.template.description, 'my stale draft');
+  // The save is therefore refused, and the row keeps showing the concurrent
+  // writer's truthful state rather than the rejected draft.
+  assert.match(state.notice.value, /changed while you were editing its description/);
+  await harness.act(() => Promise.resolve());
+  assert.equal(mounted.container.querySelector('[data-process-description-edit="described"]').textContent, 'concurrent description');
+  await mounted.unmount();
+});
+
+test('a list refresh under an open name editor cannot substitute a newer CAS baseline', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
+    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
+    harness.importDashboardModule('js/processes-island.js'),
+  ]);
+  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
+  const requests = [];
+  const actions = createProcessesActions({
+    state, notify() {},
+    fetchImpl: async (path, options = {}) => {
+      requests.push({ path, options });
+      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{ id: 'racy', name: 'What the operator saw', latestVersion: { sourceHash: 'name-v1' } }] }) };
+      if (options.method === 'POST') return { ok: true, status: 201, json: async () => ({ ref: 'racy@sha256:new' }) };
+      return { ok: true, json: async () => ({ template: { id: 'racy', name: 'Renamed by an agent' }, sourceHash: 'name-v2' }) };
+    },
+  });
+  await actions.load('templates');
+  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-edit="racy"]'), 'click'));
+  const input = mounted.container.querySelector('[data-process-name-input="racy"]');
+  input.value = 'Operator name';
+  state.templatesRequest.commitRequest(state.templatesRequest.beginRequest(), {
+    templates: [{ id: 'racy', name: 'Renamed by an agent', latestVersion: { sourceHash: 'name-v2' } }],
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.container.querySelector('[data-process-name-input="racy"]'), 'keydown', { key: 'Enter' }));
+  for (let i = 0; i < 10 && !requests.some((r) => r.options.method === 'POST'); i++) await harness.act(() => Promise.resolve());
+  const body = JSON.parse(requests.find((request) => request.options.method === 'POST').options.body);
+  assert.equal(body.sourceHash, 'name-v1', 'the shared edit session pins the inline rename baseline too');
+  await mounted.unmount();
+});
+
 test('creating a template persists the named scaffold and prepopulates the editor with its generated id', async (t) => {
   const harness = await createPreactHarness(t);
   const previous = { raf: globalThis.requestAnimationFrame, css: globalThis.CSS };
