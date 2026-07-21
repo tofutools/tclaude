@@ -769,3 +769,65 @@ test('spawn dialog applies a profile auto memory default', async (t) => {
   );
   assert.equal(silent.autoMemory, false, 'a profile that says nothing leaves auto memory off');
 });
+
+// TCL-609: the resolved sandbox policy drives the break-glass spawn gate, so
+// a policy loaded for a previous selection (or still in flight) must never be
+// submit-eligible — the confirmation could describe profile A while the
+// request selects profile B.
+test('Preact agent-spawn blocks submit on a stale sandbox policy and acknowledges the resolved one', async (t) => {
+  const loads = [];
+  const spawnRequests = [];
+  const confirms = [];
+  const mounted = await mountSpawn(t, {
+    loadSandboxPolicy: (group, selected) => {
+      const pending = deferred();
+      loads.push({ group, selected, pending });
+      return pending.promise;
+    },
+    spawn: async (request) => { spawnRequests.push(request); return { conv_id: '1234567890' }; },
+    confirmBreakGlassSpawn: async (entries) => { confirms.push(entries); return true; },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await settleWorktrees(harness);
+    const name = host.querySelector('#agent-spawn-name');
+    setValue(name, 'worker');
+    await harness.act(() => harness.fireEvent(name, 'input'));
+    await settleWorktrees(harness);
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'an unresolved policy blocks submit');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy preview to finish loading/);
+
+    loads[0].pending.resolve({ profiles: [{ name: 'danger' }], selected: '', preview: 'no profiles applied', breakGlass: [] });
+    await flush(harness);
+    const picker = host.querySelector('#agent-spawn-sandbox-profile');
+    setValue(picker, 'danger');
+    await harness.act(() => harness.fireEvent(picker, 'change'));
+    assert.equal(loads.length, 2, 'a selection change starts a fresh policy load');
+
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(spawnRequests.length, 0, 'the previous selection’s resolved policy is not submit-eligible for the new one');
+    assert.equal(confirms.length, 0, 'no confirmation is shown from a stale policy');
+    assert.match(host.querySelector('#agent-spawn-error').textContent, /sandbox policy preview to finish loading/);
+
+    loads[1].pending.resolve({
+      profiles: [{ name: 'danger' }], selected: 'danger',
+      preview: '⚠ BREAK-GLASS protected access: write /home/op/.tclaude/data (explicit:danger)',
+      breakGlass: [{ path: '/home/op/.tclaude/data', access: 'write', origins: ['explicit:danger'] }],
+    });
+    await flush(harness);
+    host.querySelector('#agent-spawn-submit').click();
+    await flush(harness);
+    assert.equal(confirms.length, 1, 'the matching policy triggers the break-glass confirmation');
+    assert.deepEqual(confirms[0], [{ path: '/home/op/.tclaude/data', access: 'write', origins: ['explicit:danger'] }]);
+    assert.equal(spawnRequests.length, 1);
+    assert.equal(spawnRequests[0].body.sandbox_profile, 'danger');
+    assert.equal(spawnRequests[0].body.break_glass_acknowledged, true);
+  } finally {
+    mounted.cleanup();
+  }
+});

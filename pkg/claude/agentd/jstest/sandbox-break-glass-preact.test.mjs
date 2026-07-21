@@ -348,3 +348,187 @@ test('the resolved spawn policy exposes break-glass and the spawn confirmation n
   assert.match(prompts[0].body, /read \/home\/op\/\.tclaude\/data \(group:group-debug\)/);
   assert.match(prompts[0].body, /never a routine or recommended posture/);
 });
+
+test('editor detects break-glass carried only by includes and gates save on acknowledgement', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'debug-base', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+    { name: 'wrapper', includes: ['debug-base'] },
+  ]);
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'wrapper', filesystem: [], environment: [], includes: ['debug-base'], agent_directories: [] }, options: {} });
+  const saves = [];
+  const { host, unmount } = await mountManagement(harness, state, {
+    async inspectDirectories() { return { missing: [], creatable: [] }; },
+    async createDirectories() {},
+    saveSandbox(value) { saves.push(value); },
+    configureSandboxWithAgent() {},
+  });
+  await harness.act(() => Promise.resolve());
+
+  const warning = host.querySelector('.sbx-break-glass .sbx-bg-warning');
+  assert.ok(warning, 'a wrapper with zero own rules still warns when an include carries break-glass');
+  assert.match(warning.textContent, /read \/home\/op\/\.tclaude\/data \(profile:debug-base\)/, 'the include origin is spelled out');
+  const ack = host.querySelector('#sandbox-profile-editor-break-glass-ack');
+  assert.ok(ack, 'include-carried break-glass demands the acknowledgement');
+
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saves, [], 'saving without the acknowledgement is refused');
+  assert.match(host.querySelector('.cron-create-error').textContent, /includes/);
+
+  ack.checked = true;
+  ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].breakGlassAcknowledged, true);
+  assert.deepEqual(saves[0].draft.break_glass_filesystem, [], 'no own rules are invented; the danger lives in the include');
+  unmount();
+});
+
+test('manager cards surface include-carried break-glass with its origin', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'debug-base', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'write' }] },
+    { name: 'wrapper', includes: ['debug-base'] },
+  ]);
+  state.openManager('sandbox');
+  const { host, unmount } = await mountManagement(harness, state, { load() {}, openSandboxEditor() {}, removeSandbox() {} });
+  await harness.act(() => Promise.resolve());
+  const wrapperCard = [...host.querySelectorAll('.template-card')].find((card) => card.dataset.key === 'wrapper');
+  const dangerValue = wrapperCard.querySelector('.sbx-cap-bg')?.parentElement?.querySelector('.sbx-cap-val');
+  assert.ok(wrapperCard.querySelector('.sbx-cap-bg'), 'the include-only wrapper card still shows the danger tag');
+  assert.match(dangerValue.textContent, /via debug-base/, 'the card names the include that introduced the rule');
+  unmount();
+});
+
+test('the diff confirmation resolves includes so break-glass cannot hide behind them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'debug-base', break_glass_filesystem: [{ path: '/home/op/.codex', access: 'read' }] },
+  ]);
+  const { host, unmount } = await mountManagement(harness, state, {});
+  await harness.act(() => Promise.resolve());
+  const decision = state.confirmSandboxDiff(null, { name: 'wrapper', includes: ['debug-base'] });
+  await harness.act(() => Promise.resolve());
+  const banner = host.querySelector('#sandbox-profile-diff-break-glass');
+  assert.ok(banner, 'an include-only profile still shows the danger banner in the confirmation');
+  assert.match(banner.textContent, /read \/home\/op\/\.codex \(profile:debug-base\)/);
+  host.querySelector('#sandbox-profile-diff-cancel').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(await decision, false);
+  unmount();
+});
+
+async function importScenario(harness, state, envelope) {
+  state.openDialog({ kind: 'sandbox-import' });
+  const imports = [];
+  const mountedResult = await mountManagement(harness, state, {
+    async inspectSandboxBundle(value) { return { profiles: value.profiles, warnings: [] }; },
+    async importSandboxBundle(...args) { imports.push(args); },
+  });
+  await harness.act(() => Promise.resolve());
+  const { host } = mountedResult;
+  const raw = host.querySelector('#sandbox-profile-import-modal textarea');
+  raw.value = JSON.stringify(envelope);
+  raw.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  [...host.querySelectorAll('#sandbox-profile-import-modal button')].find((button) => button.textContent === 'Preview').click();
+  await harness.act(() => Promise.resolve());
+  const conflictSelect = () => host.querySelector('#sandbox-profile-import-conflict');
+  const setConflict = async (value) => {
+    const select = conflictSelect();
+    for (const option of select.options) option.selected = option.value === value;
+    Object.defineProperty(select, 'value', { configurable: true, writable: true, value });
+    select.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+    await harness.act(() => Promise.resolve());
+  };
+  return { ...mountedResult, imports, setConflict };
+}
+
+test('import under skip warns for retained local break-glass reached through a new wrapper', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  // Local "lib" carries break-glass; the bundle ships a clean "lib" and a new
+  // wrapper including it.
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'lib', break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+  ]);
+  const { host, imports, setConflict, unmount } = await importScenario(harness, state, {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [{ name: 'lib' }, { name: 'wrapper', includes: ['lib'] }],
+  });
+
+  // skip (the default): the incoming clean "lib" is discarded, so the new
+  // wrapper resolves against the RETAINED local carrier and must warn.
+  const warning = host.querySelector('#sandbox-profile-import-modal .sbx-bg-warning');
+  assert.ok(warning, 'retained local break-glass reached via the imported wrapper is warned about');
+  assert.match(warning.textContent, /wrapper/);
+  assert.match(warning.textContent, /import:lib/);
+  const importButton = [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+  assert.equal(importButton.disabled, true);
+
+  // overwrite: the clean incoming "lib" replaces the local carrier, so no
+  // break-glass survives anywhere and no acknowledgement is demanded.
+  await setConflict('overwrite');
+  assert.equal(host.querySelector('#sandbox-profile-import-modal .sbx-bg-warning'), null, 'overwrite replaces the carrier, so nothing needs acknowledging');
+  assert.equal(host.querySelector('#sandbox-profile-import-break-glass-ack'), null);
+  assert.equal(importButton.disabled, false);
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 1);
+  assert.equal(imports[0][1], 'overwrite');
+  assert.equal(imports[0][2], false, 'no acknowledgement rides an import with no effective break-glass');
+  unmount();
+});
+
+test('import under skip never demands acknowledgement for discarded incoming break-glass', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
+  const state = createManagementState();
+  // Local "lib" is clean; the bundle ships a break-glass-carrying "lib" and a
+  // new wrapper including it.
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [
+    { name: 'lib', filesystem: [{ path: '/work', access: 'write' }] },
+  ]);
+  const { host, imports, setConflict, unmount } = await importScenario(harness, state, {
+    format: 'tclaude-sandbox-profiles', format_version: 3,
+    profiles: [
+      { name: 'lib', break_glass_filesystem: [{ path: '/home/op/.codex', access: 'write' }] },
+      { name: 'wrapper', includes: ['lib'] },
+    ],
+  });
+
+  // skip: the dangerous incoming "lib" is discarded and the wrapper resolves
+  // against the clean local one — demanding acknowledgement here would train
+  // operators to acknowledge rules that are never imported.
+  assert.equal(host.querySelector('#sandbox-profile-import-modal .sbx-bg-warning'), null, 'discarded incoming rules must not demand acknowledgement');
+  const importButton = [...host.querySelectorAll('#sandbox-profile-import-modal .modal-buttons button')].find((button) => button.textContent === 'Import');
+  assert.equal(importButton.disabled, false);
+
+  // overwrite: the dangerous incoming "lib" now lands, so both it and the
+  // wrapper that includes it require the acknowledgement.
+  await setConflict('overwrite');
+  const warning = host.querySelector('#sandbox-profile-import-modal .sbx-bg-warning');
+  assert.ok(warning);
+  assert.match(warning.textContent, /lib/);
+  assert.match(warning.textContent, /wrapper/);
+  assert.equal(importButton.disabled, true);
+  const ack = host.querySelector('#sandbox-profile-import-break-glass-ack');
+  ack.checked = true;
+  ack.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  importButton.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(imports.length, 1);
+  assert.deepEqual([imports[0][1], imports[0][2]], ['overwrite', true]);
+  unmount();
+});

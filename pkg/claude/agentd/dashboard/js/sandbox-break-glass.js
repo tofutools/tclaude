@@ -29,6 +29,19 @@ export function assignedBreakGlass(name, profiles, scope) {
   return composeSandboxProfilePolicy([{ scope, profile }], byName).breakGlass;
 }
 
+// resolvedBreakGlass composes an UNSAVED profile candidate against the
+// current registry, so a wrapper whose includes carry break-glass is detected
+// before it is saved. The candidate replaces both its own name and the name
+// it is being edited under (a rename in progress), never the stale stored
+// version. Origins use the "profile" scope.
+export function resolvedBreakGlass(candidate, profiles, priorName = '') {
+  const profile = { ...candidate, name: candidate?.name || priorName || '(draft)' };
+  const byName = Object.fromEntries((profiles || []).map((entry) => [entry.name, entry]));
+  byName[profile.name] = profile;
+  if (priorName) byName[priorName] = profile;
+  return composeSandboxProfilePolicy([{ scope: 'profile', profile }], byName).breakGlass;
+}
+
 // breakGlassAssignmentPrompt shapes the shell confirmation for the persistent
 // assignment surfaces (global default, group default). The scopeLabel spells
 // out the persistence: every future launch under that scope inherits the

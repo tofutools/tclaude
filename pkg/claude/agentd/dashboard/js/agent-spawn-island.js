@@ -53,6 +53,13 @@ function errorMessage(error) {
   return error?.message || String(error);
 }
 
+// Identifies which group/profile selection (and profile-library revision) a
+// resolved sandbox policy belongs to, so submit can refuse a policy loaded
+// for a different selection.
+function sandboxPolicyKey(group, sandboxProfile, revision) {
+  return JSON.stringify([group, sandboxProfile, revision]);
+}
+
 function Words({ plain, wizard, prefix = 'theme-copy' }) {
   return html`<span class=${`${prefix}-regular`}>${plain}</span><span class=${`${prefix}-wizard`}>${wizard}</span>`;
 }
@@ -124,7 +131,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     phase: 'loading', repo: initial.wtRepo, isRepo: false, hasCommits: true,
     worktrees: [], branches: [], defaultBranch: '', subRepos: [],
   });
-  const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', breakGlass: [] });
+  const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', breakGlass: [], key: '' });
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -233,12 +240,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const request = ++sandboxRequest.current;
     const generation = current.generation;
     if (view.sandboxProfilesDisabled) {
-      setSandboxPolicy((value) => ({ ...value, preview: '', error: '', breakGlass: [] }));
+      setSandboxPolicy((value) => ({ ...value, preview: '', error: '', breakGlass: [], key: '' }));
       return undefined;
     }
+    // The stored key records which selection the resolved policy belongs to.
+    // Clearing it up front makes a stale policy — one loaded for a previous
+    // group/profile pick, or one still in flight — ineligible for submit
+    // until the matching load lands.
+    const policyKey = sandboxPolicyKey(draft.group, draft.sandboxProfile, current.sandboxRevision);
+    setSandboxPolicy((value) => ({ ...value, key: '' }));
     actions.loadSandboxPolicy(draft.group, draft.sandboxProfile).then((value) => {
       if (request !== sandboxRequest.current || !state.isCurrent(generation)) return;
-      setSandboxPolicy({ ...value, error: '' });
+      setSandboxPolicy({ ...value, error: '', key: policyKey });
       if (value.selected !== draft.sandboxProfile) {
         setDraft((before) => ({ ...before, sandboxProfile: value.selected }));
       }
@@ -248,6 +261,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         ...value,
         preview: `Could not preview sandbox policy: ${errorMessage(cause)}`,
         error: errorMessage(cause),
+        breakGlass: [],
+        key: '',
       }));
     });
     return undefined;
@@ -488,7 +503,15 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     }
     // Break-glass in the RESOLVED policy (any layer: global, group, or the
     // explicit pick) needs an explicit operator acknowledgement; the daemon
-    // rejects unacknowledged spawns with a typed 422 either way.
+    // rejects unacknowledged spawns with a typed 422 either way. The policy
+    // must belong to the selection being submitted — a stale one could
+    // describe profile A while the request selects profile B.
+    if (!view.sandboxProfilesDisabled
+      && sandboxPolicy.key !== sandboxPolicyKey(next.group, next.sandboxProfile, current.sandboxRevision)) {
+      setError('wait for the sandbox policy preview to finish loading');
+      submitLock.current = false;
+      return;
+    }
     const spawnBreakGlass = !view.sandboxProfilesDisabled ? (sandboxPolicy.breakGlass || []) : [];
     if (spawnBreakGlass.length) {
       const proceed = await actions.confirmBreakGlassSpawn(spawnBreakGlass);
