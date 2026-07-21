@@ -438,7 +438,7 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
-		if err := harness.ValidateSandboxBreakGlass(h.Name, effectiveSandboxMode, breakGlass); err != nil {
+		if err := harness.ValidateSandboxBreakGlassWithReadExclusions(h.Name, effectiveSandboxMode, breakGlass, readExclusions); err != nil {
 			return err
 		}
 		// A missing protected path fails the launch closed: the operator

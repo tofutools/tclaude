@@ -94,6 +94,26 @@ func ValidateSandboxReadExclusions(harnessName, sandboxMode string, ids []string
 	}
 }
 
+// ValidateSandboxBreakGlassWithReadExclusions is the narrow integration seam
+// for Home+break-glass. A verified Linux Home split policy can reopen an
+// acknowledged protected child while leaving siblings masked. Other Codex
+// shapes retain the existing conservative break-glass guard.
+func ValidateSandboxBreakGlassWithReadExclusions(harnessName, sandboxMode string, grants []sandboxpolicy.BreakGlassGrant, exclusions []string) error {
+	if err := ValidateSandboxReadExclusions(harnessName, sandboxMode, exclusions); err != nil {
+		return err
+	}
+	if len(grants) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(harnessName) == CodexName && hasReadExclusion(exclusions, sandboxpolicy.ReadExclusionHome) {
+		// Validation above proved managed-profile + Linux + the behavioral
+		// split probe. The ordinary protected denies remain more-specific than
+		// Home; only these acknowledged child rules reopen beneath them.
+		return nil
+	}
+	return ValidateSandboxBreakGlass(harnessName, sandboxMode, grants)
+}
+
 func sanitizeSplitProbeError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "probe timed out"

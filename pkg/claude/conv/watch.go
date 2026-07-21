@@ -2357,7 +2357,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, err
 	}
 	if len(breakGlassGrants) > 0 {
-		if err := harness.ValidateSandboxBreakGlass(h.Name, sandboxMode, breakGlassGrants); err != nil {
+		if err := harness.ValidateSandboxBreakGlassWithReadExclusions(h.Name, sandboxMode, breakGlassGrants, readExclusions); err != nil {
 			return "", "", nil, err
 		}
 	}

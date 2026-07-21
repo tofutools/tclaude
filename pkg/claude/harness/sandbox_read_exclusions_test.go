@@ -60,6 +60,15 @@ func TestCodexHomeCapabilityRequiresLinuxVerifiedSplitPolicy(t *testing.T) {
 	assert.ErrorContains(t, err, "openai/codex#21081")
 }
 
+func TestHomeAndBreakGlassShareVerifiedChildReopenBoundary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installSuccessfulSplitProbe(t, false)
+	err := ValidateSandboxBreakGlassWithReadExclusions(CodexName, SandboxManagedProfile,
+		[]sandboxpolicy.BreakGlassGrant{{Path: filepath.Join(os.Getenv("HOME"), ".tclaude", "data", "debug"), Access: sandboxpolicy.AccessRead}},
+		[]string{sandboxpolicy.ReadExclusionHome})
+	require.NoError(t, err)
+}
+
 func TestCodexHomeRulesPinBackendAndKeepNarrowReopens(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
