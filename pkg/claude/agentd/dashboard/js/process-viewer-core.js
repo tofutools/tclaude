@@ -83,6 +83,8 @@ export function epochV8Summary(envelope) {
       ['Canceled', states.canceled],
       ['Handed off', states.handedOff],
     ].filter(([, count]) => count > 0),
+    entriesTotal: report.entriesTotal || 0,
+    entriesTruncated: report.entriesTruncated === true,
     entries: (report.entries || []).map((entry) => ({
       id: entry.id || '',
       ownerEpochOrdinal: entry.ownerEpochOrdinal || 0,

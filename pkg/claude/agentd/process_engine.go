@@ -238,6 +238,9 @@ func processRoute(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
+	// The listing carries schema-8 adapted state, so it shares the no-store
+	// contract of the other schema-8-bearing reads.
+	setProcessNoStoreHeaders(w)
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())

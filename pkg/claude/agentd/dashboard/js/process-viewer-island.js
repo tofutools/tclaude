@@ -136,6 +136,14 @@ function ExactArtifactViewer({ runId, epochs, actions }) {
 // binding change invalidates the preview and every token while preserving
 // the dirty draft verbatim; apply is reachable only through an explicit
 // confirmation that restates the preview.
+// The server rejects candidate sources over 4 MiB; the panel refuses them
+// client-side with the same bound, before reading or serializing anything.
+export const MAX_UNLOCK_SOURCE_BYTES = 4 * 1024 * 1024;
+
+function encodedByteLength(text) {
+  return new TextEncoder().encode(text).length;
+}
+
 function UnlockPanel({ runId, epoch, actions }) {
   const [draft, setDraft] = useState({ source: '', reason: '' });
   const [handoffs, setHandoffs] = useState({});
@@ -148,6 +156,13 @@ function UnlockPanel({ runId, epoch, actions }) {
   const [applied, setApplied] = useState(null);
   const dirty = draft.source.trim() !== '' || draft.reason.trim() !== '';
   const bindingDigest = epoch.binding.digest;
+  // The latest observed binding and a request generation couple every
+  // in-flight preview to the state it was captured against: a response that
+  // resolves after the binding moved (or after a newer preview started) is
+  // discarded instead of installing stale tokens.
+  const bindingRef = useRef(epoch.binding);
+  bindingRef.current = epoch.binding;
+  const generationRef = useRef(0);
   useEffect(() => {
     if (preview && preview.baseDigest !== bindingDigest) {
       setPreview(null);
@@ -163,13 +178,24 @@ function UnlockPanel({ runId, epoch, actions }) {
     setStale(message);
   };
   const runPreview = async () => {
+    if (encodedByteLength(draft.source) > MAX_UNLOCK_SOURCE_BYTES) {
+      setError('Candidate source exceeds the 4 MiB ceiling; nothing was sent.');
+      return;
+    }
     setBusy(true); setError(''); setStale(''); setApplied(null);
+    const generation = ++generationRef.current;
     const captured = base || { revision: epoch.binding.revision, digest: epoch.binding.digest };
     setBase(captured);
     const payload = { baseBinding: captured, candidateSource: draft.source, handoffs: handoffValues(handoffs) };
     if (draft.reason.trim() !== '') payload.reason = draft.reason;
     try {
       const result = await actions.previewUnlock(runId, payload);
+      if (generation !== generationRef.current) return; // superseded by a newer preview
+      if (captured.digest !== bindingRef.current.digest) {
+        invalidate(bindingRef.current, `Run binding moved to revision ${bindingRef.current.revision} while the preview was in flight — its result and tokens were discarded. Your draft is unchanged; re-preview to continue.`);
+        setBusy(false);
+        return;
+      }
       if (result.status === 409 && result.body?.status === 'stale') {
         invalidate(result.body.currentBinding, `Run binding moved to revision ${result.body.currentBinding?.revision} — re-preview against the new binding. Your draft is unchanged.`);
       } else if (result.ok || result.status === 422) {
@@ -190,6 +216,11 @@ function UnlockPanel({ runId, epoch, actions }) {
     setBusy(false);
   };
   const runApply = async () => {
+    if (encodedByteLength(draft.source) > MAX_UNLOCK_SOURCE_BYTES) {
+      setError('Candidate source exceeds the 4 MiB ceiling; nothing was sent.');
+      setConfirming(false);
+      return;
+    }
     setBusy(true); setError(''); setConfirming(false);
     const payload = {
       baseBinding: base, applyToken: preview.body.applyToken,
@@ -216,7 +247,16 @@ function UnlockPanel({ runId, epoch, actions }) {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = '';
     if (!file) return;
+    if (file.size > MAX_UNLOCK_SOURCE_BYTES) {
+      setError('Candidate file exceeds the 4 MiB source ceiling; it was not read.');
+      return;
+    }
     const text = await file.text();
+    if (encodedByteLength(text) > MAX_UNLOCK_SOURCE_BYTES) {
+      setError('Candidate file exceeds the 4 MiB source ceiling after decoding; it was discarded.');
+      return;
+    }
+    setError('');
     setDraft((current) => ({ ...current, source: text }));
     setPreview(null); setStale(''); setApplied(null);
   };
@@ -293,6 +333,7 @@ function EpochSummaryPanel({ epoch, runId, actions }) {
     <div class="process-viewer-state-chips" aria-label="Authority state counts">${epoch.stateChips.map(([label, value]) => html`<span key=${label}><strong>${label}</strong> ${value}</span>`)}</div>
     <h5 class="process-epoch-subhead" id="process-epoch-work-title">Outstanding work</h5>
     ${epoch.entries.length ? html`<ul class="process-epoch-entries" aria-labelledby="process-epoch-work-title">${epoch.entries.map((entry) => html`<li key=${entry.id}><span class="wl-epoch-badge">◈ epoch ${entry.ownerEpochOrdinal}</span> <strong>${entry.nodeId}</strong> ${entry.kind} · ${entry.status}${entry.attempt > 1 ? ` · attempt ${entry.attempt}` : ''}</li>`)}</ul>` : html`<p class="process-viewer-empty">No outstanding owner-epoch work.</p>`}
+    ${epoch.entriesTruncated && html`<p class="process-secondary">Showing the first ${epoch.entries.length} of ${epoch.entriesTotal} outstanding items — the Worklist tab lists them all.</p>`}
     <h5 class="process-epoch-subhead" id="process-epoch-timeline-title">History</h5>
     ${epoch.timeline.length ? html`<ol class="process-epoch-timeline" aria-labelledby="process-epoch-timeline-title">${epoch.timeline.map((event) => html`<li key=${event.revision}>rev ${event.revision} · ${event.kind} · epoch ${event.epochOrdinal}${event.reasonCode ? ` · ${event.reasonCode}` : ''}${event.actorClass ? ` · by ${event.actorClass}` : ''}${event.appliedAt ? ` · ${event.appliedAt}` : ''}</li>`)}</ol>` : html`<p class="process-viewer-empty">No recorded history events.</p>`}
     ${epoch.timelineTruncated && html`<p class="process-secondary">Showing the newest ${epoch.timeline.length} of ${epoch.timelineTotal} events.</p>`}

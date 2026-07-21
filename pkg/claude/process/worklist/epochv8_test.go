@@ -1,11 +1,13 @@
 package worklist
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 )
 
@@ -51,7 +53,10 @@ func TestCrossCheckEpochV8FailsClosedInBothDirections(t *testing.T) {
 	assert.Error(t, crossCheckEpochV8([]epochV8Record{record}, []epochv8.AuthorityRecord{base, base}, "owner-epoch"))
 	// Field disagreement: state, kind, node, reservation, and epoch each fail.
 	for _, tampered := range []func(epochv8.AuthorityRecord) epochv8.AuthorityRecord{
-		func(a epochv8.AuthorityRecord) epochv8.AuthorityRecord { a.State = epochv8.AuthorityCompleted; return a },
+		func(a epochv8.AuthorityRecord) epochv8.AuthorityRecord {
+			a.State = epochv8.AuthorityCompleted
+			return a
+		},
 		func(a epochv8.AuthorityRecord) epochv8.AuthorityRecord { a.Kind = epochv8.AuthorityWait; return a },
 		func(a epochv8.AuthorityRecord) epochv8.AuthorityRecord { a.NodeID = "other"; return a },
 		func(a epochv8.AuthorityRecord) epochv8.AuthorityRecord { a.ReservationID = "res-2"; return a },
@@ -131,5 +136,31 @@ func TestEpochV8TimelineBoundsAndMultiEventIdentity(t *testing.T) {
 		require.False(t, duplicate)
 		seen[event.Revision] = struct{}{}
 		assert.Equal(t, uint64(1), event.EpochOrdinal)
+	}
+}
+
+func TestEpochV8ReportEntriesCapBoundary(t *testing.T) {
+	build := func(count int) []Item {
+		items := make([]Item, 0, count)
+		for index := range count {
+			items = append(items, Item{ID: "wi8_" + strconv.Itoa(index), Kind: KindWaiting, Node: "hold", Attempt: index, Status: state.WaitStatusPending})
+		}
+		return items
+	}
+	// Exactly at the cap: complete, untruncated.
+	entries, total, truncated := epochV8ReportEntries(build(maxEpochV8ReportEntries), 2)
+	assert.Len(t, entries, maxEpochV8ReportEntries)
+	assert.Equal(t, maxEpochV8ReportEntries, total)
+	assert.False(t, truncated)
+	// Cap+1: the deterministic prefix survives with honest total/truncated
+	// metadata, while the worklist projection itself remains complete.
+	entries, total, truncated = epochV8ReportEntries(build(maxEpochV8ReportEntries+1), 2)
+	require.Len(t, entries, maxEpochV8ReportEntries)
+	assert.Equal(t, maxEpochV8ReportEntries+1, total)
+	assert.True(t, truncated)
+	assert.Equal(t, "wi8_0", entries[0].ID)
+	assert.Equal(t, "wi8_"+strconv.Itoa(maxEpochV8ReportEntries-1), entries[len(entries)-1].ID)
+	for _, entry := range entries {
+		assert.Equal(t, uint64(2), entry.OwnerEpochOrdinal)
 	}
 }

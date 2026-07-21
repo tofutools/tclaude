@@ -196,6 +196,11 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/process/runs", dashboardProcessRoute(handleProcessRunCreate))
 	mux.HandleFunc("GET /v1/process/runs/{id}", dashboardProcessRoute(handleProcessRun))
 	mux.HandleFunc("GET /v1/process/runs/{id}/view", dashboardProcessRoute(handleProcessRunView))
+	// The S6 unlock panel and exact-artifact drill-down ride the dashboard
+	// mux; only the routes the UI actually calls are registered here.
+	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/preview", dashboardProcessRoute(handleProcessEpochV8Preview))
+	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/apply", dashboardProcessRoute(handleProcessEpochV8Apply))
+	mux.HandleFunc("GET /v1/process/runs/{id}/epochs/{epoch}/{artifact}", dashboardProcessRoute(handleProcessEpochV8Artifact))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/signal", dashboardProcessRoute(handleProcessSignal))
 	// The Worklist sub-view (TCL-297): the derived work-item list and the
 	// human action funnel. asDashboardHumanPeer stamps the caller as the

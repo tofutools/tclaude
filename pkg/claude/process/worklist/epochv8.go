@@ -30,10 +30,15 @@ type EpochV8Projection struct {
 // Fields are whitelisted to state/kind/time/count and safe provenance; it
 // never carries sources, prompts, params, reason text, identities, or tokens.
 type EpochV8Report struct {
-	Entries       []EpochV8ReportEntry   `json:"entries"`
-	Timeline      []EpochV8TimelineEvent `json:"timeline"`
-	TimelineTotal int                    `json:"timelineTotal"`
-	Truncated     bool                   `json:"truncated,omitempty"`
+	Entries []EpochV8ReportEntry `json:"entries"`
+	// EntriesTotal/EntriesTruncated bound the ordinary viewer rows
+	// independently of the complete worklist projection: the worklist route
+	// serves every item, while the envelope report keeps a deterministic cap.
+	EntriesTotal     int                    `json:"entriesTotal"`
+	EntriesTruncated bool                   `json:"entriesTruncated,omitempty"`
+	Timeline         []EpochV8TimelineEvent `json:"timeline"`
+	TimelineTotal    int                    `json:"timelineTotal"`
+	Truncated        bool                   `json:"truncated,omitempty"`
 }
 
 // EpochV8ReportEntry mirrors one worklist item under the same collision-free
@@ -61,6 +66,11 @@ type EpochV8TimelineEvent struct {
 
 // maxEpochV8TimelineEvents bounds the projected timeline; newer events win.
 const maxEpochV8TimelineEvents = 64
+
+// maxEpochV8ReportEntries bounds the envelope report's open-work rows. Items
+// are already in deterministic presentation-id order, so the cap keeps a
+// stable prefix; the worklist route remains the complete projection.
+const maxEpochV8ReportEntries = 64
 
 // epochV8Record pairs one user-visible runtime record with the authority
 // agreement fields the cross-check requires. The localID is never exposed.
@@ -139,13 +149,24 @@ func DeriveEpochV8(ctx context.Context, snapshot store.EpochV8RunSnapshot) (Epoc
 	assignEpochV8PresentationIDs(snapshot.Run.ID, owner.Ordinal, items)
 	slices.SortFunc(items, func(a, b Item) int { return strings.Compare(a.ID, b.ID) })
 	projection.Items = items
+	projection.Report.Entries, projection.Report.EntriesTotal, projection.Report.EntriesTruncated = epochV8ReportEntries(items, owner.Ordinal)
+	return projection, nil
+}
+
+// epochV8ReportEntries mirrors the items into report rows under the shared
+// primary key, capped deterministically at maxEpochV8ReportEntries.
+func epochV8ReportEntries(items []Item, ownerOrdinal uint64) ([]EpochV8ReportEntry, int, bool) {
+	entries := make([]EpochV8ReportEntry, 0, min(len(items), maxEpochV8ReportEntries))
 	for _, item := range items {
-		projection.Report.Entries = append(projection.Report.Entries, EpochV8ReportEntry{
-			ID: item.ID, OwnerEpochOrdinal: owner.Ordinal, Kind: item.Kind,
+		if len(entries) == maxEpochV8ReportEntries {
+			return entries, len(items), true
+		}
+		entries = append(entries, EpochV8ReportEntry{
+			ID: item.ID, OwnerEpochOrdinal: ownerOrdinal, Kind: item.Kind,
 			NodeID: item.Node, Attempt: item.Attempt, Status: item.Status,
 		})
 	}
-	return projection, nil
+	return entries, len(items), false
 }
 
 // epochV8Records derives the user-visible work records from the typed runtime

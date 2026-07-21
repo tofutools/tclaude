@@ -162,3 +162,123 @@ test('exact artifact drill-down renders the restricted denial as a bounded error
   assert.doesNotMatch(root.innerHTML, /denied-body/);
   await mounted.unmount();
 });
+
+test('an in-flight preview resolving after the binding moved is discarded, preserving the draft', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');
+  let revision = 4;
+  const envelopeAt = () => {
+    const envelope = epochEnvelope();
+    envelope.currentBinding = { revision, digest: String(revision).repeat(64).slice(0, 64) };
+    return envelope;
+  };
+  let resolvePreview;
+  const actions = {
+    loadRunView: async () => envelopeAt(),
+    previewUnlock: () => new Promise((resolve) => { resolvePreview = resolve; }),
+    applyUnlock: async () => { throw new Error('apply must not be reachable'); },
+    loadExactArtifact: async () => ({ status: 200, ok: true, text: '' }),
+  };
+  const polls = [];
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-epoch', key: 'run-epoch' }} actions=${actions}
+    setTimeoutImpl=${(fn) => { polls.push(fn); return polls.length; }} clearTimeoutImpl=${() => {}} />`);
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  const root = mounted.container;
+
+  const sourceInput = root.querySelector('#process-unlock-source');
+  await harness.input(sourceInput, 'id: race-draft');
+  const previewButton = [...root.querySelectorAll('.process-unlock-panel button')].find((b) => /preview/.test(b.textContent));
+  await harness.act(() => { previewButton.click(); return Promise.resolve(); });
+
+  // The polling refresh observes a NEW binding while the preview request is
+  // still in flight.
+  revision = 9;
+  await harness.act(async () => { for (const poll of polls.splice(0)) poll(); });
+  for (let i = 0; i < 4; i++) await harness.act(() => Promise.resolve());
+
+  // Now the deferred preview resolves as if it had succeeded against rev 4.
+  await harness.act(async () => {
+    resolvePreview({ status: 200, ok: true, body: { status: 'valid', applyToken: 'f'.repeat(64), baseBinding: {}, currentBinding: {}, graphSummary: {}, lineage: {}, authorityCounts: {} } });
+  });
+  for (let i = 0; i < 4; i++) await harness.act(() => Promise.resolve());
+
+  // The stale response and its token are discarded; the draft survives.
+  assert.equal(root.querySelector('.process-unlock-preview'), null, 'stale preview result must not install');
+  assert.equal(root.querySelector('.process-unlock-apply'), null, 'no apply affordance from a stale token');
+  const stale = root.querySelector('.process-unlock-stale');
+  assert.ok(stale, 'stale status region announces the discarded preview');
+  assert.match(stale.textContent, /revision 9/);
+  assert.equal(root.querySelector('#process-unlock-source').value, 'id: race-draft');
+  assert.doesNotMatch(root.innerHTML, /ffffffff/, 'the stale applyToken never reaches the DOM');
+  await mounted.unmount();
+});
+
+test('over-budget candidate sources are refused before any request is serialized', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { ProcessViewerBoundary, MAX_UNLOCK_SOURCE_BYTES } = await harness.importDashboardModule('js/process-viewer-island.js');
+  const previews = [];
+  const actions = {
+    loadRunView: async () => epochEnvelope(),
+    previewUnlock: async (_id, payload) => { previews.push(payload); return { status: 200, ok: true, body: { status: 'valid', applyToken: 'a'.repeat(64), graphSummary: {}, blockers: [] } }; },
+    applyUnlock: async () => ({ status: 500, ok: false, body: {} }),
+    loadExactArtifact: async () => ({ status: 200, ok: true, text: '' }),
+  };
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-epoch', key: 'run-epoch' }} actions=${actions}
+    setTimeoutImpl=${() => 0} clearTimeoutImpl=${() => {}} />`);
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  const root = mounted.container;
+
+  const sourceInput = root.querySelector('#process-unlock-source');
+  // Re-query per click: the error banner render can recreate sibling nodes.
+  const clickPreview = () => harness.act(() => {
+    [...root.querySelectorAll('.process-unlock-panel button')].find((b) => /preview/.test(b.textContent)).click();
+    return Promise.resolve();
+  });
+
+  // One byte over the ceiling — with a multibyte character straddling the
+  // boundary, so the check must count encoded bytes, not string length.
+  // 'é' encodes to 2 bytes: (MAX-1) ASCII + 'é' = MAX+1 bytes but MAX chars.
+  const overBudget = 'a'.repeat(MAX_UNLOCK_SOURCE_BYTES - 1) + 'é';
+  await harness.input(sourceInput, overBudget);
+  await clickPreview();
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.equal(previews.length, 0, 'over-budget drafts are never serialized into a request');
+  const budgetError = root.querySelector('.process-unlock-panel .island-error');
+  assert.ok(budgetError, 'budget refusal renders as a bounded error');
+  assert.match(budgetError.textContent, /4 MiB/);
+
+  // Exactly at the ceiling passes the client bound and reaches the server.
+  const atBudget = 'a'.repeat(MAX_UNLOCK_SOURCE_BYTES - 2) + 'é';
+  await harness.input(root.querySelector('#process-unlock-source'), atBudget);
+  await clickPreview();
+  for (let i = 0; i < 3; i++) await harness.act(() => Promise.resolve());
+  assert.equal(previews.length, 1, 'at-budget drafts are sent');
+  await mounted.unmount();
+});
+
+test('the adaptation panel renders bounded report rows with honest totals', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { epochV8Summary } = await harness.importDashboardModule('js/process-viewer-core.js');
+  const { ProcessViewerBoundary } = await harness.importDashboardModule('js/process-viewer-island.js');
+  const envelope = epochEnvelope();
+  envelope.epochReport.entries = Array.from({ length: 64 }, (_, index) => ({ id: `wi8_${index}`, ownerEpochOrdinal: 0, kind: 'waiting', nodeId: `n${index}`, attempt: 1, status: 'pending' }));
+  envelope.epochReport.entriesTotal = 65;
+  envelope.epochReport.entriesTruncated = true;
+
+  const summary = epochV8Summary(envelope);
+  assert.equal(summary.entries.length, 64);
+  assert.equal(summary.entriesTotal, 65);
+  assert.equal(summary.entriesTruncated, true);
+
+  const actions = { loadRunView: async () => envelope };
+  const mounted = await harness.mount(harness.html`<${ProcessViewerBoundary}
+    spec=${{ id: 'run-epoch', key: 'run-epoch' }} actions=${actions}
+    setTimeoutImpl=${() => 0} clearTimeoutImpl=${() => {}} />`);
+  for (let i = 0; i < 5; i++) await harness.act(() => Promise.resolve());
+  const root = mounted.container;
+  assert.equal(root.querySelectorAll('.process-epoch-entries li').length, 64);
+  assert.match(root.querySelector('.process-epoch-summary').textContent, /first 64 of 65/);
+  await mounted.unmount();
+});

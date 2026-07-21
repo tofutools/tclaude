@@ -423,6 +423,9 @@ summary envelope from both routes: run status, schema/lineage metadata, an
 plus a changed-from-original bit), per-state authority counts, and the current
 preview binding. The lineage list is bounded: chains longer than 32 epochs keep
 their oldest and newest halves and report `totalEpochs` with `truncated:true`.
+The envelope's `epochReport.entries` is likewise capped (64 deterministic
+rows with `entriesTotal`/`entriesTruncated`); the worklist route remains the
+complete projection.
 The envelope deliberately omits raw runtime state and exact topology; its
 `viewerV2` names that restriction with the `epoch_v8_summary` reason rather
 than claiming the schema is unsupported. Schema-8-bearing run, view, verify,

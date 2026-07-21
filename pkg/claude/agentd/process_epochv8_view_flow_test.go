@@ -145,6 +145,12 @@ func TestEpochV8SafeEnvelopeSummaryFieldsAndNoStoreHeaders(t *testing.T) {
 	require.Equal(t, http.StatusOK, worklist.Code, worklist.Body.String())
 	requireProcessNoStoreHeaders(t, worklist)
 
+	// The runs listing carries schema-8 adapted state, so it shares the
+	// no-store contract too.
+	runsList := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodGet, "/v1/process/runs", nil)))
+	require.Equal(t, http.StatusOK, runsList.Code, runsList.Body.String())
+	requireProcessNoStoreHeaders(t, runsList)
+
 	// Error paths keep the exact-content headers: absent runs and stale
 	// previews are part of the same no-store contract.
 	for _, path := range []string{
