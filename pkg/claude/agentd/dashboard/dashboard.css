@@ -13490,7 +13490,9 @@ body.wizard .usage-history-error { color: #f0a3bf; }
   display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px;
   border: 1px solid var(--border, #8884); white-space: nowrap;
 }
-.process-epoch-summary { border-top: 1px solid var(--border, #8884); margin-top: 10px; padding-top: 8px; }
+/* The dashboard hides bare <section> tabs globally; the epoch summary is an
+   in-viewer section and must opt back in like the other viewer panels. */
+.process-epoch-summary { display: block; border-top: 1px solid var(--border, #8884); margin-top: 10px; padding: 8px 16px 0; }
 .process-epoch-lineage { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 16px; margin: 6px 0; }
 .process-epoch-lineage dt { font-size: 11px; opacity: 0.75; }
 .process-epoch-subhead { margin: 10px 0 4px; }

@@ -487,11 +487,12 @@ func seedProcessWorklistDashSnap(t *testing.T, root string) {
 	if err := os.WriteFile(filepath.Join(corrupt, "run.json"), []byte("{broken"), 0o644); err != nil {
 		t.Fatalf("worklist corrupt run.json: %v", err)
 	}
-	// A schema-8 run seeded AFTER the engine tick: its runtime stays
-	// unattached, so it truthfully has zero worklist items (keeping the badge
-	// fixtures stable) while the viewer renders the full safe adaptation
-	// summary and unlock panel.
-	createEngineRun(t, root, "dashsnap-epoch-8", &model.Template{
+	// A schema-8 run seeded AFTER the engine tick through the epoch-v8
+	// constructor (createEngineRun would mint a legacy run): its runtime
+	// stays unattached, so it truthfully has zero worklist items (keeping the
+	// badge fixtures stable) while the viewer renders the full safe
+	// adaptation summary and unlock panel.
+	epochTemplate := &model.Template{
 		APIVersion: model.APIVersion,
 		Kind:       model.Kind,
 		ID:         "dashsnap-epoch",
@@ -501,7 +502,22 @@ func seedProcessWorklistDashSnap(t *testing.T, root string) {
 			"hold": {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "go-ahead"}, Next: model.Next{"pass": "done"}},
 			"done": {Type: model.NodeTypeEnd, Result: "completed"},
 		},
-	}, false)
+	}
+	epochSource, err := model.CanonicalYAML(epochTemplate)
+	if err != nil {
+		t.Fatalf("epoch template source: %v", err)
+	}
+	fs, err := store.NewFS(root)
+	if err != nil {
+		t.Fatalf("epoch store: %v", err)
+	}
+	epochRecord, err := fs.PutTemplate(t.Context(), epochTemplate)
+	if err != nil {
+		t.Fatalf("epoch template: %v", err)
+	}
+	if _, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "dashsnap-epoch-8", TemplateRef: epochRecord.Ref}, epochSource); err != nil {
+		t.Fatalf("epoch run: %v", err)
+	}
 }
 
 func seedMember(t *testing.T, f *testharness.Flow, groupID int64, group string, m dashMemberSpec) {
@@ -3242,7 +3258,14 @@ func processViewerEpochStateJS(runID string) string {
   var label = panel.querySelector('label[for="process-unlock-source"]');
   if (!label) throw new Error('unlock draft field is unlabeled');
   var rect = panel.getBoundingClientRect();
-  if (rect.width < 100 || rect.height < 60) throw new Error('adaptation summary panel is not visible: ' + JSON.stringify(rect.toJSON()));
+  if (rect.width < 100 || rect.height < 60) {
+    var trace = [];
+    for (var cursor = panel; cursor && trace.length < 8; cursor = cursor.parentElement) {
+      var style = getComputedStyle(cursor); var r = cursor.getBoundingClientRect();
+      trace.push({tag: cursor.tagName, id: cursor.id, cls: String(cursor.className).slice(0, 60), display: style.display, hidden: cursor.hidden, width: r.width, height: r.height});
+    }
+    throw new Error('adaptation summary panel is not visible: ' + JSON.stringify(trace));
+  }
 })();`, runID, runID)
 }
 
