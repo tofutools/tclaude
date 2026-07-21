@@ -74,6 +74,16 @@ type Item struct {
 	AvailableActions []string     `json:"availableActions,omitempty"`
 	Links            Links        `json:"links"`
 	Target           ActionTarget `json:"-"`
+	// OwnerEpoch names the immutable epoch a schema-8 item resolves through.
+	// It is nil for schema 1-7 items, whose runs pin exactly one template.
+	OwnerEpoch *OwnerEpochRef `json:"ownerEpoch,omitempty"`
+}
+
+// OwnerEpochRef is the safe owner-epoch reference carried by schema-8 items:
+// ordinal and template ref only, never epoch artifacts or identities.
+type OwnerEpochRef struct {
+	Ordinal     uint64 `json:"ordinal"`
+	TemplateRef string `json:"templateRef"`
 }
 
 type Filter struct {

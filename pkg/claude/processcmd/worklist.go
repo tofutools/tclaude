@@ -53,6 +53,7 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 		return err
 	}
 	snapshots := make([]store.Snapshot, 0, len(runs))
+	epochItems := make([]worklist.Item, 0)
 	for _, run := range runs {
 		if run.ID == "" {
 			continue
@@ -60,6 +61,23 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 		kind, schemaErr := fs.RunStateSchemaKind(cmd.Context(), run.ID)
 		if schemaErr != nil {
 			fmt.Fprintf(out, "Warning: skipped unreadable process run %s: %v\n", run.ID, schemaErr)
+			continue
+		}
+		if kind == store.RunSchemaEpochV8 {
+			// Schema-8 items come from the same safe typed projection the
+			// daemon serves; an incoherent run yields zero items and one
+			// bounded warning, never partial or relabeled output.
+			snapshot, loadErr := fs.LoadEpochV8RunView(cmd.Context(), run.ID)
+			if loadErr != nil {
+				fmt.Fprintf(out, "Warning: skipped process run %s: epoch_v8_incoherent\n", run.ID)
+				continue
+			}
+			projection, deriveErr := worklist.DeriveEpochV8(cmd.Context(), snapshot)
+			if deriveErr != nil {
+				fmt.Fprintf(out, "Warning: skipped process run %s: epoch_v8_incoherent\n", run.ID)
+				continue
+			}
+			epochItems = append(epochItems, projection.Items...)
 			continue
 		}
 		if kind != store.RunSchemaLegacy {
@@ -73,14 +91,14 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	items := worklist.Derive(snapshots)
+	items := append(worklist.Derive(snapshots), epochItems...)
 	slices.SortFunc(items, func(a, b worklist.Item) int { return strings.Compare(a.ID, b.ID) })
 	items = worklist.ApplyFilter(items, worklist.Filter{
 		Assignee: strings.TrimSpace(p.Assignee), Kind: worklist.Kind(strings.TrimSpace(p.Kind)),
 		Run: strings.TrimSpace(p.Run), Status: state.WaitStatus(strings.TrimSpace(p.Status)),
 	})
 	tw := newTable(out)
-	fmt.Fprintln(tw, "ID\tRUN\tNODE\tKIND\tASSIGNEE\tSTATUS\tDUE\tNUDGE\tSUMMARY\tACTIONS")
+	fmt.Fprintln(tw, "ID\tRUN\tNODE\tEPOCH\tKIND\tASSIGNEE\tSTATUS\tDUE\tNUDGE\tSUMMARY\tACTIONS")
 	for _, item := range items {
 		nudge := "-"
 		if item.Nudge != nil {
@@ -89,8 +107,12 @@ func runWorklist(cmd *cobra.Command, p *worklistParams, out io.Writer) error {
 				nudge += " paused"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			item.ID, item.Run, item.Node, item.Kind, item.Assignee, item.Status,
+		epoch := "-"
+		if item.OwnerEpoch != nil {
+			epoch = fmt.Sprintf("%d", item.OwnerEpoch.Ordinal)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			item.ID, item.Run, item.Node, epoch, item.Kind, item.Assignee, item.Status,
 			formatTime(item.DueAt), nudge, item.Summary, strings.Join(item.AvailableActions, ","))
 	}
 	return tw.Flush()

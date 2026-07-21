@@ -40,7 +40,71 @@ export const ROUTING_UNAVAILABLE = Object.freeze({
     title: 'Run and template are inconsistent',
     detail: 'No routing claims are rendered until the checkpoint and exact pinned template agree.',
   },
+  epoch_v8_summary: {
+    title: 'Schema-8 run: safe summary only',
+    detail: 'Exact topology and routing are restricted surfaces on adapted-capable runs; the lineage and authority summary below is the complete ordinary view.',
+  },
 });
+
+// epochV8Summary projects the schema-8 safe envelope into the viewer's
+// summary panel model. Everything here is counts, refs, and bounded labels;
+// sources, diffs, reasons, prompts, and params never reach this projection.
+export function epochV8Summary(envelope) {
+  if (envelope?.schema !== 'epoch_v8') return null;
+  const lineage = envelope.lineage || {};
+  const counts = envelope.authorityCounts || {};
+  const states = counts.states || {};
+  const structural = envelope.structuralSummary || {};
+  const binding = envelope.currentBinding || {};
+  const report = envelope.epochReport || {};
+  return {
+    adapted: envelope.adapted === true,
+    originalTemplateRef: lineage.originalTemplateRef || '',
+    currentTemplateRef: lineage.currentTemplateRef || '',
+    totalEpochs: lineage.totalEpochs || 0,
+    lineageTruncated: lineage.truncated === true,
+    epochs: (lineage.epochs || []).map((epoch) => ({
+      ordinal: epoch.ordinal,
+      templateRef: epoch.templateRef || '',
+      epochId: epoch.epochId || '',
+    })),
+    structural: {
+      nodes: structural.nodes || 0,
+      edges: structural.edges || 0,
+      changedFromOriginal: structural.changedFromOriginal === true,
+    },
+    binding: { revision: binding.revision || 0, digest: binding.digest || '' },
+    stateChips: [
+      ['Unclaimed', states.verifiedUnclaimed],
+      ['Claimed', states.claimed],
+      ['Active', states.active],
+      ['Completed', states.completed],
+      ['Failed', states.failed],
+      ['Canceled', states.canceled],
+      ['Handed off', states.handedOff],
+    ].filter(([, count]) => count > 0),
+    entriesTotal: report.entriesTotal || 0,
+    entriesTruncated: report.entriesTruncated === true,
+    entries: (report.entries || []).map((entry) => ({
+      id: entry.id || '',
+      ownerEpochOrdinal: entry.ownerEpochOrdinal || 0,
+      kind: entry.kind || '',
+      nodeId: entry.nodeId || '',
+      attempt: entry.attempt || 0,
+      status: entry.status || '',
+    })),
+    timeline: (report.timeline || []).map((event) => ({
+      revision: event.revision || 0,
+      kind: event.kind || '',
+      epochOrdinal: event.epochOrdinal || 0,
+      appliedAt: event.appliedAt || '',
+      reasonCode: event.reasonCode || '',
+      actorClass: event.actorClass || '',
+    })),
+    timelineTotal: report.timelineTotal || 0,
+    timelineTruncated: report.truncated === true,
+  };
+}
 
 function countSummary(counts = []) {
   return counts

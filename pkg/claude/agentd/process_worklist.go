@@ -18,6 +18,7 @@ import (
 )
 
 func handleProcessWorklist(w http.ResponseWriter, r *http.Request) {
+	setProcessNoStoreHeaders(w)
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
@@ -160,12 +161,18 @@ type degradedRun struct {
 	Error string `json:"error"`
 }
 
+// epochV8WorklistDegraded is the bounded stable reason for a schema-8 run
+// whose coherent view or typed projection failed. It deliberately carries no
+// raw error or path text; the run yields zero partial items.
+const epochV8WorklistDegraded = "epoch_v8_incoherent"
+
 func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoadResult, error) {
 	runs, err := fs.ListRuns(ctx)
 	if err != nil {
 		return processWorklistLoadResult{}, err
 	}
 	snapshots := make([]store.Snapshot, 0, len(runs))
+	epochItems := make([]worklist.Item, 0)
 	degraded := make([]degradedRun, 0)
 	for _, run := range runs {
 		if run.ID == "" {
@@ -174,6 +181,20 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 		kind, schemaErr := supportedProcessRunSchema(ctx, fs, run.ID)
 		if schemaErr != nil {
 			degraded = append(degraded, degradedRun{Run: run.ID, Error: schemaErr.Error()})
+			continue
+		}
+		if kind == store.RunSchemaEpochV8 {
+			snapshot, loadErr := fs.LoadEpochV8RunView(ctx, run.ID)
+			if loadErr != nil {
+				degraded = append(degraded, degradedRun{Run: run.ID, Error: epochV8WorklistDegraded})
+				continue
+			}
+			projection, deriveErr := worklist.DeriveEpochV8(ctx, snapshot)
+			if deriveErr != nil {
+				degraded = append(degraded, degradedRun{Run: run.ID, Error: epochV8WorklistDegraded})
+				continue
+			}
+			epochItems = append(epochItems, projection.Items...)
 			continue
 		}
 		if kind != store.RunSchemaLegacy {
@@ -187,7 +208,7 @@ func loadProcessWorklist(ctx context.Context, fs *store.FS) (processWorklistLoad
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	items := worklist.Derive(snapshots)
+	items := append(worklist.Derive(snapshots), epochItems...)
 	slices.SortFunc(items, func(a, b worklist.Item) int { return strings.Compare(a.ID, b.ID) })
 	return processWorklistLoadResult{Items: items, DegradedRuns: degraded}, nil
 }

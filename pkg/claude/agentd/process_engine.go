@@ -238,6 +238,9 @@ func processRoute(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
+	// The listing carries schema-8 adapted state, so it shares the no-store
+	// contract of the other schema-8-bearing reads.
+	setProcessNoStoreHeaders(w)
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "process_store", err.Error())
@@ -254,6 +257,7 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 		Status          state.RunStatus      `json:"status"`
 		Started         time.Time            `json:"started"`
 		CurrentActivity string               `json:"currentActivity,omitempty"`
+		Adapted         bool                 `json:"adapted,omitempty"`
 		Verification    processverify.Report `json:"verification"`
 	}
 	views := make([]runView, 0, len(runs))
@@ -273,7 +277,7 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 			}
 			status := epochV8EffectiveStatus(snapshot)
 			verification := processverify.Report{RunID: run.ID, EffectiveStatus: status}
-			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: status, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Verification: verification})
+			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: status, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Adapted: len(snapshot.Checkpoint.View().Epochs) > 1, Verification: verification})
 			continue
 		}
 		if kind == store.RunSchemaResetRequired {
@@ -404,6 +408,7 @@ func currentProcessActivity(st *state.State) string {
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
+	setProcessNoStoreHeaders(w)
 	runID := r.PathValue("id")
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
@@ -429,7 +434,12 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_run", "schema-8 process run is unavailable")
 			return
 		}
-		writeProcessJSON(w, http.StatusOK, epochV8SafeEnvelope(snapshot))
+		envelope, envelopeErr := epochV8SafeEnvelope(r.Context(), snapshot)
+		if envelopeErr != nil {
+			writeError(w, http.StatusConflict, "process_run_inconsistent", "schema-8 process run is not coherent")
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, envelope)
 		return
 	}
 	snapshot, err := fs.LoadRun(r.Context(), runID)
@@ -449,6 +459,7 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
+	setProcessNoStoreHeaders(w)
 	runID := r.PathValue("id")
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
@@ -479,7 +490,12 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
 		}
-		writeProcessJSON(w, http.StatusOK, epochV8SafeEnvelope(snapshot))
+		envelope, envelopeErr := epochV8SafeEnvelope(r.Context(), snapshot)
+		if envelopeErr != nil {
+			writeError(w, http.StatusConflict, "process_view_inconsistent", "schema-8 process run is not coherent")
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, envelope)
 		return
 	}
 	snapshot, err := fs.LoadRunView(r.Context(), runID)

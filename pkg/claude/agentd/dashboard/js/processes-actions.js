@@ -26,11 +26,38 @@ export function processActorPresentation(snapshot, actor) {
   };
 }
 
+// Process responses can carry schema-8 material; every fetch opts out of
+// HTTP caching to match the server's no-store contract.
 export async function processJSON(path, fetchImpl = fetch) {
-  const response = await fetchImpl(path, { credentials: 'same-origin' });
+  const response = await fetchImpl(path, { credentials: 'same-origin', cache: 'no-store' });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
   return body;
+}
+
+// processUnlockRequest POSTs a schema-8 unlock preview/apply/unblock body and
+// returns { status, body } so callers can branch on 409 stale/422 blocked
+// without treating them as transport failures. Draft material only ever
+// travels in the request; nothing is persisted client-side.
+export async function processUnlockRequest(path, payload, fetchImpl = fetch) {
+  const response = await fetchImpl(path, {
+    method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+  return { status: response.status, ok: response.ok, body };
+}
+
+// processExactArtifact reads one restricted diff/reason artifact as text.
+// The route is permission-gated server-side; a denial surfaces as a bounded
+// { status } the panel renders as an explicit error state.
+export async function processExactArtifact(runID, epochID, kind, fetchImpl = fetch) {
+  const response = await fetchImpl(
+    `/v1/process/runs/${encodeURIComponent(runID)}/epochs/${encodeURIComponent(epochID)}/${encodeURIComponent(kind)}`,
+    { credentials: 'same-origin', cache: 'no-store' },
+  );
+  const text = await response.text().catch(() => '');
+  return { status: response.status, ok: response.ok, text };
 }
 
 export function createProcessesActions({
@@ -661,6 +688,15 @@ export function createProcessesActions({
     const query = new URLSearchParams({ detailOffset: String(offset), detailLimit: String(limit) });
     return processJSON(`/v1/process/runs/${encodeURIComponent(id)}/view?${query}`, fetchImpl);
   }
+  function previewUnlock(id, payload) {
+    return processUnlockRequest(`/v1/process/runs/${encodeURIComponent(id)}/unlock/preview`, payload, fetchImpl);
+  }
+  function applyUnlock(id, payload) {
+    return processUnlockRequest(`/v1/process/runs/${encodeURIComponent(id)}/unlock/apply`, payload, fetchImpl);
+  }
+  function loadExactArtifact(id, epochID, kind) {
+    return processExactArtifact(id, epochID, kind, fetchImpl);
+  }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
     state.setEditor(null); state.setCanvas(null); await load(state.subtab.value);
@@ -716,5 +752,6 @@ export function createProcessesActions({
     openRename, closeRename, submitRename, renameTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
     submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
+    previewUnlock, applyUnlock, loadExactArtifact,
   });
 }

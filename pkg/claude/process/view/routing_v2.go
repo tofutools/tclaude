@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/state/epochv8"
 	"github.com/tofutools/tclaude/pkg/claude/process/state/pathv1"
 )
 
@@ -45,6 +46,10 @@ const (
 	RoutingUnavailableUnsupportedProtocol RoutingUnavailableReason = "unsupported_protocol"
 	RoutingUnavailableOverBudget          RoutingUnavailableReason = "over_budget"
 	RoutingUnavailableInconsistent        RoutingUnavailableReason = "inconsistent"
+	// RoutingUnavailableEpochV8Summary distinguishes the deliberate schema-8
+	// safe-summary envelope from a genuinely unknown schema: exact topology and
+	// routing are restricted surfaces on schema 8, not unsupported ones.
+	RoutingUnavailableEpochV8Summary RoutingUnavailableReason = "epoch_v8_summary"
 )
 
 // ViewerV2 is additive to the schema-v1 history report. RoutingAvailable is
@@ -368,6 +373,11 @@ func ProjectViewerV2(input ViewerV2Input) ViewerV2 {
 		if topology, reason := projectExactTopology(input.ExactTemplateRef, input.ExactTemplate); reason == "" {
 			result.ExactTopology = topology.topology
 		}
+		return result
+	}
+	if input.StateSchemaVersion == epochv8.StateSchemaVersion {
+		result.PathProtocol = epochv8.Protocol
+		result.RoutingUnavailableReason = RoutingUnavailableEpochV8Summary
 		return result
 	}
 	if input.StateSchemaVersion != PathV1StateSchemaVersion {
