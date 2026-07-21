@@ -430,7 +430,12 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_run", "schema-8 process run is unavailable")
 			return
 		}
-		writeProcessJSON(w, http.StatusOK, epochV8SafeEnvelope(snapshot))
+		envelope, envelopeErr := epochV8SafeEnvelope(r.Context(), snapshot)
+		if envelopeErr != nil {
+			writeError(w, http.StatusConflict, "process_run_inconsistent", "schema-8 process run is not coherent")
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, envelope)
 		return
 	}
 	snapshot, err := fs.LoadRun(r.Context(), runID)
@@ -481,7 +486,12 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
 		}
-		writeProcessJSON(w, http.StatusOK, epochV8SafeEnvelope(snapshot))
+		envelope, envelopeErr := epochV8SafeEnvelope(r.Context(), snapshot)
+		if envelopeErr != nil {
+			writeError(w, http.StatusConflict, "process_view_inconsistent", "schema-8 process run is not coherent")
+			return
+		}
+		writeProcessJSON(w, http.StatusOK, envelope)
 		return
 	}
 	snapshot, err := fs.LoadRunView(r.Context(), runID)

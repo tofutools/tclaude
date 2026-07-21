@@ -21,6 +21,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	processverify "github.com/tofutools/tclaude/pkg/claude/process/verify"
 	processview "github.com/tofutools/tclaude/pkg/claude/process/view"
+	"github.com/tofutools/tclaude/pkg/claude/process/worklist"
 )
 
 const (
@@ -701,16 +702,26 @@ type epochV8SafeEnvelopeDTO struct {
 	StructuralSummary epochV8StructuralSummaryDTO `json:"structuralSummary"`
 	AuthorityCounts   epochV8AuthorityCountsDTO   `json:"authorityCounts"`
 	CurrentBinding    epochV8BindingDTO           `json:"currentBinding"`
+	// EpochReport is the bounded safe owner-epoch report. It shares one
+	// projection core with the worklist, so their states cannot disagree.
+	EpochReport worklist.EpochV8Report `json:"epochReport"`
 }
 
-func epochV8SafeEnvelope(snapshot store.EpochV8RunSnapshot) epochV8SafeEnvelopeDTO {
+// epochV8SafeEnvelope builds the ordinary schema-8 viewer envelope. A typed
+// projection failure is a whole-run coherence error: the caller fails closed
+// instead of serving an envelope with silently missing work.
+func epochV8SafeEnvelope(ctx context.Context, snapshot store.EpochV8RunSnapshot) (epochV8SafeEnvelopeDTO, error) {
+	projection, err := worklist.DeriveEpochV8(ctx, snapshot)
+	if err != nil {
+		return epochV8SafeEnvelopeDTO{}, err
+	}
 	status := epochV8EffectiveStatus(snapshot)
 	verification := processverify.Report{RunID: snapshot.Run.ID, EffectiveStatus: status}
 	base := processview.NewEnvelope(snapshot.Run.ID, verification)
 	base.Run.TemplateRef = snapshot.Run.TemplateRef
 	base.ViewerV2 = processview.ProjectViewerV2(processview.ViewerV2Input{RunID: snapshot.Run.ID, StateSchemaVersion: epochv8.StateSchemaVersion})
 	lineage := epochV8Lineage(snapshot.Checkpoint)
-	return epochV8SafeEnvelopeDTO{Run: epochV8RunSummaryDTO{ID: snapshot.Run.ID, TemplateRef: snapshot.Run.TemplateRef, EffectiveStatus: status}, Graph: nil, Verification: base.Verification, Report: base.Report, ViewerV2: base.ViewerV2, Schema: store.RunSchemaEpochV8, Adapted: lineage.TotalEpochs > 1, Lineage: lineage, StructuralSummary: epochV8StructuralSummary(snapshot.Checkpoint), AuthorityCounts: epochV8AuthorityCounts(snapshot.Checkpoint), CurrentBinding: bindingDTO(snapshot.Checkpoint.Binding())}
+	return epochV8SafeEnvelopeDTO{Run: epochV8RunSummaryDTO{ID: snapshot.Run.ID, TemplateRef: snapshot.Run.TemplateRef, EffectiveStatus: status}, Graph: nil, Verification: base.Verification, Report: base.Report, ViewerV2: base.ViewerV2, Schema: store.RunSchemaEpochV8, Adapted: lineage.TotalEpochs > 1, Lineage: lineage, StructuralSummary: epochV8StructuralSummary(snapshot.Checkpoint), AuthorityCounts: epochV8AuthorityCounts(snapshot.Checkpoint), CurrentBinding: bindingDTO(snapshot.Checkpoint.Binding()), EpochReport: projection.Report}, nil
 }
 
 func epochV8EffectiveStatus(snapshot store.EpochV8RunSnapshot) state.RunStatus {
@@ -747,10 +758,15 @@ func handleProcessEpochV8Verify(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	envelope, err := epochV8SafeEnvelope(r.Context(), snapshot)
+	if err != nil {
+		writeError(w, http.StatusConflict, "process_verify_inconsistent", "schema-8 process run is not coherent")
+		return
+	}
 	writeProcessJSON(w, http.StatusOK, struct {
 		Verified bool                   `json:"verified"`
 		View     epochV8SafeEnvelopeDTO `json:"view"`
-	}{true, epochV8SafeEnvelope(snapshot)})
+	}{true, envelope})
 }
 
 // setProcessNoStoreHeaders marks a process response as non-cacheable exact
