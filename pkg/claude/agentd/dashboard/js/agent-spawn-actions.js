@@ -1,4 +1,5 @@
-import { composeSandboxProfilePreview } from './sandbox-profile-preview.js';
+import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
+import { BREAK_GLASS_WARNING, describeBreakGlassEntries } from './sandbox-break-glass.js';
 import { WT_NEW } from './agent-spawn-model.js';
 
 const EFFORT_KEY = 'tclaude.dash.spawn.modelEffort';
@@ -148,10 +149,15 @@ export function createAgentSpawnActions({
       if (selected && byName[selected]) {
         applied.push({ scope: 'explicit', profile: byName[selected] });
       }
+      const policy = composeSandboxProfilePolicy(applied, byName);
       return {
         profiles,
         selected: byName[selected] ? selected : '',
-        preview: composeSandboxProfilePreview(applied, byName),
+        preview: policy.text,
+        // Break-glass can arrive from ANY layer (global or group assignment,
+        // not just the explicit pick), so the spawn gate keys off the resolved
+        // composition, mirroring the daemon's own acknowledgement rule.
+        breakGlass: policy.breakGlass,
       };
     },
 
@@ -199,6 +205,14 @@ export function createAgentSpawnActions({
         body: 'No name or description was given, so the agent will be auto-named from the first words of your initial message:',
         meta: `“${name}”`,
         okLabel: 'Auto-name & spawn',
+      });
+    },
+
+    confirmBreakGlassSpawn(entries) {
+      return confirm({
+        title: '\u{1f6a8} Spawn with break-glass protected access?',
+        body: `The resolved sandbox policy for this launch carries break-glass protected-path access: ${describeBreakGlassEntries(entries)}. ${BREAK_GLASS_WARNING}`,
+        okLabel: 'I understand the risk — spawn',
       });
     },
 

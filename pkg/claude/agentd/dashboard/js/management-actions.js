@@ -777,7 +777,7 @@ export function createManagementActions({
     }
   }
 
-  async function saveSandbox({ draft, original, options = {} }) {
+  async function saveSandbox({ draft, original, options = {}, breakGlassAcknowledged = false }) {
     state.busy.value = 'sandbox-save';
     state.error.value = '';
     try {
@@ -788,6 +788,8 @@ export function createManagementActions({
         includes: draft.includes,
         agent_directories: draft.agent_directories,
         network_access: draft.network_access || '',
+        read_baseline: draft.read_baseline || '',
+        break_glass_filesystem: draft.break_glass_filesystem || [],
       };
       if (!body.name) throw new Error('name is required');
       const targetName = options.targetName || original?.name || '';
@@ -809,7 +811,9 @@ export function createManagementActions({
       }
       await sandbox.saveSandboxProfile(
         targetName,
-        preview.after,
+        breakGlassAcknowledged
+          ? { ...preview.after, break_glass_acknowledged: true }
+          : preview.after,
         preview.revision || '',
       );
       state.closeDialog();
@@ -879,8 +883,8 @@ export function createManagementActions({
   async function inspectSandboxBundle(envelope) {
     return sandbox.inspectSandboxImport(envelope);
   }
-  async function importSandboxBundle(envelope, conflict) {
-    const result = await sandbox.importSandboxProfiles(envelope, conflict);
+  async function importSandboxBundle(envelope, conflict, breakGlassAcknowledged = false) {
+    const result = await sandbox.importSandboxProfiles(envelope, conflict, breakGlassAcknowledged);
     await load('sandbox');
     await refreshSandboxSpawn();
     const imported = result?.imported || [];

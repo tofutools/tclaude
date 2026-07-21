@@ -15,6 +15,8 @@ import {
   loadAddMemberPromotionPool,
 } from './add-member-actions.js';
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
+import { shellConfirm } from './shell-state.js';
+import { assignedBreakGlass, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
 
 async function responseError(response, fallback) {
   return (await response.text()) || fallback || `HTTP ${response.status}`;
@@ -22,6 +24,7 @@ async function responseError(response, fallback) {
 
 export function createGroupsActions({
   state, refresh, notify = () => {}, fetchImpl = fetch,
+  confirmDanger = shellConfirm,
   openMemberPermissions = () => { throw new Error('permissions editor is not ready'); },
 }) {
   if (!state) throw new TypeError('groups actions require state');
@@ -163,10 +166,25 @@ export function createGroupsActions({
     },
     async setGroupProfile(group, kind, name) {
       if (kind === 'sandbox') {
+        // Group assignment is a persistent break-glass surface: every future
+        // launch into the group inherits it, so it needs the prominent
+        // warning and the explicit acknowledgement.
+        let breakGlassAcknowledged = false;
+        if (name) {
+          const entries = assignedBreakGlass(name, await loadSandboxProfiles(), `group:${group.name}`);
+          if (entries.length) {
+            const proceed = await confirmDanger(breakGlassAssignmentPrompt({
+              scopeLabel: `This assigns the default sandbox profile for group "${group.name}": every agent launched into the group inherits it until the assignment is removed.`,
+              name, entries,
+            }));
+            if (!proceed) return false;
+            breakGlassAcknowledged = true;
+          }
+        }
         const response = await fetch(`/api/groups/${encodeURIComponent(group.name)}/sandbox-profile`, {
           method: name ? 'PUT' : 'DELETE', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: name ? JSON.stringify({ name }) : undefined,
+          body: name ? JSON.stringify({ name, ...(breakGlassAcknowledged ? { break_glass_acknowledged: true } : {}) }) : undefined,
         });
         if (!response.ok) throw new Error(`set sandbox profile failed: ${await responseError(response)}`);
         notify(name ? `${group.name} sandbox profile: ${name}` : `${group.name} sandbox profile cleared`);

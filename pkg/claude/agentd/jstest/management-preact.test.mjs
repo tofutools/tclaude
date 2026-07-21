@@ -314,12 +314,15 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   };
   const actions = createManagementActions({ state, confirm: async () => { genericConfirms += 1; return true; }, notify() {}, refreshSandboxSpawn: async () => { refreshed += 1; }, sandboxAPI });
   const draft = { name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [], includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet' };
+  // The save body always carries the full-replace shape, so the TCL-609
+  // fields ride along explicitly even when untouched.
+  const body = { ...draft, read_baseline: '', break_glass_filesystem: [] };
   const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
-  assert.deepEqual(state.sandboxDiff.value, { before: null, after: draft }); state.cancelSandboxDiff(true);
+  assert.deepEqual(state.sandboxDiff.value, { before: null, after: body }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
-  assert.deepEqual(calls[0], ['preview', '', draft]); assert.deepEqual(calls[1], ['save', '', draft, 'r1']); assert.equal(refreshed, 1);
-  const replacement = { ...draft, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
-  assert.deepEqual(calls[2], ['preview', 'safe', replacement]); assert.deepEqual(calls[3], ['save', 'safe', replacement, 'r1']);
+  assert.deepEqual(calls[0], ['preview', '', body]); assert.deepEqual(calls[1], ['save', '', body, 'r1']); assert.equal(refreshed, 1);
+  const replacement = { ...draft, name: 'renamed' }; const replacementBody = { ...body, name: 'renamed' }; const update = actions.saveSandbox({ draft: replacement, original: replacement, options: { targetName: 'safe' } }); await Promise.resolve(); state.cancelSandboxDiff(true); await update;
+  assert.deepEqual(calls[2], ['preview', 'safe', replacementBody]); assert.deepEqual(calls[3], ['save', 'safe', replacementBody, 'r1']);
   assert.equal(genericConfirms, 0, 'sandbox saves use the dedicated diff instead of the generic JSON confirmation blob');
   await actions.removeSandbox('safe'); assert.deepEqual(calls.find((call) => call[0] === 'delete'), ['delete', 'safe']);
   assert.equal(genericConfirms, 1, 'ordinary destructive confirmations still use the shared prompt');

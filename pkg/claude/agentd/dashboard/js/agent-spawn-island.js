@@ -124,7 +124,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     phase: 'loading', repo: initial.wtRepo, isRepo: false, hasCommits: true,
     worktrees: [], branches: [], defaultBranch: '', subRepos: [],
   });
-  const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '' });
+  const [sandboxPolicy, setSandboxPolicy] = useState({ profiles: [], preview: '', error: '', breakGlass: [] });
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -233,7 +233,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const request = ++sandboxRequest.current;
     const generation = current.generation;
     if (view.sandboxProfilesDisabled) {
-      setSandboxPolicy((value) => ({ ...value, preview: '', error: '' }));
+      setSandboxPolicy((value) => ({ ...value, preview: '', error: '', breakGlass: [] }));
       return undefined;
     }
     actions.loadSandboxPolicy(draft.group, draft.sandboxProfile).then((value) => {
@@ -486,6 +486,18 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       submitLock.current = false;
       return;
     }
+    // Break-glass in the RESOLVED policy (any layer: global, group, or the
+    // explicit pick) needs an explicit operator acknowledgement; the daemon
+    // rejects unacknowledged spawns with a typed 422 either way.
+    const spawnBreakGlass = !view.sandboxProfilesDisabled ? (sandboxPolicy.breakGlass || []) : [];
+    if (spawnBreakGlass.length) {
+      const proceed = await actions.confirmBreakGlassSpawn(spawnBreakGlass);
+      if (!state.isCurrent(current.generation)) return;
+      if (!proceed) {
+        submitLock.current = false;
+        return;
+      }
+    }
     next = prepareSpawnDraft(next, context, derived, worktrees.isRepo);
     setDraft(next);
     setError('');
@@ -511,6 +523,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       }
       if (!state.isCurrent(current.generation)) return;
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
+      if (spawnBreakGlass.length) request.body.break_glass_acknowledged = true;
       const payload = await actions.spawn(request);
       if (!state.isCurrent(current.generation)) return;
       state.close();

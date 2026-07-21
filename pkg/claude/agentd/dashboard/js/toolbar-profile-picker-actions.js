@@ -3,6 +3,8 @@ import { loadSandboxProfiles, openSandboxProfileEditor } from './sandbox-profile
 import { openProfileEditor } from './modal-profiles.js';
 import { renderDashDefaultProfile, renderDashSandboxProfile } from './toolbar-profile-renderers.js';
 import { refreshAgentSpawnSandboxPolicy } from './agent-spawn-controller.js';
+import { shellConfirm } from './shell-state.js';
+import { assignedBreakGlass, breakGlassAssignmentPrompt } from './sandbox-break-glass.js';
 
 function choices(items) {
   return profileChoices(items).map(({ value, label }) => Object.freeze({ value, label }));
@@ -12,6 +14,8 @@ export function createToolbarProfilePickerActions({
   fetchImpl = fetch,
   notify = () => {},
   refresh = () => {},
+  confirmDanger = shellConfirm,
+  loadSandboxProfilesImpl = loadSandboxProfiles,
 } = {}) {
   const pending = new Set();
   const actions = {
@@ -34,11 +38,26 @@ export function createToolbarProfilePickerActions({
           renderDashDefaultProfile();
           return true;
         }
+        // A global assignment is the most persistent break-glass surface:
+        // every future launch inherits it until the assignment is removed, so
+        // it needs the prominent warning and the explicit acknowledgement.
+        let breakGlassAcknowledged = false;
+        if (name) {
+          const entries = assignedBreakGlass(name, await loadSandboxProfilesImpl(), 'global');
+          if (entries.length) {
+            const proceed = await confirmDanger(breakGlassAssignmentPrompt({
+              scopeLabel: 'This assigns the GLOBAL default sandbox profile: every newly launched agent inherits it until the assignment is removed.',
+              name, entries,
+            }));
+            if (!proceed) return false;
+            breakGlassAcknowledged = true;
+          }
+        }
         const response = await fetchImpl('/api/sandbox-profile-default', {
           method: name ? 'PUT' : 'DELETE',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: name ? JSON.stringify({ name }) : undefined,
+          body: name ? JSON.stringify({ name, ...(breakGlassAcknowledged ? { break_glass_acknowledged: true } : {}) }) : undefined,
         });
         if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
         notify(name ? `global sandbox profile: ${name}` : 'global sandbox profile cleared');
