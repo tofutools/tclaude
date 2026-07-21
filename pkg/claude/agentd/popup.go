@@ -620,10 +620,18 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 // creation is deliberately narrower: runtime params may contain secrets, so
 // its preview exposes only safe run identity and a redacted parameter count.
 func snapshotApprovalRequestBody(r *http.Request, perm string) string {
+	if perm == PermProcessAdvance && r.Method == http.MethodPost && isEpochV8SettlementPath(r.URL.Path) {
+		return `{"settlement":"[redacted]"}`
+	}
 	if perm == PermProcessRunsCreate && r.Method == http.MethodPost && r.URL.Path == "/v1/process/runs" {
 		return snapshotProcessRunCreateApprovalBody(r)
 	}
 	return snapshotRequestBody(r)
+}
+
+func isEpochV8SettlementPath(path string) bool {
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	return len(segments) == 5 && segments[0] == "v1" && segments[1] == "process" && segments[2] == "runs" && segments[4] == "unblock"
 }
 
 const (

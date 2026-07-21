@@ -77,6 +77,13 @@ func (c *TemplateCandidate) SourceDigest() string {
 	return c.epoch.TemplateSourceDigest
 }
 
+func (c *TemplateCandidate) GraphTotals() (nodes, edges int) {
+	if c == nil {
+		return 0, 0
+	}
+	return len(c.epoch.Graph.Nodes), len(c.epoch.Graph.Edges)
+}
+
 // ClassifyTemplateSource is the stable S1 classifier for untrusted exact
 // source. Invalid, compound, program, or otherwise ineligible input returns an
 // unsupported classification rather than selecting or disabling a fallback.

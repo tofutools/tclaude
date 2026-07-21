@@ -291,6 +291,68 @@ func ApplyTransferHead(ctx context.Context, checkpoint *CheckpointV8, artifactJS
 	return appendRuntimeApplyReceipt(checkpoint, record, artifact, nextJSON, receipt)
 }
 
+// PreflightRuntimeApply executes the same pure typed constructors used by a
+// later publication, then discards the prospective transition. A sealed
+// proposal is rescue-ready only when it transfers the sole bare
+// verified-unclaimed frontier; constructor refusals are a valid non-rescue
+// preview result rather than an alternate mutation path.
+func PreflightRuntimeApply(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource, candidateSource []byte, plan *ApplyPlan) (RuntimeApplyPreflight, error) {
+	if err := VerifyCheckpointV8(checkpoint); err != nil || plan == nil {
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: sealed apply is required", ErrInvalid)
+	}
+	bare, transfer := bareTransfer(checkpoint, plan)
+	if checkpoint.wire.RuntimeBinding == (RuntimeBinding{}) {
+		if _, err := Apply(checkpoint, plan); err != nil {
+			return RuntimeApplyRefused, nil
+		}
+		if bare && transfer {
+			return RuntimeApplyTransferReady, nil
+		}
+		return RuntimeApplyRetainReady, nil
+	}
+	if bare && transfer {
+		if _, err := ApplyTransferHead(ctx, checkpoint, artifactJSON, ownerSource, candidateSource, plan); err == nil {
+			return RuntimeApplyTransferReady, nil
+		}
+		return RuntimeApplyRefused, nil
+	}
+	if _, err := ApplyRetainHead(ctx, checkpoint, artifactJSON, ownerSource, plan); err == nil {
+		return RuntimeApplyRetainReady, nil
+	}
+	return RuntimeApplyRefused, nil
+}
+
+func bareTransfer(checkpoint *CheckpointV8, plan *ApplyPlan) (bool, bool) {
+	active := make([]AuthorityRecord, 0, 2)
+	for _, authority := range checkpoint.wire.Authorities {
+		if authority.State.active() {
+			active = append(active, authority)
+		}
+	}
+	if len(active) != 1 || active[0].Kind != AuthorityFrontier || active[0].State != AuthorityVerifiedUnclaimed {
+		return false, false
+	}
+	transfers := 0
+	matched := false
+	for _, handoff := range plan.core.HandoffSet {
+		if handoff.Action == HandoffTransfer {
+			transfers++
+			matched = handoff.Source == active[0].Identity && handoff.Target != nil
+		}
+	}
+	return true, transfers == 1 && matched
+}
+
+// PreflightAuditedSettlement runs the exact outer runtime constructor in
+// memory. AuditedSettlement itself proves that retry creates exactly one new
+// verified frontier and that non-retry decisions create none.
+func PreflightAuditedSettlement(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, ownerSource []byte, transition *pathv1.ExecutionTransition) (RuntimeTransitionResult, error) {
+	return AuditedSettlement(ctx, checkpoint, artifactJSON, ownerSource, transition)
+}
+
 func advanceRuntime(ctx context.Context, checkpoint *CheckpointV8, artifactJSON, templateSource []byte, transition *pathv1.ExecutionTransition, kind RuntimeTransitionKind, evidence string) (RuntimeTransitionResult, error) {
 	current, err := verifyCurrentRuntime(ctx, checkpoint, artifactJSON, templateSource)
 	if err != nil {

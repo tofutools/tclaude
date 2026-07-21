@@ -310,6 +310,46 @@ tclaude process unblock demo-1 implement.test.tests \
 `--evidence` are required so the reconstructed event log always explains the
 release; `--actor` defaults to the current human user.
 
+Schema-8 runs in the default store use agentd for inspection, verification,
+preview, and settlement. `process show` prints the current base revision and
+digest needed by a preview:
+
+```bash
+tclaude process preview RUN_ID \
+  --store-root "$STORE" \
+  --candidate-file candidate.yaml \
+  --base-revision REVISION \
+  --base-digest DIGEST
+```
+
+The preview is read-only. If it returns opaque handoff blockers, repeat it with
+one `--handoff TOKEN=retain` or
+`--handoff TOKEN=transfer:LOCAL:RESERVATION:NODE` per blocker. If it returns
+audited-settlement guidance, pass that guidance token as the second positional
+argument to `process unblock`, together with the preview base:
+
+```bash
+tclaude process unblock RUN_ID GUIDANCE_TOKEN \
+  --store-root "$STORE" \
+  --base-revision REVISION \
+  --base-digest DIGEST \
+  --decision retry \
+  --reason "operator-confirmed recovery" \
+  --evidence incident:123
+```
+
+Agentd derives the schema-8 settlement actor and timestamp; `--actor` remains a
+legacy-run option. Exact applied artifacts are restricted reads and require
+the `process.runs.unlock.read` permission:
+
+```bash
+tclaude process show RUN_ID --store-root "$STORE" --epoch EPOCH_ID --diff
+tclaude process show RUN_ID --store-root "$STORE" --epoch EPOCH_ID --reason
+```
+
+Schema-8 daemon commands intentionally reject custom store roots. Schemas 1–7
+retain their existing direct/custom-root CLI behavior.
+
 `--evidence-hash` records the content hash of the settle's evidence — on a
 work stage it is the hash later gate verdicts evaluate, which powers the
 evidence-unchanged short-circuit; `--feedback` is the gate payload the next
@@ -353,8 +393,12 @@ recovery, and the terminal result without consulting SQLite or a live daemon.
 ## Run viewer API
 
 With Processes enabled, `GET /v1/process/runs/{id}/view` returns a dedicated,
-read-only viewer projection. The existing `GET /v1/process/runs/{id}` contract
-continues to return the persisted run, state, and verification result unchanged.
+read-only viewer projection. For schemas 1–7, the existing
+`GET /v1/process/runs/{id}` contract continues to return the persisted run,
+state, and verification result unchanged. Schema 8 returns the same safe
+summary envelope from both routes: run status, schema/lineage metadata,
+authority counts, and the current preview binding. It deliberately omits raw
+runtime state and exact topology.
 
 ```json
 {

@@ -2,6 +2,7 @@ package processcmd
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	processplan "github.com/tofutools/tclaude/pkg/claude/process/plan"
 	"github.com/tofutools/tclaude/pkg/claude/process/state"
@@ -23,6 +25,9 @@ type showParams struct {
 	StoreRoot string `long:"store-root" help:"Filesystem process store root"`
 	Mermaid   bool   `long:"mermaid" help:"Export the run graph as Mermaid"`
 	Recent    int    `long:"recent" optional:"true" help:"Number of recent manifest events to show"`
+	Epoch     string `long:"epoch" optional:"true" help:"Applied schema-8 epoch for an exact restricted artifact read"`
+	Diff      bool   `long:"diff" help:"With --epoch, print exact applied diff bytes"`
+	Reason    bool   `long:"reason" help:"With --epoch, print exact applied reason bytes"`
 }
 
 func showCmd() *cobra.Command {
@@ -42,9 +47,67 @@ func showCmd() *cobra.Command {
 			return nil
 		},
 		RunFunc: func(p *showParams, cmd *cobra.Command, _ []string) {
-			exitWithError(runShow(cmd, p, os.Stdout))
+			exitWithError(runShowDispatch(cmd, p, os.Stdout))
 		},
 	}.ToCobra()
+}
+
+func runShowDispatch(cmd *cobra.Command, p *showParams, out io.Writer) error {
+	artifactRequested := p.Epoch != "" || p.Diff || p.Reason
+	if artifactRequested && (p.Epoch == "" || p.Diff == p.Reason) {
+		return fmt.Errorf("exact schema-8 artifact reads require --epoch and exactly one of --diff or --reason")
+	}
+	canonical := requireCanonicalProcessStore(p.StoreRoot) == nil
+	if artifactRequested && !canonical {
+		return fmt.Errorf("exact schema-8 artifact reads require the canonical process store")
+	}
+	kind, probeErr := localRunSchema(cmd.Context(), p.StoreRoot, p.RunID)
+	if !canonical {
+		if probeErr == nil && kind == store.RunSchemaEpochV8 {
+			return requireCanonicalProcessStore(p.StoreRoot)
+		}
+		return runShow(cmd, p, out)
+	}
+	if probeErr == nil && kind != store.RunSchemaEpochV8 {
+		if artifactRequested {
+			return fmt.Errorf("exact artifact reads are only available for schema-8 process runs")
+		}
+		return runShow(cmd, p, out)
+	}
+	if artifactRequested {
+		artifact := "diff"
+		if p.Reason {
+			artifact = "reason"
+		}
+		data, _, err := agent.DaemonGetRaw("/v1/process/runs/" + p.RunID + "/epochs/" + p.Epoch + "/" + artifact)
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(data)
+		return err
+	}
+	if p.Mermaid {
+		return fmt.Errorf("schema-8 daemon summaries do not expose graph topology")
+	}
+	var envelope struct {
+		Run     struct{ ID, TemplateRef, EffectiveStatus string } `json:"run"`
+		Lineage struct {
+			OriginalTemplateRef, CurrentTemplateRef string
+			Epochs                                  []json.RawMessage `json:"epochs"`
+		} `json:"lineage"`
+		AuthorityCounts struct {
+			Total int `json:"total"`
+		} `json:"authorityCounts"`
+		CurrentBinding struct {
+			Revision uint64 `json:"revision"`
+			Digest   string `json:"digest"`
+		} `json:"currentBinding"`
+	}
+	if err := agent.DaemonRequest("GET", "/v1/process/runs/"+p.RunID, nil, &envelope, agent.DaemonOpts{Timeout: schema8DaemonTimeout}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Run: %s\nTemplate: %s\nState schema: 8\nEffective status: %s\nCurrent template: %s\nBase revision: %d\nBase digest: %s\nEpochs: %d\nAuthorities: %d\n", envelope.Run.ID, envelope.Run.TemplateRef, envelope.Run.EffectiveStatus, envelope.Lineage.CurrentTemplateRef, envelope.CurrentBinding.Revision, envelope.CurrentBinding.Digest, len(envelope.Lineage.Epochs), envelope.AuthorityCounts.Total)
+	return nil
 }
 
 func runShow(cmd *cobra.Command, p *showParams, out io.Writer) error {

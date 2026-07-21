@@ -160,9 +160,39 @@ func TestProcessRunCreatePinsExactRefAppliesDefaultsAndInterpolates(t *testing.T
 	read := processEngineGet(t, f, "/v1/process/runs/rest-exact-run")
 	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
 	assert.Contains(t, read.Body.String(), `"stateSchemaVersion":8`)
+	assert.NotContains(t, read.Body.String(), "TCL-300")
+	assert.NotContains(t, read.Body.String(), "Implement {{ params.issue }}")
+	assert.NotContains(t, read.Body.String(), `"params"`)
+	assert.NotContains(t, read.Body.String(), `"authorities"`)
 	view := processEngineGet(t, f, "/v1/process/runs/rest-exact-run/view")
 	require.Equal(t, http.StatusOK, view.Code, view.Body.String())
 	assert.Contains(t, view.Body.String(), `"schema":"epoch_v8"`)
+	assert.NotContains(t, view.Body.String(), "TCL-300")
+	verified := processEngineGet(t, f, "/v1/process/runs/rest-exact-run/verify")
+	require.Equal(t, http.StatusOK, verified.Code, verified.Body.String())
+	assert.NotContains(t, verified.Body.String(), "TCL-300")
+
+	var safe struct {
+		CurrentBinding map[string]any `json:"currentBinding"`
+	}
+	testharness.DecodeJSON(t, read, &safe)
+	const draftSentinel = "candidate-source-must-never-be-echoed"
+	candidate := *v1
+	candidate.Nodes = maps.Clone(v1.Nodes)
+	candidateWork := candidate.Nodes["work"]
+	candidateWork.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: draftSentinel}
+	candidate.Nodes["work"] = candidateWork
+	candidateSource, err := model.CanonicalYAML(&candidate)
+	require.NoError(t, err)
+	preview := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs/rest-exact-run/unlock/preview", map[string]any{
+		"baseBinding": safe.CurrentBinding, "candidateSource": string(candidateSource), "handoffs": []any{},
+	})))
+	assert.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+	assert.Contains(t, preview.Body.String(), `"classification":"cannot_affect_without_later_intervention"`)
+	assert.NotContains(t, preview.Body.String(), draftSentinel)
+	assert.NotContains(t, preview.Body.String(), `"addedNodes"`)
+	assert.NotContains(t, preview.Body.String(), `"diff"`)
+	assert.NotContains(t, preview.Body.String(), `"proposal"`)
 }
 
 func TestSchema7RoutesAndHostReturnStableResetRequired(t *testing.T) {
@@ -953,6 +983,76 @@ func TestProcessEngineCodeChangePoisonDecisionRetrySurvivesRestart(t *testing.T)
 	require.NoError(t, err)
 	assert.Equal(t, "3\n", string(data), "restart must not execute a program idempotency key twice")
 	assertCapstoneAuditableFromRunDir(t, root, "capstone-retry")
+}
+
+func TestEpochV8PreviewGuidanceAndDaemonSettlementStayOpaqueAndAudited(t *testing.T) {
+	f, root := processEngineFlow(t)
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	tmpl := &model.Template{APIVersion: model.APIVersion, Kind: model.Kind, ID: "epoch-settlement-flow", Start: "work", Nodes: map[string]model.Node{
+		"work": {Type: model.NodeTypeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Prompt: "fail once"}, Next: model.Next{"pass": "done", "fail": "failed"}},
+		"done": {Type: model.NodeTypeEnd, Result: "completed"}, "failed": {Type: model.NodeTypeEnd, Result: "failed"},
+	}}
+	record, err := fs.PutTemplate(t.Context(), tmpl)
+	require.NoError(t, err)
+	created := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateRef": record.Ref, "runId": "epoch-settlement-flow",
+	})))
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	host := processengine.New(fs, "agentd:settlement-flow", map[model.PerformerKind]processexec.Adapter{model.PerformerAgent: settlementFailAdapter{}})
+	results, err := agentd.RunProcessEngineTickForTest(t.Context(), host)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, state.RunStatusFailed, results[0].Status, results[0].Error)
+
+	snapshot, err := fs.LoadEpochV8RunView(t.Context(), "epoch-settlement-flow")
+	require.NoError(t, err)
+	epochs := snapshot.Checkpoint.View().Epochs
+	require.NotEmpty(t, epochs)
+	candidateSource := snapshot.EpochSources[epochs[len(epochs)-1].ID]
+	base := map[string]any{"revision": snapshot.Checkpoint.Binding().Revision, "digest": snapshot.Checkpoint.Binding().Digest}
+	preview := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/process/runs/epoch-settlement-flow/unlock/preview", map[string]any{
+		"baseBinding": base, "candidateSource": string(candidateSource), "handoffs": []any{},
+	})))
+	require.Equal(t, http.StatusOK, preview.Code, preview.Body.String())
+	var previewBody struct {
+		Classification string `json:"classification"`
+		Guidance       struct {
+			Token string `json:"token"`
+		} `json:"guidance"`
+	}
+	testharness.DecodeJSON(t, preview, &previewBody)
+	require.Equal(t, "waits_for_settlement", previewBody.Classification)
+	require.Len(t, previewBody.Guidance.Token, 64)
+
+	const deniedCaller = "epoch-settlement-denied-caller"
+	settlementPath := "/v1/process/runs/epoch-settlement-flow/unblock"
+	missingPath := "/v1/process/runs/missing-settlement-flow/unblock"
+	body := map[string]any{"baseBinding": base, "token": previewBody.Guidance.Token, "decision": "retry", "reason": "private-settlement-reason", "evidenceRef": "private-settlement-evidence"}
+	denied := agentReq(t, f, deniedCaller, http.MethodPost, settlementPath, body)
+	missing := agentReq(t, f, deniedCaller, http.MethodPost, missingPath, body)
+	require.Equal(t, http.StatusForbidden, denied.Code, denied.Body.String())
+	require.Equal(t, denied.Code, missing.Code)
+	require.Equal(t, denied.Body.String(), missing.Body.String())
+
+	settled := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, settlementPath, body)))
+	require.Equal(t, http.StatusOK, settled.Code, settled.Body.String())
+	assert.NotContains(t, settled.Body.String(), "private-settlement")
+	assert.NotContains(t, settled.Body.String(), previewBody.Guidance.Token)
+	after, err := fs.LoadEpochV8RunView(t.Context(), "epoch-settlement-flow")
+	require.NoError(t, err)
+	assert.NotEqual(t, snapshot.Checkpoint.Binding(), after.Checkpoint.Binding())
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "process.unblock"})
+	require.NoError(t, err)
+	require.Len(t, rows, 3)
+	for _, row := range rows {
+		assert.Equal(t, "/v1/process/runs/{id}/unblock", row.Path)
+		encoded, marshalErr := json.Marshal(row)
+		require.NoError(t, marshalErr)
+		assert.NotContains(t, string(encoded), "private-settlement")
+		assert.NotContains(t, string(encoded), previewBody.Guidance.Token)
+	}
 }
 
 func TestProcessEngineCodeChangePoisonDecisionCancel(t *testing.T) {
@@ -2669,6 +2769,14 @@ func (a *errorAdapter) Validate(processexec.Request) error { return nil }
 
 func (a *errorAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
 	return processexec.Observation{}, errors.New("performer result lost")
+}
+
+type settlementFailAdapter struct{}
+
+func (settlementFailAdapter) Validate(processexec.Request) error { return nil }
+
+func (settlementFailAdapter) Perform(context.Context, processexec.Request) (processexec.Observation, error) {
+	return processexec.Observation{Actor: "agent:agt_settlementtest", Verdict: "fail", EvidenceRef: "artifact:settlement-failure"}, nil
 }
 
 type captureInstantiateAdapter struct {

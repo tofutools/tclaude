@@ -234,6 +234,76 @@ func (s *FS) LoadEpochV8RunView(ctx context.Context, runID string) (EpochV8RunSn
 	return s.loadEpochV8RunViewUnlocked(ctx, runID, s.newEpochV8Budget(ctx))
 }
 
+// ReadEpochV8AppliedArtifacts returns only exact bytes reverified against the
+// coherent checkpoint while holding the run lock. The second secure open is
+// not trusted merely because the flock is held: its bytes and reason presence
+// are checked again before anything is returned.
+func (s *FS) ReadEpochV8AppliedArtifacts(ctx context.Context, runID string, epochID epochv8.EpochID) (EpochV8AppliedArtifacts, error) {
+	if err := safeSegment(runID); err != nil || !isHexSHA256(string(epochID)) {
+		return EpochV8AppliedArtifacts{}, ErrNotFound
+	}
+	unlock, err := s.lockRun(ctx, runID)
+	if err != nil {
+		return EpochV8AppliedArtifacts{}, err
+	}
+	defer unlock()
+	budget := s.newEpochV8Budget(ctx)
+	snapshot, err := s.loadEpochV8RunViewUnlocked(ctx, runID, budget)
+	if err != nil {
+		return EpochV8AppliedArtifacts{}, err
+	}
+	view := snapshot.Checkpoint.View()
+	found := false
+	for index, epoch := range view.Epochs {
+		if epoch.ID != epochID {
+			continue
+		}
+		if found || index == 0 || epoch.Ordinal == 0 {
+			return EpochV8AppliedArtifacts{}, ErrNotFound
+		}
+		found = true
+	}
+	if !found {
+		return EpochV8AppliedArtifacts{}, ErrNotFound
+	}
+	wantDiff, reasonDigest, err := epochv8.EncodeAppliedEpochDiff(snapshot.Checkpoint, epochID)
+	if err != nil {
+		return EpochV8AppliedArtifacts{}, &ExecutionViewInconsistentError{Err: err}
+	}
+	runDir, err := openViewDir(s.runDir(runID))
+	if err != nil {
+		return EpochV8AppliedArtifacts{}, err
+	}
+	defer runDir.Close()
+	epochsDir, err := openViewDirAt(runDir, "epochs")
+	if err != nil {
+		return EpochV8AppliedArtifacts{}, err
+	}
+	defer epochsDir.Close()
+	epochDir, err := openViewDirAt(epochsDir, string(epochID))
+	if err != nil {
+		return EpochV8AppliedArtifacts{}, err
+	}
+	defer epochDir.Close()
+	diff, err := readEpochV8RegularAt(budget, epochDir, "diff.json", false, epochv8.MaxApplyPlanBytes)
+	if err != nil || !bytes.Equal(diff, wantDiff) {
+		return EpochV8AppliedArtifacts{}, &ExecutionViewInconsistentError{Err: fmt.Errorf("applied diff failed exact revalidation")}
+	}
+	hasReason, err := hasViewRegularAt(epochDir, "reason.txt")
+	if err != nil || hasReason != (reasonDigest != "") {
+		return EpochV8AppliedArtifacts{}, &ExecutionViewInconsistentError{Err: fmt.Errorf("applied reason presence failed revalidation")}
+	}
+	result := EpochV8AppliedArtifacts{Diff: bytes.Clone(diff), HasReason: hasReason}
+	if hasReason {
+		reason, readErr := readEpochV8RegularAt(budget, epochDir, "reason.txt", false, EpochV8MaxReasonBytes)
+		if readErr != nil || digestBytes(reason) != reasonDigest {
+			return EpochV8AppliedArtifacts{}, &ExecutionViewInconsistentError{Err: fmt.Errorf("applied reason failed exact revalidation")}
+		}
+		result.Reason = bytes.Clone(reason)
+	}
+	return result, nil
+}
+
 func (s *FS) loadEpochV8RunViewUnlocked(ctx context.Context, runID string, budget *viewBudget) (EpochV8RunSnapshot, error) {
 	run, err := s.readExecutionRunRecordAt(ctx, runID, budget)
 	if err != nil {

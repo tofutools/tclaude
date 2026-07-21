@@ -277,6 +277,14 @@ const (
 
 type RuntimeTransitionKind string
 
+type RuntimeApplyPreflight string
+
+const (
+	RuntimeApplyTransferReady RuntimeApplyPreflight = "transfer_ready"
+	RuntimeApplyRetainReady   RuntimeApplyPreflight = "retain_ready"
+	RuntimeApplyRefused       RuntimeApplyPreflight = "refused"
+)
+
 const (
 	RuntimeAttachGenesis RuntimeTransitionKind = "attach_genesis"
 	RuntimeAdvanceHead   RuntimeTransitionKind = "advance_head"

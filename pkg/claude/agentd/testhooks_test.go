@@ -333,6 +333,14 @@ func SetPopupBaseURLForTest(url string) func() {
 	return func() { popupBaseURL = prev }
 }
 
+// SetAccessRequestNotifyForTest captures the production access-request
+// notification arguments without invoking a host desktop notifier.
+func SetAccessRequestNotifyForTest(notify func(string, string, string, string, string)) func() {
+	previous := accessRequestNotify
+	accessRequestNotify = notify
+	return func() { accessRequestNotify = previous }
+}
+
 // RefreshCodexUsageForTest runs one Codex usage scan synchronously — the
 // same work startCodexUsagePoller does on its timer — so a flow test can
 // populate the in-memory snapshot from rollouts it just wrote under the

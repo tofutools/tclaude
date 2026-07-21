@@ -875,6 +875,32 @@ func TestRuntimeApplyRetainThenBareTransfer(t *testing.T) {
 	_ = source1
 }
 
+func TestPreflightRuntimeApplySeparatesTransferAndRetain(t *testing.T) {
+	attached := runtimeAttachedFixture(t, "runtime-preflight")
+	ownerSource := testTemplateSource("runtime-preflight")
+	frontier := findAuthority(t, attached.Checkpoint.View().Authorities, func(authority AuthorityRecord) bool {
+		return authority.Kind == AuthorityFrontier && authority.State == AuthorityVerifiedUnclaimed
+	})
+	candidateSource := testTemplateSource("runtime-preflight-transfer")
+	transfer := testPlan(t, attached.Checkpoint, "runtime-preflight-transfer", frontier.Identity, "next-frontier", "next-reservation")
+	got, err := PreflightRuntimeApply(t.Context(), attached.Checkpoint, attached.ArtifactJSON, ownerSource, candidateSource, transfer)
+	if err != nil || got != RuntimeApplyTransferReady {
+		t.Fatalf("transfer preflight = %q, %v", got, err)
+	}
+	if attached.Checkpoint.Binding() != transfer.BaseBinding() {
+		t.Fatal("pure preflight mutated checkpoint")
+	}
+
+	preview, err := PreviewApply(attached.Checkpoint, ApplyDraft{BaseBinding: attached.Checkpoint.Binding(), Candidate: supportedCandidate(t, "runtime-preflight-retain"), Handoffs: retainAll(attached.Checkpoint.View().ProtectedAuthorities)})
+	if err != nil || preview.Plan == nil {
+		t.Fatalf("retain preview: %+v, %v", preview, err)
+	}
+	got, err = PreflightRuntimeApply(t.Context(), attached.Checkpoint, attached.ArtifactJSON, ownerSource, testTemplateSource("runtime-preflight-retain"), preview.Plan)
+	if err != nil || got != RuntimeApplyRetainReady {
+		t.Fatalf("retain preflight = %q, %v", got, err)
+	}
+}
+
 func TestRuntimeRetainReceiptBindsOriginalLineageAcrossEpoch(t *testing.T) {
 	runID := "runtime-retain-owner-binding"
 	source := testTemplateSource(runID)

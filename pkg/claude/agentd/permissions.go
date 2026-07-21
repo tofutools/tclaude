@@ -282,6 +282,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Instantiate an exact process-template version as a durable engine-hosted run. May launch performers when the process engine advances it, so it is separate from template authoring and is not default-granted.",
 	},
 	{
+		Slug:        PermProcessRunsUnlockRead,
+		Description: "Read exact applied schema-8 unlock diff and reason artifacts. Sensitive, not default-granted, not owner-implied, and not persistently auto-grantable.",
+	},
+	{
 		Slug:          PermHumanNotify,
 		OwnerImplied:  true,
 		AutoGrantable: true,

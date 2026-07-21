@@ -934,6 +934,10 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRunCreate))
 	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
 	mux.HandleFunc("GET /v1/process/runs/{id}/view", processRoute(handleProcessRunView))
+	mux.HandleFunc("GET /v1/process/runs/{id}/verify", processRoute(handleProcessEpochV8Verify))
+	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/preview", processRoute(handleProcessEpochV8Preview))
+	mux.HandleFunc("POST /v1/process/runs/{id}/unblock", processRoute(handleProcessEpochV8Settlement))
+	mux.HandleFunc("GET /v1/process/runs/{id}/epochs/{epoch}/{artifact}", processRoute(handleProcessEpochV8Artifact))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))
 	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/signal", processRoute(handleProcessSignal))
 	mux.HandleFunc("GET /v1/process/worklist", processRoute(handleProcessWorklist))
@@ -949,12 +953,34 @@ func logRequest(h http.Handler) http.Handler {
 		p := peerFromContext(r.Context())
 		slog.Info("http",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", safeHTTPLogPath(r.URL.Path),
 			"status", rec.code,
 			"peer_pid", p.PID,
 			"peer_conv", p.ConvID,
 			"dur_ms", time.Since(start).Milliseconds())
 	})
+}
+
+func safeHTTPLogPath(path string) string {
+	projected, _ := projectSafeHTTPLogPath(path)
+	return projected
+}
+
+func projectSafeHTTPLogPath(path string) (string, bool) {
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	if len(segments) >= 5 && segments[0] == "v1" && segments[1] == "process" && segments[2] == "runs" {
+		for index := 4; index < len(segments); index++ {
+			switch {
+			case segments[index] == "unlock" && index+1 < len(segments) && segments[index+1] == "preview":
+				return "/v1/process/runs/{id}/unlock/preview", true
+			case segments[index] == "unblock":
+				return "/v1/process/runs/{id}/unblock", true
+			case segments[index] == "epochs":
+				return "/v1/process/runs/{id}/epochs/{epoch}/{artifact}", true
+			}
+		}
+	}
+	return path, false
 }
 
 type statusRec struct {

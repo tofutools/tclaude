@@ -271,8 +271,9 @@ func handleProcessRuns(w http.ResponseWriter, r *http.Request) {
 				views = append(views, runView{ID: run.ID, TemplateRef: run.TemplateRef, Status: verification.EffectiveStatus, Started: run.CreatedAt, Verification: verification})
 				continue
 			}
-			verification := processverify.Report{RunID: run.ID, EffectiveStatus: state.RunStatusRunning}
-			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: state.RunStatusRunning, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Verification: verification})
+			status := epochV8EffectiveStatus(snapshot)
+			verification := processverify.Report{RunID: run.ID, EffectiveStatus: status}
+			views = append(views, runView{ID: run.ID, TemplateRef: snapshot.Run.TemplateRef, Status: status, Started: run.CreatedAt, CurrentActivity: "epoch_v8", Verification: verification})
 			continue
 		}
 		if kind == store.RunSchemaResetRequired {
@@ -428,10 +429,7 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_run", "schema-8 process run is unavailable")
 			return
 		}
-		writeProcessJSON(w, http.StatusOK, map[string]any{
-			"run": snapshot.Run, "state": epochV8PublicState(snapshot.Checkpoint),
-			"verification": processverify.Report{RunID: runID, EffectiveStatus: state.RunStatusRunning},
-		})
+		writeProcessJSON(w, http.StatusOK, epochV8SafeEnvelope(snapshot))
 		return
 	}
 	snapshot, err := fs.LoadRun(r.Context(), runID)
@@ -481,7 +479,7 @@ func handleProcessRunView(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "process_view", "process run view is unavailable")
 			return
 		}
-		writeProcessJSON(w, http.StatusOK, map[string]any{"run": snapshot.Run, "state": epochV8PublicState(snapshot.Checkpoint), "schema": store.RunSchemaEpochV8})
+		writeProcessJSON(w, http.StatusOK, epochV8SafeEnvelope(snapshot))
 		return
 	}
 	snapshot, err := fs.LoadRunView(r.Context(), runID)

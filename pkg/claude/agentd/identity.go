@@ -328,6 +328,7 @@ const (
 	PermProcessTemplatesRead   = "process.templates.read"
 	PermProcessTemplatesManage = "process.templates.manage"
 	PermProcessRunsCreate      = "process.runs.create"
+	PermProcessRunsUnlockRead  = "process.runs.unlock.read"
 	PermHumanNotify            = "human.notify"
 	PermHumanClipboard         = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default
@@ -536,14 +537,19 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 				bodyPreview = raw
 				bodyLabel = "Clipboard content"
 			}
+			observabilityPath, sensitivePath := projectSafeHTTPLogPath(r.URL.Path)
+			observabilityQuery := r.URL.RawQuery
+			if sensitivePath {
+				observabilityQuery = ""
+			}
 			req := &approvalRequest{
 				id:              newApprovalID(),
 				perm:            perm,
 				convID:          p.ConvID,
 				convTitle:       title,
 				method:          r.Method,
-				path:            r.URL.Path,
-				rawQuery:        r.URL.RawQuery,
+				path:            observabilityPath,
+				rawQuery:        observabilityQuery,
 				bodyPreview:     bodyPreview,
 				bodyLabel:       bodyLabel,
 				targetGroup:     targetGroup,
