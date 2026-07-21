@@ -342,6 +342,93 @@ test('background pane open and focus leave the current dashboard tab visible', a
   cleanup();
 });
 
+test('terminal tab context menu supports pointer and keyboard close actions', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { host } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const requests = [];
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
+  });
+  const open = async (key) => harness.act(async () => {
+    controller.openTerminalPane({
+      ws: `/${key}`, key, label: key, agent: `agt_${key}`, hideConv: `agt_${key}`,
+    });
+    await Promise.resolve();
+  });
+  const tab = (name) => [...host.querySelectorAll('[role="tab"]')]
+    .find((candidate) => candidate.querySelector('.mux-tab-label')?.textContent === name);
+
+  await open('one');
+  await open('two');
+  await open('three');
+
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const pointerMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  assert.equal(tab('two').getAttribute('aria-expanded'), 'true');
+  assert.equal(pointerMenu.querySelectorAll('[role="menuitem"]').length, 3);
+  assert.equal(harness.document.activeElement.textContent, 'Close tab', 'opening focuses the first action');
+  await harness.act(() => harness.fireEvent(pointerMenu, 'keydown', { key: 'Escape' }));
+  assert.equal(host.querySelector('[role="menu"]'), null);
+  assert.equal(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab');
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const tabMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  await harness.act(async () => {
+    harness.fireEvent(tabMenu, 'keydown', { key: 'Tab' });
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelector('[role="menu"]'), null, 'Tab dismisses the floating menu');
+  assert.equal(tab('two').getAttribute('aria-expanded'), 'false');
+  assert.equal(harness.document.activeElement, host.querySelector('.mux-pane.active button'),
+    'forward Tab moves into the active pane controls');
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const reverseMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  await harness.act(async () => {
+    harness.fireEvent(reverseMenu, 'keydown', { key: 'Tab', shiftKey: true });
+    await Promise.resolve();
+  });
+  assert.equal(host.querySelector('[role="menu"]'), null, 'Shift+Tab dismisses the floating menu');
+  assert.equal(harness.document.activeElement, tab('two'), 'reverse Tab restores the invoking tab');
+  await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
+  const reopenedMenu = getByRole(host, 'menu', { name: 'Actions for two' });
+  await harness.act(() => harness.fireEvent(getByRole(reopenedMenu, 'menuitem', { name: 'Close tab' }), 'click'));
+  assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['one', 'three']);
+  assert.equal(tab('three').getAttribute('aria-selected'), 'true', 'closing an inactive tab preserves active selection');
+  assert.equal(harness.document.activeElement, tab('three'), 'close tab focuses the surviving active tab');
+
+  await open('two');
+  let keyboardOpen;
+  await harness.act(() => {
+    keyboardOpen = harness.fireEvent(tab('three'), 'keydown', { key: 'F10', shiftKey: true });
+  });
+  assert.equal(keyboardOpen.defaultPrevented, true, 'Shift+F10 is the keyboard context-menu gesture');
+  const keyboardMenu = getByRole(host, 'menu', { name: 'Actions for three' });
+  harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
+  assert.equal(harness.document.activeElement.textContent, 'Close other tabs');
+  await harness.act(() => harness.fireEvent(harness.document.activeElement, 'click'));
+  assert.deepEqual([...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['three']);
+  assert.equal(tab('three').getAttribute('aria-selected'), 'true');
+  assert.equal(harness.document.activeElement, tab('three'), 'close others focuses the kept tab');
+
+  await open('four');
+  await open('five');
+  await harness.act(() => harness.fireEvent(tab('four'), 'keydown', { key: 'ContextMenu' }));
+  const allMenu = getByRole(host, 'menu', { name: 'Actions for four' });
+  await harness.act(() => harness.fireEvent(getByRole(allMenu, 'menuitem', { name: 'Close all tabs' }), 'click'));
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 0);
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
+  assert.equal(harness.document.activeElement, harness.document.querySelector('nav [data-tab="groups"]'),
+    'close all moves focus to the selected Groups navigation tab');
+  assert.deepEqual(requests.sort(), [
+    '/api/hide/agt_five', '/api/hide/agt_four', '/api/hide/agt_one',
+    '/api/hide/agt_three', '/api/hide/agt_two', '/api/hide/agt_two',
+  ]);
+  cleanup();
+});
+
 test('throwaway modal omits Detach, ignores Escape, and confirms backdrop close', async (t) => {
   const harness = await createPreactHarness(t);
   const { modalHost } = installHosts(harness);
