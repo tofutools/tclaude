@@ -248,9 +248,10 @@ When adding a new scenario:
   `https://claude.ai/code/...` URLs) in commit messages or PR
   descriptions, even if the coding harness's default instructions ask
   for them.
-- Pre-flight before staging:
+- Make sure your changes at least build (and pass any focused tests
+  you relied on) before pushing, but don't duplicate the full
+  test/lint suite locally — push early and let CI run:
   ```bash
-  go build ./...
   go test ./...
   golangci-lint run ./...
   ```
