@@ -254,7 +254,7 @@ function PaneTab({
   `;
 }
 
-function PaneContextMenu({ menu, actions, closeMenu }) {
+function PaneContextMenu({ menu, actions, closeMenu, focusAfterAction, focusAfterDismiss }) {
   const menuRef = useRef(null);
 
   useLayoutEffect(() => {
@@ -279,15 +279,26 @@ function PaneContextMenu({ menu, actions, closeMenu }) {
       event.preventDefault();
       closeMenu(true);
     };
+    const onFocusIn = (event) => {
+      if (!menuRef.current?.contains(event.target)) closeMenu(false);
+    };
     document.addEventListener('mousedown', onMouseDown);
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('focusin', onFocusIn);
     return () => {
       document.removeEventListener('mousedown', onMouseDown);
       document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('focusin', onFocusIn);
     };
   }, [closeMenu]);
 
   const onMenuKeyDown = (event) => {
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      closeMenu(false);
+      focusAfterDismiss(event.shiftKey);
+      return;
+    }
     const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')];
     const index = items.indexOf(document.activeElement);
     let next = null;
@@ -302,6 +313,7 @@ function PaneContextMenu({ menu, actions, closeMenu }) {
   const run = (action) => {
     closeMenu(false);
     void action();
+    focusAfterAction();
   };
 
   return html`
@@ -313,9 +325,9 @@ function PaneContextMenu({ menu, actions, closeMenu }) {
       style=${{ left: `${menu.x}px`, top: `${menu.y}px` }}
       onKeyDown=${onMenuKeyDown}
     >
-      <button type="button" role="menuitem" class="mux-tab-menu-item" onClick=${() => run(() => actions.closePane(menu.key))}>Close tab</button>
-      <button type="button" role="menuitem" class="mux-tab-menu-item" onClick=${() => run(() => actions.closeOtherPanes(menu.key))}>Close other tabs</button>
-      <button type="button" role="menuitem" class="mux-tab-menu-item danger" onClick=${() => run(() => actions.closeAllPanes())}>Close all tabs</button>
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closePane(menu.key))}>Close tab</button>
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closeOtherPanes(menu.key))}>Close other tabs</button>
+      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item danger" onClick=${() => run(() => actions.closeAllPanes())}>Close all tabs</button>
     </div>
   `;
 }
@@ -326,6 +338,7 @@ function TerminalTabs({
 }) {
   const current = state.view.value;
   const hasPanes = current.panes.length > 0;
+  const shellRef = useRef(null);
   const dragKeyRef = useRef(null);
   const [dragKey, setDragKey] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
@@ -381,6 +394,20 @@ function TerminalTabs({
     const trigger = tabMenu?.trigger;
     setTabMenu(null);
     if (restoreFocus) queueMicrotask(() => trigger?.focus());
+  };
+  const focusAfterTabMenuAction = () => queueMicrotask(() => {
+    const activeTab = shellRef.current?.querySelector('.mux-tab[aria-selected="true"]');
+    if (activeTab) activeTab.focus();
+    else document.querySelector('nav [data-tab="groups"]')?.focus();
+  });
+  const focusAfterTabMenuDismiss = (reverse) => {
+    const trigger = tabMenu?.trigger;
+    queueMicrotask(() => {
+      const paneControl = shellRef.current?.querySelector(
+        '.mux-pane.active button:not([disabled]), .mux-pane.active input:not([disabled]), .mux-pane.active [tabindex]:not([tabindex="-1"])',
+      );
+      (reverse ? trigger : paneControl || trigger)?.focus();
+    });
   };
 
   useEffect(() => {
@@ -463,7 +490,7 @@ function TerminalTabs({
   }, [actions, composeMessageDialogKind, current.activeKey, current.panes, onComposeMessage, solo]);
 
   return html`
-    <div class="terminal-shell-root">
+    <div ref=${shellRef} class="terminal-shell-root">
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
@@ -490,7 +517,7 @@ function TerminalTabs({
           `)}
         </div>
       ` : null}
-      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} />` : null}
+      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction} focusAfterDismiss=${focusAfterTabMenuDismiss} />` : null}
       ${hasPanes || !empty ? html`
         <div class="mux-panes">
           ${current.panes.map((pane) => html`
