@@ -14,9 +14,10 @@ import (
 // the conv-id prefix. Storage was already agent-keyed — this is the
 // display half.
 func TestRenderPermissionsState_LeadsWithAgentID(t *testing.T) {
-	// Hermetic DB: grantKeyTitle() does a conv-index lookup; point it at a
-	// fresh temp store so it finds no row (empty title) instead of touching
-	// the real ~/.tclaude.
+	// Hermetic: titles now arrive on the wire (state.Titles), so this
+	// renderer touches no DB at all — point HOME at a fresh temp store
+	// anyway so a regression back to a local lookup can't reach the real
+	// ~/.tclaude.
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
 

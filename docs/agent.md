@@ -965,6 +965,12 @@ tclaude agent permissions grant <conv|title|default> <slug>
 tclaude agent permissions revoke <conv|title|default> <slug>
 ```
 
+`permissions ls` is fully daemon-backed: selector resolution, the
+effective/owner-implied calculation and the display metadata (titles,
+stable agent ids) all come from agentd, so a sandboxed agent that cannot
+read `~/.tclaude/data` still gets a complete answer. A stale selector
+comes back as one concise `not_found`; an ambiguous one lists candidates.
+
 `sudo` requests a **bundle of slugs for a bounded duration** (capped
 at 1h). The request triggers a human-approval popup; on approve, the
 slugs join the agent's effective set until the window expires or a

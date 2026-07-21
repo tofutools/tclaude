@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -60,6 +60,37 @@ type permissionsState struct {
 	// the maps above stay conv-keyed (JOH-325). Absent for a conv with no
 	// actor behind it; the renderer falls back to the conv prefix then.
 	AgentIDs map[string]string `json:"agent_ids"`
+	// Titles projects the display name behind each conv key. The daemon
+	// supplies it so this CLI never reads ~/.tclaude/data to decorate the
+	// roster — a sandboxed agent is denied that directory (TCL-611).
+	Titles map[string]string `json:"titles"`
+}
+
+// permissionsEffectiveResp mirrors the daemon's resolved answer to
+// GET /v1/permissions?target=<selector>. Selector resolution and the
+// effective/owner-implied calculation both happen daemon-side.
+type permissionsEffectiveResp struct {
+	// Resolved is the contract discriminator the daemon always sets on a
+	// targeted answer. It is what distinguishes a real effective view from
+	// a pre-TCL-611 daemon's reply — that build ignores `?target` and
+	// returns the ordinary roster with HTTP 200, which decodes here as
+	// all-zero and would otherwise render as "this agent holds nothing".
+	Resolved     bool     `json:"resolved"`
+	Target       string   `json:"target"`
+	TargetKey    string   `json:"target_key"`
+	AgentID      string   `json:"agent_id"`
+	Title        string   `json:"title"`
+	Effective    []string `json:"effective"`
+	Source       string   `json:"source"`
+	OwnerImplied []string `json:"owner_implied"`
+}
+
+// ambiguousCandidate is one entry of the daemon's typed `ambiguous`
+// envelope — enough to disambiguate without a local conv lookup.
+type ambiguousCandidate struct {
+	AgentID string `json:"agent_id"`
+	ConvID  string `json:"conv_id"`
+	Title   string `json:"title"`
 }
 
 type permSlugEntry struct {
@@ -102,17 +133,25 @@ func permissionsLsCmd() *cobra.Command {
 	}.ToCobra()
 }
 
+// RunPermissionsLs is the exported entry point for `tclaude agent
+// permissions ls`, so flow tests can drive the real CLI rendering against
+// the daemon mux. target may be "" (roster view), "default", or a conv
+// selector.
+func RunPermissionsLs(target string, jsonOut bool, stdout, stderr io.Writer) int {
+	return runPermissionsLs(&permissionsLsParams{Target: target, JSON: jsonOut}, stdout, stderr)
+}
+
 func runPermissionsLs(p *permissionsLsParams, stdout, stderr io.Writer) int {
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
+	}
+	if p.Target != "" {
+		return renderEffectivePerms(p, stdout, stderr)
 	}
 	var state permissionsState
 	if err := DaemonGet("/v1/permissions", &state); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
-	}
-	if p.Target != "" {
-		return renderEffectivePerms(p, state, stdout, stderr)
 	}
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
@@ -164,9 +203,9 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 		}
 		sort.Strings(granted)
 		sort.Strings(denied)
-		// Try to surface a friendly title for keys that look like full
-		// conv-ids. Prefixes and arbitrary strings are passed through.
-		title := grantKeyTitle(k)
+		// Titles arrive already projected by the daemon; a key it could
+		// not resolve simply renders blank.
+		title := state.Titles[k]
 		// Lead with the stable agent_id (rotation-immune); fall back to the
 		// conv prefix when the daemon couldn't project one. conv-id stays
 		// available via --json (the Overrides map is conv-keyed).
@@ -181,88 +220,56 @@ func renderPermissionsState(state permissionsState, stdout io.Writer) int {
 	return rcOK
 }
 
-// grantKeyTitle returns the display title for a conv-id grant key. The
-// daemon stores grants under full conv-ids, but in practice the human
-// also gets prefixes back as scaffolding — accept both. Returns "" when
-// nothing's known so render falls through gracefully.
-func grantKeyTitle(key string) string {
-	if len(key) < 8 {
-		return ""
+// renderEffectivePerms asks the daemon for the resolved effective view of
+// one target and prints it. Selector resolution, the effective/owner-
+// implied calculation and the display metadata all come back over the
+// wire: this path must never read ~/.tclaude/data, which a sandboxed
+// agent is (correctly) denied (TCL-611).
+func renderEffectivePerms(p *permissionsLsParams, stdout, stderr io.Writer) int {
+	var resp permissionsEffectiveResp
+	err := DaemonGet("/v1/permissions?target="+url.QueryEscape(p.Target), &resp)
+	if de, ok := err.(*DaemonError); ok && de.Code == "ambiguous" {
+		printDaemonAmbiguous(stderr, p.Target, de)
+		return rcAmbiguous
 	}
-	if row, err := db.GetConvIndex(key); err == nil && row != nil {
-		return DisplayTitle(row)
-	}
-	if row, err := db.FindConvIndexByPrefix(key); err == nil && row != nil {
-		return DisplayTitle(row)
-	}
-	return ""
-}
-
-func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout, stderr io.Writer) int {
-	if p.Target == "default" {
-		defs := append([]string{}, state.Defaults...)
-		sort.Strings(defs)
-		if p.JSON {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(map[string]any{"target": "default", "effective": defs}); err != nil {
-				return rcIOFailure
-			}
-			return rcOK
-		}
-		fmt.Fprintln(stdout, "default — effective permissions:")
-		if len(defs) == 0 {
-			fmt.Fprintln(stdout, "  (none)")
-			return rcOK
-		}
-		for _, s := range defs {
-			fmt.Fprintf(stdout, "  %s\n", s)
-		}
-		return rcOK
-	}
-	res, matches, err := resolveSelector(p.Target)
 	if err != nil {
-		if matches != nil {
-			printAmbiguous(stderr, p.Target, matches)
-			return rcAmbiguous
-		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return rcNotFound
+		return MapDaemonErrorToRC(err)
 	}
-	title := ""
-	if res.Row != nil {
-		title = DisplayTitle(res.Row)
+	// Refuse anything that isn't a genuine targeted answer BEFORE rendering
+	// — including in --json mode, where a zero-valued struct would emit a
+	// false "no permissions" result a script could act on.
+	if !resp.Resolved || resp.Target == "" || resp.Source == "" {
+		fmt.Fprintf(stderr,
+			"Error: agentd answered without a resolved permission view for %q. "+
+				"The running daemon predates this CLI build; restart tclaude agentd so it picks up the current binary.\n",
+			p.Target)
+		return rcIOFailure
 	}
-	ownerImplied, isOwner := ownerImpliedSlugsFor(res.ConvID)
-	effective, ownerAdded, source := effectivePermsFor(state, res.ConvID, ownerImplied, isOwner)
-	sort.Strings(effective)
 	if p.JSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		sort.Strings(ownerAdded)
-		if err := enc.Encode(map[string]any{
-			"target":        p.Target,
-			"target_key":    res.ConvID,
-			"agent_id":      res.AgentID,
-			"title":         title,
-			"effective":     effective,
-			"source":        source,
-			"owner_implied": ownerAdded,
-		}); err != nil {
+		if err := enc.Encode(resp); err != nil {
 			return rcIOFailure
 		}
 		return rcOK
 	}
-	fmt.Fprintf(stdout, "%s (%s) — effective permissions [%s]:\n", shortAgentID(res.AgentID, res.ConvID), title, source)
-	if len(effective) == 0 {
+	if resp.TargetKey == "" {
+		// The "default" sentinel: a slug list, not an agent.
+		fmt.Fprintf(stdout, "%s — effective permissions:\n", resp.Target)
+	} else {
+		fmt.Fprintf(stdout, "%s (%s) — effective permissions [%s]:\n",
+			shortAgentID(resp.AgentID, resp.TargetKey), resp.Title, resp.Source)
+	}
+	if len(resp.Effective) == 0 {
 		fmt.Fprintln(stdout, "  (none)")
 		return rcOK
 	}
 	ownerSet := map[string]bool{}
-	for _, s := range ownerAdded {
+	for _, s := range resp.OwnerImplied {
 		ownerSet[s] = true
 	}
-	for _, s := range effective {
+	for _, s := range resp.Effective {
 		if ownerSet[s] {
 			fmt.Fprintf(stdout, "  %s  (via ownership)\n", s)
 		} else {
@@ -272,112 +279,24 @@ func renderEffectivePerms(p *permissionsLsParams, state permissionsState, stdout
 	return rcOK
 }
 
-// ownerImpliedSlugsFor reports the owner-conferred slug set and whether
-// convID owns at least one group. Group ownership is read straight from
-// the shared SQLite (db.ListGroupsOwnedBy); the owner-conferred slug set
-// comes from the daemon's registry (the daemon is the source of truth, and
-// the agent package can't import agentd). On any error it degrades to
-// (nil, false) — owner perms simply go un-annotated rather than failing
-// the listing.
-func ownerImpliedSlugsFor(convID string) ([]string, bool) {
-	owned, err := db.ListGroupsOwnedBy(convID)
-	if err != nil || len(owned) == 0 {
-		return nil, false
+// printDaemonAmbiguous renders the daemon's typed ambiguity envelope.
+// Candidates come from the response, so this stays readable for a caller
+// that cannot resolve conv-ids locally. Falls back to the bare daemon
+// message if the envelope carries no candidates.
+func printDaemonAmbiguous(out io.Writer, selector string, de *DaemonError) {
+	var body struct {
+		Candidates []ambiguousCandidate `json:"candidates"`
 	}
-	var slugs []permSlugEntry
-	if err := DaemonGet("/v1/permissions/slugs", &slugs); err != nil {
-		return nil, true
+	_ = json.Unmarshal(de.Raw, &body)
+	if len(body.Candidates) == 0 {
+		fmt.Fprintf(out, "Error: %s\n", de.Error())
+		return
 	}
-	var out []string
-	for _, s := range slugs {
-		if s.OwnerImplied {
-			out = append(out, s.Slug)
-		}
+	fmt.Fprintf(out, "Error: selector %q matches %d conversations:\n", selector, len(body.Candidates))
+	for _, c := range body.Candidates {
+		fmt.Fprintf(out, "  %s  %s\n", shortAgentID(c.AgentID, c.ConvID), c.Title)
 	}
-	return out, true
-}
-
-// effectivePermsFor returns the slug list the daemon would consult for
-// this agent. Per-conv overrides live in SQLite keyed by full conv-id:
-// a grant override ADDS a slug on top of the global defaults, a deny
-// override SUBTRACTS one. Group ownership ADDS the owner-conferred slugs
-// (ownerImplied, folded in only when isOwner) — the structural owner-
-// bypass, which a deny still suppresses. So the effective set is
-// ((defaults ∪ grants ∪ owner-implied) − denies).
-//
-// ownerAdded reports the subset contributed SOLELY by ownership (not
-// already held via defaults/grants and not denied), so the caller can
-// annotate those rows "(via ownership)".
-//
-// The returned label names the matched sources ("defaults",
-// "defaults+grants:<conv>", "+owner", with " −denies" appended when any
-// deny override applies).
-func effectivePermsFor(state permissionsState, convID string, ownerImplied []string, isOwner bool) (effective, ownerAdded []string, source string) {
-	effective = append([]string{}, state.Defaults...)
-	source = "defaults"
-	if grants, ok := state.Grants[convID]; ok && len(grants) > 0 {
-		effective = mergeUnique(effective, grants)
-		source = "defaults+grants:" + convID
-	}
-	if isOwner && len(ownerImplied) > 0 {
-		held := map[string]bool{}
-		for _, s := range effective {
-			held[s] = true
-		}
-		for _, s := range ownerImplied {
-			if !held[s] {
-				ownerAdded = append(ownerAdded, s)
-			}
-		}
-		if len(ownerAdded) > 0 {
-			effective = mergeUnique(effective, ownerImplied)
-			source += "+owner"
-		}
-	}
-	denied := map[string]bool{}
-	for slug, effect := range state.Overrides[convID] {
-		if effect == "deny" {
-			denied[slug] = true
-		}
-	}
-	if len(denied) > 0 {
-		effective = dropDenied(effective, denied)
-		ownerAdded = dropDenied(ownerAdded, denied)
-		source += " −denies"
-	}
-	return effective, ownerAdded, source
-}
-
-// dropDenied returns slugs with every denied entry removed, preserving
-// order. Shared by the effective set and its owner-conferred projection so
-// a deny override suppresses a slug in both — deny is authoritative over
-// the owner-bypass, mirroring the daemon's precedence.
-func dropDenied(slugs []string, denied map[string]bool) []string {
-	kept := make([]string, 0, len(slugs))
-	for _, s := range slugs {
-		if !denied[s] {
-			kept = append(kept, s)
-		}
-	}
-	return kept
-}
-
-func mergeUnique(a, b []string) []string {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, v := range a {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	for _, v := range b {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
-	return out
+	fmt.Fprintf(out, "Disambiguate by ID prefix.\n")
 }
 
 // --- permissions grant ---

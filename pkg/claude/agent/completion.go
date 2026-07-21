@@ -126,7 +126,12 @@ func completeArchivedGroupNames(_ *cobra.Command, _ []string, toComplete string)
 func completeConvSelectors(_ *cobra.Command, _ []string, toComplete string) []string {
 	rows, err := db.ListAllConvIndex()
 	if err != nil {
-		return nil
+		// The shared SQLite is unreadable from here — the normal case for a
+		// sandboxed agent, which is denied ~/.tclaude/data by design. Ask
+		// the daemon instead of completing nothing (TCL-611). The daemon
+		// view is caller-scoped (peers), so it is narrower than the local
+		// index; that is the right trade for a completion path.
+		return convSelectorsFromDaemon(toComplete)
 	}
 	out := []string{}
 	seen := map[string]bool{}
@@ -151,6 +156,29 @@ func completeConvSelectors(_ *cobra.Command, _ []string, toComplete string) []st
 		}
 		desc = sanitizeDesc(desc)
 		if desc != "" {
+			out = append(out, short+"\t"+desc)
+		} else {
+			out = append(out, short)
+		}
+	}
+	return out
+}
+
+// convSelectorsFromDaemon renders the daemon's peer list as conv-selector
+// completions, in the same `<prefix>\t<title>` shape as the local path.
+func convSelectorsFromDaemon(toComplete string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, p := range fetchPeersFromDaemon() {
+		if len(p.ConvID) < 8 {
+			continue
+		}
+		short := p.ConvID[:8]
+		if seen[short] || !strings.HasPrefix(short, toComplete) {
+			continue
+		}
+		seen[short] = true
+		if desc := sanitizeDesc(p.Title); desc != "" {
 			out = append(out, short+"\t"+desc)
 		} else {
 			out = append(out, short)
@@ -342,12 +370,40 @@ type slugEntry struct {
 
 // fetchSlugsFromDaemon does a 250ms GET on /v1/permissions/slugs.
 // Returns nil on any failure so callers fall back to a static list.
-// Bypasses the normal daemon-required gate to keep completion
-// silent when the daemon isn't running.
 func fetchSlugsFromDaemon() []slugEntry {
+	var out []slugEntry
+	if !completionGet("/v1/permissions/slugs", &out) {
+		return nil
+	}
+	return out
+}
+
+// peerCompletionEntry is the slice of /v1/peers completion needs.
+type peerCompletionEntry struct {
+	ConvID string `json:"conv_id"`
+	Title  string `json:"title"`
+}
+
+// fetchPeersFromDaemon does a 250ms GET on /v1/peers — the daemon-side
+// source for conv selectors when this process cannot read the shared
+// SQLite itself (a sandboxed agent is denied ~/.tclaude/data by design,
+// TCL-611). Returns nil on any failure, keeping completion silent.
+func fetchPeersFromDaemon() []peerCompletionEntry {
+	var out []peerCompletionEntry
+	if !completionGet("/v1/peers", &out) {
+		return nil
+	}
+	return out
+}
+
+// completionGet is the shared short-timeout daemon GET used by completion
+// helpers. It bypasses the normal daemon-required gate so completion stays
+// silent when the daemon isn't running, and reports whether out was
+// populated from a 200.
+func completionGet(path string, out any) bool {
 	sock := SocketPath()
 	if sock == "" {
-		return nil
+		return false
 	}
 	client := &http.Client{
 		Timeout: 250 * time.Millisecond,
@@ -358,19 +414,15 @@ func fetchSlugsFromDaemon() []slugEntry {
 			},
 		},
 	}
-	resp, err := client.Get("http://_/v1/permissions/slugs")
+	resp, err := client.Get("http://_" + path)
 	if err != nil {
-		return nil
+		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil
+		return false
 	}
-	var out []slugEntry
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil
-	}
-	return out
+	return json.NewDecoder(resp.Body).Decode(out) == nil
 }
 
 // sanitizeDesc keeps descriptions on a single line and bounds their
