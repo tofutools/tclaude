@@ -245,6 +245,14 @@ button is therefore mainly for *offline* past conversations you want back
 on the roster; a conversation you deliberately **retire** stays retired
 even while its pane is still running.
 
+For managed Codex agents, the state pill keeps an unexpected nonzero exit on
+the active operational surface: **crashed**, **restarting**, **crash loop /
+backoff** (with restart count and next retry), **recovered automatically**, or
+**recovery suppressed**. A scheduled retry is therefore never reduced to a
+generic offline label. The recovery view is deliberately bounded to status,
+safe reason codes, launch identifiers, counts, exit code/signal evidence, and
+timestamps.
+
 Retired conversations are kept **forever** by default — retire is the
 non-destructive half of cleanup. If you'd rather reclaim the long tail
 automatically, the Config tab's **Retention & cleanup → Retired-agent auto-cleanup**

@@ -168,22 +168,32 @@ type peerEntry struct {
 // dashboard, so sub-agent TTL reconciliation and offline handling cannot drift
 // between the two surfaces.
 type peerState struct {
-	Harness       string `json:"harness,omitempty"`
-	Model         string `json:"model,omitempty"`
-	EffortLevel   string `json:"effort_level,omitempty"`
-	Status        string `json:"status,omitempty"`
-	SubagentCount int    `json:"subagent_count"`
-	ExitReason    string `json:"exit_reason,omitempty"`
+	Harness             string `json:"harness,omitempty"`
+	Model               string `json:"model,omitempty"`
+	EffortLevel         string `json:"effort_level,omitempty"`
+	Status              string `json:"status,omitempty"`
+	SubagentCount       int    `json:"subagent_count"`
+	ExitReason          string `json:"exit_reason,omitempty"`
+	RecoveryStatus      string `json:"recovery_status,omitempty"`
+	RecoveryDetail      string `json:"recovery_detail,omitempty"`
+	RecoveryReason      string `json:"recovery_reason,omitempty"`
+	RecoveryCount       int    `json:"recovery_count,omitempty"`
+	RecoveryNextAttempt string `json:"recovery_next_attempt_at,omitempty"`
 }
 
 func peerStateFromAgentState(state agentState) peerState {
 	return peerState{
-		Harness:       state.Harness,
-		Model:         state.Model,
-		EffortLevel:   state.EffortLevel,
-		Status:        state.Status,
-		SubagentCount: state.SubagentCount,
-		ExitReason:    state.ExitReason,
+		Harness:             state.Harness,
+		Model:               state.Model,
+		EffortLevel:         state.EffortLevel,
+		Status:              state.Status,
+		SubagentCount:       state.SubagentCount,
+		ExitReason:          state.ExitReason,
+		RecoveryStatus:      state.RecoveryStatus,
+		RecoveryDetail:      state.RecoveryDetail,
+		RecoveryReason:      state.RecoveryReason,
+		RecoveryCount:       state.RecoveryCount,
+		RecoveryNextAttempt: state.RecoveryNextAttempt,
 	}
 }
 

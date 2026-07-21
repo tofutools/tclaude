@@ -351,6 +351,23 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 	return scanSessions(rows)
 }
 
+// LatestInsertedSessionIDForConv returns the newest distinct session row for a
+// conversation by SQLite row insertion order. Recovery identity uses this
+// immutable chronology rather than updated_at, which the reaper deliberately
+// bumps when it observes an older dead row.
+func LatestInsertedSessionIDForConv(convID string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var id string
+	err = d.QueryRow(`SELECT id FROM sessions WHERE conv_id = ? ORDER BY rowid DESC LIMIT 1`, convID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 // SessionExists checks whether a session with the given ID exists.
 func SessionExists(id string) (bool, error) {
 	db, err := Open()

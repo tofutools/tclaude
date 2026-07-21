@@ -400,6 +400,7 @@ func runServe(p *serveParams) error {
 	// frozen at its last hook status. Shares the daemon-wide stop
 	// channel.
 	startSessionReaper(cronStop)
+	startAgentRecovery(cronStop)
 
 	// Export-job housekeeping (JOH-265). Times out requested/running export
 	// jobs whose agent never delivered, and TTL-prunes terminal jobs + their

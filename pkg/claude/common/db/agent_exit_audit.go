@@ -120,6 +120,8 @@ type exitSessionMeta struct {
 	CallbackPaneID     string
 	CallbackUsedAt     sql.NullString
 	LaunchGateState    string
+	Harness            string
+	ResumeProvenance   string
 }
 
 type SessionExitLaunchIdentity struct {
@@ -589,6 +591,13 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 	} else {
 		merged := mergeExitAudit(*existing, entry)
 		if exitAuditEqual(*existing, merged) {
+			when := o.At
+			if when.IsZero() {
+				when = time.Now()
+			}
+			if err := reconcileAgentRecoveryCandidateTx(tx, meta, *existing, when); err != nil {
+				return AgentExitRecordResult{}, AuditLogEntry{}, false, err
+			}
 			return result, *existing, false, nil
 		}
 		merged.Detail = exitAuditDetail(merged)
@@ -597,6 +606,13 @@ func recordAgentExitObservationTx(tx *sql.Tx, o AgentExitObservation, auth *Exit
 		}
 		entry = merged
 		result.Enriched = true
+	}
+	when := o.At
+	if when.IsZero() {
+		when = time.Now()
+	}
+	if err := reconcileAgentRecoveryCandidateTx(tx, meta, entry, when); err != nil {
+		return AgentExitRecordResult{}, AuditLogEntry{}, false, err
 	}
 	return result, entry, true, nil
 }
@@ -778,12 +794,14 @@ func loadExitSessionMeta(tx *sql.Tx, sessionID string) (exitSessionMeta, error) 
 	err := tx.QueryRow(`SELECT tmux_session, conv_id, agent_id, status, created_at,
 		exit_reason, exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at,
 		exit_callback_generation, exit_callback_token_hash,
-		exit_callback_pane_id, exit_callback_used_at, exit_launch_gate_state
+		exit_callback_pane_id, exit_callback_used_at, exit_launch_gate_state,
+		harness, resume_provenance
 		FROM sessions WHERE id = ?`, sessionID).Scan(
 		&m.TmuxSession, &m.ConvID, &m.AgentID, &m.Status, &m.CreatedAt,
 		&exitReason, &m.Intent, &m.IntentEventID, &m.IntentGeneration, &m.IntentAt,
 		&m.CallbackGeneration, &m.CallbackTokenHash,
-		&m.CallbackPaneID, &m.CallbackUsedAt, &m.LaunchGateState)
+		&m.CallbackPaneID, &m.CallbackUsedAt, &m.LaunchGateState,
+		&m.Harness, &m.ResumeProvenance)
 	if err != nil {
 		return m, err
 	}

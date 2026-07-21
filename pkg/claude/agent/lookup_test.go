@@ -674,6 +674,14 @@ func TestPeerStatus_UsesDashboardLivenessLabels(t *testing.T) {
 		Online: true,
 		State:  peerState{Status: "working"},
 	}))
+	assert.Equal(t, "crash loop / backoff", peerStatus(&peerEntry{
+		Online: false,
+		State:  peerState{RecoveryStatus: "backoff"},
+	}), "a scheduled retry must not collapse to generic offline")
+	assert.Equal(t, "recovered automatically", peerStatus(&peerEntry{
+		Online: true,
+		State:  peerState{RecoveryStatus: "recovered"},
+	}))
 }
 
 // TestShortAgentID covers the narrow-table form and the conv-id fallback.

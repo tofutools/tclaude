@@ -39,3 +39,8 @@ func TestHarnessLabel(t *testing.T) {
 	assert.Equal(t, "Claude", harnessLabel(""), "empty harness keeps the historical Claude default")
 	assert.Equal(t, "Claude", harnessLabel("something-else"))
 }
+
+func TestFormatStatus_AgentRecoveryTransitions(t *testing.T) {
+	assert.Equal(t, "Crashed", formatStatus("crashed"))
+	assert.Equal(t, "Crash loop / backoff", formatStatus("crash loop / backoff"))
+}

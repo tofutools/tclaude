@@ -1114,6 +1114,18 @@ agents come back as `skipped:...`. They are the single-conv variants
 of `groups stop` / `groups resume`, and require `agent.stop` /
 `agent.resume` (or group ownership) when targeting another agent.
 
+Managed Codex agents also recover automatically after a proven nonzero
+runtime exit with no lifecycle intent. Recovery resumes the same conversation
+and stable agent identity. Retries use durable exponential backoff (5s, 10s,
+20s, 40s, 80s, 160s, 5m, then 10m indefinitely); 30 minutes of healthy
+runtime resets the sequence. Clean exits and ambiguous, pre-launch,
+superseded, retired, or provenance-unverified sessions fail closed. A manual
+`agent resume` retries immediately and supersedes the scheduled attempt;
+stop, retire, and reincarnate cancel it. The dashboard distinguishes crashed,
+restarting, crash-loop/backoff, recently recovered, and recovery-suppressed
+states and shows the bounded retry evidence without storing pane content or
+harness logs.
+
 Resume is an in-place lifecycle operation: it reconstructs and revalidates the
 target's durable physical-directory and Git identity plus its current effective
 sandbox, then reuses that target authority through daemon-owned launch pins.

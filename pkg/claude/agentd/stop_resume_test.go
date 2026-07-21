@@ -223,6 +223,35 @@ func TestStopOneConvWithIntent_FailedKillClearsAttribution(t *testing.T) {
 	assert.Empty(t, generation)
 }
 
+func TestStopOneConv_DefaultWrapperArmsForceStopIntent(t *testing.T) {
+	w := testharness.New(t)
+	prevTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+	const (
+		convID     = "default-force-stop-conv-12345678"
+		sessionID  = "default-force-stop-session"
+		tmuxName   = "default-force-stop-tmux"
+		generation = "23232323232323232323232323232323"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: tmuxName,
+		Status: "working", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	w.Tmux.MarkAlive(tmuxName)
+
+	res := stopOneConv(convID, true)
+	assert.Equal(t, "killed", res.Action)
+	database, err := db.Open()
+	require.NoError(t, err)
+	var action, intentGeneration string
+	require.NoError(t, database.QueryRow(`SELECT exit_intent, exit_intent_generation
+		FROM sessions WHERE id = ?`, sessionID).Scan(&action, &intentGeneration))
+	assert.Equal(t, db.AgentExitActionForceStop, action)
+	assert.Equal(t, generation, intentGeneration)
+}
+
 // resumeOneConv must report `skipped:no_conv_id` when called with an
 // empty conv-id. This mirrors the bulk groups.resume placeholder
 // handling — without a conv-id we have no .jsonl to resume from.
@@ -413,6 +442,7 @@ type recordingResumeSpawner struct {
 	autoReview, codexGitCommonDirPinned                                                      bool
 	effectiveSandbox                                                                         *sandboxpolicy.Snapshot
 	spawnErr                                                                                 error
+	resumeCalls                                                                              int
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -429,6 +459,7 @@ func (s *recordingResumeSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 }
 
 func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
+	s.resumeCalls++
 	s.convID = args.ConvID
 	s.cwd = args.Cwd
 	s.cwdWriteProof = args.CwdWriteProof
