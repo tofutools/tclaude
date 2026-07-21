@@ -667,8 +667,13 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 	// companion is an audit decoration, not a precondition. On any error or a
 	// non-actor `by`, the companion stays '' and the display falls back to the
 	// raw retired_by value.
-	byAgent, _ := agentIDForConvTx(d, by)
-	res, err := d.Exec(`UPDATE agents
+	tx, err := d.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	byAgent, _ := agentIDForConvTx(tx, by)
+	res, err := tx.Exec(`UPDATE agents
 		SET retired_at = ?, retired_by = ?, retire_reason = ?, retired_by_agent = ?
 		WHERE agent_id = ? AND retired_at = ''`,
 		time.Now().Format(time.RFC3339Nano), by, reason, byAgent, agentID)
@@ -676,6 +681,18 @@ func RetireAgentByID(agentID, by, reason string) (bool, error) {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
+	if n > 0 {
+		if _, err := tx.Exec(`UPDATE agent_recovery SET status = ?, reason_code = 'retire',
+			next_attempt_at = '', lease_token = '', lease_expires_at = '', updated_at = ?
+			WHERE agent_id = ? AND status IN (?, ?, ?)`, AgentRecoveryStatusCancelled,
+			time.Now().Format(time.RFC3339Nano), agentID, AgentRecoveryStatusCrashed,
+			AgentRecoveryStatusBackoff, AgentRecoveryStatusRestarting); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
 	return n > 0, nil
 }
 

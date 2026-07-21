@@ -868,3 +868,33 @@ CREATE TABLE process_snippets (
 CREATE INDEX idx_process_snippets_order
 			ON process_snippets(name_key, id);
 
+CREATE TABLE agent_recovery (
+			agent_id TEXT PRIMARY KEY REFERENCES agents(agent_id) ON DELETE CASCADE,
+			conv_id TEXT NOT NULL,
+			predecessor_session_id TEXT NOT NULL,
+			predecessor_generation TEXT NOT NULL,
+			exit_event_id TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			reason_code TEXT NOT NULL DEFAULT '',
+			consecutive_crashes INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_crashes >= 0),
+			backoff_step INTEGER NOT NULL DEFAULT 0 CHECK(backoff_step >= 0),
+			next_attempt_at TEXT NOT NULL DEFAULT '',
+			backoff_seconds INTEGER NOT NULL DEFAULT 0 CHECK(backoff_seconds >= 0),
+			lease_token TEXT NOT NULL DEFAULT '',
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			attempt_started_at TEXT NOT NULL DEFAULT '',
+			successor_session_id TEXT NOT NULL DEFAULT '',
+			successor_generation TEXT NOT NULL DEFAULT '',
+			last_exit_code INTEGER,
+			last_exit_signal TEXT NOT NULL DEFAULT '',
+			last_exit_at TEXT NOT NULL DEFAULT '',
+			recovered_at TEXT NOT NULL DEFAULT '',
+			healthy_since TEXT NOT NULL DEFAULT '',
+			notified_crash INTEGER NOT NULL DEFAULT 0,
+			notified_backoff INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL
+		);
+
+CREATE INDEX idx_agent_recovery_due
+			ON agent_recovery(status, next_attempt_at);
+

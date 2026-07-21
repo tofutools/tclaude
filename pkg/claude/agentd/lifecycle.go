@@ -108,7 +108,11 @@ func handleGroupStop(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 // initiated. Idempotent: convs already offline come back as
 // `skipped:already_offline`.
 func stopOneConv(convID string, force bool) memberOpResult {
-	return stopOneConvWithIntent(convID, force, "", "")
+	action := db.AgentExitActionStop
+	if force {
+		action = db.AgentExitActionForceStop
+	}
+	return stopOneConvWithIntent(convID, force, action, "")
 }
 
 // stopOneConvWithIntent adds audit-only lifecycle attribution to a stop. The
@@ -116,6 +120,20 @@ func stopOneConv(convID string, force bool) memberOpResult {
 // that mutation fails. Persistence is deliberately best-effort: an audit I/O
 // failure is logged but never changes the established stop result.
 func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
+	launchLock := resumeLaunchLock(convID)
+	launchLock.Lock()
+	defer launchLock.Unlock()
+	recoveryReason := lifecycleAction
+	if recoveryReason == "" {
+		recoveryReason = db.AgentExitActionStop
+	}
+	if cancelled, err := db.CancelAgentRecoveryForConv(convID, recoveryReason, time.Now()); err != nil {
+		slog.Warn("stop: cancel automatic recovery failed", "conv", short8(convID), "error", err)
+	} else if cancelled {
+		if recovery, _ := db.AgentRecoveryForConv(convID); recovery != nil {
+			_ = db.RecordAgentRecoveryAudit(*recovery, db.AuditVerbAgentRecoveryCancelled, recoveryReason, time.Now())
+		}
+	}
 	res := memberOpResult{ConvID: convID}
 	sess := pickAliveSession(convID)
 	if sess == nil {
@@ -202,6 +220,7 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 
 type lifecycleTarget struct {
 	sessionID           string
+	convID              string
 	tmuxSession         string
 	generation          string
 	paneID              string
@@ -239,7 +258,7 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 	if identity.Generation != "" && p.generation != "" && p.generation != identity.Generation {
 		return nil, fmt.Errorf("pane generation mismatch")
 	}
-	return &lifecycleTarget{sessionID: sess.ID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != ""}, nil
+	return &lifecycleTarget{sessionID: sess.ID, convID: sess.ConvID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != ""}, nil
 }
 
 func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
@@ -308,6 +327,13 @@ func setExitIntentBestEffort(sess *db.SessionRow, action, relatedEventID string)
 			"session", sess.ID, "action", action, "error", err)
 		return nil
 	}
+	if cancelled, cancelErr := db.CancelAgentRecoveryForConv(sess.ConvID, action, time.Now()); cancelErr != nil {
+		slog.Warn("lifecycle: cancel automatic recovery failed", "conv", short8(sess.ConvID), "action", action, "error", cancelErr)
+	} else if cancelled {
+		if recovery, _ := db.AgentRecoveryForConv(sess.ConvID); recovery != nil {
+			_ = db.RecordAgentRecoveryAudit(*recovery, db.AuditVerbAgentRecoveryCancelled, action, time.Now())
+		}
+	}
 	return &ref
 }
 
@@ -319,6 +345,13 @@ func setExitIntentTargetBestEffort(target *lifecycleTarget, action, relatedEvent
 	if err != nil {
 		slog.Warn("exit audit: selected lifecycle intent CAS failed", "session", target.sessionID, "error", err)
 		return nil
+	}
+	if cancelled, cancelErr := db.CancelAgentRecoveryForConv(target.convID, action, time.Now()); cancelErr != nil {
+		slog.Warn("lifecycle: cancel automatic recovery failed", "conv", short8(target.convID), "action", action, "error", cancelErr)
+	} else if cancelled {
+		if recovery, _ := db.AgentRecoveryForConv(target.convID); recovery != nil {
+			_ = db.RecordAgentRecoveryAudit(*recovery, db.AuditVerbAgentRecoveryCancelled, action, time.Now())
+		}
 	}
 	return &ref
 }
@@ -790,10 +823,16 @@ func resumeOneConvWithTrustRoot(convID string, recreateMissingDir bool) memberOp
 	return resumeOneConvLocked(convID, recreateMissingDir, true)
 }
 
-var resumeLaunchLocks sync.Map // map[convID]*sync.Mutex
+var resumeLaunchLocks sync.Map         // map[convID]*sync.Mutex
+var recoveryLaunchCommitLocks sync.Map // map[convID]*sync.Mutex
 
 func resumeLaunchLock(convID string) *sync.Mutex {
 	lock, _ := resumeLaunchLocks.LoadOrStore(convID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func recoveryLaunchCommitLock(convID string) *sync.Mutex {
+	lock, _ := recoveryLaunchCommitLocks.LoadOrStore(convID, &sync.Mutex{})
 	return lock.(*sync.Mutex)
 }
 
@@ -836,10 +875,38 @@ func sandboxWriteProofDir(path string) (string, error) {
 }
 
 func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
-	res := memberOpResult{ConvID: convID}
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
+	if isConvOnline(convID) {
+		return resumeOneConvUnderLaunchLock(convID, recreateMissingDir, trustRoot, nil)
+	}
+	now := time.Now()
+	manualClaim, err := db.BeginManualAgentRecovery(convID, now)
+	if err != nil {
+		slog.Warn("resume: claim pending automatic recovery failed", "conv", short8(convID), "error", err)
+	} else if manualClaim != nil {
+		_ = db.RecordAgentRecoveryAudit(*manualClaim, db.AuditVerbAgentRecoveryManual, "manual_resume", now)
+	}
+	res := resumeOneConvUnderLaunchLock(convID, recreateMissingDir, trustRoot, manualClaim)
+	if manualClaim != nil && res.Action != "resumed" && res.Action != "skipped:already_online" {
+		if cancelled, cancelErr := db.CancelAgentRecoveryGeneration(*manualClaim, "manual_resume_failed", time.Now()); cancelErr != nil {
+			slog.Warn("resume: cancel failed manual recovery claim", "conv", short8(convID), "error", cancelErr)
+		} else if cancelled {
+			if recovery, _ := db.AgentRecoveryForConv(convID); recovery != nil {
+				_ = db.RecordAgentRecoveryAudit(*recovery, db.AuditVerbAgentRecoveryCancelled, "manual_resume_failed", time.Now())
+			}
+		}
+	}
+	return res
+}
+
+// resumeOneConvUnderLaunchLock is the production resume path after its
+// per-conversation launch mutex has been acquired. Automatic recovery calls it
+// directly so it does not cancel its own durable lease; every manual wrapper
+// above cancels a pending automatic attempt first under the same mutex.
+func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot bool, recoveryClaim *db.AgentRecovery) memberOpResult {
+	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
 		return res
@@ -1100,6 +1167,21 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 		}
 	}
 	approval, autoReview := approvalForRelaunch(convID, harnessName)
+	if recoveryClaim != nil {
+		commitLock := recoveryLaunchCommitLock(convID)
+		commitLock.Lock()
+		defer commitLock.Unlock()
+		current, err := db.AgentRecoveryClaimCurrent(*recoveryClaim)
+		if err != nil {
+			res.Action = "error"
+			res.Detail = "revalidate recovery claim before spawn: " + err.Error()
+			return res
+		}
+		if !current {
+			res.Action = "skipped:recovery_cancelled"
+			return res
+		}
+	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
 		EffectiveSandbox:           effectiveSandbox,
 		ConvID:                     convID,

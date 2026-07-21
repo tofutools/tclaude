@@ -34,7 +34,10 @@ function AgentStatusDot({ member }) {
   const online = !!member.online;
   const errored = online && state.status === 'error';
   const detail = errored ? (state.status_detail || 'error') : '';
-  let title = errored
+  const recovery = state.recovery_status || '';
+  let title = recovery
+    ? `${statusInfo(state, online).title} — click to ${online ? 'turn off' : 'retry now'} ${label}`
+    : errored
     ? `errored (${detail}) — click to turn off ${label} (asks first: soft exit or force kill)`
     : online
       ? `online — click to turn off ${label} (asks first: soft exit or force kill)`
@@ -122,6 +125,16 @@ function SandboxBadge({ member }) {
 }
 
 function statusInfo(state, online) {
+  const recovery = state?.recovery_status || '';
+  if (recovery) {
+    const labels = {
+      crashed: 'crashed', restarting: 'restarting', backoff: 'crash loop / backoff',
+      recovered: 'recovered automatically', suppressed: 'recovery suppressed',
+    };
+    const status = labels[recovery] || recovery;
+    const detail = state?.recovery_detail || '';
+    return { status, detail, title: detail ? `${status}: ${detail}` : status };
+  }
   if (!online) {
     const status = state?.exit_reason === 'unexpected' ? 'crashed' : 'offline';
     const age = relTime(state?.last_hook);
@@ -141,7 +154,9 @@ function statusInfo(state, online) {
 function StatePill({ state, online }) {
   const info = statusInfo(state, online);
   let className = online ? 'state-idle' : 'state-offline';
-  if (!online && info.status === 'crashed') className = 'state-crashed';
+  if (info.status === 'crashed') className = 'state-crashed';
+  else if (info.status === 'restarting' || info.status === 'recovered automatically') className = 'state-working';
+  else if (info.status === 'crash loop / backoff' || info.status === 'recovery suppressed') className = 'state-error';
   else if (info.status === 'working' || info.status === 'main_agent_idle') className = 'state-working';
   else if (info.status === 'idle') className = 'state-idle';
   else if (info.status === 'awaiting_permission' || info.status === 'awaiting_input') className = 'state-awaiting';

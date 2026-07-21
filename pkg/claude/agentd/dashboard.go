@@ -1601,6 +1601,16 @@ type agentState struct {
 	// rides the harness catalog's can_remote_control, the same place the
 	// rename control reads can_rename from.
 	RemoteControl bool `json:"remote_control,omitempty"`
+	// Recovery fields are a bounded view of the durable Codex crash-loop
+	// ledger. They deliberately expose identifiers/counts/timestamps only;
+	// never pane contents, argv, environment, stderr, or harness logs.
+	RecoveryStatus       string `json:"recovery_status,omitempty"`
+	RecoveryDetail       string `json:"recovery_detail,omitempty"`
+	RecoveryReason       string `json:"recovery_reason,omitempty"`
+	RecoveryCount        int    `json:"recovery_count,omitempty"`
+	RecoveryBackoff      int    `json:"recovery_backoff_seconds,omitempty"`
+	RecoveryNextAttempt  string `json:"recovery_next_attempt_at,omitempty"`
+	RecoveryLastExitCode *int   `json:"recovery_last_exit_code,omitempty"`
 }
 
 // stateForConvIn looks up the most-recent live tmux session row for
@@ -1782,7 +1792,45 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 				"session", pick.ID, "error", err)
 		}
 	}
+	if recovery, err := db.AgentRecoveryForConv(pick.ConvID); err == nil && recovery != nil {
+		active := recovery.Status != db.AgentRecoveryStatusCancelled &&
+			(recovery.Status != db.AgentRecoveryStatusRecovered || alive)
+		if active {
+			out.RecoveryStatus = recovery.Status
+			out.RecoveryReason = recovery.ReasonCode
+			out.RecoveryCount = recovery.ConsecutiveCrashes
+			out.RecoveryBackoff = recovery.BackoffSeconds
+			out.RecoveryLastExitCode = recovery.LastExitCode
+			if !recovery.NextAttemptAt.IsZero() {
+				out.RecoveryNextAttempt = recovery.NextAttemptAt.UTC().Format(time.RFC3339Nano)
+			}
+			out.RecoveryDetail = recoveryStateDetail(*recovery, time.Now())
+		}
+	} else if err != nil {
+		slog.Warn("dashboard: read agent recovery failed", "conv", pick.ConvID, "error", err)
+	}
 	return out
+}
+
+func recoveryStateDetail(r db.AgentRecovery, now time.Time) string {
+	parts := []string{}
+	if r.ConsecutiveCrashes > 0 {
+		parts = append(parts, fmt.Sprintf("restart %d", r.ConsecutiveCrashes))
+	}
+	if r.LastExitCode != nil {
+		parts = append(parts, fmt.Sprintf("exit %d", *r.LastExitCode))
+	}
+	if !r.NextAttemptAt.IsZero() {
+		remaining := r.NextAttemptAt.Sub(now)
+		if remaining < 0 {
+			remaining = 0
+		}
+		parts = append(parts, "retry in "+remaining.Round(time.Second).String())
+	}
+	if r.ReasonCode != "" {
+		parts = append(parts, strings.ReplaceAll(r.ReasonCode, "_", " "))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // handleDashboardSnapshot returns one JSON blob covering everything

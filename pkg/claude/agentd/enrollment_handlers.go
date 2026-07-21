@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -48,6 +49,21 @@ type retireConvOutcome struct {
 // retire touched — the bulk cleanup uses them for its ownerless-group
 // warning; the /v1 handler ignores them.
 func retireAgentConv(convID, by, reason string) (retireConvOutcome, []int64, error) {
+	// Publish cancellation before waiting for the in-process launch mutex. A
+	// recovery worker may already own that mutex while it prepares a resume;
+	// its final durable claim check immediately before Spawn then observes this
+	// operator intent and aborts rather than launching a soon-to-be-retired actor.
+	commitLock := recoveryLaunchCommitLock(convID)
+	commitLock.Lock()
+	cancelled, cancelErr := db.CancelAgentRecoveryForConv(convID, db.AgentExitActionRetire, time.Now())
+	commitLock.Unlock()
+	if cancelErr != nil {
+		return retireConvOutcome{}, nil, cancelErr
+	} else if cancelled {
+		if recovery, _ := db.AgentRecoveryForConv(convID); recovery != nil {
+			_ = db.RecordAgentRecoveryAudit(*recovery, db.AuditVerbAgentRecoveryCancelled, db.AgentExitActionRetire, time.Now())
+		}
+	}
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()

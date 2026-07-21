@@ -953,12 +953,17 @@ type peerEntry struct {
 // agentd's /v1/peers endpoint. Context and cost data are not part of this
 // cross-agent listing; those have their own permission-gated commands.
 type peerState struct {
-	Harness       string `json:"harness,omitempty"`
-	Model         string `json:"model,omitempty"`
-	EffortLevel   string `json:"effort_level,omitempty"`
-	Status        string `json:"status,omitempty"`
-	SubagentCount int    `json:"subagent_count"`
-	ExitReason    string `json:"exit_reason,omitempty"`
+	Harness             string `json:"harness,omitempty"`
+	Model               string `json:"model,omitempty"`
+	EffortLevel         string `json:"effort_level,omitempty"`
+	Status              string `json:"status,omitempty"`
+	SubagentCount       int    `json:"subagent_count"`
+	ExitReason          string `json:"exit_reason,omitempty"`
+	RecoveryStatus      string `json:"recovery_status,omitempty"`
+	RecoveryDetail      string `json:"recovery_detail,omitempty"`
+	RecoveryReason      string `json:"recovery_reason,omitempty"`
+	RecoveryCount       int    `json:"recovery_count,omitempty"`
+	RecoveryNextAttempt string `json:"recovery_next_attempt_at,omitempty"`
 }
 
 func runLs(p *lsParams, stdout, stderr io.Writer) int {
@@ -1080,6 +1085,18 @@ func peerModel(state peerState) string {
 // an offline pane is offline even if its last persisted hook said "idle", and
 // a live pre-first-hook session is simply online.
 func peerStatus(pe *peerEntry) string {
+	if recovery := pe.State.RecoveryStatus; recovery != "" {
+		switch recovery {
+		case "backoff":
+			return "crash loop / backoff"
+		case "recovered":
+			return "recovered automatically"
+		case "suppressed":
+			return "recovery suppressed"
+		default:
+			return recovery
+		}
+	}
 	if !pe.Online {
 		if pe.State.ExitReason == "unexpected" {
 			return "crashed"

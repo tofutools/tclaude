@@ -10,6 +10,7 @@ import (
 )
 
 func TestMigrateV140toV141AddsBgShellsColumn(t *testing.T) {
+	require.GreaterOrEqual(t, currentVersion, 141)
 	d, err := sql.Open("sqlite", "file:migrate-v141?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

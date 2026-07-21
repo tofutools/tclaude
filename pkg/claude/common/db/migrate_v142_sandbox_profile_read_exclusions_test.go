@@ -8,7 +8,7 @@ import (
 )
 
 func TestMigrateV142AddsReadExclusionsWithCompatibleDefault(t *testing.T) {
-	require.Equal(t, 142, currentVersion, "tripwire: bump this with the next migration")
+	require.GreaterOrEqual(t, currentVersion, 142)
 	d := newV139DB(t, "migrate-v142-default")
 	mustExec(t, d, `UPDATE schema_version SET version = 141`)
 	mustExec(t, d, `CREATE TABLE sandbox_profiles (

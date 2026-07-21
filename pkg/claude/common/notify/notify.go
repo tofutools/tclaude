@@ -37,6 +37,17 @@ func IsEnabled() bool {
 // …) and drives the banner title attribution; pass "" for the historical
 // Claude-Code default.
 func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness string) {
+	onStateTransition(sessionID, convID, from, to, to, cwd, convTitle, harness)
+}
+
+// OnAgentRecoveryTransition uses the existing error-notification preference
+// while rendering recovery-specific wording. That keeps upgrades compatible
+// with notification configs written before recovery statuses existed.
+func OnAgentRecoveryTransition(sessionID, convID, from, recoveryStatus, cwd, convTitle, harness string) {
+	onStateTransition(sessionID, convID, from, "error", recoveryStatus, cwd, convTitle, harness)
+}
+
+func onStateTransition(sessionID, convID, from, matchTo, displayStatus, cwd, convTitle, harness string) {
 	// A no-op "transition" never notifies — and an explicit config rule
 	// cannot opt back in. Without this guard, CC's ~60s idle timer fires
 	// a Notification(idle_prompt) hook that re-stamps an already-idle
@@ -53,7 +64,7 @@ func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness stri
 	// the one already sent (Send renders the status + project, not the
 	// detail), and the human was at the keyboard to deny A moments
 	// earlier — accepted as noise reduction, not signal loss.
-	if from == to {
+	if from == matchTo {
 		return
 	}
 
@@ -62,7 +73,7 @@ func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness stri
 		return
 	}
 
-	if !cfg.Notifications.MatchesTransition(from, to) {
+	if !cfg.Notifications.MatchesTransition(from, matchTo) {
 		return
 	}
 
@@ -78,7 +89,7 @@ func OnStateTransition(sessionID, convID, from, to, cwd, convTitle, harness stri
 		}
 	}
 
-	sendWithHarness(sessionID, formatStatus(to), cwd, convTitle, harness)
+	sendWithHarness(sessionID, formatStatus(displayStatus), cwd, convTitle, harness)
 
 	// Record notification time
 	_ = db.SetNotifyTime(sessionID)
@@ -181,6 +192,10 @@ func formatStatus(status string) string {
 		return "Error"
 	case "exited":
 		return "Exited"
+	case "crashed":
+		return "Crashed"
+	case "crash loop / backoff":
+		return "Crash loop / backoff"
 	default:
 		return status
 	}
