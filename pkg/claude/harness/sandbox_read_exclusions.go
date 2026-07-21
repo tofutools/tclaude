@@ -21,9 +21,16 @@ import (
 
 const SandboxCapabilityReadExclusions = "unsupported_sandbox_profile_read_exclusions"
 
-type codexSplitPolicyCapability struct {
+// CodexSplitPolicyCapability binds a successful split-policy probe to the
+// exact Codex executable that was measured. Strict-Home launches carry this
+// identity through command construction rather than falling back to PATH.
+type CodexSplitPolicyCapability struct {
+	ExecutablePath           string
+	ExecutableIdentity       string
 	RequiresExecutableReopen bool
 }
+
+type codexSplitPolicyCapability = CodexSplitPolicyCapability
 
 type codexSplitProbeCacheEntry struct {
 	capability codexSplitPolicyCapability
@@ -179,10 +186,42 @@ func verifiedCodexSplitPolicyCapability() (codexSplitPolicyCapability, error) {
 	}
 	codexSplitProbeCache.Unlock()
 	capability, err := runCodexSplitPolicyProbe(path)
+	if err == nil {
+		capability.ExecutablePath = path
+		capability.ExecutableIdentity = identity
+	}
 	codexSplitProbeCache.Lock()
 	codexSplitProbeCache.entries[identity] = codexSplitProbeCacheEntry{capability: capability, err: err}
 	codexSplitProbeCache.Unlock()
 	return capability, err
+}
+
+// VerifyCodexHomeSplitPolicy returns the exact measured launch identity.
+// Callers must revalidate it immediately before BuildCommand/exec.
+func VerifyCodexHomeSplitPolicy() (CodexSplitPolicyCapability, error) {
+	return verifiedCodexSplitPolicyCapability()
+}
+
+// RevalidateCodexHomeSplitPolicyCapability closes the probe-to-launch gap: it
+// rejects an executable swap and reruns the behavioral probe against the exact
+// path immediately before command construction, so backend availability/state
+// is not trusted from the earlier cache hit.
+func RevalidateCodexHomeSplitPolicyCapability(want CodexSplitPolicyCapability) error {
+	path, identity, err := codexExecutableIdentityForProbe()
+	if err != nil {
+		return err
+	}
+	if path != want.ExecutablePath || identity != want.ExecutableIdentity {
+		return fmt.Errorf("codex executable identity changed after split-policy verification")
+	}
+	got, err := runCodexSplitPolicyProbe(path)
+	if err != nil {
+		return fmt.Errorf("codex split-policy backend changed after verification: %w", err)
+	}
+	if got.RequiresExecutableReopen != want.RequiresExecutableReopen {
+		return fmt.Errorf("codex split-policy executable-reopen behavior changed after verification")
+	}
+	return nil
 }
 
 // CodexHomeRuntimeReadPaths returns the exact executable leaf only when the
@@ -193,11 +232,7 @@ func CodexHomeRuntimeReadPaths() ([]string, error) {
 	if err != nil || !capability.RequiresExecutableReopen {
 		return nil, err
 	}
-	path, _, err := codexExecutableIdentityForProbe()
-	if err != nil {
-		return nil, err
-	}
-	return []string{path}, nil
+	return []string{capability.ExecutablePath}, nil
 }
 
 func probeCodexSplitPolicy(sourceBinary string) (codexSplitPolicyCapability, error) {

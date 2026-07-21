@@ -47,7 +47,7 @@ func handleSandboxReadExclusionCatalog(w http.ResponseWriter, r *http.Request) {
 		Categories: categories,
 		Informational: []map[string]any{
 			{"id": "system.runtime", "label": "System runtime roots", "removable": false, "description": "Execution, DNS, and TLS runtime roots remain available and are not optional profile categories."},
-			{"id": "workspace.mechanics", "label": "Workspace and Git mechanics", "removable": false, "description": "The active workspace/worktree scope and exact Git administration path are reopened when Home is denied."},
+			{"id": "workspace.mechanics", "label": "Workspace and Git mechanics", "removable": false, "description": "The active workspace and exact verified Git common/admin paths are reopened when Home is denied. The broader repository container is not reopened, so direct creation of sibling worktrees is unavailable under strict Home; create/broker the worktree before launch."},
 			{"id": "agentd.control-plane", "label": "tclaude control plane", "removable": false, "description": "Only the agentd socket/control plane is reopened; private ~/.tclaude/data remains denied."},
 		},
 	})

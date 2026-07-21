@@ -90,13 +90,13 @@ func ReadExclusionCatalog(home, goos string) ([]ReadExclusionCategory, error) {
 		return filepath.Join(append([]string{home}, parts...)...)
 	}
 	categories := []ReadExclusionCategory{
-		{ID: ReadExclusionSSH, Label: "Deny access to SSH credentials", Description: "SSH private keys, host trust, and client configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".ssh")}},
-		{ID: ReadExclusionGnuPG, Label: "Deny access to GnuPG credentials", Description: "OpenPGP private keys, trust databases, and agent configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".gnupg")}},
-		{ID: ReadExclusionCloud, Label: "Deny access to cloud and container credentials", Description: "AWS, Google Cloud, Azure, Kubernetes, and Docker client credentials/configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".aws"), under(".config", "gcloud"), under(".azure"), under(".kube"), under(".docker")}},
-		{ID: ReadExclusionVCSTokens, Label: "Deny access to VCS CLI tokens", Description: "GitHub CLI and GitLab CLI authentication/configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".config", "gh"), under(".config", "glab")}},
-		{ID: ReadExclusionToolchainCaches, Label: "Deny access to toolchain caches", Description: "Package-manager, compiler, version-manager, and dependency caches.", Warning: "Denying toolchain caches can make builds fail or force downloads; grant an agent-owned cache when the task needs one.", Tier: ReadExclusionTierPortable, Paths: []string{under(".npm"), under(".cargo"), under(".rustup"), under("go", "pkg", "mod"), under(".m2"), under(".gradle"), under(".local", "share", "mise"), under(".nvm"), under(".pyenv")}},
+		{ID: ReadExclusionSSH, Label: "Deny audited default SSH locations", Description: "Default ~/.ssh location for SSH private keys, host trust, and client configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".ssh")}},
+		{ID: ReadExclusionGnuPG, Label: "Deny audited default GnuPG locations", Description: "Default ~/.gnupg location for OpenPGP private keys, trust databases, and agent configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".gnupg")}},
+		{ID: ReadExclusionCloud, Label: "Deny audited default cloud/container locations", Description: "Default Home locations for AWS, Google Cloud, Azure, Kubernetes, and Docker client credentials/configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".aws"), under(".config", "gcloud"), under(".azure"), under(".kube"), under(".docker")}},
+		{ID: ReadExclusionVCSTokens, Label: "Deny audited default VCS CLI locations", Description: "Default Home locations for GitHub CLI and GitLab CLI authentication/configuration.", Tier: ReadExclusionTierPortable, Paths: []string{under(".config", "gh"), under(".config", "glab")}},
+		{ID: ReadExclusionToolchainCaches, Label: "Deny audited default toolchain-cache locations", Description: "Default Home locations for package-manager, compiler, version-manager, and dependency caches.", Warning: "Denying toolchain caches can make builds fail or force downloads; grant an agent-owned cache when the task needs one.", Tier: ReadExclusionTierPortable, Paths: []string{under(".npm"), under(".cargo"), under(".rustup"), under("go", "pkg", "mod"), under(".m2"), under(".gradle"), under(".local", "share", "mise"), under(".nvm"), under(".pyenv")}},
 	}
-	browser := ReadExclusionCategory{ID: ReadExclusionBrowserProfiles, Label: "Deny access to browser profiles", Description: "Chrome, Chromium, and Firefox profiles, including cookies and saved sessions.", Tier: ReadExclusionTierPortable}
+	browser := ReadExclusionCategory{ID: ReadExclusionBrowserProfiles, Label: "Deny audited default browser-profile locations", Description: "Default Chrome, Chromium, and Firefox profile locations, including cookies and saved sessions.", Tier: ReadExclusionTierPortable}
 	switch strings.TrimSpace(goos) {
 	case "linux":
 		browser.Paths = []string{under(".config", "google-chrome"), under(".config", "chromium"), under(".mozilla", "firefox")}
@@ -109,14 +109,16 @@ func ReadExclusionCatalog(home, goos string) ([]ReadExclusionCategory, error) {
 		ID: ReadExclusionHome, Label: "Deny access to the Home directory", Description: "Deny the broad home-directory baseline, then reopen only workspace, control-plane, runtime, agent-directory, and explicitly granted paths required by the launch contract.", Warning: "Requires Claude sandbox-on, or Codex on Linux after its split-policy bubblewrap behavior is verified. Codex macOS and legacy Landlock are refused.", Tier: ReadExclusionTierHome, Paths: []string{home},
 	})
 	for i := range categories {
-		// Canonicalize existing category leaves as well as Home itself. This
-		// keeps both enforcement and grant-conflict checks anchored to the
-		// symlink target, so an alternate spelling cannot bypass the semantic
-		// restriction. Nonexistent paths retain their stable lexical location.
+		// Use the same longest-existing-ancestor canonicalization as ordinary
+		// grants. A missing leaf beneath a symlinked parent must resolve through
+		// that parent now; otherwise a conflicting grant can pass validation and
+		// become a reopen when the leaf is created later.
 		for j, path := range categories[i].Paths {
-			if resolved, err := filepath.EvalSymlinks(path); err == nil {
-				categories[i].Paths[j] = filepath.Clean(resolved)
+			resolved, _, err := canonicalDirectory(path, true)
+			if err != nil {
+				return nil, fmt.Errorf("canonicalize read exclusion %q path %q: %w", categories[i].ID, path, err)
 			}
+			categories[i].Paths[j] = resolved
 		}
 		sort.Strings(categories[i].Paths)
 	}

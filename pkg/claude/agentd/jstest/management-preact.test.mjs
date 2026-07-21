@@ -404,17 +404,20 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   cleanups.reverse().forEach((fn) => fn());
 });
 
-test('sandbox editor renders semantic restrictions, preserves unknown IDs, and locks leaves covered by Home', async (t) => {
+test('sandbox editor keeps Home and external leaves distinct and lets owners remove unknown IDs', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), []);
+  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
+    name: 'base', filesystem: [], environment: [], includes: [], agent_directories: [],
+    read_baseline_exclusions: ['future.inherited-store'],
+  }]);
   state.openDialog({
     kind: 'sandbox-editor',
     seed: {
-      name: 'hardened', filesystem: [], environment: [], includes: [], agent_directories: [],
+      name: 'hardened', filesystem: [], environment: [], includes: ['base'], agent_directories: [],
       read_baseline_exclusions: ['future.secret-store'],
     },
     options: {},
@@ -439,15 +442,25 @@ test('sandbox editor renders semantic restrictions, preserves unknown IDs, and l
   const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.match(host.querySelector('.sbx-read-exclusions').textContent, /Unknown restriction: future\.secret-store/);
+  const exclusions = host.querySelector('.sbx-read-exclusions');
+  assert.match(exclusions.textContent, /Unknown restriction: future\.secret-store/);
+  assert.match(exclusions.textContent, /Unknown restriction: future\.inherited-store/);
+  const unknownRows = [...exclusions.querySelectorAll('.sbx-exclusion-row.unknown')];
+  const ownedUnknown = unknownRows.find((row) => row.textContent.includes('future.secret-store'));
+  const inheritedUnknown = unknownRows.find((row) => row.textContent.includes('future.inherited-store'));
+  assert.notEqual(ownedUnknown.querySelector('input').disabled, true, 'direct owner can recover on an older catalog');
+  assert.equal(inheritedUnknown.querySelector('input').disabled, true, 'inherited unknown remains locked at its consumer');
   let choices = host.querySelectorAll('.sbx-exclusion-list input');
   assert.equal(choices.length, 2); assert.notEqual(choices[0].disabled, true); assert.notEqual(choices[1].checked, true);
   choices[1].checked = true; choices[1].dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
   choices = host.querySelectorAll('.sbx-exclusion-list input');
-  assert.equal(choices[0].hasAttribute('checked'), true); assert.equal(choices[0].hasAttribute('disabled'), true);
-  assert.match(choices[0].parentElement.textContent, /covered by Home directory exclusion/);
+  assert.notEqual(choices[0].checked, true, 'Home does not claim coverage for a leaf that may resolve outside Home');
+  assert.notEqual(choices[0].disabled, true);
+  ownedUnknown.querySelector('input').checked = false;
+  ownedUnknown.querySelector('input').dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
-  assert.deepEqual(saved.draft.read_baseline_exclusions, ['future.secret-store', 'home.directory']);
+  assert.deepEqual(saved.draft.read_baseline_exclusions, ['home.directory']);
   cleanups.reverse().forEach((fn) => fn());
 });
 

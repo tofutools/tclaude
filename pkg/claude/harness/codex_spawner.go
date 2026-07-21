@@ -33,7 +33,11 @@ func (codexSpawner) Binary() string { return "codex" }
 // (ResolveSandboxMode) and emitted verbatim here, so the user's config.toml
 // sandbox_mode/profiles stay untouched.
 func (codexSpawner) BuildCommand(spec SpawnSpec) string {
-	cmd := spec.EnvExports + "codex"
+	binary := "codex"
+	if spec.ExecutablePath != "" {
+		binary = clcommon.ShellQuoteArg(spec.ExecutablePath)
+	}
+	cmd := spec.EnvExports + binary
 	if spec.ResumeID != "" {
 		// `codex resume <id>` — resume is a subcommand; the id is a
 		// positional. Quoted defensively even though it's a UUID.

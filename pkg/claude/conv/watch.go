@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -2266,9 +2267,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, fmt.Errorf("load effective sandbox snapshot for conversation %s: %w", convID, err)
 	}
 	var readDirs, writeDirs, denyDirs []string
-	// Resume carries the RECORDED decision forward from the frozen snapshot and
-	// never consults a later ambient profile change, so an agent cannot gain
-	// protected access or a widened read baseline by being restarted.
+	// Agentd resolves the currently selected sandbox profile before invoking the
+	// watch/session renderer and persists that exact snapshot. This boundary
+	// consumes the current persisted decision; it does not merge stale ordinary
+	// exclusions from an earlier launch. Protected break-glass clamping remains
+	// an agentd lifecycle responsibility.
 	var breakGlassReadDirs, breakGlassWriteDirs []string
 	var breakGlassGrants []sandboxpolicy.BreakGlassGrant
 	readBaseline := sandboxpolicy.ReadBaselineDefault
@@ -2375,9 +2378,10 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
+	homeExcluded := slices.Contains(readExclusions, sandboxpolicy.ReadExclusionHome)
 	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
-		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd)
+		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, homeExcluded)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
 		}
@@ -2400,6 +2404,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxBreakGlassWriteDirs: breakGlassWriteDirs,
 	}
 	cleanupPath := ""
+	var splitCapability *harness.CodexSplitPolicyCapability
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
 		requireSplitPolicy := false
@@ -2410,11 +2415,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			}
 		}
 		if requireSplitPolicy {
-			runtimeReadDirs, runtimeErr := harness.CodexHomeRuntimeReadPaths()
+			verified, runtimeErr := harness.VerifyCodexHomeSplitPolicy()
 			if runtimeErr != nil {
 				return "", "", nil, runtimeErr
 			}
-			readDirs = append(readDirs, runtimeReadDirs...)
+			splitCapability = &verified
+			if verified.RequiresExecutableReopen {
+				readDirs = append(readDirs, verified.ExecutablePath)
+			}
 		}
 		if readBaseline == sandboxpolicy.ReadBaselineMinimal {
 			// Same invariant as the spawn path: without `extends = ":workspace"`
@@ -2439,9 +2447,17 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		}
 		spec.SandboxMode = ""
 		spec.PermissionProfile = profileName
+		if splitCapability != nil {
+			spec.ExecutablePath = splitCapability.ExecutablePath
+		}
 		cleanupPath = profilePath
 	} else if h.Name == harness.CodexName && len(readDirs)+len(writeDirs)+len(denyDirs) > 0 {
 		return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_filesystem: Codex filesystem rules require sandbox %s", harness.SandboxManagedProfile)
+	}
+	if splitCapability != nil {
+		if err := harness.RevalidateCodexHomeSplitPolicyCapability(*splitCapability); err != nil {
+			return "", "", nil, fmt.Errorf("revalidate strict-Home Codex resume capability: %w", err)
+		}
 	}
 	cmd := h.Spawn.BuildCommand(spec)
 	if cleanupPath != "" {
@@ -2515,7 +2531,7 @@ func resumeApprovalState(h *harness.Harness, convID string) (string, bool, error
 	return policy, autoReview, nil
 }
 
-func resumeGitWorktreeWriteDirs(cwd string) ([]string, error) {
+func resumeGitWorktreeWriteDirs(cwd string, strictHome bool) ([]string, error) {
 	commonDir, err := harness.GitCommonDir(cwd)
 	if err != nil {
 		return nil, err
@@ -2527,7 +2543,26 @@ func resumeGitWorktreeWriteDirs(cwd string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return harness.GitWorktreeWriteDirs(cwd, commonDir, home), nil
+	dirs := harness.GitWorktreeWriteDirs(cwd, commonDir, home)
+	if !strictHome {
+		return dirs, nil
+	}
+	// Strict Home cannot inherit the historical whole-container grant used for
+	// direct sibling-worktree creation. Retain the active workspace plus exact
+	// Git common/admin descendants only.
+	var narrow []string
+	if workspace := canonicalResumeWorkspace(cwd); workspace != "" {
+		narrow = appendUniqueResumeDir(narrow, workspace)
+	}
+	commonDir = filepath.Clean(commonDir)
+	narrow = appendUniqueResumeDir(narrow, commonDir)
+	for _, dir := range dirs {
+		dir = filepath.Clean(dir)
+		if sandboxpolicy.PathContainsOrEqual(commonDir, dir) {
+			narrow = appendUniqueResumeDir(narrow, dir)
+		}
+	}
+	return narrow, nil
 }
 
 func resumeEffectiveSandboxForState(convID string) *sandboxpolicy.Snapshot {

@@ -717,6 +717,7 @@ func runNew(params *NewParams) error {
 	}
 	launchPermissionProfile := params.PermissionProfile
 	launchProfilePath := ""
+	var launchCodexSplitCapability *harness.CodexSplitPolicyCapability
 	launchProfileOwnedByPane := false
 	defer func() {
 		if launchProfilePath != "" && !launchProfileOwnedByPane {
@@ -765,12 +766,13 @@ func runNew(params *NewParams) error {
 	// Only the tclaude-owned profile is auto-created; any other name must
 	// already be defined by the user's own config.
 	if params.PermissionProfile == harness.CodexAgentProfile {
-		profileName, profilePath, err := ensureCodexManagedProfileWithSnapshot(params, cwd, GenerateSessionID(), launchSandbox)
+		profileName, profilePath, splitCapability, err := ensureCodexManagedProfileWithSnapshot(params, cwd, GenerateSessionID(), launchSandbox)
 		if err != nil {
 			return err
 		}
 		launchPermissionProfile = profileName
 		launchProfilePath = profilePath
+		launchCodexSplitCapability = splitCapability
 	}
 
 	// Pre-trust the launch dir for Codex when the operator opted in
@@ -850,7 +852,21 @@ func runNew(params *NewParams) error {
 		return fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
 
+	if launchCodexSplitCapability != nil {
+		if err := harness.RevalidateCodexHomeSplitPolicyCapability(*launchCodexSplitCapability); err != nil {
+			return fmt.Errorf("revalidate strict-Home Codex launch capability: %w", err)
+		}
+	}
+	executablePath := ""
+	if launchCodexSplitCapability != nil {
+		executablePath = launchCodexSplitCapability.ExecutablePath
+	}
+	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
+	if sandboxSnapshotHasReadExclusion(launchSandbox, sandboxpolicy.ReadExclusionHome) {
+		launchGitWriteDirs = strictHomeGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
+	}
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+		ExecutablePath:             executablePath,
 		EnvExports:                 envExports,
 		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
 		ResumeID:                   fullConvID,
@@ -860,7 +876,7 @@ func runNew(params *NewParams) error {
 		Model:                      model,
 		ExtraArgs:                  extraArgs,
 		SandboxMode:                sandboxMode,
-		SandboxWriteDirs:           append(gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd), sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
+		SandboxWriteDirs:           append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
 		SandboxReadDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead),
 		SandboxDenyDirs:            append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny), sandboxSnapshotReadExclusionDenyDirs(launchSandbox)...),
 		SandboxReadBaseline:        string(sandboxSnapshotReadBaseline(launchSandbox)),
@@ -1096,17 +1112,19 @@ func validateGitWorktreeWriteDirPins(params *NewParams) error {
 }
 
 func ensureCodexManagedProfile(params *NewParams, cwd, launchID string) (string, string, error) {
-	return ensureCodexManagedProfileWithSnapshot(params, cwd, launchID, nil)
+	name, path, _, err := ensureCodexManagedProfileWithSnapshot(params, cwd, launchID, nil)
+	return name, path, err
 }
 
-func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID string, effectiveSandbox *sandboxpolicy.Snapshot) (string, string, error) {
+func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID string, effectiveSandbox *sandboxpolicy.Snapshot) (string, string, *harness.CodexSplitPolicyCapability, error) {
 	var writeDirs []string
+	gitCommonDir := params.CodexGitCommonDir
 	if params.GitWorktreeWriteDirsPinned {
 		writeDirs = append([]string(nil), params.GitWorktreeWriteDirs...)
 	} else if params.CodexGitCommonDirPinned && params.CodexGitCommonDir != "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		writeDirs = harness.GitWorktreeWriteDirs(cwd, params.CodexGitCommonDir, home)
 	} else if params.CodexGitCommonDirPinned {
@@ -1114,24 +1132,39 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	} else {
 		commonDir, err := harness.GitCommonDir(cwd)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
+		gitCommonDir = commonDir
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		writeDirs = harness.GitWorktreeWriteDirs(cwd, commonDir, home)
+	}
+	requireSplitPolicy := sandboxSnapshotHasReadExclusion(effectiveSandbox, sandboxpolicy.ReadExclusionHome)
+	if requireSplitPolicy {
+		// The historical repository grant is the main repository's whole
+		// container so an agent can create sibling worktrees directly. That is
+		// incompatible with strict Home: it would reopen every sibling repo and
+		// arbitrary sibling file beneath Home. Keep only the active cwd and exact
+		// daemon-verified Git common/admin identities. Direct sibling-worktree
+		// creation is intentionally unavailable under this posture; tclaude must
+		// broker it before launch instead of granting the container.
+		writeDirs = strictHomeGitWriteDirs(cwd, gitCommonDir, writeDirs)
 	}
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
 	denyDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny), sandboxSnapshotReadExclusionDenyDirs(effectiveSandbox)...)
-	requireSplitPolicy := sandboxSnapshotHasReadExclusion(effectiveSandbox, sandboxpolicy.ReadExclusionHome)
+	var splitCapability *harness.CodexSplitPolicyCapability
 	if requireSplitPolicy {
-		runtimeReadDirs, err := harness.CodexHomeRuntimeReadPaths()
+		verified, err := harness.VerifyCodexHomeSplitPolicy()
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
-		readDirs = append(readDirs, runtimeReadDirs...)
+		splitCapability = &verified
+		if verified.RequiresExecutableReopen {
+			readDirs = append(readDirs, verified.ExecutablePath)
+		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
 	readBaseline := sandboxSnapshotReadBaseline(effectiveSandbox)
@@ -1155,9 +1188,31 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		RequireSplitPolicy:  requireSplitPolicy,
 	}, networkAccess, launchID)
 	if err != nil {
-		return "", "", fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
+		return "", "", nil, fmt.Errorf("ensure codex permission profile %q: %w", params.PermissionProfile, err)
 	}
-	return profileName, path, nil
+	return profileName, path, splitCapability, nil
+}
+
+func strictHomeGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {
+	var out []string
+	if workspace := canonicalMinimalWorkspace(cwd); workspace != "" {
+		out = appendUniqueDir(out, workspace)
+	}
+	common := filepath.Clean(strings.TrimSpace(gitCommonDir))
+	if common == "." || !filepath.IsAbs(common) {
+		return out
+	}
+	out = appendUniqueDir(out, common)
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(strings.TrimSpace(candidate))
+		// A candidate at/below the verified common directory is an exact Git
+		// admin identity (for linked worktrees Codex needs the more-specific
+		// worktrees/<name> reopen). Ancestors such as ~/git are discarded.
+		if candidate != "." && filepath.IsAbs(candidate) && sandboxpolicy.PathContainsOrEqual(common, candidate) {
+			out = appendUniqueDir(out, candidate)
+		}
+	}
+	return out
 }
 
 // canonicalMinimalWorkspace resolves the launch directory for a minimal-baseline

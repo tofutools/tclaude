@@ -311,12 +311,15 @@ never widens it back. Where a harness cannot faithfully enforce the strict
 posture, launch fails with a typed capability error rather than pretending
 isolation. **Additional filesystem restrictions**
 (`read_baseline_exclusions`) keep Default while subtracting versioned catalog
-categories such as SSH credentials, cloud configuration, toolchain caches,
-browser profiles, or the whole Home directory. The editor shows the concrete
-current-machine paths and category-specific warnings; restrictions union
-across includes/scopes, inherited rows are locked, and selecting Home checks
-and locks every covered leaf. Unknown IDs stay visible and fail launch closed
-instead of disappearing. Default plus selected categories remains a finite
+categories for audited/default locations such as SSH credentials, cloud
+configuration, toolchain caches, browser profiles, or the whole Home
+directory. The editor shows the concrete current-machine paths and
+category-specific warnings; restrictions union across includes/scopes and
+inherited rows are locked. Home does not check or lock leaf IDs because a leaf
+may resolve through a symlink outside Home. Directly owned unknown IDs remain
+removable for downgrade recovery, while inherited unknown IDs stay locked;
+all unknown IDs fail launch closed instead of disappearing. Default plus
+selected categories remains a finite
 denylist; Minimal is the true allowlist posture. **Break-glass protected
 access** (`break_glass_filesystem`) is the
 only representation that may touch the normally protected tclaude/harness
@@ -335,8 +338,8 @@ requires an explicit fresh acknowledgement (`break_glass_acknowledged`;
 origin: previews attribute every break-glass rule, read restriction, and a
 minimal baseline to the profile and scope that introduced them. Agent-initiated spawns can
 neither introduce nor widen break-glass access, and `minimal → default` is
-treated as widening under the same lineage rules; dropping an exclusion is
-also widening, while Home subsumes its leaf categories.
+treated as widening under the same lineage rules; dropping any exact exclusion
+ID is also widening. Home never substitutes for a leaf ID in lineage checks.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing

@@ -483,17 +483,24 @@ portable profile stores stable semantic IDs, never machine paths:
 * `secrets.ssh`, `secrets.gnupg`, `secrets.cloud`, and
   `secrets.vcs-tokens`
 * `toolchain.caches` and `browser.profiles`
-* `home.directory`, which covers every narrower Home category
+* `home.directory`, the broad Home path itself
 
 The dashboard obtains labels, warnings, and current-platform paths from the
 daemon's versioned catalog. Category paths are resolved and symlink-canonicalized
 at launch, so exports remain portable while enforcement follows the current
-machine. Restrictions compose as a union across includes and the global →
+machine. These are audited/default-location restrictions, not a claim to find
+every application-configured credential or cache location. Restrictions
+compose as a union across includes and the global →
 group → explicit scopes, with every contributing profile retained in
 provenance. An ordinary read/write grant that intersects a selected leaf
-category is rejected; `home.directory` instead uses managed, auditable reopens
+category is rejected; each leaf ID remains distinct from `home.directory`
+because (for example) `~/.ssh` can be a symlink outside Home. `home.directory`
+instead uses managed, auditable reopens
 for the workspace, control plane, runtime, agent-owned directories, and
-explicit grants.
+explicit grants. For Codex, strict Home reopens only the active workspace and
+exact verified Git common/admin paths, not the historical whole repository
+container. Direct sibling-worktree creation is therefore unavailable under
+strict Home; create or broker the worktree before launch.
 
 Unknown but well-formed IDs survive storage, export, import, and display. They
 fail launch with `unsupported_sandbox_profile_read_exclusions` until the local

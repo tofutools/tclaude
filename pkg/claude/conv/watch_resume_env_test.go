@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -320,4 +321,57 @@ func TestResumeDefaultBaselineKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
 	assert.Contains(t, content, `extends = ":workspace"`)
 	assert.NotContains(t, content, `"`+workspace+`" = "write"`,
 		"default resumes keep relying on the unchanged workspace baseline")
+}
+
+func TestCodexStrictHomeWatchRendererHostSmoke(t *testing.T) {
+	if os.Getenv("TCLAUDE_CODEX_SPLIT_SMOKE") != "1" {
+		t.Skip("set TCLAUDE_CODEX_SPLIT_SMOKE=1 on an unsandboxed Linux host with Codex+bubblewrap")
+	}
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux only")
+	}
+	setupTestDB(t)
+	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	container := filepath.Join(home, "git")
+	workspace := filepath.Join(container, "active")
+	sibling := filepath.Join(container, "sibling")
+	for _, dir := range []string{workspace, sibling} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	cmd := exec.Command("git", "-C", workspace, "init")
+	output, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "git init: %s", output)
+	common, err := harness.GitCommonDir(workspace)
+	require.NoError(t, err)
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "strict-home", ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionHome},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvCodex, Harness: harness.CodexName,
+		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
+	}))
+
+	launch, profilePath, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	capability, err := harness.VerifyCodexHomeSplitPolicy()
+	require.NoError(t, err)
+	assert.Contains(t, launch, capability.ExecutablePath, "watch resume must bind the verified executable rather than PATH")
+	raw, err := os.ReadFile(profilePath)
+	require.NoError(t, err)
+	content := string(raw)
+	assert.Contains(t, content, `"`+workspace+`" = "write"`)
+	assert.Contains(t, content, `"`+common+`" = "write"`)
+	assert.NotContains(t, content, `"`+container+`" = "write"`, "strict Home must not reopen the sibling-worktree container")
+	assert.NotContains(t, content, sibling)
 }

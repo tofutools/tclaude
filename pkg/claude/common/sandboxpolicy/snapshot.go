@@ -108,13 +108,10 @@ func readExclusionsContained(parent, child []string) bool {
 		childSet[id] = true
 	}
 	for _, id := range parent {
-		if id == ReadExclusionHome {
-			if !childSet[id] {
-				return false
-			}
-			continue
-		}
-		if !childSet[id] && !childSet[ReadExclusionHome] {
+		// Semantic IDs are portable authority. Home cannot stand in for a leaf:
+		// an audited leaf such as ~/.ssh may resolve through a symlink outside
+		// Home, where a Home deny provides no coverage.
+		if !childSet[id] {
 			return false
 		}
 	}
@@ -277,6 +274,12 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if !slices.Equal(agentDirectories, in.Effective.AgentDirectories) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
 	}
+	// Catalog paths are host-resolved values rather than snapshot bytes. Rerun
+	// overlap validation now so a symlinked ancestor or newly-created leaf
+	// cannot turn a formerly-safe ordinary grant into a category reopen.
+	if err := validateReadExclusionGrantConflicts(in.Effective); err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate effective sandbox read exclusions: %w", err)
+	}
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	return out, nil
@@ -307,6 +310,9 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 // the window after snapshot revalidation rather than activating a redirected
 // textual rule.
 func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
+	if err := validateReadExclusionGrantConflicts(in); err != nil {
+		return nil, fmt.Errorf("prepare read exclusions for launch: %w", err)
+	}
 	out := make([]FilesystemGrant, 0, len(in.Filesystem))
 	for _, grant := range in.Filesystem {
 		canonical, missing, err := canonicalDirectory(grant.Path, true)
