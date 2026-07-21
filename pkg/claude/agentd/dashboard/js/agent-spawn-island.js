@@ -512,21 +512,34 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     // rejects unacknowledged spawns with a typed 422 either way. The policy
     // must belong to the selection being submitted — a stale one could
     // describe profile A while the request selects profile B — and it must
-    // STAY valid across every await in this closure: a policy refresh or a
-    // failed replacement load while confirmation, worktree resolution, or
-    // uploads are pending would otherwise let the old policy's
-    // acknowledgement ride the request. policyMismatch reads live state (the
-    // ref and the dialog signal), so it revalidates rather than re-checking
-    // captured values.
-    const policyMismatch = () => !view.sandboxProfilesDisabled
-      && sandboxPolicyRef.current.key
-        !== sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
-    if (policyMismatch()) {
+    // STAY the exact policy the operator was shown across every await in
+    // this closure. Comparing live-to-live is not enough: a refresh whose
+    // replacement load completes while confirmation or later work is
+    // pending would re-align both sides and let the OLD confirmation
+    // authorize the NEW policy. So the submit freezes a token for the
+    // policy it validated — its selection/revision key and a break-glass
+    // fingerprint — and every revalidation requires the live selection AND
+    // the live resolved policy to still match that token. Any refresh bumps
+    // the revision and therefore aborts, even if its reload lands quickly.
+    const liveSelectionKey = () =>
+      sandboxPolicyKey(next.group, next.sandboxProfile, state.dialog.value?.sandboxRevision);
+    if (!view.sandboxProfilesDisabled && sandboxPolicyRef.current.key !== liveSelectionKey()) {
       setError('wait for the sandbox policy preview to finish loading');
       submitLock.current = false;
       return;
     }
-    const spawnBreakGlass = !view.sandboxProfilesDisabled ? (sandboxPolicy.breakGlass || []) : [];
+    const policyToken = view.sandboxProfilesDisabled ? null : Object.freeze({
+      key: sandboxPolicyRef.current.key,
+      fingerprint: JSON.stringify(sandboxPolicyRef.current.breakGlass || []),
+    });
+    const policyMismatch = () => {
+      if (!policyToken) return false;
+      const live = sandboxPolicyRef.current;
+      return policyToken.key !== liveSelectionKey()
+        || live.key !== policyToken.key
+        || JSON.stringify(live.breakGlass || []) !== policyToken.fingerprint;
+    };
+    const spawnBreakGlass = policyToken ? (sandboxPolicyRef.current.breakGlass || []) : [];
     if (spawnBreakGlass.length) {
       const proceed = await actions.confirmBreakGlassSpawn(spawnBreakGlass);
       if (!state.isCurrent(current.generation)) return;
