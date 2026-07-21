@@ -20,7 +20,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`options: { editExisting: false, cloneSourceName: source.name }`:             "clone editor retains create semantics and source context",
 		`options.editExisting === false`:                                             "clone save cannot patch its source profile",
 		`const MAX_SANDBOX_PROFILE_NAME_BYTES = 200`:                                 "clone suggestions obey the server name limit",
-		`{ editExisting }`:                                                           "scribe handoff carries explicit create/edit mode",
+		`{ editExisting, cloneSourceName: options.cloneSourceName || '' }`:           "scribe handoff carries explicit create/edit mode and clone context",
 		`{ ...editorOptions, targetName, onCreate, notice:`:                          "returned scribe drafts preserve clone-create mode",
 		`class="sbx-agent-name"`:                                                     "structured agent-owned directory row",
 		`.sbx-section input:not([type])`:                                             "Preact structured inputs retain dark modal styling",

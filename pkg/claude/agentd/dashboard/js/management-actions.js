@@ -969,7 +969,7 @@ export function createManagementActions({
       seed,
       editExisting ? options.targetName || seed?.name || '' : '',
       options.onCreate || null,
-      { editExisting },
+      { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
   }
   function inspectDirectories(filesystem) {

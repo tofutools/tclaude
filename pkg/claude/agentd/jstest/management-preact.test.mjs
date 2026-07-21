@@ -294,7 +294,7 @@ test('sandbox manager clones a full profile through the guarded create editor', 
   assert.ok(host.querySelector('#sandbox-profile-editor-break-glass-ack'), 'cloned authority still demands a fresh acknowledgement');
   await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-scribe'), 'click'));
   assert.equal(scribeCall[1], '', 'the clone scribe handoff has no edit target');
-  assert.deepEqual(scribeCall[3], { editExisting: false }, 'the clone scribe handoff explicitly preserves create mode');
+  assert.deepEqual(scribeCall[3], { editExisting: false, cloneSourceName: 'restricted' }, 'the clone scribe handoff preserves create mode and its label');
   cleanups.reverse().forEach((fn) => fn());
 });
 
@@ -326,9 +326,11 @@ test('sandbox scribe return reopens clone drafts in explicit create mode', async
   const harness = await createPreactHarness(t);
   await harness.replaceDashboardModule('js/refresh.js', 'export function toast() {}');
   await harness.replaceDashboardModule('js/terminals-tab.js', 'export function openTermModal() {}');
-  const [{ registerManagementController }, { summonSandboxScribe }] = await Promise.all([
+  const [{ registerManagementController }, { summonSandboxScribe }, { createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-controller.js'),
     harness.importDashboardModule('js/sandbox-profiles.js'),
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
   ]);
   let opened = null;
   const unregister = registerManagementController({
@@ -349,12 +351,34 @@ test('sandbox scribe return reopens clone drafts in explicit create mode', async
     { name: 'restricted-copy', filesystem: [] },
     '',
     null,
-    { editExisting: false },
+    { editExisting: false, cloneSourceName: 'restricted' },
   );
   await harness.act(() => Promise.resolve());
   assert.equal(opened.seed.name, 'restricted-copy');
   assert.equal(opened.options.targetName, '');
   assert.equal(opened.options.editExisting, false, 'the returned named draft remains a create');
+  assert.equal(opened.options.cloneSourceName, 'restricted', 'the returned editor remains labeled as a clone');
+
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: opened.seed, options: opened.options });
+  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host,
+    state,
+    actions: {
+      loadReadExclusionCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+      inspectDirectories: async () => ({ missing: [], creatable: [] }),
+      createDirectories: async () => {},
+      saveSandbox: async () => {},
+      configureSandboxWithAgent() {},
+    },
+    confirmDiscard: async () => true,
+    openProfilePermissions() {},
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-title').textContent, /Clone sandbox profile: restricted/);
+  cleanups.reverse().forEach((fn) => fn());
 });
 
 test('profile editor Escape follows the visual stack over a later spawn dialog', async (t) => {
