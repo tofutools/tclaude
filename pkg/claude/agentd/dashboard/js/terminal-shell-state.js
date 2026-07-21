@@ -1,11 +1,30 @@
 import { computed, signal } from '@preact/signals';
+import { dashPrefs } from './prefs.js';
 import { normalizeSeed } from './terminals-core.js';
+
+export const TERMINAL_PANE_ORDER_KEY = 'tclaude.dash.terminals.order';
+export const MAX_REMEMBERED_TERMINAL_PANES = 512;
+export const MAX_TERMINAL_PANE_ORDER_BYTES = 60 * 1024;
+
+function boundPreferredOrder(keys) {
+  const bounded = [];
+  const encoder = new TextEncoder();
+  let bytes = 2; // JSON array brackets.
+  for (const key of keys) {
+    if (bounded.length >= MAX_REMEMBERED_TERMINAL_PANES) break;
+    const entryBytes = encoder.encode(JSON.stringify(key)).byteLength + (bounded.length ? 1 : 0);
+    if (bytes + entryBytes > MAX_TERMINAL_PANE_ORDER_BYTES) continue;
+    bounded.push(key);
+    bytes += entryBytes;
+  }
+  return bounded;
+}
 
 export function terminalSeedKey(seed) {
   return seed.key || seed.ws;
 }
 
-export function createTerminalShellState() {
+export function createTerminalShellState({ prefs = dashPrefs, persistOrder = true } = {}) {
   const panes = signal([]);
   const activeKey = signal(null);
   const modal = signal(null);
@@ -19,6 +38,49 @@ export function createTerminalShellState() {
   }));
   let paneSequence = 0;
   let modalSequence = 0;
+  let preferredOrder = null;
+
+  function readPreferredOrder() {
+    if (preferredOrder) return preferredOrder;
+    try {
+      const parsed = JSON.parse(prefs.getItem(TERMINAL_PANE_ORDER_KEY) || '[]');
+      preferredOrder = Array.isArray(parsed)
+        ? boundPreferredOrder([...new Set(parsed.filter((key) => typeof key === 'string' && key))])
+        : [];
+    } catch (_) {
+      preferredOrder = [];
+    }
+    return preferredOrder;
+  }
+
+  function persistPreferredOrder(visibleKeys = panes.value.map((pane) => pane.key)) {
+    const visible = new Set(visibleKeys);
+    preferredOrder = boundPreferredOrder([
+      ...visibleKeys,
+      ...readPreferredOrder().filter((key) => !visible.has(key)),
+    ]);
+    if (!persistOrder) return;
+    try { prefs.setItem(TERMINAL_PANE_ORDER_KEY, JSON.stringify(preferredOrder)); } catch (_) {}
+  }
+
+  function sortByPreferredOrder(items) {
+    const rank = new Map(readPreferredOrder().map((key, index) => [key, index]));
+    return items
+      .map((pane, index) => ({ pane, index }))
+      .sort((a, b) => (rank.get(a.pane.key) ?? Number.MAX_SAFE_INTEGER)
+        - (rank.get(b.pane.key) ?? Number.MAX_SAFE_INTEGER) || a.index - b.index)
+      .map(({ pane }) => pane);
+  }
+
+  function commitPaneOrder(next) {
+    if (next.every((pane, index) => panes.value[index] === pane)) return null;
+    panes.value = next;
+    persistPreferredOrder();
+    return Object.freeze({
+      pane: next.find((pane) => pane.key === activeKey.value) || null,
+      panes: next,
+    });
+  }
 
   function requestReveal() {
     revealRequest.value += 1;
@@ -41,7 +103,9 @@ export function createTerminalShellState() {
       label: seed.label || 'terminal',
       seed: Object.freeze({ ...seed }),
     });
-    panes.value = [...panes.value, pane];
+    const preferred = readPreferredOrder();
+    if (!preferred.includes(key)) preferred.push(key);
+    panes.value = sortByPreferredOrder([...panes.value, pane]);
     activeKey.value = key;
     if (reveal) requestReveal();
     return pane;
@@ -62,6 +126,38 @@ export function createTerminalShellState() {
     panes.value = next;
     if (activeKey.value === key) activeKey.value = next[0]?.key || null;
     return pane;
+  }
+
+  function movePane(key, toIndex) {
+    const current = panes.value;
+    const fromIndex = current.findIndex((pane) => pane.key === key);
+    if (fromIndex < 0 || current.length < 2 || !Number.isInteger(toIndex)) return null;
+    const destination = Math.max(0, Math.min(current.length - 1, toIndex));
+    if (destination === fromIndex) return null;
+    const next = [...current];
+    const [pane] = next.splice(fromIndex, 1);
+    next.splice(destination, 0, pane);
+    if (!commitPaneOrder(next)) return null;
+    return Object.freeze({ pane, index: destination, count: next.length });
+  }
+
+  function reorderPane(key, targetKey, { after = false } = {}) {
+    if (key === targetKey) return null;
+    const current = panes.value;
+    const pane = current.find((candidate) => candidate.key === key);
+    if (!pane || !current.some((candidate) => candidate.key === targetKey)) return null;
+    const next = current.filter((candidate) => candidate.key !== key);
+    const targetIndex = next.findIndex((candidate) => candidate.key === targetKey);
+    const destination = targetIndex + (after ? 1 : 0);
+    next.splice(destination, 0, pane);
+    if (!commitPaneOrder(next)) return null;
+    return Object.freeze({ pane, index: destination, count: next.length });
+  }
+
+  function movePaneByOffset(key, offset) {
+    const index = panes.value.findIndex((pane) => pane.key === key);
+    if (index < 0 || !Number.isInteger(offset) || offset === 0) return null;
+    return movePane(key, index + offset);
   }
 
   function openModal({ wsPath, ws, label = '', hideConv = null, initialRetry = false } = {}) {
@@ -107,6 +203,9 @@ export function createTerminalShellState() {
     openPane,
     activatePane,
     removePane,
+    movePane,
+    reorderPane,
+    movePaneByOffset,
     openModal,
     closeModal,
     findPaneKey,

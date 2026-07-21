@@ -64,6 +64,14 @@ export function createTerminalShellActions({
     return !disposed && state.activatePane(key);
   }
 
+  function reorderPane(key, targetKey, options) {
+    return disposed ? null : state.reorderPane(key, targetKey, options);
+  }
+
+  function movePaneByOffset(key, offset) {
+    return disposed ? null : state.movePaneByOffset(key, offset);
+  }
+
   async function closePane(key, { skipDetach = false } = {}) {
     if (disposed) return;
     const pane = state.panes.value.find((candidate) => candidate.key === key);
@@ -216,6 +224,8 @@ export function createTerminalShellActions({
     openPane,
     receiveHandoffPane,
     activatePane,
+    reorderPane,
+    movePaneByOffset,
     closePane,
     closeForHide,
     closeForAgents,

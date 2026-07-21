@@ -11,6 +11,15 @@ import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
+const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
+
+export function terminalTabReorderOffset(event) {
+  if (event?.type !== 'keydown' || event.target?.closest?.('button')) return null;
+  if (!event.shiftKey || !event.altKey) return null;
+  if (event.key === 'ArrowLeft') return -1;
+  if (event.key === 'ArrowRight') return 1;
+  return null;
+}
 
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
@@ -171,26 +180,50 @@ function TerminalPane({
   `;
 }
 
-function PaneTab({ pane, active, actions }) {
+function PaneTab({
+  pane, active, actions, dragging, dropSide, onDragStart, onDragEnd,
+  onDragOver, onDragLeave, onDrop, onReordered,
+}) {
   const activate = (event) => {
+    if (event.type === 'keydown' && event.target.closest('button')) return;
+    const reorderOffset = terminalTabReorderOffset(event);
+    if (reorderOffset !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      const moved = actions.movePaneByOffset(pane.key, reorderOffset);
+      if (moved) onReordered(moved);
+      return;
+    }
     if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') return;
     if (event.type === 'keydown') event.preventDefault();
     actions.activatePane(pane.key);
   };
   return html`
     <div
-      class=${`mux-tab${active ? ' active' : ''}`}
+      class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
       role="tab"
       tabIndex="0"
       aria-selected=${active ? 'true' : 'false'}
       aria-controls=${pane.id}
+      aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+      aria-describedby="terminal-tab-reorder-help"
       onClick=${activate}
       onKeyDown=${activate}
+      onDragOver=${(event) => onDragOver(event, pane.key)}
+      onDragLeave=${(event) => onDragLeave(event, pane.key)}
+      onDrop=${(event) => onDrop(event, pane.key)}
     >
-      <span class="mux-tab-label">${pane.label}</span>
+      <span
+        class="mux-tab-label"
+        draggable="true"
+        title="Drag to reorder · Alt+Shift+Left/Right to move with the keyboard"
+        onDragStart=${(event) => onDragStart(event, pane.key)}
+        onDragEnd=${onDragEnd}
+      >${pane.label}</span>
       <button
         type="button"
         class="mux-tab-close"
+        draggable="false"
         title="Close this terminal"
         aria-label=${`Close ${pane.label}`}
         onClick=${(event) => { event.stopPropagation(); void actions.closePane(pane.key); }}
@@ -205,6 +238,56 @@ function TerminalTabs({
 }) {
   const current = state.view.value;
   const hasPanes = current.panes.length > 0;
+  const dragKeyRef = useRef(null);
+  const [dragKey, setDragKey] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('');
+
+  const clearDrag = () => {
+    dragKeyRef.current = null;
+    setDragKey(null);
+    setDropTarget(null);
+  };
+  const announceReorder = ({ pane, index, count }) => {
+    setReorderAnnouncement(`Moved ${pane.label} to position ${index + 1} of ${count}.`);
+  };
+  const startTabDrag = (event, key) => {
+    event.stopPropagation();
+    event.dataTransfer.setData(TERMINAL_TAB_DRAG_MIME, key);
+    event.dataTransfer.effectAllowed = 'move';
+    dragKeyRef.current = key;
+    setDragKey(key);
+    setDropTarget(null);
+  };
+  const tabDragOver = (event, targetKey) => {
+    const sourceKey = dragKeyRef.current;
+    if (!sourceKey || sourceKey === targetKey) {
+      setDropTarget(null);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    if (dropTarget?.key !== targetKey || dropTarget.side !== side) {
+      setDropTarget({ key: targetKey, side });
+    }
+  };
+  const tabDragLeave = (event, targetKey) => {
+    if (dropTarget?.key !== targetKey || event.currentTarget.contains(event.relatedTarget)) return;
+    setDropTarget(null);
+  };
+  const dropTab = (event, targetKey) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    const moved = key && actions.reorderPane(key, targetKey, { after: side === 'after' });
+    clearDrag();
+    if (moved) announceReorder(moved);
+  };
 
   useLayoutEffect(() => {
     if (solo) return undefined;
@@ -284,8 +367,27 @@ function TerminalTabs({
   return html`
     <div class="terminal-shell-root">
       ${!solo ? html`
+        <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
+          Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
+        </span>
+        <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div class="mux-tabs" role="tablist" aria-label="Open terminals">
-          ${current.panes.map((pane) => html`<${PaneTab} key=${pane.key} pane=${pane} active=${current.activeKey === pane.key} actions=${actions} />`)}
+          ${current.panes.map((pane) => html`
+            <${PaneTab}
+              key=${pane.key}
+              pane=${pane}
+              active=${current.activeKey === pane.key}
+              actions=${actions}
+              dragging=${dragKey === pane.key}
+              dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
+              onDragStart=${startTabDrag}
+              onDragEnd=${clearDrag}
+              onDragOver=${tabDragOver}
+              onDragLeave=${tabDragLeave}
+              onDrop=${dropTab}
+              onReordered=${announceReorder}
+            />
+          `)}
         </div>
       ` : null}
       ${hasPanes || !empty ? html`
