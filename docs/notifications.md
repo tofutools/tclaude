@@ -180,6 +180,12 @@ exactly as before.
 - Clicking a browser banner focuses the dashboard. It does *not* raise the
   agent's tmux window the way an OS notification does — when you are
   remote, there is no window of yours to raise.
+- While `delivery` is left at `os`, a browser that has already been granted
+  permission falls back to a 30-second heartbeat rather than the 3-second
+  poll, so nothing is spent watching a channel that is switched off.
+- The Config tab reads the browser permission when it mounts. If you revoke
+  it in site settings (or grant it in another tab), that tab keeps showing
+  the previous state until you reload.
 
 ### Custom Notification Command
 

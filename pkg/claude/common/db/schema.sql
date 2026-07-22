@@ -904,3 +904,14 @@ CREATE TABLE conversation_resume_profiles (
 		updated_at   TEXT NOT NULL
 	);
 
+CREATE TABLE browser_notifications (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL DEFAULT '',
+			title      TEXT NOT NULL,
+			body       TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
+		);
+
+CREATE INDEX idx_browser_notifications_created
+			ON browser_notifications(created_at);
+

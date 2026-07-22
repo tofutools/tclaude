@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -30,6 +31,16 @@ func handleDashboardBrowserNotifications(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// enabled tells the client whether browser delivery is configured at
+	// all, so a browser that once granted permission can back off to a
+	// slow heartbeat instead of polling every 3s forever for a channel
+	// the operator left switched off. Advisory only — the queue is empty
+	// in that case anyway; this just saves the round-trips.
+	enabled := false
+	if cfg, err := config.Load(); err == nil {
+		enabled = cfg.Notifications.DeliverToBrowser()
+	}
+
 	raw := r.URL.Query().Get("since")
 	if raw == "" {
 		// No cursor: hand back the head and nothing else.
@@ -39,6 +50,7 @@ func handleDashboardBrowserNotifications(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled":       enabled,
 			"cursor":        head,
 			"notifications": []db.BrowserNotification{},
 		})
@@ -65,6 +77,7 @@ func handleDashboardBrowserNotifications(w http.ResponseWriter, r *http.Request)
 		head = since
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":       enabled,
 		"cursor":        head,
 		"notifications": items,
 	})

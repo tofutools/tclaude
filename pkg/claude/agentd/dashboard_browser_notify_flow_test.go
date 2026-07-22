@@ -3,6 +3,7 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 
@@ -117,6 +118,52 @@ func TestBrowserNotifications_MutedAgentIsSilentInTheBrowserToo(t *testing.T) {
 
 	mux := agentd.BuildDashboardHandlerForTest()
 	assert.Empty(t, fetchBrowserNotifications(t, mux, "?since=0").Notifications)
+}
+
+// Scenario: the queue endpoint sits behind the dashboard cookie gate like
+// every sibling route. It is the one new externally reachable surface in
+// this change, and it hands back conversation titles and project paths.
+func TestBrowserNotifications_AuthRequired(t *testing.T) {
+	restoreURL := agentd.SetPopupBaseURLForTest("http://127.0.0.1:0")
+	t.Cleanup(restoreURL)
+
+	_ = newFlow(t)
+	mux := http.NewServeMux()
+	agentd.RegisterDashboardRoutesForTest(mux)
+	rec := testharness.Serve(mux, httptest.NewRequest(http.MethodGet, "/api/browser-notifications?since=0", nil))
+	assert.NotEqual(t, http.StatusOK, rec.Code,
+		"the queue without the dashboard cookie should fail; body=%s", rec.Body.String())
+}
+
+// Scenario: the payload advertises whether browser delivery is configured,
+// so a browser that granted permission once can back off to a slow
+// heartbeat instead of polling every few seconds for a channel the
+// operator left switched off.
+func TestBrowserNotifications_PayloadAdvertisesWhetherDeliveryIsOn(t *testing.T) {
+	newFlow(t)
+	pinBrowserNotifyOrigin(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	off := fetchBrowserNotificationsRaw(t, mux, "")
+	assert.Equal(t, false, off["enabled"], "default delivery is os → the browser channel is off")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Notifications.Enabled = true
+	cfg.Notifications.Delivery = config.NotifyDeliveryBoth
+	require.NoError(t, config.Save(cfg))
+
+	on := fetchBrowserNotificationsRaw(t, mux, "?since=0")
+	assert.Equal(t, true, on["enabled"], "delivery both → the browser channel is on")
+}
+
+func fetchBrowserNotificationsRaw(t *testing.T, mux http.Handler, query string) map[string]any {
+	t.Helper()
+	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/api/browser-notifications"+query, nil))
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	return out
 }
 
 // Scenario: a malformed cursor is a clean 400, not a silent reset that

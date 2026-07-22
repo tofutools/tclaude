@@ -17,6 +17,14 @@
 
 export const BROWSER_NOTIFY_POLL_MS = 3000;
 
+// Cadence used while the server reports browser delivery is switched off.
+// Permission is granted per BROWSER, delivery is configured per DAEMON, so
+// a human who granted permission once and then left delivery at the default
+// `os` would otherwise poll every 3s forever for a channel that can never
+// produce anything. The slow heartbeat still notices the operator flipping
+// the knob, within half a minute.
+export const BROWSER_NOTIFY_IDLE_POLL_MS = 30000;
+
 const ENDPOINT = '/api/browser-notifications';
 
 // notificationsUsable reports whether this browsing context can raise a
@@ -60,12 +68,16 @@ export function startBrowserNotifyPoll({
   clearTimeoutImpl = globalThis.clearTimeout,
   win = globalThis,
   pollMs = BROWSER_NOTIFY_POLL_MS,
+  idlePollMs = BROWSER_NOTIFY_IDLE_POLL_MS,
   onJump = defaultJump,
 } = {}) {
   let cursor = null;
   let stopped = false;
   let timer = null;
   let inFlight = false;
+  // Assume delivery is on until the server says otherwise, so the very
+  // first banner after a fresh grant is never delayed by a slow tick.
+  let deliveryEnabled = true;
 
   const get = async (path) => {
     const res = await fetchImpl(path, { credentials: 'same-origin', cache: 'no-store' });
@@ -84,10 +96,17 @@ export function startBrowserNotifyPoll({
       if (cursor === null) {
         // Adopt the head without painting anything — "from now on".
         const data = await get(ENDPOINT);
-        cursor = Number(data?.cursor) || 0;
+        deliveryEnabled = data?.enabled !== false;
+        // A body without a usable cursor leaves us UNADOPTED (cursor stays
+        // null) and we retry next tick. Defaulting to 0 here would make the
+        // next poll ask `since=0` and raise every un-expired queued banner
+        // at once — precisely the backlog flood adoption exists to prevent.
+        const head = Number(data?.cursor);
+        if (Number.isFinite(head) && head >= 0) cursor = head;
         return;
       }
       const data = await get(`${ENDPOINT}?since=${encodeURIComponent(cursor)}`);
+      deliveryEnabled = data?.enabled !== false;
       // Advance the cursor BEFORE painting: a throw out of the Notification
       // constructor (a browser that refuses one for its own reasons) must
       // not pin the cursor and re-deliver the whole batch every 3s.
@@ -106,7 +125,7 @@ export function startBrowserNotifyPoll({
   };
 
   const schedule = () => {
-    if (!stopped) timer = setTimeoutImpl(run, pollMs);
+    if (!stopped) timer = setTimeoutImpl(run, deliveryEnabled ? pollMs : idlePollMs);
   };
   const run = () => {
     void tick().finally(schedule);

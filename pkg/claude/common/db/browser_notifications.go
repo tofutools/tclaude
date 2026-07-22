@@ -42,15 +42,34 @@ func enqueueBrowserNotificationAt(sessionID, title, body string, now time.Time) 
 	}
 	if _, err := d.Exec(
 		`INSERT INTO browser_notifications (session_id, title, body, created_at) VALUES (?, ?, ?, ?)`,
-		sessionID, title, body, now.Format(time.RFC3339Nano),
+		sessionID, title, body, stamp(now),
 	); err != nil {
 		return err
 	}
-	// Best-effort: a failed prune must not fail the enqueue — the row that
-	// matters is already committed, and the next enqueue or poll prunes.
-	_, _ = d.Exec(`DELETE FROM browser_notifications WHERE created_at < ?`,
-		now.Add(-browserNotificationTTL).Format(time.RFC3339Nano))
+	pruneBrowserNotifications(d, now)
 	return nil
+}
+
+// stamp renders a queue timestamp. Deliberately UTC: created_at is compared
+// against the TTL cutoff as a STRING, so two rows must never be ordered by
+// their wall-clock text under different UTC offsets. At a DST fall-back a
+// local-time stamp would make a 70-minute-old row read as fresh (and hide
+// expired rows from the prune) for an hour.
+func stamp(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+// pruneBrowserNotifications drops expired rows. Best-effort by design: a
+// failed prune must never fail the operation that triggered it — the row
+// that matters is already committed, and every later enqueue or poll
+// prunes again.
+//
+// Called from BOTH the enqueue and the read path, so a queue left behind
+// when the operator switches delivery back to `os` still drains instead of
+// sitting in the table forever.
+func pruneBrowserNotifications(d *sql.DB, now time.Time) {
+	_, _ = d.Exec(`DELETE FROM browser_notifications WHERE created_at < ?`,
+		stamp(now.Add(-browserNotificationTTL)))
 }
 
 // ListBrowserNotificationsSince returns the un-expired notifications
@@ -68,12 +87,21 @@ func listBrowserNotificationsSinceAt(afterID int64, now time.Time) ([]BrowserNot
 		return nil, 0, err
 	}
 
+	pruneBrowserNotifications(d, now)
+
+	// Read the head BEFORE the rows, never after: these are two separate
+	// implicit transactions, so a row inserted between them must land on
+	// the side that cannot lose it. Head-first means such a row is either
+	// invisible to both (delivered next poll) or visible to the row query
+	// — and the max() below then pulls the returned cursor up to cover it.
+	// Rows-first would instead produce a head AHEAD of what was delivered,
+	// silently skipping that row forever.
 	var head sql.NullInt64
 	if err := d.QueryRow(`SELECT MAX(id) FROM browser_notifications`).Scan(&head); err != nil {
 		return nil, 0, err
 	}
 
-	cutoff := now.Add(-browserNotificationTTL).Format(time.RFC3339Nano)
+	cutoff := stamp(now.Add(-browserNotificationTTL))
 	rows, err := d.Query(
 		`SELECT id, session_id, title, body, created_at
 		   FROM browser_notifications
@@ -100,12 +128,21 @@ func listBrowserNotificationsSinceAt(afterID int64, now time.Time) ([]BrowserNot
 		return nil, 0, err
 	}
 
-	// A truncated batch must NOT advance the caller past the rows it did
-	// not receive, so report the last delivered id as the head in that case.
-	if len(items) == browserNotificationLimit {
-		return items, items[len(items)-1].ID, nil
+	if len(items) == 0 {
+		return items, head.Int64, nil
 	}
-	return items, head.Int64, nil
+	last := items[len(items)-1].ID
+	// A truncated batch must NOT advance the caller past the rows it did
+	// not receive, so the last delivered id is the cursor in that case.
+	if len(items) == browserNotificationLimit {
+		return items, last, nil
+	}
+	// Otherwise the cursor must cover everything just delivered: a row
+	// inserted after the head read but before the row query is IN items
+	// while head still sits behind it. Returning the stale head there
+	// would re-deliver that row on every subsequent poll — a banner that
+	// repeats every few seconds until it ages out.
+	return items, max(head.Int64, last), nil
 }
 
 // LatestBrowserNotificationID returns the queue's head id — what a

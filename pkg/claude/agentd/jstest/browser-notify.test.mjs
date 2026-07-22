@@ -7,8 +7,10 @@ import { createPreactHarness } from './preact-harness.mjs';
 // than waiting on wall-clock time.
 function fakeClock() {
   let pending = null;
+  const delays = [];
   return {
-    setTimeoutImpl: (callback) => { pending = callback; return 1; },
+    delays,
+    setTimeoutImpl: (callback, ms) => { pending = callback; delays.push(ms); return 1; },
     clearTimeoutImpl: () => { pending = null; },
     async advance() {
       const run = pending;
@@ -123,6 +125,59 @@ test('browser notify poll survives a failing endpoint and keeps its cursor', asy
   // Still asking from 4 — a failed poll must not rewind or skip ahead.
   assert.equal(urls[2], '/api/browser-notifications?since=4');
   assert.equal(clock.scheduled, true, 'the loop keeps ticking after a failure');
+  stop();
+});
+
+test('browser notify poll backs off when the daemon says browser delivery is off', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { startBrowserNotifyPoll, BROWSER_NOTIFY_POLL_MS, BROWSER_NOTIFY_IDLE_POLL_MS } =
+    await harness.importDashboardModule('js/browser-notify.js');
+  const clock = fakeClock();
+  const { win } = fakeWindow('granted');
+  // Permission is per-browser, delivery is per-daemon: this human granted
+  // permission but left delivery at the default `os`.
+  let enabled = false;
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ enabled, cursor: 3, notifications: [] }) });
+
+  const stop = startBrowserNotifyPoll({ fetchImpl, win, ...clock });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(clock.delays.at(-1), BROWSER_NOTIFY_IDLE_POLL_MS,
+    'a switched-off channel must not be polled at the fast cadence forever');
+
+  // Flipping the knob on the daemon is picked up without a reload.
+  enabled = true;
+  await clock.advance();
+  assert.equal(clock.delays.at(-1), BROWSER_NOTIFY_POLL_MS);
+  stop();
+});
+
+test('browser notify poll refuses to adopt a missing cursor rather than replaying the queue', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { startBrowserNotifyPoll } = await harness.importDashboardModule('js/browser-notify.js');
+  const clock = fakeClock();
+  const { win, raised } = fakeWindow('granted');
+  const urls = [];
+  let broken = true;
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    if (broken) return { ok: true, json: async () => ({ enabled: true }) }; // no cursor
+    return { ok: true, json: async () => ({ enabled: true, cursor: 11, notifications: [] }) };
+  };
+
+  const stop = startBrowserNotifyPoll({ fetchImpl, win, ...clock });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  await clock.advance();
+  // Still unadopted — never `?since=0`, which would raise every un-expired
+  // banner in the queue at once.
+  assert.deepEqual(urls, ['/api/browser-notifications', '/api/browser-notifications']);
+  assert.equal(raised.length, 0);
+
+  broken = false;
+  await clock.advance();
+  await clock.advance();
+  assert.equal(urls.at(-1), '/api/browser-notifications?since=11');
   stop();
 });
 
