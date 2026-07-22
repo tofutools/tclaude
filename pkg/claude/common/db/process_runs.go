@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"regexp"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
 const (
@@ -166,95 +166,8 @@ func decodeBoundedProcessJSON(name string, data []byte, maximum int, dst any) er
 	if !utf8.Valid(data) {
 		return fmt.Errorf("%w: %s contains invalid UTF-8", ErrProcessRunInvalid, name)
 	}
-	if err := validateProcessJSONValueNames(data); err != nil {
+	if err := strictjson.Decode(data, dst); err != nil {
 		return fmt.Errorf("%w: decode %s: %v", ErrProcessRunInvalid, name, err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
-		return fmt.Errorf("%w: decode %s: %v", ErrProcessRunInvalid, name, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("multiple JSON values")
-		}
-		return fmt.Errorf("%w: decode %s: trailing data: %v", ErrProcessRunInvalid, name, err)
-	}
-	return nil
-}
-
-// validateProcessJSONValueNames rejects duplicate member names recursively.
-// encoding/json otherwise accepts duplicates (later values replace or merge
-// earlier ones), which would make a persisted checkpoint ambiguous. It runs on
-// raw UTF-8 before typed decoding, so escaped-equivalent names also collide.
-func validateProcessJSONValueNames(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := walkProcessJSONValue(decoder); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("multiple JSON values")
-		}
-		return fmt.Errorf("trailing data: %w", err)
-	}
-	return nil
-}
-
-func walkProcessJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, composite := token.(json.Delim)
-	if !composite {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		seen := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return errors.New("object member name is not a string")
-			}
-			if _, duplicate := seen[key]; duplicate {
-				return fmt.Errorf("duplicate object member %q", key)
-			}
-			seen[key] = struct{}{}
-			if err := walkProcessJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		closing, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		if closing != json.Delim('}') {
-			return errors.New("object has invalid closing delimiter")
-		}
-	case '[':
-		for decoder.More() {
-			if err := walkProcessJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		closing, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		if closing != json.Delim(']') {
-			return errors.New("array has invalid closing delimiter")
-		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
 	}
 	return nil
 }

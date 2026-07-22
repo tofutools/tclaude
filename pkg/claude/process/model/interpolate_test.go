@@ -22,3 +22,16 @@ func TestInterpolatePerformerRuntimeFields(t *testing.T) {
 		t.Fatalf("input args mutated: %#v", original.Args)
 	}
 }
+
+func TestParamReferencesUsesInterpolationGrammar(t *testing.T) {
+	got := ParamReferences("{{params.one}}/{{ params.two }}/{{ params.one }}")
+	want := []string{"one", "two", "one"}
+	if len(got) != len(want) {
+		t.Fatalf("ParamReferences = %#v", got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("ParamReferences = %#v, want %#v", got, want)
+		}
+	}
+}
