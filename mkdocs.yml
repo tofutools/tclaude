@@ -49,6 +49,7 @@ nav:
       - Dashboard: dashboard.md
       - Remote Control: remote-control.md
       - Remote Dashboard Access: remote-access.md
+      - Sandboxing: sandboxing.md
       - Sandbox Hardening: sandbox-hardening.md
       - Processes: processes.md
   - Claude Code Utilities:

@@ -10,51 +10,54 @@ lives elsewhere and is not repeated here:
 | For | Read |
 |-----|------|
 | Profile wire shape, deny/reopen rules, break-glass, the CLI | [Agent coordination → sandbox profiles](agent.md#sandbox-profiles) |
-| Per-session sandbox modes, Claude vs Codex capability matrix | [Harnesses](harnesses.md#sandbox-at-spawn-claude-code) |
+| Per-session sandbox modes (Claude `inherit`/`on`/`off`, Codex) | [Harnesses](harnesses.md#sandbox-at-spawn-claude-code) |
+| The full harness capability matrix | [Harnesses](harnesses.md#capability-matrix) |
 | Locking agents out of agentd's own state | [Sandbox hardening](sandbox-hardening.md) |
 | The dashboard editor and the sandbox scribe | [Dashboard → Sandbox Profiles](dashboard.md#sandbox-profiles) |
 
 Start here, then go to those.
 
-## The two layers, and which one is real
+## The two layers, and what each one actually covers
 
 An agent's filesystem access is shaped by two mechanisms that are easy to
-conflate. They have **different guarantees**, and only one is a boundary.
+conflate. They have **different guarantees**, and — this is the part that trips
+people up — **neither one covers everything**. You need both.
 
-### Layer 1 — the OS sandbox (the actual boundary)
+### Layer 1 — the OS sandbox
 
-bubblewrap on Linux/WSL2, Seatbelt on macOS. The kernel enforces it on the
-agent's process and every child it spawns. It acts on the **resolved mount
-view**, so no shell trick reaches around it: a path that is not mounted does
-not exist for that process, however the string was constructed.
+bubblewrap on Linux/WSL2, Seatbelt on macOS. This is what tclaude sandbox
+profiles render into: Claude Code's `sandbox.filesystem.*` block, or Codex's
+managed permission profile.
 
-This is what tclaude sandbox profiles render into — Claude Code's
-`sandbox.filesystem.*` block, or Codex's managed permission profile. **Treat
-this as the security boundary.**
+Within its scope it is a real boundary, enforced by the kernel and inherited by
+every child process. No shell trick reaches around it — the policy applies to
+the resolved path, however the string was constructed.
 
-### Layer 2 — permission rules (defense in depth only)
+**But its scope is Bash commands and their children.** Per Claude Code's
+sandboxing docs it "applies only to Bash commands and their child processes",
+which includes scripts (`python`, `node`, …). It does **not**, on its own, gate
+Claude Code's built-in `Read` / `Write` / `Edit` tools. That gap is real and
+verified: the `Write` tool created a file under `~/.tclaude/` on a machine whose
+Bash sandbox treated it as read-only. Layer 2 is what closes it.
+
+### Layer 2 — permission rules
 
 Claude Code's `permissions.allow` / `permissions.deny` rules for `Bash`,
 `Read`, and `Edit`. These are evaluated **before** a command runs, by matching
-the command string and argument structure.
+the command string and argument structure. `Read` and `Edit` rules gate the
+built-in file tools — the hole layer 1 leaves open.
 
-String matching has known gaps. A literal `ls ~/.tclaude` is denied, but the
-same path assembled from a shell variable is not:
+The trade-off is that string matching is not a boundary. It is best-effort at
+recognizing file access in Bash commands, and an arbitrary subprocess that
+opens a file itself never passes through it at all — a `python`/`node`
+one-liner slips straight past. See upstream
+[anthropics/claude-code#45200](https://github.com/anthropics/claude-code/issues/45200)
+for the discrepancies between the documented and actual matching behavior.
 
-```bash
-ls ~/.tclaude               # denied by the rule
-for d in .tclaude; do ls "$HOME/$d"; done   # the rule does not match
-```
-
-See upstream [anthropics/claude-code#45200](https://github.com/anthropics/claude-code/issues/45200)
-and [#51001](https://github.com/anthropics/claude-code/issues/51001).
-
-**Do not rely on layer 2 alone.** It is a useful belt — it catches the
-straightforward case and produces a clear denial message — but the reason
-[sandbox hardening](sandbox-hardening.md) asks you to configure *both* layers is
-that each covers a hole the other leaves open: layer 2 also gates Claude Code's
-built-in `Read`/`Write`/`Edit` tools, which the OS sandbox does not reach on its
-own, while layer 1 catches the subprocess that slips past a string match.
+**So: configure both, and understand what each buys.** Layer 1 contains the
+subprocess that layer 2 cannot see. Layer 2 gates the built-in tools that layer
+1 does not reach. [Sandbox hardening](sandbox-hardening.md) walks through
+setting up both for agentd's own state; a sandbox profile drives layer 1 only.
 
 ### What neither layer covers: MCP
 
@@ -135,23 +138,30 @@ automatically. That list is **short and closed**:
 
 ## Gotchas worth knowing before you debug one
 
-### Writes under a deny fail *silently*
+### Writes under a deny can fail *silently* (Linux)
 
-A write to a denied path can return **exit 0**, be visible to the rest of that
-same command invocation, and be gone by the next one. You do not get `EPERM` or
-`EROFS`.
+Observed under bubblewrap: a write to a denied path returned **exit 0**, stayed
+visible to the rest of that same command invocation, and was gone by the next
+one — no `EPERM`, no `EROFS`. The write landed in a throwaway layer of the mount
+view rather than being refused.
 
 The practical damage: a build that writes into `$HOME` reports success and
 loses its output. If an agent's work keeps evaporating with no error, suspect
-this first.
+this first. On macOS, Seatbelt denies the syscall instead, so expect an ordinary
+permission error there.
 
-### `ls ~` shows only what you reopened
+### `ls ~` shows only what you reopened (Linux)
 
-Under `deny ~`, listing home shows the reopened paths and nothing else. The
-rest of home is not *hidden* — it is **not mounted**. bubblewrap bind-mounts
-the allowed paths and builds the view from those.
+Under `deny ~` on bubblewrap, listing home shows the reopened paths and nothing
+else. The rest of home is not *hidden* — it is **not mounted**; bubblewrap
+bind-mounts the allowed paths and builds the view from those.
 
-### `$PATH` is a string; the mount view decides
+Seatbelt has no mount namespace: it filters syscalls against a path policy, so
+on macOS directory entries can still be enumerable while access to them is
+refused. Do not use "the listing looks short" as your macOS confirmation that a
+deny is in effect — try to read something.
+
+### `$PATH` is a string; the sandbox policy decides
 
 `command not found` for a tool that is plainly on `$PATH` is the normal symptom
 of a denied install root, not a broken profile. Version-manager installs are the
@@ -235,8 +245,9 @@ refused.
    tclaude agent sandbox-profiles group show <g>   # group assignment
    ```
 
-   These need `sandbox-profiles.manage` (human-only by default; it is
-   deliberately not implied by `profiles.manage`).
+   Reading a profile's payload (`show`) requires `sandbox-profiles.manage`,
+   which is human-only by default and deliberately not implied by
+   `profiles.manage`. Reading the global and group *assignments* does not.
 5. **Let the scribe draft it.** The dashboard's **🤖 configure with agent**
    button on the sandbox-profile editor summons a scribe that holds only
    `sandbox-profiles.draft` — it can propose a validated profile but cannot
