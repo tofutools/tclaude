@@ -28,6 +28,7 @@ type sandboxGlobalFilesystemRuleOriginJSON struct {
 	Harness string `json:"harness"`
 	Source  string `json:"source"`
 	Setting string `json:"setting"`
+	Access  string `json:"access"`
 	Note    string `json:"note,omitempty"`
 }
 
@@ -219,15 +220,17 @@ func mergeSandboxGlobalFilesystemRules(home string, candidates []sandboxGlobalFi
 		} else if candidate.access == "write" {
 			rule.Access = "write"
 		}
+		candidateOrigin := candidate.origin
+		candidateOrigin.Access = candidate.access
 		duplicate := false
-		for _, origin := range rule.Origins {
-			if origin == candidate.origin {
+		for _, existingOrigin := range rule.Origins {
+			if existingOrigin == candidateOrigin {
 				duplicate = true
 				break
 			}
 		}
 		if !duplicate {
-			rule.Origins = append(rule.Origins, candidate.origin)
+			rule.Origins = append(rule.Origins, candidateOrigin)
 		}
 	}
 
@@ -246,7 +249,10 @@ func mergeSandboxGlobalFilesystemRules(home string, candidates []sandboxGlobalFi
 			if rule.Origins[i].Harness != rule.Origins[j].Harness {
 				return rule.Origins[i].Harness < rule.Origins[j].Harness
 			}
-			return rule.Origins[i].Setting < rule.Origins[j].Setting
+			if rule.Origins[i].Setting != rule.Origins[j].Setting {
+				return rule.Origins[i].Setting < rule.Origins[j].Setting
+			}
+			return rule.Origins[i].Access < rule.Origins[j].Access
 		})
 		out = append(out, *rule)
 	}
