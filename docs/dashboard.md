@@ -360,14 +360,16 @@ rather than duplicated.
 The filesystem table also shows **inherited global config rules** by default.
 These subdued, read-only rows come from Claude Code's user-level
 `~/.claude/settings.json` sandbox filesystem block and tclaude's managed Codex
-`tclaude-agent.config.toml` permission profile. A badge says whether each rule
-applies to Claude, Codex, or both, and hovering it identifies the source file,
-setting, and whether the Claude sandbox is currently enabled. They are context
-for the effective launch policy, not part of the named profile: hiding them,
-opening raw JSON, cloning, exporting, or saving never copies them into the
-profile. The final launch can still add workspace, Git, agent-owned-directory,
-and assignment-layer rules that depend on its cwd and selected global/group/
-explicit profiles; the spawn dialog remains the authoritative composed preview.
+baseline rendered into every generated
+`tclaude-agent-<launch-id>.config.toml` permission profile. A badge says whether
+each rule applies to Claude, Codex, or both, and its keyboard-reachable tooltip
+identifies the source, setting, and whether the Claude sandbox is currently
+enabled. They are context for the effective launch policy, not part of the
+named profile: hiding them, opening raw JSON, cloning, exporting, or saving
+never copies them into the profile. The final launch can still add workspace,
+Git, agent-owned-directory, and assignment-layer rules that depend on its cwd
+and selected global/group/explicit profiles; the spawn dialog remains the
+authoritative composed preview.
 
 Profiles saved before this change may still carry the
 retired `read_baseline`/`read_baseline_exclusions` fields; the dashboard

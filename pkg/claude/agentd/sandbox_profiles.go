@@ -55,7 +55,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	global := sandboxGlobalFilesystemRules()
+	global := sandboxGlobalFilesystemRules(home)
 	writeJSON(w, http.StatusOK, sandboxCommonRuleCatalogJSON{
 		Version:              sandboxpolicy.CommonRuleCatalogVersion,
 		Platform:             runtime.GOOS,

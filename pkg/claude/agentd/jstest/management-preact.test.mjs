@@ -652,14 +652,14 @@ const COMMON_RULES = {
   global_filesystem: [
     { path: '~/.claude/sessions', access: 'deny', harnesses: ['claude', 'codex'], origins: [
       { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead + denyWrite', note: "Claude Code's global sandbox is enabled." },
-      { harness: 'codex', source: '~/.codex/tclaude-agent.config.toml', setting: 'permissions.tclaude-agent.filesystem', note: "Applied by tclaude's managed Codex sandbox profile." },
+      { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
     { path: '~/.codex', access: 'deny-read', harnesses: ['claude'], origins: [
       { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead', note: "Claude Code's global sandbox is enabled." },
     ] },
     { path: '~/.tclaude/api/agentd.sock', access: 'read', harnesses: ['claude', 'codex'], origins: [
       { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.allowRead', note: "Claude Code's global sandbox is enabled." },
-      { harness: 'codex', source: '~/.codex/tclaude-agent.config.toml', setting: 'permissions.tclaude-agent.filesystem', note: "Applied by tclaude's managed Codex sandbox profile." },
+      { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
   ],
   global_config_warnings: [],
@@ -702,10 +702,12 @@ test('global harness filesystem rows are visible, immutable, attributable, and n
   assert.equal(toggle.hasAttribute('checked'), true, 'inherited context is visible by default');
   const inherited = [...host.querySelectorAll('.sbx-global-row')];
   assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
+  assert.equal(inherited[0].getAttribute('tabindex'), '0', 'provenance tooltip is keyboard reachable');
+  assert.equal(inherited[0].getAttribute('role'), 'group');
   assert.equal(inherited[0].querySelector('.sbx-path').hasAttribute('readonly'), true);
   assert.equal(inherited[0].querySelectorAll('button').length, 0, 'an inherited row has no browse or delete actions');
   assert.match(inherited[0].textContent, /Claude \+ Codex/);
-  assert.match(inherited[0].getAttribute('title'), /settings\.json.*tclaude-agent\.config\.toml/s);
+  assert.match(inherited[0].getAttribute('title'), /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
   assert.match(inherited[1].textContent, /deny read.*Claude/);
 
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
@@ -1020,7 +1022,7 @@ test('common-rule insertion leaves ~otheruser paths literal', async (t) => {
   host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /Added 1 deny row/);
-  assert.deepEqual([...host.querySelectorAll('.sbx-path')].map((input) => input.value), ['~otheruser/.ssh', '/home/op/.ssh']);
+  assert.deepEqual([...host.querySelectorAll('.sbx-row:not(.sbx-global-row) .sbx-path')].map((input) => input.value), ['~otheruser/.ssh', '/home/op/.ssh']);
   unmount();
 });
 

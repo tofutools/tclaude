@@ -2,13 +2,12 @@ package agentd
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -47,14 +46,14 @@ type sandboxGlobalFilesystemRuleCandidate struct {
 // harness configs that compose beneath a named sandbox profile:
 //
 //   - Claude Code's user settings.json sandbox block; and
-//   - tclaude's managed Codex permission profile.
+//   - the canonical baseline rendered into every managed Codex launch profile.
 //
 // A missing config is an empty layer, not an error. A malformed config is
 // reported as an inline warning while the other harness remains useful. This
 // feed is explanatory only and must never make the editor unable to save its
 // own independent profile payload.
-func sandboxGlobalFilesystemRules() sandboxGlobalFilesystemRulesJSON {
-	home, err := os.UserHomeDir()
+func sandboxGlobalFilesystemRules(home string) sandboxGlobalFilesystemRulesJSON {
+	home, err := sandboxpolicy.CanonicalCommonRuleHome(home)
 	if err != nil {
 		return sandboxGlobalFilesystemRulesJSON{Warnings: []string{"Could not resolve the home directory used by global sandbox config."}}
 	}
@@ -66,7 +65,7 @@ func sandboxGlobalFilesystemRules() sandboxGlobalFilesystemRulesJSON {
 	if claudeWarning != "" {
 		warnings = append(warnings, claudeWarning)
 	}
-	codexRules, codexWarning := readCodexGlobalFilesystemRules(home)
+	codexRules, codexWarning := readCodexGlobalFilesystemRules()
 	candidates = append(candidates, codexRules...)
 	if codexWarning != "" {
 		warnings = append(warnings, codexWarning)
@@ -116,7 +115,7 @@ func readClaudeGlobalFilesystemRules(home string) ([]sandboxGlobalFilesystemRule
 			note = "Configured globally, but inactive unless the launch forces the Claude Code sandbox on."
 		}
 	}
-	source := displaySandboxGlobalPath(home, path)
+	source := displaySandboxGlobalPath(home, sandboxGlobalPathIdentity(home, path))
 	filesystem := settings.Sandbox.Filesystem
 	candidates := make([]sandboxGlobalFilesystemRuleCandidate, 0,
 		len(filesystem.AllowRead)+len(filesystem.AllowWrite)+len(filesystem.DenyRead)+len(filesystem.DenyWrite))
@@ -155,40 +154,18 @@ func readClaudeGlobalFilesystemRules(home string) ([]sandboxGlobalFilesystemRule
 	return candidates, ""
 }
 
-func readCodexGlobalFilesystemRules(home string) ([]sandboxGlobalFilesystemRuleCandidate, string) {
-	path, err := harness.CodexAgentProfilePath()
+func readCodexGlobalFilesystemRules() ([]sandboxGlobalFilesystemRuleCandidate, string) {
+	rules, err := harness.CodexManagedBaselineFilesystemRules()
 	if err != nil {
-		return nil, "Could not locate the managed Codex sandbox profile: " + err.Error()
+		return nil, "Could not render the managed Codex sandbox baseline: " + err.Error()
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, ""
-	}
-	if err != nil {
-		return nil, "Could not read the managed Codex sandbox profile: " + err.Error()
-	}
-	var config struct {
-		Permissions map[string]struct {
-			Filesystem map[string]string `toml:"filesystem"`
-		} `toml:"permissions"`
-	}
-	if err := toml.Unmarshal(data, &config); err != nil {
-		return nil, "Could not parse the managed Codex sandbox profile: tclaude-agent.config.toml is not valid TOML."
-	}
-	profile, ok := config.Permissions[harness.CodexAgentProfile]
-	if !ok {
-		return nil, fmt.Sprintf("The managed Codex sandbox profile does not define permissions.%s.", harness.CodexAgentProfile)
-	}
-	source := displaySandboxGlobalPath(home, path)
-	paths := make([]string, 0, len(profile.Filesystem))
-	for rulePath := range profile.Filesystem {
-		paths = append(paths, rulePath)
-	}
-	sort.Strings(paths)
-	candidates := make([]sandboxGlobalFilesystemRuleCandidate, 0, len(paths))
-	for _, rulePath := range paths {
+	candidates := make([]sandboxGlobalFilesystemRuleCandidate, 0, len(rules))
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.Path) == "" {
+			continue
+		}
 		access := ""
-		switch strings.TrimSpace(profile.Filesystem[rulePath]) {
+		switch strings.TrimSpace(rule.Access) {
 		case "read":
 			access = "read"
 		case "write":
@@ -199,11 +176,11 @@ func readCodexGlobalFilesystemRules(home string) ([]sandboxGlobalFilesystemRuleC
 			continue
 		}
 		candidates = append(candidates, sandboxGlobalFilesystemRuleCandidate{
-			path: rulePath, access: access,
+			path: rule.Path, access: access,
 			origin: sandboxGlobalFilesystemRuleOriginJSON{
-				Harness: "codex", Source: source,
-				Setting: fmt.Sprintf("permissions.%s.filesystem", harness.CodexAgentProfile),
-				Note:    "Applied by tclaude's managed Codex sandbox profile.",
+				Harness: "codex", Source: "generated tclaude-agent-<launch-id>.config.toml",
+				Setting: "permissions.tclaude-agent-<launch-id>.filesystem",
+				Note:    "Generated from tclaude's canonical managed baseline for each Codex launch.",
 			},
 		})
 	}
@@ -281,8 +258,25 @@ func sandboxGlobalPathIdentity(home, path string) string {
 		path = home
 	} else if strings.HasPrefix(path, "~/") {
 		path = filepath.Join(home, path[2:])
+	} else if filepath.IsAbs(path) {
+		// os.UserHomeDir may retain a symlink spelling while the catalog home is
+		// canonical. Rewrite that lexical prefix before comparing it with Claude
+		// `~/…` rules so both harnesses get one row and one provenance badge.
+		if rawHome, err := os.UserHomeDir(); err == nil {
+			rawHome = filepath.Clean(rawHome)
+			if rel, relErr := filepath.Rel(rawHome, filepath.Clean(path)); relErr == nil &&
+				(rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
+				path = filepath.Join(home, rel)
+			}
+		}
 	}
-	return filepath.Clean(path)
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) {
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = filepath.Clean(resolved)
+		}
+	}
+	return path
 }
 
 func displaySandboxGlobalPath(home, path string) string {

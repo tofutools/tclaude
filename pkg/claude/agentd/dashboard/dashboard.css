@@ -3848,6 +3848,11 @@ body.wizard .group-pending-title-wizard { display: inline; }
 .sbx-global-toggle input { accent-color: #58a6ff; }
 .sbx-global-rows { gap: 4px; }
 .sbx-global-row { opacity: .82; }
+.sbx-global-row:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 .sbx-global-row .sbx-path[readonly] {
   background: #11161d; border-color: #242d38; color: #9da7b3;
   cursor: default; user-select: text;

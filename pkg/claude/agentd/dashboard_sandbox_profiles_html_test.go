@@ -73,7 +73,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`break_glass_filesystem: draft.break_glass_filesystem || []`:                 "break-glass rules persist in save payloads",
 		`id="sandbox-profile-editor-common-rules"`:                                   "the common-rule preset menu rides on the filesystem table",
 		`id="sandbox-profile-editor-show-global-filesystem"`:                         "inherited global filesystem rows have an explicit visibility control",
-		`class="sbx-row sbx-global-row"`:                                             "global harness rules render as immutable filesystem rows",
+		`class="sbx-row sbx-global-row" role="group" tabindex="0"`:                  "global harness rule provenance is keyboard reachable",
 		`readonly aria-readonly="true"`:                                              "global config paths cannot be edited into the named profile",
 		`globalFilesystemRuleTooltip(row)`:                                           "immutable rows explain their harness config provenance",
 		`.sbx-global-harness {`:                                                      "Claude/Codex provenance stays visible without opening a tooltip",
