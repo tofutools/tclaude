@@ -203,6 +203,28 @@ func TestBlankInitialSessionProjectionPreservesExactAgentBirthIntent(t *testing.
 	assert.Equal(t, "on", *profile.SandboxMode)
 }
 
+func TestNewUnmanagedGenerationDoesNotInheritPreviousToggles(t *testing.T) {
+	setupTestDB(t)
+	const convID = "plain-toggle-generations"
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "plain-toggle-old", ConvID: convID, Cwd: "/tmp/plain-toggle",
+		Harness: DefaultHarness, CreatedAt: time.Now().Add(-time.Hour),
+	}))
+	require.NoError(t, SetSessionRemoteControl("plain-toggle-old", true))
+	require.NoError(t, SetSessionAutoMemory("plain-toggle-old", true))
+	assert.True(t, mustRemoteControlForConv(t, convID))
+	assert.True(t, mustAutoMemoryForConv(t, convID))
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "plain-toggle-new", ConvID: convID, Cwd: "/tmp/plain-toggle",
+		Harness: DefaultHarness, CreatedAt: time.Now(),
+	}))
+	require.NoError(t, DeleteSession("plain-toggle-old"))
+	require.NoError(t, DeleteSession("plain-toggle-new"))
+	assert.False(t, mustRemoteControlForConv(t, convID))
+	assert.False(t, mustAutoMemoryForConv(t, convID))
+}
+
 func TestMigrateV145BackfillsThenDecouplesLegacySession(t *testing.T) {
 	setupTestDB(t)
 	const convID = "legacy-v144-conv"

@@ -319,6 +319,8 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	}
 	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
 		previous := existingConversation.FallbackRelaunch
+		sameSourceGeneration := existingConversation.SourceSessionCreatedAt == createdAt &&
+			existingConversation.SourceSessionRowID == rowID
 		if agent.ModelID == nil {
 			agent.ModelID = previous.ModelID
 		}
@@ -328,10 +330,10 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.ContextWindowSize == nil {
 			agent.ContextWindowSize = previous.ContextWindowSize
 		}
-		if agent.RemoteControl == nil {
+		if sameSourceGeneration && agent.RemoteControl == nil {
 			agent.RemoteControl = previous.RemoteControl
 		}
-		if agent.AutoMemory == nil {
+		if sameSourceGeneration && agent.AutoMemory == nil {
 			agent.AutoMemory = previous.AutoMemory
 		}
 	}
