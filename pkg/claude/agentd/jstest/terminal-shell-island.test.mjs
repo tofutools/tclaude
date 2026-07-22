@@ -354,8 +354,8 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     widgetFactory: fake.factory,
     fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
     windowRef: {
-      open(url, target) {
-        const tab = { opened: [url, target], location: { replace: (next) => opened.push(next) } };
+      open(url, target, features) {
+        const tab = { opened: [url, target, features], location: { replace: (next) => opened.push(next) } };
         opened.push(tab);
         return tab;
       },
@@ -421,7 +421,7 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/,
     'detach uses the same standalone terminal handoff as the pane header button');
   assert.equal(opened.at(-2).opened[2], undefined,
-    'the context menu still detaches into a browser tab — only a drag asks for a window');
+    'the context menu still detaches into a browser tab — window features are what would make it a window');
   assert.equal(harness.document.activeElement, tab('three'), 'detach focuses the surviving active tab');
 
   await open('two');

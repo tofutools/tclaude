@@ -68,15 +68,26 @@ export const DETACH_WINDOW_MIN = Object.freeze({ width: 480, height: 300 });
 export const DETACH_WINDOW_CHROME_HEIGHT = 40;
 
 function clampAxis(length, start, min, availLength, availStart) {
-  const span = Math.max(min, Math.min(Math.round(length), availLength));
+  // A screen smaller than the minimum is still the whole screen: the cap is the
+  // last word, so an unusually small work area gets a window that fits it rather
+  // than one deliberately larger than the display.
+  const span = Math.min(Math.max(min, Math.round(length)), availLength);
+  // `screen` only ever describes the display the dashboard itself is on; a
+  // release point beyond it landed on some other monitor whose geometry this
+  // page cannot see (that needs the permission-gated Window Management API).
+  // Clamping such a point would yank the window back onto the monitor the user
+  // just dragged away from, so pass it through and let the browser place it.
+  const outside = start < availStart || start > availStart + availLength;
   const limit = availStart + availLength - span;
-  return { span, start: Math.round(Math.max(availStart, Math.min(start, limit))) };
+  const placed = outside ? start : Math.max(availStart, Math.min(start, limit));
+  return { span, start: Math.round(placed) };
 }
 
 // detachWindowFeatures sizes the detached window to the pane the terminal is
-// leaving and puts it where the drag was released, clamped onto the screen.
-// It returns '' when either measurement is missing, which asks for a plain tab
-// rather than guessing at a geometry.
+// leaving and puts it where the drag was released, kept on-screen when the
+// release point is on the screen this page can measure. It returns '' when
+// either measurement is missing, which asks for a plain tab rather than
+// guessing at a geometry.
 export function detachWindowFeatures({ size, at, screen } = {}) {
   const width = Number(size?.width);
   const height = Number(size?.height);

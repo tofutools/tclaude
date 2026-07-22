@@ -69,17 +69,37 @@ test('a dragged-out terminal asks for a window sized to the pane it is leaving',
     `popup=yes,width=${DETACH_WINDOW_MIN.width},height=${DETACH_WINDOW_MIN.height},left=200,top=100`,
     'a sliver of a pane still opens a usable window');
   assert.equal(features({ at: { x: 1500, y: 850 } }),
-    `popup=yes,width=800,height=540,left=800,top=360`,
-    'a release near the screen edge pulls the whole window back on-screen');
-  assert.equal(features({ at: { x: -500, y: -500 } }),
-    'popup=yes,width=800,height=540,left=0,top=0');
+    'popup=yes,width=800,height=540,left=800,top=360',
+    'a release inside the screen pulls the whole window back on-screen');
+
+  // `screen` describes the display the dashboard is on. A release beyond it is
+  // on a monitor this page cannot measure, so the point survives untouched and
+  // the browser does the placing; clamping it would drag the window back onto
+  // the monitor the operator just left.
+  assert.equal(features({ at: { x: 2400, y: 300 } }),
+    'popup=yes,width=800,height=540,left=2400,top=300',
+    'a release past the right edge keeps the monitor it was dropped on');
+  assert.equal(features({ at: { x: -900, y: 300 } }),
+    'popup=yes,width=800,height=540,left=-900,top=300',
+    'a monitor to the left is reached through negative coordinates');
+  assert.equal(features({ at: { x: 700, y: 1400 } }),
+    'popup=yes,width=800,height=540,left=700,top=1400',
+    'each axis decides on its own whether the point is measurable');
   assert.equal(
     detachWindowFeatures({
-      size: { width: 800, height: 500 }, at: { x: 100, y: 100 },
-      screen: { availWidth: 1600, availHeight: 900, availLeft: 1600, availTop: 0 },
+      size: { width: 800, height: 500 }, at: { x: 2400, y: 100 },
+      screen: { availWidth: 1600, availHeight: 900, availLeft: 1920, availTop: 0 },
     }),
-    'popup=yes,width=800,height=540,left=1600,top=100',
-    'a second monitor is addressed through its own available origin');
+    'popup=yes,width=800,height=540,left=2400,top=100',
+    'a screen with its own origin clamps against that origin, not zero');
+
+  assert.equal(
+    detachWindowFeatures({
+      size: { width: 800, height: 500 }, at: { x: 10, y: 10 },
+      screen: { availWidth: 320, availHeight: 200, availLeft: 0, availTop: 0 },
+    }),
+    'popup=yes,width=320,height=200,left=0,top=0',
+    'a screen smaller than the minimum window still caps the window');
 
   assert.equal(features({ size: null }), '', 'an unmeasured pane asks for a plain tab, not a guess');
   assert.equal(features({ screen: null }), '', 'an unmeasured screen asks for a plain tab');
