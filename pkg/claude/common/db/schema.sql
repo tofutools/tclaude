@@ -904,3 +904,30 @@ CREATE TABLE conversation_resume_profiles (
 		updated_at   TEXT NOT NULL
 	);
 
+CREATE TABLE process_runs (
+			id                     TEXT PRIMARY KEY,
+			template_ref           TEXT NOT NULL,
+			template_snapshot_json TEXT NOT NULL,
+			params_json            TEXT NOT NULL,
+			status                 TEXT NOT NULL,
+			state_version          INTEGER NOT NULL CHECK(state_version > 0),
+			checkpoint_json        TEXT NOT NULL,
+			created_at             TEXT NOT NULL,
+			updated_at             TEXT NOT NULL
+		);
+
+CREATE INDEX idx_process_runs_active
+			ON process_runs(id)
+			WHERE status NOT IN ('completed', 'failed', 'canceled');
+
+CREATE TABLE process_run_events (
+			run_id       TEXT NOT NULL REFERENCES process_runs(id) ON DELETE CASCADE,
+			sequence     INTEGER NOT NULL CHECK(sequence > 0),
+			occurred_at  TEXT NOT NULL,
+			node_id      TEXT NOT NULL DEFAULT '',
+			kind         TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			actor        TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (run_id, sequence)
+		);
+
