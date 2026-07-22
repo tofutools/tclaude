@@ -1447,6 +1447,7 @@ type AgentDeletionCounts struct {
 	SuccessionNew  int64 `json:"succession_new"`
 	Embeddings     int64 `json:"embeddings"`
 	ConvIndex      int64 `json:"conv_index"`
+	ResumeProfiles int64 `json:"resume_profiles"`
 	Sessions       int64 `json:"sessions"`
 	NotifyPrefs    int64 `json:"notify_prefs"`
 	SudoGrants     int64 `json:"sudo_grants"`
@@ -1469,6 +1470,7 @@ func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
 	c.SuccessionNew += o.SuccessionNew
 	c.Embeddings += o.Embeddings
 	c.ConvIndex += o.ConvIndex
+	c.ResumeProfiles += o.ResumeProfiles
 	c.Sessions += o.Sessions
 	c.NotifyPrefs += o.NotifyPrefs
 	c.SudoGrants += o.SudoGrants
@@ -1486,6 +1488,7 @@ func (c *AgentDeletionCounts) Add(o AgentDeletionCounts) {
 //   - agent_conv_succession (old_conv_id = ? OR new_conv_id = ?)
 //   - conv_embeddings
 //   - conv_index
+//   - conversation_resume_profiles
 //   - sessions
 //
 // Actor-scoped (keyed on the resolved agent_id) — ONLY when convID is the
@@ -1571,6 +1574,7 @@ func DeleteAgentByConvID(convID string) (AgentDeletionCounts, error) {
 		{`DELETE FROM agent_conv_succession WHERE new_conv_id = ?`, &c.SuccessionNew},
 		{`DELETE FROM conv_embeddings WHERE conv_id = ?`, &c.Embeddings},
 		{`DELETE FROM conv_index WHERE conv_id = ?`, &c.ConvIndex},
+		{`DELETE FROM conversation_resume_profiles WHERE conv_id = ?`, &c.ResumeProfiles},
 		{`DELETE FROM sessions WHERE conv_id = ?`, &c.Sessions},
 	} {
 		res, err := tx.Exec(s.stmt, convID)

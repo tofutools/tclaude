@@ -193,17 +193,18 @@ func TestCrossAgentAskHuman_ResumeProvenanceRecoveryApproveDenyTimeout(t *testin
 			}
 
 			require.Equal(t, tc.status, response.Code, "body=%s", response.Body.String())
-			oldRow, err := db.LoadSession(source.ID)
+			profile, err := db.ConversationResumeProfileForConv(target)
 			require.NoError(t, err)
+			require.NotNil(t, profile)
 			_, launched := f.World.SpawnCwdWriteProof(target)
 			if tc.decision == "approve" {
 				assert.True(t, launched)
-				assert.NotEmpty(t, oldRow.ResumeProvenance,
+				assert.NotEmpty(t, profile.ResumeProvenance,
 					"actual approval must durably recover the stopped target identity")
 			} else {
 				assert.False(t, launched, "deny/timeout must leave the target stopped")
-				assert.Empty(t, oldRow.ResumeProvenance,
-					"deny/timeout must not bless or mutate the stopped row")
+				assert.Empty(t, profile.ResumeProvenance,
+					"deny/timeout must not bless or mutate the conversation profile")
 				assert.False(t, f.World.Tmux.IsAlive(tmux))
 			}
 			assertNoDirWriteProofMarkers(t, cwd)
@@ -231,6 +232,10 @@ func TestCrossAgentAskHuman_MissingSessionRecoveryRequiresActualApproval(t *test
 	f.HaveMember(group.Name, target)
 	require.NoError(t, db.AddAgentGroupOwner(group.ID, caller, "test"))
 	require.NoError(t, db.DeleteSession(sessionID))
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`DELETE FROM conversation_resume_profiles WHERE conv_id = ?`, target)
+	require.NoError(t, err)
 
 	// Group ownership authorizes the resume verb, but it is not a human trust
 	// root and therefore cannot bless a replacement anchor on its own.
@@ -270,8 +275,11 @@ func TestCrossAgentAskHuman_MissingSessionRecoveryRequiresActualApproval(t *test
 
 	rows, err = db.FindSessionsByConvID(target)
 	require.NoError(t, err)
-	require.NotEmpty(t, rows)
-	assert.NotEmpty(t, rows[0].ResumeProvenance)
+	require.NotEmpty(t, rows, "the successful resume creates only the new process row")
+	profile, err := db.ConversationResumeProfileForConv(target)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	assert.NotEmpty(t, profile.ResumeProvenance)
 	_, launched := f.World.SpawnCwdWriteProof(target)
 	assert.True(t, launched, "the actually approved recovery must launch the target")
 }

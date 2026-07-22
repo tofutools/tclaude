@@ -62,10 +62,10 @@ type SessionRow struct {
 	// session generation. Nil is the legacy/direct-session sentinel. Hook
 	// upserts preserve an existing snapshot when they do not carry one.
 	EffectiveSandbox *sandboxpolicy.Snapshot
-	// ResumeProvenance is versioned daemon-private JSON binding this session's
-	// physical cwd and repository metadata identities. Empty means the row is
-	// legacy or a controlled-stop capture failed; offline agent resume must then
-	// fail closed until a human explicitly recovers trust (schema v131).
+	// ResumeProvenance is the process-generation snapshot of versioned,
+	// daemon-private physical cwd/repository identity. Writes are projected to
+	// the conversation-owned resume profile; lifecycle reads that durable owner,
+	// not this prunable audit copy (schema v131/v145).
 	ResumeProvenance string
 	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
 	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under,
@@ -150,7 +150,12 @@ func SaveSession(s *SessionRow) error {
 	// Resume provenance is intentionally insert-only here. Trusted lifecycle
 	// boundaries update it through SetSessionResumeProvenance; allowing generic
 	// hook UPSERTs to update it could resurrect a value invalidated during stop.
-	_, err = db.Exec(`INSERT INTO sessions
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`INSERT INTO sessions
 		(id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, ask_user_question_timeout, effective_sandbox_config, approval_policy, approval_auto_review, resume_provenance, agent_id,
 		 exit_callback_generation, exit_callback_token_hash, exit_callback_pane_id, exit_callback_used_at,
 		 exit_intent, exit_intent_event_id, exit_intent_generation, exit_intent_at, exit_launch_gate_state)
@@ -190,7 +195,13 @@ func SaveSession(s *SessionRow) error {
 		s.Status, s.StatusDetail, s.SubagentCount, s.SubagentsJSON, s.BgShellsJSON, boolToInt(s.AutoRegistered),
 		s.CreatedAt.Format(time.RFC3339Nano), s.UpdatedAt.Format(time.RFC3339Nano), s.LastHook.Format(time.RFC3339Nano), harness, s.SandboxMode, s.AskUserQuestionTimeout, effectiveSandbox, s.ApprovalPolicy, boolToInt(s.ApprovalAutoReview), s.ResumeProvenance, s.ConvID,
 		s.ExitLaunchGeneration, s.ExitLaunchGateState)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := projectSessionRelaunchProfilesTx(tx, s.ID, relaunchProjectionOptions{}); err != nil {
+		return fmt.Errorf("project durable relaunch profiles: %w", err)
+	}
+	return tx.Commit()
 }
 
 // InsertSessionResumeAnchor persists the minimum trusted launch identity needed
@@ -202,6 +213,10 @@ func SaveSession(s *SessionRow) error {
 // overwrite that launch. The normal session-new UPSERT later reuses this row
 // (resume rows are keyed by the full conv-id) while SaveSession's insert-only
 // provenance rule preserves the trusted anchor.
+//
+// Deprecated: retained only for pre-v145 compatibility tests/older callers.
+// New recovery writes ConversationResumeProfile directly and must not create
+// synthetic process history.
 func InsertSessionResumeAnchor(convID, cwd, harness, provenance string, now time.Time) (bool, error) {
 	d, err := Open()
 	if err != nil {
@@ -322,9 +337,9 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 	return s, err
 }
 
-// SessionLaunchProfile is the observable launch shape of a conv's
-// most-recent session — what a from-group template snapshot re-traces per
-// member (JOH-239) so a round-trip preserves each role's launch fields.
+// SessionLaunchProfile is the observable launch shape of a conversation. The
+// historical name is retained for API compatibility; v145 reads durable agent
+// intent or the unmanaged conversation fallback before legacy session evidence.
 //
 // ModelID is the resume-safe full model ID (sessions.model_id, e.g.
 // "claude-fable-5"), NOT the display alias (sessions.model, "Opus 4.8") —
@@ -341,11 +356,77 @@ type SessionLaunchProfile struct {
 	ApprovalAutoReview bool
 }
 
-// SessionLaunchProfileForConv reads the launch fields of a conv's most-recent
-// session row. Returns a zero-value profile (no error) when the conv has no
-// session row, so a snapshot of a member whose row was pruned degrades to "no
-// overrides" rather than failing.
+// SessionLaunchProfileForConv reads durable agent intent, or the conversation
+// fallback for an unmanaged conversation. A latest-session read remains only
+// as compatibility for data not yet projected by v145/older binaries.
 func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
+	durable, err := AgentRelaunchProfileForConv(convID)
+	if err != nil {
+		return SessionLaunchProfile{}, err
+	}
+	resume, err := ConversationResumeProfileForConv(convID)
+	if err != nil {
+		return SessionLaunchProfile{}, err
+	}
+	if resume != nil && resume.FallbackRelaunch != nil {
+		fallback := resume.FallbackRelaunch
+		if durable == nil {
+			durable = fallback
+		} else {
+			merged := *fallback
+			merged.Version = durable.Version
+			if durable.SandboxMode != nil {
+				merged.SandboxMode = durable.SandboxMode
+			}
+			if durable.ApprovalPolicy != nil {
+				merged.ApprovalPolicy = durable.ApprovalPolicy
+			}
+			if durable.ApprovalAutoReview != nil {
+				merged.ApprovalAutoReview = durable.ApprovalAutoReview
+			}
+			if durable.ModelID != nil {
+				merged.ModelID = durable.ModelID
+			}
+			if durable.Effort != nil {
+				merged.Effort = durable.Effort
+			}
+			if durable.ContextWindowSize != nil {
+				merged.ContextWindowSize = durable.ContextWindowSize
+			}
+			if durable.AskUserQuestionTimeout != nil {
+				merged.AskUserQuestionTimeout = durable.AskUserQuestionTimeout
+			}
+			if durable.RemoteControl != nil {
+				merged.RemoteControl = durable.RemoteControl
+			}
+			if durable.AutoMemory != nil {
+				merged.AutoMemory = durable.AutoMemory
+			}
+			durable = &merged
+		}
+	}
+	if durable != nil {
+		p := SessionLaunchProfile{}
+		if resume != nil {
+			p.Harness = resume.Harness
+		}
+		if durable.ModelID != nil {
+			p.ModelID = *durable.ModelID
+		}
+		if durable.Effort != nil {
+			p.Effort = *durable.Effort
+		}
+		if durable.SandboxMode != nil {
+			p.SandboxMode = *durable.SandboxMode
+		}
+		if durable.ApprovalPolicy != nil {
+			p.ApprovalPolicy = *durable.ApprovalPolicy
+		}
+		if durable.ApprovalAutoReview != nil {
+			p.ApprovalAutoReview = *durable.ApprovalAutoReview
+		}
+		return p, nil
+	}
 	d, err := Open()
 	if err != nil {
 		return SessionLaunchProfile{}, err
@@ -504,12 +585,8 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 // meaningful here: controlled stop uses it to atomically invalidate an older
 // snapshot when fresh live-pane capture fails.
 func SetSessionResumeProvenance(id, provenance string) error {
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions SET resume_provenance = ? WHERE id = ?`, provenance, id)
-	return err
+	return execSessionUpdateAndProject(id, relaunchProjectionOptions{},
+		`UPDATE sessions SET resume_provenance = ? WHERE id = ?`, provenance, id)
 }
 
 // MarkSessionExitedIfUnchanged sets a session's status to "exited" —
@@ -758,14 +835,9 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return nil
 	}
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{}, `UPDATE sessions
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
-	return err
 }
 
 // UpdateStatuslineSnapshot stores the verbatim raw JSON of the most recent
@@ -835,21 +907,24 @@ func SetSessionBgShellsIfUnchanged(sessionID, prev, next string) (bool, error) {
 // injection, so the recorded flag stays in step with what was actually typed
 // into the pane. See JOH-256 / JOH-257.
 func SetSessionRemoteControl(sessionID string, on bool) error {
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions SET remote_control = ? WHERE id = ?`, boolToInt(on), sessionID)
-	return err
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{RemoteControl: true},
+		`UPDATE sessions SET remote_control = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
 
-// RemoteControlForConv reports tclaude's best-known remote-control state for
-// a conversation: the flag on its most-recently-updated session row (the row
-// FindSessionByConvID resolves). false (no error) when the conv has no
-// session row. The toggle direction logic reads SessionRow.RemoteControl off
-// the resolved ALIVE row directly; this is the convenience reader for the CLI
-// `status` verb and the dashboard payload. See JOH-256.
+// RemoteControlForConv reports durable agent intent, or the conversation
+// fallback when unmanaged. The live toggle path still reads the active
+// SessionRow directly because it controls one process generation.
 func RemoteControlForConv(convID string) (bool, error) {
+	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
+		return false, err
+	} else if p != nil && p.RemoteControl != nil {
+		return *p.RemoteControl, nil
+	}
+	if p, err := ConversationResumeProfileForConv(convID); err != nil {
+		return false, err
+	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.RemoteControl != nil {
+		return *p.FallbackRelaunch.RemoteControl, nil
+	}
 	s, err := FindSessionByConvID(convID)
 	if err != nil || s == nil {
 		return false, err
@@ -864,21 +939,24 @@ func RemoteControlForConv(convID string) (bool, error) {
 // The launch path sets this once, right after the session row is written, so a
 // later relaunch can reproduce the posture the agent was actually started with.
 func SetSessionAutoMemory(sessionID string, on bool) error {
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions SET auto_memory = ? WHERE id = ?`, boolToInt(on), sessionID)
-	return err
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{AutoMemory: true},
+		`UPDATE sessions SET auto_memory = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
 
-// AutoMemoryForConv reports the auto-memory posture recorded on a conv's
-// most-recently-updated session row. false (no error) when the conv has no
-// session row or predates the column — which is the tclaude-recommended
-// posture (memory off) either way, so a relaunch degrades safely. A relaunch
-// reads it to PRESERVE an explicit opt-in; the sibling of RemoteControlForConv
-// and AskTimeoutForConv.
+// AutoMemoryForConv reports durable agent intent, or the unmanaged
+// conversation fallback. Legacy sessions are consulted only when v145
+// projection has not occurred.
 func AutoMemoryForConv(convID string) (bool, error) {
+	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
+		return false, err
+	} else if p != nil && p.AutoMemory != nil {
+		return *p.AutoMemory, nil
+	}
+	if p, err := ConversationResumeProfileForConv(convID); err != nil {
+		return false, err
+	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.AutoMemory != nil {
+		return *p.FallbackRelaunch.AutoMemory, nil
+	}
 	s, err := FindSessionByConvID(convID)
 	if err != nil || s == nil {
 		return false, err
@@ -886,12 +964,20 @@ func AutoMemoryForConv(convID string) (bool, error) {
 	return s.AutoMemory, nil
 }
 
-// AskTimeoutForConv returns the resolved AskUserQuestion idle-timeout recorded
-// on a conv's most-recent session row (schema v97), or "" when none is stored
-// (a pre-column row, a non-Claude harness, or an un-chosen timeout). A relaunch
-// (resume / clone / reincarnate) reads it to PRESERVE the per-agent timeout —
-// the sibling of RemoteControlForConv and the recorded approval fields.
+// AskTimeoutForConv returns durable agent intent, or the unmanaged conversation
+// fallback. Legacy sessions are consulted only when v145 projection has not
+// occurred.
 func AskTimeoutForConv(convID string) (string, error) {
+	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
+		return "", err
+	} else if p != nil && p.AskUserQuestionTimeout != nil {
+		return *p.AskUserQuestionTimeout, nil
+	}
+	if p, err := ConversationResumeProfileForConv(convID); err != nil {
+		return "", err
+	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.AskUserQuestionTimeout != nil {
+		return *p.FallbackRelaunch.AskUserQuestionTimeout, nil
+	}
 	s, err := FindSessionByConvID(convID)
 	if err != nil || s == nil {
 		return "", err
@@ -939,12 +1025,8 @@ func UpdateSessionModelID(sessionID, modelID string) error {
 	if modelID == "" {
 		return nil
 	}
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions SET model_id = ? WHERE id = ?`, modelID, sessionID)
-	return err
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{},
+		`UPDATE sessions SET model_id = ? WHERE id = ?`, modelID, sessionID)
 }
 
 // UpdateSessionModelSlug stores a model token that is both the human-facing
@@ -960,12 +1042,8 @@ func UpdateSessionModelSlug(sessionID, model string) error {
 	if model == "" {
 		return nil
 	}
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions SET model = ?, model_id = ? WHERE id = ?`, model, model, sessionID)
-	return err
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{},
+		`UPDATE sessions SET model = ?, model_id = ? WHERE id = ?`, model, model, sessionID)
 }
 
 // SessionModels returns the model display name of every session that
@@ -1038,12 +1116,8 @@ func UpdateSessionEffort(sessionID, level string) error {
 	if level == "" {
 		return nil
 	}
-	db, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = db.Exec(`UPDATE sessions SET effort_level = ? WHERE id = ?`, level, sessionID)
-	return err
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{},
+		`UPDATE sessions SET effort_level = ? WHERE id = ?`, level, sessionID)
 }
 
 // UpdateSessionCost stores the session's cumulative API cost in USD —

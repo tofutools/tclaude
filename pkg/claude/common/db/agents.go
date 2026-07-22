@@ -1135,6 +1135,14 @@ func advanceAgentToNewConv(tx dbExecQuerier, agentID, oldConv, newConv, reason, 
 			return false, err
 		}
 	}
+	// The successor session is normally registered before identity rotation.
+	// Its first projection therefore populated only conversation state (or a
+	// short-lived self-enrolled actor that was absorbed above). Now that the
+	// stable actor points at newConv, project once more so agent-owned launch
+	// intent advances atomically with the generation.
+	if err := projectLatestSessionRelaunchProfilesForConvTx(tx, newConv); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 

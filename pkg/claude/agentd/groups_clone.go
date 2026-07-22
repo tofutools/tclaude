@@ -160,7 +160,12 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
-		if fail := spawnHarnessPolicyFailure(newGroup, caller, harnessForConv(m.ConvID).Name); fail != nil {
+		relaunch, relaunchErr := durableRelaunchConfigForConv(m.ConvID)
+		if relaunchErr != nil {
+			results = append(results, memberResult{SrcConv: m.ConvID, Error: "relaunch profile: " + relaunchErr.Error()})
+			continue
+		}
+		if fail := spawnHarnessPolicyFailure(newGroup, caller, relaunch.Harness); fail != nil {
 			results = append(results, memberResult{SrcConv: m.ConvID, Error: fail.Msg})
 			continue
 		}
@@ -172,9 +177,9 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
-		// Each clone runs the model + effort its own source is live on
-		// (inheritedLaunchFlags; "" falls back to claude's default).
-		effort, model := inheritedLaunchFlags(oldSess.ID)
+		// Each clone runs its source agent's durable model + effort; "" falls
+		// back to the harness default.
+		effort, model := relaunch.Effort, relaunch.Model
 		newConv, _, label, warn, spawnErr := cloneSpawnOnce(
 			m.ConvID, cwd, body.NoCopyConv, effort, model,
 			"", false, nil, "", nil)

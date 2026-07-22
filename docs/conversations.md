@@ -111,6 +111,12 @@ tclaude session new --resume <claude-conv-id>
 tclaude session new --harness codex --resume <codex-conv-id>
 ```
 
+The durable conversation record is independent of tmux process history.
+Removing an exited row from `session ls -w` therefore does not remove the
+conversation's harness, resume provenance, or unmanaged launch fallback.
+Standalone conversation listing, search, archive, and resume do not require an
+agent record.
+
 ### conv archive / unarchive (Claude Code only)
 
 Hide a conversation from default listings without deleting its harness data:

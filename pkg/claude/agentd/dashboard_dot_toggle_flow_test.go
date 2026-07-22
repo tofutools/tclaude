@@ -174,9 +174,10 @@ func TestDotToggle_ManualWakeRecoversMissingResumeProvenance(t *testing.T) {
 	assert.Equal(t, "resumed", resp.Action,
 		"a human dashboard wake must recover provenance; detail=%s", resp.Detail)
 
-	source, err := db.LoadSession(sessionID)
+	profile, err := db.ConversationResumeProfileForConv(conv)
 	require.NoError(t, err)
-	assert.NotEmpty(t, source.ResumeProvenance,
+	require.NotNil(t, profile)
+	assert.NotEmpty(t, profile.ResumeProvenance,
 		"human recovery must persist the newly trusted physical identity")
 }
 

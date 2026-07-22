@@ -17,6 +17,13 @@ import (
 // session is tagged "claude", so this is the CC harness and the tokens are
 // the same literals as before the seam.
 func harnessForConv(convID string) *harness.Harness {
+	if profile, err := db.ConversationResumeProfileForConv(convID); err == nil && profile != nil {
+		if h, err := harness.Resolve(profile.Harness); err == nil {
+			return h
+		}
+		slog.Warn("harnessForConv: unknown durable conversation harness; checking live session",
+			"conv", convID, "harness", profile.Harness)
+	}
 	if rows, err := db.FindSessionsByConvID(convID); err == nil {
 		for _, s := range rows {
 			if s.Harness == "" {
@@ -33,6 +40,21 @@ func harnessForConv(convID string) *harness.Harness {
 		}
 	}
 	return harness.Default()
+}
+
+// relaunchSandboxForProfile returns the stable agent's already-selected
+// sandbox mode. A nil field is unknown legacy authority and fails closed; a
+// present empty string retains the historical legacy interpretation.
+func relaunchSandboxForProfile(profile *db.AgentRelaunchProfile, harnessName string) (string, error) {
+	if profile == nil {
+		return "", fmt.Errorf("durable agent relaunch profile is missing")
+	}
+	if profile.SandboxMode == nil {
+		return "", fmt.Errorf("durable agent relaunch profile has unknown sandbox mode")
+	}
+	return relaunchSandboxForSession(&db.SessionRow{
+		Harness: harnessName, SandboxMode: *profile.SandboxMode,
+	})
 }
 
 // resolveSpawnHarness resolves a requested harness name for a daemon
@@ -201,86 +223,6 @@ func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 		return approvalForHarness(harnessName), false
 	}
 	return policy, autoReview
-}
-
-// remoteControlForRelaunch resolves whether a relaunch (resume / reincarnate /
-// clone) should re-arm Claude Code's built-in Remote Access on the new pane,
-// carried from the SOURCE conversation's persisted best-known state (JOH-256).
-// Like approval posture, remote-control is persisted per-conv, so this
-// carries the source's actual flag rather than a harness default: an agent the
-// operator armed for phone access must survive the handoff, the operator-decided
-// carry-over semantics for all three paths (JOH-261).
-//
-// True only when the source was armed AND the harness can honour it. The
-// persisted flag is itself the gate — only a Claude Code conv can ever record
-// remote_control=1, since the toggle/spawn that set it is gated on
-// CanRemoteControl — so a Codex source is false by construction; the explicit
-// capability check is defence in depth so a stale flag could never thread
-// `--remote-control` onto a harness that would reject it. A lookup error
-// degrades to false (no re-arm), logged, never fatal.
-func remoteControlForRelaunch(sourceConv, harnessName string) bool {
-	on, err := db.RemoteControlForConv(sourceConv)
-	if err != nil {
-		slog.Warn("relaunch: remote-control lookup failed; not re-arming",
-			"conv", sourceConv, "error", err)
-		return false
-	}
-	if !on {
-		return false
-	}
-	h, _ := harness.Resolve(strings.TrimSpace(harnessName))
-	return h.CanRemoteControl()
-}
-
-// autoMemoryForRelaunch resolves the auto-memory posture a relaunch (resume /
-// clone / reincarnate) threads onto the new pane, carried from the SOURCE
-// conversation's recorded value. Same preserve semantics as
-// remoteControlForRelaunch: an operator who explicitly opted an agent INTO
-// Claude Code's auto memory must not have it silently reverted by a handoff.
-//
-// false — tclaude's recommended posture, which makes the launch inject
-// CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 — for a source that never opted in, a
-// pre-column row, or a lookup error (logged, never fatal). The capability check
-// is defence in depth: only a Claude Code conv can ever record auto_memory=1
-// (the spawn that set it is gated on CanAutoMemory), so a Codex source is false
-// by construction.
-func autoMemoryForRelaunch(sourceConv, harnessName string) bool {
-	on, err := db.AutoMemoryForConv(sourceConv)
-	if err != nil {
-		slog.Warn("relaunch: auto-memory lookup failed; not preserving",
-			"conv", sourceConv, "error", err)
-		return false
-	}
-	if !on {
-		return false
-	}
-	h, _ := harness.Resolve(strings.TrimSpace(harnessName))
-	return h.CanAutoMemory()
-}
-
-// askTimeoutForRelaunch resolves the AskUserQuestion idle-timeout a relaunch
-// (resume / clone / reincarnate) threads onto the new pane, carried from the
-// SOURCE conversation's persisted value (schema v97). Like approval posture,
-// the operator wants a per-agent timeout PRESERVED across the handoff: a
-// reincarnated agentic worker set to auto-continue at 5m must come back on 5m,
-// not revert to global settings.json. So this reads the source's actual recorded
-// value rather than a harness default (the same preserve semantics as
-// remoteControlForRelaunch).
-//
-// "" (omit the flag) when the source recorded no timeout — a pre-column row, an
-// un-chosen timeout, or a non-Claude source; a lookup error degrades to "" and
-// is logged, never fatal. A stale value can never mis-thread onto a harness that
-// would reject it: the forked `tclaude session new` re-validates it per-harness
-// (a Codex relaunch would 400 an ask-timeout), and a Codex source records "" by
-// construction (its spawn path rejects the flag), so this yields "" for Codex.
-func askTimeoutForRelaunch(sourceConv string) string {
-	v, err := db.AskTimeoutForConv(sourceConv)
-	if err != nil {
-		slog.Warn("relaunch: ask-timeout lookup failed; not preserving",
-			"conv", sourceConv, "error", err)
-		return ""
-	}
-	return v
 }
 
 // deliverRename renames a conversation the way its harness dictates and
