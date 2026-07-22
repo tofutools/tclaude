@@ -15,14 +15,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-type sandboxReadExclusionCatalogJSON struct {
-	Version       int                                   `json:"version"`
-	Platform      string                                `json:"platform"`
-	Categories    []sandboxpolicy.ReadExclusionCategory `json:"categories"`
-	Informational []map[string]any                      `json:"informational"`
+// sandboxCommonRuleCatalogJSON is the "Add common rule" feed: audited deny
+// presets the dashboard inserts as ORDINARY filesystem rows. Nothing here is
+// persisted as an ID — after insertion the rows are hand-editable like any
+// other (TCL-623). The field is still named "categories" so an older dashboard
+// build keeps rendering the feed.
+type sandboxCommonRuleCatalogJSON struct {
+	Version       int                        `json:"version"`
+	Platform      string                     `json:"platform"`
+	Categories    []sandboxpolicy.CommonRule `json:"categories"`
+	Informational []map[string]any           `json:"informational"`
 }
 
-func handleSandboxReadExclusionCatalog(w http.ResponseWriter, r *http.Request) {
+func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermSandboxProfilesManage); !ok {
 		return
 	}
@@ -36,18 +41,18 @@ func handleSandboxReadExclusionCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "resolve home directory")
 		return
 	}
-	categories, err := sandboxpolicy.ReadExclusionCatalog(home, runtime.GOOS)
+	rules, err := sandboxpolicy.CommonRuleCatalog(home, runtime.GOOS)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, sandboxReadExclusionCatalogJSON{
-		Version:    sandboxpolicy.ReadExclusionCatalogVersion,
+	writeJSON(w, http.StatusOK, sandboxCommonRuleCatalogJSON{
+		Version:    sandboxpolicy.CommonRuleCatalogVersion,
 		Platform:   runtime.GOOS,
-		Categories: categories,
+		Categories: rules,
 		Informational: []map[string]any{
-			{"id": "system.runtime", "label": "System runtime roots", "removable": false, "description": "Execution, DNS, and TLS runtime roots remain available and are not optional profile categories."},
-			{"id": "workspace.mechanics", "label": "Workspace and Git mechanics", "removable": false, "description": "The active workspace and exact verified Git common/admin paths are reopened when Home is denied. The broader repository container is not reopened, so direct creation of sibling worktrees is unavailable under strict Home; create/broker the worktree before launch."},
+			{"id": "system.runtime", "label": "System runtime roots", "removable": false, "description": "Execution, DNS, and TLS runtime roots remain available and are not affected by these rules."},
+			{"id": "workspace.mechanics", "label": "Workspace and Git mechanics", "removable": false, "description": "The active workspace and exact verified Git common/admin paths are reopened when a deny covers them. The broader repository container is not reopened, so direct creation of sibling worktrees is unavailable under a home-wide deny; create/broker the worktree before launch."},
 			{"id": "agentd.control-plane", "label": "tclaude control plane", "removable": false, "description": "Only the agentd socket/control plane is reopened; private ~/.tclaude/data remains denied."},
 		},
 	})
@@ -55,7 +60,7 @@ func handleSandboxReadExclusionCatalog(w http.ResponseWriter, r *http.Request) {
 
 const (
 	sandboxProfileExportFormat  = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion = 4
+	sandboxProfileExportVersion = 5
 )
 
 // sandboxProfileBeforeMkdir is a test seam for exercising substitutions in
@@ -66,17 +71,17 @@ var sandboxProfileBeforeMkdir = func(string) {}
 type sandboxProfileJSON struct {
 	Name       string                          `json:"name"`
 	Filesystem []sandboxpolicy.FilesystemGrant `json:"filesystem"`
-	// ReadBaseline and BreakGlassFilesystem are omitempty so a profile using
-	// neither serializes exactly as it did before TCL-609.
-	ReadBaseline           sandboxpolicy.ReadBaseline       `json:"read_baseline,omitempty"`
-	ReadBaselineExclusions []string                         `json:"read_baseline_exclusions,omitempty"`
-	BreakGlassFilesystem   []sandboxpolicy.BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
-	Environment            []sandboxpolicy.EnvironmentEntry `json:"environment"`
-	AgentDirectories       []string                         `json:"agent_directories,omitempty"`
-	NetworkAccess          sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
-	Includes               []string                         `json:"includes,omitempty"`
-	CreatedAt              string                           `json:"created_at,omitempty"`
-	UpdatedAt              string                           `json:"updated_at,omitempty"`
+	// BreakGlassFilesystem is omitempty so a profile that does not use it
+	// serializes exactly as it did before that capability existed. An imported
+	// payload carrying the removed read_baseline/read_baseline_exclusions keys
+	// has no field to decode into and is silently dropped (TCL-623).
+	BreakGlassFilesystem []sandboxpolicy.BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
+	Environment          []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	AgentDirectories     []string                         `json:"agent_directories,omitempty"`
+	NetworkAccess        sandboxpolicy.NetworkAccess      `json:"network_access,omitempty"`
+	Includes             []string                         `json:"includes,omitempty"`
+	CreatedAt            string                           `json:"created_at,omitempty"`
+	UpdatedAt            string                           `json:"updated_at,omitempty"`
 	// BreakGlassAcknowledged is a TRANSIENT request-only field. It is never
 	// stored and never emitted: the durable danger marker is
 	// BreakGlassFilesystem itself, so a cross-machine import or a later
@@ -113,7 +118,7 @@ type sandboxProfilePreviewJSON struct {
 
 func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfileJSON {
 	out := sandboxProfileJSON{
-		Name: p.Name, Filesystem: p.Filesystem, ReadBaseline: p.ReadBaseline, ReadBaselineExclusions: p.ReadBaselineExclusions, BreakGlassFilesystem: p.BreakGlassFilesystem,
+		Name: p.Name, Filesystem: p.Filesystem, BreakGlassFilesystem: p.BreakGlassFilesystem,
 		Environment: p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess, Includes: p.Includes,
 	}
 	if localFields {
@@ -129,28 +134,28 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 
 func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForPersistence(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, ReadBaseline: body.ReadBaseline, ReadBaselineExclusions: body.ReadBaselineExclusions, BreakGlassFilesystem: body.BreakGlassFilesystem,
+		Name: body.Name, Filesystem: body.Filesystem, BreakGlassFilesystem: body.BreakGlassFilesystem,
 		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, ReadBaseline: normalized.ReadBaseline, ReadBaselineExclusions: normalized.ReadBaselineExclusions, BreakGlassFilesystem: normalized.BreakGlassFilesystem,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, BreakGlassFilesystem: normalized.BreakGlassFilesystem,
 		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
 	}, missing, nil
 }
 
 func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, []string, error) {
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
-		Name: body.Name, Filesystem: body.Filesystem, ReadBaseline: body.ReadBaseline, ReadBaselineExclusions: body.ReadBaselineExclusions, BreakGlassFilesystem: body.BreakGlassFilesystem,
+		Name: body.Name, Filesystem: body.Filesystem, BreakGlassFilesystem: body.BreakGlassFilesystem,
 		Environment: body.Environment, AgentDirectories: body.AgentDirectories, NetworkAccess: body.NetworkAccess, Includes: body.Includes,
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return &db.SandboxProfile{
-		Name: normalized.Name, Filesystem: normalized.Filesystem, ReadBaseline: normalized.ReadBaseline, ReadBaselineExclusions: normalized.ReadBaselineExclusions, BreakGlassFilesystem: normalized.BreakGlassFilesystem,
+		Name: normalized.Name, Filesystem: normalized.Filesystem, BreakGlassFilesystem: normalized.BreakGlassFilesystem,
 		Environment: normalized.Environment, AgentDirectories: normalized.AgentDirectories, NetworkAccess: normalized.NetworkAccess, Includes: normalized.Includes,
 	}, missing, nil
 }
@@ -803,12 +808,16 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 }
 
 // Version 2 adds network_access; version 3 adds read_baseline and
-// break_glass_filesystem; version 4 adds semantic read_baseline_exclusions.
-// Keeping older versions readable preserves imports
-// from older installations; exporting only the newest prevents an older
-// importer from silently dropping a security-significant offline policy,
-// strict read baseline, or protected-path grant as an unknown JSON field.
+// break_glass_filesystem; version 4 adds semantic read_baseline_exclusions;
+// version 5 REMOVES read_baseline and read_baseline_exclusions (TCL-623) —
+// strictness is expressed as ordinary filesystem deny rows plus narrower
+// reopens. Keeping older versions readable preserves imports from older
+// installations: their removed fields decode into nothing and are dropped,
+// which is the deliberate operator decision rather than a silent enforcement
+// claim. Exporting only the newest still prevents an older importer from
+// silently dropping a security-significant offline policy or protected-path
+// grant as an unknown JSON field.
 func supportedSandboxProfileExport(format string, version int) bool {
 	return format == sandboxProfileExportFormat &&
-		(version == 1 || version == 2 || version == 3 || version == sandboxProfileExportVersion)
+		(version == 1 || version == 2 || version == 3 || version == 4 || version == sandboxProfileExportVersion)
 }

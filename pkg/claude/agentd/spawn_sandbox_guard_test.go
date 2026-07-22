@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -26,20 +27,25 @@ func TestSandboxProfileCapabilityFailureRequiresClaudeOnWithDeny(t *testing.T) {
 	}
 }
 
-func TestSandboxProfileCapabilityFailureGatesSemanticReadExclusions(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+func TestSandboxProfileCapabilityFailureGatesReopenUnderDeny(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
-		ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH},
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: root, Access: sandboxpolicy.AccessDeny},
+			{Path: workspace, Access: sandboxpolicy.AccessRead},
+		},
 	}}
 	require.Nil(t, sandboxProfileCapabilityFailure(harness.DefaultName, harness.ClaudeSandboxOn, snapshot))
-	require.Nil(t, sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot))
 	for _, tc := range []struct{ harness, mode string }{
 		{harness.DefaultName, harness.ClaudeSandboxInherit},
 		{harness.CodexName, harness.SandboxReadOnly},
 	} {
 		failure := sandboxProfileCapabilityFailure(tc.harness, tc.mode, snapshot)
 		require.NotNil(t, failure)
-		require.Equal(t, harness.SandboxCapabilityReadExclusions, failure.Kind)
+		require.Equal(t, harness.SandboxCapabilityReopenUnderDeny, failure.Kind)
 	}
 }
 

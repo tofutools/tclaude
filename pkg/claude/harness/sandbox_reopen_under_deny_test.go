@@ -45,34 +45,102 @@ func installSuccessfulSplitProbe(t *testing.T, executableReopen bool) {
 	})
 }
 
-func TestReadExclusionCapabilityMatrix(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	leaf := []string{sandboxpolicy.ReadExclusionSSH}
-	require.NoError(t, ValidateSandboxReadExclusions(DefaultName, ClaudeSandboxOn, leaf))
-	assertCapabilityKind(t, ValidateSandboxReadExclusions(DefaultName, ClaudeSandboxInherit, leaf), SandboxCapabilityReadExclusions)
-	require.NoError(t, ValidateSandboxReadExclusions(CodexName, SandboxManagedProfile, leaf))
-	assertCapabilityKind(t, ValidateSandboxReadExclusions(CodexName, SandboxWorkspaceWrite, leaf), SandboxCapabilityReadExclusions)
-	assertCapabilityKind(t, ValidateSandboxReadExclusions(CodexName, SandboxManagedProfile, []string{"future.secret"}), SandboxCapabilityReadExclusions)
+// canonicalTestHome resolves $HOME the way profile normalization does. macOS
+// hands out temp dirs under the /var → /private/var symlink, so a test that
+// compares against protected roots or grant paths must use the resolved form.
+func canonicalTestHome(t *testing.T) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	require.NoError(t, err)
+	return filepath.Clean(resolved)
 }
 
-func TestCodexHomeCapabilityRequiresLinuxVerifiedSplitPolicy(t *testing.T) {
+func denyShape(t *testing.T) []sandboxpolicy.FilesystemGrant {
+	t.Helper()
+	home := canonicalTestHome(t)
+	return []sandboxpolicy.FilesystemGrant{
+		{Path: home, Access: sandboxpolicy.AccessDeny},
+		{Path: filepath.Join(home, "work"), Access: sandboxpolicy.AccessRead},
+	}
+}
+
+// A plain deny needs no capability at all; only the reopen shape does.
+func TestPlainDenyNeedsNoCapability(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plain := []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessDeny}}
+	for _, mode := range []string{ClaudeSandboxOn, ClaudeSandboxInherit, SandboxWorkspaceWrite} {
+		require.NoError(t, ValidateSandboxReopenUnderDeny(DefaultName, mode, plain))
+		require.NoError(t, ValidateSandboxReopenUnderDeny(CodexName, mode, plain))
+	}
+}
+
+func TestReopenUnderDenyCapabilityMatrix(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installSuccessfulSplitProbe(t, false)
+	shape := denyShape(t)
+
+	// Claude: the documented specificity rule applies, but only sandbox "on"
+	// guarantees the deny and the reopen are applied at all.
+	require.NoError(t, ValidateSandboxReopenUnderDeny(DefaultName, ClaudeSandboxOn, shape))
+	err := ValidateSandboxReopenUnderDeny(DefaultName, ClaudeSandboxInherit, shape)
+	assertCapabilityKind(t, err, SandboxCapabilityReopenUnderDeny)
+	assert.ErrorContains(t, err, "beneath a deny")
+
+	// Codex: managed profile only, and only with the verified split policy.
+	require.NoError(t, ValidateSandboxReopenUnderDeny(CodexName, SandboxManagedProfile, shape))
+	assertCapabilityKind(t, ValidateSandboxReopenUnderDeny(CodexName, SandboxWorkspaceWrite, shape), SandboxCapabilityReopenUnderDeny)
+
+	// An unknown harness cannot promise anything.
+	assertCapabilityKind(t, ValidateSandboxReopenUnderDeny("someone-else", SandboxManagedProfile, shape), SandboxCapabilityReopenUnderDeny)
+}
+
+func TestCodexReopenUnderDenyRefusedOnMacOS(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	oldOS := sandboxRuntimeGOOS
 	sandboxRuntimeGOOS = "darwin"
 	t.Cleanup(func() { sandboxRuntimeGOOS = oldOS })
-	err := ValidateSandboxReadExclusions(CodexName, SandboxManagedProfile, []string{sandboxpolicy.ReadExclusionHome})
-	assertCapabilityKind(t, err, SandboxCapabilityReadExclusions)
+	err := ValidateSandboxReopenUnderDeny(CodexName, SandboxManagedProfile, denyShape(t))
+	assertCapabilityKind(t, err, SandboxCapabilityReopenUnderDeny)
 	assert.ErrorContains(t, err, "openai/codex#21081")
 }
 
-func TestHomeAndBreakGlassShareVerifiedChildReopenBoundary(t *testing.T) {
+func TestCodexReopenUnderDenyRefusedWhenProbeFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	oldIdentity := codexExecutableIdentityForProbe
+	oldProbe := runCodexSplitPolicyProbe
+	oldCache := codexSplitProbeCache.entries
+	oldOS := sandboxRuntimeGOOS
+	codexExecutableIdentityForProbe = func() (string, string, error) { return "/isolated/codex", "probe-fails", nil }
+	runCodexSplitPolicyProbe = func(string) (codexSplitPolicyCapability, error) {
+		return codexSplitPolicyCapability{}, errors.New("bwrap backend unavailable")
+	}
+	sandboxRuntimeGOOS = "linux"
+	codexSplitProbeCache.entries = map[string]codexSplitProbeCacheEntry{}
+	t.Cleanup(func() {
+		codexExecutableIdentityForProbe = oldIdentity
+		runCodexSplitPolicyProbe = oldProbe
+		codexSplitProbeCache.entries = oldCache
+		sandboxRuntimeGOOS = oldOS
+	})
+	err := ValidateSandboxReopenUnderDeny(CodexName, SandboxManagedProfile, denyShape(t))
+	assertCapabilityKind(t, err, SandboxCapabilityReopenUnderDeny)
+	assert.ErrorContains(t, err, "bubblewrap")
+}
+
+// Break-glass and the reopen shape share one verified boundary: once the split
+// probe proved a narrower reopen survives a denied parent, an acknowledged
+// protected child is representable too.
+func TestBreakGlassAndReopenShareVerifiedChildBoundary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	installSuccessfulSplitProbe(t, false)
-	err := ValidateSandboxBreakGlassWithReadExclusions(CodexName, SandboxManagedProfile,
-		[]sandboxpolicy.BreakGlassGrant{{Path: filepath.Join(os.Getenv("HOME"), ".tclaude", "data", "debug"), Access: sandboxpolicy.AccessRead}},
-		[]string{sandboxpolicy.ReadExclusionHome})
-	require.NoError(t, err)
+	grants := []sandboxpolicy.BreakGlassGrant{{Path: filepath.Join(canonicalTestHome(t), ".tclaude", "data", "debug"), Access: sandboxpolicy.AccessRead}}
+	require.NoError(t, ValidateSandboxBreakGlassWithReopenUnderDeny(CodexName, SandboxManagedProfile, grants, denyShape(t)))
+
+	// WITHOUT the shape, Codex keeps the conservative guard that refuses a
+	// grant strictly inside the denied protected directory.
+	err := ValidateSandboxBreakGlassWithReopenUnderDeny(CodexName, SandboxManagedProfile, grants, nil)
+	assertCapabilityKind(t, err, SandboxCapabilityBreakGlass)
 }
 
 func TestCodexHomeRulesPinBackendAndKeepNarrowReopens(t *testing.T) {
@@ -201,7 +269,6 @@ func TestCodexSplitPolicyHostSmoke(t *testing.T) {
 		DenyDirs:            []string{home},
 		BreakGlassReadDirs:  []string{breakGlass},
 		RequireSplitPolicy:  true,
-		ReadBaseline:        sandboxpolicy.ReadBaselineDefault,
 		BreakGlassWriteDirs: nil,
 	}, sandboxpolicy.NetworkAccessInherit, "1234567890abcdef")
 	require.NoError(t, err)

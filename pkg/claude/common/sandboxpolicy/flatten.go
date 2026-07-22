@@ -72,21 +72,13 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	}
 	parts := f.compose(root)
 	out := Profile{
-		Name:                   root.Name,
-		Filesystem:             make([]FilesystemGrant, 0, len(parts.filesystem)),
-		ReadBaseline:           parts.readBaseline,
-		ReadBaselineExclusions: make([]string, 0, len(parts.readExclusions)),
-		BreakGlassFilesystem:   make([]BreakGlassGrant, 0, len(parts.breakGlass)),
-		Environment:            make([]EnvironmentEntry, 0, len(parts.environment)),
-		AgentDirectories:       make([]string, 0, len(parts.agentDirectories)),
-		NetworkAccess:          parts.networkAccess,
+		Name:                 root.Name,
+		Filesystem:           make([]FilesystemGrant, 0, len(parts.filesystem)),
+		BreakGlassFilesystem: make([]BreakGlassGrant, 0, len(parts.breakGlass)),
+		Environment:          make([]EnvironmentEntry, 0, len(parts.environment)),
+		AgentDirectories:     make([]string, 0, len(parts.agentDirectories)),
+		NetworkAccess:        parts.networkAccess,
 	}
-	readExclusionChains := make(map[string][][]string, len(parts.readExclusions))
-	for id, chains := range parts.readExclusions {
-		out.ReadBaselineExclusions = append(out.ReadBaselineExclusions, id)
-		readExclusionChains[id] = cloneChains(chains)
-	}
-	sort.Strings(out.ReadBaselineExclusions)
 	for _, grant := range parts.filesystem {
 		out.Filesystem = append(out.Filesystem, grant)
 	}
@@ -114,7 +106,7 @@ func Flatten(in Profile, lookup LookupProfile) (Profile, error) {
 	for path, grant := range parts.breakGlass {
 		chains[path] = cloneChains(grant.chains)
 	}
-	return out.withDerivedBreakGlass(chains).withDerivedReadExclusions(readExclusionChains), nil
+	return out.withDerivedBreakGlass(chains), nil
 }
 
 // mergeBreakGlass folds one protected-path rule into an accumulator, keeping
@@ -194,14 +186,12 @@ func extendChains(in [][]string, owner string) [][]string {
 
 type flattenedParts struct {
 	filesystem map[string]FilesystemGrant
-	// breakGlass and readBaseline deliberately do NOT follow the last-layer-wins
-	// rule the other fields use. Protected-path authority composes as a
-	// privilege-monotonic union (write dominating read on one canonical path)
-	// and the read baseline composes strictest-wins, so an include can never
-	// quietly widen either one — the sources stay visible to provenance.
+	// breakGlass deliberately does NOT follow the last-layer-wins rule the
+	// other fields use. Protected-path authority composes as a
+	// privilege-monotonic union (write dominating read on one canonical path),
+	// so an include can never quietly widen it — the sources stay visible to
+	// provenance.
 	breakGlass       map[string]flattenedBreakGlassGrant
-	readBaseline     ReadBaseline
-	readExclusions   map[string][][]string
 	environment      map[string]EnvironmentEntry
 	agentDirectories map[string]struct{}
 	networkAccess    NetworkAccess
@@ -272,7 +262,6 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	out := &flattenedParts{
 		filesystem:       map[string]FilesystemGrant{},
 		breakGlass:       map[string]flattenedBreakGlassGrant{},
-		readExclusions:   map[string][][]string{},
 		environment:      map[string]EnvironmentEntry{},
 		agentDirectories: map[string]struct{}{},
 	}
@@ -291,10 +280,6 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			inherited := grant
 			inherited.chains = extendChains(grant.chains, p.Name)
 			mergeBreakGlass(out.breakGlass, inherited, path)
-		}
-		out.readBaseline = StrictestReadBaseline(out.readBaseline, parts.readBaseline)
-		for id, chains := range parts.readExclusions {
-			out.readExclusions[id] = unionChains(out.readExclusions[id], extendChains(chains, p.Name))
 		}
 		for name, entry := range parts.environment {
 			delete(out.agentDirectories, name)
@@ -317,10 +302,6 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			Path: grant.Path, Access: grant.Access, chains: [][]string{{p.Name}},
 		}
 		mergeBreakGlass(out.breakGlass, authored, grant.Path)
-	}
-	out.readBaseline = StrictestReadBaseline(out.readBaseline, p.ReadBaseline)
-	for _, id := range p.ReadBaselineExclusions {
-		out.readExclusions[id] = unionChains(out.readExclusions[id], [][]string{{p.Name}})
 	}
 	for _, entry := range p.Environment {
 		delete(out.agentDirectories, entry.Name)

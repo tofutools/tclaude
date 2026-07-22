@@ -45,27 +45,6 @@ type FilesystemGrant struct {
 	Access Access `json:"access"`
 }
 
-// ReadBaseline selects how much of the host an agent may read before the
-// profile's own filesystem rules are applied. The empty value inherits each
-// harness's existing (denylist-shaped, broadly readable) baseline, so an
-// omitted field reproduces today's behavior exactly.
-//
-// Minimal requests an allowlist-shaped read posture: only the workspace, the
-// paths tclaude must grant for the launch contract, and paths the profile
-// grants explicitly. It is a mode, not another entry in the deny > write >
-// read path lattice, and it composes strictest-wins rather than last-wins:
-// once any layer asks for minimal, no later layer can widen it back.
-type ReadBaseline string
-
-const (
-	ReadBaselineDefault ReadBaseline = ""
-	ReadBaselineMinimal ReadBaseline = "minimal"
-	// readBaselineDefaultAlias is accepted on input as an explicit spelling of
-	// the omitted default so a UI selector can post a non-empty value. It is
-	// normalized away, so every persisted or emitted value is "" or "minimal".
-	readBaselineDefaultAlias = "default"
-)
-
 // BreakGlassGrant is one exceptional, operator-acknowledged rule that reaches
 // normally protected tclaude/Claude state (~/.tclaude/data or
 // ~/.claude/sessions). It exists so a human can launch a tightly scoped agent
@@ -125,21 +104,19 @@ const (
 type Profile struct {
 	Name       string            `json:"name"`
 	Filesystem []FilesystemGrant `json:"filesystem,omitempty"`
-	// ReadBaseline and BreakGlassFilesystem are both omitempty so a profile
-	// that uses neither serializes byte-identically to a pre-TCL-609 profile.
-	ReadBaseline           ReadBaseline       `json:"read_baseline,omitempty"`
-	ReadBaselineExclusions []string           `json:"read_baseline_exclusions,omitempty"`
-	BreakGlassFilesystem   []BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
-	Environment            []EnvironmentEntry `json:"environment,omitempty"`
-	AgentDirectories       []string           `json:"agent_directories,omitempty"`
-	NetworkAccess          NetworkAccess      `json:"network_access,omitempty"`
-	Includes               []string           `json:"includes,omitempty"`
+	// BreakGlassFilesystem is omitempty so a profile that does not use it
+	// serializes byte-identically to a profile from before the capability
+	// existed.
+	BreakGlassFilesystem []BreakGlassGrant  `json:"break_glass_filesystem,omitempty"`
+	Environment          []EnvironmentEntry `json:"environment,omitempty"`
+	AgentDirectories     []string           `json:"agent_directories,omitempty"`
+	NetworkAccess        NetworkAccess      `json:"network_access,omitempty"`
+	Includes             []string           `json:"includes,omitempty"`
 
 	// derivedBreakGlass is opaque effective provenance computed by Flatten. It
 	// is deliberately separate from the public authored fields; see
 	// derivedBreakGlassProvenance above.
-	derivedBreakGlass          *derivedBreakGlassProvenance
-	derivedReadExclusionChains map[string][][]string
+	derivedBreakGlass *derivedBreakGlassProvenance
 }
 
 func (p Profile) withDerivedBreakGlass(chains map[string][][]string) Profile {
@@ -152,14 +129,6 @@ func (p Profile) withDerivedBreakGlass(chains map[string][][]string) Profile {
 		sealed.chains[path] = cloneChains(pathChains)
 	}
 	p.derivedBreakGlass = sealed
-	return p
-}
-
-func (p Profile) withDerivedReadExclusions(chains map[string][][]string) Profile {
-	p.derivedReadExclusionChains = make(map[string][][]string, len(chains))
-	for id, paths := range chains {
-		p.derivedReadExclusionChains[id] = cloneChains(paths)
-	}
 	return p
 }
 
@@ -223,14 +192,6 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 	if err != nil {
 		return Profile{}, nil, err
 	}
-	readBaseline, err := NormalizeReadBaseline(in.ReadBaseline)
-	if err != nil {
-		return Profile{}, nil, err
-	}
-	readExclusions, err := NormalizeReadBaselineExclusions(in.ReadBaselineExclusions)
-	if err != nil {
-		return Profile{}, nil, err
-	}
 	breakGlass, breakGlassMissing, err := normalizeBreakGlass(in.BreakGlassFilesystem, allowMissing)
 	if err != nil {
 		return Profile{}, nil, err
@@ -253,35 +214,9 @@ func normalize(in Profile, allowMissing bool) (Profile, []string, error) {
 		return Profile{}, nil, err
 	}
 	return Profile{
-		Name: name, Filesystem: filesystem, ReadBaseline: readBaseline, ReadBaselineExclusions: readExclusions, BreakGlassFilesystem: breakGlass,
+		Name: name, Filesystem: filesystem, BreakGlassFilesystem: breakGlass,
 		Environment: environment, AgentDirectories: agentDirectories, NetworkAccess: networkAccess, Includes: includes,
 	}, missing, nil
-}
-
-// NormalizeReadBaseline validates one baseline value without requiring a
-// complete profile. Harness adapters use it at their final rendering seam.
-// The explicit "default" spelling is accepted and folded to the omitted value
-// so persisted and emitted profiles only ever carry "" or "minimal".
-func NormalizeReadBaseline(in ReadBaseline) (ReadBaseline, error) {
-	switch in {
-	case ReadBaselineDefault, ReadBaselineMinimal:
-		return in, nil
-	case readBaselineDefaultAlias:
-		return ReadBaselineDefault, nil
-	default:
-		return "", fmt.Errorf("read_baseline %q is invalid (want minimal, or omitted to inherit the harness default)", in)
-	}
-}
-
-// StrictestReadBaseline composes two baselines privilege-monotonically: once
-// any layer asks for minimal the result stays minimal. Both include expansion
-// and cross-scope resolution use it, so a broad global profile cannot widen a
-// stricter group or explicit one, and vice versa.
-func StrictestReadBaseline(a, b ReadBaseline) ReadBaseline {
-	if a == ReadBaselineMinimal || b == ReadBaselineMinimal {
-		return ReadBaselineMinimal
-	}
-	return ReadBaselineDefault
 }
 
 // normalizeBreakGlass canonicalizes the exceptional protected-path rules. Each

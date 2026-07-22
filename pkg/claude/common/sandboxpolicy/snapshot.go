@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// SnapshotVersion 4 adds semantic read-baseline exclusions. Like v3's minimal
-// baseline and break-glass fields, the bump is deliberate even though the new
-// field is omitempty: an older binary would otherwise ignore a restriction and
-// launch with a broader policy. Rejecting the unknown version makes a
-// downgrade fail closed and loudly.
-const SnapshotVersion = 4
+// SnapshotVersion 5 drops the separate read-baseline/read-exclusion mechanism
+// (TCL-623): strictness is now expressed entirely through ordinary filesystem
+// rows (a broad deny plus narrower reopens), so those fields no longer exist.
+// The bump keeps the fail-closed downgrade property of earlier versions — an
+// older binary rejects v5 rather than reinterpreting it.
+const SnapshotVersion = 5
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -26,12 +26,20 @@ type AppliedProfile struct {
 }
 
 // RequireContained rejects authority that the parent snapshot did not already
-// possess. Filesystem coverage is segment-aware: an ancestor grant covers
-// descendants, write covers read, and every parent deny must be preserved by
-// an equal or broader child deny. Environment entries must match the parent's
-// exact value; omission is a safe weakening. Agent-owned directories are not
-// inherited host authority: agentd creates fresh private bindings for each
-// child, so their declarations do not participate in containment.
+// possess. Filesystem coverage is segment-aware AND specificity-aware: a child
+// read/write grant is contained only when the parent's own most-specific rule
+// at that path already conferred at least that access, and every parent deny
+// must be preserved by an equal or broader child deny. Environment entries must
+// match the parent's exact value; omission is a safe weakening. Agent-owned
+// directories are not inherited host authority: agentd creates fresh private
+// bindings for each child, so their declarations do not participate in
+// containment.
+//
+// Specificity is what gives plain deny rows real lineage authority (TCL-623).
+// A parent that denies ~ and reopens only its workspace must not be able to
+// mint a child that reopens ~/.ssh beneath the same deny: the child grant would
+// otherwise look "covered" by any broad parent read grant sitting above the
+// deny, and resume/reincarnate/child-spawn would silently widen.
 func RequireContained(parent, child Snapshot) error {
 	parent, err := RevalidateSnapshot(parent)
 	if err != nil {
@@ -45,21 +53,13 @@ func RequireContained(parent, child Snapshot) error {
 		if childGrant.Access == AccessDeny {
 			continue
 		}
-		covered := false
-		for _, parentGrant := range parent.Effective.Filesystem {
-			if parentGrant.Access == AccessDeny {
-				continue
-			}
-			if !pathContainsOrEqual(parentGrant.Path, childGrant.Path) {
-				continue
-			}
-			if childGrant.Access == AccessWrite && parentGrant.Access != AccessWrite {
-				continue
-			}
-			covered = true
-			break
+		parentAccess, covered := EffectiveAccessAt(parent.Effective.Filesystem, childGrant.Path)
+		if covered && parentAccess == AccessDeny {
+			return fmt.Errorf(
+				"filesystem %s grant %q reopens a path the parent snapshot denies; a child may not carve out authority beneath a deny the parent did not itself reopen",
+				childGrant.Access, childGrant.Path)
 		}
-		if !covered {
+		if !covered || (childGrant.Access == AccessWrite && parentAccess != AccessWrite) {
 			return fmt.Errorf("filesystem %s grant %q is not contained by the parent snapshot", childGrant.Access, childGrant.Path)
 		}
 	}
@@ -93,46 +93,7 @@ func RequireContained(parent, child Snapshot) error {
 	if err := breakGlassContained(parent.Effective, child.Effective); err != nil {
 		return err
 	}
-	if !readBaselineContained(parent.Effective.ReadBaseline, child.Effective.ReadBaseline) {
-		return fmt.Errorf("read baseline %q is wider than the parent's %q", displayReadBaseline(child.Effective.ReadBaseline), displayReadBaseline(parent.Effective.ReadBaseline))
-	}
-	if !readExclusionsContained(parent.Effective.ReadBaselineExclusions, child.Effective.ReadBaselineExclusions) {
-		return fmt.Errorf("read baseline exclusions are wider than the parent's restrictions")
-	}
 	return nil
-}
-
-func readExclusionsContained(parent, child []string) bool {
-	childSet := make(map[string]bool, len(child))
-	for _, id := range child {
-		childSet[id] = true
-	}
-	for _, id := range parent {
-		// Semantic IDs are portable authority. Home cannot stand in for a leaf:
-		// an audited leaf such as ~/.ssh may resolve through a symlink outside
-		// Home, where a Home deny provides no coverage.
-		if !childSet[id] {
-			return false
-		}
-	}
-	return true
-}
-
-// readBaselineContained treats minimal → default as WIDENING. A parent that
-// only sees its workspace must not be able to hand a child the broad
-// harness-inherited read baseline it does not itself possess.
-func readBaselineContained(parent, child ReadBaseline) bool {
-	if parent == ReadBaselineMinimal {
-		return child == ReadBaselineMinimal
-	}
-	return true
-}
-
-func displayReadBaseline(in ReadBaseline) string {
-	if in == ReadBaselineDefault {
-		return string(readBaselineDefaultAlias)
-	}
-	return string(in)
 }
 
 // breakGlassContained refuses any protected-path authority the parent does not
@@ -181,10 +142,7 @@ func HasCapabilities(snapshot Snapshot) bool {
 			return true
 		}
 	}
-	// Break-glass is always inherited host authority. The read baseline is not
-	// listed here: minimal is a restriction, and default is today's status quo
-	// rather than an added capability — RequireContained is what stops a
-	// minimal parent from handing a child the broader default.
+	// Break-glass is always inherited host authority.
 	return len(snapshot.Effective.Environment) > 0 ||
 		snapshot.Effective.NetworkAccess == NetworkAccessInternet ||
 		snapshot.Effective.HasBreakGlass()
@@ -235,13 +193,11 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
-		Name:                   "effective-sandbox-snapshot",
-		Filesystem:             in.Effective.Filesystem,
-		ReadBaseline:           in.Effective.ReadBaseline,
-		ReadBaselineExclusions: in.Effective.ReadBaselineExclusions,
-		BreakGlassFilesystem:   in.Effective.BreakGlassFilesystem,
-		Environment:            in.Effective.Environment,
-		NetworkAccess:          in.Effective.NetworkAccess,
+		Name:                 "effective-sandbox-snapshot",
+		Filesystem:           in.Effective.Filesystem,
+		BreakGlassFilesystem: in.Effective.BreakGlassFilesystem,
+		Environment:          in.Effective.Environment,
+		NetworkAccess:        in.Effective.NetworkAccess,
 	})
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate effective sandbox snapshot: %w", err)
@@ -255,12 +211,6 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if !reflect.DeepEqual(normalized.BreakGlassFilesystem, in.Effective.BreakGlassFilesystem) {
 		return Snapshot{}, fmt.Errorf("effective sandbox break-glass rules changed since resolution")
 	}
-	if normalized.ReadBaseline != in.Effective.ReadBaseline {
-		return Snapshot{}, fmt.Errorf("effective sandbox read baseline changed since resolution")
-	}
-	if !slices.Equal(normalized.ReadBaselineExclusions, in.Effective.ReadBaselineExclusions) {
-		return Snapshot{}, fmt.Errorf("effective sandbox read baseline exclusions changed since resolution")
-	}
 	if !reflect.DeepEqual(normalized.Environment, in.Effective.Environment) {
 		return Snapshot{}, fmt.Errorf("effective sandbox environment changed since resolution")
 	}
@@ -273,12 +223,6 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if !slices.Equal(agentDirectories, in.Effective.AgentDirectories) {
 		return Snapshot{}, fmt.Errorf("effective sandbox agent directories changed since resolution")
-	}
-	// Catalog paths are host-resolved values rather than snapshot bytes. Rerun
-	// overlap validation now so a symlinked ancestor or newly-created leaf
-	// cannot turn a formerly-safe ordinary grant into a category reopen.
-	if err := validateReadExclusionGrantConflicts(in.Effective); err != nil {
-		return Snapshot{}, fmt.Errorf("revalidate effective sandbox read exclusions: %w", err)
 	}
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
@@ -295,7 +239,13 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// field, which decodes to the zero value that means "today's behavior".
 	// v2 is what current main persists, so rejecting it here would break every
 	// existing session, actor, and pending spawn on upgrade.
-	case 1, 2, 3, SnapshotVersion:
+	// v3/v4 additionally carried read_baseline and read_baseline_exclusions.
+	// TCL-623 removed that mechanism outright, so those fields simply do not
+	// decode any more and the restriction is dropped rather than reinterpreted.
+	// That is the deliberate operator decision — the feature had no users, and
+	// silently claiming to enforce a mechanism this binary no longer implements
+	// would be worse than dropping it.
+	case 1, 2, 3, 4, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
@@ -310,9 +260,6 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 // the window after snapshot revalidation rather than activating a redirected
 // textual rule.
 func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
-	if err := validateReadExclusionGrantConflicts(in); err != nil {
-		return nil, fmt.Errorf("prepare read exclusions for launch: %w", err)
-	}
 	out := make([]FilesystemGrant, 0, len(in.Filesystem))
 	for _, grant := range in.Filesystem {
 		canonical, missing, err := canonicalDirectory(grant.Path, true)
@@ -368,11 +315,9 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		// slices above) so an unused capability serializes as an absent field
 		// and revalidation's exact comparison against a fresh normalization
 		// keeps matching.
-		ReadBaseline:           in.ReadBaseline,
-		ReadBaselineExclusions: append([]string(nil), in.ReadBaselineExclusions...),
-		Environment:            append([]EnvironmentEntry{}, in.Environment...),
-		AgentDirectories:       append([]string{}, in.AgentDirectories...),
-		NetworkAccess:          in.NetworkAccess,
+		Environment:      append([]EnvironmentEntry{}, in.Environment...),
+		AgentDirectories: append([]string{}, in.AgentDirectories...),
+		NetworkAccess:    in.NetworkAccess,
 		Provenance: ResolutionProvenance{
 			Applied:          cloneProfileSources(in.Provenance.Applied),
 			Filesystem:       make(map[string][]ProfileSource, len(in.Provenance.Filesystem)),
@@ -380,9 +325,6 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			Network:          nil,
 		},
-	}
-	if len(in.Provenance.ReadBaselineExclusions) > 0 {
-		out.Provenance.ReadBaselineExclusions = make(map[string][]ProfileSource, len(in.Provenance.ReadBaselineExclusions))
 	}
 	if len(in.BreakGlassFilesystem) > 0 {
 		out.BreakGlassFilesystem = append([]BreakGlassGrant{}, in.BreakGlassFilesystem...)
@@ -395,13 +337,6 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		for path, sources := range in.Provenance.BreakGlassFilesystem {
 			out.Provenance.BreakGlassFilesystem[path] = cloneProfileSources(sources)
 		}
-	}
-	if in.Provenance.ReadBaseline != nil {
-		source := cloneProfileSource(*in.Provenance.ReadBaseline)
-		out.Provenance.ReadBaseline = &source
-	}
-	for id, sources := range in.Provenance.ReadBaselineExclusions {
-		out.Provenance.ReadBaselineExclusions[id] = cloneProfileSources(sources)
 	}
 	for path, sources := range in.Provenance.Filesystem {
 		out.Provenance.Filesystem[path] = cloneProfileSources(sources)

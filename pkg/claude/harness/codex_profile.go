@@ -189,12 +189,6 @@ type CodexSandboxRules struct {
 	ReadDirs  []string
 	WriteDirs []string
 	DenyDirs  []string
-	// ReadBaseline "minimal" drops `extends = ":workspace"` (whose resolved
-	// policy makes the filesystem root readable) in favor of an enumerated
-	// allowlist. Codex permission profiles make `extends` optional and an
-	// extends-less profile resolves to a deny-all baseline, so this is a real
-	// allowlist read posture rather than an approximation.
-	ReadBaseline sandboxpolicy.ReadBaseline
 	// BreakGlassReadDirs/BreakGlassWriteDirs are acknowledged protected-path
 	// exceptions. They must suppress the baseline private-state deny they
 	// cover: on Codex a deny dominates any narrower grant regardless of
@@ -202,28 +196,10 @@ type CodexSandboxRules struct {
 	// the operator's acknowledged access.
 	BreakGlassReadDirs  []string
 	BreakGlassWriteDirs []string
-	// RequireSplitPolicy pins the Linux backend away from legacy Landlock.
-	// Home exclusions set it only after the isolated behavioral probe proved
-	// denied-parent/narrower-reopen semantics for this Codex executable.
+	// RequireSplitPolicy pins the Linux backend away from legacy Landlock. A
+	// reopen-under-deny profile sets it only after the isolated behavioral probe
+	// proved denied-parent/narrower-reopen semantics for this Codex executable.
 	RequireSplitPolicy bool
-}
-
-// codexMinimalRuntimeGrants are the special paths a minimal (extends-less)
-// profile must still grant for tools to run at all. ":minimal" is Codex's
-// purpose-built runtime baseline and expands to the system binary/library
-// roots (/bin, /etc, /lib, /lib64, /sbin, /usr); without it an extends-less
-// profile cannot execute even /usr/bin/true. The temp roots replace the
-// writable /tmp and $TMPDIR that ":workspace" supplied for free.
-//
-// Note what is deliberately NOT restored: ":root" = "read". That single entry
-// is the broad read baseline this whole feature exists to remove.
-var codexMinimalRuntimeGrants = []struct {
-	key    string
-	access string
-}{
-	{":minimal", "read"},
-	{":slash_tmp", "write"},
-	{":tmpdir", "write"},
 }
 
 func codexAgentProfileContentForNameAndRulesAndNetworkForOS(profileName, socketPath, privateStateDir string, readDirs, writeDirs, denyDirs []string, networkAccess sandboxpolicy.NetworkAccess, goos string) (string, error) {
@@ -250,10 +226,6 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 		return "", err
 	}
 	tmuxSocketDir, err := codexTmuxSocketDir()
-	if err != nil {
-		return "", err
-	}
-	readBaseline, err := sandboxpolicy.NormalizeReadBaseline(rules.ReadBaseline)
 	if err != nil {
 		return "", err
 	}
@@ -345,37 +317,8 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 		fmt.Fprintln(&b)
 	}
 	fmt.Fprintf(&b, "[permissions.%s]\n", p)
-	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
-		// No `extends` at all: Codex resolves an extends-less profile to a
-		// deny-all filesystem baseline, which is precisely the allowlist read
-		// posture a minimal profile asks for. The enumerated runtime grants
-		// below replace what ":workspace" used to supply, minus its readable
-		// filesystem root.
-		fmt.Fprintf(&b, "# read_baseline = minimal: no `extends`, so the filesystem baseline is deny-all\n")
-		fmt.Fprintf(&b, "# and only the enumerated grants below are readable.\n\n")
-	} else {
-		fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
-	}
+	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
 	fmt.Fprintf(&b, "[permissions.%s.filesystem]\n", p)
-	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
-		for _, grant := range codexMinimalRuntimeGrants {
-			fmt.Fprintf(&b, "%q = %q\n", grant.key, grant.access)
-		}
-		// Harness-owned homes intentionally remain agent-readable unless Home
-		// is itself excluded. Codex's
-		// standalone distribution can live below ~/.codex/packages, and the
-		// Linux sandbox re-executes that binary for every tool command. A
-		// whole-home deny (or an allowlist that omits it) therefore prevents
-		// commands from launching at all. Path-level hardening requires a
-		// measured runtime/state split and is tracked separately.
-		if !rules.RequireSplitPolicy {
-			home, homeErr := os.UserHomeDir()
-			if homeErr != nil {
-				return "", fmt.Errorf("resolve home directory for Codex runtime grants: %w", homeErr)
-			}
-			fmt.Fprintf(&b, "%q = \"read\"\n", filepath.Join(home, ".codex"))
-		}
-	}
 	if !suppressPrivateStateDeny {
 		fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
 	}

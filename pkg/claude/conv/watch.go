@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"runtime"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -2274,8 +2272,8 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	// an agentd lifecycle responsibility.
 	var breakGlassReadDirs, breakGlassWriteDirs []string
 	var breakGlassGrants []sandboxpolicy.BreakGlassGrant
-	readBaseline := sandboxpolicy.ReadBaselineDefault
-	var readExclusions []string
+	var launchGrants []sandboxpolicy.FilesystemGrant
+	var agentDirPaths []string
 	networkAccess := sandboxpolicy.NetworkAccessInherit
 	if effectiveSandbox != nil {
 		validated, err := sandboxpolicy.RevalidateSnapshot(*effectiveSandbox)
@@ -2287,11 +2285,17 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			resumeEnv[entry.Name] = entry.Value
 			shellEnvironment[entry.Name] = entry.Value
 		}
+		for _, name := range validated.Effective.AgentDirectories {
+			if path, ok := shellEnvironment[name]; ok {
+				agentDirPaths = append(agentDirPaths, path)
+			}
+		}
 		networkAccess = validated.Effective.NetworkAccess
 		launchFilesystem, err := sandboxpolicy.FilesystemForLaunch(validated.Effective)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("sandbox_profile_changed: %w", err)
 		}
+		launchGrants = launchFilesystem
 		for _, grant := range launchFilesystem {
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
@@ -2300,21 +2304,6 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 				readDirs = append(readDirs, grant.Path)
 			case sandboxpolicy.AccessDeny:
 				denyDirs = append(denyDirs, grant.Path)
-			}
-		}
-		readBaseline = validated.Effective.ReadBaseline
-		readExclusions = append([]string(nil), validated.Effective.ReadBaselineExclusions...)
-		if len(readExclusions) > 0 {
-			home, homeErr := os.UserHomeDir()
-			if homeErr != nil {
-				return "", "", nil, fmt.Errorf("resolve home for sandbox read exclusions: %w", homeErr)
-			}
-			exclusionDirs, unknown, resolveErr := sandboxpolicy.ReadExclusionDenyPathsForOS(readExclusions, home, runtime.GOOS)
-			if resolveErr != nil {
-				return "", "", nil, resolveErr
-			}
-			if len(unknown) == 0 {
-				denyDirs = append(denyDirs, exclusionDirs...)
 			}
 		}
 		breakGlassGrants = validated.Effective.BreakGlassFilesystem
@@ -2351,16 +2340,11 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	if err != nil {
 		return "", "", nil, err
 	}
-	if readBaseline != sandboxpolicy.ReadBaselineDefault {
-		if err := harness.ValidateSandboxReadBaseline(h.Name, sandboxMode, readBaseline); err != nil {
-			return "", "", nil, err
-		}
-	}
-	if err := harness.ValidateSandboxReadExclusions(h.Name, sandboxMode, readExclusions); err != nil {
+	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, launchGrants); err != nil {
 		return "", "", nil, err
 	}
 	if len(breakGlassGrants) > 0 {
-		if err := harness.ValidateSandboxBreakGlassWithReadExclusions(h.Name, sandboxMode, breakGlassGrants, readExclusions); err != nil {
+		if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, sandboxMode, breakGlassGrants, launchGrants); err != nil {
 			return "", "", nil, err
 		}
 	}
@@ -2378,14 +2362,38 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			return "", "", nil, fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
 		}
 	}
-	homeExcluded := slices.Contains(readExclusions, sandboxpolicy.ReadExclusionHome)
+	// A deny covering the workspace narrows the Git grants the same way the
+	// spawn path does: the historical repository container would reopen every
+	// sibling repo beneath the deny.
+	workspaceDenied := resumeDenyCoversPath(launchGrants, resumeCwd)
 	if (h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile) ||
 		(h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOff) {
-		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, homeExcluded)
+		gitWriteDirs, err := resumeGitWorktreeWriteDirs(resumeCwd, workspaceDenied)
 		if err != nil {
 			return "", "", nil, fmt.Errorf("resolve sandboxed resume Git grants: %w", err)
 		}
 		writeDirs = append(gitWriteDirs, writeDirs...)
+	}
+	if workspaceDenied {
+		// A deny covering the workspace masks the harness's ordinary cwd grant,
+		// and resumeGitWorktreeWriteDirs yields nothing outside a Git repository.
+		// The workspace is an invariant launch requirement, so reopen it for
+		// WRITE on every harness — not just Codex — or a resumed agent in a plain
+		// directory silently loses write access it had at spawn.
+		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
+			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
+		}
+	}
+	// Launch contract: pair explicit read reopens for everything tclaude
+	// requires the resumed agent to reach when a deny covers it. Mirrors the
+	// spawn path — see session.sandboxLaunchContractReadDirs.
+	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, append([]string{resumeCwd}, writeDirs...))...)
+	// Re-gate on the rules that will actually be emitted: the launch contract
+	// above can introduce a reopen beneath a deny that the authored profile did
+	// not contain. Mirrors the spawn path.
+	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
+	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
+		return "", "", nil, err
 	}
 	spec := harness.SpawnSpec{
 		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
@@ -2399,7 +2407,6 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
 
-		SandboxReadBaseline:        string(readBaseline),
 		SandboxBreakGlassReadDirs:  breakGlassReadDirs,
 		SandboxBreakGlassWriteDirs: breakGlassWriteDirs,
 	}
@@ -2407,13 +2414,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
-		requireSplitPolicy := false
-		for _, id := range readExclusions {
-			if id == sandboxpolicy.ReadExclusionHome {
-				requireSplitPolicy = true
-				break
-			}
-		}
+		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
 			verified, runtimeErr := harness.VerifyCodexHomeSplitPolicy()
 			if runtimeErr != nil {
@@ -2424,20 +2425,10 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 				readDirs = append(readDirs, verified.ExecutablePath)
 			}
 		}
-		if readBaseline == sandboxpolicy.ReadBaselineMinimal {
-			// Same invariant as the spawn path: without `extends = ":workspace"`
-			// nothing grants the launch directory, and GitWorktreeWriteDirs is
-			// empty outside a Git repository. Resume must not strand a minimal
-			// agent with no workspace.
-			if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-				resumeWriteDirs = appendUniqueResumeDir(resumeWriteDirs, workspace)
-			}
-		}
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 			ReadDirs:            readDirs,
 			WriteDirs:           resumeWriteDirs,
 			DenyDirs:            denyDirs,
-			ReadBaseline:        readBaseline,
 			BreakGlassReadDirs:  breakGlassReadDirs,
 			BreakGlassWriteDirs: breakGlassWriteDirs,
 			RequireSplitPolicy:  requireSplitPolicy,
@@ -2478,6 +2469,68 @@ func canonicalResumeWorkspace(cwd string) string {
 		return ""
 	}
 	return filepath.Clean(resolved)
+}
+
+// resumeDenyCoversPath reports whether a STRICT ancestor of path is denied by
+// the launch grants. Mirrors session.sandboxDenyCoversPath, including its
+// symlink resolution: effective grants are fully canonical, so a resume cwd
+// reached through a symlinked ancestor must be resolved before comparison or a
+// covering deny goes undetected and the workspace is never reopened.
+func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) bool {
+	path = canonicalResumeSandboxPath(path)
+	if path == "" {
+		return false
+	}
+	for _, grant := range grants {
+		if grant.Access != sandboxpolicy.AccessDeny || grant.Path == path {
+			continue
+		}
+		if sandboxpolicy.PathContainsOrEqual(grant.Path, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// resumeLaunchContractReadDirs mirrors session.sandboxLaunchContractReadDirs on
+// the resume path: every directory tclaude requires the agent to reach gets an
+// explicit read reopen when a deny covers it, because write access does not
+// imply read beneath a denied ancestor on either harness. Agent-owned
+// directories arrive here as their already-resolved paths.
+//
+// Only agent-OWNED directories are eligible: a literal environment value that
+// happens to look like a path under a deny must never mint a read reopen, or an
+// operator could widen the sandbox through the environment table.
+func resumeLaunchContractReadDirs(grants []sandboxpolicy.FilesystemGrant, agentDirs []string, candidates []string) []string {
+	if len(grants) == 0 {
+		return nil
+	}
+	all := append(append([]string(nil), candidates...), agentDirs...)
+	var out []string
+	for _, candidate := range all {
+		// Emit the canonical form: the rule must name the path the sandbox will
+		// actually see, and must be comparable to the canonical deny above.
+		candidate = canonicalResumeSandboxPath(candidate)
+		if candidate == "" || !resumeDenyCoversPath(grants, candidate) {
+			continue
+		}
+		out = appendUniqueResumeDir(out, candidate)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// canonicalResumeSandboxPath mirrors session.canonicalSandboxPath: resolve when
+// possible, fall back to the lexical form otherwise.
+func canonicalResumeSandboxPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }
 
 func appendUniqueResumeDir(dirs []string, dir string) []string {

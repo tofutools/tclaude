@@ -2,9 +2,7 @@ package sandboxpolicy
 
 import (
 	"fmt"
-	"os"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 )
@@ -60,13 +58,10 @@ type ResolutionProvenance struct {
 	Filesystem map[string][]ProfileSource `json:"filesystem"`
 	// BreakGlassFilesystem lists EVERY scope that contributed each protected
 	// path, so composition can never hide where dangerous authority came from.
-	// ReadBaseline names the scope that first imposed minimal.
-	BreakGlassFilesystem   map[string][]ProfileSource `json:"break_glass_filesystem,omitempty"`
-	ReadBaseline           *ProfileSource             `json:"read_baseline,omitempty"`
-	ReadBaselineExclusions map[string][]ProfileSource `json:"read_baseline_exclusions,omitempty"`
-	Environment            map[string]ProfileSource   `json:"environment"`
-	AgentDirectories       map[string][]ProfileSource `json:"agent_directories"`
-	Network                *ProfileSource             `json:"network,omitempty"`
+	BreakGlassFilesystem map[string][]ProfileSource `json:"break_glass_filesystem,omitempty"`
+	Environment          map[string]ProfileSource   `json:"environment"`
+	AgentDirectories     map[string][]ProfileSource `json:"agent_directories"`
+	Network              *ProfileSource             `json:"network,omitempty"`
 }
 
 // EffectiveProfile is the fully-composed harness-neutral sandbox payload and
@@ -74,16 +69,15 @@ type ResolutionProvenance struct {
 // scope is assigned.
 type EffectiveProfile struct {
 	Filesystem []FilesystemGrant `json:"filesystem"`
-	// ReadBaseline and BreakGlassFilesystem stay omitempty so a resolved
-	// payload for profiles that use neither is byte-identical to a pre-TCL-609
-	// snapshot, keeping stored snapshots and dashboard output compatible.
-	ReadBaseline           ReadBaseline         `json:"read_baseline,omitempty"`
-	ReadBaselineExclusions []string             `json:"read_baseline_exclusions,omitempty"`
-	BreakGlassFilesystem   []BreakGlassGrant    `json:"break_glass_filesystem,omitempty"`
-	Environment            []EnvironmentEntry   `json:"environment"`
-	AgentDirectories       []string             `json:"agent_directories"`
-	NetworkAccess          NetworkAccess        `json:"network_access,omitempty"`
-	Provenance             ResolutionProvenance `json:"provenance"`
+	// BreakGlassFilesystem stays omitempty so a resolved payload for profiles
+	// that do not use it is byte-identical to a snapshot from before the
+	// capability existed, keeping stored snapshots and dashboard output
+	// compatible.
+	BreakGlassFilesystem []BreakGlassGrant    `json:"break_glass_filesystem,omitempty"`
+	Environment          []EnvironmentEntry   `json:"environment"`
+	AgentDirectories     []string             `json:"agent_directories"`
+	NetworkAccess        NetworkAccess        `json:"network_access,omitempty"`
+	Provenance           ResolutionProvenance `json:"provenance"`
 }
 
 // HasBreakGlass reports whether a resolved policy carries protected-path
@@ -172,10 +166,9 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			current.sources = append(current.sources, source)
 			filesystem[grant.Path] = current
 		}
-		// Break-glass and the read baseline are privilege-monotonic across
-		// scopes rather than last-scope-wins: every contributing scope is kept
-		// in provenance, write dominates read on one canonical path, and the
-		// first scope that imposes minimal owns that decision.
+		// Break-glass is privilege-monotonic across scopes rather than
+		// last-scope-wins: every contributing scope is kept in provenance and
+		// write dominates read on one canonical path.
 		for _, grant := range normalized.BreakGlassFilesystem {
 			// Attribute to the profile that AUTHORED the rule, not the wrapper
 			// that happened to include it. Without this an operator auditing a
@@ -214,35 +207,6 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			}
 			current.sources = append(current.sources, grantSources...)
 			breakGlass[grant.Path] = current
-		}
-		if normalized.ReadBaseline == ReadBaselineMinimal && result.ReadBaseline != ReadBaselineMinimal {
-			result.ReadBaseline = ReadBaselineMinimal
-			baselineSource := source
-			result.Provenance.ReadBaseline = &baselineSource
-		}
-		for _, id := range normalized.ReadBaselineExclusions {
-			if result.Provenance.ReadBaselineExclusions == nil {
-				result.Provenance.ReadBaselineExclusions = map[string][]ProfileSource{}
-			}
-			sources := []ProfileSource{}
-			for _, chain := range tier.profile.derivedReadExclusionChains[id] {
-				if len(chain) == 0 {
-					continue
-				}
-				if len(chain) == 1 && chain[0] == normalized.Name {
-					sources = append(sources, source)
-					continue
-				}
-				chainSource := source
-				chainSource.Profile = chain[0]
-				chainSource.IncludedBy = normalized.Name
-				chainSource.Chain = append([]string(nil), chain...)
-				sources = append(sources, chainSource)
-			}
-			if len(sources) == 0 {
-				sources = append(sources, source)
-			}
-			result.Provenance.ReadBaselineExclusions[id] = append(result.Provenance.ReadBaselineExclusions[id], sources...)
 		}
 		for _, entry := range normalized.Environment {
 			if _, exists := agentDirectories[entry.Name]; exists {
@@ -291,11 +255,6 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		current.sources = append(current.sources, grant.sources...)
 		revalidated[canonical.Path] = current
 	}
-	for id, sources := range result.Provenance.ReadBaselineExclusions {
-		result.ReadBaselineExclusions = append(result.ReadBaselineExclusions, id)
-		result.Provenance.ReadBaselineExclusions[id] = canonicalSources(sources)
-	}
-	sort.Strings(result.ReadBaselineExclusions)
 	paths = paths[:0]
 	for path := range revalidated {
 		paths = append(paths, path)
@@ -306,10 +265,6 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		result.Filesystem = append(result.Filesystem, FilesystemGrant{Path: path, Access: grant.access})
 		result.Provenance.Filesystem[path] = canonicalSources(grant.sources)
 	}
-	if err := validateReadExclusionGrantConflicts(result); err != nil {
-		return EffectiveProfile{}, err
-	}
-
 	// Re-resolve the merged protected-path set for the same reason as the
 	// filesystem set above, and to re-prove every surviving rule still lands on
 	// a protected root after canonicalization.
@@ -369,36 +324,6 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	}
 	sort.Strings(result.AgentDirectories)
 	return result, nil
-}
-
-func validateReadExclusionGrantConflicts(effective EffectiveProfile) error {
-	if len(effective.ReadBaselineExclusions) == 0 {
-		return nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("resolve home for read_baseline_exclusions: %w", err)
-	}
-	resolved, _, err := ResolveReadBaselineExclusions(effective.ReadBaselineExclusions, home, runtime.GOOS)
-	if err != nil {
-		return fmt.Errorf("resolve read_baseline_exclusions: %w", err)
-	}
-	for id, category := range resolved {
-		if id == ReadExclusionHome {
-			continue // explicit grants are managed reopens in the Home contract
-		}
-		for _, excluded := range category.Paths {
-			for _, grant := range effective.Filesystem {
-				if grant.Access == AccessDeny {
-					continue
-				}
-				if pathContainsOrEqual(excluded, grant.Path) || pathContainsOrEqual(grant.Path, excluded) {
-					return fmt.Errorf("filesystem %s grant %q conflicts with read_baseline_exclusions category %q at %q; remove the grant or the exclusion", grant.Access, grant.Path, id, excluded)
-				}
-			}
-		}
-	}
-	return nil
 }
 
 func canonicalSources(in []ProfileSource) []ProfileSource {
