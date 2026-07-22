@@ -34,13 +34,13 @@ function CommonRuleEntry({ entry, onAdd }) {
   const base = `sbx-common-rule-${String(entry.id || '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const descrID = `${base}-descr`; const warnID = `${base}-warn`; const pathsID = `${base}-paths`;
   const describedBy = [descrID, entry.warning ? warnID : '', pathsID].filter(Boolean).join(' ');
-  // An entry with no paths on this platform is inert, but `disabled` would take
-  // it out of the tab order and take its description — which is precisely the
-  // explanation of WHY it is inert — with it. aria-disabled keeps both
-  // reachable; the handler refuses instead of the DOM.
-  const inert = !paths.length;
+  // An entry with no paths on this platform has nothing to insert, but
+  // `disabled` would take it out of the tab order and take its description —
+  // which is precisely the explanation of WHY it does nothing — with it.
+  // aria-disabled keeps both reachable; the handler refuses instead of the DOM.
+  const noPaths = !paths.length;
   return html`<div class="sbx-common-rule-entry" data-rule=${entry.id}>
-    <button type="button" class="sbx-common-rule-add" aria-describedby=${describedBy} aria-disabled=${inert ? 'true' : null} onClick=${() => { if (!inert) onAdd(entry); }}>＋ ${entry.label || entry.id}</button>
+    <button type="button" class="sbx-common-rule-add" aria-describedby=${describedBy} aria-disabled=${noPaths ? 'true' : null} onClick=${() => { if (!noPaths) onAdd(entry); }}>＋ ${entry.label || entry.id}</button>
     <span class="sbx-common-rule-descr" id=${descrID}>${entry.description || ''}</span>
     ${entry.warning ? html`<span class="sbx-common-rule-warn" id=${warnID}>⚠ ${entry.warning}</span>` : null}
     <code class="sbx-common-rule-paths" id=${pathsID}>${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}</code>
@@ -67,7 +67,10 @@ function commonRulePaths(entry) {
    `/home/op/go` do NOT, even though the daemon expands `~` to its own home
    before cleaning. That alias is a real remaining hole with the same
    silent-override consequence; closing it needs the daemon's home directory,
-   which the catalog payload does not carry today (TCL-635).
+   which the catalog payload does not carry today (TCL-635). Until then a `~`
+   path that also climbs (`~/../x`) folds to a relative identity the daemon
+   would have made absolute — harmless, because a relative row cannot save at
+   all: canonicalization refuses it loudly rather than folding it silently.
 
    The inserted row always keeps the catalog's own spelling; only the
    comparison normalizes. */
