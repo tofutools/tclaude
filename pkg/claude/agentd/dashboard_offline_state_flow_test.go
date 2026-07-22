@@ -47,7 +47,17 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 		Cwd:         f.TestCwd("offl"),
 		Status:      "idle",
 		LastHook:    time.Now(),
+		Harness:     "codex",
+		SandboxMode: "workspace-write",
 	}), "freeze offline session status at idle")
+	require.NoError(t, db.UpdateSessionModel("spwn-offl", "gpt-5.6-sol"),
+		"record last-used model")
+	require.NoError(t, db.UpdateSessionEffort("spwn-offl", "high"),
+		"record last-used effort")
+	require.NoError(t, db.UpdateSessionCost("spwn-offl", 1.23),
+		"record last-used API cost")
+	require.NoError(t, db.UpdateSessionVirtualCost("spwn-offl", 0.45),
+		"record last-used what-if cost")
 	f.MarkOffline("tmux-offl")
 
 	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
@@ -79,12 +89,30 @@ func TestDashboardSnapshot_OfflineAgentReportsExitedNotIdle(t *testing.T) {
 		"offline agent must report exited, not the frozen hook status")
 	assert.NotEqual(t, "idle", off.State.Status,
 		"the stale 'idle' status must not leak into the snapshot")
+	assert.Equal(t, "codex", off.State.Harness,
+		"offline member keeps its last-used harness")
+	assert.Equal(t, "gpt-5.6-sol", off.State.Model,
+		"offline member keeps its last-used model")
+	assert.Equal(t, "high", off.State.EffortLevel,
+		"offline member keeps its last-used reasoning effort")
+	assert.Equal(t, "workspace-write", off.State.SandboxMode,
+		"offline member keeps its last-used sandbox mode")
+	assert.Equal(t, 1.23, off.State.CostUSD,
+		"offline member keeps its last-used API cost")
+	assert.Equal(t, 0.45, off.State.VirtualCostUSD,
+		"offline member keeps its last-used what-if cost")
 
 	// Same conv via the broader Agents list.
 	offA := agentOf(offlineConv)
 	require.NotNil(t, offA, "offline conv should appear in Agents")
 	assert.False(t, offA.Online, "Agents row should be offline too")
 	assert.Equal(t, "exited", offA.State.Status, "Agents row must report exited")
+	assert.Equal(t, "codex", offA.State.Harness, "Agents row keeps last-used harness")
+	assert.Equal(t, "gpt-5.6-sol", offA.State.Model, "Agents row keeps last-used model")
+	assert.Equal(t, "high", offA.State.EffortLevel, "Agents row keeps last-used effort")
+	assert.Equal(t, "workspace-write", offA.State.SandboxMode, "Agents row keeps last-used sandbox")
+	assert.Equal(t, 1.23, offA.State.CostUSD, "Agents row keeps last-used API cost")
+	assert.Equal(t, 0.45, offA.State.VirtualCostUSD, "Agents row keeps last-used what-if cost")
 
 	// Control: the online member keeps its live, non-exited status.
 	on := memberOf(onlineConv)

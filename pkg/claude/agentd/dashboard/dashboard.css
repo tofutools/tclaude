@@ -2012,6 +2012,13 @@ tr:hover .agent-harness { color: #c9d1d9; }
 /* danger-full-access turns the OS sandbox OFF — flag it amber/red so a
    full-access agent visibly stands apart from a confined one. */
 .sandbox-badge.sandbox-danger { color: #f0883e; border-color: #693d1f; }
+/* Runtime/launch metadata remains useful after the pane exits, but it is no
+   longer a statement about a live process. Keep the last-used values visible
+   and dim them without dropping the already-small text below readable contrast. */
+.runtime-meta-offline { opacity: 0.85; font-style: italic; }
+.agent-harness .runtime-meta-offline .harness-name,
+.agent-harness .runtime-meta-offline .harness-sep { color: #9aa4af; }
+.agent-harness .runtime-meta-offline .harness-cost-whatif { color: #969c79; }
 /* Per-agent "remote on" indicator — a bare 📱 glyph trailing the harness
    line ("CC · O4.8 1M high 📱"), shown ONLY when Remote Access is armed
    (best-known) — an off agent carries none, so an armed one stands out as
