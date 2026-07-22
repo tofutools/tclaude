@@ -57,6 +57,7 @@ func TestDashboardHTML_HarnessLineWired(t *testing.T) {
 	must(".harness-effort", "the effort token is styled")
 	must("runtime-meta-offline", "offline runtime metadata remains rendered with a dimmed treatment")
 	must("offline ? 'Last used harness' : 'Harness'", "offline metadata is labelled as last-used in its tooltip")
+	must(`role="note" aria-label=${title}`, "last-used metadata is exposed without relying on pointer-only tooltips")
 
 	// The harness is now a per-agent value (state.harness), not a frontend
 	// constant: a label map keyed by the tag drives the chip, and the line
@@ -87,7 +88,7 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// (Claude Code) no-model row stays clean UNLESS Remote Access is armed,
 	// in which case the bare 📱 indicator still earns a minimal line.
 	must("if (!harness || harness === 'claude')", "no-model Claude Code rows stay clean; Codex still badges")
-	must("return state.remote_control ? html`<div class=${className}>${remote}</div>` : null;", "an armed remote indicator still shows on a pre-tick CC row")
+	must("return member.online && state.remote_control ? html`<div class=\"agent-harness\">${remote}</div>` : null;", "an armed remote indicator still shows on a live pre-tick CC row")
 
 	// The sandbox badge component reads state.sandbox_mode and special-cases
 	// the full-access (sandbox-off) mode.

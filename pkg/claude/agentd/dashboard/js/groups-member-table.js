@@ -83,7 +83,7 @@ function shortModel(model) {
 }
 
 function RemoteBadge({ member }) {
-  if (!member.state?.remote_control) return null;
+  if (!member.online || !member.state?.remote_control) return null;
   const title = 'Remote Access is ON — this agent is reachable from the Claude app/phone. Click to open its live session (Claude Code TUI) in a web terminal; Ctrl/Cmd-click opens it without leaving this tab. Best-known state (the harness has no readback); toggle it from the row’s ⚙ menu.';
   return html`<span class="remote-badge" data-act="web-open-window" ...${memberAttrs(member)} title=${title}>📱</span>`;
 }
@@ -91,14 +91,15 @@ function RemoteBadge({ member }) {
 function HarnessLine({ member }) {
   const state = member.state || {};
   const offline = !member.online;
-  const className = `agent-harness${offline ? ' runtime-meta-offline' : ''}`;
+  const metadataClass = `runtime-meta${offline ? ' runtime-meta-offline' : ''}`;
   const harness = state.harness || '';
   const labels = harnessLabels(harness);
   const model = state.model || '';
   const remote = html`<${RemoteBadge} member=${member} />`;
   if (!model) {
-    if (!harness || harness === 'claude') return state.remote_control ? html`<div class=${className}>${remote}</div>` : null;
-    return html`<div class=${className} title=${`${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`}><span class="harness-name">${labels.short}</span>${remote}</div>`;
+    if (!harness || harness === 'claude') return member.online && state.remote_control ? html`<div class="agent-harness">${remote}</div>` : null;
+    const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
+    return html`<div class="agent-harness"><span class=${metadataClass} role="note" aria-label=${title} title=${title}><span class="harness-name">${labels.short}</span></span>${remote}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -107,12 +108,12 @@ function HarnessLine({ member }) {
   if (effort) title += ` — ${offline ? 'Last used effort' : 'Effort'}: ${effort}`;
   if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) title += ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
-  return html`<div class=${className} title=${title}>
-    <span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model)}</span>
-    ${effort ? html`<span class="harness-effort">${effort}</span>` : null}
-    ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
-    ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
-    ${remote}
+  return html`<div class="agent-harness">
+    <span class=${metadataClass} role="note" aria-label=${title} title=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model)}</span>
+      ${effort ? html`<span class="harness-effort">${effort}</span>` : null}
+      ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
+      ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
+    </span>${remote}
   </div>`;
 }
 
@@ -125,7 +126,7 @@ function SandboxBadge({ member }) {
     ? `${offline ? 'Last used sandbox' : 'Sandbox'}: ${mode} — the OS sandbox is OFF (full access). Explicit opt-in.`
     : `${offline ? 'Last used sandbox' : 'Sandbox'}: ${mode} — launch-time OS sandbox confining the agent's writes`;
   const className = `sandbox-badge${danger ? ' sandbox-danger' : ''}${offline ? ' runtime-meta-offline' : ''}`;
-  return html`<span class=${className} title=${title}>${danger ? '⚠' : '🔒'} ${mode}</span>`;
+  return html`<span class=${className} role="note" aria-label=${title} title=${title}>${danger ? '⚠' : '🔒'} ${mode}</span>`;
 }
 
 function statusInfo(state, online) {

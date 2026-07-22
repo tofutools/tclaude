@@ -36,6 +36,7 @@ func TestDashboardHTML_RemoteControlWired(t *testing.T) {
 	// label) so it stays small — the explanation rides in the title tooltip.
 	must("function RemoteBadge({ member })", "RemoteBadge component is defined")
 	must("member.state?.remote_control", "the indicator reads the best-known flag off the agent's state")
+	must("if (!member.online || !member.state?.remote_control) return null;", "the live-session affordance is hidden when the agent is offline")
 	must(`title=${title}>📱</span>`, "the indicator is a bare 📱 glyph with the explanation in its title")
 	must("harnessCanRename, harnessCanRemoteControl,", "harnessCanRemoteControl is exported from helpers.js")
 
