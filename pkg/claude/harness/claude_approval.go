@@ -70,6 +70,15 @@ const ClaudePermissionInherit = claudePermInherit
 //
 // `inherit` remains selectable as an explicit per-session override for an
 // operator who really does want their settings.json posture verbatim.
+//
+// The "in-sandbox" half of that classification is a statement about what the
+// classifier does, NOT a promise that a sandbox exists: Claude's sandbox
+// default is `inherit`, so an operator who configures none gets `auto` with the
+// classifier as the only gate. TCL-586 settled that tclaude warns about that
+// combination rather than overriding the sandbox axis —
+// UnsandboxedAutonomyWarnings (claude_sandbox_effective.go) is the check, and
+// it fires on the CLI, on the spawn response, and in the dashboard spawn
+// dialog.
 type claudeApproval struct{}
 
 func (claudeApproval) DefaultPolicy() string { return claudePermAuto }

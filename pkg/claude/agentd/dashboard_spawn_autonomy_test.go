@@ -1,0 +1,136 @@
+package agentd
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func spawnEffectiveSandbox(t *testing.T, query string) (int, spawnEffectiveSandboxJSON) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	handleDashboardSpawnEffectiveSandbox(recorder, httptest.NewRequest(http.MethodGet, "/api/spawn/effective-sandbox?"+query, nil))
+	var payload spawnEffectiveSandboxJSON
+	if recorder.Code == http.StatusOK {
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode body %q: %v", recorder.Body.String(), err)
+		}
+	}
+	return recorder.Code, payload
+}
+
+// The dashboard probe must answer for the posture the spawn would ACTUALLY get.
+// A dialog whose selects are on their blank "default" option sends empty
+// values, and answering those as "nothing chosen, nothing to warn about" would
+// stay silent on exactly the default Claude spawn TCL-586 is about.
+func TestDashboardSpawnEffectiveSandboxAppliesHarnessDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	status, payload := spawnEffectiveSandbox(t, "harness=claude&sandbox=&approval=&dir="+home)
+	if status != http.StatusOK {
+		t.Fatalf("got status %d, want 200", status)
+	}
+	if payload.Approval != "auto" {
+		t.Fatalf("got approval %q, want the resolved harness default %q", payload.Approval, "auto")
+	}
+	if payload.SandboxState != "unconfigured" {
+		t.Fatalf("got sandbox_state %q, want unconfigured", payload.SandboxState)
+	}
+	if len(payload.Warnings) == 0 || !strings.Contains(payload.Warnings[0], "unattended") {
+		t.Fatalf("got warnings %v, want the unsandboxed-autonomy warning", payload.Warnings)
+	}
+}
+
+func TestDashboardSpawnEffectiveSandboxSilentWhenSandboxed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"),
+		[]byte(`{"sandbox":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	status, payload := spawnEffectiveSandbox(t, "harness=claude&approval=auto&dir="+home)
+	if status != http.StatusOK {
+		t.Fatalf("got status %d, want 200", status)
+	}
+	if payload.SandboxState != "on" {
+		t.Fatalf("got sandbox_state %q, want on", payload.SandboxState)
+	}
+	if len(payload.Warnings) != 0 {
+		t.Fatalf("got warnings %v, want none", payload.Warnings)
+	}
+	// An always-present array keeps every consumer free of a null guard.
+	if !strings.Contains(httpBodyOf(t, "harness=claude&approval=auto&dir="+home), `"warnings":[]`) {
+		t.Fatal("empty warnings should serialize as [], not null")
+	}
+}
+
+func httpBodyOf(t *testing.T, query string) string {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	handleDashboardSpawnEffectiveSandbox(recorder, httptest.NewRequest(http.MethodGet, "/api/spawn/effective-sandbox?"+query, nil))
+	return recorder.Body.String()
+}
+
+// A `~/…` CWD that reached the resolver unexpanded would find no project
+// settings and report a clean bill of health for a directory it never looked
+// at — the one failure mode this endpoint must not have.
+func TestDashboardSpawnEffectiveSandboxExpandsTildeCwd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, "repo")
+	if err := os.MkdirAll(filepath.Join(project, ".claude"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".claude", "settings.json"),
+		[]byte(`{"sandbox":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	_, payload := spawnEffectiveSandbox(t, "harness=claude&approval=auto&dir=~/repo")
+	if payload.SandboxState != "on" {
+		t.Fatalf("got sandbox_state %q, want on (tilde CWD should have been expanded)", payload.SandboxState)
+	}
+}
+
+func TestDashboardSpawnEffectiveSandboxRejectsBadInput(t *testing.T) {
+	for _, tc := range []struct{ name, query string }{
+		{"unknown harness", "harness=nope"},
+		{"invalid sandbox", "harness=claude&sandbox=sideways"},
+		{"invalid approval", "harness=claude&approval=whenever"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if status, _ := spawnEffectiveSandbox(t, tc.query); status != http.StatusBadRequest {
+				t.Fatalf("got status %d, want 400", status)
+			}
+		})
+	}
+}
+
+// The handler tests above call it directly, which would keep passing if the
+// route were never wired. The dialog only works if the path is actually served.
+func TestDashboardSpawnEffectiveSandboxRouteIsRegistered(t *testing.T) {
+	mux := http.NewServeMux()
+	registerDashboardEditRoutes(mux)
+	_, pattern := mux.Handler(httptest.NewRequest(http.MethodGet, "/api/spawn/effective-sandbox?harness=claude", nil))
+	if pattern != "/api/spawn/effective-sandbox" {
+		t.Fatalf("got pattern %q, want the effective-sandbox route", pattern)
+	}
+}
+
+func TestDashboardSpawnEffectiveSandboxRejectsNonGET(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	handleDashboardSpawnEffectiveSandbox(recorder,
+		httptest.NewRequest(http.MethodPost, "/api/spawn/effective-sandbox", nil))
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("got status %d, want 405", recorder.Code)
+	}
+}

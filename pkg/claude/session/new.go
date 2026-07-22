@@ -756,6 +756,15 @@ func runNew(params *NewParams) error {
 			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
 	}
 
+	// Unsandboxed-autonomy warning (TCL-586). Unlike the daemon spawn path this
+	// one applies no approval default, so it only ever fires on a posture the
+	// human asked for by name — but a human who typed `--permission-mode auto`
+	// still deserves to know tclaude found nothing that confines it. It stays a
+	// warning on stderr, never a refusal: the human is the trust root here.
+	for _, warning := range harness.UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd) {
+		fmt.Fprintf(os.Stderr, "%s\n", warning)
+	}
+
 	// Ensure the managed profile file exists before launch (self-healing —
 	// works even if `tclaude setup` was never run). This lives after cwd
 	// resolution so the profile can add a narrow write grant for the launch

@@ -19,6 +19,15 @@ import (
 // can answer (the deadlock from JOH-167). The default is paired with the
 // sandbox default (JOH-192): non-
 // escalating approvals are only safe because writes are sandbox-confined.
+//
+// That pairing is ENFORCED for Codex, whose spawn default is the managed
+// permission profile, and only ASSUMED for Claude Code, whose sandbox default
+// is `inherit` — deliberately, so the operator's settings.json posture survives.
+// TCL-586 settled what to do about the gap: tclaude does not force the sandbox
+// on (that would override settings.json on the one axis it promises not to
+// touch), it tells the operator when a launch is about to pair unattended
+// command execution with nothing that confines it. See
+// UnsandboxedAutonomyWarnings in claude_sandbox_effective.go.
 type ApprovalCatalog interface {
 	// DefaultPolicy is the policy a tclaude-spawned (unattended) agent runs
 	// under when the caller didn't choose one. It must be a *non-escalating*

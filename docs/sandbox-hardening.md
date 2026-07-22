@@ -319,6 +319,46 @@ blocks in **managed settings** instead
 equivalent elsewhere). Managed settings sit at the top of the precedence
 chain and cannot be overridden by user or project settings.
 
+## The unsandboxed-autonomy warning
+
+tclaude's spawn defaults pair an **autonomous approval posture** with a
+**confined filesystem**: an agent in a detached tmux pane must not block on a
+prompt nobody will answer, which is only a safe trade because its writes stay
+inside a sandbox. For Codex tclaude enforces both halves — the spawn default is
+the managed `tclaude-agent` permission profile. For Claude Code it enforces only
+the first: the sandbox default is `inherit`, which by design leaves your
+`settings.json` posture exactly as you wrote it.
+
+So if you have *not* configured a Claude Code sandbox, a default Claude spawn
+runs `--permission-mode auto` with the supervisor classifier as the only thing
+between the agent and your machine.
+
+tclaude does not silently fix this for you — forcing the sandbox on would
+override your `settings.json` on the one axis it promises not to touch. It tells
+you instead. Whenever a launch pairs a permission mode that runs commands
+unattended (`auto`, `bypassPermissions`) with a sandbox tclaude cannot prove is
+active, you get a warning:
+
+- `tclaude agent spawn` prints it as a `Warning:` line in the resolved-launch
+  echo;
+- `tclaude session new` prints it to stderr;
+- the dashboard spawn dialog shows it under the permission-mode select, live as
+  you change the harness, sandbox, permission mode, or CWD;
+- a group-template deploy attaches it to the per-agent notes.
+
+To decide whether the sandbox is really active, tclaude reads the same settings
+files Claude Code will, in the same precedence order: managed policy settings,
+then `.claude/settings.local.json` and `.claude/settings.json` found by walking
+up from the launch directory, then `~/.claude/settings.json`. A file it cannot
+read or parse is reported alongside the verdict rather than treated as an
+all-clear.
+
+Two ways to make the warning go away, both of which are the actual fix:
+
+- install the hardening above (`tclaude setup --install-sandbox-hardening`), so
+  every Claude agent is sandboxed by default; or
+- spawn with sandbox `on` for that one agent.
+
 ## Verifying
 
 After updating `settings.json`, start an agent through tclaude and, from
