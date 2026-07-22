@@ -746,7 +746,8 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_run_not_reconcilable", err.Error())
 	case errors.As(err, &eligibilityErr), errors.Is(err, engine.ErrTemplateIneligible),
 		errors.Is(err, engine.ErrInvalidCheckpoint), errors.Is(err, engine.ErrInvalidTransition),
-		errors.Is(err, db.ErrProcessRunInvalid):
+		errors.Is(err, executor.ErrInvalidRun), errors.Is(err, db.ErrProcessRunInvalid),
+		errors.Is(err, db.ErrProcessRunCorrupt):
 		writeError(w, http.StatusUnprocessableEntity, "process_run_invalid", err.Error())
 	case errors.Is(err, errProcessRuntimeStopped):
 		writeError(w, http.StatusServiceUnavailable, "process_runtime_stopping", err.Error())
