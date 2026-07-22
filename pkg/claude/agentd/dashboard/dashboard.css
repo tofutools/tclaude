@@ -3847,20 +3847,18 @@ body.wizard .group-pending-title-wizard { display: inline; }
 }
 .sbx-global-toggle input { accent-color: #58a6ff; }
 .sbx-global-rows { gap: 4px; }
-.sbx-global-row { position: relative; opacity: .82; }
+.sbx-global-row { flex-wrap: wrap; opacity: .82; }
 .sbx-global-row:focus-visible {
   outline: 2px solid #58a6ff;
   outline-offset: 2px;
   border-radius: 4px;
 }
 .sbx-global-detail {
-  display: none; position: absolute; z-index: 300;
-  top: calc(100% + 4px); left: 0; width: max-content;
-  max-width: min(520px, calc(100vw - 80px)); box-sizing: border-box;
+  display: none; flex: 1 0 100%; box-sizing: border-box;
   padding: 7px 9px; border: 1px solid #3b4654; border-radius: 5px;
-  background: #161b22; color: #c9d1d9; box-shadow: 0 6px 18px rgba(0, 0, 0, .38);
+  background: #161b22; color: #c9d1d9;
   font-size: 11px; line-height: 1.45; white-space: pre-line;
-  pointer-events: none;
+  cursor: text; user-select: text;
 }
 .sbx-global-row:hover > .sbx-global-detail,
 .sbx-global-row:focus > .sbx-global-detail,

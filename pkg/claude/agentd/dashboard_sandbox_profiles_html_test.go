@@ -76,6 +76,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`class="sbx-row sbx-global-row" role="group" tabindex="0"`:                  "global harness rule provenance is keyboard reachable",
 		`class="sbx-global-detail" role="tooltip"`:                                  "global provenance has a real tooltip element",
 		`.sbx-global-row:focus > .sbx-global-detail`:                                 "keyboard focus visibly opens global provenance",
+		`display: none; flex: 1 0 100%;`:                                              "global provenance expands inline instead of obscuring later rows",
 		`readonly aria-readonly="true"`:                                              "global config paths cannot be edited into the named profile",
 		`globalFilesystemRuleTooltip(row)`:                                           "immutable rows explain their harness config provenance",
 		`.sbx-global-harness {`:                                                      "Claude/Codex provenance stays visible without opening a tooltip",
