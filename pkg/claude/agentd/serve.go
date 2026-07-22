@@ -351,6 +351,10 @@ func runServe(p *serveParams) error {
 	cronStop := make(chan struct{})
 	defer close(cronStop)
 	startCronScheduler(cronStop)
+	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
+	// Each actively advancing run is claimed by exactly one daemon-owned drive;
+	// SQLite remains the only authoritative checkpoint writer.
+	startProcessRunRuntime(cronStop)
 
 	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
 	// choreography: spawns each deferred wave once the prior wave's agents are
@@ -564,6 +568,9 @@ func runServe(p *serveParams) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	if err := processRuns.shutdown(ctx); err != nil {
+		slog.Warn("process runtime: shutdown did not drain", "error", err)
+	}
 	_ = srv.Shutdown(ctx)
 	if popupSrv != nil {
 		_ = popupSrv.Shutdown(ctx)
@@ -927,6 +934,14 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
+	// Runtime mutations stay behind the same hot-reloaded feature flag, but are
+	// daemon-owned and SQLite-backed rather than part of filesystem authoring.
+	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
+	mux.HandleFunc("POST /v1/process/runs/{id}/resume", processRoute(handleProcessRunResume))
+	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", processRoute(handleProcessRunReissue))
+	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
 	return idempotencyRequests(logRequest(auditRequests(mux)))
 }
 

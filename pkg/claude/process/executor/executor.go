@@ -42,6 +42,7 @@ type Run struct {
 	stateVersion int64
 	checkpoint   engine.Checkpoint
 	definition   *engine.Definition
+	authorized   map[string]struct{}
 	dispatch     *Dispatch
 }
 
@@ -89,6 +90,20 @@ func (r *Run) StateVersion() int64 {
 	return r.stateVersion
 }
 
+// AuthorizationFor returns the concrete authorization token Execute expects
+// only when that exact program profile was explicitly persisted for this run.
+// The daemon uses this after every restart; template contents never mint the
+// decision.
+func (r *Run) AuthorizationFor(profile string) (Authorization, bool) {
+	if r == nil {
+		return Authorization{}, false
+	}
+	if _, ok := r.authorized[profile]; !ok {
+		return Authorization{}, false
+	}
+	return Authorization{RunID: r.id, Profile: profile}, true
+}
+
 func (r *Run) Action() Action {
 	if r == nil {
 		return Action{}
@@ -127,6 +142,14 @@ func LoadRun(runID string) (*Run, error) {
 	if err := record.DecodeParams(&params); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRun, err)
 	}
+	var authorizationProfiles []string
+	if err := record.DecodeProgramAuthorizations(&authorizationProfiles); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidRun, err)
+	}
+	authorized := make(map[string]struct{}, len(authorizationProfiles))
+	for _, profile := range authorizationProfiles {
+		authorized[profile] = struct{}{}
+	}
 	definition, err := engine.Prepare(&tmpl, params)
 	if err != nil {
 		return nil, fmt.Errorf("%w: prepare definition: %v", ErrInvalidRun, err)
@@ -140,7 +163,7 @@ func LoadRun(runID string) (*Run, error) {
 	}
 	return &Run{
 		id: record.ID, stateVersion: record.StateVersion,
-		checkpoint: checkpoint, definition: definition,
+		checkpoint: checkpoint, definition: definition, authorized: authorized,
 	}, nil
 }
 
