@@ -162,8 +162,17 @@ function StatePill({ state, online }) {
   else if (info.status === 'awaiting_permission' || info.status === 'awaiting_input') className = 'state-awaiting';
   else if (info.status === 'error') className = 'state-error';
   else if (info.status === 'exited') className = 'state-exited';
-  const label = info.detail ? `${info.status}: ${info.detail}` : info.status;
-  return html`<span class=${`state-pill ${className}`} title=${info.title}>${label}</span>`;
+  // The activity badges already carry the live sub-agent/background-shell
+  // counts. Keep this transitional state compact instead of repeating those
+  // counts across most of the row; the pill tooltip retains the full detail.
+  const backgroundActive = info.status === 'main_agent_idle';
+  const label = backgroundActive
+    ? 'idle + work'
+    : info.detail ? `${info.status}: ${info.detail}` : info.status;
+  const ariaLabel = backgroundActive
+    ? `idle; background work is still running${info.detail ? `: ${info.detail}` : ''}`
+    : info.title;
+  return html`<span class=${`state-pill ${className}`} title=${info.title} aria-label=${ariaLabel}>${label}</span>`;
 }
 
 const SLOP_STOPPED = {
@@ -272,7 +281,7 @@ function ActivityBadges({ state }) {
   // a `Bash` launched with run_in_background outlives the turn, and the
   // count is reconciled against the agent's live descendant processes.
   const shellTitle = `${shells} background shell command${shells === 1 ? '' : 's'} still running under this agent`;
-  return html`<span class="activity-badges">${subagents > 0 ? html`<span class="activity-badge badge-subagents" title=${subagentTitle}>🤖+${subagents}</span>` : null}${shells > 0 ? html`<span class="activity-badge badge-bg-shells" title=${shellTitle}>⚙+${shells}</span>` : null}</span>`;
+  return html`<span class="activity-badges">${subagents > 0 ? html`<span class="activity-badge badge-subagents" title=${subagentTitle} aria-label=${subagentTitle}>🤖+${subagents}</span>` : null}${shells > 0 ? html`<span class="activity-badge badge-bg-shells" title=${shellTitle} aria-label=${shellTitle}>⚙+${shells}</span>` : null}</span>`;
 }
 
 function StateCell({ member }) {
