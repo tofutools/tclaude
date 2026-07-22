@@ -223,9 +223,17 @@ func TestObservationCommitFailureLeavesOutstandingCommandForReconciliation(t *te
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "observation is not durable; reconciliation required")
 	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
+	assert.Equal(t, ActionNeedsReconcile, run.Action().Kind)
+	_, err = runProgram(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	assert.ErrorIs(t, err, ErrStaleDispatch, "the spent dispatch must never become reusable")
+	require.NoError(t, RecordOutcome(run, "operator:test", RecordedOutcome{
+		Outcome: result.Observation.Outcome, ExitCode: result.Observation.ExitCode,
+		Error: result.Observation.Error, Note: "recorded after observation commit failure",
+	}))
+	assert.Equal(t, ActionContinue, run.Action().Kind)
 	cold := mustLoadRun(t, run.ID())
-	assert.Equal(t, ActionNeedsReconcile, cold.Action().Kind)
-	assert.Equal(t, []string{"program_prepared"}, eventKinds(t, run.ID()))
+	assert.Equal(t, ActionContinue, cold.Action().Kind)
+	assert.Equal(t, []string{"program_prepared", "program_outcome_recorded"}, eventKinds(t, run.ID()))
 }
 
 func TestCrashBoundariesNeverSilentlyRerunOutstandingCommand(t *testing.T) {

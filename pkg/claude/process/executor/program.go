@@ -52,6 +52,10 @@ func Execute(ctx context.Context, run *Run, dispatch *Dispatch, authorization Au
 		return Result{}, err
 	}
 	if err := recordResult(run, dispatch, result); err != nil {
+		// The program may have executed, so the spent in-memory permission must
+		// never become dispatchable again. Dropping it exposes the same explicit
+		// reconciliation actions as a cold load of the durable outstanding row.
+		run.dispatch = nil
 		return result, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
 	}
 	return result, nil
