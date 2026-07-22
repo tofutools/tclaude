@@ -3833,6 +3833,56 @@ body.wizard .group-pending-title-wizard { display: inline; }
 /* Agent-owned directory rows are a single variable-name input plus the ✕. */
 .sbx-agent-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .sbx-row .sbx-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Global harness rules explain the layer beneath the named profile. They look
+   like rows so the combined filesystem policy is scannable, but use immutable
+   text/badges and never participate in the editor draft. */
+.sbx-global-filesystem {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 4px; padding: 7px 8px; border: 1px solid #26303d;
+  border-radius: 5px; background: rgba(56, 139, 253, 0.035);
+}
+.sbx-global-toggle {
+  display: flex; align-items: center; gap: 7px; width: fit-content;
+  color: #8b949e; font-size: 12px; line-height: 1.35; cursor: pointer;
+}
+.sbx-global-toggle input { accent-color: #58a6ff; }
+.sbx-global-rows { gap: 4px; }
+.sbx-global-row { flex-wrap: wrap; opacity: .82; }
+.sbx-global-row:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.sbx-global-detail {
+  display: none; flex: 1 0 100%; box-sizing: border-box;
+  padding: 7px 9px; border: 1px solid #3b4654; border-radius: 5px;
+  background: #161b22; color: #c9d1d9;
+  font-size: 11px; line-height: 1.45; white-space: pre-line;
+  cursor: text; user-select: text;
+}
+.sbx-global-row:hover > .sbx-global-detail,
+.sbx-global-row:focus > .sbx-global-detail,
+.sbx-global-row:focus-within > .sbx-global-detail { display: block; }
+.sbx-global-row .sbx-path[readonly] {
+  background: #11161d; border-color: #242d38; color: #9da7b3;
+  cursor: default; user-select: text;
+}
+.sbx-global-access {
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+  border: 1px solid #303b49; border-radius: 4px; background: #11161d;
+  color: #9da7b3; font-size: 11px; white-space: nowrap;
+}
+.sbx-global-access-deny,
+.sbx-global-access-deny-read,
+.sbx-global-access-deny-write { color: #ff7b72; border-color: rgba(248, 81, 73, 0.35); }
+.sbx-global-access-read { color: #79c0ff; border-color: rgba(56, 139, 253, 0.30); }
+.sbx-global-access-write { color: #e3b341; border-color: rgba(210, 153, 34, 0.35); }
+.sbx-global-harness {
+  flex: 0 0 8.2em; align-self: center; box-sizing: border-box;
+  color: #a5b6ca; border: 1px solid #303b49; border-radius: 999px;
+  padding: 2px 7px; font-size: 10px; text-align: center; white-space: nowrap;
+}
+.sbx-global-warning { color: #f0883e; font-size: 11px; line-height: 1.4; padding: 2px 1px; }
 /* Browse… and the ✕ delete button share the dark inline-button skin. */
 .sbx-row button {
   flex: 0 0 auto; align-self: stretch;

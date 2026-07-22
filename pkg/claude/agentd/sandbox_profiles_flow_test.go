@@ -55,6 +55,9 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	t.Setenv("HOME", linkedHome)
 	canonicalHome, err := filepath.EvalSymlinks(linkedHome)
 	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Join(linkedHome, ".claude"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(linkedHome, ".tclaude", "data"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(linkedHome, ".claude", "settings.json"), []byte(`{"sandbox":{"enabled":true,"filesystem":{"denyRead":["~/.tclaude/data"],"denyWrite":["~/.tclaude/data"]}}}`), 0o600))
 	rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var catalog struct {
@@ -63,6 +66,12 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 		Home          string
 		Categories    []map[string]any `json:"categories"`
 		Informational []map[string]any `json:"informational"`
+		Global        []struct {
+			Path      string   `json:"path"`
+			Access    string   `json:"access"`
+			Harnesses []string `json:"harnesses"`
+		} `json:"global_filesystem"`
+		GlobalWarnings []string `json:"global_config_warnings"`
 	}
 	testharness.DecodeJSON(t, rec, &catalog)
 	assert.Equal(t, 1, catalog.Version)
@@ -73,6 +82,20 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
 	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
 	assert.NotEmpty(t, catalog.Informational)
+	var privateState *struct {
+		Path      string   `json:"path"`
+		Access    string   `json:"access"`
+		Harnesses []string `json:"harnesses"`
+	}
+	for i := range catalog.Global {
+		if catalog.Global[i].Path == "~/.tclaude/data" && catalog.Global[i].Access == "deny" {
+			privateState = &catalog.Global[i]
+			break
+		}
+	}
+	require.NotNil(t, privateState)
+	assert.Equal(t, []string{"claude", "codex"}, privateState.Harnesses)
+	assert.Empty(t, catalog.GlobalWarnings)
 }
 
 func TestSandboxProfileDraftPermissionCanOnlySubmitValidatedDraft(t *testing.T) {

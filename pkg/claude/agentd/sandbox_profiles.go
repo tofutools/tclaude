@@ -15,17 +15,20 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-// sandboxCommonRuleCatalogJSON is the "Add common rule" feed: audited deny
-// presets the dashboard inserts as ORDINARY filesystem rows. Nothing here is
-// persisted as an ID — after insertion the rows are hand-editable like any
-// other (TCL-623). The field is still named "categories" so an older dashboard
-// build keeps rendering the feed.
+// sandboxCommonRuleCatalogJSON carries both parts of the filesystem editor's
+// explanatory feed: audited deny presets the dashboard can insert as ORDINARY
+// rows, and immutable harness-global rows it renders only as launch context.
+// Nothing from GlobalFilesystem is accepted by profile write routes. The
+// preset field remains named "categories" so an older dashboard build keeps
+// rendering that portion of the feed.
 type sandboxCommonRuleCatalogJSON struct {
-	Version       int                        `json:"version"`
-	Platform      string                     `json:"platform"`
-	Home          string                     `json:"home"`
-	Categories    []sandboxpolicy.CommonRule `json:"categories"`
-	Informational []map[string]any           `json:"informational"`
+	Version              int                               `json:"version"`
+	Platform             string                            `json:"platform"`
+	Home                 string                            `json:"home"`
+	Categories           []sandboxpolicy.CommonRule        `json:"categories"`
+	Informational        []map[string]any                  `json:"informational"`
+	GlobalFilesystem     []sandboxGlobalFilesystemRuleJSON `json:"global_filesystem"`
+	GlobalConfigWarnings []string                          `json:"global_config_warnings"`
 }
 
 func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
@@ -52,11 +55,14 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	global := sandboxGlobalFilesystemRules(home)
 	writeJSON(w, http.StatusOK, sandboxCommonRuleCatalogJSON{
-		Version:    sandboxpolicy.CommonRuleCatalogVersion,
-		Platform:   runtime.GOOS,
-		Home:       home,
-		Categories: rules,
+		Version:              sandboxpolicy.CommonRuleCatalogVersion,
+		Platform:             runtime.GOOS,
+		Home:                 home,
+		Categories:           rules,
+		GlobalFilesystem:     global.Filesystem,
+		GlobalConfigWarnings: global.Warnings,
 		Informational: []map[string]any{
 			{"id": "system.runtime", "label": "System runtime roots", "removable": false, "description": "Execution, DNS, and TLS runtime roots remain available and are not affected by these rules."},
 			{"id": "workspace.mechanics", "label": "Workspace and Git mechanics", "removable": false, "description": "The active workspace and exact verified Git common/admin paths are reopened when a deny covers them. The broader repository container is not reopened, so direct creation of sibling worktrees is unavailable under a home-wide deny; create/broker the worktree before launch."},
