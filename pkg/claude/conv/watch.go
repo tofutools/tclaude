@@ -2464,10 +2464,13 @@ func canonicalResumeWorkspace(cwd string) string {
 }
 
 // resumeDenyCoversPath reports whether a STRICT ancestor of path is denied by
-// the launch grants. Mirrors session.sandboxDenyCoversPath.
+// the launch grants. Mirrors session.sandboxDenyCoversPath, including its
+// symlink resolution: effective grants are fully canonical, so a resume cwd
+// reached through a symlinked ancestor must be resolved before comparison or a
+// covering deny goes undetected and the workspace is never reopened.
 func resumeDenyCoversPath(grants []sandboxpolicy.FilesystemGrant, path string) bool {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || !filepath.IsAbs(path) {
+	path = canonicalResumeSandboxPath(path)
+	if path == "" {
 		return false
 	}
 	for _, grant := range grants {
@@ -2497,14 +2500,29 @@ func resumeLaunchContractReadDirs(grants []sandboxpolicy.FilesystemGrant, agentD
 	all := append(append([]string(nil), candidates...), agentDirs...)
 	var out []string
 	for _, candidate := range all {
-		candidate = filepath.Clean(strings.TrimSpace(candidate))
-		if candidate == "." || !filepath.IsAbs(candidate) || !resumeDenyCoversPath(grants, candidate) {
+		// Emit the canonical form: the rule must name the path the sandbox will
+		// actually see, and must be comparable to the canonical deny above.
+		candidate = canonicalResumeSandboxPath(candidate)
+		if candidate == "" || !resumeDenyCoversPath(grants, candidate) {
 			continue
 		}
 		out = appendUniqueResumeDir(out, candidate)
 	}
 	sort.Strings(out)
 	return out
+}
+
+// canonicalResumeSandboxPath mirrors session.canonicalSandboxPath: resolve when
+// possible, fall back to the lexical form otherwise.
+func canonicalResumeSandboxPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
 }
 
 func appendUniqueResumeDir(dirs []string, dir string) []string {

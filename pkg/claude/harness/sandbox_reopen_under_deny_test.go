@@ -45,9 +45,19 @@ func installSuccessfulSplitProbe(t *testing.T, executableReopen bool) {
 	})
 }
 
+// canonicalTestHome resolves $HOME the way profile normalization does. macOS
+// hands out temp dirs under the /var → /private/var symlink, so a test that
+// compares against protected roots or grant paths must use the resolved form.
+func canonicalTestHome(t *testing.T) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(os.Getenv("HOME"))
+	require.NoError(t, err)
+	return filepath.Clean(resolved)
+}
+
 func denyShape(t *testing.T) []sandboxpolicy.FilesystemGrant {
 	t.Helper()
-	home := os.Getenv("HOME")
+	home := canonicalTestHome(t)
 	return []sandboxpolicy.FilesystemGrant{
 		{Path: home, Access: sandboxpolicy.AccessDeny},
 		{Path: filepath.Join(home, "work"), Access: sandboxpolicy.AccessRead},
@@ -124,7 +134,7 @@ func TestCodexReopenUnderDenyRefusedWhenProbeFails(t *testing.T) {
 func TestBreakGlassAndReopenShareVerifiedChildBoundary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	installSuccessfulSplitProbe(t, false)
-	grants := []sandboxpolicy.BreakGlassGrant{{Path: filepath.Join(os.Getenv("HOME"), ".tclaude", "data", "debug"), Access: sandboxpolicy.AccessRead}}
+	grants := []sandboxpolicy.BreakGlassGrant{{Path: filepath.Join(canonicalTestHome(t), ".tclaude", "data", "debug"), Access: sandboxpolicy.AccessRead}}
 	require.NoError(t, ValidateSandboxBreakGlassWithReopenUnderDeny(CodexName, SandboxManagedProfile, grants, denyShape(t)))
 
 	// WITHOUT the shape, Codex keeps the conservative guard that refuses a

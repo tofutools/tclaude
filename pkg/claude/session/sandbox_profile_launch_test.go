@@ -379,3 +379,30 @@ func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 	assert.NotContains(t, content, `"`+container+`" = "write"`)
 	assert.NotContains(t, content, sibling)
 }
+
+// Regression: effective grants are fully symlink-resolved by normalization, so
+// a launch path reached through a symlinked ancestor (macOS /var →
+// /private/var, or a symlinked home) must still be recognized as covered by a
+// deny. Comparing the unresolved form silently skipped every launch-contract
+// reopen and left the agent with a masked workspace.
+func TestDenyCoverageResolvesSymlinkedLaunchPaths(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	real := filepath.Join(root, "real")
+	workspace := filepath.Join(real, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, link))
+	viaLink := filepath.Join(link, "workspace")
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "deny-real", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: real, Access: sandboxpolicy.AccessDeny}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+
+	assert.True(t, sandboxDenyCoversPath(&snapshot, viaLink),
+		"a deny on the resolved parent covers the same directory reached through a symlink")
+	assert.Equal(t, []string{workspace}, sandboxLaunchContractReadDirs(&snapshot, viaLink),
+		"the emitted reopen must name the resolved path the sandbox will see")
+}

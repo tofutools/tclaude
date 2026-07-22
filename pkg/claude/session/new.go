@@ -1277,6 +1277,24 @@ func sandboxSnapshotBreakGlassDirs(snapshot *sandboxpolicy.Snapshot, access sand
 	return out
 }
 
+// canonicalSandboxPath symlink-resolves a launch-time path so it can be
+// compared against effective grants, which normalization has already fully
+// resolved. Without this a cwd reached through a symlinked ancestor (macOS
+// /var → /private/var, or a symlinked home) would not appear to be covered by a
+// deny that does cover it, and the launch contract would silently skip the
+// reopens the agent needs. Falls back to the lexical form when the path cannot
+// be resolved; the ordinary cwd checks report that failure.
+func canonicalSandboxPath(path string) string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return path
+}
+
 // sandboxDenyCoversPath reports whether a STRICT ancestor of path is denied by
 // the effective profile. A deny at exactly path is not a "cover": normalization
 // folds a same-path grant to the strongest access, so that path is simply
@@ -1285,8 +1303,8 @@ func sandboxDenyCoversPath(snapshot *sandboxpolicy.Snapshot, path string) bool {
 	if snapshot == nil {
 		return false
 	}
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "." || !filepath.IsAbs(path) {
+	path = canonicalSandboxPath(path)
+	if path == "" {
 		return false
 	}
 	for _, grant := range snapshot.Effective.Filesystem {
@@ -1328,8 +1346,10 @@ func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates 
 	}
 	var out []string
 	for _, candidate := range all {
-		candidate = filepath.Clean(strings.TrimSpace(candidate))
-		if candidate == "." || !filepath.IsAbs(candidate) || !sandboxDenyCoversPath(snapshot, candidate) {
+		// Emit the canonical form: the rule must name the path the sandbox will
+		// actually see, and must be comparable to the canonical deny above.
+		candidate = canonicalSandboxPath(candidate)
+		if candidate == "" || !sandboxDenyCoversPath(snapshot, candidate) {
 			continue
 		}
 		out = appendUniqueDir(out, candidate)
