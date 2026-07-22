@@ -211,6 +211,71 @@ func TestCrossAgentAskHuman_ResumeProvenanceRecoveryApproveDenyTimeout(t *testin
 	}
 }
 
+func TestCrossAgentAskHuman_MissingSessionRecoveryRequiresActualApproval(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	const (
+		target    = "missing-row-target-111111111111"
+		caller    = "missing-row-owner-111111111111"
+		sessionID = "missing-row-session"
+		tmuxName  = "missing-row-tmux"
+	)
+	cwd := f.TestCwd("missing-row")
+	f.HaveConvWithTitle(target, "missing-row-target")
+	f.HaveAliveSession(target, sessionID, tmuxName, cwd)
+	f.MarkOffline(tmuxName)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: target, ProjectPath: cwd, CustomTitle: "missing-row-target", IndexedAt: time.Now(),
+	}))
+	group := f.HaveGroup("missing-row-team")
+	f.HaveMember(group.Name, target)
+	require.NoError(t, db.AddAgentGroupOwner(group.ID, caller, "test"))
+	require.NoError(t, db.DeleteSession(sessionID))
+
+	// Group ownership authorizes the resume verb, but it is not a human trust
+	// root and therefore cannot bless a replacement anchor on its own.
+	plainReq := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/agent/"+target+"/resume", nil), caller)
+	plain := testharness.Serve(f.Mux, plainReq)
+	require.Equal(t, http.StatusOK, plain.Code, "body=%s", plain.Body.String())
+	assert.Contains(t, plain.Body.String(), "error:resume_provenance")
+	rows, err := db.FindSessionsByConvID(target)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "an unattended owner must not persist recovery provenance")
+
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := agentd.AsAgentPeer(testharness.JSONRequest(t, http.MethodPost,
+			"/v1/agent/"+target+"/resume", nil), caller)
+		req.Header.Set("X-Tclaude-Ask-Human", "5s")
+		result <- testharness.Serve(f.Mux, req)
+	}()
+	dashboard := agentd.BuildDashboardHandlerForTest()
+	pendingID := ""
+	require.Eventually(t, func() bool {
+		for _, request := range fetchAccessReqSnapshot(t, dashboard).AccessRequests {
+			if request.Status == db.AccessRequestStatusPending && request.Perm == agentd.PermAgentResume {
+				pendingID = request.ID
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 10*time.Millisecond)
+	decision := testharness.Serve(dashboard, testharness.JSONRequest(t, http.MethodPost,
+		"/api/access-requests/"+pendingID+"/decision", map[string]any{"decision": "approve"}))
+	require.Equal(t, http.StatusOK, decision.Code, "decision body=%s", decision.Body.String())
+	approved := <-result
+	require.Equal(t, http.StatusOK, approved.Code, "body=%s", approved.Body.String())
+	assert.Contains(t, approved.Body.String(), `"action":"resumed"`)
+
+	rows, err = db.FindSessionsByConvID(target)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.NotEmpty(t, rows[0].ResumeProvenance)
+	_, launched := f.World.SpawnCwdWriteProof(target)
+	assert.True(t, launched, "the actually approved recovery must launch the target")
+}
+
 func TestGroupResume_ProvenanceRecoveryApprovalIsMemberScoped(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)

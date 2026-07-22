@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -925,10 +926,10 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
 		return res
 	}
-	// Offline managed resume requires a session-generation record carrying
-	// daemon-private physical provenance. Conversation-index/native-store
-	// pathnames remain useful for clone/export discovery, but they cannot safely
-	// authorize an unattended relaunch after the pane that owned the cwd exited.
+	// Offline managed resume normally requires a session-generation record
+	// carrying daemon-private physical provenance. A human trust root may repair
+	// a missing row from a verified harness conversation; unattended callers may
+	// not turn cache/native-store pathnames into launch authority.
 	sessions, sessionErr := db.FindSessionsByConvID(convID)
 	if sessionErr != nil {
 		res.Action = "error"
@@ -936,9 +937,24 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		return res
 	}
 	if len(sessions) == 0 {
-		res.Action = "error"
-		res.Detail = "no resumable session row for this agent; delete/recreate the orphaned agent or restore it from a real conversation"
-		return res
+		if !trustRoot {
+			res.Action = "error:resume_provenance"
+			res.Detail = "no resumable session row for this agent; a direct human resume or --ask-human approval is required to recover it from the real harness conversation"
+			return res
+		}
+		recovered, recoverErr := recoverMissingSessionResumeAnchor(convID, recreateMissingDir)
+		if recoverErr != nil {
+			var missing *missingResumeAnchorCwdError
+			if errors.As(recoverErr, &missing) {
+				res.Action = "error:missing_cwd"
+				res.Detail = missing.path
+				return res
+			}
+			res.Action = "error"
+			res.Detail = recoverErr.Error()
+			return res
+		}
+		sessions = []*db.SessionRow{recovered}
 	}
 	sourceSession := sessions[0]
 	effort, model := inheritedLaunchFlags(sourceSession.ID)
@@ -1233,6 +1249,140 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		}
 	}
 	return res
+}
+
+type missingResumeAnchorCwdError struct{ path string }
+
+func (e *missingResumeAnchorCwdError) Error() string { return "missing launch directory: " + e.path }
+
+// recoverMissingSessionResumeAnchor is the compatibility bridge for managed
+// agents that outlived their prunable sessions rows. It is called only at a
+// real human trust boundary. The harness conversation must still exist; a
+// stale conv_index row alone is not enough. Once resolved, recovery captures
+// the same physical cwd/repository identity as an ordinary trusted launch and
+// persists it before returning to the normal provenance-checked resume path.
+func recoverMissingSessionResumeAnchor(convID string, recreateMissingDir bool) (*db.SessionRow, error) {
+	cwd, harnessName, err := resolveMissingSessionResumeTarget(convID)
+	if err != nil {
+		return nil, err
+	}
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return nil, fmt.Errorf("no trustworthy recovery target for agent %s: harness conversation has no absolute launch directory", short8(convID))
+	}
+	missing, err := launchDirMissing(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("inspect recovered launch directory: %w", err)
+	}
+	if missing {
+		if !recreateMissingDir {
+			return nil, &missingResumeAnchorCwdError{path: cwd}
+		}
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			return nil, fmt.Errorf("failed to recreate launch directory %s: %w", cwd, err)
+		}
+	}
+	observed, err := resumeprovenance.Capture(cwd)
+	if err != nil {
+		return nil, fmt.Errorf("human recovery could not capture current resume provenance: %w", err)
+	}
+	encoded, err := resumeprovenance.Encode(observed)
+	if err != nil {
+		return nil, fmt.Errorf("human recovery could not encode current resume provenance: %w", err)
+	}
+	inserted, err := db.InsertSessionResumeAnchor(convID, observed.Cwd.Path, harnessName, encoded, time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("human recovery could not persist a resume anchor: %w", err)
+	}
+	rows, err := db.FindSessionsByConvID(convID)
+	if err != nil {
+		return nil, fmt.Errorf("reload recovered resume anchor: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("human recovery could not persist a resume anchor: the session id is already used by another conversation")
+	}
+	if inserted {
+		slog.Info("resume: human trust root recovered missing session anchor",
+			"conv", short8(convID), "session", rows[0].ID, "harness", harnessName, "cwd", observed.Cwd.Path)
+	}
+	return rows[0], nil
+}
+
+// resolveMissingSessionResumeTarget first honors the harness tag and cwd cached
+// in conv_index, then falls back to each harness's native resolver
+// (needed for Codex rollouts that were never indexed). Every candidate is
+// checked through ConvStore.Exists so a stale cache row cannot be blessed.
+func resolveMissingSessionResumeTarget(convID string) (string, string, error) {
+	var lookupErrors []string
+	attempted := map[string]bool{}
+	if row, err := db.GetConvIndex(convID); err == nil && row != nil {
+		fallbackCwd := strings.TrimSpace(row.ProjectPath)
+		if fallbackCwd == "" {
+			fallbackCwd = strings.TrimSpace(row.ProjectDir)
+		}
+		if h, resolveErr := harness.Resolve(strings.TrimSpace(row.Harness)); resolveErr != nil {
+			lookupErrors = append(lookupErrors, resolveErr.Error())
+		} else if !h.SupportsConvs() {
+			lookupErrors = append(lookupErrors, fmt.Sprintf("harness %q has no conversation store", h.Name))
+		} else {
+			attempted[h.Name] = true
+			cwd, found, probeErr := verifiedMissingSessionResumeTarget(h, convID, fallbackCwd)
+			if probeErr != nil {
+				lookupErrors = append(lookupErrors, fmt.Sprintf("%s conversation lookup: %v", h.Name, probeErr))
+			} else if found {
+				return cwd, h.Name, nil
+			}
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		// Defer cache read failures to the native-store probes below and retain
+		// the diagnostic if none can resolve the conversation.
+		lookupErrors = append(lookupErrors, "conversation index lookup: "+err.Error())
+	}
+
+	for _, name := range harness.Names() {
+		h, ok := harness.Get(name)
+		if !ok || !h.SupportsConvs() || attempted[name] {
+			continue
+		}
+		cwd, found, err := verifiedMissingSessionResumeTarget(h, convID, "")
+		if err != nil {
+			lookupErrors = append(lookupErrors, fmt.Sprintf("%s conversation lookup: %v", name, err))
+			continue
+		}
+		if found {
+			return cwd, h.Name, nil
+		}
+	}
+	if len(lookupErrors) > 0 {
+		return "", "", fmt.Errorf("no trustworthy recovery target for agent %s; conversation lookup failed: %s",
+			short8(convID), strings.Join(lookupErrors, "; "))
+	}
+	return "", "", fmt.Errorf("no trustworthy recovery target for agent %s; the harness conversation no longer exists", short8(convID))
+}
+
+func verifiedMissingSessionResumeTarget(h *harness.Harness, convID, fallbackCwd string) (string, bool, error) {
+	ref, err := h.Convs.Resolve(convID, "", true)
+	if err != nil {
+		return "", false, err
+	}
+	if ref == nil || ref.ConvID != convID {
+		return "", false, nil
+	}
+	// Claude's resolver is conv_index-backed and can see rows tagged for
+	// another harness. Do not let that cross-harness cache view preempt the
+	// actual owner's native resolver.
+	if owner := strings.TrimSpace(ref.Harness); owner != "" && owner != h.Name {
+		return "", false, nil
+	}
+	cwd := strings.TrimSpace(ref.ProjectPath)
+	if cwd == "" {
+		cwd = strings.TrimSpace(fallbackCwd)
+	}
+	exists, err := h.Convs.Exists(convID, cwd)
+	if err != nil {
+		return "", false, err
+	}
+	return cwd, exists, nil
 }
 
 func resolveResumeConvFromHarnessStores(convID string) (*harness.ConvRef, bool) {
