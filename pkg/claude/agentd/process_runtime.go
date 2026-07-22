@@ -150,17 +150,17 @@ func (m *processRunManager) claimed(runID string) bool {
 }
 
 func (m *processRunManager) begin(runID string, start processRunStart) (bool, error) {
-	return m.beginRun(runID, nil, start)
+	return m.beginRun(runID, nil, nil, start)
 }
 
-func (m *processRunManager) beginPrepared(run *executor.Run, start processRunStart) (bool, error) {
+func (m *processRunManager) beginCreated(run *executor.Run, dispatch *executor.Dispatch) (bool, error) {
 	if run == nil || run.ID() == "" {
 		return false, executor.ErrInvalidRun
 	}
-	return m.beginRun(run.ID(), run, start)
+	return m.beginRun(run.ID(), run, dispatch, processRunStart{mode: processRunResume})
 }
 
-func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start processRunStart) (bool, error) {
+func (m *processRunManager) beginRun(runID string, prepared *executor.Run, createdDispatch *executor.Dispatch, start processRunStart) (bool, error) {
 	claim, acquired, err := m.claim(runID)
 	if err != nil || !acquired {
 		if err == nil && !acquired && start.mode != processRunResume {
@@ -193,7 +193,11 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		if run.Action().Kind == executor.ActionNeedsReconcile {
 			return false, executor.ErrNeedsReconcile
 		}
-		dispatch, err = prepareProcessRun(run)
+		if prepared != nil {
+			dispatch = createdDispatch
+		} else {
+			dispatch, err = prepareProcessRun(run)
+		}
 	case processRunReissue:
 		dispatch, err = executor.Reissue(run, start.actor)
 	case processRunRecordOutcome:
@@ -253,20 +257,16 @@ func (m *processRunManager) drive(ctx context.Context, runID string, claim *proc
 				"run", runID, "profile", action.Command.Program.Profile)
 			return
 		}
-		if _, err := processProgramExecute(ctx, claim.run, dispatch, authorization); err != nil {
+		_, next, err := processProgramExecute(ctx, claim.run, dispatch, authorization)
+		if err != nil {
 			slog.Warn("process runtime: program drive stopped", "run", runID, "error", err)
 			return
 		}
+		dispatch = next
+		if dispatch != nil {
+			continue
+		}
 		switch claim.run.Action().Kind {
-		case executor.ActionContinue:
-			var err error
-			dispatch, err = executor.Prepare(claim.run)
-			if err != nil {
-				slog.Warn("process runtime: continuation failed", "run", runID, "error", err)
-				return
-			}
-		case executor.ActionDispatch:
-			dispatch = claim.run.DispatchForRuntime()
 		case executor.ActionTerminal, executor.ActionNeedsReconcile:
 			return
 		default:
@@ -405,16 +405,16 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	run, err := createProcessRun(r.Context(), request, string(actor))
+	run, dispatch, err := createProcessRun(r.Context(), request, string(actor))
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
 	}
-	if _, err := processRuns.beginPrepared(run, processRunStart{mode: processRunResume}); err != nil {
+	if _, err := processRuns.beginCreated(run, dispatch); err != nil {
 		// Persistence already succeeded, so creation must remain a successful,
-		// idempotent-looking response. SQLite keeps the runnable checkpoint for
-		// a later bounded sweep; reporting failure here invites a retry that
-		// creates a second generated run with duplicate effects.
+		// idempotent-looking response. SQLite keeps the committed outstanding
+		// command for explicit reconciliation; reporting failure here invites a
+		// retry that creates a second generated run with duplicate effects.
 		slog.Warn("process runtime: created run deferred", "run", run.ID(), "error", err)
 	}
 	view, err := loadProcessRunView(run.ID())
@@ -532,22 +532,22 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
 }
 
-func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, error) {
+func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, *executor.Dispatch, error) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	if templateID == "" {
-		return nil, fmt.Errorf("%w: templateId is required", db.ErrProcessRunInvalid)
+		return nil, nil, fmt.Errorf("%w: templateId is required", db.ErrProcessRunInvalid)
 	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	head, err := fs.GetTemplateHead(ctx, templateID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tmpl, err := fs.GetTemplate(ctx, head.Ref)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	params := request.Params
 	if params == nil {
@@ -555,14 +555,14 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	}
 	definition, err := engine.Prepare(tmpl, params)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	authorizations, err := normalizeProcessRunAuthorizations(request.AuthorizeProgramProfiles)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if missing := missingProcessProgramAuthorizations(tmpl, authorizations); len(missing) > 0 {
-		return nil, &processProgramAuthorizationError{Profiles: missing}
+		return nil, nil, &processProgramAuthorizationError{Profiles: missing}
 	}
 	runID := strings.TrimSpace(request.ID)
 	if runID == "" {
@@ -570,30 +570,34 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	}
 	checkpoint, err := engine.Initialize(runID, definition)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	checkpoint, err = engine.AdvanceUntilQuiescent(checkpoint, definition)
+	if err != nil {
+		return nil, nil, err
 	}
 	snapshot, err := model.CanonicalSemanticJSON(tmpl)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	authorizationsJSON, err := json.Marshal(authorizations)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	checkpointJSON, err := json.Marshal(checkpoint)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	payload, err := json.Marshal(struct {
 		TemplateRef           string   `json:"templateRef"`
 		ProgramAuthorizations []string `json:"programAuthorizations"`
 	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	record := &db.ProcessRun{
 		ID: runID, TemplateRef: head.Ref, TemplateSnapshotJSON: snapshot,
@@ -601,19 +605,43 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		Status: string(checkpoint.Status), StateVersion: db.InitialProcessRunStateVersion,
 		CheckpointJSON: checkpointJSON,
 	}
+	initialEvents := []db.ProcessRunEvent{{
+		Sequence: 1, OccurredAt: time.Now().UTC(), Kind: "run_created",
+		PayloadJSON: payload, Actor: actor,
+	}}
+	if checkpoint.OutstandingCommand != nil {
+		preparedPayload, marshalErr := json.Marshal(struct {
+			Command engine.Command `json:"command"`
+		}{Command: *checkpoint.OutstandingCommand})
+		if marshalErr != nil {
+			return nil, nil, marshalErr
+		}
+		initialEvents = append(initialEvents, db.ProcessRunEvent{
+			Sequence: 2, OccurredAt: time.Now().UTC(), NodeID: checkpoint.OutstandingCommand.NodeID,
+			Kind: "program_prepared", PayloadJSON: preparedPayload, Actor: "engine:program-executor",
+		})
+	} else {
+		advancedPayload, marshalErr := json.Marshal(struct {
+			Status engine.RunStatus `json:"status"`
+		}{Status: checkpoint.Status})
+		if marshalErr != nil {
+			return nil, nil, marshalErr
+		}
+		initialEvents = append(initialEvents, db.ProcessRunEvent{
+			Sequence: 2, OccurredAt: time.Now().UTC(), Kind: "engine_advanced",
+			PayloadJSON: advancedPayload, Actor: "engine:program-executor",
+		})
+	}
 	err = db.CreateProcessRun(db.ProcessRunCreate{
 		ID: record.ID, TemplateRef: record.TemplateRef, TemplateSnapshotJSON: record.TemplateSnapshotJSON,
 		ParamsJSON: record.ParamsJSON, ProgramAuthorizationsJSON: record.ProgramAuthorizationsJSON,
 		Status: record.Status, CheckpointJSON: record.CheckpointJSON,
-		InitialEvents: []db.ProcessRunEvent{{
-			Sequence: 1, OccurredAt: time.Now().UTC(), Kind: "run_created",
-			PayloadJSON: payload, Actor: actor,
-		}},
+		InitialEvents: initialEvents,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return executor.LoadPreparedRun(record, definition)
+	return executor.LoadCreatedRun(record, definition)
 }
 
 type processProgramAuthorizationError struct{ Profiles []string }

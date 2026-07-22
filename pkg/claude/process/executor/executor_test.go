@@ -51,9 +51,12 @@ func TestPreparePersistsBoundCommandBeforeAnyDispatch(t *testing.T) {
 	assert.Equal(t, []string{"program_prepared"}, eventKinds(t, run.ID()))
 }
 
-func TestLoadPreparedRunReusesCreationDefinitionWithoutSnapshotPrepare(t *testing.T) {
+func TestLoadCreatedRunReusesCreationDefinitionAndMintsOnlyCommittedDispatch(t *testing.T) {
 	setupExecutorTest(t)
 	createRun(t, "run_creation_boundary", helperProgram(t, "success"))
+	prepared := mustLoadRun(t, "run_creation_boundary")
+	_, err := Prepare(prepared)
+	require.NoError(t, err)
 	record, err := db.GetProcessRun("run_creation_boundary")
 	require.NoError(t, err)
 	var tmpl model.Template
@@ -65,9 +68,12 @@ func TestLoadPreparedRunReusesCreationDefinitionWithoutSnapshotPrepare(t *testin
 	// This narrow reconstruction path must consume the definition directly;
 	// cold LoadRun remains responsible for decoding and preparing snapshots.
 	record.TemplateSnapshotJSON = json.RawMessage(`not-json`)
-	run, err := LoadPreparedRun(record, definition)
+	run, dispatch, err := LoadCreatedRun(record, definition)
 	require.NoError(t, err)
-	assert.Equal(t, ActionContinue, run.Action().Kind)
+	require.NotNil(t, dispatch)
+	assert.Equal(t, ActionDispatch, run.Action().Kind)
+	assert.Equal(t, ActionNeedsReconcile, mustLoadRun(t, run.ID()).Action().Kind,
+		"cold LoadRun must never mint a dispatch for persisted work")
 }
 
 func TestPrepareRollsBackCheckpointWhenEvidenceCannotCommit(t *testing.T) {
@@ -103,13 +109,13 @@ func TestExecutionRequiresRunAuthorizationAndKeepsShellSyntaxInert(t *testing.T)
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
 
-	_, err = Execute(t.Context(), run, dispatch, Authorization{RunID: "run_other", Profile: program.Profile})
+	_, _, err = Execute(t.Context(), run, dispatch, Authorization{RunID: "run_other", Profile: program.Profile})
 	assert.ErrorIs(t, err, ErrUnauthorized)
-	_, err = Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: "profile-b"})
+	_, _, err = Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: "profile-b"})
 	assert.ErrorIs(t, err, ErrUnauthorized)
 	assert.Equal(t, ActionDispatch, run.Action().Kind, "authorization rejection must happen before dispatch consumption")
 
-	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
+	result, next, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
 	require.NoError(t, err)
 	assert.True(t, result.Dispatched)
 	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
@@ -117,7 +123,8 @@ func TestExecutionRequiresRunAuthorizationAndKeepsShellSyntaxInert(t *testing.T)
 	require.NoError(t, json.Unmarshal([]byte(result.Stdout), &got))
 	assert.Equal(t, []string{commandSubstitution, `; echo injected`, "a b"}, got)
 	assert.NoFileExists(t, injectedPath)
-	assert.Equal(t, ActionContinue, run.Action().Kind)
+	assert.Nil(t, next)
+	assert.Equal(t, ActionTerminal, run.Action().Kind)
 }
 
 func TestExecutionUsesBoundedSecretFreeEnvironment(t *testing.T) {
@@ -127,7 +134,7 @@ func TestExecutionUsesBoundedSecretFreeEnvironment(t *testing.T) {
 	run := mustLoadRun(t, "run_env")
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
-	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.Equal(t, "unset|run_env|"+dispatch.command.ID, result.Stdout)
 	assert.NotContains(t, result.Stdout, "must-not-leak")
@@ -168,7 +175,7 @@ func TestEnvironmentAndTimeoutBoundsFailWithoutDispatchAndBecomeDurableObservati
 			if test.changeRuntime != nil {
 				test.changeRuntime(t)
 			}
-			result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+			result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 			require.NoError(t, err)
 			assert.False(t, result.Dispatched)
 			assert.Contains(t, result.Observation.Error, test.want)
@@ -184,7 +191,7 @@ func TestOutputIsTailBoundedAndPersistedWithObservation(t *testing.T) {
 	run := mustLoadRun(t, "run_output")
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
-	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.Equal(t, engine.ProgramFailed, result.Observation.Outcome)
 	assert.Equal(t, 7, result.Observation.ExitCode)
@@ -197,7 +204,7 @@ func TestOutputIsTailBoundedAndPersistedWithObservation(t *testing.T) {
 
 	events, err := db.ListProcessRunEvents(run.ID(), 0, db.MaxProcessRunEventReadPage)
 	require.NoError(t, err)
-	require.Len(t, events, 2)
+	require.Len(t, events, 3)
 	assert.Equal(t, "program_observed", events[1].Kind)
 	var stored Result
 	require.NoError(t, events[1].DecodePayload(&stored))
@@ -210,7 +217,7 @@ func TestBinaryOutputIsBoundedAndStoredAsValidText(t *testing.T) {
 	run := mustLoadRun(t, "run_binary_output")
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
-	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.True(t, result.StdoutTruncated)
 	assert.True(t, result.StderrTruncated)
@@ -221,7 +228,7 @@ func TestBinaryOutputIsBoundedAndStoredAsValidText(t *testing.T) {
 	events, err := db.ListProcessRunEvents(run.ID(), 0, db.MaxProcessRunEventReadPage)
 	require.NoError(t, err)
 	var stored Result
-	require.NoError(t, events[len(events)-1].DecodePayload(&stored))
+	require.NoError(t, events[len(events)-2].DecodePayload(&stored))
 	assert.Equal(t, result, stored)
 }
 
@@ -238,7 +245,7 @@ func TestObservationCommitFailureLeavesOutstandingCommandForReconciliation(t *te
 		BEGIN SELECT RAISE(ABORT, 'injected observation failure'); END`)
 	require.NoError(t, err)
 
-	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "observation is not durable; reconciliation required")
 	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
@@ -314,13 +321,10 @@ func TestCrashBoundariesNeverSilentlyRerunOutstandingCommand(t *testing.T) {
 		run := mustLoadRun(t, "run_crash_durable")
 		dispatch, err := Prepare(run)
 		require.NoError(t, err)
-		_, err = Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+		_, next, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 		require.NoError(t, err)
+		assert.Nil(t, next)
 		cold := mustLoadRun(t, run.ID())
-		assert.Equal(t, ActionContinue, cold.Action().Kind)
-		terminal, err := Prepare(cold)
-		require.NoError(t, err)
-		assert.Nil(t, terminal)
 		assert.Equal(t, ActionTerminal, cold.Action().Kind)
 		assert.Equal(t, engine.RunCompleted, cold.Action().Status)
 	})
@@ -381,7 +385,7 @@ func TestGracefulCancellationWaitsKillsAndRecordsFailure(t *testing.T) {
 	}
 	done := make(chan response, 1)
 	go func() {
-		result, err := Execute(ctx, run, dispatch, Authorization{RunID: run.ID()})
+		result, _, err := Execute(ctx, run, dispatch, Authorization{RunID: run.ID()})
 		done <- response{result: result, err: err}
 	}()
 	descendantPID := waitForHelper(t, readyPath, pidPath)
@@ -414,7 +418,7 @@ func TestProcessGroupCleanupFailureIsAuditableAndCannotRecordSuccess(t *testing.
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
 
-	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.Equal(t, engine.ProgramFailed, result.Observation.Outcome)
 	assert.Contains(t, result.Observation.Error, "process-group cleanup")
@@ -424,7 +428,7 @@ func TestProcessGroupCleanupFailureIsAuditableAndCannotRecordSuccess(t *testing.
 	events, err := db.ListProcessRunEvents(run.ID(), 0, db.MaxProcessRunEventReadPage)
 	require.NoError(t, err)
 	var stored Result
-	require.NoError(t, events[len(events)-1].DecodePayload(&stored))
+	require.NoError(t, events[len(events)-2].DecodePayload(&stored))
 	assert.Equal(t, result, stored)
 }
 
@@ -446,7 +450,7 @@ func TestProgramTimeoutKillsDescendantAndRecordsTimeout(t *testing.T) {
 	}
 	done := make(chan response, 1)
 	go func() {
-		result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+		result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 		done <- response{result: result, err: err}
 	}()
 	descendantPID := waitForHelper(t, readyPath, pidPath)

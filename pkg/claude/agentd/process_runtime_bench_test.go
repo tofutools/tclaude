@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -110,14 +111,14 @@ func benchmarkWarmProcessRuns(b *testing.B, tasks int, enforceBudget bool) {
 	b.ResetTimer()
 	for i := range b.N {
 		started := time.Now()
-		run, err := createProcessRun(context.Background(), processRunCreateRequest{
+		run, dispatch, err := createProcessRun(context.Background(), processRunCreateRequest{
 			TemplateID: benchmarkTemplateID(tasks), AuthorizeProgramProfiles: []string{"benchmark"},
 		}, "benchmark")
 		created := time.Now()
 		if err != nil {
 			b.Fatal(err)
 		}
-		began, err := processRuns.beginPrepared(run, processRunStart{mode: processRunResume})
+		began, err := processRuns.beginCreated(run, dispatch)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -151,14 +152,11 @@ func benchmarkColdProcessRuns(b *testing.B, tasks int) {
 	for i := range b.N {
 		// Persist the active fixture before the measured cold-start interval.
 		b.StopTimer()
-		fixture, err := createProcessRun(context.Background(), processRunCreateRequest{
-			TemplateID: benchmarkTemplateID(tasks), AuthorizeProgramProfiles: []string{"benchmark"},
-		}, "benchmark")
+		fixtureRunID, err := createColdProcessRuntimeBenchmarkFixture(context.Background(), tasks)
 		if err != nil {
 			b.Fatal(err)
 		}
-		lastRunID = fixture.ID()
-		fixture = nil // the timed path must reconstruct only from SQLite
+		lastRunID = fixtureRunID
 
 		b.StartTimer()
 		started := time.Now()
@@ -204,6 +202,47 @@ func processRuntimeBenchmarkTemplate(tasks int) *model.Template {
 	}
 }
 
+func createColdProcessRuntimeBenchmarkFixture(ctx context.Context, tasks int) (string, error) {
+	tmpl := processRuntimeBenchmarkTemplate(tasks)
+	fs, err := store.NewFS(processStoreRoot())
+	if err != nil {
+		return "", err
+	}
+	head, err := fs.GetTemplateHead(ctx, tmpl.ID)
+	if err != nil {
+		return "", err
+	}
+	definition, err := engine.Prepare(tmpl, map[string]string{})
+	if err != nil {
+		return "", err
+	}
+	runID := db.NewProcessRunID()
+	checkpoint, err := engine.Initialize(runID, definition)
+	if err != nil {
+		return "", err
+	}
+	snapshot, err := model.CanonicalSemanticJSON(tmpl)
+	if err != nil {
+		return "", err
+	}
+	checkpointJSON, err := json.Marshal(checkpoint)
+	if err != nil {
+		return "", err
+	}
+	if err := db.CreateProcessRun(db.ProcessRunCreate{
+		ID: runID, TemplateRef: head.Ref, TemplateSnapshotJSON: snapshot,
+		ParamsJSON: json.RawMessage(`{}`), ProgramAuthorizationsJSON: json.RawMessage(`["benchmark"]`),
+		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON,
+		InitialEvents: []db.ProcessRunEvent{{
+			Sequence: 1, OccurredAt: time.Now().UTC(), Kind: "run_created",
+			PayloadJSON: json.RawMessage(`{}`), Actor: "benchmark",
+		}},
+	}); err != nil {
+		return "", err
+	}
+	return runID, nil
+}
+
 func benchmarkTemplateID(tasks int) string { return fmt.Sprintf("benchmark-%02d-tasks", tasks) }
 
 func verifyProcessRuntimeBenchmarkRun(b *testing.B, run *executor.Run, tasks int) {
@@ -247,15 +286,15 @@ func reportProcessRuntimeBenchmark(b *testing.B, samples []processRuntimeBenchma
 		drives := sampleDurations(samples, func(s processRuntimeBenchmarkSample) time.Duration { return s.drive })
 		b.ReportMetric(float64(benchmarkPercentile(creates, 0.50).Nanoseconds()), "create-p50-ns")
 		b.ReportMetric(float64(benchmarkPercentile(drives, 0.50).Nanoseconds()), "drive-p50-ns")
-		b.ReportMetric(float64(2*tasks+2), "tx/op")
-		b.ReportMetric(float64(6*tasks+5), "sqlstmt/op")
+		b.ReportMetric(float64(tasks+1), "tx/op")
+		b.ReportMetric(float64(4*tasks+3), "sqlstmt/op")
 		b.ReportMetric(0, "aggregate-read/op")
 		return
 	}
 	// Cold startup performs one bounded ID-only active-page read and one exact
 	// checkpoint load, followed by the same per-transition SQL as a warm drive.
-	b.ReportMetric(float64(2*tasks+1), "tx/op")
-	b.ReportMetric(float64(6*tasks+5), "sqlstmt/op")
+	b.ReportMetric(float64(tasks+1), "tx/op")
+	b.ReportMetric(float64(4*tasks+5), "sqlstmt/op")
 	b.ReportMetric(1, "aggregate-read/op")
 	b.ReportMetric(1, "exact-read/op")
 }

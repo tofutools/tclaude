@@ -33,10 +33,10 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("sequential", 2))
 
 	completed := make(chan struct{}, 2)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
-		result, err := executor.Execute(ctx, run, dispatch, authorization)
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+		result, next, err := executor.Execute(ctx, run, dispatch, authorization)
 		completed <- struct{}{}
-		return result, err
+		return result, next, err
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -70,6 +70,8 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	var shown processRuntimeRunView
 	testharness.DecodeJSON(t, show, &shown)
 	assert.Equal(t, engine.RunCompleted, shown.Checkpoint.Status)
+	assert.Equal(t, int64(3), shown.StateVersion,
+		"creation plus one atomic observation/advance transaction per task")
 	assert.Nil(t, shown.Checkpoint.OutstandingCommand)
 	assert.Equal(t, "terminal", shown.Action)
 	assert.Equal(t, map[string]string{"branch": "main"}, shown.Params)
@@ -88,7 +90,7 @@ func TestProcessRuntimeRefusesImplicitProgramAuthorization(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("authorization", 1))
 	var dispatched atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		dispatched.Add(1)
 		return executor.Execute(ctx, run, dispatch, authorization)
 	}))
@@ -115,10 +117,10 @@ func TestProcessRuntimeColdOutstandingNeedsReconcileWithoutRedispatch(t *testing
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("cold", 1))
 	var attempts atomic.Int32
 	prepared := make(chan struct{}, 1)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		attempts.Add(1)
 		prepared <- struct{}{}
-		return executor.Result{}, errors.New("simulate daemon loss before dispatch")
+		return executor.Result{}, nil, errors.New("simulate daemon loss before dispatch")
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -172,11 +174,11 @@ func TestProcessRuntimeExecutedButUnobservedNeedsReconcileWithoutRedispatch(t *t
 
 	executed := make(chan executor.Result, 1)
 	var attempts atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		attempts.Add(1)
-		result, executeErr := executor.Execute(ctx, run, dispatch, authorization)
+		result, next, executeErr := executor.Execute(ctx, run, dispatch, authorization)
 		executed <- result
-		return result, executeErr
+		return result, next, executeErr
 	}))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_execution_ambiguous", "templateId": "execution-ambiguous",
@@ -220,8 +222,8 @@ func TestProcessRuntimeExecutedButUnobservedNeedsReconcileWithoutRedispatch(t *t
 func TestProcessRuntimeExplicitReissueAndRecordOutcome(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reconcile", 1))
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
-		return executor.Result{}, errors.New("leave a cold outstanding command")
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+		return executor.Result{}, nil, errors.New("leave a cold outstanding command")
 	}))
 
 	create := func(id string) processRuntimeRunView {
@@ -262,8 +264,8 @@ func TestProcessRuntimeExplicitReissueAndRecordOutcome(t *testing.T) {
 func TestProcessRuntimeConcurrentReconcileCannotDoubleDispatch(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reconcile-race", 1))
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
-		return executor.Result{}, errors.New("leave command ambiguous")
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+		return executor.Result{}, nil, errors.New("leave command ambiguous")
 	}))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_reconcile_race", "templateId": "reconcile-race",
@@ -276,7 +278,7 @@ func TestProcessRuntimeConcurrentReconcileCannotDoubleDispatch(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		if dispatches.Add(1) == 1 {
 			close(entered)
 		}
@@ -317,7 +319,7 @@ func TestProcessRuntimeConcurrentReconcileCannotDoubleDispatch(t *testing.T) {
 	assert.Equal(t, int32(1), dispatches.Load())
 }
 
-func TestProcessRuntimeRestartBetweenCommandsContinuesAutomatically(t *testing.T) {
+func TestProcessRuntimeRestartBetweenAtomicCommandsRequiresReconciliation(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	tmpl := processRuntimeTemplate("", 2)
 	tmpl.Name = "Restart acceptance"
@@ -348,13 +350,13 @@ func TestProcessRuntimeRestartBetweenCommandsContinuesAutomatically(t *testing.T
 
 	var executions atomic.Int32
 	firstObserved := make(chan struct{})
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
-		result, err := executor.Execute(ctx, run, dispatch, authorization)
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+		result, next, err := executor.Execute(ctx, run, dispatch, authorization)
 		if executions.Add(1) == 1 && err == nil {
 			close(firstObserved)
-			return result, errors.New("stop daemon after first durable observation")
+			return result, next, errors.New("stop daemon after first durable observation")
 		}
-		return result, err
+		return result, next, err
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -372,9 +374,10 @@ func TestProcessRuntimeRestartBetweenCommandsContinuesAutomatically(t *testing.T
 	var halfway processRuntimeRunView
 	testharness.DecodeJSON(t, between, &halfway)
 	assert.Equal(t, engine.RunRunning, halfway.Status)
-	assert.Equal(t, "runnable", halfway.Action)
+	assert.Equal(t, "needs_reconcile", halfway.Action)
 	assert.Equal(t, engine.NodeDone, halfway.Checkpoint.Nodes["task-01"])
-	assert.Equal(t, engine.NodeReady, halfway.Checkpoint.Nodes["task-02"])
+	assert.Equal(t, engine.NodeRunning, halfway.Checkpoint.Nodes["task-02"])
+	require.NotNil(t, halfway.Checkpoint.OutstandingCommand)
 
 	// Stop the original daemon-lifetime runtime and re-exec this test binary.
 	// The child constructs a new production mux and runtime manager in a new OS
@@ -382,15 +385,15 @@ func TestProcessRuntimeRestartBetweenCommandsContinuesAutomatically(t *testing.T
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
 	freshView := runProcessRuntimeFreshHost(t, f.World.HomeDir, root, run.ID)
 	assert.Equal(t, int32(1), executions.Load(), "the old host never executes the second command")
-	assert.Equal(t, engine.RunCompleted, freshView.Status)
+	assert.Equal(t, engine.RunRunning, freshView.Status)
+	assert.Equal(t, "needs_reconcile", freshView.Action)
 
 	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+run.ID, nil)
 	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
-	var completed processRuntimeRunView
-	testharness.DecodeJSON(t, show, &completed)
-	assert.Equal(t, engine.RunCompleted, completed.Status)
-	assert.Equal(t, engine.RunCompleted, completed.Checkpoint.Status)
-	assert.Equal(t, "terminal", completed.Action)
+	var cold processRuntimeRunView
+	testharness.DecodeJSON(t, show, &cold)
+	assert.Equal(t, engine.RunRunning, cold.Status)
+	assert.Equal(t, "needs_reconcile", cold.Action)
 }
 
 const processRuntimeFreshHostEnv = "TCLAUDE_TEST_PROCESS_RUNTIME_FRESH_HOST"
@@ -443,7 +446,7 @@ func TestProcessRuntimeConcurrentResumeCannotDoubleDispatch(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		if dispatches.Add(1) == 1 {
 			close(entered)
 		}
@@ -471,17 +474,17 @@ func TestProcessRuntimeConcurrentResumeCannotDoubleDispatch(t *testing.T) {
 	assert.Equal(t, int32(1), dispatches.Load())
 }
 
-func TestProcessRuntimeCapacityReturnsCreatedRunnableRun(t *testing.T) {
+func TestProcessRuntimeCapacityLeavesCreatedDispatchReconciliationRequired(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("capacity", 1))
 	release := make(chan struct{})
 	entered := make(chan struct{}, db.MaxProcessRunReadPage)
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		dispatches.Add(1)
 		entered <- struct{}{}
 		<-release
-		return executor.Result{}, errors.New("release capacity test claim")
+		return executor.Result{}, nil, errors.New("release capacity test claim")
 	}))
 
 	for i := range db.MaxProcessRunReadPage {
@@ -504,7 +507,7 @@ func TestProcessRuntimeCapacityReturnsCreatedRunnableRun(t *testing.T) {
 	var view processRuntimeRunView
 	testharness.DecodeJSON(t, deferred, &view)
 	assert.Equal(t, "run_capacity_deferred", view.ID)
-	assert.Equal(t, "runnable", view.Action)
+	assert.Equal(t, "needs_reconcile", view.Action)
 	assert.Equal(t, db.MaxProcessRunReadPage, agentd.ProcessRunClaimCountForTest())
 	assert.Equal(t, int32(db.MaxProcessRunReadPage), dispatches.Load())
 
@@ -517,15 +520,15 @@ func TestProcessRuntimeCapacityReturnsCreatedRunnableRun(t *testing.T) {
 		"the first bounded page advances across the reconciliation-blocked claims")
 	agentd.RunProcessRunSweepForTest()
 	agentd.WaitForProcessRunRuntimeForTest()
-	assert.Equal(t, int32(db.MaxProcessRunReadPage+1), dispatches.Load(),
-		"the bounded fallback sweep later discovers the capacity-deferred committed run")
+	assert.Equal(t, int32(db.MaxProcessRunReadPage), dispatches.Load(),
+		"cold recovery never remints the capacity-deferred committed dispatch")
 }
 
 func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown", 1))
 	entered := make(chan struct{})
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		close(entered)
 		<-ctx.Done()
 		return executor.Execute(ctx, run, dispatch, authorization)
@@ -556,10 +559,10 @@ func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown-capacity", 1))
 	entered := make(chan struct{}, db.MaxProcessRunReadPage)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, _ *executor.Run, _ *executor.Dispatch, _ executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, _ *executor.Run, _ *executor.Dispatch, _ executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		entered <- struct{}{}
 		<-ctx.Done()
-		return executor.Result{}, ctx.Err()
+		return executor.Result{}, nil, ctx.Err()
 	}))
 	for i := range db.MaxProcessRunReadPage {
 		created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -676,9 +679,9 @@ func TestProcessRuntimeStartupAndFallbackScansOneBoundedPage(t *testing.T) {
 		createRunnableProcessRunFixture(t, fmt.Sprintf("run_%03d", i), record.Ref, tmpl)
 	}
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		dispatches.Add(1)
-		return executor.Result{}, errors.New("stop after the bounded page prepared")
+		return executor.Result{}, nil, errors.New("stop after the bounded page prepared")
 	}))
 
 	agentd.RunProcessRunSweepForTest()
@@ -719,9 +722,9 @@ func TestProcessRuntimeReconciliationOnlyPageAdvancesFallbackCursor(t *testing.T
 		WHERE id >= 'run_cursor_00' AND id <= 'run_cursor_31'`)
 	require.NoError(t, err)
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
 		dispatches.Add(1)
-		return executor.Result{}, errors.New("stop after cursor proof")
+		return executor.Result{}, nil, errors.New("stop after cursor proof")
 	}))
 
 	agentd.RunProcessRunSweepForTest()
@@ -739,6 +742,7 @@ type processRuntimeRunView struct {
 	Params                map[string]string `json:"params"`
 	ProgramAuthorizations []string          `json:"programAuthorizations"`
 	Status                engine.RunStatus  `json:"status"`
+	StateVersion          int64             `json:"stateVersion"`
 	Action                string            `json:"action"`
 	NeedsReconcile        bool              `json:"needsReconcile"`
 	Checkpoint            engine.Checkpoint `json:"checkpoint"`

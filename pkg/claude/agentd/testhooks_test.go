@@ -61,7 +61,7 @@ func ShutdownProcessRunRuntimeForTest() (remaining int, restore func(), err erro
 
 // SetProcessProgramExecuteForTest swaps the daemon/executor call boundary so
 // flow tests can place deterministic channels around real executor execution.
-func SetProcessProgramExecuteForTest(fn func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error)) func() {
+func SetProcessProgramExecuteForTest(fn func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error)) func() {
 	previous := processProgramExecute
 	processProgramExecute = fn
 	return func() { processProgramExecute = previous }
