@@ -51,7 +51,10 @@ type CommonRule struct {
 	Paths       []string `json:"paths"`
 }
 
-func canonicalCatalogHome(home string) (string, error) {
+// CanonicalCommonRuleHome returns the home spelling used as the root of every
+// common-rule catalog path. Callers that expose the catalog root alongside the
+// rules must use this value so aliases compare against the same identity.
+func CanonicalCommonRuleHome(home string) (string, error) {
 	home = filepath.Clean(strings.TrimSpace(home))
 	if home == "." || !filepath.IsAbs(home) {
 		return "", fmt.Errorf("home directory %q is not absolute", home)
@@ -64,7 +67,7 @@ func canonicalCatalogHome(home string) (string, error) {
 
 // CommonRuleCatalog returns catalog v1 resolved for one platform/home.
 func CommonRuleCatalog(home, goos string) ([]CommonRule, error) {
-	home, err := canonicalCatalogHome(home)
+	home, err := CanonicalCommonRuleHome(home)
 	if err != nil {
 		return nil, err
 	}

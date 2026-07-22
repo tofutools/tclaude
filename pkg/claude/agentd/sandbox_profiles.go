@@ -23,6 +23,7 @@ import (
 type sandboxCommonRuleCatalogJSON struct {
 	Version       int                        `json:"version"`
 	Platform      string                     `json:"platform"`
+	Home          string                     `json:"home"`
 	Categories    []sandboxpolicy.CommonRule `json:"categories"`
 	Informational []map[string]any           `json:"informational"`
 }
@@ -41,6 +42,11 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "resolve home directory")
 		return
 	}
+	home, err = sandboxpolicy.CanonicalCommonRuleHome(home)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	rules, err := sandboxpolicy.CommonRuleCatalog(home, runtime.GOOS)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
@@ -49,6 +55,7 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sandboxCommonRuleCatalogJSON{
 		Version:    sandboxpolicy.CommonRuleCatalogVersion,
 		Platform:   runtime.GOOS,
+		Home:       home,
 		Categories: rules,
 		Informational: []map[string]any{
 			{"id": "system.runtime", "label": "System runtime roots", "removable": false, "description": "Execution, DNS, and TLS runtime roots remain available and are not affected by these rules."},

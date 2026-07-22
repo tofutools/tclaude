@@ -63,20 +63,21 @@ function commonRulePaths(entry) {
    themselves stay unresolved — they need the filesystem — so two names for one
    inode remain distinct here, as they must.
 
-   `~` is an ordinary leading segment: `~/go/` and `~/go` match, `~/go` and
-   `/home/op/go` do NOT, even though the daemon expands `~` to its own home
-   before cleaning. That alias is a real remaining hole with the same
-   silent-override consequence; closing it needs the daemon's home directory,
-   which the catalog payload does not carry today (TCL-635). Until then a `~`
-   path that also climbs (`~/../x`) folds to a relative identity the daemon
-   would have made absolute — harmless, because a relative row cannot save at
-   all: canonicalization refuses it loudly rather than folding it silently.
+   A leading `~` or `~/` expands against the daemon home shipped with the
+   catalog before cleaning, in the same order as the daemon. `~otheruser/...`
+   stays literal because the daemon does not guess another account's home.
+   When talking to an older daemon that does not ship its home, `~` also stays
+   literal so the comparison remains conservative.
 
    The inserted row always keeps the catalog's own spelling; only the
    comparison normalizes. */
-function pathIdentity(path) {
-  const raw = String(path || '').trim();
+function pathIdentity(path, home = '') {
+  let raw = String(path || '').trim();
   if (!raw) return '';
+  const daemonHome = String(home || '').trim();
+  if (daemonHome && (raw === '~' || raw.startsWith('~/'))) {
+    raw = raw === '~' ? daemonHome : `${daemonHome}/${raw.slice(2)}`;
+  }
   const rooted = raw.startsWith('/');
   const out = [];
   for (const segment of raw.split('/')) {
@@ -330,10 +331,10 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // count would need to distinguish that from "already in the table".
   const addCommonRule = (entry) => {
     const paths = commonRulePaths(entry);
-    const existing = new Set(draft.filesystem.map((row) => pathIdentity(row.path)).filter(Boolean));
+    const existing = new Set(draft.filesystem.map((row) => pathIdentity(row.path, commonRules.home)).filter(Boolean));
     const added = [];
     for (const path of paths) {
-      const identity = pathIdentity(path);
+      const identity = pathIdentity(path, commonRules.home);
       if (!identity || existing.has(identity)) continue;
       existing.add(identity);
       added.push(path);

@@ -642,6 +642,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
 
 const COMMON_RULES = {
   version: 1,
+  home: '/home/op',
   categories: [
     { id: 'secrets.ssh', label: 'Deny SSH credentials', description: 'SSH private keys and known hosts.', warning: 'Breaks git over SSH.', paths: ['/home/op/.ssh'] },
     { id: 'home.directory', label: 'Deny home directory', description: 'Everything under the home directory.', warning: 'You must reopen the harness, tclaude and toolchain directories (~/go, ~/.cargo, ~/.codex) or the agent cannot function.', paths: ['/home/op'] },
@@ -926,11 +927,10 @@ test('common-rule insertion treats separator aliases as the same authored path',
   unmount();
 });
 
-// `~` is expanded by the daemon before it cleans, but the browser has no way to
-// know the daemon's home directory: the catalog payload does not carry it. So a
-// `~` row and its absolute equivalent stay distinct here — a real remaining
-// alias hole, pinned so it is visible rather than assumed closed (TCL-635).
-test('a ~ row is not yet recognized as an alias of its absolute path', async (t) => {
+// The catalog carries the daemon home so the browser can expand `~` before it
+// cleans, matching the daemon's order. Presets must leave both the bare home and
+// a descendant written with `~/` exactly as authored.
+test('common-rule insertion treats ~ aliases as the same authored path', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -938,7 +938,36 @@ test('a ~ row is not yet recognized as an alias of its absolute path', async (t)
   const state = createManagementState();
   state.openDialog({
     kind: 'sandbox-editor',
-    seed: { name: 'tilde', filesystem: [{ path: '~/.ssh/', access: 'write' }], environment: [], includes: [], agent_directories: [] },
+    seed: { name: 'tilde', filesystem: [{ path: '~', access: 'write' }, { path: '~/.ssh/', access: 'write' }], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /added no rows.*1 path was already in the table and left as authored/);
+  host.querySelector('.sbx-common-rule-entry[data-rule="home.directory"] .sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /added no rows.*1 path was already in the table and left as authored/);
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.filesystem, [
+    { path: '~', access: 'write' },
+    { path: '~/.ssh/', access: 'write' },
+  ], 'the authored ~ rows are untouched and no aliased deny was appended');
+  unmount();
+});
+
+test('common-rule insertion leaves ~otheruser paths literal', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'other-home', filesystem: [{ path: '~otheruser/.ssh', access: 'write' }], environment: [], includes: [], agent_directories: [] },
     options: {},
   });
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
@@ -946,6 +975,7 @@ test('a ~ row is not yet recognized as an alias of its absolute path', async (t)
   host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /Added 1 deny row/);
+  assert.deepEqual([...host.querySelectorAll('.sbx-path')].map((input) => input.value), ['~otheruser/.ssh', '/home/op/.ssh']);
   unmount();
 });
 
