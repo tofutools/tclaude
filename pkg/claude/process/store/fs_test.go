@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"os"
@@ -753,28 +752,4 @@ func splitTemplateRef(ref string) (string, string, error) {
 		return "", "", errors.New("invalid template ref")
 	}
 	return id, hash, nil
-}
-
-func directoryFingerprint(t *testing.T, root string) map[string][32]byte {
-	t.Helper()
-	result := map[string][32]byte{}
-	require.NoError(t, filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		result[rel] = sha256.Sum256(data)
-		return nil
-	}))
-	return result
 }
