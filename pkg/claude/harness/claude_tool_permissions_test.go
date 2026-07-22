@@ -74,16 +74,81 @@ func TestClaudeToolPermissionDenyMixedShapes(t *testing.T) {
 }
 
 // An acknowledged break-glass path has its OS-sandbox deny suppressed so the
-// grant can take effect. Re-denying it on the tool surface would defeat the
-// acknowledgement on exactly the tools an operator debugging tclaude needs.
-func TestClaudeSettingsBreakGlassNotReDeniedOnToolSurface(t *testing.T) {
+// grant can take effect. A profile deny that is an ANCESTOR of it (the only
+// shape possible — ordinary denies cannot name a protected path) must not be
+// mirrored, or the mirrored Read deny would re-cover the acknowledged path and
+// defeat the acknowledgement on exactly the tools an operator debugging tclaude
+// needs. Workspace deliberately outside the denied home so no ordinary reopen
+// also marks the deny — the break-glass reopen is what must carry it.
+func TestClaudeToolPermissionDenyBreakGlassAncestorSkipped(t *testing.T) {
+	rules, skipped := claudeToolPermissionDenyRules(
+		nil, nil,
+		[]string{"/home/op"},
+		[]string{"/home/op/.tclaude/data"},
+	)
+	if slices.Contains(rules, "Read(//home/op/**)") {
+		t.Fatalf("ancestor deny of a break-glass path must not be mirrored; rules = %v", rules)
+	}
+	if !slices.Contains(skipped, "/home/op") {
+		t.Fatalf("skipped = %v, want it to name /home/op", skipped)
+	}
+}
+
+// End-to-end through the renderer: the same shape must not surface a tool-deny.
+func TestClaudeSettingsBreakGlassAncestorNotReDenied(t *testing.T) {
 	settings := claudeSettingsJSON(SpawnSpec{
 		SandboxMode:               ClaudeSandboxOn,
-		SandboxDenyDirs:           []string{"/home/op/.tclaude/data"},
+		SandboxDenyDirs:           []string{"/home/op"},
+		SandboxReadDirs:           []string{"/srv/repo"},
 		SandboxBreakGlassReadDirs: []string{"/home/op/.tclaude/data"},
 	})
-	if strings.Contains(settings, "Read(//home/op/.tclaude/data/**)") {
-		t.Fatalf("acknowledged break-glass path re-denied on the tool surface: %s", settings)
+	if strings.Contains(settings, "Read(//home/op/**)") {
+		t.Fatalf("break-glass ancestor re-denied on the tool surface: %s", settings)
+	}
+}
+
+// A directory name containing gitignore metacharacters must be escaped, or the
+// mirrored rule matches the wrong paths and silently leaves the built-in tools
+// un-denied for the literal directory Bash IS confined to — the exact bug this
+// change closes, reintroduced.
+func TestClaudeToolPermissionPatternEscapesGlobs(t *testing.T) {
+	got := claudeAbsolutePermissionPattern("/home/op/we[ir]d")
+	want := `//home/op/we\[ir\]d/**`
+	if got != want {
+		t.Fatalf("pattern = %q, want %q", got, want)
+	}
+	// The trailing recursive glob must stay live.
+	if !strings.HasSuffix(got, "/**") {
+		t.Fatalf("pattern %q lost its recursive suffix", got)
+	}
+	// A star inside the path must be escaped, not left as an operator.
+	if star := claudeAbsolutePermissionPattern("/home/op/a*b"); star != `//home/op/a\*b/**` {
+		t.Fatalf("star not escaped: %q", star)
+	}
+}
+
+// inherit emits the OS-sandbox denies (inert unless the operator's own settings
+// enable the sandbox) AND the tool-permission denies. The tool layer is
+// independent of sandbox.enabled by design, so a profile's `deny ~/.ssh` should
+// bind the built-in Read/Edit tools under inherit exactly as under on — the
+// whole point of the fix. permissions.deny is monotonic (it only restricts), so
+// honoring an explicit operator deny on both surfaces cannot make the session
+// less safe, and does not touch whether the sandbox is enabled — which is all
+// inherit promises to leave alone. Under inherit the reopen-under-deny gate
+// already refuses any launch whose profile reopens beneath a deny, so only leaf
+// denies reach here.
+func TestClaudeSettingsInheritMirrorsLeafDeny(t *testing.T) {
+	settings := claudeSettingsJSON(SpawnSpec{
+		SandboxMode:     ClaudeSandboxInherit,
+		SandboxDenyDirs: []string{"/home/op/.ssh"},
+	})
+	if !strings.Contains(settings, `Read(//home/op/.ssh/**)`) {
+		t.Fatalf("inherit did not mirror the leaf deny to the tool surface: %s", settings)
+	}
+	// inherit must not force the sandbox on — that is the part of the operator's
+	// config it promises not to change.
+	if strings.Contains(settings, `"enabled":true`) {
+		t.Fatalf("inherit forced sandbox enabled: %s", settings)
 	}
 }
 

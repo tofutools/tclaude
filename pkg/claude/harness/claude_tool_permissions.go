@@ -50,31 +50,32 @@ func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs, breakGlassDirs
 	if len(denies) == 0 {
 		return nil, nil
 	}
+	// Break-glass reopens are folded into the read set. The OS layer emits an
+	// allowRead/allowWrite for each acknowledged path beneath a deny (see
+	// claudeSandboxBlockWithBreakGlass), so on THIS surface they are reopens
+	// exactly like ordinary read/write rows — and a deny that is their ancestor
+	// is just as unmirrorable. Passing them here is what makes the shape check
+	// below see them: an ordinary deny can only ever be an ANCESTOR of a
+	// break-glass path (break-glass paths sit inside a protected root, which
+	// ordinary deny rows are forbidden to intersect), so a `deny ~` covering an
+	// acknowledged `~/.tclaude/data` is caught as a reopen-under-deny and
+	// skipped, instead of emitting a Read deny that would defeat the
+	// acknowledgement on the built-in tools.
+	reopenReads := append(append([]string{}, readDirs...), breakGlassDirs...)
 	grants := sandboxpolicy.GrantsFromDirs(
-		normalizedSandboxWriteDirs(readDirs),
+		normalizedSandboxWriteDirs(reopenReads),
 		normalizedSandboxWriteDirs(writeDirs),
 		denies,
 	)
-	// Any deny that appears as the covering deny of a reopen pair cannot be
-	// mirrored; the reopen beneath it would be unreachable for the built-in
-	// tools.
+	// Any deny that covers a reopen cannot be mirrored: Claude evaluates deny
+	// before allow with no specificity ordering, so the reopen beneath it would
+	// be unreachable for the built-in tools.
 	unmirrorable := map[string]bool{}
 	for _, shape := range sandboxpolicy.ReopensUnderDeny(grants) {
 		unmirrorable[shape.Deny] = true
 	}
 	for _, path := range denies {
 		if unmirrorable[path] {
-			skipped = append(skipped, path)
-			continue
-		}
-		// A break-glass grant AT the deny path is not a reopen-under-deny —
-		// normalization folds a same-path grant into the deny, so the shape
-		// check above cannot see it. On the OS surface that pairing still works
-		// because allowRead takes precedence over denyRead; on this surface
-		// deny always wins, so emitting the rule would silently defeat an
-		// acknowledged break-glass on exactly the built-in tools it was
-		// acknowledged for.
-		if breakGlassCoversPath(breakGlassDirs, path) {
 			skipped = append(skipped, path)
 			continue
 		}
@@ -97,8 +98,36 @@ func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs, breakGlassDirs
 // source rather than the filesystem root ("A pattern like /Users/alice/file
 // isn't an absolute path"), and for a `--settings` payload that source is the
 // session's original cwd. `//path` is the documented absolute form.
+//
+// The path is glob-escaped first. Read/Edit rules are gitignore PATTERNS, but
+// the OS-sandbox side binds the LITERAL path — so a real directory named
+// `we[ir]d` would render as `Read(//…/we[ir]d/**)`, whose `[ir]` is a character
+// class that matches `weid`/`werd` but not the literal directory, silently
+// leaving the built-in tools un-denied for exactly the path Bash is confined
+// to. Escaping the metacharacters keeps the two surfaces enforcing the same
+// path. (Claude Code does the same escaping when it materializes a rule from an
+// approved literal path.)
 func claudeAbsolutePermissionPattern(dir string) string {
-	return "//" + strings.TrimPrefix(dir, "/") + "/**"
+	return "//" + escapeGitignoreGlobs(strings.TrimPrefix(dir, "/")) + "/**"
+}
+
+// escapeGitignoreGlobs backslash-escapes the gitignore metacharacters so a path
+// segment matches literally. `\` is escaped first so it cannot double-escape a
+// following metacharacter. `*`, `?`, and `[` are the active pattern operators;
+// `]` is escaped too so a literal bracket pair cannot form a class with an
+// unescaped partner. The trailing `/**` this feeds into is added by the caller
+// and intentionally left as a live recursive glob.
+func escapeGitignoreGlobs(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for _, r := range s {
+		switch r {
+		case '\\', '*', '?', '[', ']':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // appendClaudePermissionDeny merges rules into settings["permissions"]["deny"],
