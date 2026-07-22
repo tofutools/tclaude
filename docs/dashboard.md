@@ -884,6 +884,18 @@ the drag was released: clear of the tab strip (or the standalone header) by a
 margin wide enough that a sloppy reorder cannot trigger it. Once the pointer is
 past that margin the region dims and states what releasing will do; a drag
 cancelled with **Escape**, or released inside the margin, changes nothing.
+
+Where a detached terminal lands depends on how it was detached. A **drag** off
+the strip opens a separate browser *window*, sized to the pane the terminal is
+leaving and positioned where the drag was released, clamped onto the screen it
+was dropped on — dragging a terminal out is a request to get it out of the way,
+which another tab behind the dashboard would not satisfy, and matching the pane's
+size means the terminal keeps its columns and rows instead of reflowing on
+arrival. The **⧉ tab** button and the context menu's **Detach tab** keep opening
+an ordinary browser tab. Both are the same handoff to the same standalone page;
+only the window request differs. Browsers treat that request as a hint: a setting
+that forces new windows into tabs, or a screen too small for the asked-for size,
+quietly wins, and the terminal works either way.
 Because the rule is conservative rather than clever, anything it does not
 recognise simply falls through to the explicit buttons and the tab context
 menu, which remain the dependable and keyboard-accessible path.

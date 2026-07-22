@@ -8,7 +8,7 @@ import { registerTerminalShellController } from './terminals-tab.js';
 import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
-import { dragLeftRegion } from './terminal-drag-out.js';
+import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -281,7 +281,7 @@ function PaneTab({
       <span
         class="mux-tab-label"
         draggable="true"
-        title="Drag to reorder · drag off the strip to detach into its own browser tab · Alt+Shift+Left/Right to move with the keyboard"
+        title="Drag to reorder · drag off the strip to detach into its own window · Alt+Shift+Left/Right to move with the keyboard"
         onDragStart=${(event) => onDragStart(event, pane.key)}
         onDragEnd=${onDragEnd}
       >${pane.label}</span>
@@ -385,6 +385,7 @@ function TerminalTabs({
   const hasPanes = current.panes.length > 0;
   const shellRef = useRef(null);
   const tabsRef = useRef(null);
+  const panesRef = useRef(null);
   const dragKeyRef = useRef(null);
   const droppedRef = useRef(false);
   const [dragKey, setDragKey] = useState(null);
@@ -413,13 +414,24 @@ function TerminalTabs({
     setDropTarget(null);
   };
   // Nothing in the strip accepted the drag and it ended clear of the strip:
-  // treat that as "pull this terminal out into its own browser tab". A drop on
-  // a sibling tab (reorder) or a cancelled drag never reaches the detach.
+  // treat that as "pull this terminal out of the dashboard". A drop on a
+  // sibling tab (reorder) or a cancelled drag never reaches the detach.
+  //
+  // Dragging a terminal out asks for it out of the way, so this lands in a
+  // window of its own — sized to the pane it is leaving and placed where the
+  // drag was released — rather than in another tab behind the dashboard. The
+  // ⧉ tab button and the tab context menu still open an ordinary tab.
   const endTabDrag = (event) => {
     const key = dragKeyRef.current;
     const detach = !droppedRef.current && key && dragLeftRegion(event, tabsRef.current);
     clearDrag();
-    if (detach) void actions.popOutPane(key);
+    if (!detach) return;
+    void actions.popOutPane(key, {
+      detachTo: {
+        size: panesRef.current?.getBoundingClientRect?.(),
+        at: dragScreenPoint(event),
+      },
+    });
   };
   const tabDragOver = (event, targetKey) => {
     const sourceKey = dragKeyRef.current;
@@ -557,7 +569,7 @@ function TerminalTabs({
       ${!solo ? html`
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
-          Drag a tab off the strip to detach it into its own browser tab, or use the tab's context menu.
+          Drag a tab off the strip to detach it into its own window, or use the tab's context menu to detach it into a browser tab.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
@@ -580,11 +592,11 @@ function TerminalTabs({
             />
           `)}
         </div>
-        ${detachArmed ? html`<div class="mux-drag-out-hint">Release to detach this terminal into its own browser tab</div>` : null}
+        ${detachArmed ? html`<div class="mux-drag-out-hint">Release to detach this terminal into its own window</div>` : null}
       ` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction} focusAfterDismiss=${focusAfterTabMenuDismiss} />` : null}
       ${hasPanes || !empty ? html`
-        <div class="mux-panes">
+        <div ref=${panesRef} class="mux-panes">
           ${current.panes.map((pane) => html`
             <${TerminalPane}
               key=${pane.key}

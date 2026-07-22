@@ -1,6 +1,7 @@
 import { setArcanePaletteEnabled } from './terminal-theme.js';
 import { encodeTerminalOpenHash } from './terminal-handoff.js';
 import { shellToast } from './shell-state.js';
+import { detachWindowFeatures } from './terminal-drag-out.js';
 
 export function createTerminalShellActions({
   state,
@@ -120,16 +121,25 @@ export function createTerminalShellActions({
     return key ? state.activatePane(key, options) : false;
   }
 
-  async function popOutPane(key) {
+  // `detachTo` decides tab vs. window. Browsers open a tab when a window is
+  // asked for with no features and a separate window when any are given, so the
+  // drag gesture passes the pane size and release point it measured and gets a
+  // window; the ⧉ tab button and the tab context menu pass nothing and keep
+  // getting an ordinary tab. The caller measures the DOM, this owns the window.
+  async function popOutPane(key, { detachTo = null } = {}) {
     const pane = state.panes.value.find((candidate) => candidate.key === key);
     if (!pane) return false;
+    const features = detachTo
+      ? detachWindowFeatures({ ...detachTo, screen: windowRef.screen })
+      : '';
     let target = null;
-    try { target = windowRef.open('about:blank', '_blank'); } catch (_) { target = null; }
+    try { target = windowRef.open('about:blank', '_blank', features || undefined); }
+    catch (_) { target = null; }
     if (!target) {
       // A blocked pop-up leaves the pane exactly where it is — nothing is lost,
       // but the gesture must say so. Drag-out especially: the strip has just
       // promised the terminal was about to leave.
-      notify('terminal detach blocked: allow pop-ups for this dashboard to open a terminal in its own browser tab', true);
+      notify('terminal detach blocked: allow pop-ups for this dashboard to detach a terminal', true);
       return false;
     }
     const seed = {

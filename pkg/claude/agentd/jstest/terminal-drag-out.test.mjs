@@ -9,7 +9,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DRAG_OUT_MARGIN, dragOutPoint, draggedOut, dragLeftRegion,
+  DETACH_WINDOW_CHROME_HEIGHT, DETACH_WINDOW_MIN, DRAG_OUT_MARGIN,
+  detachWindowFeatures, dragLeftRegion, dragOutPoint, dragScreenPoint, draggedOut,
 } from '../dashboard/js/terminal-drag-out.js';
 
 const stripRect = { left: 100, top: 0, right: 400, bottom: 30, width: 300, height: 30 };
@@ -41,4 +42,47 @@ test('drag-out geometry only fires well clear of the home region', () => {
     'an unmounted region resolves to the explicit buttons, not a detach');
   assert.equal(dragLeftRegion({ clientX: 200, clientY: 400 }, region, 1000), false,
     'the margin is the caller-tunable slop');
+});
+
+const screen = { availWidth: 1600, availHeight: 900, availLeft: 0, availTop: 0 };
+
+function features(overrides = {}) {
+  return detachWindowFeatures({
+    size: { width: 800, height: 500 }, at: { x: 200, y: 100 }, screen, ...overrides,
+  });
+}
+
+test('a dragged-out terminal asks for a window sized to the pane it is leaving', () => {
+  assert.deepEqual(dragScreenPoint({ screenX: 40, screenY: 60 }), { x: 40, y: 60 });
+  assert.equal(dragScreenPoint({ clientX: 40, clientY: 60 }), null,
+    'a drag with no screen coordinate cannot place a window');
+
+  assert.equal(features(), `popup=yes,width=800,height=${500 + DETACH_WINDOW_CHROME_HEIGHT},left=200,top=100`);
+  assert.match(features(), /^popup=yes/,
+    'the features string is what makes a browser choose a window over a tab');
+
+  assert.equal(features({ at: null }), `popup=yes,width=800,height=${500 + DETACH_WINDOW_CHROME_HEIGHT},left=0,top=0`,
+    'an unplaceable drag still sizes the window');
+  assert.equal(features({ size: { width: 4000, height: 3000 } }),
+    'popup=yes,width=1600,height=900,left=0,top=0', 'a pane larger than the screen is clamped onto it');
+  assert.equal(features({ size: { width: 10, height: 10 } }),
+    `popup=yes,width=${DETACH_WINDOW_MIN.width},height=${DETACH_WINDOW_MIN.height},left=200,top=100`,
+    'a sliver of a pane still opens a usable window');
+  assert.equal(features({ at: { x: 1500, y: 850 } }),
+    `popup=yes,width=800,height=540,left=800,top=360`,
+    'a release near the screen edge pulls the whole window back on-screen');
+  assert.equal(features({ at: { x: -500, y: -500 } }),
+    'popup=yes,width=800,height=540,left=0,top=0');
+  assert.equal(
+    detachWindowFeatures({
+      size: { width: 800, height: 500 }, at: { x: 100, y: 100 },
+      screen: { availWidth: 1600, availHeight: 900, availLeft: 1600, availTop: 0 },
+    }),
+    'popup=yes,width=800,height=540,left=1600,top=100',
+    'a second monitor is addressed through its own available origin');
+
+  assert.equal(features({ size: null }), '', 'an unmeasured pane asks for a plain tab, not a guess');
+  assert.equal(features({ screen: null }), '', 'an unmeasured screen asks for a plain tab');
+  assert.equal(features({ size: { width: 0, height: 500 } }), '');
+  assert.equal(detachWindowFeatures(), '');
 });
