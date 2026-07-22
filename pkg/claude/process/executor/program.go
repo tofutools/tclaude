@@ -13,6 +13,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 )
 
+var programPerform = performProgram
+
 const (
 	DefaultProgramTimeout     = 10 * time.Minute
 	MaxProgramTimeout         = time.Hour
@@ -77,6 +79,10 @@ func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization
 	dispatch.used = true
 	dispatch.mu.Unlock()
 
+	return programPerform(ctx, run.id, command)
+}
+
+func performProgram(ctx context.Context, runID string, command engine.Command) (Result, error) {
 	started := time.Now().UTC()
 	result := Result{
 		StartedAt: started,
@@ -91,7 +97,7 @@ func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization
 		result.Observation.Error = boundedError(err.Error())
 		return result, nil
 	}
-	environment, err := programEnvironment(run.id, command.ID)
+	environment, err := programEnvironment(runID, command.ID)
 	if err != nil {
 		result.FinishedAt = time.Now().UTC()
 		result.Observation.Error = boundedError(err.Error())
