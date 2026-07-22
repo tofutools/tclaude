@@ -106,4 +106,6 @@ func TestMergeSandboxGlobalFilesystemRulesWriteIncludesRead(t *testing.T) {
 	assert.Equal(t, "write", got[0].Access)
 	assert.Equal(t, []string{"claude", "codex"}, got[0].Harnesses)
 	require.Len(t, got[0].Origins, 2, "both settings remain visible as provenance")
+	assert.Equal(t, "read", got[0].Origins[0].Access)
+	assert.Equal(t, "write", got[0].Origins[1].Access)
 }

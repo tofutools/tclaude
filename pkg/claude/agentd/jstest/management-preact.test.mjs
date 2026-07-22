@@ -651,15 +651,15 @@ const COMMON_RULES = {
   informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
   global_filesystem: [
     { path: '~/.claude/sessions', access: 'deny', harnesses: ['claude', 'codex'], origins: [
-      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead + denyWrite', note: "Claude Code's global sandbox is enabled." },
-      { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
+      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead + denyWrite', access: 'deny', note: "Claude Code's global sandbox is enabled." },
+      { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', access: 'deny', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
     { path: '~/.codex', access: 'deny-read', harnesses: ['claude'], origins: [
-      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead', note: "Claude Code's global sandbox is enabled." },
+      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead', access: 'deny-read', note: "Claude Code's global sandbox is enabled." },
     ] },
-    { path: '~/.tclaude/api/agentd.sock', access: 'read', harnesses: ['claude', 'codex'], origins: [
-      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.allowRead', note: "Claude Code's global sandbox is enabled." },
-      { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
+    { path: '~/.tclaude/api/agentd.sock', access: 'write', harnesses: ['claude', 'codex'], origins: [
+      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.allowRead', access: 'read', note: "Claude Code's global sandbox is enabled." },
+      { harness: 'codex', source: 'generated tclaude-agent-<launch-id>.config.toml', setting: 'permissions.tclaude-agent-<launch-id>.filesystem', access: 'write', note: "Canonical baseline applied to every tclaude-managed Codex launch profile." },
     ] },
   ],
   global_config_warnings: [],
@@ -730,6 +730,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   assert.equal(inherited.length, 3);
   assert.equal(inherited.every((row) => row.textContent.includes('Claude') && !row.textContent.includes('Codex')), true);
   assert.equal(inherited.every((row) => !row.getAttribute('title').includes('generated tclaude-agent')), true, 'Claude-only tooltips omit Codex provenance');
+  assert.equal(inherited.find((row) => row.querySelector('.sbx-path').value === '~/.tclaude/api/agentd.sock').querySelector('.sbx-access').textContent, 'read', 'Claude-only rows use Claude access, not the merged write');
 
   filter.querySelector('option[value="codex"]').selected = true;
   filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
@@ -738,6 +739,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   assert.equal(inherited.length, 2);
   assert.equal(inherited.every((row) => row.textContent.includes('Codex') && !row.textContent.includes('Claude')), true);
   assert.equal(inherited.every((row) => !row.getAttribute('title').includes('settings.json')), true, 'Codex-only tooltips omit Claude provenance');
+  assert.equal(inherited.find((row) => row.querySelector('.sbx-path').value === '~/.tclaude/api/agentd.sock').querySelector('.sbx-access').textContent, 'write');
 
   filter.querySelector('option[value="none"]').selected = true;
   filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));

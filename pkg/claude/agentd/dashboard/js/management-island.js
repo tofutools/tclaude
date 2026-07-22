@@ -78,7 +78,9 @@ function globalFilesystemForHarness(rows, filter) {
   return (rows || []).flatMap((row) => {
     const origins = (row.origins || []).filter((origin) => origin.harness === filter);
     if (origins.length === 0 && !(row.harnesses || []).includes(filter)) return [];
-    return [{ ...row, harnesses: [filter], origins }];
+    const originAccess = origins.map((origin) => origin.access).filter(Boolean);
+    const access = originAccess.includes('write') ? 'write' : originAccess.includes('read') ? 'read' : originAccess[0] || row.access;
+    return [{ ...row, access, harnesses: [filter], origins }];
   });
 }
 
