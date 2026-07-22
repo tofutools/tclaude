@@ -2297,12 +2297,12 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
 			// TCL-613 — the activity badges. fe-dev-watcher's own turn has
 			// ended, but it still has a sub-agent and two background shell
 			// commands running, so its state cell must carry BOTH 🤖+1 and
-			// ⚙+2 and a busy (not idle) pill. Self-checking (throws) so a
+			// ⚙+2 and a busy (not idle) idle + work pill. Self-checking (throws) so a
 			// regression to a plain "idle" row — the exact bug TCL-613 fixes
 			// — fails the run instead of passing as a silent "ok".
 			Key:     "groups-activity-badges",
 			Title:   "Groups tab — sub-agent + background-shell badges",
-			Caption: "TCL-613 (self-checked): an agent whose turn ended while a sub-agent and two background shell commands keep running — 🤖+1 and ⚙+2 beside a busy main_agent_idle pill, so it never reads as plain idle.",
+			Caption: "TCL-613 (self-checked): an agent whose turn ended while a sub-agent and two background shell commands keep running — a compact green idle + work pill beside 🤖+1 and ⚙+2, so the counts are not repeated.",
 			JS: showGroups + expandGroups + `(function(){
   var row = document.querySelector('tr[data-dnd-conv="` + badgesConv + `"]');
   if (!row) throw new Error('activity-badges: fe-dev-watcher row not found');
@@ -2320,8 +2320,11 @@ document.dispatchEvent(new CustomEvent('tclaude:wizard', {detail:{active:true}})
   if (!pill.classList.contains('state-working')) {
     throw new Error('activity-badges: expected a busy pill, got "' + pill.textContent + '"');
   }
-  if (pill.textContent.indexOf('background shell') < 0) {
-    throw new Error('activity-badges: pill does not name the background shells: ' + pill.textContent);
+  if (pill.textContent.trim() !== 'idle + work') {
+    throw new Error('activity-badges: expected compact idle + work pill, got "' + pill.textContent + '"');
+  }
+  if (!/background shell/.test(pill.title)) {
+    throw new Error('activity-badges: compact pill lost its full-detail tooltip: ' + pill.title);
   }
 })();`,
 		},
