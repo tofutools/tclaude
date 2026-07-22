@@ -136,14 +136,16 @@ review. Larger, riskier, or more judgment-heavy PRs should get an independent
 fresh-agent review even if CodeRabbit commented.
 
 An independent review must be done by a fresh agent that sees the PR diff cold:
-give it the diff and a review instruction, not the design backstory or how the
-change was built — though the instruction should state any settled operator
-decisions the PR implements, so the reviewer targets defects rather than
-relitigating direction. Use the freshest independent reviewer available.
-Triage its findings like
-CodeRabbit's: fix valid issues and document any deliberate skips. Record the
-review status in the PR description or a PR comment, including who reviewed
-and any important follow-up.
+give it the diff, a review instruction, and the PR's purpose/background — the
+reviewer must know why the change is being made, including any settled operator
+decisions it implements and the larger refactor it is part of, so a partial or
+incremental step is not mistaken for reintroducing old limitations or bugs, and
+review effort goes to defects rather than relitigating direction. What stays
+out is the implementation journey: how the change was built, what was tried,
+or the implementer's own justifications. Use the freshest independent reviewer
+available. Triage its findings like CodeRabbit's: fix valid issues and document
+any deliberate skips. Record the review status in the PR description or a PR
+comment, including who reviewed and any important follow-up.
 
 Do not `git add -A`; stage specific paths.
 
