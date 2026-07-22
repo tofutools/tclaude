@@ -94,6 +94,7 @@ type Transition struct {
 
 var (
 	ErrTemplateIneligible        = errors.New("process template is not executable by the sequential engine")
+	ErrInvalidProgramBinding     = errors.New("invalid bound program command")
 	ErrInvalidCheckpoint         = errors.New("invalid process checkpoint")
 	ErrInvalidTransition         = errors.New("invalid process transition")
 	ErrStaleObservation          = errors.New("stale process command observation")

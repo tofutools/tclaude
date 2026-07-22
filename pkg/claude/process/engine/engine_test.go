@@ -131,8 +131,30 @@ func TestProgramFailureTerminatesRun(t *testing.T) {
 	}
 }
 
+func TestInitializeRejectsMissingOrBlankProgramBindingsAcrossWholeRun(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		run    string
+		params map[string]string
+	}{
+		{name: "missing whole executable", run: "{{ params.command }}"},
+		{name: "blank whole executable", run: "{{ params.command }}", params: map[string]string{"command": "  "}},
+		{name: "missing partial executable", run: "tools/{{ params.command }}"},
+		{name: "blank partial executable", run: "tools/{{ params.command }}", params: map[string]string{"command": ""}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tmpl := sequentialTemplate("first", "later")
+			tmpl.Params = map[string]model.Param{"command": {Type: "string"}}
+			tmpl.Nodes["later"] = programTask("end", test.run)
+			if _, err := Initialize("run-bind", tmpl, test.params); !errors.Is(err, ErrInvalidProgramBinding) {
+				t.Fatalf("Initialize error = %v", err)
+			}
+		})
+	}
+}
+
 func TestDuplicateAndStaleObservationsAreRefused(t *testing.T) {
-	tmpl := sequentialTemplate("task")
+	tmpl := sequentialTemplate("task", "next")
 	checkpoint, err := Initialize("run-stale", tmpl, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +168,11 @@ func TestDuplicateAndStaleObservationsAreRefused(t *testing.T) {
 	if _, err := Apply(checkpoint, tmpl, nil, stale); !errors.Is(err, ErrStaleObservation) {
 		t.Fatalf("stale error = %v", err)
 	}
+	wrongNode := observed(checkpoint.OutstandingCommand, ProgramSucceeded, 0)
+	wrongNode.Observation.NodeID = "next"
+	if _, err := Apply(checkpoint, tmpl, nil, wrongNode); !errors.Is(err, ErrStaleObservation) {
+		t.Fatalf("wrong-node error = %v", err)
+	}
 
 	accepted := observed(checkpoint.OutstandingCommand, ProgramSucceeded, 0)
 	next, err := Apply(checkpoint, tmpl, nil, accepted)
@@ -154,6 +181,26 @@ func TestDuplicateAndStaleObservationsAreRefused(t *testing.T) {
 	}
 	if _, err := Apply(next, tmpl, nil, accepted); !errors.Is(err, ErrStaleObservation) {
 		t.Fatalf("duplicate error = %v", err)
+	}
+	nextRunning, err := AdvanceUntilQuiescent(next, tmpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(nextRunning, tmpl, nil, accepted); !errors.Is(err, ErrStaleObservation) {
+		t.Fatalf("old-command error = %v", err)
+	}
+
+	initial, err := Initialize("run-unsolicited", tmpl, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsolicited := Transition{Kind: TransitionProgramObserved, Observation: &ProgramObservation{
+		CommandID: "cmd_14_run-unsolicited_4_task_program",
+		NodeID:    "task",
+		Outcome:   ProgramSucceeded,
+	}}
+	if _, err := Apply(initial, tmpl, nil, unsolicited); !errors.Is(err, ErrStaleObservation) {
+		t.Fatalf("unsolicited error = %v", err)
 	}
 }
 
@@ -200,6 +247,14 @@ func TestDecodeAndReducerRejectMalformedOrInvalidCheckpoint(t *testing.T) {
 	}
 	if _, err := DecodeCheckpoint(append(valid, []byte(` {}`)...), tmpl, nil); !errors.Is(err, ErrInvalidCheckpoint) {
 		t.Fatalf("trailing-value error = %v", err)
+	}
+	for _, duplicate := range []string{
+		`{"version":1,"version":1,"runId":"run-load","status":"running","nodes":{"end":"pending","start":"ready","task":"pending"}}`,
+		`{"version":1,"runId":"run-load","status":"running","nodes":{"end":"pending","start":"ready","task":"pending","t\u0061sk":"pending"}}`,
+	} {
+		if _, err := DecodeCheckpoint([]byte(duplicate), tmpl, nil); !errors.Is(err, ErrInvalidCheckpoint) {
+			t.Fatalf("duplicate-member error = %v", err)
+		}
 	}
 
 	checkpoint.Nodes["start"] = NodePending

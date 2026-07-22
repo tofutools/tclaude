@@ -1,15 +1,12 @@
 package engine
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
+	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
 type definition struct {
@@ -34,18 +31,9 @@ func newDefinition(tmpl *model.Template) (definition, error) {
 // DecodeCheckpoint performs strict shape decoding followed by semantic
 // validation against the pinned template and immutable run parameters.
 func DecodeCheckpoint(data []byte, tmpl *model.Template, params map[string]string) (Checkpoint, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
 	var checkpoint Checkpoint
-	if err := decoder.Decode(&checkpoint); err != nil {
+	if err := strictjson.Decode(data, &checkpoint); err != nil {
 		return Checkpoint{}, fmt.Errorf("%w: decode: %v", ErrInvalidCheckpoint, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			err = errors.New("multiple JSON values")
-		}
-		return Checkpoint{}, fmt.Errorf("%w: trailing data: %v", ErrInvalidCheckpoint, err)
 	}
 	if err := ValidateCheckpoint(checkpoint, tmpl, params); err != nil {
 		return Checkpoint{}, err
@@ -81,6 +69,9 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 		if _, ok := def.template.Nodes[nodeID]; !ok {
 			return invalid("nodes contains unknown node %q", nodeID)
 		}
+	}
+	if err := validateBoundPrograms(def, params); err != nil {
+		return err
 	}
 
 	if checkpoint.OutstandingCommand != nil {
@@ -182,6 +173,37 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 		}
 	default:
 		return invalid("unknown run status %q", checkpoint.Status)
+	}
+	return nil
+}
+
+func validateBoundPrograms(def definition, params map[string]string) error {
+	for _, nodeID := range def.sequence {
+		node := def.template.Nodes[nodeID]
+		if node.Type != model.NodeTypeTask {
+			continue
+		}
+		performer := *node.Performer
+		for _, reference := range model.ParamReferences(performer.Run) {
+			value, ok := params[reference]
+			if !ok {
+				return fmt.Errorf("%w: node %q run parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
+			}
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%w: node %q run parameter %q is blank", ErrInvalidProgramBinding, nodeID, reference)
+			}
+		}
+		for index, arg := range performer.Args {
+			for _, reference := range model.ParamReferences(arg) {
+				if _, ok := params[reference]; !ok {
+					return fmt.Errorf("%w: node %q argument %d parameter %q is missing", ErrInvalidProgramBinding, nodeID, index, reference)
+				}
+			}
+		}
+		bound := model.InterpolatePerformer(performer, params)
+		if strings.TrimSpace(bound.Run) == "" {
+			return fmt.Errorf("%w: node %q run is blank after interpolation", ErrInvalidProgramBinding, nodeID)
+		}
 	}
 	return nil
 }
