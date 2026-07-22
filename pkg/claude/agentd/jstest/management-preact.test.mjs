@@ -703,7 +703,16 @@ test('the common-rule menu inserts plain editable deny rows and warns at inserti
   // Warning and exact paths are readable before the click, not only after it.
   assert.match(entries[1].querySelector('.sbx-common-rule-warn').textContent, /~\/go, ~\/\.cargo, ~\/\.codex/);
   assert.equal(entries[1].querySelector('.sbx-common-rule-paths').textContent, '/home/op');
-  assert.equal(entries[2].querySelector('.sbx-common-rule-add').disabled, true, 'an entry with no paths here cannot be inserted');
+  // An entry with no paths here is inert but stays focusable, so the reason it
+  // is inert is still announced with it.
+  const inertAdd = entries[2].querySelector('.sbx-common-rule-add');
+  assert.equal(inertAdd.getAttribute('aria-disabled'), 'true');
+  assert.notEqual(inertAdd.disabled, true, 'the inert entry keeps its place in the tab order');
+  const rowsBefore = host.querySelectorAll('.sbx-section .sbx-path').length;
+  inertAdd.click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, rowsBefore, 'an entry with no paths here cannot be inserted');
+  assert.equal(host.querySelector('#sandbox-profile-editor-common-rule-notice'), null);
 
   entries[1].querySelector('.sbx-common-rule-add').click();
   await harness.act(() => Promise.resolve());
@@ -784,15 +793,187 @@ test('a failing common-rule feed leaves the filesystem table usable', async (t) 
   ]);
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  let feedOffline = true;
   const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
-    async loadCommonRuleCatalog() { throw new Error('feed offline'); },
+    async loadCommonRuleCatalog() { if (feedOffline) throw new Error('feed offline'); return COMMON_RULES; },
   });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  assert.match(host.querySelector('.cron-create-error').textContent, /Could not load the common-rule catalog: feed offline/);
+  // The failure belongs to the menu it came from, not to the editor's shared
+  // error line, and it offers a way back.
+  const feedError = host.querySelector('#sandbox-profile-editor-common-rule-feed-error');
+  assert.match(feedError.textContent, /Could not load the common-rule catalog: feed offline/);
+  assert.equal(feedError.getAttribute('role'), 'alert');
+  assert.equal(host.querySelector('.cron-create-error').textContent, '', 'an optional feed never writes to the shared error signal');
   assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, 0);
+  // Nothing inside a closed <details> is visible or announced, so the summary
+  // itself has to say the presets are unavailable.
+  assert.match(host.querySelector('.sbx-common-rule-summary').textContent, /unavailable/);
   host.querySelector('.sbx-section .sbx-add-row').click();
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, 1, 'rows can still be added by hand');
+  // Retry recovers the menu without a reopen.
+  feedOffline = false;
+  await harness.act(() => { feedError.querySelector('button').click(); return new Promise((resolve) => setTimeout(resolve, 50)); });
+  assert.equal(host.querySelector('#sandbox-profile-editor-common-rule-feed-error'), null);
+  assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
+  assert.equal(host.querySelector('.sbx-common-rule-summary').textContent.includes('unavailable'), false);
+  unmount();
+});
+
+// A feed that never settles must not strand the operator: retry stays live so a
+// second attempt can supersede a hung one, and a synchronous throw is a failure
+// like any other rather than a stuck "retrying…".
+test('a hung or synchronously throwing common-rule feed can still be retried', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  let mode = 'throw-sync';
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    loadCommonRuleCatalog() {
+      if (mode === 'throw-sync') throw new Error('feed exploded');
+      if (mode === 'hang') return new Promise(() => {});
+      return Promise.resolve(COMMON_RULES);
+    },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  const feedError = () => host.querySelector('#sandbox-profile-editor-common-rule-feed-error');
+  assert.match(feedError().textContent, /feed exploded/, 'a synchronous throw surfaces as a feed failure');
+  assert.notEqual(feedError().querySelector('button').disabled, true);
+
+  mode = 'hang';
+  await harness.act(() => { feedError().querySelector('button').click(); return new Promise((resolve) => setTimeout(resolve, 50)); });
+  assert.notEqual(feedError().querySelector('button').disabled, true, 'a hung load never disables its own way out');
+
+  mode = 'ok';
+  await harness.act(() => { feedError().querySelector('button').click(); return new Promise((resolve) => setTimeout(resolve, 50)); });
+  assert.equal(feedError(), null);
+  assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, COMMON_RULES.categories.length);
+  unmount();
+});
+
+// state.error carries save, validation and break-glass refusals. A catalog
+// rejection landing after one of those must not replace the reason the save
+// was refused with an explanation of an optional convenience.
+test('a late common-rule feed rejection does not overwrite a refused save', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'restricted', filesystem: [], environment: [], includes: [], agent_directories: [], break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+    options: {},
+  });
+  let rejectFeed = null;
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    loadCommonRuleCatalog() { return new Promise((_, reject) => { rejectFeed = reject; }); },
+    async saveSandbox(value) { saved = value; },
+  });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  // The save is refused locally: break-glass rules need an acknowledgement.
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(saved, null);
+  assert.match(host.querySelector('.cron-create-error').textContent, /acknowledgement/);
+
+  // Only now does the feed give up.
+  rejectFeed(new Error('feed offline'));
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  assert.match(host.querySelector('.cron-create-error').textContent, /acknowledgement/, 'the refusal reason survives the late rejection');
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-feed-error').textContent, /feed offline/);
+  unmount();
+});
+
+// The daemon canonicalizes paths and folds deny over write, so a trailing
+// separator is not a different location: appending a deny for an alias of an
+// authored `write` row would silently override it while the notice claims the
+// path was left as authored.
+test('common-rule insertion treats separator aliases as the same authored path', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    // Aliases of the catalog's `/home/op` and `/home/op/.ssh`, authored by hand.
+    // `..` is folded because the daemon Cleans before it resolves symlinks.
+    seed: { name: 'aliased', filesystem: [{ path: '/home/op/', access: 'write' }, { path: '/home/op/tmp/../.ssh', access: 'write' }], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  const entries = [...host.querySelectorAll('.sbx-common-rule-entry')];
+  entries[1].querySelector('.sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /added no rows.*1 path was already in the table and left as authored/);
+  entries[0].querySelector('.sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /added no rows.*1 path was already in the table and left as authored/);
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.filesystem, [
+    { path: '/home/op/', access: 'write' },
+    { path: '/home/op/tmp/../.ssh', access: 'write' },
+  ], 'the authored rows are untouched and no aliased deny was appended');
+  unmount();
+});
+
+// `~` is expanded by the daemon before it cleans, but the browser has no way to
+// know the daemon's home directory: the catalog payload does not carry it. So a
+// `~` row and its absolute equivalent stay distinct here — a real remaining
+// alias hole, pinned so it is visible rather than assumed closed (TCL-635).
+test('a ~ row is not yet recognized as an alias of its absolute path', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'tilde', filesystem: [{ path: '~/.ssh/', access: 'write' }], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+  host.querySelector('.sbx-common-rule-entry[data-rule="secrets.ssh"] .sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /Added 1 deny row/);
+  unmount();
+});
+
+// The button applies the rule; the warning explaining what that costs must be
+// announced with it, and the notice must be dismissable by name.
+test('common-rule controls are described and named for assistive technology', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state);
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  const home = host.querySelector('.sbx-common-rule-entry[data-rule="home.directory"]');
+  const described = home.querySelector('.sbx-common-rule-add').getAttribute('aria-describedby').split(/\s+/);
+  assert.equal(described.length, 3, 'description, warning and paths are all announced with the button');
+  const texts = described.map((id) => host.querySelector(`#${id}`)?.textContent);
+  assert.ok(texts.every((text) => typeof text === 'string' && text.length), 'every described-by id resolves to real text');
+  assert.match(texts.join(' '), /reopen the harness, tclaude and toolchain directories/);
+  assert.match(texts.join(' '), /\/home\/op/);
+  // An entry without a warning describes only what it has.
+  assert.equal(host.querySelector('.sbx-common-rule-entry[data-rule="empty.here"] .sbx-common-rule-add').getAttribute('aria-describedby').split(/\s+/).length, 2);
+
+  home.querySelector('.sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('.sbx-common-rule-dismiss').getAttribute('aria-label'), 'Dismiss common-rule notice');
   unmount();
 });
 
