@@ -1,4 +1,4 @@
-import { signal, computed } from '@preact/signals';
+import { signal } from '@preact/signals';
 import { createRequestLifecycle } from './request-lifecycle.js';
 import { dashPrefs } from './prefs.js';
 
@@ -27,14 +27,6 @@ export function createManagementState() {
   let settleSandboxDiff = null;
   const templateManagerCloseCallbacks = new Set();
 
-  const view = computed(() => ({
-    manager: manager.value, dialog: dialog.value, templateDialog: templateDialog.value, templateManager: templateManager.value,
-    profileFilter: profileFilter.value, roleFilter: roleFilter.value, sandboxFilter: sandboxFilter.value, templateFilter: templateFilter.value,
-    profiles: profiles.value || [], roles: roles.value || [], sandboxProfiles: sandboxProfiles.value || [], templates: templates.value || [], templateGroups: templateGroups.value || [],
-    requests: { profiles: profilesRequest.request.value, roles: rolesRequest.request.value, sandbox: sandboxRequest.request.value },
-    busy: busy.value, error: error.value, sandboxDiff: sandboxDiff.value,
-  }));
-
   function confirmSandboxDiff(before, after) {
     cancelSandboxDiff(false);
     return new Promise((resolve) => {
@@ -52,7 +44,7 @@ export function createManagementState() {
 
   return Object.freeze({
     manager, dialog, templateDialog, templateManager, profileFilter, roleFilter, sandboxFilter, templateFilter, profiles, roles, sandboxProfiles, templates, templateGroups, profilesRequest, rolesRequest, sandboxRequest,
-    busy, error, sandboxDiff, sandboxRegistryRecoveryRequired, view, confirmSandboxDiff, cancelSandboxDiff,
+    busy, error, sandboxDiff, sandboxRegistryRecoveryRequired, confirmSandboxDiff, cancelSandboxDiff,
     openManager(kind) { error.value = ''; manager.value = kind; },
     closeManager() { manager.value = ''; },
     openDialog(value) { error.value = ''; dialog.value = value; },

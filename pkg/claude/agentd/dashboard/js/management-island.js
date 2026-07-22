@@ -1,4 +1,4 @@
-import { Component, h, render } from 'preact';
+import { h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
@@ -446,25 +446,6 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${submitBlocked} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
 }
 
-// The dashboard snapshot poll republishes template/group arrays every two
-// seconds. ManagementApp observes that aggregate view, but an open sandbox
-// editor does not depend on those arrays. Letting the poll reconcile its
-// controlled native selects closes an open browser dropdown even though the
-// underlying DOM node survives. This boundary admits only editor descriptor or
-// sandbox-registry changes; signals read inside SandboxEditor (busy/error/diff)
-// still schedule that child directly when their own values change.
-class PollStableSandboxEditor extends Component {
-  shouldComponentUpdate(next) {
-    const current = this.props;
-    return next.descriptor !== current.descriptor ||
-      next.sandboxProfiles !== current.sandboxProfiles ||
-      next.state !== current.state || next.actions !== current.actions ||
-      next.confirmDiscard !== current.confirmDiscard;
-  }
-
-  render(props) { return h(SandboxEditor, props); }
-}
-
 function ProfileExport({ current, state, actions, confirmDiscard }) {
   const [selected, setSelected] = useState(() => new Set(current.profiles.map((item) => item.name))); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const toggle = (name) => setSelected((old) => { const next = new Set(old); next.has(name) ? next.delete(name) : next.add(name); return next; });
@@ -646,27 +627,95 @@ function SandboxDiffModal({ model, close, profiles = [] }) {
   </div>`;
 }
 
+// Keep signal subscriptions at the overlay that consumes them. The dashboard
+// snapshot poll republishes template/group arrays every two seconds; a single
+// aggregate subscription here would make that unrelated change reconcile all
+// open management controls (and close native select popups in Chromium).
+function TemplateManagerSlot({ state, actions, confirmDiscard }) {
+  if (!state.templateManager.value) return null;
+  const current = {
+    templates: state.templates.value || [],
+    templateGroups: state.templateGroups.value || [],
+    profiles: state.profiles.value || [],
+    templateFilter: state.templateFilter.value,
+  };
+  return html`<${TemplateManager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+}
+
+function TemplateEditorSlot({ state, actions, confirmDiscard, confirm }) {
+  const descriptor = state.templateDialog.value;
+  if (descriptor?.kind !== 'template-editor') return null;
+  const current = {
+    busy: state.busy.value,
+    error: state.error.value,
+    roles: state.roles.value || [],
+    profiles: state.profiles.value || [],
+  };
+  return html`<${TemplateEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>`;
+}
+
+function ManagerSlot({ state, actions, confirmDiscard }) {
+  const kind = state.manager.value;
+  if (!kind) return null;
+  const current = kind === 'profiles'
+    ? { profiles: state.profiles.value || [], profileFilter: state.profileFilter.value, requests: { profiles: state.profilesRequest.request.value } }
+    : kind === 'roles'
+      ? { roles: state.roles.value || [], roleFilter: state.roleFilter.value, requests: { roles: state.rolesRequest.request.value } }
+      : { sandboxProfiles: state.sandboxProfiles.value || [], sandboxFilter: state.sandboxFilter.value, requests: { sandbox: state.sandboxRequest.request.value } };
+  return html`<${Manager} kind=${kind} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+}
+
+function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions }) {
+  const descriptor = state.dialog.value;
+  switch (descriptor?.kind) {
+    case 'profile-editor':
+      return html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
+    case 'role-editor':
+      return html`<${RoleEditor} descriptor=${descriptor} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'profile-export':
+      return html`<${ProfileExport} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'profile-import':
+      return html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'sandbox-editor':
+      return html`<${SandboxEditor} descriptor=${descriptor} sandboxProfiles=${state.sandboxProfiles.value || []} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'sandbox-export':
+      return html`<${SandboxExport} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'sandbox-import':
+      return html`<${SandboxImport} current=${{ sandboxProfiles: state.sandboxProfiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'template-duplicate':
+      return html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'template-import':
+      return html`<${TemplateImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'template-from-group':
+      return html`<${TemplateFromGroupDialog} descriptor=${descriptor} current=${{ templates: state.templates.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'template-starters':
+      return html`<${TemplateStartersDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'group-import':
+      return html`<${GroupImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'group-context':
+      return html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'group-clone':
+      return html`<${GroupCloneDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    case 'template-deploy': {
+      const current = { templates: state.templates.value || [], templateGroups: state.templateGroups.value || [], profiles: state.profiles.value || [] };
+      return html`<${TemplateDeployDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
+    }
+    default:
+      return null;
+  }
+}
+
+function SandboxDiffSlot({ state }) {
+  const model = state.sandboxDiff.value;
+  return html`<${SandboxDiffModal} model=${model} close=${state.cancelSandboxDiff} profiles=${model ? state.sandboxProfiles.value || [] : []} />`;
+}
+
 function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions }) {
-  const current = state.view.value; const descriptor = current.dialog;
-  return html`${current.templateManager && html`<${TemplateManager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${current.templateDialog?.kind === 'template-editor' && html`<${TemplateEditor} descriptor=${current.templateDialog} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>`}
-    ${current.manager && html`<${Manager} kind=${current.manager} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'profile-editor' && html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`}
-    ${descriptor?.kind === 'role-editor' && html`<${RoleEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'profile-export' && html`<${ProfileExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'profile-import' && html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'sandbox-editor' && html`<${PollStableSandboxEditor} descriptor=${descriptor} sandboxProfiles=${current.sandboxProfiles} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'sandbox-export' && html`<${SandboxExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'template-duplicate' && html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'template-import' && html`<${TemplateImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'template-from-group' && html`<${TemplateFromGroupDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'template-starters' && html`<${TemplateStartersDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'group-import' && html`<${GroupImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'group-context' && html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'group-clone' && html`<${GroupCloneDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'template-deploy' && html`<${TemplateDeployDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    <${SandboxDiffModal} model=${current.sandboxDiff} close=${state.cancelSandboxDiff} profiles=${current.sandboxProfiles} />`;
+  return html`<${TemplateManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
+    <${TemplateEditorSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>
+    <${ManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
+    <${DialogSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>
+    <${SandboxDiffSlot} state=${state}/>`;
 }
 
 export function mountManagementIsland({ host, state, actions, confirm, confirmDiscard, openProfilePermissions, registerCleanup }) {

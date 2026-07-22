@@ -77,7 +77,8 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`id="sandbox-profile-editor-global-harness-filter"`:                          "shown inherited rows have a harness display filter",
 		`<option value="none">None</option>`:                                         "the harness filter can hide every builtin row",
 		`globalFilesystemForHarness(globalFilesystem, globalHarnessFilter)`:          "the harness filter narrows rows and provenance",
-		`class PollStableSandboxEditor extends Component`:                            "unrelated snapshot polls do not reconcile open sandbox controls",
+		`function TemplateManagerSlot(`:                                               "template polling is scoped to the template-manager overlay",
+		`function DialogSlot(`:                                                        "ordinary management dialogs own their signal subscriptions",
 		`class="sbx-row sbx-global-row" role="group" title=${tooltip}`:               "global harness rule provenance uses a regular tooltip",
 		`readonly aria-readonly="true"`:                                              "global config paths cannot be edited into the named profile",
 		`globalFilesystemRuleTooltip(row)`:                                           "immutable rows explain their harness config provenance",
@@ -129,6 +130,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	for _, retired := range []string{
 		`function paintSandboxProfiles(`,
 		`function bindLegacySandboxProfilesUI(`, `profileCapabilitiesHTML(`,
+		`const current = state.view.value; const descriptor = current.dialog;`,
 		`data-sandbox-profile-action=`, `id="sandbox-profile-global"`, `Validated policy to save:`,
 	} {
 		if strings.Contains(dashboardAssets, retired) {
