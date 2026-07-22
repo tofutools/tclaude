@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 )
 
@@ -163,7 +164,27 @@ func recordResult(run *Run, dispatch *Dispatch, result Result) error {
 	if err != nil {
 		return err
 	}
-	return persist(run, next, event("program_observed", &command, executorActor, result))
+	observed := event("program_observed", &command, executorActor, result)
+	advanced, err := engine.AdvanceUntilQuiescent(next, run.definition)
+	if err != nil {
+		return err
+	}
+	events := []db.ProcessRunEvent{observed}
+	if advanced.OutstandingCommand != nil {
+		events = append(events, event("program_prepared", advanced.OutstandingCommand, executorActor, preparedEvidence{Command: cloneCommand(*advanced.OutstandingCommand)}))
+	} else {
+		events = append(events, event("engine_advanced", nil, executorActor, struct {
+			Status engine.RunStatus `json:"status"`
+		}{Status: advanced.Status}))
+	}
+	if err := persistEvents(run, advanced, events); err != nil {
+		return err
+	}
+	if advanced.OutstandingCommand != nil {
+		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*advanced.OutstandingCommand)}
+		run.dispatch = d
+	}
+	return nil
 }
 
 func validateProgram(program engine.ProgramCommand) (time.Duration, error) {

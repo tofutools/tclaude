@@ -90,6 +90,9 @@ func (r *Run) StateVersion() int64 {
 	return r.stateVersion
 }
 
+// DispatchForRuntime returns the committed next dispatch for the daemon drive loop.
+func (r *Run) DispatchForRuntime() *Dispatch { return r.dispatch }
+
 // AuthorizationFor returns the concrete authorization token Execute expects
 // only when that exact program profile was explicitly persisted for this run.
 // The daemon uses this after every restart; template contents never mint the
@@ -289,6 +292,10 @@ func validateReconciliationActor(actor string) error {
 }
 
 func persist(run *Run, checkpoint engine.Checkpoint, evidence db.ProcessRunEvent) error {
+	return persistEvents(run, checkpoint, []db.ProcessRunEvent{evidence})
+}
+
+func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRunEvent) error {
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
 		return fmt.Errorf("encode process checkpoint: %w", err)
@@ -297,7 +304,7 @@ func persist(run *Run, checkpoint engine.Checkpoint, evidence db.ProcessRunEvent
 		ExpectedStateVersion: run.stateVersion,
 		Status:               string(checkpoint.Status),
 		CheckpointJSON:       encoded,
-		Events:               []db.ProcessRunEvent{evidence},
+		Events:               events,
 	})
 	if err != nil {
 		return err

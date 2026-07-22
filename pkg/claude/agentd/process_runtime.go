@@ -265,6 +265,8 @@ func (m *processRunManager) drive(ctx context.Context, runID string, claim *proc
 				slog.Warn("process runtime: continuation failed", "run", runID, "error", err)
 				return
 			}
+		case executor.ActionDispatch:
+			dispatch = claim.run.DispatchForRuntime()
 		case executor.ActionTerminal, executor.ActionNeedsReconcile:
 			return
 		default:
