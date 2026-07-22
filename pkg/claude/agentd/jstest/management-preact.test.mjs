@@ -706,12 +706,15 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   // state-aware selector rather than asserting only that an attribute exists.
   assert.equal(toggle.matches(':checked'), false, 'inherited context starts folded');
   assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null);
+  assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), null, 'the harness filter only appears with inherited rows enabled');
   assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/, 'config warnings remain visible while inherited rows are folded');
 
   toggle.checked = true;
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
-  const inherited = [...host.querySelectorAll('.sbx-global-row')];
+  const filter = host.querySelector('#sandbox-profile-editor-global-harness-filter');
+  assert.equal(filter.querySelector('option:checked').value, 'both');
+  let inherited = [...host.querySelectorAll('.sbx-global-row')];
   assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
   assert.equal(inherited[0].getAttribute('role'), 'group');
   assert.equal(inherited[0].querySelector('.sbx-path').hasAttribute('readonly'), true);
@@ -720,6 +723,28 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   assert.match(inherited[0].getAttribute('title'), /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
   assert.match(inherited[1].textContent, /deny read.*Claude/);
 
+  filter.querySelector('option[value="claude"]').selected = true;
+  filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  inherited = [...host.querySelectorAll('.sbx-global-row')];
+  assert.equal(inherited.length, 3);
+  assert.equal(inherited.every((row) => row.textContent.includes('Claude') && !row.textContent.includes('Codex')), true);
+  assert.equal(inherited.every((row) => !row.getAttribute('title').includes('generated tclaude-agent')), true, 'Claude-only tooltips omit Codex provenance');
+
+  filter.querySelector('option[value="codex"]').selected = true;
+  filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  inherited = [...host.querySelectorAll('.sbx-global-row')];
+  assert.equal(inherited.length, 2);
+  assert.equal(inherited.every((row) => row.textContent.includes('Codex') && !row.textContent.includes('Claude')), true);
+  assert.equal(inherited.every((row) => !row.getAttribute('title').includes('settings.json')), true, 'Codex-only tooltips omit Claude provenance');
+
+  filter.querySelector('option[value="none"]').selected = true;
+  filter.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'None hides all builtin rows without folding the controls');
+  assert.ok(host.querySelector('#sandbox-profile-editor-global-harness-filter'));
+
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
   assert.deepEqual(saved.draft.filesystem, [{ path: '/work', access: 'write' }]);
 
@@ -727,6 +752,7 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'the checkbox folds inherited context without changing the draft');
+  assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), null);
   assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/);
   unmount();
 });

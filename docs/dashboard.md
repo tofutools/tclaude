@@ -362,14 +362,16 @@ checkbox that starts unchecked. These subdued, read-only rows come from Claude
 Code's user-level `~/.claude/settings.json` sandbox filesystem block and
 tclaude's managed Codex baseline rendered into every generated
 `tclaude-agent-<launch-id>.config.toml` permission profile. A badge says whether
-each rule applies to Claude, Codex, or both, and its tooltip identifies the
-source, setting, and whether the Claude sandbox is currently
-enabled. They are context for the effective launch policy, not part of the
-named profile: hiding them, opening raw JSON, cloning, exporting, or saving
-never copies them into the profile. The final launch can still add workspace,
-Git, agent-owned-directory, and assignment-layer rules that depend on its cwd
-and selected global/group/explicit profiles; the spawn dialog remains the
-authoritative composed preview.
+each rule applies to Claude, Codex, or both. When the rows are shown, an adjacent
+filter can display both harnesses, only Claude, only Codex, or neither; shared
+rows and their provenance are narrowed to the selected harness. Each row's
+tooltip identifies the source, setting, and whether the Claude sandbox is
+currently enabled. They are context for the effective launch policy, not part
+of the named profile: hiding them, opening raw JSON, cloning, exporting, or
+saving never copies them into the profile. The final launch can still add
+workspace, Git, agent-owned-directory, and assignment-layer rules that depend
+on its cwd and selected global/group/explicit profiles; the spawn dialog
+remains the authoritative composed preview.
 
 Profiles saved before this change may still carry the
 retired `read_baseline`/`read_baseline_exclusions` fields; the dashboard

@@ -72,6 +72,16 @@ function globalFilesystemRuleTooltip(rule) {
   return [`Inherited ${access} rule for ${rule.path}. This row is read-only because it belongs to global harness config, not this profile.`, ...origins].join('\n');
 }
 
+function globalFilesystemForHarness(rows, filter) {
+  if (filter === 'both') return rows || [];
+  if (filter === 'none') return [];
+  return (rows || []).flatMap((row) => {
+    const origins = (row.origins || []).filter((origin) => origin.harness === filter);
+    if (origins.length === 0 && !(row.harnesses || []).includes(filter)) return [];
+    return [{ ...row, harnesses: [filter], origins }];
+  });
+}
+
 /* Comparison-only path identity, mirroring the daemon's own `filepath.Clean`:
    trailing separators, duplicated separators, `.` segments and `..` segments
    all name the same location there, so treating them as distinct lets a preset
@@ -255,6 +265,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // Global harness rows are context, not draft state. Keep the potentially
   // long ambient list folded until the operator asks to inspect it.
   const [showGlobalFilesystem, setShowGlobalFilesystem] = useState(false);
+  const [globalHarnessFilter, setGlobalHarnessFilter] = useState('both');
   // The menu is long and most profiles never touch it, so it ships folded.
   const [commonRulesOpen, setCommonRulesOpen] = useState(false);
   // What the last insertion did, including the entry's warning — the operator
@@ -378,6 +389,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const draftBreakGlass = candidate.break_glass_filesystem || [];
   const resolvedBG = resolvedBreakGlass(candidate, current.sandboxProfiles, seed?.name || '');
   const globalFilesystem = commonRules.global_filesystem || [];
+  const visibleGlobalFilesystem = globalFilesystemForHarness(globalFilesystem, globalHarnessFilter);
   const globalConfigWarnings = commonRules.global_config_warnings || [];
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses. The overlay already suppresses its hotkey while
@@ -387,9 +399,11 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network policies control external IP connectivity while retaining the tclaude agent socket. Managed Codex profiles block the host tmux server independently. Environment values are ordinary configuration, not secrets.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}><${Row} label="Network"><${Select} id="sandbox-profile-editor-network" value=${draft.network_access} onChange=${(value) => change(setDraft, 'network_access', value)} options=${[['', 'No override (inherit profile layers)'], ['internet', 'Internet access'], ['none', 'Offline (macOS; unavailable on Linux/WSL)']]}/></${Row}>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
-        <label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
-        ${showGlobalFilesystem && html`<div id="sandbox-profile-editor-global-filesystem" class="sbx-rows sbx-global-rows">
-          ${globalFilesystem.map((row, index) => { const tooltip = globalFilesystemRuleTooltip(row); return html`<div key=${`${row.path}:${row.access}:${index}`} class="sbx-row sbx-global-row" role="group" title=${tooltip} aria-label=${tooltip}><span class=${`sbx-access sbx-global-access sbx-global-access-${row.access}`}>${globalFilesystemAccessLabel(row.access)}</span><input class="sbx-path" value=${row.path || ''} readonly aria-readonly="true" tabindex="-1"/><span class="sbx-global-harness">${globalFilesystemHarnessLabel(row.harnesses)}</span></div>`; })}
+        <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
+          ${showGlobalFilesystem && globalFilesystem.length > 0 && html`<label class="sbx-global-filter" for="sandbox-profile-editor-global-harness-filter">Builtins <select id="sandbox-profile-editor-global-harness-filter" value=${globalHarnessFilter} onChange=${(event) => setGlobalHarnessFilter(event.currentTarget.value)}><option value="both">Claude + Codex</option><option value="claude">Claude only</option><option value="codex">Codex only</option><option value="none">None</option></select></label>`}
+        </div>
+        ${showGlobalFilesystem && visibleGlobalFilesystem.length > 0 && html`<div id="sandbox-profile-editor-global-filesystem" class="sbx-rows sbx-global-rows">
+          ${visibleGlobalFilesystem.map((row, index) => { const tooltip = globalFilesystemRuleTooltip(row); return html`<div key=${`${row.path}:${row.access}:${index}`} class="sbx-row sbx-global-row" role="group" title=${tooltip} aria-label=${tooltip}><span class=${`sbx-access sbx-global-access sbx-global-access-${row.access}`}>${globalFilesystemAccessLabel(row.access)}</span><input class="sbx-path" value=${row.path || ''} readonly aria-readonly="true" tabindex="-1"/><span class="sbx-global-harness">${globalFilesystemHarnessLabel(row.harnesses)}</span></div>`; })}
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
