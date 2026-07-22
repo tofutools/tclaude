@@ -96,8 +96,8 @@ func TestMergeSandboxGlobalFilesystemRulesWriteIncludesRead(t *testing.T) {
 	t.Setenv("HOME", home)
 	path := filepath.Join(home, "shared")
 	candidates := []sandboxGlobalFilesystemRuleCandidate{
-		{path: path, access: "write", origin: sandboxGlobalFilesystemRuleOriginJSON{Harness: "codex", Setting: "write-setting"}},
 		{path: path, access: "read", origin: sandboxGlobalFilesystemRuleOriginJSON{Harness: "claude", Setting: "read-setting"}},
+		{path: path, access: "write", origin: sandboxGlobalFilesystemRuleOriginJSON{Harness: "codex", Setting: "write-setting"}},
 	}
 
 	got := mergeSandboxGlobalFilesystemRules(home, candidates)
