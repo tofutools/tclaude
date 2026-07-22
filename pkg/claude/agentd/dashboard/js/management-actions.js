@@ -22,6 +22,27 @@ import {
   createSandboxDirectories,
 } from './sandbox-profiles-data.js';
 
+const MAX_SANDBOX_PROFILE_NAME_BYTES = 200;
+
+function utf8Length(value) {
+  return new TextEncoder().encode(value).length;
+}
+
+function sandboxCloneName(sourceName, existingNames) {
+  const names = new Set(existingNames);
+  for (let suffix = 1; ; suffix += 1) {
+    const tail = suffix === 1 ? '-copy' : `-copy-${suffix}`;
+    const budget = MAX_SANDBOX_PROFILE_NAME_BYTES - utf8Length(tail);
+    let prefix = '';
+    for (const char of sourceName) {
+      if (utf8Length(prefix + char) > budget) break;
+      prefix += char;
+    }
+    const candidate = prefix + tail;
+    if (!names.has(candidate)) return candidate;
+  }
+}
+
 function downloadJSON(name, value) {
   const blob = new Blob([JSON.stringify(value, null, 2) + '\n'], {
     type: 'application/json',
@@ -336,6 +357,25 @@ export function createManagementActions({
   function openSandboxEditor(seed = null, options = {}) {
     state.openDialog({ kind: 'sandbox-editor', seed, options });
     if (options.notice) state.error.value = options.notice;
+  }
+  function openSandboxClone(source) {
+    if (!source?.name) {
+      notify('sandbox profile not found', true);
+      return false;
+    }
+    const name = sandboxCloneName(
+      source.name,
+      (state.sandboxProfiles.value || []).map((profile) => profile.name),
+    );
+    // Keep clone creation in the normal sandbox editor. Besides making the
+    // copy reviewable, this preserves its normalized diff and the mandatory
+    // fresh acknowledgement when break-glass authority is carried over.
+    state.openDialog({
+      kind: 'sandbox-editor',
+      seed: { ...source, name },
+      options: { editExisting: false, cloneSourceName: source.name },
+    });
+    return true;
   }
   function openTemplateEditor(seed = null, options = {}) {
     state.openTemplateDialog({ kind: 'template-editor', seed, options });
@@ -802,7 +842,9 @@ export function createManagementActions({
         break_glass_filesystem: draft.break_glass_filesystem || [],
       };
       if (!body.name) throw new Error('name is required');
-      const targetName = options.targetName || original?.name || '';
+      const targetName = options.editExisting === false
+        ? ''
+        : options.targetName || original?.name || '';
       const preview = await sandbox.previewSandboxProfile(targetName, body);
       if (
         preview.before &&
@@ -921,10 +963,13 @@ export function createManagementActions({
     return result;
   }
   async function configureSandboxWithAgent(seed, options = {}) {
+    const editExisting = options.editExisting !== false
+      && !!(options.targetName || seed?.name);
     await summonSandboxScribe(
       seed,
-      options.targetName || seed?.name || '',
+      editExisting ? options.targetName || seed?.name || '' : '',
       options.onCreate || null,
+      { editExisting, cloneSourceName: options.cloneSourceName || '' },
     );
   }
   function inspectDirectories(filesystem) {
@@ -952,6 +997,7 @@ export function createManagementActions({
     openProfileEditor,
     openRoleEditor,
     openSandboxEditor,
+    openSandboxClone,
     openTemplateManager,
     openTemplateEditor,
     updateTemplates,

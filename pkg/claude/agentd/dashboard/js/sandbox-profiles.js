@@ -48,33 +48,33 @@ function openSandboxProfilesManageModal() { return managementController().openSa
 
 const sandboxDraftQueue = createSandboxDraftQueue({
   canDeliver: () => !document.querySelector('#sandbox-profile-editor-modal'),
-  deliver: ({ draft, targetName, onCreate }) => {
-    openSandboxProfileEditor(draft.profile, { targetName, onCreate, notice: 'Agent draft loaded. Review every field, then explicitly save.' });
+  deliver: ({ draft, targetName, onCreate, editorOptions }) => {
+    openSandboxProfileEditor(draft.profile, { ...editorOptions, targetName, onCreate, notice: 'Agent draft loaded. Review every field, then explicitly save.' });
     toast('sandbox scribe draft ready — review and explicitly save');
   },
 });
 
-async function pollSandboxScribeDraft(token, targetName, onCreate) {
+async function pollSandboxScribeDraft(token, targetName, onCreate, editorOptions) {
   const deadline = Date.now() + 30 * 60 * 1000;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`/api/sandbox-profile-drafts/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
-      if (response.ok) { const draft = await response.json(); const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate }); if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`); return; }
+      if (response.ok) { const draft = await response.json(); const opened = sandboxDraftQueue.enqueue({ draft, targetName, onCreate, editorOptions }); if (!opened) toast(`sandbox scribe draft ready — queued for review (${sandboxDraftQueue.pendingCount()} waiting)`); return; }
       if (response.status !== 404) throw new Error((await response.text()) || `HTTP ${response.status}`);
     } catch (error) { toast(`sandbox draft handoff failed: ${error.message || String(error)}`, true); return; }
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
 }
 
-async function summonSandboxScribe(seed, targetName = '', onCreate = null) {
+async function summonSandboxScribe(seed, targetName = '', onCreate = null, editorOptions = {}) {
   const token = sandboxScribeToken();
   try {
     const response = await fetch('/api/scribe', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: SANDBOX_SCRIBE_NAME, slugs: SANDBOX_SCRIBE_SLUGS, brief: sandboxScribeBrief(token, targetName, seed) }) });
     if (!response.ok) throw new Error((await response.text()) || `HTTP ${response.status}`);
     const result = await response.json().catch(() => ({})); const name = result.name || SANDBOX_SCRIBE_NAME;
     if (result.focus_mode === 'browser' && result.focus_ws) openTermModal({ wsPath: result.focus_ws, label: name, hideConv: result.conv_id || null });
-    toast(`summoned ${name}${result.focus_mode === 'browser' ? ' — opened in-browser terminal' : ' — opening its terminal'}`); void pollSandboxScribeDraft(token, targetName, onCreate);
-  } catch (error) { openSandboxProfileEditor(seed, { targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` }); toast(error.message || String(error), true); }
+    toast(`summoned ${name}${result.focus_mode === 'browser' ? ' — opened in-browser terminal' : ' — opening its terminal'}`); void pollSandboxScribeDraft(token, targetName, onCreate, editorOptions);
+  } catch (error) { openSandboxProfileEditor(seed, { ...editorOptions, targetName, onCreate, notice: `Could not summon sandbox scribe: ${error.message || String(error)}` }); toast(error.message || String(error), true); }
 }
 
 function bindSandboxProfilesUI() {
