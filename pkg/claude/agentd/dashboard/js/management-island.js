@@ -1,4 +1,4 @@
-import { h, render } from 'preact';
+import { Component, h, render } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { profileSummary, profileAliasesLabel, profileChoices, findProfileByHandle } from './profiles.js';
@@ -256,7 +256,7 @@ function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
   </${Overlay}>`;
 }
 
-function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) {
+function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
   const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: seed?.network_access || '', break_glass_filesystem: clone(breakGlassRules(seed)) }), [descriptor]);
@@ -336,7 +336,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const submit = async () => {
     let value = draft;
     if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } }
-    if (resolvedBreakGlass(value, current.sandboxProfiles, seed?.name || '').length && !breakGlassAck) { state.error.value = 'break-glass rules (including ones carried by includes) require the explicit risk acknowledgement below before saving'; return; }
+    if (resolvedBreakGlass(value, sandboxProfiles, seed?.name || '').length && !breakGlassAck) { state.error.value = 'break-glass rules (including ones carried by includes) require the explicit risk acknowledgement below before saving'; return; }
     const outcome = await actions.saveSandbox({ draft: value, original: seed, options, breakGlassAcknowledged: breakGlassAck });
     // The daemon refused the commit because break-glass authority appeared
     // or changed after the preview. The stale acknowledgement must not carry
@@ -389,7 +389,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     try { return { ...draft, ...parseRaw() }; } catch (_) { return draft; }
   })();
   const draftBreakGlass = candidate.break_glass_filesystem || [];
-  const resolvedBG = resolvedBreakGlass(candidate, current.sandboxProfiles, seed?.name || '');
+  const resolvedBG = resolvedBreakGlass(candidate, sandboxProfiles, seed?.name || '');
   const globalFilesystem = commonRules.global_filesystem || [];
   const visibleGlobalFilesystem = globalFilesystemForHarness(globalFilesystem, globalHarnessFilter);
   const globalConfigWarnings = commonRules.global_config_warnings || [];
@@ -432,7 +432,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
       </div>`}
     </fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>
-    <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...current.sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
+    <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
     <fieldset class="sbx-section sbx-break-glass" hidden=${advanced}><legend title="Exact-path read/write access to normally protected tclaude/harness state. An exception mechanism for debugging tclaude itself — not a recommended posture.">🚨 Break-glass protected access</legend>
       ${resolvedBG.length ? html`<div class="sbx-bg-warning" role="alert"><strong>🚨 Dangerous:</strong> This profile grants break-glass protected access: ${describeBreakGlassEntries(resolvedBG)}. ${BREAK_GLASS_WARNING}</div>` : html`<div class="sbx-bg-intro">Grants access to normally protected tclaude/harness state (daemon database, sessions, credentials). Exceptional debugging only — leave empty unless you are deliberately debugging tclaude itself.</div>`}
@@ -444,6 +444,25 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     <button type="button" class="sbx-advanced-toggle" aria-expanded=${advanced} onClick=${toggleAdvanced}>${advanced ? '▾' : '▸'} Advanced — edit raw JSON</button>${advanced && html`<div class="sbx-advanced-body"><${Row} label="Filesystem JSON"><textarea id="sandbox-profile-editor-filesystem" rows="6" value=${rawFS} onInput=${(event) => setRawFS(event.currentTarget.value)}/></${Row}><${Row} label="Environment JSON"><textarea id="sandbox-profile-editor-environment" rows="6" value=${rawEnv} onInput=${(event) => setRawEnv(event.currentTarget.value)}/></${Row}><${Row} label="Includes JSON"><textarea id="sandbox-profile-editor-includes" rows="3" value=${rawIncludes} onInput=${(event) => setRawIncludes(event.currentTarget.value)}/></${Row}><${Row} label="Agent dirs JSON"><textarea id="sandbox-profile-editor-agent-directories" rows="3" value=${rawAgentDirs} onInput=${(event) => setRawAgentDirs(event.currentTarget.value)}/></${Row}><${Row} label="Break-glass JSON" title="Exact-path {path, access: read|write} rules for normally protected tclaude/harness state. Dangerous; requires the explicit acknowledgement to save."><textarea id="sandbox-profile-editor-break-glass" rows="3" value=${rawBreakGlass} onInput=${(event) => setRawBreakGlass(event.currentTarget.value)}/></${Row}></div>`}
     ${recoveryBlocked && html`<div id="sandbox-profile-editor-recovery" class="sbx-bg-warning" role="alert">The daemon refused this save because the profile now carries break-glass authority this editor cannot see: the registry reload failed, so the current rules are unknown. Saving stays blocked until an authoritative reload succeeds. <button type="button" id="sandbox-profile-editor-recovery-retry" disabled=${recoveryBusy || saving} onClick=${() => { void retryRecovery(); }}>${recoveryBusy ? 'Reloading…' : '↻ Retry registry reload'}</button></div>`}
     <div role="alert" class="cron-create-error">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving || directoryBusy} onClick=${() => { void requestClose(); }}>Cancel</button><button id="sandbox-profile-editor-scribe" disabled=${saving || directoryBusy} onClick=${configureWithAgent}>🤖 configure with agent</button><span class="spacer"></span><button ref=${submitRef} id="sandbox-profile-editor-submit" class="primary" disabled=${submitBlocked} onClick=${submit}>${saving ? 'Saving…' : 'Save sandbox profile'}</button></div></${Overlay}>`;
+}
+
+// The dashboard snapshot poll republishes template/group arrays every two
+// seconds. ManagementApp observes that aggregate view, but an open sandbox
+// editor does not depend on those arrays. Letting the poll reconcile its
+// controlled native selects closes an open browser dropdown even though the
+// underlying DOM node survives. This boundary admits only editor descriptor or
+// sandbox-registry changes; signals read inside SandboxEditor (busy/error/diff)
+// still schedule that child directly when their own values change.
+class PollStableSandboxEditor extends Component {
+  shouldComponentUpdate(next) {
+    const current = this.props;
+    return next.descriptor !== current.descriptor ||
+      next.sandboxProfiles !== current.sandboxProfiles ||
+      next.state !== current.state || next.actions !== current.actions ||
+      next.confirmDiscard !== current.confirmDiscard;
+  }
+
+  render(props) { return h(SandboxEditor, props); }
 }
 
 function ProfileExport({ current, state, actions, confirmDiscard }) {
@@ -636,7 +655,7 @@ function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePer
     ${descriptor?.kind === 'role-editor' && html`<${RoleEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'profile-export' && html`<${ProfileExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'profile-import' && html`<${ProfileImport} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
-    ${descriptor?.kind === 'sandbox-editor' && html`<${SandboxEditor} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
+    ${descriptor?.kind === 'sandbox-editor' && html`<${PollStableSandboxEditor} descriptor=${descriptor} sandboxProfiles=${current.sandboxProfiles} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-export' && html`<${SandboxExport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'sandbox-import' && html`<${SandboxImport} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
     ${descriptor?.kind === 'template-duplicate' && html`<${TemplateDuplicateDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`}
