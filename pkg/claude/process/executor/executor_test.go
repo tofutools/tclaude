@@ -197,6 +197,8 @@ func TestBinaryOutputIsBoundedAndStoredAsValidText(t *testing.T) {
 	assert.True(t, result.StderrTruncated)
 	assert.True(t, utf8.ValidString(result.Stdout))
 	assert.True(t, utf8.ValidString(result.Stderr))
+	assert.LessOrEqual(t, len(result.Stdout), MaxOutputTailBytes)
+	assert.LessOrEqual(t, len(result.Stderr), MaxOutputTailBytes)
 	events, err := db.ListProcessRunEvents(run.ID(), 0, db.MaxProcessRunEventReadPage)
 	require.NoError(t, err)
 	var stored Result
@@ -448,8 +450,8 @@ func TestProgramExecutorHelperProcess(t *testing.T) {
 		_, _ = fmt.Fprint(os.Stderr, strings.Repeat("y", 127)+strings.Repeat("e", MaxOutputTailBytes))
 		os.Exit(7)
 	case "binary-output":
-		_, _ = os.Stdout.Write(bytes.Repeat([]byte{0xff}, MaxOutputTailBytes+127))
-		_, _ = os.Stderr.Write(bytes.Repeat([]byte{0xfe}, MaxOutputTailBytes+127))
+		_, _ = os.Stdout.Write(bytes.Repeat([]byte{0xff, 'o'}, MaxOutputTailBytes+127))
+		_, _ = os.Stderr.Write(bytes.Repeat([]byte{0xfe, 'e'}, MaxOutputTailBytes+127))
 	case "descendant":
 		if len(args) != 4 {
 			os.Exit(91)

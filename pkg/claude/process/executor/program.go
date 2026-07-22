@@ -255,5 +255,5 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-func (b *tailBuffer) String() string  { return strings.ToValidUTF8(string(b.data), "�") }
+func (b *tailBuffer) String() string  { return strings.ToValidUTF8(string(b.data), "?") }
 func (b *tailBuffer) Truncated() bool { return b.truncated }
