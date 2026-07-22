@@ -137,12 +137,13 @@ fresh-agent review even if CodeRabbit commented.
 
 An independent review must be done by a fresh agent that sees the PR diff cold:
 give it the diff and a review instruction, not the design backstory or how the
-change was built. When practical, prefer a reviewer from a different
-harness/vendor than the implementer (for example Codex reviewing Claude Code
-work, or vice versa); otherwise use the freshest independent reviewer
-available. Triage its findings like CodeRabbit's: fix valid issues and
-document any deliberate skips. Record the review status in the PR description or
-a PR comment, including who reviewed and any important follow-up.
+change was built — though the instruction should state any settled operator
+decisions the PR implements, so the reviewer targets defects rather than
+relitigating direction. Use the freshest independent reviewer available; do
+not seek out a different-harness/vendor reviewer. Triage its findings like
+CodeRabbit's: fix valid issues and document any deliberate skips. Record the
+review status in the PR description or a PR comment, including who reviewed
+and any important follow-up.
 
 Do not `git add -A`; stage specific paths.
 
