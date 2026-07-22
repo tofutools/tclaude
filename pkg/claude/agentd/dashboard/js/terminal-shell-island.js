@@ -252,8 +252,8 @@ function TerminalPane({
 }
 
 function PaneTab({
-  pane, active, menuOpen, actions, openMenu, dragging, dropSide, onDragStart, onDragEnd,
-  onDragOver, onDragLeave, onDrop, onReordered,
+  pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered,
 }) {
   const activate = (event) => {
     if (event.type === 'keydown' && event.target.closest('button')) return;
@@ -276,7 +276,9 @@ function PaneTab({
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     openMenu({
+      kind: 'pane',
       key: pane.key,
+      groupId,
       label: pane.label,
       trigger: event.currentTarget,
       x: keyboard ? rect.left : event.clientX,
@@ -325,7 +327,95 @@ function PaneTab({
   `;
 }
 
-function PaneContextMenu({ menu, actions, closeMenu, focusAfterAction, focusAfterDismiss }) {
+// GroupStack renders one tab stack: a pill that names and collapses the stack,
+// followed by its member tabs. The pill is the stack's drop target — releasing
+// a tab on it joins the stack — and its own context-menu anchor.
+//
+// The wrapper carries role="group" inside the strip's tablist so assistive tech
+// announces "N tabs, <name>" around the members instead of a flat run. The pill
+// itself is a button, not a tab: it selects nothing, it only opens and closes.
+function GroupStack({
+  group, panes, activeKey, actions, renaming, onRenameCommit, onRenameCancel,
+  openMenu, menuOpen, dropActive, onPillDragOver, onPillDragLeave, onPillDrop, renderTab,
+}) {
+  const inputRef = useRef(null);
+  useLayoutEffect(() => {
+    if (!renaming) return;
+    inputRef.current?.focus();
+    // Selecting the existing name makes retyping it the default gesture.
+    // Guarded because the test DOM implements focus() but not select().
+    if (typeof inputRef.current?.select === 'function') inputRef.current.select();
+  }, [renaming]);
+  // A collapsed stack still shows the terminal the operator is looking at when
+  // there is nowhere outside the stack for activation to move to — collapsing
+  // must never leave the strip with no visible active tab.
+  const visible = group.collapsed ? panes.filter((pane) => pane.key === activeKey) : panes;
+  const openMenuAt = (event) => {
+    const keyboard = event.type === 'keydown';
+    if (keyboard && event.key !== 'ContextMenu' && !(event.key === 'F10' && event.shiftKey)) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    openMenu({
+      kind: 'group',
+      id: group.id,
+      label: group.name,
+      collapsed: group.collapsed,
+      trigger: event.currentTarget,
+      x: keyboard ? rect.left : event.clientX,
+      y: keyboard ? rect.bottom : event.clientY,
+    });
+    return true;
+  };
+  return html`
+    <div
+      class=${`mux-tab-group mux-group-${group.color}${group.collapsed ? ' collapsed' : ''}${dropActive ? ' drop-into' : ''}`}
+      role="group"
+      aria-label=${`${group.name} — ${panes.length} terminal${panes.length === 1 ? '' : 's'}`}
+      onDragOver=${(event) => onPillDragOver(event, group.id)}
+      onDragLeave=${(event) => onPillDragLeave(event, group.id)}
+      onDrop=${(event) => onPillDrop(event, group.id)}
+    >
+      ${renaming ? html`
+        <input
+          ref=${inputRef}
+          class="mux-group-rename"
+          type="text"
+          maxLength=${40}
+          aria-label=${`Rename terminal group ${group.name}`}
+          value=${group.name}
+          onKeyDown=${(event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter') onRenameCommit(group.id, event.currentTarget.value);
+            else if (event.key === 'Escape') onRenameCancel();
+          }}
+          onBlur=${(event) => onRenameCommit(group.id, event.currentTarget.value)}
+        />
+      ` : html`
+        <button
+          type="button"
+          class="mux-group-pill"
+          aria-expanded=${group.collapsed ? 'false' : 'true'}
+          title=${`${group.collapsed ? 'Expand' : 'Collapse'} the ${group.name} terminal group · right-click or Shift+F10 for group actions`}
+          onClick=${() => actions.toggleGroupCollapsed(group.id)}
+          onContextMenu=${openMenuAt}
+          onKeyDown=${openMenuAt}
+          aria-label=${`${group.name}, ${panes.length} terminal${panes.length === 1 ? '' : 's'}`}
+          data-menu-open=${menuOpen ? 'true' : 'false'}
+        >
+          <span class="mux-group-caret" aria-hidden="true">${group.collapsed ? '▸' : '▾'}</span>
+          <span class="mux-group-name">${group.name}</span>
+          <span class="mux-group-count" aria-hidden="true">${panes.length}</span>
+        </button>
+      `}
+      ${visible.map((pane) => renderTab(pane))}
+    </div>
+  `;
+}
+
+function PaneContextMenu({
+  menu, actions, groups, closeMenu, focusAfterAction, focusAfterDismiss, onRenameGroup,
+}) {
   const menuRef = useRef(null);
 
   useLayoutEffect(() => {
@@ -381,11 +471,44 @@ function PaneContextMenu({ menu, actions, closeMenu, focusAfterAction, focusAfte
     event.preventDefault();
     next.focus();
   };
-  const run = (action) => {
+  // Most commands hand focus back to the strip. The rename commands must not:
+  // they hand focus to the rename input the stack is about to render, and the
+  // parent's refocus would blur it — committing the edit before it is typed.
+  const run = (action, { refocus = true } = {}) => {
     closeMenu(false);
     void action();
-    focusAfterAction();
+    if (refocus) focusAfterAction();
   };
+
+  const item = (label, action, { className = 'mux-tab-menu-item', refocus = true } = {}) => html`
+    <button type="button" role="menuitem" tabIndex="-1" class=${className} onClick=${() => run(action, { refocus })}>${label}</button>
+  `;
+  const separator = html`<div class="mux-tab-menu-separator" role="separator"></div>`;
+  // The grouping commands live in this menu rather than only on the drag
+  // gesture so every one of them is reachable from the keyboard (Shift+F10 on a
+  // focused tab), which drag-and-drop alone can never be.
+  const groupItems = menu.kind === 'group' ? [
+    item(menu.collapsed ? 'Expand group' : 'Collapse group', () => actions.toggleGroupCollapsed(menu.id)),
+    item('Rename group…', () => onRenameGroup(menu.id), { refocus: false }),
+    item('Ungroup tabs', () => actions.dissolveGroup(menu.id)),
+    separator,
+    item('Close tabs in group', () => actions.closeGroupPanes(menu.id), { className: 'mux-tab-menu-item danger' }),
+  ] : [
+    item('New group from this tab', () => {
+      const group = actions.createGroup({ keys: [menu.key] });
+      if (group) onRenameGroup(group.id);
+    }, { refocus: false }),
+    ...groups
+      .filter((group) => group.id !== menu.groupId)
+      .map((group) => item(`Add to “${group.name}”`, () => actions.assignPaneToGroup(menu.key, group.id))),
+    ...(menu.groupId ? [item('Remove from group', () => actions.assignPaneToGroup(menu.key, null))] : []),
+    separator,
+    item('Detach tab', () => actions.popOutPane(menu.key)),
+    separator,
+    item('Close tab', () => actions.closePane(menu.key)),
+    item('Close other tabs', () => actions.closeOtherPanes(menu.key)),
+    item('Close all tabs', () => actions.closeAllPanes(), { className: 'mux-tab-menu-item danger' }),
+  ];
 
   return html`
     <div
@@ -395,13 +518,7 @@ function PaneContextMenu({ menu, actions, closeMenu, focusAfterAction, focusAfte
       aria-label=${`Actions for ${menu.label}`}
       style=${{ left: `${menu.x}px`, top: `${menu.y}px` }}
       onKeyDown=${onMenuKeyDown}
-    >
-      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.popOutPane(menu.key))}>Detach tab</button>
-      <div class="mux-tab-menu-separator" role="separator"></div>
-      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closePane(menu.key))}>Close tab</button>
-      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item" onClick=${() => run(() => actions.closeOtherPanes(menu.key))}>Close other tabs</button>
-      <button type="button" role="menuitem" tabIndex="-1" class="mux-tab-menu-item danger" onClick=${() => run(() => actions.closeAllPanes())}>Close all tabs</button>
-    </div>
+    >${groupItems}</div>
   `;
 }
 
@@ -421,6 +538,8 @@ function TerminalTabs({
   const [reorderAnnouncement, setReorderAnnouncement] = useState('');
   const [tabMenu, setTabMenu] = useState(null);
   const [menuFocusRequest, setMenuFocusRequest] = useState(0);
+  const [renamingGroup, setRenamingGroup] = useState(null);
+  const [groupDropTarget, setGroupDropTarget] = useState(null);
 
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
   const clearDrag = () => {
@@ -428,9 +547,14 @@ function TerminalTabs({
     droppedRef.current = false;
     setDragKey(null);
     setDropTarget(null);
+    setGroupDropTarget(null);
   };
-  const announceReorder = ({ pane, index, count }) => {
-    setReorderAnnouncement(`Moved ${pane.label} to position ${index + 1} of ${count}.`);
+  // The live region has to say where a tab landed AND which stack it landed in,
+  // because a keyboard move at a stack edge changes both at once.
+  const announceReorder = ({ pane, index, count, group, leftGroup }) => {
+    const where = group ? ` in group ${group.name}`
+      : leftGroup ? `, out of group ${leftGroup.name}` : '';
+    setReorderAnnouncement(`Moved ${pane.label} to position ${index + 1} of ${count}${where}.`);
   };
   const startTabDrag = (event, key) => {
     event.stopPropagation();
@@ -491,6 +615,36 @@ function TerminalTabs({
     clearDrag();
     if (moved) announceReorder(moved);
   };
+  // Dropping ON a stack (its pill or its padding) joins the stack at the end.
+  // Dropping on a member TAB is handled by that tab and adopts its membership,
+  // so the same gesture covers "join here" and "join at this exact position".
+  const groupDragOver = (event, groupID) => {
+    const sourceKey = dragKeyRef.current;
+    if (!sourceKey || event.defaultPrevented) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (groupDropTarget !== groupID) setGroupDropTarget(groupID);
+  };
+  const groupDragLeave = (event, groupID) => {
+    if (groupDropTarget !== groupID || event.currentTarget.contains(event.relatedTarget)) return;
+    setGroupDropTarget(null);
+  };
+  const dropOnGroup = (event, groupID) => {
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    event.stopPropagation();
+    droppedRef.current = true;
+    const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
+    const pane = key && current.panes.find((candidate) => candidate.key === key);
+    const joined = key && actions.assignPaneToGroup(key, groupID);
+    clearDrag();
+    const group = joined && current.groups.find((candidate) => candidate.id === groupID);
+    if (group && pane) setReorderAnnouncement(`Moved ${pane.label} into group ${group.name}.`);
+  };
+  const commitGroupRename = (groupID, name) => {
+    setRenamingGroup(null);
+    actions.renameGroup(groupID, name);
+  };
   const closeTabMenu = (restoreFocus = false) => {
     const trigger = tabMenu?.trigger;
     setTabMenu(null);
@@ -513,9 +667,19 @@ function TerminalTabs({
     });
   };
 
+  // A menu anchored to something that is gone — a closed tab, or a stack whose
+  // last member closed — has nothing left to act on.
   useEffect(() => {
-    if (tabMenu && !current.panes.some((pane) => pane.key === tabMenu.key)) setTabMenu(null);
-  }, [current.panes, tabMenu]);
+    if (!tabMenu) return;
+    const alive = tabMenu.kind === 'group'
+      ? current.segments.some((segment) => segment.type === 'group' && segment.group.id === tabMenu.id)
+      : current.panes.some((pane) => pane.key === tabMenu.key);
+    if (!alive) setTabMenu(null);
+  }, [current.panes, current.segments, tabMenu]);
+
+  useEffect(() => {
+    if (renamingGroup && !current.groups.some((group) => group.id === renamingGroup)) setRenamingGroup(null);
+  }, [current.groups, renamingGroup]);
 
   useLayoutEffect(() => {
     if (solo) return undefined;
@@ -598,31 +762,58 @@ function TerminalTabs({
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
           Drag a tab off the strip to detach it into its own window, or use the tab's context menu to detach it into a browser tab.
+          Tabs can be collected into named groups: use a tab's context menu to start a group or join one, drop a tab on a group to join it,
+          and press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow at the edge of a group to move the tab out of it.
+          A group's pill collapses and expands the group, and carries its own context menu for renaming, ungrouping, and closing its tabs.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
-          ${current.panes.map((pane) => html`
-            <${PaneTab}
-              key=${pane.key}
-              pane=${pane}
-              active=${current.activeKey === pane.key}
-              menuOpen=${tabMenu?.key === pane.key}
-              actions=${actions}
-              openMenu=${setTabMenu}
-              dragging=${dragKey === pane.key}
-              dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
-              onDragStart=${startTabDrag}
-              onDragEnd=${endTabDrag}
-              onDragOver=${tabDragOver}
-              onDragLeave=${tabDragLeave}
-              onDrop=${dropTab}
-              onReordered=${announceReorder}
-            />
-          `)}
+          ${current.segments.map((segment) => {
+            const renderTab = (pane) => html`
+              <${PaneTab}
+                key=${pane.key}
+                pane=${pane}
+                active=${current.activeKey === pane.key}
+                menuOpen=${tabMenu?.kind !== 'group' && tabMenu?.key === pane.key}
+                groupId=${segment.type === 'group' ? segment.group.id : null}
+                actions=${actions}
+                openMenu=${setTabMenu}
+                dragging=${dragKey === pane.key}
+                dropSide=${dropTarget?.key === pane.key ? dropTarget.side : ''}
+                onDragStart=${startTabDrag}
+                onDragEnd=${endTabDrag}
+                onDragOver=${tabDragOver}
+                onDragLeave=${tabDragLeave}
+                onDrop=${dropTab}
+                onReordered=${announceReorder}
+              />
+            `;
+            return segment.type === 'group' ? html`
+              <${GroupStack}
+                key=${segment.key}
+                group=${segment.group}
+                panes=${segment.panes}
+                activeKey=${current.activeKey}
+                actions=${actions}
+                renaming=${renamingGroup === segment.group.id}
+                onRenameCommit=${commitGroupRename}
+                onRenameCancel=${() => setRenamingGroup(null)}
+                openMenu=${setTabMenu}
+                menuOpen=${tabMenu?.kind === 'group' && tabMenu.id === segment.group.id}
+                dropActive=${groupDropTarget === segment.group.id}
+                onPillDragOver=${groupDragOver}
+                onPillDragLeave=${groupDragLeave}
+                onPillDrop=${dropOnGroup}
+                renderTab=${renderTab}
+              />
+            ` : renderTab(segment.pane);
+          })}
         </div>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
-      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction} focusAfterDismiss=${focusAfterTabMenuDismiss} />` : null}
+      ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} groups=${current.groups}
+        closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction}
+        focusAfterDismiss=${focusAfterTabMenuDismiss} onRenameGroup=${setRenamingGroup} />` : null}
       ${hasPanes || !empty ? html`
         <div ref=${panesRef} class="mux-panes">
           ${current.panes.map((pane) => html`
@@ -768,4 +959,7 @@ export function mountStandaloneTerminalShell({
   };
 }
 
-export { OpaqueTerminalHost, PaneTab, TerminalBadge, TerminalModal, TerminalModalSession, TerminalPane, TerminalTabs };
+export {
+  GroupStack, OpaqueTerminalHost, PaneContextMenu, PaneTab, TerminalBadge, TerminalModal,
+  TerminalModalSession, TerminalPane, TerminalTabs,
+};

@@ -75,6 +75,43 @@ export function createTerminalShellActions({
     return disposed ? null : state.movePaneByOffset(key, offset);
   }
 
+  // Tab-stack commands are thin pass-throughs: grouping is view state, so the
+  // actions layer only adds the disposed guard every other pane command has.
+  // closeGroupPanes is the one that is not, because closing terminals has to go
+  // through the same widget-dispose + detach path as any other close.
+  function createGroup(descriptor) {
+    return disposed ? null : state.createGroup(descriptor);
+  }
+
+  function renameGroup(id, name) {
+    return disposed ? null : state.renameGroup(id, name);
+  }
+
+  function setGroupColor(id, color) {
+    return disposed ? null : state.setGroupColor(id, color);
+  }
+
+  function setGroupCollapsed(id, collapsed) {
+    return disposed ? null : state.setGroupCollapsed(id, collapsed);
+  }
+
+  function toggleGroupCollapsed(id) {
+    return disposed ? null : state.toggleGroupCollapsed(id);
+  }
+
+  function dissolveGroup(id) {
+    return !disposed && state.dissolveGroup(id);
+  }
+
+  function assignPaneToGroup(key, groupID) {
+    return !disposed && state.assignPaneToGroup(key, groupID);
+  }
+
+  function closeGroupPanes(id) {
+    if (disposed) return Promise.resolve();
+    return closePanes(state.groupMembers(id).map((pane) => pane.key));
+  }
+
   async function closePanes(keys, { skipDetach = false } = {}) {
     if (disposed) return;
     const wanted = new Set(keys || []);
@@ -261,6 +298,14 @@ export function createTerminalShellActions({
     activatePane,
     reorderPane,
     movePaneByOffset,
+    createGroup,
+    renameGroup,
+    setGroupColor,
+    setGroupCollapsed,
+    toggleGroupCollapsed,
+    dissolveGroup,
+    assignPaneToGroup,
+    closeGroupPanes,
     closePane,
     closeOtherPanes,
     closeAllPanes,

@@ -67,6 +67,57 @@
 }
 .mux-tab-close:hover { opacity: 1; color: #f85149; }
 
+/* Tab stacks — a named, collapsible run of tabs inside the strip. The stack
+   owns one accent colour, applied to its pill and to the rail under its
+   members, so a glance at the strip separates work without reading labels. The
+   accents are chosen against the #0d1117 / #161b22 chrome; body.wizard retunes
+   the strip around them further down. */
+.mux-tab-group {
+  position: relative; display: flex; align-items: flex-end; gap: 4px; flex: none;
+  padding: 0 5px 0 4px; border-radius: 7px 7px 0 0;
+  background: color-mix(in srgb, var(--mux-group-accent) 12%, transparent);
+  border-bottom: 2px solid var(--mux-group-accent);
+}
+.mux-tab-group.drop-into {
+  background: color-mix(in srgb, var(--mux-group-accent) 30%, transparent);
+  outline: 1px dashed var(--mux-group-accent); outline-offset: -1px;
+}
+.mux-group-blue   { --mux-group-accent: #58a6ff; }
+.mux-group-purple { --mux-group-accent: #a371f7; }
+.mux-group-green  { --mux-group-accent: #3fb950; }
+.mux-group-amber  { --mux-group-accent: #d29922; }
+.mux-group-red    { --mux-group-accent: #f85149; }
+.mux-group-teal   { --mux-group-accent: #39c5cf; }
+.mux-group-pink   { --mux-group-accent: #db61a2; }
+.mux-group-slate  { --mux-group-accent: #8b949e; }
+
+.mux-group-pill {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  margin-bottom: 3px; padding: 4px 8px; font: inherit; font-size: 12px;
+  border: 1px solid color-mix(in srgb, var(--mux-group-accent) 55%, #2a3340);
+  border-radius: 11px; cursor: pointer; white-space: nowrap;
+  background: color-mix(in srgb, var(--mux-group-accent) 20%, #0d1117);
+  color: color-mix(in srgb, var(--mux-group-accent) 45%, #c9d1d9);
+}
+.mux-group-pill:hover { background: color-mix(in srgb, var(--mux-group-accent) 32%, #0d1117); }
+.mux-group-pill:focus-visible { outline: 2px solid var(--mux-group-accent); outline-offset: 1px; }
+.mux-group-caret { font-size: 10px; opacity: 0.85; }
+.mux-group-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.mux-group-count {
+  min-width: 15px; padding: 0 4px; border-radius: 8px; text-align: center;
+  font-size: 10px; line-height: 15px;
+  background: color-mix(in srgb, var(--mux-group-accent) 45%, #0d1117); color: #f0f6fc;
+}
+.mux-group-rename {
+  flex: none; margin-bottom: 3px; padding: 4px 7px; width: 150px;
+  font: inherit; font-size: 12px; border-radius: 11px;
+  border: 1px solid var(--mux-group-accent); background: #0d1117; color: #f0f6fc;
+}
+.mux-group-rename:focus-visible { outline: 2px solid var(--mux-group-accent); outline-offset: 1px; }
+/* A collapsed stack keeps its pill and, when it still owns the active terminal,
+   that one tab — so collapsing never hides what is on screen. */
+.mux-tab-group.collapsed .mux-tab { max-width: 150px; }
+
 .mux-tab-menu {
   position: fixed; z-index: 1000; display: flex; flex-direction: column;
   min-width: 170px; padding: 4px;
@@ -170,6 +221,21 @@ body.wizard .mux-tab.drop-after::after {
   background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab-close:hover { color: #f0a868; }
+/* Group accents keep their hue in the portal frame but are mixed against the
+   wizard chrome instead of the #0d1117 base, so a stack reads as a sigil on the
+   same parchment rather than a hole punched through it. */
+body.wizard .mux-tab-group {
+  background: color-mix(in srgb, var(--mux-group-accent) 16%, transparent);
+}
+body.wizard .mux-group-pill {
+  background: color-mix(in srgb, var(--mux-group-accent) 22%, #171024);
+  border-color: color-mix(in srgb, var(--mux-group-accent) 55%, #4a3a6b);
+  color: color-mix(in srgb, var(--mux-group-accent) 35%, #f3e6c0);
+}
+body.wizard .mux-group-pill:hover {
+  background: color-mix(in srgb, var(--mux-group-accent) 34%, #171024);
+}
+body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
 body.wizard .mux-tab-menu {
   border-color: #7a5db0;
   background: linear-gradient(180deg, #2a1c43 0%, #171024 100%);
