@@ -253,18 +253,16 @@ func (m *processRunManager) drive(ctx context.Context, runID string, claim *proc
 				"run", runID, "profile", action.Command.Program.Profile)
 			return
 		}
-		if _, err := processProgramExecute(ctx, claim.run, dispatch, authorization); err != nil {
+		_, next, err := processProgramExecute(ctx, claim.run, dispatch, authorization)
+		if err != nil {
 			slog.Warn("process runtime: program drive stopped", "run", runID, "error", err)
 			return
 		}
+		dispatch = next
+		if dispatch != nil {
+			continue
+		}
 		switch claim.run.Action().Kind {
-		case executor.ActionContinue:
-			var err error
-			dispatch, err = executor.Prepare(claim.run)
-			if err != nil {
-				slog.Warn("process runtime: continuation failed", "run", runID, "error", err)
-				return
-			}
 		case executor.ActionTerminal, executor.ActionNeedsReconcile:
 			return
 		default:

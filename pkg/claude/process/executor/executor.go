@@ -289,6 +289,10 @@ func validateReconciliationActor(actor string) error {
 }
 
 func persist(run *Run, checkpoint engine.Checkpoint, evidence db.ProcessRunEvent) error {
+	return persistEvents(run, checkpoint, []db.ProcessRunEvent{evidence})
+}
+
+func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRunEvent) error {
 	encoded, err := json.Marshal(checkpoint)
 	if err != nil {
 		return fmt.Errorf("encode process checkpoint: %w", err)
@@ -297,7 +301,7 @@ func persist(run *Run, checkpoint engine.Checkpoint, evidence db.ProcessRunEvent
 		ExpectedStateVersion: run.stateVersion,
 		Status:               string(checkpoint.Status),
 		CheckpointJSON:       encoded,
-		Events:               []db.ProcessRunEvent{evidence},
+		Events:               events,
 	})
 	if err != nil {
 		return err
