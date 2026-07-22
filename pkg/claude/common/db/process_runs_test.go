@@ -145,6 +145,38 @@ func TestProcessRunTransitionRollbackAndVersionCAS(t *testing.T) {
 	assert.Equal(t, int64(2), conflict.Actual)
 }
 
+func TestProcessRunTransitionRollsBackPartialEvidenceAppend(t *testing.T) {
+	setupTestDB(t)
+	input := processRunFixture(t, "run_partial_rollback", "running", json.RawMessage(`{"step":1}`))
+	require.NoError(t, CreateProcessRun(input))
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`CREATE TRIGGER reject_second_process_event
+		BEFORE INSERT ON process_run_events WHEN NEW.sequence = 2
+		BEGIN SELECT RAISE(ABORT, 'injected event failure'); END`)
+	require.NoError(t, err)
+
+	_, err = TransitionProcessRun(input.ID, ProcessRunTransition{
+		ExpectedStateVersion: 1,
+		Status:               "failed",
+		CheckpointJSON:       json.RawMessage(`{"step":2}`),
+		Events: []ProcessRunEvent{
+			processRunEvent(1, "first_would_insert"),
+			processRunEvent(2, "injected_failure"),
+		},
+	})
+	require.Error(t, err)
+
+	run, err := GetProcessRun(input.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), run.StateVersion)
+	assert.Equal(t, "running", run.Status)
+	assert.JSONEq(t, `{"step":1}`, string(run.CheckpointJSON))
+	events, err := ListProcessRunEvents(input.ID, 0, MaxProcessRunEventReadPage)
+	require.NoError(t, err)
+	assert.Empty(t, events, "the event inserted before the failure must roll back too")
+}
+
 func TestProcessRunConcurrentTransitionsHaveOneWinner(t *testing.T) {
 	setupTestDB(t)
 	require.NoError(t, CreateProcessRun(processRunFixture(t, "run_race", "running", json.RawMessage(`{"winner":0}`))))
