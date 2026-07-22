@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,6 +49,28 @@ func TestPreparePersistsBoundCommandBeforeAnyDispatch(t *testing.T) {
 	_, err = Prepare(cold)
 	assert.ErrorIs(t, err, ErrNeedsReconcile)
 	assert.Equal(t, []string{"program_prepared"}, eventKinds(t, run.ID()))
+}
+
+func TestPrepareRollsBackCheckpointWhenEvidenceCannotCommit(t *testing.T) {
+	setupExecutorTest(t)
+	createRun(t, "run_prepare_rollback", helperProgram(t, "success"))
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TRIGGER reject_program_prepared
+		BEFORE INSERT ON process_run_events WHEN NEW.kind = 'program_prepared'
+		BEGIN SELECT RAISE(ABORT, 'injected evidence failure'); END`)
+	require.NoError(t, err)
+
+	run := mustLoadRun(t, "run_prepare_rollback")
+	_, err = Prepare(run)
+	require.Error(t, err)
+	record, err := db.GetProcessRun(run.ID())
+	require.NoError(t, err)
+	assert.Equal(t, db.InitialProcessRunStateVersion, record.StateVersion)
+	var checkpoint engine.Checkpoint
+	require.NoError(t, record.DecodeCheckpoint(&checkpoint))
+	assert.Nil(t, checkpoint.OutstandingCommand)
+	assert.Empty(t, eventKinds(t, run.ID()))
 }
 
 func TestExecutionRequiresRunAuthorizationAndKeepsShellSyntaxInert(t *testing.T) {
@@ -159,6 +183,47 @@ func TestOutputIsTailBoundedAndPersistedWithObservation(t *testing.T) {
 	var stored Result
 	require.NoError(t, events[1].DecodePayload(&stored))
 	assert.Equal(t, result, stored)
+}
+
+func TestBinaryOutputIsBoundedAndStoredAsValidText(t *testing.T) {
+	setupExecutorTest(t)
+	createRun(t, "run_binary_output", helperProgram(t, "binary-output"))
+	run := mustLoadRun(t, "run_binary_output")
+	dispatch, err := Prepare(run)
+	require.NoError(t, err)
+	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	require.NoError(t, err)
+	assert.True(t, result.StdoutTruncated)
+	assert.True(t, result.StderrTruncated)
+	assert.True(t, utf8.ValidString(result.Stdout))
+	assert.True(t, utf8.ValidString(result.Stderr))
+	events, err := db.ListProcessRunEvents(run.ID(), 0, db.MaxProcessRunEventReadPage)
+	require.NoError(t, err)
+	var stored Result
+	require.NoError(t, events[len(events)-1].DecodePayload(&stored))
+	assert.Equal(t, result, stored)
+}
+
+func TestObservationCommitFailureLeavesOutstandingCommandForReconciliation(t *testing.T) {
+	setupExecutorTest(t)
+	createRun(t, "run_observation_rollback", helperProgram(t, "success"))
+	run := mustLoadRun(t, "run_observation_rollback")
+	dispatch, err := Prepare(run)
+	require.NoError(t, err)
+	database, err := db.Open()
+	require.NoError(t, err)
+	_, err = database.Exec(`CREATE TRIGGER reject_program_observed
+		BEFORE INSERT ON process_run_events WHEN NEW.kind = 'program_observed'
+		BEGIN SELECT RAISE(ABORT, 'injected observation failure'); END`)
+	require.NoError(t, err)
+
+	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "observation is not durable; reconciliation required")
+	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
+	cold := mustLoadRun(t, run.ID())
+	assert.Equal(t, ActionNeedsReconcile, cold.Action().Kind)
+	assert.Equal(t, []string{"program_prepared"}, eventKinds(t, run.ID()))
 }
 
 func TestCrashBoundariesNeverSilentlyRerunOutstandingCommand(t *testing.T) {
@@ -310,6 +375,30 @@ func TestGracefulCancellationWaitsKillsAndRecordsFailure(t *testing.T) {
 	assert.Equal(t, engine.RunFailed, cold.Action().Status)
 }
 
+func TestProcessGroupCleanupFailureIsAuditableAndCannotRecordSuccess(t *testing.T) {
+	setupExecutorTest(t)
+	originalKill := killProgramProcessGroup
+	killProgramProcessGroup = func(int) error { return syscall.EPERM }
+	t.Cleanup(func() { killProgramProcessGroup = originalKill })
+	createRun(t, "run_cleanup_failure", helperProgram(t, "success"))
+	run := mustLoadRun(t, "run_cleanup_failure")
+	dispatch, err := Prepare(run)
+	require.NoError(t, err)
+
+	result, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	require.NoError(t, err)
+	assert.Equal(t, engine.ProgramFailed, result.Observation.Outcome)
+	assert.Contains(t, result.Observation.Error, "process-group cleanup")
+	assert.Contains(t, result.CleanupError, "operation not permitted")
+	assert.Equal(t, engine.RunFailed, mustLoadRun(t, run.ID()).Action().Status)
+
+	events, err := db.ListProcessRunEvents(run.ID(), 0, db.MaxProcessRunEventReadPage)
+	require.NoError(t, err)
+	var stored Result
+	require.NoError(t, events[len(events)-1].DecodePayload(&stored))
+	assert.Equal(t, result, stored)
+}
+
 func TestProgramTimeoutKillsDescendantAndRecordsTimeout(t *testing.T) {
 	setupExecutorTest(t)
 	dir := t.TempDir()
@@ -358,6 +447,9 @@ func TestProgramExecutorHelperProcess(t *testing.T) {
 		_, _ = fmt.Fprint(os.Stdout, strings.Repeat("x", 127)+strings.Repeat("o", MaxOutputTailBytes))
 		_, _ = fmt.Fprint(os.Stderr, strings.Repeat("y", 127)+strings.Repeat("e", MaxOutputTailBytes))
 		os.Exit(7)
+	case "binary-output":
+		_, _ = os.Stdout.Write(bytes.Repeat([]byte{0xff}, MaxOutputTailBytes+127))
+		_, _ = os.Stderr.Write(bytes.Repeat([]byte{0xfe}, MaxOutputTailBytes+127))
 	case "descendant":
 		if len(args) != 4 {
 			os.Exit(91)

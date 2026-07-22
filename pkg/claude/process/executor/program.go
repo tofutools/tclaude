@@ -40,6 +40,7 @@ type Result struct {
 	Stderr          string                    `json:"stderr,omitempty"`
 	StdoutTruncated bool                      `json:"stdoutTruncated,omitempty"`
 	StderrTruncated bool                      `json:"stderrTruncated,omitempty"`
+	CleanupError    string                    `json:"cleanupError,omitempty"`
 }
 
 // Execute validates explicit per-run authorization, dispatches argv without a
@@ -104,7 +105,14 @@ func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization
 	cmd.Stderr = stderr
 	runErr := cmd.Run()
 	result.Dispatched = cmd.Process != nil
-	cleanupProgramCommand(cmd)
+	if cleanupErr := cleanupProgramCommand(cmd); cleanupErr != nil {
+		result.CleanupError = boundedError(cleanupErr.Error())
+		if runErr == nil {
+			runErr = fmt.Errorf("process-group cleanup: %w", cleanupErr)
+		} else {
+			runErr = fmt.Errorf("%v; process-group cleanup: %w", runErr, cleanupErr)
+		}
+	}
 	result.FinishedAt = time.Now().UTC()
 	result.Stdout, result.Stderr = stdout.String(), stderr.String()
 	result.StdoutTruncated, result.StderrTruncated = stdout.Truncated(), stderr.Truncated()
@@ -247,5 +255,5 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-func (b *tailBuffer) String() string  { return string(b.data) }
+func (b *tailBuffer) String() string  { return strings.ToValidUTF8(string(b.data), "�") }
 func (b *tailBuffer) Truncated() bool { return b.truncated }

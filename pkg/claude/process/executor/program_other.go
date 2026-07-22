@@ -8,4 +8,4 @@ func configureProgramCommand(command *osexec.Cmd) {
 	command.WaitDelay = programWaitDelay
 }
 
-func cleanupProgramCommand(*osexec.Cmd) {}
+func cleanupProgramCommand(*osexec.Cmd) error { return nil }
