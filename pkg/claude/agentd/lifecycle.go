@@ -946,7 +946,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			res.Detail = "no durable conversation resume profile for this agent; a direct human resume or --ask-human approval is required to recover it from the real harness conversation"
 			return res
 		}
-		recovered, recoverErr := recoverMissingConversationResumeProfile(convID, recreateMissingDir)
+		_, recoverErr := recoverMissingConversationResumeProfile(convID, recreateMissingDir)
 		if recoverErr != nil {
 			var missing *missingResumeAnchorCwdError
 			if errors.As(recoverErr, &missing) {
@@ -958,7 +958,6 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			res.Detail = recoverErr.Error()
 			return res
 		}
-		conversationProfile = recovered
 	}
 	launchConfig, configErr := durableRelaunchConfigForConv(convID)
 	if configErr != nil {
