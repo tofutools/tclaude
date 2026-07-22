@@ -590,7 +590,18 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
     return event;
   };
 
+  // Registered before the drag starts, so it runs before the shell's own
+  // document listener and this really exercises the defaultPrevented guard: a
+  // target that claimed the event keeps its own effect, which is what leaves the
+  // tab strip's reorder edges alone.
+  const claim = (event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; };
+  harness.document.addEventListener('dragover', claim);
   await harness.act(() => harness.fireEvent(label('two'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(() => harness.fireEvent(strip, 'dragover', { clientX: 120, clientY: 10, dataTransfer: transfer }));
+  assert.equal(transfer.dropEffect, 'copy', 'an already-claimed dragover is left alone');
+  harness.document.removeEventListener('dragover', claim);
+  transfer.dropEffect = '';
+
   const nearMiss = await dragOver({ clientX: 120, clientY: 60, dataTransfer: transfer });
   assert.equal(host.querySelector('.mux-drag-out-hint'), null,
     'a drag hovering just past the strip is still a reorder near-miss');
@@ -608,15 +619,6 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   const dropped = harness.fireEvent(harness.document, 'drop', { dataTransfer: transfer });
   assert.equal(dropped.defaultPrevented, true,
     'accepting the drag means consuming the drop it now receives');
-
-  // A target that already claimed the event keeps its own effect: the tab strip
-  // reorder edges must not be flattened into "detach" while hovering them.
-  const claim = (event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; };
-  harness.document.addEventListener('dragover', claim, true);
-  await harness.act(() => harness.fireEvent(strip, 'dragover', { clientX: 120, clientY: 10, dataTransfer: transfer }));
-  harness.document.removeEventListener('dragover', claim, true);
-  assert.equal(transfer.dropEffect, 'copy', 'an already-claimed dragover is left alone');
-  transfer.dropEffect = '';
   await harness.act(async () => {
     harness.fireEvent(label('two'), 'dragend', {
       dataTransfer: transfer, clientX: 120, clientY: 260, screenX: 340, screenY: 260,
