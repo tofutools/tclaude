@@ -261,6 +261,39 @@ func TestProcessRuntimeConcurrentResumeCannotDoubleDispatch(t *testing.T) {
 	assert.Equal(t, int32(1), dispatches.Load())
 }
 
+func TestProcessRuntimeCapacityReturnsCreatedRunnableRun(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("capacity", 1))
+	release := make(chan struct{})
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error) {
+		<-release
+		return executor.Result{}, errors.New("release capacity test claim")
+	}))
+
+	for i := range db.MaxProcessRunReadPage {
+		created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+			"id": fmt.Sprintf("run_capacity_%02d", i), "templateId": "capacity",
+			"authorizeProgramProfiles": []string{"safe"},
+		})
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	}
+	require.Equal(t, db.MaxProcessRunReadPage, agentd.ProcessRunClaimCountForTest())
+
+	deferred := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"id": "run_capacity_deferred", "templateId": "capacity",
+		"authorizeProgramProfiles": []string{"safe"},
+	})
+	require.Equal(t, http.StatusCreated, deferred.Code, deferred.Body.String())
+	var view processRuntimeRunView
+	testharness.DecodeJSON(t, deferred, &view)
+	assert.Equal(t, "run_capacity_deferred", view.ID)
+	assert.Equal(t, "runnable", view.Action)
+	assert.Equal(t, db.MaxProcessRunReadPage, agentd.ProcessRunClaimCountForTest())
+
+	close(release)
+	agentd.WaitForProcessRunRuntimeForTest()
+}
+
 func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown", 1))

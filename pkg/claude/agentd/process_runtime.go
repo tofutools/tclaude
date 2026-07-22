@@ -397,6 +397,7 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
+	setAuditDetail(r, processRunCreateAuditDetail(request))
 	actor, err := processTemplateAuthor(caller)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
@@ -408,9 +409,11 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := processRuns.beginPrepared(run, processRunStart{mode: processRunResume}); err != nil {
-		writeError(w, http.StatusInternalServerError, "process_run_created_not_started",
-			fmt.Sprintf("run %q was created but could not start: %v", run.ID(), err))
-		return
+		// Persistence already succeeded, so creation must remain a successful,
+		// idempotent-looking response. SQLite keeps the runnable checkpoint for
+		// a later bounded sweep; reporting failure here invites a retry that
+		// creates a second generated run with duplicate effects.
+		slog.Warn("process runtime: created run deferred", "run", run.ID(), "error", err)
 	}
 	view, err := loadProcessRunView(run.ID())
 	if err != nil {
@@ -418,6 +421,11 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusCreated, view)
+}
+
+func processRunCreateAuditDetail(request processRunCreateRequest) string {
+	profiles, _ := json.Marshal(request.AuthorizeProgramProfiles)
+	return "template: " + strings.TrimSpace(request.TemplateID) + ", authorized profiles: " + string(profiles)
 }
 
 func handleProcessRun(w http.ResponseWriter, r *http.Request) {
