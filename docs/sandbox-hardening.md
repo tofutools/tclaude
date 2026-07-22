@@ -367,6 +367,8 @@ reasons — check both: the `sandbox.filesystem.allowRead` entry for
 
 ## See also
 
+- [Sandboxing](sandboxing.md) — the operator mental model for sandbox profiles:
+  enforcement layers, deny + reopen, and the failure modes to expect.
 - [Agent coordination](agent.md#identity) — caller attribution, operator
   identity, and the permission guardrail this guide backs on the operator side.
 - Claude Code sandboxing: <https://code.claude.com/docs/en/sandboxing>

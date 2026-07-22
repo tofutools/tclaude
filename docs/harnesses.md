@@ -200,6 +200,10 @@ are left untouched. The research behind the defaults lives in the
 
 ### Sandbox at spawn (Claude Code)
 
+> The modes below decide *whether* containment is enforced. What it then does to
+> a running agent — deny + reopen, the capability gate, and the failure modes —
+> is in [Sandboxing](sandboxing.md).
+
 Claude Code's OS sandbox lives in `settings.json` (a `sandbox` block), not a
 launch flag — there is no `claude --sandbox`. tclaude still offers a **per-session
 override** in the spawn dialog, profiles, and `tclaude session new`/`agent spawn
