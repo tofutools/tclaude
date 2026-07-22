@@ -20,9 +20,9 @@ async function request(path, options = {}) {
 }
 
 export async function loadSandboxProfiles() { const value = await request(API); return Array.isArray(value) ? value : []; }
-// The common-rule catalog: audited deny presets (labels, descriptions,
-// warnings, per-OS paths) the editor inserts as ordinary filesystem rows. The
-// endpoint keeps its historical read-exclusions path.
+// The filesystem-editor feed: audited deny presets the editor may insert as
+// ordinary rows, plus provenance-rich harness-global rows it renders read-only.
+// The endpoint keeps its historical read-exclusions path.
 export function loadSandboxCommonRules() { return request('/api/sandbox-profile-read-exclusions'); }
 export async function previewSandboxProfile(name, body) {
   const target = name ? `${API}/${encodeURIComponent(name)}` : API;

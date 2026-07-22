@@ -355,7 +355,21 @@ it would insert *before* you click; selecting one appends those paths as
 ordinary `deny` rows and repeats the warning in a notice naming what was added.
 Nothing about the preset is stored: afterwards they are plain rows you can
 edit, retarget, or delete, and a path already in the table is left as authored
-rather than duplicated. Profiles saved before this change may still carry the
+rather than duplicated.
+
+The filesystem table also shows **inherited global config rules** by default.
+These subdued, read-only rows come from Claude Code's user-level
+`~/.claude/settings.json` sandbox filesystem block and tclaude's managed Codex
+`tclaude-agent.config.toml` permission profile. A badge says whether each rule
+applies to Claude, Codex, or both, and hovering it identifies the source file,
+setting, and whether the Claude sandbox is currently enabled. They are context
+for the effective launch policy, not part of the named profile: hiding them,
+opening raw JSON, cloning, exporting, or saving never copies them into the
+profile. The final launch can still add workspace, Git, agent-owned-directory,
+and assignment-layer rules that depend on its cwd and selected global/group/
+explicit profiles; the spawn dialog remains the authoritative composed preview.
+
+Profiles saved before this change may still carry the
 retired `read_baseline`/`read_baseline_exclusions` fields; the dashboard
 ignores them rather than rendering an enforcement that no longer exists — such
 a profile is no longer strict despite its name, so audit it and re-express the

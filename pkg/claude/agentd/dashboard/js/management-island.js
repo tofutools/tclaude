@@ -51,6 +51,27 @@ function commonRulePaths(entry) {
   return [...new Set((entry?.paths || []).map((path) => String(path || '').trim()).filter(Boolean))];
 }
 
+function globalFilesystemAccessLabel(access) {
+  return ({ read: 'read', write: 'write', deny: 'deny', 'deny-read': 'deny read', 'deny-write': 'deny write' })[access] || access;
+}
+
+function globalFilesystemHarnessLabel(harnesses) {
+  const set = new Set(harnesses || []);
+  if (set.has('claude') && set.has('codex')) return 'Claude + Codex';
+  if (set.has('claude')) return 'Claude';
+  if (set.has('codex')) return 'Codex';
+  return 'global';
+}
+
+function globalFilesystemRuleTooltip(rule) {
+  const access = globalFilesystemAccessLabel(rule.access);
+  const origins = (rule.origins || []).map((origin) => {
+    const harness = origin.harness === 'claude' ? 'Claude Code' : origin.harness === 'codex' ? 'Codex' : origin.harness;
+    return `${harness}: ${origin.source} → ${origin.setting}.${origin.note ? ` ${origin.note}` : ''}`;
+  });
+  return [`Inherited ${access} rule for ${rule.path}. This row is read-only because it belongs to global harness config, not this profile.`, ...origins].join('\n');
+}
+
 /* Comparison-only path identity, mirroring the daemon's own `filepath.Clean`:
    trailing separators, duplicated separators, `.` segments and `..` segments
    all name the same location there, so treating them as distinct lets a preset
@@ -230,7 +251,11 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawBreakGlass, setRawBreakGlass] = useState(() => JSON.stringify(baseline.break_glass_filesystem, null, 2));
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
-  const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [] });
+  const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_config_warnings: [] });
+  // Global harness rows are context, not draft state. Show them initially so
+  // the editor answers "what else will apply?" without a discovery click, but
+  // let operators fold them away while authoring a large profile.
+  const [showGlobalFilesystem, setShowGlobalFilesystem] = useState(true);
   // The menu is long and most profiles never touch it, so it ships folded.
   const [commonRulesOpen, setCommonRulesOpen] = useState(false);
   // What the last insertion did, including the entry's warning — the operator
@@ -254,7 +279,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
     // must land in the catch like any other failure, or the busy flag sticks.
     Promise.resolve().then(() => actions.loadCommonRuleCatalog()).then((value) => {
       if (generation !== commonRuleGeneration.current) return;
-      setCommonRules(value || { version: 0, categories: [], informational: [] });
+      setCommonRules(value || { version: 0, categories: [], informational: [], global_filesystem: [], global_config_warnings: [] });
       setCommonRuleFeedError(''); setCommonRuleFeedBusy(false);
     }).catch((error) => {
       if (generation !== commonRuleGeneration.current) return;
@@ -353,13 +378,23 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   })();
   const draftBreakGlass = candidate.break_glass_filesystem || [];
   const resolvedBG = resolvedBreakGlass(candidate, current.sandboxProfiles, seed?.name || '');
+  const globalFilesystem = commonRules.global_filesystem || [];
+  const globalConfigWarnings = commonRules.global_config_warnings || [];
   // Same guard as the Save button, so the hotkey can never reach a save the
   // mouse path refuses. The overlay already suppresses its hotkey while
   // `blocked` (saving || directoryBusy); recoveryBlocked is the term that adds
   // to it — a failed break-glass registry reload must refuse the keyboard too.
   const submitBlocked = saving || directoryBusy || recoveryBlocked;
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} onSubmitHotkey=${submitBlocked ? null : submit} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network policies control external IP connectivity while retaining the tclaude agent socket. Managed Codex profiles block the host tmux server independently. Environment values are ordinary configuration, not secrets.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}><${Row} label="Network"><${Select} id="sandbox-profile-editor-network" value=${draft.network_access} onChange=${(value) => change(setDraft, 'network_access', value)} options=${[['', 'No override (inherit profile layers)'], ['internet', 'Internet access'], ['none', 'Offline (macOS; unavailable on Linux/WSL)']]}/></${Row}>
-    <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend><div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
+    <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend>
+      ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
+        <label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
+        ${showGlobalFilesystem && html`<div id="sandbox-profile-editor-global-filesystem" class="sbx-rows sbx-global-rows">
+          ${globalFilesystem.map((row, index) => { const tooltip = globalFilesystemRuleTooltip(row); return html`<div key=${`${row.path}:${row.access}:${index}`} class="sbx-row sbx-global-row" title=${tooltip} aria-label=${tooltip}><span class=${`sbx-access sbx-global-access sbx-global-access-${row.access}`}>${globalFilesystemAccessLabel(row.access)}</span><input class="sbx-path" value=${row.path || ''} readonly aria-readonly="true" tabindex="-1"/><span class="sbx-global-harness">${globalFilesystemHarnessLabel(row.harnesses)}</span></div>`; })}
+          ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
+        </div>`}
+      </div>`}
+      <div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes

@@ -55,6 +55,13 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	t.Setenv("HOME", linkedHome)
 	canonicalHome, err := filepath.EvalSymlinks(linkedHome)
 	require.NoError(t, err)
+	t.Setenv("CODEX_HOME", filepath.Join(linkedHome, ".codex"))
+	require.NoError(t, os.MkdirAll(filepath.Join(linkedHome, ".claude"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(linkedHome, ".codex"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(linkedHome, ".claude", "settings.json"), []byte(`{"sandbox":{"enabled":true,"filesystem":{"denyRead":["~/private"],"denyWrite":["~/private"]}}}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(linkedHome, ".codex", "tclaude-agent.config.toml"), []byte(`[permissions.tclaude-agent.filesystem]
+"`+filepath.Join(linkedHome, "private")+`" = "none"
+`), 0o600))
 	rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var catalog struct {
@@ -63,6 +70,12 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 		Home          string
 		Categories    []map[string]any `json:"categories"`
 		Informational []map[string]any `json:"informational"`
+		Global        []struct {
+			Path      string   `json:"path"`
+			Access    string   `json:"access"`
+			Harnesses []string `json:"harnesses"`
+		} `json:"global_filesystem"`
+		GlobalWarnings []string `json:"global_config_warnings"`
 	}
 	testharness.DecodeJSON(t, rec, &catalog)
 	assert.Equal(t, 1, catalog.Version)
@@ -73,6 +86,11 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
 	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
 	assert.NotEmpty(t, catalog.Informational)
+	require.Len(t, catalog.Global, 1)
+	assert.Equal(t, "~/private", catalog.Global[0].Path)
+	assert.Equal(t, "deny", catalog.Global[0].Access)
+	assert.Equal(t, []string{"claude", "codex"}, catalog.Global[0].Harnesses)
+	assert.Empty(t, catalog.GlobalWarnings)
 }
 
 func TestSandboxProfileDraftPermissionCanOnlySubmitValidatedDraft(t *testing.T) {

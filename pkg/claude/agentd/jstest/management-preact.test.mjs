@@ -649,6 +649,20 @@ const COMMON_RULES = {
     { id: 'empty.here', label: 'Nothing on this platform', description: 'Resolves nowhere here.', paths: [] },
   ],
   informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
+  global_filesystem: [
+    { path: '~/.claude/sessions', access: 'deny', harnesses: ['claude', 'codex'], origins: [
+      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead + denyWrite', note: "Claude Code's global sandbox is enabled." },
+      { harness: 'codex', source: '~/.codex/tclaude-agent.config.toml', setting: 'permissions.tclaude-agent.filesystem', note: "Applied by tclaude's managed Codex sandbox profile." },
+    ] },
+    { path: '~/.codex', access: 'deny-read', harnesses: ['claude'], origins: [
+      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.denyRead', note: "Claude Code's global sandbox is enabled." },
+    ] },
+    { path: '~/.tclaude/api/agentd.sock', access: 'read', harnesses: ['claude', 'codex'], origins: [
+      { harness: 'claude', source: '~/.claude/settings.json', setting: 'sandbox.filesystem.allowRead', note: "Claude Code's global sandbox is enabled." },
+      { harness: 'codex', source: '~/.codex/tclaude-agent.config.toml', setting: 'permissions.tclaude-agent.filesystem', note: "Applied by tclaude's managed Codex sandbox profile." },
+    ] },
+  ],
+  global_config_warnings: [],
 };
 
 function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {}) {
@@ -672,6 +686,37 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   });
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
+
+test('global harness filesystem rows are visible, immutable, attributable, and never saved', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [{ path: '/work', access: 'write' }], environment: [], includes: [], agent_directories: [] }, options: {} });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  const toggle = host.querySelector('#sandbox-profile-editor-show-global-filesystem');
+  assert.equal(toggle.hasAttribute('checked'), true, 'inherited context is visible by default');
+  const inherited = [...host.querySelectorAll('.sbx-global-row')];
+  assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
+  assert.equal(inherited[0].querySelector('.sbx-path').hasAttribute('readonly'), true);
+  assert.equal(inherited[0].querySelectorAll('button').length, 0, 'an inherited row has no browse or delete actions');
+  assert.match(inherited[0].textContent, /Claude \+ Codex/);
+  assert.match(inherited[0].getAttribute('title'), /settings\.json.*tclaude-agent\.config\.toml/s);
+  assert.match(inherited[1].textContent, /deny read.*Claude/);
+
+  host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.filesystem, [{ path: '/work', access: 'write' }]);
+
+  toggle.checked = false;
+  toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'the checkbox folds inherited context without changing the draft');
+  unmount();
+});
 
 // The presets are row inserters, nothing more: what they add is an ordinary,
 // visible, editable deny row, and the entry's warning must be on screen at the
