@@ -203,13 +203,21 @@ func mergeSandboxGlobalFilesystemRules(home string, candidates []sandboxGlobalFi
 	byKey := make(map[string]*sandboxGlobalFilesystemRuleJSON, len(candidates))
 	for _, candidate := range candidates {
 		identity := sandboxGlobalPathIdentity(home, candidate.path)
-		key := identity + "\x00" + candidate.access
+		accessKey := candidate.access
+		if accessKey == "read" || accessKey == "write" {
+			// Write access includes read access. Use one effective allow row for
+			// the path while retaining every read/write origin for provenance.
+			accessKey = "allow"
+		}
+		key := identity + "\x00" + accessKey
 		rule := byKey[key]
 		if rule == nil {
 			rule = &sandboxGlobalFilesystemRuleJSON{
 				Path: displaySandboxGlobalPath(home, identity), Access: candidate.access,
 			}
 			byKey[key] = rule
+		} else if candidate.access == "write" {
+			rule.Access = "write"
 		}
 		duplicate := false
 		for _, origin := range rule.Origins {

@@ -252,10 +252,9 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // The audited common-rule presets. They are pure row inserters: nothing from
   // the catalog is persisted, so a profile never depends on it being loaded.
   const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [], global_filesystem: [], global_config_warnings: [] });
-  // Global harness rows are context, not draft state. Show them initially so
-  // the editor answers "what else will apply?" without a discovery click, but
-  // let operators fold them away while authoring a large profile.
-  const [showGlobalFilesystem, setShowGlobalFilesystem] = useState(true);
+  // Global harness rows are context, not draft state. Keep the potentially
+  // long ambient list folded until the operator asks to inspect it.
+  const [showGlobalFilesystem, setShowGlobalFilesystem] = useState(false);
   // The menu is long and most profiles never touch it, so it ships folded.
   const [commonRulesOpen, setCommonRulesOpen] = useState(false);
   // What the last insertion did, including the entry's warning — the operator
@@ -390,7 +389,7 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
         ${showGlobalFilesystem && html`<div id="sandbox-profile-editor-global-filesystem" class="sbx-rows sbx-global-rows">
-          ${globalFilesystem.map((row, index) => { const tooltip = globalFilesystemRuleTooltip(row); const detailID = `sandbox-global-rule-${index}-detail`; return html`<div key=${`${row.path}:${row.access}:${index}`} class="sbx-row sbx-global-row" role="group" tabindex="0" aria-label=${`${row.path || ''} ${globalFilesystemAccessLabel(row.access)} inherited sandbox rule`} aria-describedby=${detailID}><span class=${`sbx-access sbx-global-access sbx-global-access-${row.access}`}>${globalFilesystemAccessLabel(row.access)}</span><input class="sbx-path" value=${row.path || ''} readonly aria-readonly="true" tabindex="-1"/><span class="sbx-global-harness">${globalFilesystemHarnessLabel(row.harnesses)}</span><span id=${detailID} class="sbx-global-detail" role="tooltip">${tooltip}</span></div>`; })}
+          ${globalFilesystem.map((row, index) => { const tooltip = globalFilesystemRuleTooltip(row); return html`<div key=${`${row.path}:${row.access}:${index}`} class="sbx-row sbx-global-row" role="group" title=${tooltip} aria-label=${tooltip}><span class=${`sbx-access sbx-global-access sbx-global-access-${row.access}`}>${globalFilesystemAccessLabel(row.access)}</span><input class="sbx-path" value=${row.path || ''} readonly aria-readonly="true" tabindex="-1"/><span class="sbx-global-harness">${globalFilesystemHarnessLabel(row.harnesses)}</span></div>`; })}
         </div>`}
         ${globalConfigWarnings.map((warning, index) => html`<div key=${index} class="sbx-global-warning" role="status">⚠ ${warning}</div>`)}
       </div>`}
