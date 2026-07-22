@@ -44,23 +44,20 @@ export const KNOWN_TABS = new Set([
 // KNOWN_SUBTABS enumerates the valid second-segment values per tab that has a
 // sub-navigation. Only these two tabs have one today:
 //   - Access: the segmented control (permissions / slugs / sudo).
-//   - Processes: the subtab switcher (templates / runs / worklist).
+//   - Processes: the template library/editor.
 // A second segment not listed here is dropped on parse (fall back to the tab's
 // default view) so a renamed/removed subtab degrades gracefully.
 export const KNOWN_SUBTABS = {
   access: new Set(['permissions', 'slugs', 'sudo']),
-  processes: new Set(['templates', 'runs', 'worklist']),
+  processes: new Set(['templates']),
 };
 
 // SELECTABLE_SUBTABS enumerates the tab/subtab pairs whose view can address a
 // SINGLE entity, so a third path segment carries meaning there:
 //   - processes/templates/<template-id> — the template editor is open on it.
-//   - processes/runs/<run-id>           — the run viewer is open on it.
-// Only the templates half is wired end to end today (the editor produces and
-// restores it); the runs half stays modelled-but-unwired, exactly as before.
 // A selection parsed under any other tab/subtab is dropped.
 export const SELECTABLE_SUBTABS = {
-  processes: new Set(['templates', 'runs']),
+  processes: new Set(['templates']),
 };
 
 // defaultLocation returns a fresh copy of the fallback location. Returned as a
@@ -80,7 +77,7 @@ export function normalizeLocation(loc) {
   if (loc && loc.subtab && subs && subs.has(loc.subtab)) {
     out.subtab = loc.subtab;
   }
-  // A selection is a free-form entity id (a Processes template or run id). It
+  // A selection is a free-form entity id (a Processes template id). It
   // is only meaningful under a tab/subtab that has a detail view — see
   // SELECTABLE_SUBTABS. Keep it only where it can apply.
   if (loc && loc.selection && SELECTABLE_SUBTABS[tab]?.has(out.subtab)) {

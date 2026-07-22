@@ -519,7 +519,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <span class="cfg-label">Processes</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-feature-processes" /> enable the in-development <strong>Processes</strong> feature</label>
-        <span class="cfg-hint">BPMN-lite repeatable process graphs — a drag-and-drop template editor, long-running instantiated runs, and a live process viewer. In development: surfaces appear as they land, and may change or break between versions. Stored as <code>features.processes</code>.</span>
+        <span class="cfg-hint">BPMN-lite repeatable process graphs with a drag-and-drop template editor. Runtime execution is temporarily unavailable while the engine is rebuilt. Stored as <code>features.processes</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Agent dirs: mount parent</span>

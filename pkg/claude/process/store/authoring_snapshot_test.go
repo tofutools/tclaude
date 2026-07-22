@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
-	"github.com/tofutools/tclaude/pkg/claude/process/state"
 )
 
 func TestTemplateAuthoringSnapshotSerializesSourceAndAuthorship(t *testing.T) {
@@ -68,7 +67,7 @@ func TestTemplateAuthoringSnapshotSerializesSourceAndAuthorship(t *testing.T) {
 	parsedSnapshot, err := model.Parse(result.snapshot.Source)
 	require.NoError(t, err)
 	assert.Equal(t, parsedSnapshot.SourceHash, result.snapshot.Authorship[0].SourceHash)
-	assert.Equal(t, state.ActorRef("agent:agt_first"), result.snapshot.Authorship[0].Actor)
+	assert.Equal(t, ActorRef("agent:agt_first"), result.snapshot.Authorship[0].Actor)
 	require.NoError(t, <-writerDone)
 
 	fs.templateLockContendedHook = nil
@@ -79,7 +78,7 @@ func TestTemplateAuthoringSnapshotSerializesSourceAndAuthorship(t *testing.T) {
 	parsedAfter, err := model.Parse(after.Source)
 	require.NoError(t, err)
 	assert.Equal(t, parsedAfter.SourceHash, after.Authorship[1].SourceHash)
-	assert.Equal(t, state.ActorRef("agent:agt_second"), after.Authorship[1].Actor)
+	assert.Equal(t, ActorRef("agent:agt_second"), after.Authorship[1].Actor)
 }
 
 func TestTemplateAuthoringCommitIsExactWithQueuedLayoutWriter(t *testing.T) {
@@ -102,7 +101,7 @@ func TestTemplateAuthoringCommitIsExactWithQueuedLayoutWriter(t *testing.T) {
 	aCommitted := make(chan struct{})
 	releaseA := make(chan struct{})
 	fs.templateAuthoringCommitHook = func(commit TemplateAuthoringCommit) {
-		if commit.Actor == state.ActorRef("agent:agt_a") {
+		if commit.Actor == ActorRef("agent:agt_a") {
 			close(aCommitted)
 			<-releaseA
 		}
@@ -133,9 +132,9 @@ func TestTemplateAuthoringCommitIsExactWithQueuedLayoutWriter(t *testing.T) {
 	resultB := <-bDone
 	require.NoError(t, resultB.err)
 	assert.Equal(t, hashA, resultA.commit.SourceHash)
-	assert.Equal(t, state.ActorRef("agent:agt_a"), resultA.commit.Actor)
+	assert.Equal(t, ActorRef("agent:agt_a"), resultA.commit.Actor)
 	assert.Equal(t, hashB, resultB.commit.SourceHash)
-	assert.Equal(t, state.ActorRef("agent:agt_b"), resultB.commit.Actor)
+	assert.Equal(t, ActorRef("agent:agt_b"), resultB.commit.Actor)
 
 	fs.templateLockContendedHook = nil
 	fs.templateAuthoringCommitHook = nil

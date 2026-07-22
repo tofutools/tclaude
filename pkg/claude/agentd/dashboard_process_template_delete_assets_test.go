@@ -60,8 +60,6 @@ func TestDashboardJS_ProcessTemplateDeleteWired(t *testing.T) {
 		// processes-actions.js: one shared commit behind both affordances.
 		{`async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {`,
 			"both delete affordances route through one commit"},
-		{`if (body.code === 'process_template_in_use') {`,
-			"the commit surfaces the daemon's in-use refusal"},
 	} {
 		if !strings.Contains(dashboardAssets, c.needle) {
 			t.Errorf("dashboard assets missing %q — %s", c.needle, c.why)

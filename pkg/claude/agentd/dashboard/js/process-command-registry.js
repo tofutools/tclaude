@@ -93,12 +93,8 @@ export function buildProcessEditorCommands({ editor, actions, wizard = isWizardA
       'edit refactor agent scribe whole template rewrite process', true, '', () => editor.requestScribe('template')),
     command('save', '💾', 'Save template', 'Seal the template', 'Use validation, versioning, and CAS conflict handling',
       'save template version persist seal scroll', context.canSave, context.saveReason, () => editor.save()),
-    command('instantiate', '▶', 'Instantiate / run template…', 'Awaken this process…', 'Create a run from an exact saved version',
-      'instantiate run start launch execute awaken cast', context.canInstantiate, context.instantiateReason, () => editor.requestInstantiate()),
     command('templates', '▤', 'Focus process templates', 'Scry the process templates', 'Leave the editor for the templates list (dirty guard applies)',
       'focus go navigate templates list scry scrolls', true, '', () => actions?.activateSubtab?.('templates')),
-    command('runs', '▶', 'Focus process runs', 'Scry the process runs', 'Leave the editor for the runs list (dirty guard applies)',
-      'focus go navigate runs list scry quests', true, '', () => actions?.activateSubtab?.('runs')),
   );
   return commands;
 }

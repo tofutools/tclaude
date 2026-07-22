@@ -42,7 +42,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
-	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -448,10 +447,6 @@ func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
 	t.Cleanup(agentd.SetProcessStoreRootForTest(root))
 	fs, err := store.NewFS(root)
 	requireNoError("create process store", err)
-	// Worklist fixtures FIRST: they run an engine tick to mint the human
-	// obligations, and the tick must not see (and advance to completion) the
-	// hand-crafted release-42 run created below.
-	seedProcessWorklistDashSnap(t, root)
 	required := true
 	tmpl := &model.Template{
 		APIVersion:  model.APIVersion,
@@ -473,95 +468,8 @@ func seedProcessDashSnap(t *testing.T, f *testharness.Flow) {
 			"begin": {X: 80, Y: 120}, "ship": {X: 360, Y: 120},
 		}},
 	}
-	record, err := fs.PutTemplate(t.Context(), tmpl)
+	_, err = fs.PutTemplate(t.Context(), tmpl)
 	requireNoError("seed process template", err)
-	initial := state.New("dashsnap-release-42", record.Ref, record.Ref, []state.NodeInit{
-		{ID: "begin", Type: model.NodeTypeStart, Status: state.NodeStatusReady},
-		{ID: "ship", Type: model.NodeTypeEnd, Status: state.NodeStatusPending},
-	})
-	initial.Status = state.RunStatusRunning
-	_, err = fs.CreateRun(t.Context(), store.RunRecord{
-		ID: "dashsnap-release-42", TemplateRef: record.Ref,
-		CreatedAt: time.Now().Add(-12 * time.Minute),
-	}, initial)
-	requireNoError("seed process run", err)
-}
-
-// seedProcessWorklistDashSnap populates the Worklist sub-view (TCL-297): two
-// pending human decisions (operator + oncall assignees, one with a visible
-// contact/nudge schedule) minted by a real engine tick, and a corrupt run so
-// the amber degraded-runs strip renders in every worklist state.
-func seedProcessWorklistDashSnap(t *testing.T, root string) {
-	t.Helper()
-	createEngineRun(t, root, "dashsnap-approve-7", decisionTemplate("dashsnap-approve", model.Performer{
-		Kind: model.PerformerHuman, Profile: "operator", Ask: "Approve the release-train cut?",
-		Contact: &model.ContactSchedule{Cadence: "30m", Budget: 5, EscalationTarget: "human:oncall"},
-	}), false)
-	createEngineRun(t, root, "dashsnap-signoff-8", decisionTemplate("dashsnap-signoff", model.Performer{
-		Kind: model.PerformerHuman, Profile: "oncall", Ask: "Sign off the incident follow-up?",
-	}), false)
-	createEngineRun(t, root, "dashsnap-parallel-any-9", &model.Template{
-		APIVersion: model.APIVersion,
-		Kind:       model.Kind,
-		ID:         "dashsnap-parallel-any",
-		Name:       "Parallel-any deployment checks",
-		Start:      "fork",
-		Nodes: map[string]model.Node{
-			"fork": {Type: model.NodeTypeParallel, Next: model.Next{"primary": "primary-wait", "independent": "independent-wait"}},
-			"primary-wait": {
-				Type: model.NodeTypeWait, Wait: &model.WaitConfig{Duration: "24h"}, Next: model.Next{"pass": "accepted"},
-			},
-			"independent-wait": {
-				Type: model.NodeTypeWait, Wait: &model.WaitConfig{Duration: "24h"}, Next: model.Next{"pass": "accepted"},
-			},
-			"accepted": {Type: model.NodeTypeEnd, Join: model.JoinAny, Result: "completed"},
-		},
-	}, false)
-	host, err := agentd.NewProcessEngineHostForTest(root)
-	if err != nil {
-		t.Fatalf("worklist engine host: %v", err)
-	}
-	if _, err := agentd.RunProcessEngineTickForTest(t.Context(), host); err != nil {
-		t.Fatalf("worklist engine tick: %v", err)
-	}
-	corrupt := filepath.Join(root, "runs", "dashsnap-corrupt-run")
-	if err := os.MkdirAll(corrupt, 0o755); err != nil {
-		t.Fatalf("worklist corrupt run dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(corrupt, "run.json"), []byte("{broken"), 0o644); err != nil {
-		t.Fatalf("worklist corrupt run.json: %v", err)
-	}
-	// A schema-8 run seeded AFTER the engine tick through the epoch-v8
-	// constructor (createEngineRun would mint a legacy run): its runtime
-	// stays unattached, so it truthfully has zero worklist items (keeping the
-	// badge fixtures stable) while the viewer renders the full safe
-	// adaptation summary and unlock panel.
-	epochTemplate := &model.Template{
-		APIVersion: model.APIVersion,
-		Kind:       model.Kind,
-		ID:         "dashsnap-epoch",
-		Name:       "Adaptable release hold",
-		Start:      "hold",
-		Nodes: map[string]model.Node{
-			"hold": {Type: model.NodeTypeWait, Wait: &model.WaitConfig{Signal: "go-ahead"}, Next: model.Next{"pass": "done"}},
-			"done": {Type: model.NodeTypeEnd, Result: "completed"},
-		},
-	}
-	epochSource, err := model.CanonicalYAML(epochTemplate)
-	if err != nil {
-		t.Fatalf("epoch template source: %v", err)
-	}
-	fs, err := store.NewFS(root)
-	if err != nil {
-		t.Fatalf("epoch store: %v", err)
-	}
-	epochRecord, err := fs.PutTemplate(t.Context(), epochTemplate)
-	if err != nil {
-		t.Fatalf("epoch template: %v", err)
-	}
-	if _, err := fs.InitializeEpochV8Run(t.Context(), store.RunRecord{ID: "dashsnap-epoch-8", TemplateRef: epochRecord.Ref}, epochSource); err != nil {
-		t.Fatalf("epoch run: %v", err)
-	}
 }
 
 func seedMember(t *testing.T, f *testharness.Flow, groupID int64, group string, m dashMemberSpec) {
@@ -1273,34 +1181,6 @@ func baseStates() []dashsnap.State {
 			SettleMS: 900,
 		},
 		{
-			Key:      "processes-runs",
-			Title:    "Processes — runs",
-			Caption:  "Processes Runs sub-view with a populated live run row, status, current activity, and viewer action.",
-			JS:       processTabJS("runs", `[data-process-run="dashsnap-release-42"]`),
-			SettleMS: 900,
-		},
-		{
-			Key:      "process-viewer-rich",
-			Title:    "Processes — rich checkpoint view",
-			Caption:  "Schema-7 checkpoint view with exact pinned topology, current routing overlays, paginated detail tabs, authority boundary, and a sanitized timeline.",
-			JS:       processViewerStateJS("dashsnap-parallel-any-9", true),
-			SettleMS: 1200,
-		},
-		{
-			Key:      "process-viewer-legacy-unavailable",
-			Title:    "Processes — legacy routing unavailable",
-			Caption:  "Legacy run view fails closed: exact pinned topology remains visible while the routing overlay and checkpoint detail tables explicitly report their unavailable state.",
-			JS:       processViewerStateJS("dashsnap-approve-7", false),
-			SettleMS: 1200,
-		},
-		{
-			Key:      "process-viewer-epoch-summary",
-			Title:    "Processes — schema-8 safe summary",
-			Caption:  "Schema-8 run renders the honest epoch_v8_summary restriction, the adaptation summary (lineage, structural totals, authority state chips, bounded timeline), and the memory-only unlock draft panel; exact topology stays restricted.",
-			JS:       processViewerEpochStateJS("dashsnap-epoch-8"),
-			SettleMS: 1200,
-		},
-		{
 			Key:      "management-profiles",
 			Title:    "Management — spawn profiles",
 			Caption:  "Preact-owned spawn-profile manager with filtering, transfer actions, keyed cards, and create/edit/delete entry points.",
@@ -1348,27 +1228,6 @@ func baseStates() []dashsnap.State {
 			Caption:  "The \"add common rule\" menu expanded on the filesystem table: audited presets with their description, warning, and the exact paths each one would insert as ordinary deny rows.",
 			JS:       sandboxCommonRulesJS(),
 			SettleMS: 700,
-		},
-		{
-			Key:      "processes-worklist",
-			Title:    "Processes — worklist (My work)",
-			Caption:  "Worklist My-work view: a decision row with the nudge schedule line, advertised approve/reject actions with the required comment input, the actionable-count sub-nav badge, and the amber degraded-runs strip.",
-			JS:       worklistTabJS("my-work", `#process-panel-worklist .wl-row`),
-			SettleMS: 900,
-		},
-		{
-			Key:      "processes-worklist-waiting",
-			Title:    "Processes — worklist (Waiting on)",
-			Caption:  "Worklist Waiting-on view grouped by whom the work waits on: 👤 operator and 👤 oncall group heads over their pending items.",
-			JS:       worklistTabJS("waiting-on", `#process-panel-worklist .wl-group-head`),
-			SettleMS: 900,
-		},
-		{
-			Key:      "processes-worklist-empty-view",
-			Title:    "Processes — worklist (empty view)",
-			Caption:  "Worklist Needs-review view with no matching items: the per-view empty state counts pending items in other views, and the degraded strip stays visible (unreadable runs are never silently dropped).",
-			JS:       worklistTabJS("review", `#process-panel-worklist .process-placeholder`),
-			SettleMS: 900,
 		},
 		{
 			Key:      "process-editor-palette",
@@ -2022,14 +1881,6 @@ func baseStates() []dashsnap.State {
 			Caption: "TCL-300 params editor: parameter names, free-form types, descriptions, explicit defaults, and required state in one atomic editor transaction.",
 			JS: processEditorStateJS(`await ed.openParamsSettings();
   if (!document.querySelector('.process-param-dialog [data-process-param="issue"]')) throw new Error('params dialog did not open');`),
-			SettleMS: 1100,
-		},
-		{
-			Key:     "process-instantiate-dialog",
-			Title:   "Process template — instantiate exact version",
-			Caption: "TCL-300 instantiate dialog: exact content-addressed ref plus required string, defaulted number, and defaulted boolean inputs.",
-			JS: processEditorStateJS(`await ed.requestInstantiate();
-  if (!document.querySelector('.process-instantiate-dialog [data-process-param-input="issue"]')) throw new Error('instantiate dialog did not open');`),
 			SettleMS: 1100,
 		},
 		{
@@ -3264,150 +3115,6 @@ func processTabJS(subtab, readySelector string) string {
   }
   if (!document.querySelector('%s')) throw new Error('Processes populated row did not render');
 })();`, subtab, subtab, readySelector, readySelector)
-}
-
-// processViewerStateJS opens a seeded run through the same Runs action an
-// operator uses and verifies the load-bearing authority split. baseStates is
-// expanded across both skins, so every viewer state is captured in regular and
-// wizard chrome without maintaining two diverging fixtures.
-func processViewerStateJS(runID string, rich bool) string {
-	expected := `
-  var unavailable = canvas.querySelector('.process-viewer-unavailable.reason-legacy_schema');
-  if (!unavailable) throw new Error('legacy routing unavailable state missing');
-  if (canvas.querySelector('.process-viewer-tabs')) throw new Error('legacy viewer rendered checkpoint detail tabs');`
-	if rich {
-		expected = `
-  if (canvas.querySelector('.process-viewer-unavailable')) throw new Error('schema-7 routing unexpectedly unavailable');
-  var activeDetailTab = canvas.querySelector('.process-viewer-tabs button[role="tab"][aria-selected="true"]');
-  if (!activeDetailTab || activeDetailTab.tabIndex !== 0) throw new Error('routing detail tabs missing selected roving tab');
-  var activeDetailPanel = canvas.querySelector('#' + activeDetailTab.getAttribute('aria-controls'));
-  if (!activeDetailPanel || activeDetailPanel.getAttribute('role') !== 'tabpanel' || activeDetailPanel.getAttribute('aria-labelledby') !== activeDetailTab.id) throw new Error('routing detail tabpanel relationship missing');
-  activeDetailTab.focus();
-  activeDetailTab.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowRight', bubbles: true, cancelable: true}));
-  await new Promise(function(resolve){ requestAnimationFrame(resolve); });
-  var nextDetailTab = canvas.querySelector('.process-viewer-tabs button[role="tab"][aria-selected="true"]');
-  if (!nextDetailTab || nextDetailTab === activeDetailTab || document.activeElement !== nextDetailTab || nextDetailTab.tabIndex !== 0) throw new Error('routing detail keyboard activation did not move selection and focus');
-  if (!canvas.querySelector('.process-viewer-state-chips span')) throw new Error('checkpoint state counts missing');`
-	}
-	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav [data-tab="processes"]');
-  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
-  nav.click();
-  var sub = document.querySelector('[data-process-subtab="runs"]');
-  if (!sub) throw new Error('Processes runs subtab missing');
-  sub.click();
-  var deadline = Date.now() + 5000;
-  var openSel = 'button[data-process-action="view"][data-id="%s"]';
-  while (!document.querySelector(openSel) && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  var open = document.querySelector(openSel);
-  if (!open) throw new Error('process viewer action did not render for %s');
-  open.click();
-  while (!document.querySelector('#process-viewer-canvas .process-viewer-header') && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  var canvas = document.querySelector('#process-viewer-canvas');
-  if (!canvas) throw new Error('process viewer did not mount');
-  if (!canvas.querySelector('.process-viewer-authority-strip')) throw new Error('viewer authority boundary missing');
-  while (!canvas.querySelector('.process-viewer-graph .process-graph-svg') && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  if (!canvas.querySelector('.process-viewer-graph .process-graph-svg')) throw new Error('exact pinned topology graph missing');
-  if (!canvas.querySelector('.process-viewer-timeline')) throw new Error('sanitized timeline missing');%s
-  var graphRect = canvas.querySelector('.process-viewer-graph').getBoundingClientRect();
-  var timelineRect = canvas.querySelector('.process-viewer-timeline').getBoundingClientRect();
-  if (graphRect.width < 100 || graphRect.height < 100) {
-    var graphNode = canvas.querySelector('.process-viewer-graph');
-    var graphTrace = [];
-    for (var cursor = graphNode; cursor && graphTrace.length < 6; cursor = cursor.parentElement) {
-      var style = getComputedStyle(cursor); var rect = cursor.getBoundingClientRect();
-      graphTrace.push({tag: cursor.tagName, cls: cursor.className, display: style.display, position: style.position, width: rect.width, height: rect.height});
-    }
-    throw new Error('exact pinned topology graph is not visible: ' + JSON.stringify(graphTrace));
-  }
-  if (timelineRect.width < 100 || timelineRect.height < 20) throw new Error('sanitized timeline is not visible: ' + JSON.stringify(timelineRect.toJSON()));
-})();`, runID, runID, expected)
-}
-
-// processViewerEpochStateJS opens a seeded schema-8 run and verifies the S6
-// safe-summary contract: the honest restriction banner, the adaptation
-// summary panel with authority state chips, the memory-only unlock draft
-// field, and the absence of any exact-topology rendering.
-func processViewerEpochStateJS(runID string) string {
-	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav [data-tab="processes"]');
-  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
-  nav.click();
-  var sub = document.querySelector('[data-process-subtab="runs"]');
-  if (!sub) throw new Error('Processes runs subtab missing');
-  sub.click();
-  var deadline = Date.now() + 5000;
-  var openSel = 'button[data-process-action="view"][data-id="%s"]';
-  while (!document.querySelector(openSel) && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  var open = document.querySelector(openSel);
-  if (!open) throw new Error('process viewer action did not render for %s');
-  open.click();
-  while (!document.querySelector('#process-viewer-canvas .process-epoch-summary') && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  var canvas = document.querySelector('#process-viewer-canvas');
-  if (!canvas) throw new Error('process viewer did not mount');
-  if (!canvas.querySelector('.process-viewer-unavailable.reason-epoch_v8_summary')) throw new Error('epoch_v8_summary restriction banner missing');
-  if (canvas.querySelector('.process-graph-svg')) throw new Error('schema-8 viewer must not render exact topology');
-  var panel = canvas.querySelector('.process-epoch-summary');
-  if (!panel) throw new Error('adaptation summary panel missing');
-  if (!panel.querySelector('.process-viewer-state-chips span')) throw new Error('authority state chips missing');
-  if (!panel.querySelector('#process-unlock-source')) throw new Error('unlock draft field missing');
-  var label = panel.querySelector('label[for="process-unlock-source"]');
-  if (!label) throw new Error('unlock draft field is unlabeled');
-  var rect = panel.getBoundingClientRect();
-  if (rect.width < 100 || rect.height < 60) {
-    var trace = [];
-    for (var cursor = panel; cursor && trace.length < 8; cursor = cursor.parentElement) {
-      var style = getComputedStyle(cursor); var r = cursor.getBoundingClientRect();
-      trace.push({tag: cursor.tagName, id: cursor.id, cls: String(cursor.className).slice(0, 60), display: style.display, hidden: cursor.hidden, width: r.width, height: r.height});
-    }
-    throw new Error('adaptation summary panel is not visible: ' + JSON.stringify(trace));
-  }
-})();`, runID, runID)
-}
-
-// worklistTabJS drives the Worklist sub-view into one of its filter-chip
-// views and self-checks the load-bearing chrome: the ready selector for the
-// view's body, the degraded-runs strip (must be visible — the seed plants a
-// corrupt run), and the actionable-count badge (the seed mints exactly two
-// pending human decisions).
-func worklistTabJS(view, readySelector string) string {
-	// `return` so MustEval awaits the promise — see processTabJS.
-	return fmt.Sprintf(`return (async function(){
-  var nav = document.querySelector('nav [data-tab="processes"]');
-  if (!nav || nav.offsetParent === null) throw new Error('Processes nav is not visible');
-  nav.click();
-  var sub = document.querySelector('[data-process-subtab="worklist"]');
-  if (!sub) throw new Error('Worklist subtab missing');
-  sub.click();
-  var deadline = Date.now() + 3000;
-  var chip;
-  while (!(chip = document.querySelector('button[data-worklist-view="%s"]')) && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  if (!chip) throw new Error('Worklist view chip %s missing');
-  chip.click();
-  deadline = Date.now() + 3000;
-  while (!document.querySelector('%s') && Date.now() < deadline) {
-    await new Promise(function(resolve){ setTimeout(resolve, 40); });
-  }
-  if (!document.querySelector('%s')) throw new Error('Worklist state did not render');
-  var strip = document.querySelector('#process-worklist-degraded');
-  if (!strip || strip.hidden) throw new Error('degraded-runs strip is not visible');
-  var badge = document.querySelector('#process-worklist-badge');
-  if (!badge || badge.hidden || badge.textContent !== '2') {
-    throw new Error('worklist badge expected 2, got ' + (badge ? badge.textContent : 'missing'));
-  }
-})();`, view, view, readySelector, readySelector)
 }
 
 func managementModalJS(modulePath, opener, readySelector string) string {

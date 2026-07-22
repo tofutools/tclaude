@@ -66,9 +66,9 @@ func TestDashboardNavLinks_Wired(t *testing.T) {
 		// Vegas is NOT URL-routed, so it stays a <button> (no href to hover).
 		`<button data-tab="vegas">`,
 		// Subtabs are anchors too, carrying their nested path (/access/sudo,
-		// /processes/runs) while keeping tablist ARIA.
+		// /processes/templates) while keeping tablist ARIA.
 		`data-subtab=${subtab} href=${` + "`/access/${subtab}`" + `} role="tab"`,
-		"data-process-subtab=${name} href=${`/processes/${name}`} role=\"tab\"",
+		`data-process-subtab="templates" href="/processes/templates" role="tab"`,
 		// The shared SPA-link guard: a modified/middle click is left to the
 		// browser (native new tab); a plain left-click / synthetic element.click()
 		// returns false and the handler preventDefaults + switches in place.

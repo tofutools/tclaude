@@ -188,6 +188,12 @@ func runServe(p *serveParams) error {
 	if err := migrateStateIntoDataDir(); err != nil {
 		return fmt.Errorf("relocate daemon state into data dir: %w", err)
 	}
+	// P0 intentionally wipes only obsolete process run data. The process root
+	// also holds template versions, heads, layout-bearing sources, and
+	// authorship; those authoring paths must survive the engine replacement.
+	if err := removeLegacyProcessRuntimeData(); err != nil {
+		return err
+	}
 
 	// Open (and, if needed, migrate) the SQLite DB now — AFTER rejecting an
 	// already-running daemon above (so a second `agentd serve` never migrates a
@@ -343,19 +349,8 @@ func runServe(p *serveParams) error {
 	// Recurring agent_cron_jobs scheduler. Runs in its own goroutine
 	// and stops when the daemon-wide quit channel closes.
 	cronStop := make(chan struct{})
-	var processEngineDone <-chan struct{}
-	defer func() {
-		close(cronStop)
-		if processEngineDone != nil {
-			<-processEngineDone
-		}
-	}()
+	defer close(cronStop)
 	startCronScheduler(cronStop)
-
-	// Feature-gated BPMN-lite process engine. The supervisor reloads
-	// features.processes every tick, so toggling the flag starts or cancels
-	// automation without restarting agentd.
-	processEngineDone = startProcessEngine(cronStop)
 
 	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
 	// choreography: spawns each deferred wave once the prior wave's agents are
@@ -922,7 +917,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/notify-human", handleNotifyHuman)
 	mux.HandleFunc("/v1/notify-human/attachment", handleNotifyHumanAttachment)
 	mux.HandleFunc("/v1/clipboard", handleClipboard)
-	// Experimental process engine surfaces remain registered so off means a
+	// Experimental template-authoring surfaces remain registered so off means a
 	// stable 404 rather than a different mux shape. processRoute reloads the
 	// feature flag per request.
 	mux.HandleFunc("GET /v1/process/templates", processRoute(handleProcessTemplates))
@@ -932,19 +927,6 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
-	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
-	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRunCreate))
-	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
-	mux.HandleFunc("GET /v1/process/runs/{id}/view", processRoute(handleProcessRunView))
-	mux.HandleFunc("GET /v1/process/runs/{id}/verify", processRoute(handleProcessEpochV8Verify))
-	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/preview", processRoute(handleProcessEpochV8Preview))
-	mux.HandleFunc("POST /v1/process/runs/{id}/unlock/apply", processRoute(handleProcessEpochV8Apply))
-	mux.HandleFunc("POST /v1/process/runs/{id}/unblock", processRoute(handleProcessEpochV8Settlement))
-	mux.HandleFunc("GET /v1/process/runs/{id}/epochs/{epoch}/{artifact}", processRoute(handleProcessEpochV8Artifact))
-	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/report", processRoute(handleProcessReport))
-	mux.HandleFunc("POST /v1/process/runs/{id}/nodes/{node}/signal", processRoute(handleProcessSignal))
-	mux.HandleFunc("GET /v1/process/worklist", processRoute(handleProcessWorklist))
-	mux.HandleFunc("POST /v1/process/worklist/{itemId}/action", processRoute(handleProcessWorklistAction))
 	return idempotencyRequests(logRequest(auditRequests(mux)))
 }
 
@@ -970,21 +952,6 @@ func safeHTTPLogPath(path string) string {
 }
 
 func projectSafeHTTPLogPath(path string) (string, bool) {
-	segments := strings.Split(strings.Trim(path, "/"), "/")
-	if len(segments) >= 5 && segments[0] == "v1" && segments[1] == "process" && segments[2] == "runs" {
-		for index := 4; index < len(segments); index++ {
-			switch {
-			case segments[index] == "unlock" && index+1 < len(segments) && segments[index+1] == "preview":
-				return "/v1/process/runs/{id}/unlock/preview", true
-			case segments[index] == "unlock" && index+1 < len(segments) && segments[index+1] == "apply":
-				return "/v1/process/runs/{id}/unlock/apply", true
-			case segments[index] == "unblock":
-				return "/v1/process/runs/{id}/unblock", true
-			case segments[index] == "epochs":
-				return "/v1/process/runs/{id}/epochs/{epoch}/{artifact}", true
-			}
-		}
-	}
 	return path, false
 }
 

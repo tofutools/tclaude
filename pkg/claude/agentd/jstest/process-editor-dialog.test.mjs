@@ -928,32 +928,6 @@ test('params dialog traps Tab and restores focus on every close path without pro
   }
 });
 
-test('dirty editor instantiate requires a successful clean save before emitting an exact ref', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { ProcessTemplateEditor } = await harness.importDashboardModule('js/process-editor.js');
-  const emitted = [];
-  const base = () => ({
-    blank: false, dirty: true, savePending: false,
-    abort: new AbortController(),
-    model: { dirty: true, currentRef: 'release@sha256:old', template: { id: 'release' } },
-    options: { onInstantiate: (value) => emitted.push(value) },
-    choiceModal: async (copy) => { assert.match(copy.title, /Save before instantiating/); return 'save'; },
-    status() {},
-  });
-
-  const clean = base();
-  clean.save = async () => { clean.dirty = false; clean.model.dirty = false; clean.model.currentRef = 'release@sha256:saved'; return true; };
-  assert.equal(await ProcessTemplateEditor.prototype.requestInstantiate.call(clean), true);
-  assert.equal(emitted[0].ref, 'release@sha256:saved');
-
-  const changedInFlight = base();
-  let status = '';
-  changedInFlight.save = async () => true;
-  changedInFlight.status = (message) => { status = message; };
-  assert.equal(await ProcessTemplateEditor.prototype.requestInstantiate.call(changedInFlight), false);
-  assert.match(status, /changed while saving/);
-  assert.equal(emitted.length, 1, 'dirty state is never instantiated');
-});
 
 test('Cancel, backdrop, and close affordance discard only after confirmation', async (t) => {
   const harness = await createPreactHarness(t);

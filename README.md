@@ -26,7 +26,7 @@ operations continue through the correct CLI automatically.
   manage agents, schedule nudges, delegate permissions, and deploy reusable task
   forces through `agentd`.
 - **Operations dashboard** — manage the fleet, messages, profiles, permissions,
-  templates, audit history, usage, and optional process runs from a browser.
+  templates, audit history, usage, and experimental process-template authoring from a browser.
 - **Developer utilities** — worktree helpers, semantic conversation search,
   notifications, subscription/activity reporting, and Claude-specific task and
   statusline integrations.
@@ -128,7 +128,7 @@ Groups can freely mix Claude Code and Codex agents.
   [dashboard](https://tofutools.github.io/tclaude/dashboard/) — groups,
   messaging, lifecycle, profiles, permissions, templates, and task forces.
 - [Processes](https://tofutools.github.io/tclaude/processes/) — the opt-in
-  repeatable-process engine and editor.
+  process-template library and editor; runtime execution is temporarily unavailable.
 - [Remote control](https://tofutools.github.io/tclaude/remote-control/) and
   [remote access](https://tofutools.github.io/tclaude/remote-access/) — two
   distinct ways to operate away from the host terminal.

@@ -160,14 +160,9 @@ test('normalizeLocation drops unknown tab / subtab / misplaced selection', () =>
     'selection dropped where no detail view applies',
   );
   assert.deepEqual(
-    normalizeLocation({ tab: 'processes', subtab: 'runs', selection: 7 }),
-    { tab: 'processes', subtab: 'runs', selection: '7' },
-    'selection coerced to string and kept under runs',
-  );
-  assert.deepEqual(
     normalizeLocation({ tab: 'processes', subtab: 'worklist', selection: 'x' }),
-    { tab: 'processes', subtab: 'worklist' },
-    'worklist has no detail view, so a selection is dropped there',
+    { tab: 'processes' },
+    'removed runtime subtabs are dropped',
   );
 });
 
@@ -204,9 +199,8 @@ test('toPath / fromPath round-trip for tab, subtab and selection', () => {
   assert.equal(toPath(accessSudo), '/access/sudo');
   assert.deepEqual(fromPath('/access/sudo'), { tab: 'access', subtab: 'sudo' });
 
-  assert.equal(toPath(run), '/processes/runs/run-42');
-  assert.deepEqual(fromPath('/processes/runs/run-42'),
-    { tab: 'processes', subtab: 'runs', selection: 'run-42' });
+  assert.equal(toPath(run), '/processes');
+  assert.deepEqual(fromPath('/processes/runs/run-42'), { tab: 'processes' });
 
   assert.equal(toPath(editingTemplate), '/processes/templates/release-train');
   assert.deepEqual(fromPath('/processes/templates/release-train'),
@@ -237,7 +231,7 @@ test('toPath percent-encodes an exotic selection id and fromPath decodes it', ()
 test('resolveStale falls back to the parent list when the selection is gone (AC #7)', () => {
   const gone = () => false;   // predicate: nothing is valid anymore
   const resolved = resolveStale(run, gone);
-  assert.deepEqual(resolved, { tab: 'processes', subtab: 'runs' },
+  assert.deepEqual(resolved, { tab: 'processes' },
     'dead selection dropped, parent list kept');
   assert.ok(!('selection' in resolved));
 });

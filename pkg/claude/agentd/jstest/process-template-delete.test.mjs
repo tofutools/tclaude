@@ -23,7 +23,6 @@ function templateListFetch(requests, { deleteResponse } = {}) {
         id: 'release', name: 'Release train', versionCount: 3, latestVersion: { ref: `release@sha256:${'a'.repeat(64)}`, sourceHash: 'src' },
       }] }) };
     }
-    if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
     throw new Error(`unexpected ${path}`);
   };
 }
@@ -149,26 +148,6 @@ test('declining the confirm sends no request at all', async (t) => {
   assert.equal(requests.filter((request) => request.method === 'DELETE').length, 0);
 });
 
-test('a template still needed by unfinished runs reports which runs block it', async (t) => {
-  const { harness, mounted, state } = await mountTemplates(t, {
-    deleteResponse: () => ({
-      ok: false, status: 409,
-      json: async () => ({ code: 'process_template_in_use', runIds: ['run-a', 'run-b', 'run-c', 'run-d'] }),
-    }),
-  });
-
-  const button = mounted.container.querySelector('[data-process-action="delete"]');
-  await harness.act(() => harness.fireEvent(button, 'click'));
-  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
-
-  const notice = state.view.value.notice;
-  assert.match(notice, /4 runs still need it/);
-  assert.match(notice, /run-a, run-b, run-c and 1 more/, 'the blocking list stays bounded');
-  assert.match(notice, /Finish or cancel them first/, 'the notice says what to do next');
-  // The row must survive a refused delete.
-  assert.ok(mounted.container.querySelector('[data-process-template="release"]'));
-});
-
 test('wizard mode speaks the rite vocabulary in the confirm', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
@@ -283,24 +262,6 @@ test('another module\'s dragend does not clear the shared bin', async (t) => {
 
   assert.ok(trash.classList.contains('show'),
     'a foreign dragend must leave the shared bin alone');
-});
-
-test('a store with unreadable runs explains repair rather than completion', async (t) => {
-  const { harness, mounted, state } = await mountTemplates(t, {
-    deleteResponse: () => ({
-      ok: false, status: 409,
-      json: async () => ({ code: 'process_template_in_use', runIds: [], unreadableRunIds: ['run-corrupt'] }),
-    }),
-  });
-
-  const button = mounted.container.querySelector('[data-process-action="delete"]');
-  await harness.act(() => harness.fireEvent(button, 'click'));
-  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
-
-  const notice = state.view.value.notice;
-  assert.match(notice, /run-corrupt/);
-  assert.match(notice, /Repair or remove them first/);
-  assert.doesNotMatch(notice, /Finish or cancel/, 'an unreadable run is not something you can finish');
 });
 
 test('a cancelled drag tears the bin down without deleting', async (t) => {

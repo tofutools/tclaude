@@ -232,8 +232,6 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"this.saveSeq += 1",
 		"setTemplateMeta(fields)",
 		"this.model.setTemplateMeta(clean)",
-		"Save before instantiating",
-		"unsaved editor state is never instantiated",
 		"ref: this.model.currentRef",
 		// Rewire affordance on mid-graph node deletion.
 		"'Delete + rewire through'",
@@ -314,7 +312,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"<${EditableTitle} controller=${controller} view=${view} />",
 		"controller.setSelection({ type: 'template' })",
 		"controller.setTemplateMeta({ name })",
-		"params…", "instantiate…", "⌘K commands",
+		"params…", "⌘K commands",
 		"Review changes", "Keep editing",
 		"Keep editing preserves this draft; Save still uses CAS and will stop on a 409 conflict.",
 		"process-issues-panel",
@@ -400,9 +398,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"export function buildProcessEditorCommands(",
 		"editor.deleteSelection()",
 		"editor.save()",
-		"editor.requestInstantiate()",
 		"actions?.activateSubtab?.('templates')",
-		"actions?.activateSubtab?.('runs')",
 	)
 	nodeTypes := read("js/process-node-types.js")
 	mustContain("process-node-types.js", nodeTypes,
@@ -441,22 +437,12 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 	mustContain("processes-island.js", processes,
 		// The editor loads lazily after the feature-gated tab opens.
 		"await import('./process-editor.js')",
-		"onInstantiate: actions?.openInstantiation",
 		"describeActor: actions?.describeActor",
 		"onOpenActor: actions?.openActor",
 		"editor?.destroy?.()",
 		"document.addEventListener('tclaude:snapshot', poll)",
-		"void actions.load('worklist', { quiet: true })",
 		"void actions.observeTemplateHeads()",
-		"function InstantiateDialog(",
 		"useDialogFocus({",
-		"initialParamValues(params)",
-		"initializedRef.current === spec.ref",
-		"data-process-param-input",
-		"type === 'boolean'",
-		"actions.submitInstantiation(resolved)",
-		"<option value=\"\">Not set</option>",
-		"viewerBackRef.current?.focus({ preventScroll: true })",
 		"registerCommandProvider('process-editor'",
 		"buildProcessEditorCommands({ editor: state.currentEditor(), actions })",
 	)
@@ -490,14 +476,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		"'/v1/process/template-heads'",
 		"export function processActorPresentation(",
 		"`/api/open-window/${encodeURIComponent(agentId)}`",
-		"async function openInstantiation(",
 		"mintAttemptID = mintUUID",
-		"const runId = `${id}-${mintAttemptID()}`",
-		"body.currentRef !== ref",
-		"async function submitInstantiation(params)",
-		"fetchImpl('/v1/process/runs'",
-		"body: JSON.stringify({ templateRef: spec.ref, runId: spec.runId, params })",
-		"openViewer(body.run.id)",
 	)
 
 	css := read("dashboard.css")
@@ -536,9 +515,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 		".process-issue:hover, .process-issue:focus-visible",
 		"body.wizard .process-issues-panel",
 		".process-param-dialog",
-		".process-instantiate-dialog",
 		"body.wizard .process-param-dialog",
-		"body.wizard .process-instantiate-dialog",
 		`.process-editor-modal .process-editor-field input:hover:not(:disabled):not(:focus):not([aria-invalid="true"])`,
 		`.process-editor-modal .process-editor-field input[aria-invalid="true"]`,
 		".process-editor-modal .process-editor-field input:disabled",
@@ -579,8 +556,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 
 // TestDashboardProcessEditorScrollbarsScoped pins TCL-571's ownership and
 // theme contract. Actual editor scroll owners opt into one marker; the command
-// palette and instantiate dialog are shared portals, so they may join only
-// under the existing active-editor marker. Viewer/worklist and unrelated
+// palette may join only under the existing active-editor marker. Unrelated
 // dashboard scroll regions must never be captured by this block.
 func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	read := func(name string) string {
@@ -600,9 +576,8 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	block := css[start:end]
 	for _, needle := range []string{
 		".process-scroll-surface,",
-		"body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,",
-		"body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {",
-		"body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,",
+		"body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {",
+		"body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {",
 		"--process-scrollbar-track: #0d1117;",
 		"--process-scrollbar-thumb: #6e7681;",
 		"--process-scrollbar-thumb-hover: #8b949e;",
@@ -632,7 +607,6 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 		".process-viewer",
 		".process-worklist",
 		"body.wizard #command-palette-modal .palette-list",
-		"body.wizard .process-instantiate-dialog",
 	} {
 		if strings.Contains(block, banned) {
 			t.Errorf("dashboard.css process scrollbar block widened into %q", banned)
@@ -640,7 +614,7 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	}
 
 	for name, needle := range map[string]string{
-		"js/processes-island.js":      "process-canvas-view${spec.kind === 'editor' ? ' process-scroll-surface' : ''}",
+		"js/processes-island.js":      `id="process-editor-view" class="process-canvas-view process-scroll-surface"`,
 		"js/process-editor-island.js": "process-editor-palette process-scroll-surface",
 		"js/process-node-chooser.js":  "process-node-chooser-list process-scroll-surface",
 		"js/process-node-dialog.js":   "process-node-dialog-body process-scroll-surface",

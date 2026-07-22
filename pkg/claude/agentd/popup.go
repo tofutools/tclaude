@@ -3,18 +3,15 @@ package agentd
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -616,166 +613,16 @@ func recordApprovalDecision(req *approvalRequest, outcome approvalOutcome) {
 }
 
 // snapshotApprovalRequestBody builds the human-facing preview for a permission
-// request. Most endpoints retain the generic body snapshot. Process-run
-// creation is deliberately narrower: runtime params may contain secrets, so
-// its preview exposes only safe run identity and a redacted parameter count.
-func snapshotApprovalRequestBody(r *http.Request, perm string) string {
-	if perm == PermProcessRunsUnlock && r.Method == http.MethodPost && isEpochV8ApplyPath(r.URL.Path) {
-		// Do not even read the stream: source, reason, and handoffs are exact
-		// restricted draft material. The handler receives the original body.
-		return `{"unlockApply":"[redacted]"}`
-	}
-	if perm == PermProcessAdvance && r.Method == http.MethodPost && isEpochV8SettlementPath(r.URL.Path) {
-		return `{"settlement":"[redacted]"}`
-	}
-	if perm == PermProcessRunsCreate && r.Method == http.MethodPost && r.URL.Path == "/v1/process/runs" {
-		return snapshotProcessRunCreateApprovalBody(r)
-	}
+// request. The preview is bounded and the request body is restored for the
+// downstream handler.
+func snapshotApprovalRequestBody(r *http.Request, _ string) string {
 	return snapshotRequestBody(r)
 }
 
-func isEpochV8ApplyPath(path string) bool {
-	segments := strings.Split(strings.Trim(path, "/"), "/")
-	return len(segments) == 6 && segments[0] == "v1" && segments[1] == "process" && segments[2] == "runs" &&
-		segments[3] != "" && segments[4] == "unlock" && segments[5] == "apply"
-}
-
-func isEpochV8SettlementPath(path string) bool {
-	segments := strings.Split(strings.Trim(path, "/"), "/")
-	return len(segments) == 5 && segments[0] == "v1" && segments[1] == "process" && segments[2] == "runs" && segments[4] == "unblock"
-}
-
 const (
-	processRunApprovalPreviewUnavailable = `{"templateRef":"[unavailable]","params":"[redacted: preview unavailable]"}`
-	// Process identities become filesystem path segments. Keep previews within
-	// the portable component limit even though the request body's aggregate
-	// limit is much larger.
-	maxProcessRunApprovalIdentityBytes = 255
-	maxApprovalBodyPreview             = 64 * 1024
-	maxApprovalRestoreBody             = 2 * 1024 * 1024
+	maxApprovalBodyPreview = 64 * 1024
+	maxApprovalRestoreBody = 2 * 1024 * 1024
 )
-
-var processRunApprovalIdentityPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
-
-type replayReadCloser struct {
-	prefix      *bytes.Reader
-	boundaryErr error
-	tail        io.Reader
-	closer      io.Closer
-}
-
-func (r *replayReadCloser) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	if r.prefix.Len() > 0 {
-		n, _ := r.prefix.Read(p)
-		if r.prefix.Len() == 0 && r.boundaryErr != nil {
-			err := r.boundaryErr
-			r.boundaryErr = nil
-			return n, err
-		}
-		return n, nil
-	}
-	if r.boundaryErr != nil {
-		err := r.boundaryErr
-		r.boundaryErr = nil
-		return 0, err
-	}
-	return r.tail.Read(p)
-}
-
-func (r *replayReadCloser) Close() error {
-	return r.closer.Close()
-}
-
-// snapshotProcessRunCreateApprovalBody reads at most the handler's accepted
-// body size, then reconstructs the request stream from the bytes already read
-// plus the unread tail. Approval therefore cannot consume, truncate, or alter
-// the body that handleProcessRunCreate later validates. Invalid, unreadable,
-// or oversized input fails closed to a constant preview that contains none of
-// the submitted JSON.
-func snapshotProcessRunCreateApprovalBody(r *http.Request) string {
-	if r.Body == nil {
-		return processRunApprovalPreviewUnavailable
-	}
-	original := r.Body
-	buf, readErr := io.ReadAll(io.LimitReader(original, maxProcessEditBody+1))
-	r.Body = &replayReadCloser{
-		prefix:      bytes.NewReader(buf),
-		boundaryErr: readErr,
-		tail:        original,
-		closer:      original,
-	}
-	if readErr != nil || len(buf) > maxProcessEditBody {
-		return processRunApprovalPreviewUnavailable
-	}
-
-	var submitted struct {
-		TemplateRef string                     `json:"templateRef"`
-		RunID       string                     `json:"runId,omitempty"`
-		Params      map[string]json.RawMessage `json:"params,omitempty"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(buf))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&submitted); err != nil {
-		return processRunApprovalPreviewUnavailable
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return processRunApprovalPreviewUnavailable
-	}
-	templateRef, runID, ok := boundedProcessRunApprovalIdentities(submitted.TemplateRef, submitted.RunID)
-	if !ok {
-		return processRunApprovalPreviewUnavailable
-	}
-	preview := struct {
-		TemplateRef string `json:"templateRef"`
-		RunID       string `json:"runId,omitempty"`
-		Params      string `json:"params"`
-	}{
-		TemplateRef: templateRef,
-		RunID:       runID,
-		Params:      fmt.Sprintf("[redacted: %d parameter(s)]", len(submitted.Params)),
-	}
-	encoded, err := json.MarshalIndent(preview, "", "  ")
-	if err != nil || len(encoded) > maxApprovalBodyPreview {
-		return processRunApprovalPreviewUnavailable
-	}
-	return string(encoded)
-}
-
-// boundedProcessRunApprovalIdentities returns only identities the downstream
-// handler can treat as safe. An exact template ref consists of one ordinary
-// process identifier plus its lowercase SHA-256 suffix; an optional run id
-// uses the same identifier grammar. Trimming mirrors handleProcessRunCreate,
-// while the preview-only byte limits prevent otherwise-valid megabyte strings
-// from reaching the durable access-request history.
-func boundedProcessRunApprovalIdentities(templateRef, runID string) (string, string, bool) {
-	templateRef = strings.TrimSpace(templateRef)
-	runID = strings.TrimSpace(runID)
-	templateID, hash, ok := strings.Cut(templateRef, "@sha256:")
-	if !ok || len(templateID) == 0 || len(templateID) > maxProcessRunApprovalIdentityBytes ||
-		!processRunApprovalIdentityPattern.MatchString(templateID) || !isLowerHexSHA256(hash) {
-		return "", "", false
-	}
-	if runID != "" && (len(runID) > maxProcessRunApprovalIdentityBytes ||
-		!processRunApprovalIdentityPattern.MatchString(runID)) {
-		return "", "", false
-	}
-	return templateRef, runID, true
-}
-
-func isLowerHexSHA256(value string) bool {
-	if len(value) != sha256.Size*2 {
-		return false
-	}
-	for _, ch := range value {
-		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
-			return false
-		}
-	}
-	return true
-}
 
 // snapshotRequestBody reads the request body, builds a bounded preview
 // string for the popup (JSON-prettified when it parses), and replaces

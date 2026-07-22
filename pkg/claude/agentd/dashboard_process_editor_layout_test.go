@@ -78,7 +78,7 @@ func TestDashboardProcessEditorWorkspaceLayout(t *testing.T) {
 	renderMarkup := island[renderStart:]
 	ordered := []string{
 		"class=\"process-subnav\"",
-		"process-canvas-view${spec.kind === 'editor' ? ' process-scroll-surface' : ''}",
+		`id="process-editor-view" class="process-canvas-view process-scroll-surface"`,
 		"data-process-close-view",
 		"<${ProcessEditorBoundary}",
 	}
