@@ -50,6 +50,12 @@ function useDragOutArmed(active, regionRef) {
       return undefined;
     }
     const onDragOver = (event) => {
+      // Arming first is deliberate: it answers "what happens if you release
+      // here", which is pure geometry. Whether some other target claimed the
+      // event has no bearing on that — the gesture fires from dragend either
+      // way — so skipping the hint for a claimed dragover would hide a detach
+      // that is still going to happen. The guard below is about a different
+      // question: whose dropEffect wins.
       setArmed(dragLeftRegion(event, regionRef.current));
       if (event.defaultPrevented) return;
       event.preventDefault();

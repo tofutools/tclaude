@@ -599,6 +599,16 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   await harness.act(() => harness.fireEvent(label('two'), 'dragstart', { dataTransfer: transfer }));
   await harness.act(() => harness.fireEvent(strip, 'dragover', { clientX: 120, clientY: 10, dataTransfer: transfer }));
   assert.equal(transfer.dropEffect, 'copy', 'an already-claimed dragover is left alone');
+  // Deferring on the effect must not also silence the hint. Which target claimed
+  // the dragover has no bearing on the gesture — endTabDrag decides on geometry
+  // and on whether the strip itself took the drop — so releasing over a claimed
+  // target still detaches, and a hint that went quiet there would be lying.
+  await harness.act(() => harness.fireEvent(
+    harness.document, 'dragover', { clientX: 120, clientY: 260, dataTransfer: transfer },
+  ));
+  assert.equal(strip.classList.contains('drag-out-armed'), true,
+    'a claimed dragover outside the strip still arms, because releasing there still detaches');
+  assert.equal(transfer.dropEffect, 'copy', 'arming never touches an effect another target set');
   harness.document.removeEventListener('dragover', claim);
   transfer.dropEffect = '';
 
