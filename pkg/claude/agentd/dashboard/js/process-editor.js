@@ -931,35 +931,6 @@ export class ProcessTemplateEditor {
     return true;
   }
 
-  async requestInstantiate() {
-    if (this.destroyed || externalInteractionPending(this) || this.savePending) return false;
-    if (this.blank || this.dirty || !this.model.currentRef) {
-      const choice = await this.choiceModal({
-        title: 'Save before instantiating',
-        body: 'Runs can only pin a saved, content-addressed template version. Save these changes first; unsaved editor state is never instantiated.',
-        choices: [{ key: 'save', label: 'Save first', primary: true }],
-      });
-      if (choice !== 'save' || this.abort.signal.aborted) return false;
-      const saved = await this.save();
-      // Edits made while the save was in flight deliberately leave the model
-      // dirty; requiring another click is what makes unsaved instantiation
-      // impossible by construction.
-      if (!saved || this.destroyed || this.dirty || !this.model.currentRef) {
-        if (saved && this.dirty) this.status('The editor changed while saving. Save the latest changes before instantiating.', true);
-        return false;
-      }
-    }
-    // The save's onSaved hook may navigate away and destroy this editor;
-    // never hand a destroyed editor's identity to the instantiate flow.
-    if (this.destroyed || typeof this.options.onInstantiate !== 'function') return false;
-    this.options.onInstantiate({
-      id: this.model.template.id,
-      ref: this.model.currentRef,
-      template: structuredClone(this.model.template),
-    });
-    return true;
-  }
-
   // openNodeSettings opens the shared node dialog (TCL-298). The TCL-296
   // editability seam decides the mode: a node the view may not edit renders
   // the exact same component read-only — the viewer's detail card.
@@ -1303,7 +1274,6 @@ export class ProcessTemplateEditor {
         canValidate: false, validateReason: closedReason,
         issueCount: 0, hasCurrentIssue: false,
         canSave: false, saveReason: closedReason,
-        canInstantiate: false, instantiateReason: closedReason,
       };
     }
     const pending = externalInteractionPending(this);
@@ -1346,8 +1316,6 @@ export class ProcessTemplateEditor {
       hasCurrentIssue,
       canSave: !pending && !this.savePending && !!id && (this.model.dirty || this.blank),
       saveReason: busyReason || (this.savePending ? 'A save is already in progress.' : !id ? 'Enter a template id first.' : 'There are no unsaved changes.'),
-      canInstantiate: !pending && !this.savePending && typeof this.options.onInstantiate === 'function',
-      instantiateReason: busyReason || (this.savePending ? 'Wait for the save to finish.' : 'Run creation is not available in this context.'),
     };
   }
 
@@ -1664,8 +1632,7 @@ export class ProcessTemplateEditor {
     try {
       await this.saveRequest(requestSeq);
       // destroy() (or a newer lifecycle generation) invalidates the sequence
-      // mid-flight; a discarded completion must not report success to callers
-      // like requestInstantiate that act on it.
+      // mid-flight; a discarded completion must not report success to callers.
       return requestSeq === this.saveSeq;
     } catch (error) {
       if (requestSeq === this.saveSeq) this.status(`Save failed: ${error.message}`, true);

@@ -6,66 +6,7 @@ import { createPreactHarness } from './preact-harness.mjs';
 const prefs = () => { const values = new Map(); return { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, value) }; };
 const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
 
-test('Processes state owns subtab, requests, worklist views, drafts, and stale rejection', async (t) => {
-  const harness = await createPreactHarness(t);
-  const { createProcessesState } = await harness.importDashboardModule('js/processes-state.js');
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs(), now: () => 1000 });
-  const old = state.templatesRequest.beginRequest(); const fresh = state.templatesRequest.beginRequest();
-  assert.equal(state.templatesRequest.commitRequest(old, { templates: [{ id: 'old' }] }), false);
-  assert.equal(state.templatesRequest.commitRequest(fresh, { templates: [{ id: 'new' }] }), true);
-  assert.equal(state.view.value.templates[0].id, 'new');
-  state.setSubtab('worklist'); state.setWorklistView('review'); state.setDraft('item-1', 'ship it'); state.requireComment('item-1');
-  assert.equal(state.view.value.subtab, 'worklist'); assert.equal(state.view.value.worklistView, 'review');
-  assert.equal(state.view.value.drafts['item-1'], 'ship it'); assert.equal(state.view.value.missingComments.has('item-1'), true);
-  state.pruneWorklistState([]); assert.deepEqual(state.view.value.drafts, {}); assert.equal(state.view.value.missingComments.size, 0);
-});
 
-test('Processes actions preserve API routes, single-flight loads, comment gate, and retained idempotency', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const requests = []; let resolveOld;
-  const fetchImpl = async (path, options = {}) => {
-    requests.push({ path, options });
-    if (path === '/v1/process/templates' && requests.filter((r) => r.path === path).length === 1) return new Promise((resolve) => { resolveOld = resolve; });
-    if (options.method === 'POST') return { ok: true, json: async () => ({}) };
-    return { ok: true, json: async () => path.includes('worklist') ? ({ items: [], degradedRuns: [] }) : path.includes('templates') ? ({ templates: [{ id: 'fresh' }] }) : ({ runs: [] }) };
-  };
-  const actions = createProcessesActions({ state, fetchImpl, notify() {} });
-  const stale = actions.load('templates'); const duplicate = actions.load('templates');
-  assert.equal(await duplicate, false, 'a loading template request is single-flight');
-  resolveOld({ ok: true, json: async () => ({ templates: [{ id: 'old' }] }) }); await stale;
-  await actions.load('templates');
-  assert.equal(state.view.value.templates[0].id, 'fresh');
-  await actions.loadRunView('run/with space', 25, 25);
-  assert.equal(requests.at(-1).path, '/v1/process/runs/run%2Fwith%20space/view?detailOffset=25&detailLimit=25');
-  assert.equal(requests.at(-1).options.credentials, 'same-origin');
-  const item = { id: 'i/1', run: 'r', node: 'n', kind: 'decision', status: 'pending', summary: 'Choose', availableActions: ['approve'] };
-  state.worklistRequest.commitRequest(state.worklistRequest.beginRequest(), { items: [item], degradedRuns: [] });
-  assert.equal(await actions.submitWorklistAction(item.id, 'approve'), false); assert.equal(state.missingComments.value.has(item.id), true);
-  state.setDraft(item.id, 'ok'); assert.equal(await actions.submitWorklistAction(item.id, 'approve'), true);
-  const post = requests.find((request) => request.options.method === 'POST'); assert.equal(post.path, '/v1/process/worklist/i%2F1/action');
-  assert.equal(JSON.parse(post.options.body).action, 'approve');
-
-  let observedHead = null;
-  state.setEditor({
-    model: { template: { id: 'fresh' }, currentRef: '', sourceHash: '', dirty: false },
-    observeExternalHead(head) { observedHead = head; },
-  });
-  await actions.load('templates', { quiet: true });
-  assert.equal(observedHead, null, 'a list row without a latest generation is ignored');
-
-  let discardPrompts = 0;
-  state.setEditor({ dirty: true, model: { dirty: false } });
-  const guarded = createProcessesActions({
-    state, fetchImpl,
-    confirmDiscard: async () => { discardPrompts += 1; return false; },
-  });
-  assert.equal(await guarded.closeCanvas(), false, 'a staged dialog draft participates in editor navigation guards');
-  assert.equal(discardPrompts, 1);
-});
 
 test('process scribe actions send bounded structured scope, exact grants, and recover visibly', async (t) => {
   const harness = await createPreactHarness(t);
@@ -329,329 +270,13 @@ test('process actor presentation renders only validated attribution and marks na
   assert.equal(await actions.openActor(`agent:${'b'.repeat(32)}`), false, 'an unattributed/offline actor is not presented as a live navigation target');
 });
 
-test('instantiate actions load an exact ref, POST string params, and navigate to its viewer', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const ref = `release@sha256:${'a'.repeat(64)}`;
-  const requests = [];
-  const attemptID = '11111111-2222-4333-8444-555555555555';
-  const actions = createProcessesActions({ state, notify() {}, dispatchNavigated() {}, mintAttemptID: () => attemptID, fetchImpl: async (path, options = {}) => {
-    requests.push({ path, options });
-    if (path.startsWith('/v1/process/templates/release?version=')) return { ok: true, json: async () => ({
-      currentRef: ref, template: { id: 'release', params: { issue: { type: 'string', required: true } } },
-    }) };
-    if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
-      run: { id: `release-${attemptID}`, templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
-    }) };
-    if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
-    throw new Error(`unexpected ${path}`);
-  } });
-  assert.equal(await actions.openInstantiation({ id: 'release', ref }), true);
-  assert.equal(state.instantiation.value.ref, ref);
-  assert.equal(state.instantiation.value.phase, 'ready');
-  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300', retries: '2', approved: 'true' }), true);
-  const post = requests.find((request) => request.path === '/v1/process/runs' && request.options.method === 'POST');
-  assert.deepEqual(JSON.parse(post.options.body), {
-    templateRef: ref, runId: `release-${attemptID}`, params: { issue: 'TCL-300', retries: '2', approved: 'true' },
-  });
-  assert.equal(state.subtab.value, 'runs');
-  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: `release-${attemptID}`, key: `release-${attemptID}` });
-  assert.equal(state.instantiation.value, null);
-});
 
-test('successful instantiation moves focus from the removed invoker into the new viewer', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-    harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const ref = `focus-success@sha256:${'f'.repeat(64)}`;
-  const runID = 'focus-success-run';
-  const actions = createProcessesActions({
-    state, notify() {}, dispatchNavigated() {}, mintAttemptID: () => 'focus-success-attempt',
-    fetchImpl: async (path, options = {}) => {
-      if (path === '/v1/process/templates') return { ok: true, json: async () => ({ templates: [{
-        id: 'focus-success', latestVersion: { ref, sourceHash: 'focus-success-source' },
-      }] }) };
-      if (path.startsWith('/v1/process/templates/focus-success?version=')) return { ok: true, json: async () => ({
-        currentRef: ref, template: { id: 'focus-success', params: {} },
-      }) };
-      if (path === '/v1/process/runs' && options.method === 'POST') return { ok: true, json: async () => ({
-        run: { id: runID, templateRef: ref, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
-      }) };
-      if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [] }) };
-      throw new Error(`unexpected ${path}`);
-    },
-  });
-  await actions.load('templates');
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  await harness.act(() => Promise.resolve());
-  const invoker = mounted.container.querySelector('[data-process-action="instantiate"]');
-  invoker.focus();
-  await harness.act(() => harness.fireEvent(invoker, 'click'));
-  for (let i = 0; i < 10 && state.instantiation.value?.phase !== 'ready'; i++) await harness.act(() => Promise.resolve());
-  assert.equal(state.instantiation.value?.phase, 'ready');
-  const form = mounted.container.querySelector('.process-instantiate-dialog');
-  assert.ok(form);
-  await harness.act(() => harness.fireEvent(form, 'submit'));
-  for (let i = 0; i < 10; i++) await harness.act(() => Promise.resolve());
-  const back = mounted.container.querySelector('#process-viewer-view [data-process-close-view]');
-  assert.ok(back);
-  assert.equal(mounted.container.contains(invoker), false, 'viewer navigation removes the template-list invoker');
-  assert.equal(harness.document.activeElement, back, 'focus lands on the viewer back control instead of body');
-  await mounted.unmount();
-});
 
-test('instantiate retry keeps one strong attempt id and recovers a committed run after its response is lost', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const ref = `retry@sha256:${'e'.repeat(64)}`;
-  const attemptID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-  let minted = 0;
-  let durableRun = null;
-  let durableCreates = 0;
-  const posted = [];
-  const actions = createProcessesActions({
-    state,
-    notify() {},
-    dispatchNavigated() {},
-    mintAttemptID() { minted++; return attemptID; },
-    fetchImpl: async (path, options = {}) => {
-      if (path === '/v1/process/runs' && options.method === 'POST') {
-        const request = JSON.parse(options.body);
-        posted.push(request);
-        if (!durableRun) {
-          durableCreates++;
-          durableRun = { id: request.runId, templateRef: request.templateRef, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' };
-          throw new TypeError('response lost after commit');
-        }
-        assert.equal(request.runId, durableRun.id, 'retry must address the committed logical attempt');
-        return { ok: true, json: async () => ({ run: durableRun }) };
-      }
-      if (path === '/v1/process/runs') return { ok: true, json: async () => ({ runs: [durableRun] }) };
-      throw new Error(`unexpected ${path}`);
-    },
-  });
 
-  assert.equal(await actions.openInstantiation({
-    id: 'retry', ref, template: { id: 'retry', params: { issue: { type: 'string', required: true } } },
-  }), true);
-  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300' }), false, 'lost response remains retryable');
-  assert.equal(state.instantiation.value.runId, `retry-${attemptID}`);
-  assert.equal(await actions.submitInstantiation({ issue: 'TCL-300' }), true, 'retry recovers committed run');
-  assert.equal(minted, 1, 'one open instantiation mints one logical-attempt id');
-  assert.equal(durableCreates, 1, 'backend simulation commits only one durable run');
-  assert.equal(posted.length, 2);
-  assert.equal(posted[0].runId, posted[1].runId);
-  assert.deepEqual(state.canvas.value, { kind: 'viewer', id: durableRun.id, key: durableRun.id });
-});
 
-test('list instantiation loading transition initializes every declared default exactly once', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const ref = `defaults@sha256:${'c'.repeat(64)}`;
-  state.setInstantiation({ key: 'list-defaults', id: 'defaults', ref, phase: 'loading', error: '', template: null });
-  let submitted = null;
-  const actions = {
-    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
-    closeInstantiation() { state.setInstantiation(null); }, submitInstantiation(params) { submitted = params; },
-  };
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  assert.match(mounted.container.querySelector('.process-instantiate-dialog').textContent, /Loading exact template version/);
-  await harness.act(() => state.setInstantiation({
-    key: 'list-defaults', id: 'defaults', ref, phase: 'ready', error: '',
-    template: { id: 'defaults', params: {
-      issue: { type: 'string', default: 'TCL-300' },
-      retries: { type: 'number', default: 2 },
-      approved: { type: 'boolean', default: true },
-    } },
-  }));
-  await new Promise(resolve => queueMicrotask(resolve));
-  const dialog = mounted.container.querySelector('.process-instantiate-dialog');
-  assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'TCL-300');
-  assert.equal(dialog.querySelector('[data-process-param-input="retries"]').value, '2');
-  assert.equal(dialog.querySelector('[data-process-param-input="approved"]').getAttribute('value'), 'true');
-  harness.fireEvent(dialog, 'submit');
-  assert.deepEqual(submitted, { approved: 'true', issue: 'TCL-300', retries: '2' });
-  const issue = dialog.querySelector('[data-process-param-input="issue"]');
-  issue.value = 'user edit'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
-  await harness.act(() => state.setInstantiation({
-    ...state.instantiation.value,
-    template: { id: 'defaults', params: {
-      issue: { type: 'string', default: 'replacement default' },
-      retries: { type: 'number', default: 9 },
-      approved: { type: 'boolean', default: false },
-    } },
-  }));
-  assert.equal(dialog.querySelector('[data-process-param-input="issue"]').value, 'user edit', 'same-ref refresh preserves edits');
-  await mounted.unmount();
-});
 
-test('instantiate dialog renders typed/defaulted/required inputs and canonical values', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const ref = `typed@sha256:${'b'.repeat(64)}`;
-  state.setInstantiation({
-    key: 'typed', id: 'typed', ref, phase: 'ready', error: '',
-    template: { id: 'typed', name: 'Typed run', params: {
-      issue: { type: 'string', description: 'Issue id', required: true },
-      retries: { type: 'number', default: 2 },
-      approved: { type: 'boolean', default: true },
-      legacy: { type: 'custom-kind', default: 'raw' },
-    } },
-  });
-  let submitted = null;
-  const actions = {
-    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
-    closeInstantiation() {}, submitInstantiation(params) { submitted = params; },
-  };
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  const dialog = harness.document.querySelector('.process-instantiate-dialog');
-  assert.ok(dialog);
-  const issue = dialog.querySelector('[data-process-param-input="issue"]');
-  const retries = dialog.querySelector('[data-process-param-input="retries"]');
-  const approved = dialog.querySelector('[data-process-param-input="approved"]');
-  const legacy = dialog.querySelector('[data-process-param-input="legacy"]');
-  assert.equal(issue.type, 'text'); assert.equal(issue.hasAttribute('required'), true);
-  assert.equal(retries.type, 'number'); assert.equal(retries.value, '2');
-  assert.equal(approved.tagName, 'SELECT'); assert.equal(approved.getAttribute('value'), 'true');
-  assert.equal(legacy.type, 'text'); assert.equal(legacy.value, 'raw');
-  assert.match(dialog.querySelector('[data-process-param="issue"]').textContent, /Issue id/);
-  issue.value = 'TCL-300'; harness.fireEvent(issue, 'input'); await harness.act(() => Promise.resolve());
-  retries.value = '9007199254740993'; harness.fireEvent(retries, 'input'); await harness.act(() => Promise.resolve());
-  for (const option of approved.options) option.selected = option.value === 'false';
-  harness.fireEvent(approved, 'change'); await harness.act(() => Promise.resolve());
-  harness.fireEvent(dialog, 'submit');
-  assert.deepEqual(submitted, { approved: 'false', issue: 'TCL-300', legacy: 'raw', retries: '9007199254740993' });
-  await mounted.unmount();
-});
 
-test('optional booleans stay omitted while explicit and defaulted false values are submitted', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  state.setInstantiation({
-    key: 'boolean-omission', id: 'boolean-omission', ref: `boolean-omission@sha256:${'9'.repeat(64)}`, phase: 'ready', error: '',
-    template: { id: 'boolean-omission', params: {
-      defaultFalse: { type: 'boolean', default: false },
-      optional: { type: 'boolean' },
-    } },
-  });
-  const submissions = [];
-  const actions = {
-    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
-    closeInstantiation() {}, submitInstantiation(params) { submissions.push(params); },
-  };
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  const dialog = mounted.container.querySelector('.process-instantiate-dialog');
-  const defaultFalse = dialog.querySelector('[data-process-param-input="defaultFalse"]');
-  const optional = dialog.querySelector('[data-process-param-input="optional"]');
-  assert.equal(defaultFalse.getAttribute('value'), 'false', 'a declared false default remains selected');
-  assert.equal(optional.getAttribute('value'), '', 'an optional boolean without a default begins unset');
-  harness.fireEvent(dialog, 'submit');
-  assert.deepEqual(submissions.at(-1), { defaultFalse: 'false' }, 'untouched optional boolean is omitted');
-  for (const option of optional.options) option.selected = option.value === 'false';
-  harness.fireEvent(optional, 'change'); await harness.act(() => Promise.resolve());
-  harness.fireEvent(dialog, 'submit');
-  assert.deepEqual(submissions.at(-1), { defaultFalse: 'false', optional: 'false' }, 'explicit false is retained');
-  await mounted.unmount();
-});
 
-test('instantiate dialog owns focus, traps Tab, restores the invoker, and cannot dismiss while busy', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const ref = `focus@sha256:${'d'.repeat(64)}`;
-  const spec = (key, params = { issue: { type: 'string', required: true } }) => ({
-    key, id: 'focus', ref, phase: 'ready', error: '', template: { id: 'focus', params },
-  });
-  const actions = {
-    refreshActive() {}, load() {}, observeTemplateHeads() {}, activateSubtab() {}, openEditor() {}, closeCanvas() {},
-    closeInstantiation() { if (!state.mutation.value.busy) state.setInstantiation(null); }, submitInstantiation() {},
-  };
-  const invoker = harness.document.body.appendChild(harness.document.createElement('button'));
-  invoker.textContent = 'instantiate focus'; invoker.focus();
-  state.setInstantiation(spec('focus-1'));
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  await new Promise(resolve => queueMicrotask(resolve));
-  let overlay = mounted.container.querySelector('.process-instantiate-modal');
-  let first = overlay.querySelector('[data-process-param-input="issue"]');
-  let create = overlay.querySelector('button[type="submit"]');
-  assert.equal(harness.document.activeElement, first, 'the first declared param receives initial focus');
-  create.focus(); await harness.act(() => harness.fireEvent(create, 'keydown', { key: 'Tab' }));
-  assert.equal(harness.document.activeElement, first, 'Tab wraps to the first dialog control');
-  await harness.act(() => harness.fireEvent(first, 'keydown', { key: 'Tab', shiftKey: true }));
-  assert.equal(harness.document.activeElement, create, 'Shift+Tab wraps to the last dialog control');
-  await harness.act(() => harness.fireEvent(create, 'keydown', { key: 'Escape' }));
-  assert.equal(state.instantiation.value, null);
-  assert.equal(harness.document.activeElement, invoker, 'Escape restores focus to the invoker');
-
-  invoker.focus(); await harness.act(() => state.setInstantiation(spec('focus-empty', {})));
-  await new Promise(resolve => queueMicrotask(resolve));
-  overlay = mounted.container.querySelector('.process-instantiate-modal');
-  create = overlay.querySelector('button[type="submit"]');
-  assert.equal(harness.document.activeElement, create, 'Create run receives initial focus when there are no params');
-  await harness.act(() => harness.fireEvent(overlay, 'click'));
-  assert.equal(state.instantiation.value, null, 'backdrop closes when idle');
-  assert.equal(harness.document.activeElement, invoker, 'backdrop close restores focus');
-
-  invoker.focus(); state.beginMutation(); await harness.act(() => state.setInstantiation(spec('focus-busy')));
-  await new Promise(resolve => queueMicrotask(resolve));
-  overlay = mounted.container.querySelector('.process-instantiate-modal');
-  first = overlay.querySelector('[data-process-param-input="issue"]');
-  await harness.act(() => harness.fireEvent(first, 'keydown', { key: 'Escape' }));
-  assert.ok(state.instantiation.value, 'busy Escape cannot dismiss');
-  await harness.act(() => harness.fireEvent(overlay, 'click'));
-  assert.ok(state.instantiation.value, 'busy backdrop cannot dismiss');
-  state.endMutation(); state.setInstantiation(null);
-  await mounted.unmount(); invoker.remove();
-});
-
-test('a successful Worklist action supersedes an older poll with an authoritative refresh', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { createProcessesActions }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-actions.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const item = { id: 'item-1', run: 'run-1', node: 'review', kind: 'review-needed', status: 'pending', summary: 'Review', availableActions: ['approve'] };
-  state.worklistRequest.commitRequest(state.worklistRequest.beginRequest(), { items: [item], degradedRuns: [] });
-  state.setDraft(item.id, 'approved');
-  const oldPoll = deferred(); const freshPoll = deferred(); let gets = 0;
-  const actions = createProcessesActions({ state, fetchImpl: async (path, options = {}) => {
-    if (options.method === 'POST') return { ok: true, json: async () => ({}) };
-    assert.equal(path, '/v1/process/worklist');
-    gets += 1;
-    return gets === 1 ? oldPoll.promise : freshPoll.promise;
-  } });
-
-  const stale = actions.load('worklist', { quiet: true });
-  assert.equal(await actions.submitWorklistAction(item.id, 'approve'), true);
-  assert.equal(gets, 2, 'the post-success refresh starts even while the old poll is pending');
-  freshPoll.resolve({ ok: true, json: async () => ({ items: [], degradedRuns: [] }) });
-  await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(state.view.value.worklist.items, [], 'the authoritative refresh removes the resolved item');
-
-  oldPoll.resolve({ ok: true, json: async () => ({ items: [item], degradedRuns: [] }) });
-  assert.equal(await stale, false, 'the superseded poll cannot commit');
-  assert.deepEqual(state.view.value.worklist.items, [], 'the resolved item never becomes visible again');
-});
 
 test('template list refresh publishes the matching head to the persistent editor', async (t) => {
   const harness = await createPreactHarness(t);
@@ -704,32 +329,6 @@ test('a source-only head change refreshes the list and notifies the editor', asy
   assert.deepEqual(observed.at(-1), { id: 'release', ref: 'release@sha256:same', sourceHash: 'source-b' });
 });
 
-test('snapshot cadence always refreshes worklist and observes heads only for Templates', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  const loaded = []; let headObservations = 0;
-  const actions = { refreshActive() {}, load(name, options) { loaded.push([name, options]); }, observeTemplateHeads() { headObservations += 1; }, activateSubtab() {}, openEditor() {}, openViewer() {}, closeCanvas() {} };
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'));
-  assert.deepEqual(loaded, [['worklist', { quiet: true }]], 'Templates keeps the cross-subtab Worklist badge live');
-  assert.equal(headObservations, 1);
-  loaded.length = 0;
-  state.setSubtab('runs');
-  await harness.act(() => Promise.resolve());
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'));
-  assert.deepEqual(loaded, [['worklist', { quiet: true }]], 'Runs still refreshes the Worklist badge');
-  assert.equal(headObservations, 1, 'Runs does not poll template heads');
-  loaded.length = 0;
-  state.setSubtab('worklist');
-  await harness.act(() => Promise.resolve());
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:snapshot'));
-  assert.deepEqual(loaded, [['worklist', { quiet: true }]]);
-  assert.equal(headObservations, 1, 'Worklist does not duplicate its own request with a head observation');
-  await mounted.unmount();
-});
 
 test('head observation is single-flight and full list refreshes only after a generation change', async (t) => {
   const harness = await createPreactHarness(t);
@@ -941,7 +540,7 @@ test('Processes surfaces scoped scribe lifecycle and latest-version actor attrib
   assert.ok(status);
   assert.match(status.textContent, /active.*release-scribe.*template release-flow.*process: release-flow.*stop.*retire/s);
   assert.match(mounted.container.querySelector('.process-version-actor').textContent, /by agent release-scribe/);
-  harness.fireEvent(status.querySelector('.wl-link'), 'click');
+  harness.fireEvent(status.querySelector('.process-scribe-open'), 'click');
   harness.fireEvent(status.querySelector('[data-process-scribe-action="stop"]'), 'click');
   harness.fireEvent(status.querySelector('[data-process-scribe-action="retire"]'), 'click');
   assert.deepEqual(called, [['open', agentId], ['stop', agentId], ['retire', agentId]]);
@@ -962,44 +561,7 @@ test('editor boundary exposes startup failures inside the canvas', async (t) => 
   await mounted.unmount();
 });
 
-test('canvas views retain their parent Processes subtab selection', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs() });
-  state.setSubtab('runs'); state.setCanvas({ kind: 'viewer', id: 'run-1', key: 'run-1' });
-  const actions = {
-    refreshActive() {}, load() {}, activateSubtab() {}, closeCanvas() {},
-    loadRunView: async () => ({ run: { id: 'run-1' }, viewerV2: { routingAvailable: false, routingUnavailableReason: 'routing_absent' }, report: { nodes: {} } }),
-  };
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  assert.equal(mounted.container.querySelector('[data-process-subtab="runs"]').getAttribute('aria-selected'), 'true');
-  assert.equal(mounted.container.querySelectorAll('[role="tab"][aria-selected="true"]').length, 1);
-  await mounted.unmount();
-});
 
-test('Processes component renders keyed lists, worklist counts, degraded state, and preserves drafts', async (t) => {
-  const harness = await createPreactHarness(t);
-  const [{ createProcessesState }, { ProcessesApp }] = await Promise.all([
-    harness.importDashboardModule('js/processes-state.js'), harness.importDashboardModule('js/processes-island.js'),
-  ]);
-  const state = createProcessesState({ activeTab: harness.signals.signal('processes'), prefs: prefs(), now: () => Date.parse('2026-01-01T00:00:00Z') });
-  state.setSubtab('worklist'); state.setDraft('item-1', 'keep this draft');
-  const item = { id: 'item-1', run: 'run-1', node: 'review', kind: 'review-needed', status: 'pending', summary: 'Review it', assignee: 'human:operator', createdAt: '2025-12-31T23:00:00Z', availableActions: ['approve'] };
-  state.worklistRequest.commitRequest(state.worklistRequest.beginRequest(), { items: [item], degradedRuns: [{ run: 'broken-run', error: 'corrupt' }] });
-  const actions = { refreshActive() {}, load() {}, activateSubtab() {}, openEditor() {}, openViewer() {}, closeCanvas() {}, openRunInList() {}, submitWorklistAction() {} };
-  const mounted = await harness.mount(harness.html`<${ProcessesApp} state=${state} actions=${actions} />`);
-  assert.equal(mounted.container.querySelectorAll('.wl-row').length, 1);
-  assert.equal(mounted.container.querySelector('#process-worklist-badge').textContent, '1');
-  assert.match(mounted.container.querySelector('#process-worklist-degraded').textContent, /broken-run/);
-  const input = mounted.container.querySelector('[data-worklist-comment="item-1"]'); input.focus();
-  state.worklistRequest.commitRequest(state.worklistRequest.beginRequest(), { items: [{ ...item, summary: 'Updated' }], degradedRuns: [] });
-  await harness.act(() => Promise.resolve());
-  const current = mounted.container.querySelector('[data-worklist-comment="item-1"]');
-  assert.equal(current, input); assert.equal(current.value, 'keep this draft'); assert.equal(harness.document.activeElement, current);
-  await mounted.unmount();
-});
 
 test('renaming a template round-trips the head edit view and changes only the display name', async (t) => {
   const harness = await createPreactHarness(t);
@@ -1690,32 +1252,14 @@ test('Processes URL location follows the open template editor and restores from 
     { tab: 'processes', subtab: 'templates', selection: 'release-train' }), true);
   assert.equal(state.canvas.value.id, 'release-train');
 
-  // A run selection is a modelled-but-unwired detail view. applyLocation must
-  // report that it did NOT honour the URL, so the caller corrects the address
-  // bar — otherwise a bookmarked /processes/runs/<id> would describe a run
-  // detail view that is not on screen, forever, across reloads.
-  assert.equal(await actions.applyLocation(
-    { tab: 'processes', subtab: 'runs', selection: 'run-42' }), false,
-  'an unwired run selection is reported as not applied');
-  assert.equal(state.subtab.value, 'runs', 'the subtab part was still honoured');
-  actions.correctLocation();
-  assert.deepEqual(lastLocation(), { tab: 'processes', subtab: 'runs' },
-    'the correction drops the segment that could not be shown');
-  assert.equal(announced.at(-1).correction, true,
-    'a correction replaces the current entry instead of pushing one');
-
   // An unsaved editor refuses a Back-driven restore, so the operator keeps
-  // their work. Restore the editor location properly first (openEditor alone
-  // would leave the canvas open under the `runs` subtab — a state the UI cannot
-  // actually produce, and one that would short-circuit the check below).
-  assert.equal(await actions.applyLocation(
-    { tab: 'processes', subtab: 'templates', selection: 'release-train' }), true);
+  // their work.
   state.setEditor({ dirty: true, model: { dirty: true } });
   const guarded = createProcessesActions({
     state, fetchImpl, notify() {}, dispatchNavigated: record,
     confirmDiscard: async () => false,
   });
-  assert.equal(await guarded.applyLocation({ tab: 'processes', subtab: 'runs' }), false);
+  assert.equal(await guarded.applyLocation({ tab: 'processes', subtab: 'templates' }), false);
   assert.equal(state.canvas.value.id, 'release-train', 'the unsaved editor stayed open');
   guarded.correctLocation();
   assert.deepEqual(lastLocation(),
@@ -1740,10 +1284,7 @@ test('a router restore-location event opens the editor on the mounted Processes 
   const actions = createProcessesActions({
     state, notify() {}, dispatchNavigated: (location, { correction = false } = {}) =>
       announced.push({ location, correction }),
-    fetchImpl: async (path) => ({ ok: true, json: async () => (
-      path.includes('worklist') ? { items: [], degradedRuns: [] }
-        : path.includes('templates') ? { templates: [{ id: 'release-train' }] }
-          : { runs: [] }) }),
+    fetchImpl: async () => ({ ok: true, json: async () => ({ templates: [{ id: 'release-train' }] }) }),
   });
   // Go through the real mount path, not just <ProcessesApp>: the restore
   // listener is registered there precisely so it is attached synchronously,
@@ -1773,22 +1314,11 @@ test('a router restore-location event opens the editor on the mounted Processes 
   await harness.act(() => Promise.resolve());
   assert.equal(state.canvas.value?.id, 'release-train', 'another tab’s location is ignored');
 
-  // A location the island cannot honour must come back as a CORRECTION, so the
-  // router replaces the entry the browser already committed rather than pushing
-  // a new one (which would truncate the forward tail).
-  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
-    detail: { location: { tab: 'processes', subtab: 'runs', selection: 'run-42' } },
-  }));
-  for (let i = 0; i < 10 && announced.length === 0; i++) await harness.act(() => Promise.resolve());
-  assert.deepEqual(announced.at(-1), {
-    location: { tab: 'processes', subtab: 'runs' }, correction: true,
-  }, 'the unwired run selection is corrected out of the URL, as a replace');
-
   // Cleanup must detach the listener, or a remounted island would double-apply.
   for (const fn of cleanups.reverse()) fn();
   const settled = announced.length;
   harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:restore-location', {
-    detail: { location: { tab: 'processes', subtab: 'runs', selection: 'run-42' } },
+    detail: { location: { tab: 'processes', subtab: 'templates', selection: 'another-template' } },
   }));
   await harness.act(() => Promise.resolve());
   assert.equal(announced.length, settled, 'the restore listener is removed on cleanup');

@@ -14,7 +14,7 @@ function context(overrides = {}) {
     canCreate: true, createReason: '', canEdit: true, editReason: '',
     canDuplicate: true, duplicateReason: '', canDelete: true, deleteReason: '',
     canValidate: true, validateReason: '', issueCount: 2, hasCurrentIssue: true,
-    canSave: true, saveReason: '', canInstantiate: true, instantiateReason: '',
+    canSave: true, saveReason: '',
     ...overrides,
   };
 }
@@ -25,7 +25,7 @@ function editorFixture(overrides = {}) {
   for (const method of [
     'addNodeType', 'editSelection', 'duplicateSelection', 'deleteSelection', 'selectAll',
     'clearSelection', 'fitGraph', 'centerSelection', 'zoomGraph', 'resetZoom',
-    'validateNow', 'focusIssue', 'requestScribe', 'save', 'requestInstantiate',
+    'validateNow', 'focusIssue', 'requestScribe', 'save',
   ]) editor[method] ||= (...args) => calls.push([method, ...args]);
   return { editor, calls };
 }
@@ -78,14 +78,14 @@ test('commands delegate to the editor and process navigation handlers', () => {
     'process.create.wait', 'process.edit-selection', 'process.duplicate-selection',
     'process.delete-selection', 'process.validate', 'process.next-issue',
     'process.scribe-selection', 'process.scribe-diagnostic', 'process.scribe-template',
-    'process.save', 'process.instantiate', 'process.templates', 'process.runs',
+    'process.save', 'process.templates',
   ]) commands.find((command) => command.id === id).run();
   assert.deepEqual(calls, [
     ['addNodeType', 'wait'], ['editSelection'], ['duplicateSelection'], ['deleteSelection'],
     ['validateNow'], ['focusIssue', 1], ['requestScribe', 'selection'],
-    ['requestScribe', 'diagnostic'], ['requestScribe', 'template'], ['save'], ['requestInstantiate'],
+    ['requestScribe', 'diagnostic'], ['requestScribe', 'template'], ['save'],
   ]);
-  assert.deepEqual(navigation, ['templates', 'runs']);
+  assert.deepEqual(navigation, ['templates']);
 });
 
 test('node-type chooser substrate is injectable for a future positioned chooser', () => {

@@ -646,7 +646,7 @@ test('command context reflects selection, editability, dirty state, and validati
   const fake = {
     selection: { type: 'node', id: 'a' },
     externalDecisionPending: false, externalReloadPending: false, savePending: false, blank: false,
-    options: { onInstantiate() {} },
+    options: {},
     validation: { mapped: { entries: [{ code: 'issue' }] } },
     model: {
       template: { id: 'flow', nodes: { a: { type: 'task' }, b: { type: 'end' } } },
@@ -662,7 +662,6 @@ test('command context reflects selection, editability, dirty state, and validati
   assert.equal(current.canDuplicate, true);
   assert.equal(current.canDelete, true);
   assert.equal(current.canSave, true);
-  assert.equal(current.canInstantiate, true);
   assert.equal(current.issueCount, 1);
 
   fake.selection = { type: 'node', id: 'b' };
@@ -1877,7 +1876,7 @@ test('synchronous commands are inert and cannot mutate state after repeated dest
 
     const context = editor.commandContext();
     for (const flag of ['hasGraph', 'hasSelection', 'hasGraphSelection', 'canCreate', 'canEdit',
-      'canDuplicate', 'canDelete', 'canValidate', 'canSave', 'canInstantiate', 'hasCurrentIssue']) {
+      'canDuplicate', 'canDelete', 'canValidate', 'canSave', 'hasCurrentIssue']) {
       assert.equal(context[flag], false, `destroyed context must disable ${flag}`);
     }
     assert.equal(context.issueCount, 0);
@@ -1899,7 +1898,6 @@ test('asynchronous commands cannot start network, modal, or callback work after 
     const editor = destroyableEditor();
     let outward = 0;
     editor.options.onScribe = async () => { outward += 1; return {}; };
-    editor.options.onInstantiate = () => { outward += 1; };
     editor.options.confirmDiscard = async () => { outward += 1; return true; };
     editor.destroy();
     editor.destroy();
@@ -1908,8 +1906,6 @@ test('asynchronous commands cannot start network, modal, or callback work after 
     assert.equal(await editor.save(), false);
     assert.equal(editor.savePending, false);
     assert.equal(await editor.requestScribe('template'), false);
-    assert.equal(await editor.requestInstantiate(), false,
-      'a clean saved model must not reach onInstantiate after destroy');
     assert.equal(await editor.deleteSelection(), false);
     assert.equal(await editor.openNodeSettings('b'), false);
     assert.equal(await editor.openParamsSettings(), false);
@@ -1949,7 +1945,6 @@ test('every palette command built from a destroyed editor is disabled and inert 
   try {
     const editor = destroyableEditor();
     editor.options.onScribe = async () => assert.fail('scribe handoff must not start');
-    editor.options.onInstantiate = () => assert.fail('instantiation must not start');
     editor.destroy();
     const before = editor.model.saveBody();
 
@@ -1962,16 +1957,16 @@ test('every palette command built from a destroyed editor is disabled and inert 
     for (const id of ['process.create.task', 'process.edit-selection', 'process.duplicate-selection',
       'process.delete-selection', 'process.select-all', 'process.clear-selection', 'process.fit',
       'process.center', 'process.validate', 'process.next-issue', 'process.previous-issue',
-      'process.scribe-selection', 'process.scribe-diagnostic', 'process.save', 'process.instantiate']) {
+      'process.scribe-selection', 'process.scribe-diagnostic', 'process.save']) {
       assert.equal(byID[id].enabled, false, `${id} must be disabled on a destroyed editor`);
     }
     // Even the always-enabled commands (zoom, whole-template scribe) and any
     // stale run handler a client may still hold must be harmless.
     for (const command of commands) await command.run();
-    // The templates/runs commands only navigate AWAY from the dead editor
+    // The templates command only navigates AWAY from the dead editor
     // surface through actions and never touch the editor — the one deliberate
     // exemption from run inertness. Everything editor-bound stayed inert.
-    assert.deepEqual(navigations, ['templates', 'runs']);
+    assert.deepEqual(navigations, ['templates']);
     assert.deepEqual(editor.model.saveBody(), before);
     assert.equal(editor.modalState, null);
     assert.equal(editor.graph, null);
@@ -1981,40 +1976,6 @@ test('every palette command built from a destroyed editor is disabled and inert 
   }
 });
 
-test('destroy during an in-flight save reports failure and blocks the instantiate handoff', async () => {
-  const previousFetch = globalThis.fetch;
-  const started = deferred();
-  const response = deferred();
-  let fetches = 0;
-  globalThis.fetch = () => { fetches += 1; started.resolve(); return response.promise; };
-  try {
-    const editor = destroyableEditor();
-    let instantiations = 0;
-    editor.options.onInstantiate = () => { instantiations += 1; };
-    editor.choiceModal = async () => 'save';
-    editor.model.setTemplateMeta({ name: 'Local draft' });
-    assert.equal(editor.model.dirty, true);
-
-    const pending = editor.requestInstantiate();
-    await started.promise;
-    // Teardown lands while the save POST is in flight — e.g. the onSaved /
-    // navigation path unmounting the editor. The discarded completion must
-    // read as a failed save and never reach onInstantiate.
-    editor.destroy();
-    response.resolve({
-      ok: true, status: 201, statusText: 'Created',
-      json: async () => ({ sourceHash: 'source-late', semanticHash: 'semantic-late', diagnostics: [] }),
-    });
-    assert.equal(await pending, false);
-    assert.equal(instantiations, 0, 'a destroyed editor identity is never handed to the instantiate flow');
-    assert.equal(fetches, 1);
-    assert.equal(editor.model.sourceHash, 'source-old', 'the delayed completion cannot adopt a CAS head after destroy');
-    assert.equal(editor.savePending, false);
-  } finally {
-    if (previousFetch === undefined) delete globalThis.fetch;
-    else globalThis.fetch = previousFetch;
-  }
-});
 
 test('a never-saved draft creates through the collection endpoint and adopts the minted id', async () => {
   const previousFetch = globalThis.fetch;

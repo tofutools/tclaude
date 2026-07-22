@@ -150,7 +150,6 @@ function Header({ controller, view }) {
     <button class="process-action process-scribe-action" type="button" disabled=${externalPending || pending.save} title="Open an agent scoped to this exact process template" onClick=${() => controller.requestScribe('template')}>
       <span class="process-scribe-plain">Edit with agent</span><span class="process-scribe-wizard">Consult a process scribe</span>
     </button>
-    <button class="process-action" type="button" disabled=${externalPending || pending.save} title="Instantiate this exact saved version" onClick=${() => controller.requestInstantiate()}>instantiate…</button>
     <button class="process-action primary" type="button" disabled=${pending.save || externalPending || (!model.dirty && !view.blank)} title="Save a new version" onClick=${() => controller.save()}>${pending.save ? 'Saving…' : 'Save'}</button>
   </div>`;
 }

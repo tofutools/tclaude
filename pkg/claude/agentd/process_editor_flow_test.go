@@ -27,7 +27,7 @@ import (
 )
 
 func TestProcessEditorSaveRoundTripsNodeEdgeJoinAndPin(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	_, err = fs.PutTemplate(t.Context(), processRESTTemplate("editor-roundtrip", "seeded", 40))
@@ -79,7 +79,7 @@ func TestProcessEditorSaveRoundTripsNodeEdgeJoinAndPin(t *testing.T) {
 }
 
 func TestProcessEditorRenameDisplayNameCreatesVersionAndUpdatesReadSurfaces(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	original, err := fs.PutTemplate(t.Context(), processRESTTemplate("rename-display", "before rename", 40))
@@ -140,7 +140,7 @@ func TestProcessEditorRenameDisplayNameCreatesVersionAndUpdatesReadSurfaces(t *t
 }
 
 func TestProcessEditorConflictDialogDataAndBothResolutions(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	_, err = fs.PutTemplate(t.Context(), processRESTTemplate("editor-conflict", "opened in editor", 30))
@@ -199,7 +199,7 @@ func TestProcessEditorConflictDialogDataAndBothResolutions(t *testing.T) {
 // the same save against an id that already exists is the conflict the editor
 // presents as "template id already exists".
 func TestProcessEditorBlankFirstSaveUsesEmptyBaseHash(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 
@@ -231,7 +231,7 @@ func TestProcessEditorBlankFirstSaveUsesEmptyBaseHash(t *testing.T) {
 // declared params, and above all the editor layout, which is authoring state
 // the operator would otherwise silently lose by renaming.
 func TestProcessListRenameDialogBodyPreservesLayoutGraphAndParams(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	seed := processRESTTemplate("rename-preserves", "before rename", 40)
@@ -296,7 +296,7 @@ func TestProcessListRenameDialogBodyPreservesLayoutGraphAndParams(t *testing.T) 
 // an id is a permanent key embedded in every ref, whereas the display name is
 // renameable. This asserts the creation contract end to end.
 func TestProcessTemplateCreateGeneratesIDAndRejectsCallerSuppliedOnes(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 
@@ -347,7 +347,7 @@ func TestProcessTemplateCreateGeneratesIDAndRejectsCallerSuppliedOnes(t *testing
 }
 
 func TestDashboardProcessTemplateCreateReplaysGeneratedIDForSameBrowserAttempt(t *testing.T) {
-	_, root := processEngineFlow(t)
+	_, root := processAuthoringFlow(t)
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	dash := agentd.BuildDashboardHandlerForTest()
 	scaffold := processRESTTemplate("placeholder", "created from the dashboard", 40)

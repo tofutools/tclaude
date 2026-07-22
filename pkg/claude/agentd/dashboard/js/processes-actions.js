@@ -1,4 +1,3 @@
-import { buildWorklistAction, isDestructiveAction, mintUUID, retainedActionKey } from './process-worklist-core.js';
 import { templateHeadSignature } from './process-external-change.js';
 import { idempotentRequestHeaders } from './request-idempotency.js';
 import { dashboardState } from './snapshot-store.js';
@@ -6,6 +5,17 @@ import {
   PROCESS_SCRIBE_NAME, PROCESS_SCRIBE_SLUGS, processScribeBrief, processScribeHandoff,
   processScribeScopeLabel, processScribeSessions, processScribeTaskRef,
 } from './process-scribe.js';
+
+function mintUUID() {
+  const crypto = globalThis.crypto;
+  if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 export function processActorPresentation(snapshot, actor) {
   const ref = String(actor || '');
@@ -26,38 +36,11 @@ export function processActorPresentation(snapshot, actor) {
   };
 }
 
-// Process responses can carry schema-8 material; every fetch opts out of
-// HTTP caching to match the server's no-store contract.
 export async function processJSON(path, fetchImpl = fetch) {
   const response = await fetchImpl(path, { credentials: 'same-origin', cache: 'no-store' });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
   return body;
-}
-
-// processUnlockRequest POSTs a schema-8 unlock preview/apply/unblock body and
-// returns { status, body } so callers can branch on 409 stale/422 blocked
-// without treating them as transport failures. Draft material only ever
-// travels in the request; nothing is persisted client-side.
-export async function processUnlockRequest(path, payload, fetchImpl = fetch) {
-  const response = await fetchImpl(path, {
-    method: 'POST', credentials: 'same-origin', cache: 'no-store',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  });
-  const body = await response.json().catch(() => ({}));
-  return { status: response.status, ok: response.ok, body };
-}
-
-// processExactArtifact reads one restricted diff/reason artifact as text.
-// The route is permission-gated server-side; a denial surfaces as a bounded
-// { status } the panel renders as an explicit error state.
-export async function processExactArtifact(runID, epochID, kind, fetchImpl = fetch) {
-  const response = await fetchImpl(
-    `/v1/process/runs/${encodeURIComponent(runID)}/epochs/${encodeURIComponent(epochID)}/${encodeURIComponent(kind)}`,
-    { credentials: 'same-origin', cache: 'no-store' },
-  );
-  const text = await response.text().catch(() => '');
-  return { status: response.status, ok: response.ok, text };
 }
 
 export function createProcessesActions({
@@ -80,7 +63,6 @@ export function createProcessesActions({
   ),
   mintAttemptID = mintUUID,
 } = {}) {
-  const actionKeys = new Map();
   let listedHeadsSignature = null;
   let headObservationPending = false;
 
@@ -104,8 +86,8 @@ export function createProcessesActions({
   };
 
   async function load(name, { quiet = false } = {}) {
-    const lifecycle = ({ templates: state.templatesRequest, runs: state.runsRequest, worklist: state.worklistRequest })[name];
-    const path = ({ templates: '/v1/process/templates', runs: '/v1/process/runs', worklist: '/v1/process/worklist' })[name];
+    const lifecycle = name === 'templates' ? state.templatesRequest : null;
+    const path = name === 'templates' ? '/v1/process/templates' : '';
     if (!lifecycle || !path) return false;
     if (name === 'templates' && (requestBusy(lifecycle) || headObservationPending)) return false;
     const generation = name === 'templates' ? editorGeneration() : null;
@@ -113,16 +95,7 @@ export function createProcessesActions({
     try {
       const body = await processJSON(path, fetchImpl);
       if (!lifecycle.commitRequest(token, body)) return false;
-      if (name === 'worklist') {
-        const items = body.items || [];
-        state.pruneWorklistState(items);
-        const live = new Set(items.map((item) => item.id));
-        for (const payload of actionKeys.keys()) {
-          if (!live.has(payload.slice(0, payload.indexOf('\x00')))) actionKeys.delete(payload);
-        }
-        if (!quiet) state.setNotice(`${state.view.value.actionable} actionable item${state.view.value.actionable === 1 ? '' : 's'}`);
-        if (!items.length && state.runs.value === null) void load('runs', { quiet: true });
-      } else if (name === 'templates') {
+      if (name === 'templates') {
         const rows = body.templates || [];
         const heads = rows.map((template) => ({
           id: template.id, ref: template.latestVersion?.ref || '', sourceHash: template.latestVersion?.sourceHash || '',
@@ -134,9 +107,6 @@ export function createProcessesActions({
         if (!quiet) {
           state.setNotice(`${rows.length} template${rows.length === 1 ? '' : 's'}`);
         }
-      } else if (!quiet) {
-        const rows = body[name] || [];
-        state.setNotice(`${rows.length} run${rows.length === 1 ? '' : 's'}`);
       }
       return true;
     } catch (error) {
@@ -280,11 +250,7 @@ export function createProcessesActions({
   // paths — so the unsaved-changes guard still runs — but suppresses the
   // outgoing navigation event, because the URL is already where it wants to be.
   //
-  // Returns false when it did NOT end up where it was asked to go, which
-  // happens two ways:
-  //   - the operator refused to discard an unsaved editor, so we stayed put;
-  //   - the URL named something this tab cannot show — today a run selection,
-  //     /processes/runs/<id>, which is a modelled but unwired detail view.
+  // Returns false when the operator refused to discard an unsaved editor.
   // Either way the caller corrects the URL, so a bookmarked or hand-typed path
   // can never leave the address bar permanently describing a view that is not
   // on screen.
@@ -293,9 +259,9 @@ export function createProcessesActions({
   // the editor itself reports it, and evicting the id on a transient
   // template-list failure would break a perfectly good deep link on reload.
   async function applyLocation({ subtab, selection } = {}) {
-    const name = ['templates', 'runs', 'worklist'].includes(subtab) ? subtab : 'templates';
+    const name = subtab === 'templates' ? subtab : 'templates';
     const requested = String(selection || '');
-    const target = name === 'templates' ? requested : '';
+    const target = requested;
     // Already showing exactly this? Nothing to do — and nothing to prompt about.
     const showing = state.location.value;
     if (showing.subtab === name && (showing.selection || '') === target) return target === requested;
@@ -473,26 +439,9 @@ export function createProcessesActions({
       return false;
     }
   }
-  async function openInstantiation({ id, ref, template = null } = {}) {
-    if (!id || !ref) return false;
-    const key = `${ref}:${Date.now()}`;
-    const runId = `${id}-${mintAttemptID()}`;
-    state.setInstantiation({ key, id, ref, runId, template, phase: template ? 'ready' : 'loading', error: '' });
-    if (template) return true;
-    try {
-      const body = await processJSON(`/v1/process/templates/${encodeURIComponent(id)}?version=${encodeURIComponent(ref)}`, fetchImpl);
-      if (state.instantiation.value?.key !== key) return false;
-      if (body.currentRef !== ref) throw new Error('the requested exact template version was not returned');
-      state.setInstantiation({ key, id, ref, runId, template: body.template, phase: 'ready', error: '' });
-      return true;
-    } catch (error) {
-      if (state.instantiation.value?.key === key) state.setInstantiation({ key, id, ref, runId, template: null, phase: 'error', error: error.message });
-      return false;
-    }
-  }
   // Renaming edits only the display name. The immutable id stays the store key,
-  // so every pinned ref and running instance is unaffected -- but the name is
-  // part of the semantic hash, so this still commits a normal CAS version.
+  // so every stored ref is unaffected -- but the name is part of the semantic
+  // hash, so this still commits a normal CAS version.
   // sourceHash is captured when the dialog opens, not when it is submitted, so
   // the CAS check covers the whole time the operator sat in the dialog. Saving
   // against the head read at submit time would silently clobber a concurrent
@@ -600,16 +549,10 @@ export function createProcessesActions({
     }
   }
   // deleteTemplate is the shared commit for BOTH delete affordances (the row
-  // button and the drag-to-bin drop), so the confirm copy, the in-use handling,
+  // button and the drag-to-bin drop), so the confirm copy
   // and the list refresh cannot drift between them.
   //
-  // Deleting drops the whole version history for the id. The daemon refuses
-  // outright while any run that still needs the stored template references it.
-  //
-  // The copy deliberately does NOT promise that finished runs stay fully
-  // readable. A finished run keeps the snapshot pinned into its own record, but
-  // the execution-view and verification surfaces resolve the template body from
-  // the library and report the run as inconsistent once it is gone.
+  // Deleting drops the whole version history for the id.
   async function deleteTemplate({ id, name = '', versionCount = 0 } = {}) {
     if (!id) return false;
     const label = String(name || '').trim() || id;
@@ -618,8 +561,8 @@ export function createProcessesActions({
     const approved = await confirm({
       title: wizard ? 'Unmake this rite?' : 'Delete this process template?',
       body: wizard
-        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail. Quests already ended keep their own bound copy, but their scrying and attestation views will read as broken once the rite is gone. A rite still underway cannot be unmade.`
-        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. Runs that already finished keep their own pinned copy, but their execution and verification views will report as inconsistent once the template is gone. This cannot be undone.`,
+        ? `This unmakes ${label} and every one of its ${versions || 'stored'} inscribed version${versions === 1 ? '' : 's'}, along with its authorship trail.`
+        : `This permanently deletes ${label} and all ${versions || 'stored'} version${versions === 1 ? '' : 's'} of it, including its authorship history. This cannot be undone.`,
       meta: id,
       okLabel: wizard ? 'Unmake rite' : 'Delete template',
     });
@@ -633,29 +576,6 @@ export function createProcessesActions({
         method: 'DELETE', credentials: 'same-origin',
       });
       const body = await response.json().catch(() => ({}));
-      if (body.code === 'process_template_in_use') {
-        const runs = Array.isArray(body.runIds) ? body.runIds : [];
-        const unreadable = Array.isArray(body.unreadableRunIds) ? body.unreadableRunIds : [];
-        // Bound the list: a store with many blocked runs must not push a wall of
-        // ids into the notice line.
-        const nameRuns = (ids) => {
-          const shown = ids.slice(0, 3).join(', ');
-          return `${shown}${ids.length > 3 ? ` and ${ids.length - 3} more` : ''}`;
-        };
-        // Unreadable runs need repair, not completion, so they get their own
-        // sentence rather than being folded into the "finish or cancel" advice.
-        if (runs.length) {
-          throw new Error(
-            `${runs.length} run${runs.length === 1 ? '' : 's'} still need${runs.length === 1 ? 's' : ''} it (${nameRuns(runs)}). `
-            + 'Finish or cancel them first.'
-            + (unreadable.length ? ` ${unreadable.length} run${unreadable.length === 1 ? '' : 's'} could not be read (${nameRuns(unreadable)}) and must be repaired or removed.` : ''),
-          );
-        }
-        throw new Error(
-          `${unreadable.length} run${unreadable.length === 1 ? '' : 's'} could not be read (${nameRuns(unreadable)}), `
-          + 'so it is not safe to say whether this template is still in use. Repair or remove them first.',
-        );
-      }
       if (response.status === 404) throw new Error('this template no longer exists; refresh Processes');
       if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
       // An editor still open on the deleted id would keep accepting edits and
@@ -683,52 +603,6 @@ export function createProcessesActions({
       state.endMutation();
     }
   }
-  function closeInstantiation() {
-    if (state.mutation.value.busy) return false;
-    state.setInstantiation(null);
-    return true;
-  }
-  async function submitInstantiation(params) {
-    const spec = state.instantiation.value;
-    if (!spec?.ref || !spec.runId || spec.phase !== 'ready' || !state.beginMutation()) return false;
-    try {
-      const response = await fetchImpl('/v1/process/runs', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ templateRef: spec.ref, runId: spec.runId, params }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
-      if (!body.run?.id || body.run.templateRef !== spec.ref) throw new Error('run creation returned an invalid response');
-      state.setInstantiation(null);
-      state.setSubtab('runs');
-      openViewer(body.run.id);
-      state.setNotice(`Created run ${body.run.id}.`);
-      notify(`Created process run ${body.run.id}`);
-      void load('runs', { quiet: true });
-      announceLocation();
-      return true;
-    } catch (error) {
-      state.setNotice(`Run creation failed: ${error.message}`);
-      notify(`process run creation failed: ${error.message}`, true);
-      return false;
-    } finally {
-      state.endMutation();
-    }
-  }
-  function openViewer(id) { state.setCanvas({ kind: 'viewer', id, key: id }); state.setNotice(`Opening run ${id}.`); }
-  function loadRunView(id, offset = 0, limit = 25) {
-    const query = new URLSearchParams({ detailOffset: String(offset), detailLimit: String(limit) });
-    return processJSON(`/v1/process/runs/${encodeURIComponent(id)}/view?${query}`, fetchImpl);
-  }
-  function previewUnlock(id, payload) {
-    return processUnlockRequest(`/v1/process/runs/${encodeURIComponent(id)}/unlock/preview`, payload, fetchImpl);
-  }
-  function applyUnlock(id, payload) {
-    return processUnlockRequest(`/v1/process/runs/${encodeURIComponent(id)}/unlock/apply`, payload, fetchImpl);
-  }
-  function loadExactArtifact(id, epochID, kind) {
-    return processExactArtifact(id, epochID, kind, fetchImpl);
-  }
   async function closeCanvas() {
     if (!(await canLeaveEditor())) return false;
     state.setEditor(null); state.setCanvas(null); await load(state.subtab.value);
@@ -737,53 +611,13 @@ export function createProcessesActions({
     announceLocation();
     return true;
   }
-  async function openRunInList(id) {
-    if (!(await activateSubtab('runs'))) return;
-    state.setHighlightedRun(id);
-  }
-
-  async function submitWorklistAction(itemID, action) {
-    const item = state.worklist.value?.items?.find((candidate) => candidate.id === itemID);
-    const comment = (state.drafts.value[itemID] || '').trim();
-    if (!item) return false;
-    if (!comment) { state.requireComment(itemID); state.setNotice('A comment is required for every worklist action.'); return false; }
-    if (!state.beginMutation()) return false;
-    try {
-      if (isDestructiveAction(action)) {
-        const ok = await confirm({
-          title: `${action} — are you sure?`,
-          body: `“${action}” on ${item.node} (run ${item.run}) is recorded durably in the run's audit log and drives the run forward.`,
-          meta: item.summary || '', okLabel: action,
-        });
-        if (!ok) return false;
-      }
-      const { payload, key } = retainedActionKey(actionKeys, item, action, comment);
-      const request = buildWorklistAction(item, action, comment, key);
-      if (!request) { state.setNotice(`“${action}” is no longer available for this item.`); return false; }
-      const response = await fetchImpl(request.path, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify(request.body),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.message || body.error || `${response.status} ${response.statusText}`);
-      actionKeys.delete(payload); state.setDraft(itemID, ''); notify(`${request.body.action} recorded for ${item.node}`);
-      return true;
-    } catch (error) {
-      notify(`worklist action failed: ${error.message}`, true); return false;
-    } finally {
-      state.endMutation();
-      void load('worklist');
-    }
-  }
-
-  function refreshActive() { return load(state.subtab.value); }
+  function refreshActive() { return load('templates'); }
   return Object.freeze({
     load, observeTemplateHeads, activateSubtab, openEditor, applyLocation, announceLocation, correctLocation,
     summonScribe, describeActor, openActor,
-    openScribe, stopScribe, retireScribe, openInstantiation, closeInstantiation,
+    openScribe, stopScribe, retireScribe,
     openRename, closeRename, submitRename, renameTemplate, describeTemplate, deleteTemplate,
     openCreate, closeCreate, submitCreate,
-    submitInstantiation, openViewer, loadRunView, closeCanvas, openRunInList, submitWorklistAction, refreshActive,
-    previewUnlock, applyUnlock, loadExactArtifact,
+    closeCanvas, refreshActive,
   });
 }

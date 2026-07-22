@@ -58,8 +58,7 @@ type auditCtx struct {
 
 // auditResult carries safe handler-produced attribution back to the audit
 // middleware after a command succeeds. It deliberately cannot carry request
-// bodies: routes such as process run creation contain runtime params that may
-// be secrets and must remain unbuffered by the audit layer.
+// request bodies.
 type auditResult struct {
 	targetLabel string
 	eventID     string
@@ -216,17 +215,6 @@ var auditRoutes = []auditRoute{
 	// real coordination action against an existing team, so it is audited too.
 	{method: http.MethodPost, segs: []string{"templates", "{name}", "reinforce"}, verb: "template.reinforce", describe: describeTemplateInstantiate},
 
-	// Process run creation is a durable engine command that may launch
-	// performers. Keep the describer nil: the body contains runtime params that
-	// may be secrets, and actor/source/status/path are sufficient attribution.
-	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create"},
-	// Signal satisfaction advances a durable schema-7 wait. Keep the describer
-	// nil so the signal body is never copied into the audit detail.
-	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "nodes", "{node}", "signal"}, verb: "process.signal"},
-	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "unblock"}, verb: "process.unblock"},
-	// Unlock apply carries exact source, reason, and handoff material. A nil
-	// describer is load-bearing: the audit middleware must never buffer it.
-	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "unlock", "apply"}, verb: "process.unlock.apply"},
 	// Template deletion is the most destructive operation on this surface: it
 	// discards every version, the editor source, and the authorship trail for an
 	// id, irreversibly. No describer is needed — the path already carries the id,

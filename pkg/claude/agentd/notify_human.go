@@ -22,9 +22,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
-	processexec "github.com/tofutools/tclaude/pkg/claude/process/exec"
-	"github.com/tofutools/tclaude/pkg/claude/process/state"
-	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -976,47 +973,9 @@ func handleDashboardHumanMessagesReply(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func resolveProcessHumanMessage(ctx context.Context, message *db.HumanMessage, reply string) error {
-	fields := strings.Fields(strings.TrimSpace(reply))
-	if len(fields) == 0 {
-		return fmt.Errorf("reply must begin with a verdict")
-	}
-	verdict := fields[0]
-	feedback := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(reply), verdict))
-	fs, err := store.NewFS(processStoreRoot())
-	if err != nil {
-		return err
-	}
-	schema, err := fs.RunStateSchemaVersion(ctx, message.ProcessRunID)
-	if err != nil {
-		return err
-	}
-	kind, err := store.ClassifyRunStateSchema(schema)
-	if err != nil {
-		return err
-	}
-	switch kind {
-	case store.RunSchemaResetRequired:
-		return fmt.Errorf("%w: process run %q", store.ErrRunResetRequired, message.ProcessRunID)
-	case store.RunSchemaEpochV8:
-		return fmt.Errorf("schema-8 process human-reply mutation is not released")
-	case store.RunSchemaLegacy:
-	default:
-		return fmt.Errorf("unsupported process state schema %d", schema)
-	}
-	snapshot, err := fs.LoadRun(ctx, message.ProcessRunID)
-	if err != nil {
-		return err
-	}
-	command, ok := snapshot.State.OutstandingCommands[message.ProcessCommandID]
-	if !ok || command.NodeID != message.ProcessNodeID {
-		return fmt.Errorf("process obligation command no longer matches run/node")
-	}
-	_, err = processexec.New(fs, nil).RecordOutstandingObservation(ctx, message.ProcessRunID, message.ProcessCommandID, processexec.Observation{
-		Actor:       state.ActorRef("human:operator"),
-		Verdict:     verdict,
-		Feedback:    feedback,
-		EvidenceRef: fmt.Sprintf("human-message:%d:reply", message.ID),
-	})
-	return err
+func resolveProcessHumanMessage(_ context.Context, _ *db.HumanMessage, _ string) error {
+	// Retain process command metadata for the replacement engine, but never
+	// feed a reply into the removed filesystem runtime. Old obligation rows are
+	// inert until a new engine explicitly adopts a migration policy.
+	return fmt.Errorf("process runtime is temporarily unavailable: no engine is installed")
 }

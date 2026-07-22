@@ -15,7 +15,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
-	"github.com/tofutools/tclaude/pkg/claude/process/state"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 )
 
@@ -26,7 +25,7 @@ type processTemplateVersionView struct {
 	SemanticHash string         `json:"semanticHash"`
 	SourceHash   string         `json:"sourceHash"`
 	StoredAt     time.Time      `json:"storedAt"`
-	Actor        state.ActorRef `json:"actor,omitempty"`
+	Actor        store.ActorRef `json:"actor,omitempty"`
 	AuthoredAt   *time.Time     `json:"authoredAt,omitempty"`
 }
 
@@ -47,7 +46,7 @@ type processTemplateHeadView struct {
 	ID         string         `json:"id"`
 	Ref        string         `json:"ref"`
 	SourceHash string         `json:"sourceHash"`
-	Actor      state.ActorRef `json:"actor,omitempty"`
+	Actor      store.ActorRef `json:"actor,omitempty"`
 	AuthoredAt *time.Time     `json:"authoredAt,omitempty"`
 }
 
@@ -63,7 +62,7 @@ type processTemplateEditView struct {
 	SemanticHash  string                     `json:"semanticHash,omitempty"`
 	CurrentRef    string                     `json:"currentRef,omitempty"`
 	Source        string                     `json:"source,omitempty"`
-	Actor         state.ActorRef             `json:"actor,omitempty"`
+	Actor         store.ActorRef             `json:"actor,omitempty"`
 	AuthoredAt    *time.Time                 `json:"authoredAt,omitempty"`
 	Diagnostics   []processEditDiag          `json:"diagnostics,omitempty"`
 	Authorship    []store.TemplateAuthorship `json:"authorship,omitempty"`
@@ -214,9 +213,8 @@ func handleProcessTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleProcessTemplateDelete removes a template and its whole version history.
-// The store refuses while unfinished runs still reference it, which surfaces
-// here as 409 plus the blocking run ids so the caller can act on them.
+// handleProcessTemplateDelete removes a template and its whole authoring
+// history. The retired runtime has no live references that can block deletion.
 func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *store.FS) {
 	if _, ok := requirePermission(w, r, PermProcessTemplatesManage); !ok {
 		return
@@ -231,16 +229,6 @@ func handleProcessTemplateDelete(w http.ResponseWriter, r *http.Request, fs *sto
 	err := fs.DeleteTemplate(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
-		return
-	}
-	var inUse *store.TemplateInUseError
-	if errors.As(err, &inUse) {
-		writeProcessJSON(w, http.StatusConflict, map[string]any{
-			"error":            inUse.Error(),
-			"code":             "process_template_in_use",
-			"runIds":           inUse.RunIDs,
-			"unreadableRunIds": inUse.UnreadableRunIDs,
-		})
 		return
 	}
 	if err != nil {
@@ -533,15 +521,15 @@ func writeProcessEditParseError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusUnprocessableEntity, "process_template_unserializable", err.Error())
 }
 
-func processTemplateAuthor(callerConv string) (state.ActorRef, error) {
+func processTemplateAuthor(callerConv string) (store.ActorRef, error) {
 	if callerConv == "" {
-		return state.ActorRef("human:operator"), nil
+		return store.ActorRef("human:operator"), nil
 	}
 	agentID := peerAgentID(callerConv)
 	if agentID == "" {
 		return "", fmt.Errorf("caller has no stable agent identity")
 	}
-	return state.ActorRef("agent:" + agentID), nil
+	return store.ActorRef("agent:" + agentID), nil
 }
 
 func decodeProcessEditView(w http.ResponseWriter, r *http.Request) (*processTemplateEditView, error) {

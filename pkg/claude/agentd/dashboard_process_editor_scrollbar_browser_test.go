@@ -15,7 +15,7 @@ import (
 
 // TestDashboardProcessEditorScrollbarsChrome is TCL-571's bounded visual and
 // computed-style proof. It forces overflow in the real editor shell, palette,
-// and validation list in both skins. A production process-viewer table class
+// and validation list in both skins. An unrelated table class
 // is rendered alongside them as the negative control: its native scrollbar
 // must not acquire the editor tokens or geometry.
 func TestDashboardProcessEditorScrollbarsChrome(t *testing.T) {
@@ -103,7 +103,7 @@ func processEditorScrollbarState(wizard bool) dashsnap.State {
   // A visible real production-class negative control. It deliberately lives
   // outside the editor and must keep its native scrollbar contract.
   var unrelated=document.createElement('div');
-  unrelated.className='process-viewer-table-wrap';
+  unrelated.className='unrelated-table-wrap';
   unrelated.setAttribute('data-dashsnap-unrelated-scroll','');
   unrelated.style.cssText='position:fixed;z-index:95;right:18px;bottom:38px;width:245px;height:150px;padding:8px;background:#161b22;border:1px solid #30363d;border-radius:7px;color:#c9d1d9;font:11px/1.5 ui-monospace,monospace;';
   unrelated.innerHTML='<strong>Viewer table — native bar</strong><div style="height:620px;padding-top:6px">Unrelated dashboard overflow<br>'+Array.from({length:30},function(_,n){return 'viewer row '+(n+1);}).join('<br>')+'</div>';

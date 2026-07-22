@@ -44,7 +44,7 @@ func TestProcessTemplatePermissionSlugsAreRegistered(t *testing.T) {
 }
 
 func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
@@ -160,7 +160,7 @@ func TestProcessTemplateRESTListGetSaveAndConflict(t *testing.T) {
 // and still loses the CAS race against a head that moved -- so the list needs
 // no in-place metadata mutation that would bypass versioning or hashing.
 func TestProcessTemplateSaveDescriptionOnlyEditPreservesTemplateAndCAS(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	original := processRESTTemplate("described", "first description", 40)
@@ -253,7 +253,7 @@ func TestProcessTemplateSaveDescriptionOnlyEditPreservesTemplateAndCAS(t *testin
 }
 
 func TestProcessTemplateGetRejectsLegacyOverBudgetSourceWithoutPanic(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-large", "legacy source", 10))
@@ -280,7 +280,7 @@ func TestProcessTemplateGetRejectsLegacyOverBudgetSourceWithoutPanic(t *testing.
 }
 
 func TestProcessTemplateGetRejectsLegacyMalformedGraphKeyWithTypedDiagnostic(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("legacy-malformed", "legacy source", 10))
@@ -312,7 +312,7 @@ nodes:
 }
 
 func TestProcessTemplateSaveStoreFailureIsInternalError(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	_, err = fs.PutTemplate(t.Context(), processRESTTemplate("broken-head", "before corruption", 10))
@@ -330,7 +330,7 @@ func TestProcessTemplateSaveStoreFailureIsInternalError(t *testing.T) {
 }
 
 func TestProcessTemplateSaveRejectsUnsafeIdentityAsClientError(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := processRESTTemplate("Bad", "unsafe identity", 10)
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/Bad", map[string]any{
 		"template": tmpl,
@@ -341,7 +341,7 @@ func TestProcessTemplateSaveRejectsUnsafeIdentityAsClientError(t *testing.T) {
 }
 
 func TestProcessTemplateSaveHonorsNestedLayoutWhenTopLevelOmitted(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := processRESTTemplate("nested-layout", "complete template client", 321)
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/templates/nested-layout", map[string]any{
 		"template": tmpl,
@@ -357,7 +357,7 @@ func TestProcessTemplateSaveHonorsNestedLayoutWhenTopLevelOmitted(t *testing.T) 
 }
 
 func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	record, err := fs.PutTemplate(t.Context(), processRESTTemplate("layout-only", "move me", 10))
@@ -406,7 +406,7 @@ func TestProcessTemplateSavePersistsLayoutOnlyEditAtSameRef(t *testing.T) {
 }
 
 func TestProcessTemplateSaveCanRevertHeadToExistingSemanticVersion(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	first := processRESTTemplate("revert", "first", 10)
@@ -437,7 +437,7 @@ func TestProcessTemplateSaveCanRevertHeadToExistingSemanticVersion(t *testing.T)
 }
 
 func TestProcessTemplateSaveRequiresProcessTemplatesManageForAgent(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	const intruder = "proc-intruder-aaaa-bbbb"
 	tmpl := processRESTTemplate("agent-owned", "agent draft", 10)
 	body := processEditResponse{
@@ -452,7 +452,7 @@ func TestProcessTemplateSaveRequiresProcessTemplatesManageForAgent(t *testing.T)
 }
 
 func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	const scribe = "proc-scribe-aaaa-bbbb"
 
 	tmpl := processRESTTemplate("agent-source", "created conversationally", 10)
@@ -601,7 +601,7 @@ func TestProcessTemplateAgentSourceWorkflowPermissionsCASAndAttribution(t *testi
 }
 
 func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	source := "apiVersion: tclaude.dev/v1alpha1\nkind: ProcessTemplate\nid: raw\nunknown: true\nstart: done\nnodes:\n  done:\n    type: end\n"
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{
 		"source": source,
@@ -623,7 +623,7 @@ func TestProcessTemplateRawSourceValidationPreservesYAMLDiagnostics(t *testing.T
 }
 
 func TestProcessTemplateRawSchemaAliasBudgetIsStableAndRejectsSave(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	source := processSchemaAliasSource(model.MaxNormalizedNodes)
 	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
 	require.Equal(t, http.StatusOK, validate.Code, validate.Body.String())
@@ -638,7 +638,7 @@ func TestProcessTemplateRawSchemaAliasBudgetIsStableAndRejectsSave(t *testing.T)
 }
 
 func TestProcessTemplateDuplicateFloodResponseIsBounded(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	source := processDuplicateMetadataSource(100_000)
 	require.Less(t, len(source), model.MaxProcessTemplateSourceBytes)
 	rec := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"source": string(source)})
@@ -649,7 +649,7 @@ func TestProcessTemplateDuplicateFloodResponseIsBounded(t *testing.T) {
 }
 
 func TestProcessTemplateSemanticDiagnosticFloodIsBoundedAndRejectsSave(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	tmpl := semanticDiagnosticFloodProcessTemplate()
 
 	validate := processTemplateRequest(t, f, http.MethodPost, "/v1/process/validate", map[string]any{"template": tmpl})
@@ -688,7 +688,7 @@ func TestProcessTemplateSemanticDiagnosticFloodIsBoundedAndRejectsSave(t *testin
 }
 
 func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := processRESTTemplate("validate-me", "invalid edge", 10)
 	edges := model.NormalizeEdges(tmpl)
 	for i := range edges {
@@ -717,7 +717,7 @@ func TestProcessValidateReturnsEditorScopedAdvisoryDiagnostics(t *testing.T) {
 }
 
 func TestProcessValidateReturnsStableCardinalityDiagnosticsAndSaveRejects(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := overBudgetProcessTemplate("cardinality")
 	body := map[string]any{"template": tmpl}
 
@@ -749,7 +749,7 @@ func TestProcessValidateReturnsStableCardinalityDiagnosticsAndSaveRejects(t *tes
 }
 
 func TestProcessValidateRejectsHostileStructuredEdgeWireBeforeCanonicalization(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion, Kind: model.Kind, ID: "edge-wire", Start: "target",
 		Nodes: map[string]model.Node{"target": {Type: model.NodeTypeEnd}},
@@ -812,7 +812,7 @@ func semanticDiagnosticFloodProcessTemplate() *model.Template {
 // test has a DOTTED id, so it also pins the longest-prefix targetId
 // anchoring (a naive first-dot split would emit "work").
 func TestProcessValidateSurfacesSection8aDiagnostics(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := &model.Template{
 		APIVersion: model.APIVersion,
 		Kind:       model.Kind,
@@ -874,7 +874,7 @@ func TestProcessValidateSurfacesSection8aDiagnostics(t *testing.T) {
 }
 
 func TestProcessValidateRejectsDuplicateNormalizedEdges(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, _ := processAuthoringFlow(t)
 	tmpl := processRESTTemplate("duplicate-edge", "ambiguous graph", 10)
 	edges := model.NormalizeEdges(tmpl)
 	require.NotEmpty(t, edges)
@@ -888,19 +888,30 @@ func TestProcessValidateRejectsDuplicateNormalizedEdges(t *testing.T) {
 }
 
 func TestDashboardProcessRESTRequiresDashboardAuth(t *testing.T) {
-	processEngineFlow(t)
+	processAuthoringFlow(t)
 	mux := http.NewServeMux()
 	agentd.RegisterDashboardRoutesForTest(mux)
 	rec := testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/templates", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/template-heads", nil))
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodGet, "/v1/process/worklist", nil))
-	assert.Equal(t, http.StatusForbidden, rec.Code)
-	rec = testharness.Serve(mux, testharness.JSONRequest(t, http.MethodPost, "/v1/process/worklist/wi_x/action", map[string]string{
-		"action": "approve", "comment": "c", "idempotencyKey": "k",
-	}))
-	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestProcessRuntimeHTTPRoutesAreAbsentWithoutEngine(t *testing.T) {
+	f, _ := processAuthoringFlow(t)
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/v1/process/runs"},
+		{http.MethodPost, "/v1/process/runs"},
+		{http.MethodGet, "/v1/process/runs/legacy"},
+		{http.MethodPost, "/v1/process/runs/legacy/nodes/work/report"},
+		{http.MethodGet, "/v1/process/worklist"},
+	} {
+		rec := processTemplateRequest(t, f, test.method, test.path, map[string]any{})
+		assert.Equalf(t, http.StatusNotFound, rec.Code, "%s %s: %s", test.method, test.path, rec.Body.String())
+	}
 }
 
 func TestDashboardSnapshotDynamicallyGatesProcessesTab(t *testing.T) {

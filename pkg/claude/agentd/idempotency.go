@@ -41,14 +41,6 @@ func idempotencyRequestsWithOwner(h http.Handler, ownerID string) http.Handler {
 
 func idempotencyRequestsWithOwnerAndWaitHook(h http.Handler, ownerID string, waitHook func()) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Schema-8 unlock apply re-evaluates its non-default permission on every
-		// invocation and uses only checkpoint-bound domain replay. Bypass before
-		// even looking at generic idempotency headers or durable request state.
-		// This helper is shared by the socket and dashboard middleware placements.
-		if r.Method == http.MethodPost && isEpochV8ApplyPath(r.URL.Path) {
-			h.ServeHTTP(w, r)
-			return
-		}
 		key := strings.TrimSpace(r.Header.Get(agent.IdempotencyKeyHeader))
 		if key == "" || !isMutatingMethod(r.Method) {
 			h.ServeHTTP(w, r)

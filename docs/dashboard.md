@@ -649,62 +649,14 @@ work-pattern broadcast target — so you cannot create a role called `all`.)
 
 ### Processes
 
-Visible only when the experimental Processes feature flag is on — the tab
-chrome and its REST surface are both gated on `processes_enabled`. See
-[Processes](processes.md) for the model, CLI, and API. The tab covers process
-templates, instantiated runs, the run viewer, and human work; this section
-documents the schema-8 (owner-epoch) run surfaces.
+Visible only when the experimental Processes feature flag is on. The tab and
+its REST surface expose the template library and drag-and-drop editor: template
+creation, validated CAS saves, versions, parameters, performers, layout,
+snippets, authorship, deletion, and scoped process scribes.
 
-#### Schema-8 runs and unlock
-
-Schema-8 unlock is implemented for development and testing but is not
-released or supported for operational use — see the status note at the top of
-[Processes](processes.md).
-
-A schema-8 run renders the **safe summary envelope** only — counts, refs, and
-bounded labels; never exact topology, raw runtime state, or restricted
-artifacts. The viewer names that restriction honestly with an
-`epoch_v8_summary` banner instead of claiming the schema is unsupported. The
-run header carries an **⟳ adapted** badge once the run's template has been
-adapted, and the **Adaptation summary** panel shows the original/current
-template refs, the epoch lineage (oldest and newest halves when the chain is
-truncated), current structure totals with a changed-from-original marker,
-authority state chips, outstanding owner-epoch work rows (each tagged with an
-**◈ epoch N** badge naming its owner epoch), and the bounded apply history
-with honest totals.
-
-**Unlock panel (Draft → Preview → Apply).** The panel adapts a running
-schema-8 process to a new candidate template:
-
-- **Drafts are memory-only.** The candidate YAML, optional reason, and
-  handoff choices live exclusively in the panel's in-browser state — never in
-  browser storage, URLs, or server-side drafts. Nothing durable exists until
-  an apply commits. Candidate sources over 4 MiB are refused client-side
-  before anything is serialized; the server enforces the same ceiling.
-- **Preview** validates the draft against the run's current binding and
-  returns the bounded projection: status, graph totals, blockers, and — when
-  valid — an opaque apply token. Blockers are resolved inline by choosing a
-  handoff per blocker: retain, or transfer to a target.
-- **Binding changes invalidate, never rebase.** If the run's binding moves —
-  another apply landed or the engine settled work — the preview and all its
-  tokens are discarded and a status banner says so, while the dirty draft is
-  preserved verbatim for re-preview. A preview response that raced a binding
-  change is likewise discarded rather than installed, so a stale apply token
-  can never reach the apply button.
-- **Apply** is reachable only through an explicit confirmation that restates
-  the preview, and requires the `process.runs.unlock` permission (sensitive:
-  not default-granted, not owner-implied). The dashboard's authenticated
-  human operator passes this check directly; an agent caller without the slug
-  can be granted one one-shot, bounded human approval whose popup preview
-  shows a redacted placeholder — never the draft material — and denial or
-  timeout fails closed. The permission cannot be made persistent through the
-  popup.
-
-**Exact artifacts (restricted).** Each applied epoch offers an exact **diff**
-and **reason** drill-down, fetched only on explicit request. These reads
-require the `process.runs.unlock.read` permission; a denial renders as a
-bounded message naming the permission, and the denied response body is never
-rendered. Everything else on the panel stays within the safe envelope.
+The legacy execution engine and its Runs, Worklist, viewer, and instantiation
+surfaces have been removed. Runtime execution is temporarily unavailable while
+the replacement engine is designed. See [Processes](processes.md).
 
 ### Cron
 

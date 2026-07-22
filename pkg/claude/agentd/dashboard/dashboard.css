@@ -5469,6 +5469,8 @@ body.wizard #tab-processes .process-scribe-wizard { display: inline; }
 .process-scribe-state { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .process-scribe-state.online { color: #3fb950; }
 .process-scribe-state.stopped { color: #d29922; }
+.process-scribe-open { border: 0; padding: 0; color: #58a6ff; background: none; font: inherit; cursor: pointer; text-decoration: underline dotted; }
+.process-scribe-open:disabled { color: #8b949e; cursor: default; }
 .process-scribe-session .process-action { padding: 3px 7px; font-size: 12px; }
 .process-scribe-task { color: #79c0ff; font-size: 12px; }
 .process-notice { color: #8b949e; font-size: 12px; }
@@ -5546,179 +5548,6 @@ body:has(#tab-processes.active #process-editor-view) .process-canvas-mount {
    ⚠ degraded strip names unreadable runs (never silently dropped); rows carry
    glyph+text kind cells, the nudge-schedule line, and inline dark-themed
    action buttons with a required comment input. */
-.process-worklist-views { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.process-view-chip {
-  border: 1px solid #30363d; border-radius: 14px; background: #161b22;
-  color: #c9d1d9; padding: 3px 11px; cursor: pointer; font: inherit; font-size: 12px;
-}
-.process-view-chip:hover { background: #21262d; border-color: #484f58; }
-.process-view-chip.active { color: #fff; background: #1f6feb; border-color: #388bfd; }
-.wl-view-count { margin-left: 5px; color: #8b949e; font-size: 11px; }
-.process-view-chip.active .wl-view-count { color: #c6dbff; }
-.wl-view-count:empty { display: none; }
-.wl-degraded {
-  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
-  margin: 0 0 10px; padding: 8px 12px; border: 1px solid #9e6a03;
-  border-radius: 6px; background: #2d2305; color: #e3b341; font-size: 12px;
-}
-.wl-degraded-glyph { font-size: 14px; }
-.wl-degraded-run { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-decoration: underline dotted; }
-.wl-row .wl-kind { white-space: nowrap; }
-.wl-row.wl-resolved .wl-summary { color: #8b949e; }
-/* Overdue/due-soon: a left accent bar + tinted due cell; the ⚠/"in Nh" text
-   in the cell carries the meaning for color-blind readers. */
-.wl-row.wl-overdue td:first-child { box-shadow: inset 3px 0 0 #f85149; }
-.wl-row.wl-detached td:first-child { box-shadow: inset 3px 0 0 #a371f7; }
-.wl-detached-badge {
-  display: inline-block; margin-left: 4px; padding: 1px 5px; border: 1px solid #6e40c9;
-  border-radius: 9px; color: #d2a8ff; background: #21143a; font-size: 10px; white-space: nowrap;
-}
-
-/* Live process viewer (TCL-447). The graph reads exact-template topology plus
-   checkpoint overlays; rich records are separately paged and evidence is a
-   visibly segregated timeline. All controls are explicitly dark-themed. */
-#process-viewer-canvas.process-viewer {
-  min-height: 640px; padding: 0; overflow: hidden; color: #c9d1d9;
-  background: #0d1117; border: 1px solid #30363d; border-style: solid;
-}
-.process-viewer-header {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
-  padding: 14px 16px; border-bottom: 1px solid #30363d; background: #161b22;
-}
-.process-viewer-header h3 { margin: 2px 0 3px; color: #f0f6fc; font-size: 20px; }
-.process-viewer-kicker { color: #79c0ff; font-size: 10px; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; }
-.process-viewer-ref { max-width: 66vw; overflow: hidden; color: #8b949e; font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
-.process-viewer-run-state { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 7px; color: #8b949e; font-size: 11px; }
-.process-viewer-authority-strip {
-  padding: 8px 16px; border-bottom: 1px solid #274666; background: #101d2b;
-  color: #9fc5e8; font-size: 12px;
-}
-.process-viewer-unavailable {
-  display: flex; align-items: flex-start; gap: 10px; margin: 12px 16px 0; padding: 10px 12px;
-  border: 1px solid #9e6a03; border-radius: 7px; color: #e3b341; background: #2d2305;
-}
-.process-viewer-unavailable.reason-inconsistent,
-.process-viewer-unavailable.reason-over_budget { border-color: #b62324; color: #ffb3ad; background: #2b1516; }
-.process-viewer-unavailable p { margin: 3px 0; color: inherit; font-size: 12px; }
-.process-viewer-unavailable code { color: #8b949e; font-size: 10px; }
-.process-viewer-unavailable-glyph { font-size: 17px; }
-.process-viewer-state-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 16px 0; }
-.process-viewer-state-chips > span {
-  padding: 4px 8px; border: 1px solid #30363d; border-radius: 12px; color: #aeb7c1;
-  background: #161b22; font-size: 10px;
-}
-.process-viewer-state-chips strong { color: #e6edf3; }
-.process-viewer-main { display: grid; grid-template-columns: minmax(420px, 1.2fr) minmax(390px, .8fr); gap: 12px; padding: 12px 16px; }
-.process-viewer-graph-panel, .process-viewer-details {
-  min-width: 0; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d;
-}
-.process-viewer-graph-panel { display: block; }
-.process-viewer-graph { min-height: 470px; height: 100%; }
-.process-viewer-graph .process-graph { min-height: 470px; border: 0; border-radius: 0; }
-.process-viewer-graph .process-port-layer { display: none; }
-.process-viewer-details { display: flex; min-height: 470px; flex-direction: column; }
-.process-viewer-section-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  padding: 10px 12px; border-bottom: 1px solid #30363d; background: #161b22;
-  color: #8b949e; font-size: 11px;
-}
-.process-viewer-section-head h4 { margin: 0; color: #e6edf3; font-size: 13px; }
-.process-viewer-tabs { display: flex; gap: 4px; padding: 8px; overflow-x: auto; border-bottom: 1px solid #21262d; }
-.process-viewer-tabs button {
-  display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 4px 7px;
-  border: 1px solid #30363d; border-radius: 5px; color: #aeb7c1; background: #161b22;
-  font: 11px/1.3 inherit; cursor: pointer;
-}
-.process-viewer-tabs button:hover { border-color: #58a6ff; }
-.process-viewer-tabs button.active { color: #fff; border-color: #388bfd; background: #1f6feb; }
-.process-viewer-tabs button span { min-width: 14px; text-align: center; color: #8b949e; font-size: 9px; }
-.process-viewer-tabs button.active span { color: #c6dbff; }
-.process-viewer-tabpanel { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-.process-viewer-tabpanel[hidden] { display: none; }
-.process-viewer-detail-summary { display: flex; align-items: center; gap: 6px; padding: 7px 9px; color: #8b949e; font-size: 10px; }
-.process-viewer-detail-summary .process-action { padding: 3px 7px; font-size: 10px; }
-.process-viewer-detail-summary .process-action:disabled { opacity: .4; cursor: default; }
-.process-viewer-table-wrap { flex: 1; max-height: 370px; overflow: auto; }
-.process-viewer-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.process-viewer-table th, .process-viewer-table td { padding: 7px 8px; border-top: 1px solid #21262d; text-align: left; vertical-align: top; }
-.process-viewer-table th { position: sticky; top: 0; z-index: 1; color: #8b949e; background: #161b22; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
-.process-viewer-id { color: #79c0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: help; }
-.process-viewer-empty { padding: 18px !important; color: #8b949e; text-align: center !important; }
-.process-viewer-timeline { display: block; margin: 0 16px 16px; overflow: hidden; border: 1px solid #30363d; border-radius: 8px; background: #11161d; }
-.process-viewer-timeline ol { max-height: 190px; margin: 0; padding: 0; overflow: auto; list-style: none; }
-.process-viewer-timeline li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 9px; padding: 7px 11px; border-top: 1px solid #21262d; color: #aeb7c1; font-size: 11px; }
-.process-viewer-timeline li:first-child { border-top: 0; }
-.process-viewer-timeline li strong { color: #e6edf3; }
-.process-viewer-seq { min-width: 40px; color: #8b949e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.process-viewer-authority { color: #79c0ff; }
-
-/* The wizard skin changes the full viewer chrome—not just accents—while
-   preserving the same DTOs, labels, warning glyphs, and pagination controls. */
-body.wizard #process-viewer-canvas.process-viewer { color: #eadff8; background: #100c1b; border-color: #4a3d6b; }
-body.wizard .process-viewer-header,
-body.wizard .process-viewer-section-head { background: #211832; border-color: #4a3d6b; }
-body.wizard .process-viewer-header h3,
-body.wizard .process-viewer-section-head h4,
-body.wizard .process-viewer-state-chips strong,
-body.wizard .process-viewer-timeline li strong { color: #f3e6c0; }
-body.wizard .process-viewer-kicker,
-body.wizard .process-viewer-authority,
-body.wizard .process-viewer-id { color: #d4af37; }
-body.wizard .process-viewer-authority-strip { color: #d7c9ff; background: #1a1430; border-color: #6d54a3; }
-body.wizard .process-viewer-state-chips > span,
-body.wizard .process-viewer-tabs button { color: #c9b8f0; background: #211832; border-color: #4a3d6b; }
-body.wizard .process-viewer-tabs button.active { color: #1a1325; background: #d4af37; border-color: #f0cf67; }
-body.wizard .process-viewer-tabs button.active span { color: #4a3610; }
-body.wizard .process-viewer-graph-panel,
-body.wizard .process-viewer-details,
-body.wizard .process-viewer-timeline { background: #171021; border-color: #4a3d6b; }
-body.wizard .process-viewer-tabs,
-body.wizard .process-viewer-table th,
-body.wizard .process-viewer-table td,
-body.wizard .process-viewer-timeline li { border-color: #3a2f57; }
-body.wizard .process-viewer-table th { color: #b39ddb; background: #211832; }
-body.wizard .wl-detached-badge { color: #f3e6c0; background: #2c2042; border-color: #a28bd4; }
-@media (max-width: 980px) {
-  .process-viewer-main { grid-template-columns: 1fr; }
-  .process-viewer-graph, .process-viewer-graph .process-graph { min-height: 390px; }
-}
-@media (max-width: 620px) {
-  .process-viewer-header { flex-direction: column; }
-  .process-viewer-run-state { justify-content: flex-start; }
-  .process-viewer-main { padding: 10px; }
-  .process-viewer-timeline { margin: 0 10px 10px; }
-}
-.wl-row.wl-overdue .wl-due { color: #f85149; font-weight: 600; }
-.wl-row.wl-due-soon td:first-child { box-shadow: inset 3px 0 0 #e3b341; }
-.wl-row.wl-due-soon .wl-due { color: #e3b341; }
-.wl-nudge { margin-top: 3px; }
-.wl-nudge.wl-paused { color: #e3b341; }
-.wl-group-head td {
-  padding-top: 14px; color: #c9d1d9; font-weight: 600; font-size: 12px;
-  text-transform: none; letter-spacing: normal; border-bottom: 1px solid #30363d;
-}
-.wl-link {
-  border: none; background: none; padding: 0; cursor: pointer; font: inherit;
-  color: #58a6ff; text-decoration: underline dotted; text-underline-offset: 2px;
-}
-.wl-link:hover { color: #79c0ff; }
-.wl-link-node { font-size: 12px; }
-.wl-age, .wl-due { white-space: nowrap; }
-.wl-actions { min-width: 220px; }
-.wl-comment {
-  width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 4px 8px;
-  border: 1px solid #30363d; border-radius: 6px; background: #0d1117;
-  color: #c9d1d9; font: inherit; font-size: 12px;
-}
-.wl-comment:focus { outline: none; border-color: #388bfd; }
-.wl-comment.wl-comment-missing { border-color: #f85149; }
-.wl-comment.wl-comment-missing::placeholder { color: #f85149; }
-.wl-action-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-.wl-action-row .wl-action { padding: 4px 8px; font-size: 12px; white-space: nowrap; }
-/* Deep-link landing flash on the Runs row a worklist run/node link targets. */
-@keyframes wl-run-flash { 0% { background: #1f6feb55; } 100% { background: transparent; } }
-.wl-run-flash { animation: wl-run-flash 1.6s ease-out 1; }
-
 /* Terminals-tab auto-hide. body.hide-terminals is set by js/terminals-tab.js
    whenever no terminal pane is open — the tab exists only while ≥1 web terminal
    / window is live. Unlike Costs/Plugins (server flags), this is driven
@@ -12383,13 +12212,10 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   overflow: hidden;
 }
 .process-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-/* Actual editor-owned overflow containers carry this marker. The two shared
-   portal surfaces are included only while the existing active-editor marker is
-   present, so viewer/worklist and unrelated dashboard scrollbars keep their
-   native/component behavior. */
+/* Actual editor-owned overflow containers carry this marker. The command
+   palette joins only while the existing active-editor marker is present. */
 .process-scroll-surface,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {
   --process-scrollbar-track: #0d1117;
   --process-scrollbar-thumb: #6e7681;
   --process-scrollbar-thumb-hover: #8b949e;
@@ -12399,8 +12225,7 @@ body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog
   scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);
 }
 body.wizard .process-scroll-surface,
-body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,
-body.wizard:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {
+body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {
   --process-scrollbar-track: #181226;
   --process-scrollbar-thumb: #755da0;
   --process-scrollbar-thumb-hover: #957ac0;
@@ -12408,74 +12233,61 @@ body.wizard:has(#tab-processes.active #process-editor-view) .process-instantiate
   --process-scrollbar-corner: #211832;
 }
 .process-scroll-surface::-webkit-scrollbar,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 .process-scroll-surface::-webkit-scrollbar-track,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-track {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track {
   background: var(--process-scrollbar-track);
 }
 .process-scroll-surface::-webkit-scrollbar-thumb,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
   min-height: 24px;
   background: var(--process-scrollbar-thumb);
   border-radius: 6px;
 }
 .process-scroll-surface::-webkit-scrollbar-thumb:hover,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:hover {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover {
   background: var(--process-scrollbar-thumb-hover);
 }
 .process-scroll-surface::-webkit-scrollbar-thumb:active,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:active {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active {
   background: var(--process-scrollbar-thumb-active);
 }
 .process-scroll-surface::-webkit-scrollbar-corner,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner,
-body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-corner {
+body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner {
   background: var(--process-scrollbar-corner);
 }
 /* High contrast returns to native geometry/Firefox colors. System keywords
    provide a safe fallback where Chromium still exposes the pseudo-elements. */
 @media (forced-colors: active) {
   .process-scroll-surface,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog {
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {
     scrollbar-width: auto;
     scrollbar-color: auto;
     forced-color-adjust: auto;
   }
   .process-scroll-surface::-webkit-scrollbar,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar {
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar {
     width: auto;
     height: auto;
   }
   .process-scroll-surface::-webkit-scrollbar-track,
   body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-track,
   .process-scroll-surface::-webkit-scrollbar-corner,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-corner {
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner {
     background: Canvas;
   }
   .process-scroll-surface::-webkit-scrollbar-thumb,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb {
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
     background: ButtonText;
     border: 1px solid Canvas;
   }
   .process-scroll-surface::-webkit-scrollbar-thumb:hover,
   body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:hover,
   .process-scroll-surface::-webkit-scrollbar-thumb:active,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active,
-  body:has(#tab-processes.active #process-editor-view) .process-instantiate-dialog::-webkit-scrollbar-thumb:active {
+  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active {
     background: Highlight;
   }
 }
@@ -13031,15 +12843,6 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 .process-param-check { display: flex; align-items: center; gap: 5px; min-height: 31px; color: #c9d1d9; font-size: 12px; white-space: nowrap; }
 .process-param-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .process-param-error { min-height: 18px; color: #f85149; font-size: 12px; text-align: right; }
-.process-instantiate-dialog {
-  width: min(560px, 94vw);
-  max-width: 560px;
-  max-height: 86vh;
-  overflow-y: auto;
-  color: #c9d1d9;
-  background: #161b22;
-  border: 1px solid #30363d;
-}
 /* Chrome only: the .process-editor-modal skin supplies the field, button, and
    wizard treatment, so this must not restate colours the skin already owns. */
 .process-rename-dialog { width: min(460px, 94vw); }
@@ -13048,21 +12851,6 @@ body.wizard .process-list .process-actions .process-delete-btn:focus-visible .tr
 /* An unnamed template falls back to its id; mark it so the row reads as
    "not named yet" rather than as a deliberate name. */
 .process-unnamed { color: #8b949e; font-style: italic; }
-.process-instantiate-fields { display: flex; flex-direction: column; gap: 10px; margin: 14px 0; }
-.process-instantiate-field { padding: 9px 10px; border: 1px solid #30363d; border-radius: 8px; background: #0d1117; }
-.process-instantiate-field > label:not(.process-instantiate-boolean) { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 650; color: #e6edf3; }
-.process-instantiate-field input[type="text"],
-.process-instantiate-field input[type="number"],
-.process-instantiate-field select {
-  box-sizing: border-box;
-  width: 100%;
-  padding: 7px 8px;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  color: #e6edf3;
-  background: #161b22;
-}
-.process-instantiate-field .process-secondary { margin-top: 4px; }
 @media (max-width: 780px) {
   .process-param-row { grid-template-columns: 1fr 1fr; }
   .process-param-description-field, .process-param-default-field { grid-column: 1 / -1; }
@@ -13214,8 +13002,7 @@ body.wizard .process-editor-modal .modal-buttons button:not(.confirm-danger) {
 body.wizard .process-editor-modal .modal-buttons button.primary {
   background: #6d4aa2; border-color: #d4af37;
 }
-body.wizard .process-param-dialog,
-body.wizard .process-instantiate-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-param-dialog { background: #211832; border-color: #6d5695; color: #f3e6c0; }
 body.wizard .process-unnamed { color: #a99bc0; }
 body.wizard .process-editor-title,
 body.wizard .process-name-edit { color: #f3e6c0; }
@@ -13225,17 +13012,10 @@ body.wizard .process-name-edit:hover:not(:disabled) { background: #181226; borde
 body.wizard .process-editor-title-input,
 body.wizard .process-description-input,
 body.wizard .process-name-input { color: #f3e6c0; background: #181226; border-color: #d4af37; }
-body.wizard .process-param-row,
-body.wizard .process-instantiate-field { background: #181226; border-color: #4a3d6b; }
-body.wizard .process-param-row input[type="text"],
-body.wizard .process-instantiate-field input[type="text"],
-body.wizard .process-instantiate-field input[type="number"],
-body.wizard .process-instantiate-field select { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
-body.wizard .process-param-row input:focus,
-body.wizard .process-instantiate-field input:focus,
-body.wizard .process-instantiate-field select:focus { border-color: #d4af37; outline: none; }
-body.wizard .process-param-check,
-body.wizard .process-instantiate-field > label:not(.process-instantiate-boolean) { color: #f3e6c0; }
+body.wizard .process-param-row { background: #181226; border-color: #4a3d6b; }
+body.wizard .process-param-row input[type="text"] { background: #2c2042; border-color: #6d5695; color: #f3e6c0; }
+body.wizard .process-param-row input:focus { border-color: #d4af37; outline: none; }
+body.wizard .process-param-check { color: #f3e6c0; }
 
 /* === Node edit dialog / detail card (process-node-dialog.js, TCL-298) ======
    One component, two modes: the editor's modal and the viewer's read-only
@@ -13644,29 +13424,3 @@ body.wizard .usage-history-note {
   background: #1c1436; border-color: rgba(122, 93, 176, 0.4); color: #b39ddb;
 }
 body.wizard .usage-history-error { color: #f0a3bf; }
-
-/* Schema-8 adaptation summary (S6). Badges are glyph+text, never color-only. */
-.process-adapted-badge, .wl-epoch-badge {
-  display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px;
-  border: 1px solid var(--border, #8884); white-space: nowrap;
-}
-/* The dashboard hides bare <section> tabs globally; the epoch summary is an
-   in-viewer section and must opt back in like the other viewer panels. */
-.process-epoch-summary { display: block; border-top: 1px solid var(--border, #8884); margin-top: 10px; padding: 8px 16px 0; }
-.process-epoch-lineage { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 4px 16px; margin: 6px 0; }
-.process-epoch-lineage dt { font-size: 11px; opacity: 0.75; }
-.process-epoch-subhead { margin: 10px 0 4px; }
-.process-epoch-list, .process-epoch-entries, .process-epoch-timeline { margin: 4px 0; padding-left: 18px; }
-.process-epoch-timeline { max-height: 180px; overflow-y: auto; }
-.process-unlock-panel { border-top: 1px dashed var(--border, #8884); margin-top: 10px; padding-top: 8px; }
-.process-unlock-source { width: 100%; font-family: monospace; font-size: 12px; }
-.process-unlock-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
-.process-unlock-row input[type="text"] { flex: 1 1 160px; min-width: 120px; }
-.process-unlock-label { font-size: 11px; opacity: 0.8; }
-.process-unlock-stale, .process-unlock-applied { border: 1px solid var(--border, #8884); border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
-.process-unlock-blockers { padding-left: 18px; }
-.process-unlock-handoff, .process-unlock-transfer { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
-.process-unlock-transfer input { width: 110px; }
-.process-unlock-confirm { border: 1px solid var(--border, #8884); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
-.process-epoch-artifact-pre { max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
-.process-epoch-artifact-row { margin-right: 12px; }

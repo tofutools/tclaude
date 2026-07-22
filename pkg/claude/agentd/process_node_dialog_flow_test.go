@@ -21,7 +21,7 @@ import (
 )
 
 func TestProcessNodeDialogEditPathSaveRoundTrip(t *testing.T) {
-	f, root := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	fs, err := store.NewFS(root)
 	require.NoError(t, err)
 	seed := &model.Template{

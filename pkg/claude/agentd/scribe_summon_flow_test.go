@@ -271,7 +271,7 @@ func TestScribeSummon_SameScopeReusesAndRefreshesBrief(t *testing.T) {
 }
 
 func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
-	f, _ := processEngineFlow(t)
+	f, root := processAuthoringFlow(t)
 	stubScribeTerminal(t)
 	taskURL := "https://dashboard.example/processes/templates"
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/scribe",
@@ -331,9 +331,8 @@ func TestScribeSummon_ProcessScopePersistsTaskAndApprovalAudit(t *testing.T) {
 	listed := processTemplateRequest(t, f, http.MethodGet, "/v1/process/templates", nil)
 	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
 	assert.Contains(t, listed.Body.String(), saved.Actor, "version/change-review readback retains the exact scribe actor")
-	runs := processTemplateRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
-	require.Equal(t, http.StatusOK, runs.Code, runs.Body.String())
-	assert.JSONEq(t, `{"runs":[]}`, runs.Body.String(), "summoning and authoring never instantiate or execute a process")
+	_, err = os.Stat(filepath.Join(root, "runs"))
+	assert.ErrorIs(t, err, os.ErrNotExist, "summoning and authoring never instantiate or execute a process")
 
 	// Reuse refreshes the task reference but does not mint or relabel grants.
 	secondTask := "https://dashboard.example/processes/templates?refreshed=1"
