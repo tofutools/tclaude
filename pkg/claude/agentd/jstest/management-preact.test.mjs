@@ -714,6 +714,29 @@ test('global harness filesystem rows start folded, remain immutable, and are nev
   await harness.act(() => Promise.resolve());
   const filter = host.querySelector('#sandbox-profile-editor-global-harness-filter');
   assert.equal(filter.querySelector('option:checked').value, 'both');
+  const selectedDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(filter.querySelector('option')), 'selected');
+  const valueDescriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(filter), 'value');
+  let pollSelectedWrites = 0;
+  let pollValueReads = 0;
+  Object.defineProperty(filter, 'value', {
+    configurable: true,
+    get() { pollValueReads += 1; return valueDescriptor.get.call(this); },
+  });
+  for (const option of filter.querySelectorAll('option')) {
+    Object.defineProperty(option, 'selected', {
+      configurable: true,
+      get() { return selectedDescriptor.get.call(this); },
+      set(value) { pollSelectedWrites += 1; selectedDescriptor.set.call(this, value); },
+    });
+  }
+  state.updateTemplates([{ name: 'snapshot-poll' }], []);
+  await harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#sandbox-profile-editor-global-harness-filter'), filter, 'snapshot polls preserve the native select node');
+  assert.equal(pollValueReads, 0, 'snapshot polls do not reconcile the open editor select');
+  assert.equal(pollSelectedWrites, 0, 'snapshot polls do not reapply controlled options and close the native dropdown');
+  state.sandboxProfiles.value = [{ name: 'new-registry-profile', filesystem: [], environment: [] }];
+  await harness.act(() => Promise.resolve());
+  assert.equal(pollValueReads > 0, true, 'sandbox-registry changes still reconcile the editor');
   let inherited = [...host.querySelectorAll('.sbx-global-row')];
   assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
   assert.equal(inherited[0].getAttribute('role'), 'group');
