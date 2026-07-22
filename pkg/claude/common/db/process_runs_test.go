@@ -146,6 +146,27 @@ func TestProcessRunTransitionRollbackAndVersionCAS(t *testing.T) {
 	assert.Equal(t, int64(2), conflict.Actual)
 }
 
+func TestProcessRunTransitionCanAssignEvidenceSequenceAtomically(t *testing.T) {
+	setupTestDB(t)
+	input := processRunFixture(t, "run_auto_sequence", "running", json.RawMessage(`{"step":1}`))
+	input.InitialEvents = []ProcessRunEvent{processRunEvent(7, "created")}
+	require.NoError(t, CreateProcessRun(input))
+
+	event := processRunEvent(0, "advanced")
+	_, err := TransitionProcessRun(input.ID, ProcessRunTransition{
+		ExpectedStateVersion: 1,
+		Status:               "running",
+		CheckpointJSON:       json.RawMessage(`{"step":2}`),
+		Events:               []ProcessRunEvent{event},
+	})
+	require.NoError(t, err)
+
+	events, err := ListProcessRunEvents(input.ID, 0, MaxProcessRunEventReadPage)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.Equal(t, []int64{7, 8}, []int64{events[0].Sequence, events[1].Sequence})
+}
+
 func TestProcessRunTransitionRollsBackPartialEvidenceAppend(t *testing.T) {
 	setupTestDB(t)
 	input := processRunFixture(t, "run_partial_rollback", "running", json.RawMessage(`{"step":1}`))
