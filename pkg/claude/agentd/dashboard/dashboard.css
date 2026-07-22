@@ -3921,6 +3921,10 @@ body.wizard .group-pending-title-wizard { display: inline; }
   color: #8b949e; overflow-wrap: anywhere;
 }
 .sbx-common-rule-informational { color: #8b949e; font-size: 12px; margin-top: 8px; }
+/* The feed is optional, so its failure stays inside the menu it belongs to
+   rather than in the editor's shared error line, where it would displace a
+   save or break-glass refusal. */
+.sbx-common-rule-feed-error { color: #f0883e; font-size: 12px; line-height: 1.45; margin: 2px 0 6px; }
 /* What the last insertion actually did, warning included: rows appearing in a
    long table are easy to miss, and a deny of Home is only safe once its
    consequence has been read. */

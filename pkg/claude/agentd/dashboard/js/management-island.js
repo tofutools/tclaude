@@ -28,16 +28,42 @@ function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: 
    entry is stored — after insertion the rows are plain, editable table rows. */
 function CommonRuleEntry({ entry, onAdd }) {
   const paths = commonRulePaths(entry);
+  // The rationale, the warning and the exact paths are what make the button
+  // safe to press, so they are announced with it rather than left as nearby
+  // text a screen-reader or keyboard operator can tab straight past.
+  const base = `sbx-common-rule-${String(entry.id || '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
+  const descrID = `${base}-descr`; const warnID = `${base}-warn`; const pathsID = `${base}-paths`;
+  const describedBy = [descrID, entry.warning ? warnID : '', pathsID].filter(Boolean).join(' ');
   return html`<div class="sbx-common-rule-entry" data-rule=${entry.id}>
-    <button type="button" class="sbx-common-rule-add" disabled=${!paths.length} onClick=${() => onAdd(entry)}>＋ ${entry.label || entry.id}</button>
-    <span class="sbx-common-rule-descr">${entry.description || ''}</span>
-    ${entry.warning ? html`<span class="sbx-common-rule-warn">⚠ ${entry.warning}</span>` : null}
-    <code class="sbx-common-rule-paths">${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}</code>
+    <button type="button" class="sbx-common-rule-add" aria-describedby=${describedBy} disabled=${!paths.length} onClick=${() => onAdd(entry)}>＋ ${entry.label || entry.id}</button>
+    <span class="sbx-common-rule-descr" id=${descrID}>${entry.description || ''}</span>
+    ${entry.warning ? html`<span class="sbx-common-rule-warn" id=${warnID}>⚠ ${entry.warning}</span>` : null}
+    <code class="sbx-common-rule-paths" id=${pathsID}>${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}</code>
   </div>`;
 }
 
 function commonRulePaths(entry) {
   return [...new Set((entry?.paths || []).map((path) => String(path || '').trim()).filter(Boolean))];
+}
+
+/* Comparison-only path identity. Trailing separators, duplicated separators
+   and `.` segments all name the same location, so treating them as distinct
+   lets a preset append a deny for a path the operator already authored as
+   `write` — the daemon canonicalizes and folds deny over write, silently
+   overriding the authored row while the notice claims it was left as
+   authored. `..` segments and symlinks cannot be resolved in the browser, so
+   paths carrying them stay deliberately distinct rather than guessed at. The
+   inserted row always keeps the catalog's own spelling; only the comparison
+   normalizes. `~` is just an ordinary leading segment here: `~/go/` and `~/go`
+   match, `~/go` and `/home/op/go` do not. */
+function pathIdentity(path) {
+  const raw = String(path || '').trim();
+  if (!raw) return '';
+  const segments = raw.split('/').filter((segment) => segment && segment !== '.');
+  if (segments.includes('..')) return raw;
+  const rooted = raw.startsWith('/');
+  const joined = segments.join('/');
+  return rooted ? `/${joined}` : joined;
 }
 
 function RequestList({ request, label, retry, children }) {
@@ -184,7 +210,28 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // What the last insertion did, including the entry's warning — the operator
   // must see the consequence of the rows that just appeared in the table.
   const [commonRuleNotice, setCommonRuleNotice] = useState(null);
-  useEffect(() => { let active = true; if (typeof actions.loadCommonRuleCatalog !== 'function') return () => { active = false; }; actions.loadCommonRuleCatalog().then((value) => { if (active) setCommonRules(value || { version: 0, categories: [], informational: [] }); }).catch((error) => { if (active) state.error.value = `Could not load the common-rule catalog: ${error.message || String(error)}`; }); return () => { active = false; }; }, []);
+  // The feed is optional and its failures are the menu's own business. They
+  // must never reach `state.error`, which carries save, validation and
+  // break-glass refusals: a late rejection would replace the reason a save was
+  // refused with an explanation of a convenience the operator did not ask for.
+  const [commonRuleFeedError, setCommonRuleFeedError] = useState('');
+  const [commonRuleFeedBusy, setCommonRuleFeedBusy] = useState(false);
+  const commonRuleGeneration = useRef(0);
+  const loadCommonRules = () => {
+    if (typeof actions.loadCommonRuleCatalog !== 'function') return;
+    const generation = ++commonRuleGeneration.current;
+    setCommonRuleFeedBusy(true);
+    actions.loadCommonRuleCatalog().then((value) => {
+      if (generation !== commonRuleGeneration.current) return;
+      setCommonRules(value || { version: 0, categories: [], informational: [] });
+      setCommonRuleFeedError(''); setCommonRuleFeedBusy(false);
+    }).catch((error) => {
+      if (generation !== commonRuleGeneration.current) return;
+      setCommonRuleFeedError(message(error)); setCommonRuleFeedBusy(false);
+    });
+  };
+  // Unmount bumps the generation so an in-flight load resolves into nothing.
+  useEffect(() => { loadCommonRules(); return () => { commonRuleGeneration.current++; }; }, []);
   // The acknowledgement is deliberately NOT part of the draft: it never
   // persists, and every editor session must collect it afresh.
   const [breakGlassAck, setBreakGlassAck] = useState(false);
@@ -250,8 +297,14 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // exactly as authored rather than silently re-denied, and the notice says so.
   const addCommonRule = (entry) => {
     const paths = commonRulePaths(entry);
-    const existing = new Set(draft.filesystem.map((row) => String(row.path || '').trim()));
-    const added = paths.filter((path) => !existing.has(path));
+    const existing = new Set(draft.filesystem.map((row) => pathIdentity(row.path)).filter(Boolean));
+    const added = [];
+    for (const path of paths) {
+      const identity = pathIdentity(path);
+      if (!identity || existing.has(identity)) continue;
+      existing.add(identity);
+      added.push(path);
+    }
     if (added.length) setDraft((value) => ({ ...value, filesystem: [...value.filesystem, ...added.map((path) => ({ path, access: 'deny' }))] }));
     setCommonRuleNotice({ label: entry.label || entry.id, added, skipped: paths.length - added.length, warning: entry.warning || '' });
   };
@@ -281,13 +334,14 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
         onToggle=${(event) => setCommonRulesOpen(event.currentTarget.open)}>
         <summary class="sbx-common-rule-summary">＋ add common rule</summary>
         <div class="sbx-common-rule-intro">Audited presets for locations most profiles want denied. Each one inserts ordinary deny rows into the table above — visible, editable, and yours to adjust or remove afterwards. Nothing else is stored.</div>
+        ${commonRuleFeedError && html`<div id="sandbox-profile-editor-common-rule-feed-error" class="sbx-common-rule-feed-error" role="alert">Could not load the common-rule catalog: ${commonRuleFeedError} <button type="button" disabled=${commonRuleFeedBusy} onClick=${loadCommonRules}>${commonRuleFeedBusy ? 'retrying…' : 'retry'}</button></div>`}
         <div class="sbx-common-rule-list">${(commonRules.categories || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} entry=${entry} onAdd=${addCommonRule}/>`)}</div>
         ${(commonRules.informational || []).length > 0 && html`<details class="sbx-common-rule-informational"><summary>Required, non-removable access</summary>${(commonRules.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-bg-intro"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>`}
       </details>
       ${commonRuleNotice && html`<div id="sandbox-profile-editor-common-rule-notice" class="sbx-common-rule-notice" role="status">
         <span>${commonRuleNotice.added.length ? `Added ${commonRuleNotice.added.length} deny row${commonRuleNotice.added.length === 1 ? '' : 's'} from “${commonRuleNotice.label}”: ${commonRuleNotice.added.join(' · ')}.` : `“${commonRuleNotice.label}” added no rows.`}${commonRuleNotice.skipped ? ` ${commonRuleNotice.skipped} path${commonRuleNotice.skipped === 1 ? ' was' : 's were'} already in the table and left as authored.` : ''}</span>
         ${commonRuleNotice.warning ? html`<span class="sbx-common-rule-warn">⚠ ${commonRuleNotice.warning}</span>` : null}
-        <button type="button" class="sbx-common-rule-dismiss" onClick=${() => setCommonRuleNotice(null)}>×</button>
+        <button type="button" class="sbx-common-rule-dismiss" aria-label="Dismiss common-rule notice" onClick=${() => setCommonRuleNotice(null)}>×</button>
       </div>`}
     </fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>
