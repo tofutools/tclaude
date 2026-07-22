@@ -155,11 +155,35 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 	require.NoError(t, err)
 
 	for range 2 {
-		ids, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
+		ids, next, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"run_runnable"}, ids,
 			"repeated recovery pages must keep reconciliation-blocked rows before LoadRun")
+		assert.Empty(t, next)
 	}
+}
+
+func TestRunnableProcessRunIDsAdvanceByExaminedRowsNotMatches(t *testing.T) {
+	setupTestDB(t)
+	for i := range MaxProcessRunReadPage + 1 {
+		checkpoint := json.RawMessage(`{"outstandingCommand":{"id":"command"}}`)
+		if i == MaxProcessRunReadPage {
+			checkpoint = json.RawMessage(`{"cursor":"ready"}`)
+		}
+		id := fmt.Sprintf("run_recovery_%02d", i)
+		require.NoError(t, CreateProcessRun(processRunFixture(t, id, "running", checkpoint)))
+	}
+
+	ids, next, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+	assert.Equal(t, "run_recovery_31", next,
+		"cursor must advance across a full raw page even when no row is runnable")
+
+	ids, next, err = ListRunnableProcessRunIDs(next, MaxProcessRunReadPage)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"run_recovery_32"}, ids)
+	assert.Empty(t, next)
 }
 
 func TestProcessRunTransitionRollbackAndVersionCAS(t *testing.T) {

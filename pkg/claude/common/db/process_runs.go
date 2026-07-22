@@ -682,46 +682,62 @@ func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, er
 	return runs, rows.Err()
 }
 
-// ListRunnableProcessRunIDs returns only active runs whose checkpoint has no
-// outstanding command. The JSON predicate is evaluated by SQLite so recovery
-// does not materialize snapshots or checkpoints merely to reject a run that
-// requires human reconciliation.
-func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, error) {
+// ListRunnableProcessRunIDs examines one raw ID-ordered active page and returns
+// the runnable IDs within it plus an exclusive cursor for the last examined
+// row. Applying LIMIT inside the subquery bounds JSON classification even when
+// every row requires human reconciliation; snapshots and checkpoint bytes are
+// never returned to Go.
+func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, error) {
 	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
-		return nil, fmt.Errorf("%w: invalid runnable-run cursor", ErrProcessRunInvalid)
+		return nil, "", fmt.Errorf("%w: invalid runnable-run cursor", ErrProcessRunInvalid)
 	}
 	if limit <= 0 || limit > MaxProcessRunReadPage {
-		return nil, fmt.Errorf("%w: runnable-run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+		return nil, "", fmt.Errorf("%w: runnable-run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
 	}
 	d, err := Open()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	rows, err := d.Query(`SELECT
-		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END
-		FROM process_runs
-		WHERE id > ?
-			AND status NOT IN ('completed', 'failed', 'canceled')
-			AND CASE WHEN json_valid(checkpoint_json) = 1
-				THEN json_type(checkpoint_json, '$.outstandingCommand') IS NULL
-				ELSE 0 END
-		ORDER BY id LIMIT ?`, MaxProcessRunIDBytes, afterID, limit)
+		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
+		CASE WHEN json_valid(checkpoint_json) = 1
+			AND json_type(checkpoint_json, '$.outstandingCommand') IS NULL
+			THEN 1 ELSE 0 END
+		FROM (
+			SELECT id, checkpoint_json FROM process_runs
+			WHERE id > ? AND status NOT IN ('completed', 'failed', 'canceled')
+			ORDER BY id LIMIT ?
+		) AS active_page
+		ORDER BY id`, MaxProcessRunIDBytes, afterID, limit)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer func() { _ = rows.Close() }()
 	ids := make([]string, 0, limit)
+	lastExamined := ""
+	examined := 0
 	for rows.Next() {
 		var id sql.NullString
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		var runnable bool
+		if err := rows.Scan(&id, &runnable); err != nil {
+			return nil, "", err
 		}
 		if !id.Valid || !validProcessRuntimeIdentifier(id.String, MaxProcessRunIDBytes, false) {
-			return nil, ErrProcessRunCorrupt
+			return nil, "", ErrProcessRunCorrupt
 		}
-		ids = append(ids, id.String)
+		examined++
+		lastExamined = id.String
+		if runnable {
+			ids = append(ids, id.String)
+		}
 	}
-	return ids, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if examined < limit {
+		lastExamined = ""
+	}
+	return ids, lastExamined, nil
 }
 
 func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {

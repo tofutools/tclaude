@@ -145,6 +145,8 @@ func TestProcessRuntimeColdOutstandingNeedsReconcileWithoutRedispatch(t *testing
 	assert.Equal(t, "needs_reconcile", cold.Action)
 	require.NotNil(t, cold.Checkpoint.OutstandingCommand)
 
+	invalidResume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/resume", map[string]any{"unexpected": true})
+	assert.Equal(t, http.StatusBadRequest, invalidResume.Code, invalidResume.Body.String())
 	resume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/resume", map[string]any{})
 	assert.Equal(t, http.StatusConflict, resume.Code, resume.Body.String())
 	assert.Contains(t, resume.Body.String(), "process_run_needs_reconcile")
@@ -173,6 +175,8 @@ func TestProcessRuntimeExplicitReissueAndRecordOutcome(t *testing.T) {
 
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
 	t.Cleanup(agentd.SetProcessProgramExecuteForTest(executor.Execute))
+	invalidReissue := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+reissueRun.ID+"/reissue", map[string]any{"outcome": "succeeded"})
+	require.Equal(t, http.StatusBadRequest, invalidReissue.Code, invalidReissue.Body.String())
 	reissue := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+reissueRun.ID+"/reissue", map[string]any{})
 	require.Equal(t, http.StatusAccepted, reissue.Code, reissue.Body.String())
 	recorded := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+recordRun.ID+"/record-outcome", map[string]any{

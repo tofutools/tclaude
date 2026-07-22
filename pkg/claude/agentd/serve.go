@@ -19,6 +19,7 @@ import (
 
 	"fyne.io/systray"
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -61,6 +62,26 @@ func serveCmd() *cobra.Command {
 // hands to xdg-open. Empty when no popup listener is up — in that
 // case ask-human flows return immediately denied.
 var popupBaseURL string
+
+func acquireAgentdSingletonLock() (func(), error) {
+	dataDir := common.TclaudeDataDir()
+	if dataDir == "" {
+		return nil, fmt.Errorf("could not determine private agentd data directory")
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create agentd data directory: %w", err)
+	}
+	lock := flock.New(filepath.Join(dataDir, "agentd.lock"))
+	locked, err := lock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("lock agentd data directory: %w", err)
+	}
+	if !locked {
+		return nil, fmt.Errorf("another agentd already owns %s", dataDir)
+	}
+	var once sync.Once
+	return func() { once.Do(func() { _ = lock.Unlock() }) }, nil
+}
 
 // prepareSocketPath creates the parent and removes a stale Unix socket without
 // ever clobbering a regular file or a live daemon endpoint.
@@ -172,6 +193,11 @@ func runServe(p *serveParams) error {
 	if sockPath == "" {
 		return fmt.Errorf("could not determine socket path; pass --socket")
 	}
+	releaseSingleton, err := acquireAgentdSingletonLock()
+	if err != nil {
+		return err
+	}
+	defer releaseSingleton()
 	legacySockPaths := socketPaths[1:]
 	for _, path := range socketPaths {
 		if err := prepareSocketPath(path); err != nil {
@@ -180,11 +206,10 @@ func runServe(p *serveParams) error {
 	}
 
 	// Relocate any pre-split daemon state into ~/.tclaude/data BEFORE opening
-	// the DB — but AFTER prepareSocketPath above rejected an already-running
-	// daemon, so exactly one process ever migrates (a second `agentd serve`
-	// aborts before reaching here). The DB and its sidecars must be moved as a
-	// group before the first Open() so we never open a db.sqlite whose -wal/-shm
-	// were left behind at the old path.
+	// the DB. The per-data-directory singleton lock above covers custom socket
+	// paths too, so exactly one process ever migrates or drives runtime state.
+	// The DB and its sidecars must be moved as a group before the first Open() so
+	// we never open a db.sqlite whose -wal/-shm were left behind at the old path.
 	if err := migrateStateIntoDataDir(); err != nil {
 		return fmt.Errorf("relocate daemon state into data dir: %w", err)
 	}
@@ -195,9 +220,8 @@ func runServe(p *serveParams) error {
 		return err
 	}
 
-	// Open (and, if needed, migrate) the SQLite DB now — AFTER rejecting an
-	// already-running daemon above (so a second `agentd serve` never migrates a
-	// DB the live daemon is using, then aborts), but BEFORE net.Listen and
+	// Open (and, if needed, migrate) the SQLite DB now — AFTER claiming the
+	// data-directory singleton above, but BEFORE net.Listen and
 	// every listener/dashboard/goroutine below. The daemon owns the DB and all
 	// of those depend on it, so a failed schema migration must fail startup
 	// here, loudly, before anything comes up on a half-migrated store.

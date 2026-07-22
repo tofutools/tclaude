@@ -26,11 +26,13 @@ import (
 const (
 	processRunFallbackInterval = time.Minute
 	processRunListDefault      = 20
+	processRunMaxClaims        = db.MaxProcessRunReadPage
 	maxProcessRunRequestBytes  = db.MaxProcessRunParamsBytes + db.MaxProcessRunAuthorizationsBytes + 16<<10
 )
 
 var (
 	errProcessRunClaimed     = errors.New("process run is already being driven")
+	errProcessRunCapacity    = errors.New("process runtime is at its active-run limit")
 	errProcessRuntimeStopped = errors.New("process runtime is shutting down")
 	processProgramExecute    = executor.Execute
 	processRuns              = newProcessRunManager()
@@ -118,6 +120,9 @@ func (m *processRunManager) claim(runID string) (*processRunClaim, bool, error) 
 	if _, exists := m.claims[runID]; exists {
 		return nil, false, nil
 	}
+	if len(m.claims) >= processRunMaxClaims {
+		return nil, false, errProcessRunCapacity
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	claim := &processRunClaim{ctx: ctx, cancel: cancel}
 	m.claims[runID] = claim
@@ -158,7 +163,7 @@ func (m *processRunManager) beginPrepared(run *executor.Run, start processRunSta
 func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start processRunStart) (bool, error) {
 	claim, acquired, err := m.claim(runID)
 	if err != nil || !acquired {
-		if !acquired && start.mode != processRunResume {
+		if err == nil && !acquired && start.mode != processRunResume {
 			return false, errProcessRunClaimed
 		}
 		return false, err
@@ -321,14 +326,10 @@ func sweepProcessRuns() {
 	processRuns.mu.Lock()
 	after := processRuns.sweepCursor
 	processRuns.mu.Unlock()
-	runIDs, err := db.ListRunnableProcessRunIDs(after, db.MaxProcessRunReadPage)
+	runIDs, next, err := db.ListRunnableProcessRunIDs(after, db.MaxProcessRunReadPage)
 	if err != nil {
 		slog.Warn("process runtime: active-run sweep failed", "error", err)
 		return
-	}
-	next := ""
-	if len(runIDs) == db.MaxProcessRunReadPage {
-		next = runIDs[len(runIDs)-1]
 	}
 	processRuns.mu.Lock()
 	processRuns.sweepCursor = next
@@ -435,6 +436,10 @@ func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
 	if _, ok := requirePermission(w, r, PermProcessRunsManage); !ok {
 		return
 	}
+	if err := decodeEmptyProcessRuntimeRequest(w, r); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
 	runID := r.PathValue("id")
 	started, err := processRuns.begin(runID, processRunStart{mode: processRunResume})
 	if err != nil {
@@ -452,6 +457,10 @@ func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
 func handleProcessRunReissue(w http.ResponseWriter, r *http.Request) {
 	caller, ok := requirePermission(w, r, PermProcessRunsManage)
 	if !ok {
+		return
+	}
+	if err := decodeEmptyProcessRuntimeRequest(w, r); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
 		return
 	}
 	actor, err := processTemplateAuthor(caller)
@@ -615,7 +624,7 @@ func normalizeProcessRunAuthorizations(profiles []string) ([]string, error) {
 	if len(profiles) > db.MaxProcessRunAuthorizationProfiles {
 		return nil, fmt.Errorf("%w: too many program authorization profiles", db.ErrProcessRunInvalid)
 	}
-	normalized := append([]string(nil), profiles...)
+	normalized := append([]string{}, profiles...)
 	slices.Sort(normalized)
 	for i, profile := range normalized {
 		if len(profile) > db.MaxProcessRunAuthorizationProfile || !utf8.ValidString(profile) {
@@ -704,6 +713,11 @@ func decodeProcessRuntimeRequest(w http.ResponseWriter, r *http.Request, dst any
 	return nil
 }
 
+func decodeEmptyProcessRuntimeRequest(w http.ResponseWriter, r *http.Request) error {
+	var request struct{}
+	return decodeProcessRuntimeRequest(w, r, &request)
+}
+
 func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 	var authorizationErr *processProgramAuthorizationError
 	var eligibilityErr *engine.EligibilityError
@@ -716,6 +730,8 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_run_exists", err.Error())
 	case errors.Is(err, errProcessRunClaimed):
 		writeError(w, http.StatusConflict, "process_run_claimed", err.Error())
+	case errors.Is(err, errProcessRunCapacity):
+		writeError(w, http.StatusServiceUnavailable, "process_runtime_capacity", err.Error())
 	case errors.Is(err, executor.ErrNeedsReconcile):
 		writeError(w, http.StatusConflict, "process_run_needs_reconcile", err.Error())
 	case errors.Is(err, executor.ErrNoReconciliation):

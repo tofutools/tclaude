@@ -220,7 +220,7 @@ var auditRoutes = []auditRoute{
 	// id, irreversibly. No describer is needed — the path already carries the id,
 	// and the request has no body.
 	{method: http.MethodDelete, segs: []string{"process", "templates", "{id}"}, verb: "process.template.delete"},
-	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create"},
+	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create", describe: describeProcessRunCreate},
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "resume"}, verb: "process.run.resume"},
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "reissue"}, verb: "process.run.reissue"},
 	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "record-outcome"}, verb: "process.run.record-outcome"},
@@ -766,6 +766,20 @@ func describeTemplateInstantiate(c *auditCtx) {
 	if task := strings.TrimSpace(b.Task); task != "" {
 		detail += ": " + task
 	}
+	c.fields.Detail = auditClip(detail, auditDetailMax)
+}
+
+// describeProcessRunCreate records the pinned template request and the exact
+// program profiles the caller chose to authorize. Parameters are deliberately
+// excluded because they may contain secrets.
+func describeProcessRunCreate(c *auditCtx) {
+	var b struct {
+		TemplateID               string   `json:"templateId"`
+		AuthorizeProgramProfiles []string `json:"authorizeProgramProfiles"`
+	}
+	_ = json.Unmarshal(c.body, &b)
+	profiles, _ := json.Marshal(b.AuthorizeProgramProfiles)
+	detail := "template: " + strings.TrimSpace(b.TemplateID) + ", authorized profiles: " + string(profiles)
 	c.fields.Detail = auditClip(detail, auditDetailMax)
 }
 

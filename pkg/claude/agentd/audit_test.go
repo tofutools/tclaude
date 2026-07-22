@@ -217,6 +217,31 @@ func TestDescribeRemoteAccessSetup_RedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestDescribeProcessRunCreateRecordsAuthorizationWithoutParams(t *testing.T) {
+	f := auditFields{}
+	describeProcessRunCreate(&auditCtx{
+		body: []byte(`{"templateId":"release","params":{"token":"secret"},` +
+			`"authorizeProgramProfiles":["deploy","report"]}`),
+		fields: &f,
+	})
+	if !strings.Contains(f.Detail, "release") || !strings.Contains(f.Detail, `["deploy","report"]`) {
+		t.Errorf("detail should carry template and exact profiles, got %q", f.Detail)
+	}
+	if strings.Contains(f.Detail, "token") || strings.Contains(f.Detail, "secret") {
+		t.Fatalf("parameter data must not enter the audit detail, got %q", f.Detail)
+	}
+}
+
+func TestNormalizeProcessRunAuthorizationsReturnsDurableEmptyList(t *testing.T) {
+	profiles, err := normalizeProcessRunAuthorizations(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profiles == nil || len(profiles) != 0 {
+		t.Fatalf("empty profiles = %#v, want non-nil empty list", profiles)
+	}
+}
+
 // recordApprovalDecision writes one popup-sourced audit row attributed to
 // the operator, naming the requesting agent as the target and the decided
 // permission in the detail.
