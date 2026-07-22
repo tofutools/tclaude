@@ -709,10 +709,14 @@ test('global harness filesystem rows are visible, immutable, attributable, and n
   assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
   assert.equal(inherited[0].getAttribute('tabindex'), '0', 'provenance tooltip is keyboard reachable');
   assert.equal(inherited[0].getAttribute('role'), 'group');
+  const detailID = inherited[0].getAttribute('aria-describedby');
+  assert.equal(inherited[0].querySelector(`#${detailID}`).getAttribute('role'), 'tooltip');
+  inherited[0].focus();
+  assert.equal(harness.document.activeElement, inherited[0], 'keyboard focus owns the visible provenance detail');
   assert.equal(inherited[0].querySelector('.sbx-path').hasAttribute('readonly'), true);
   assert.equal(inherited[0].querySelectorAll('button').length, 0, 'an inherited row has no browse or delete actions');
   assert.match(inherited[0].textContent, /Claude \+ Codex/);
-  assert.match(inherited[0].getAttribute('title'), /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
+  assert.match(inherited[0].querySelector('.sbx-global-detail').textContent, /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
   assert.match(inherited[1].textContent, /deny read.*Claude/);
 
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
