@@ -432,97 +432,104 @@ the agentd control channel. The profile value remains portable so this can be
 enabled when Codex gains a compatible Linux boundary. Existing profiles omit
 the field and therefore remain backward-compatible.
 
-#### `read_baseline` — opt-in strict read visibility
+#### Deny rules, reopens, and common rules
 
 By default a sandboxed agent inherits its harness's read baseline, which is
 broad: ordinary files across the operator's home and system are readable even
 though writes are confined. That includes ambient credential locations such as
 `~/.ssh`, `~/.aws`, and `~/.config/gh`. tclaude does not construct that
-baseline — it comes from the harness — so narrowing it needs an explicit
-opt-in.
+baseline — it comes from the harness.
 
-`read_baseline` accepts `minimal`, or may be omitted to inherit today's
-behavior. **Omitting it is fully backward-compatible**: existing profiles,
-launches, resumes, imports, and defaults keep exactly the effective sandbox
-they have now.
+Narrowing it does **not** need a separate mechanism. There is exactly one:
+the `filesystem` table. Strictness is composed from ordinary rows — a broad
+`deny` plus narrower `read`/`write` rows that reopen the parts the agent
+actually needs:
 
-`minimal` requests an allowlist-shaped read posture: the workspace, the paths
-tclaude must grant for the launch contract, and paths the profile grants
-explicitly. It is a mode, not another entry in the `deny > write > read` path
-lattice, and it composes **strictest-wins** across includes and across the
-global → group → explicit scopes: once any layer asks for `minimal`, no later
-layer widens it back.
+```json
+{
+  "name": "strict-home",
+  "filesystem": [
+    { "path": "~", "access": "deny" },
+    { "path": "~/git/myproject", "access": "write" },
+    { "path": "~/go", "access": "read" },
+    { "path": "~/.cargo", "access": "read" }
+  ]
+}
+```
 
-Invariant launch requirements survive `minimal`: the agentd Unix socket stays
-readable so `tclaude agent …` keeps working, and the workspace/worktree and
-proof-pinned Git write grants are retained. Without those an agent could not
-do its job or coordinate.
+This works because both harnesses resolve overlapping filesystem rules by
+specificity rather than by order. The Claude Code sandboxing docs state it
+directly — "when read rules overlap, the more specific path wins" — and give
+the same shape as an example: `denyRead: ["~/"]` with `allowRead: ["."]`. The
+Claude renderer maps a `deny` row to `denyRead` + `denyWrite` and a `read` row
+to `allowRead`; the Codex renderer maps a `deny` row to `"path" = "none"`.
 
-Harness support is **not** symmetric, and tclaude does not pretend otherwise:
+Rows are normalized only per canonical path (`deny` > `write` > `read` on the
+*same* path). Overlapping but distinct ancestor/descendant paths are kept as
+authored, which is what makes a reopen expressible at all. Cross-scope
+composition is unchanged: `deny` still dominates an exact-path grant from
+another applied profile, so a global or group profile's deny cannot be undone
+by an explicit profile naming the same path — only by a strictly narrower one.
 
-* **Codex (managed `tclaude-agent` sandbox) — supported.** Codex permission
-  profiles make `extends` optional, and an `extends`-less profile resolves to a
-  deny-all filesystem baseline. A `minimal` profile therefore drops
-  `extends = ":workspace"` (whose resolved policy makes the filesystem root
-  readable) and enumerates the runtime grants instead — Codex's purpose-built
-  `":minimal"` set plus the temp roots and the profile's own rules.
-* **Claude Code — not supported.** Its `sandbox.filesystem` block exposes only
-  `allowRead`/`denyRead`/`allowWrite`/`denyWrite`, so its read policy is always
-  denylist-shaped; there is no per-session way to make it allowlist-shaped.
-  A `minimal` profile on a Claude launch is rejected with the typed
-  `unsupported_sandbox_profile_read_baseline` error rather than launching with
-  today's broad baseline under a strict-looking profile.
+There is deliberately **no** "minimal"/allowlist mode and no host-wide preset.
+Deny-all is composed by hand (`deny /`, or `deny ~` plus reopens). Everything
+is visible in the table; nothing is hidden behind a stored mode ID.
 
-For sandbox lineage, `minimal → default` is **widening**: an agent whose own
-launch was minimal cannot spawn a child with the broader default baseline.
+**Reopen-under-deny is a shape, and it is capability-gated.** A `read`/`write`
+row strictly beneath a `deny` row in the *effective* profile is a
+reopen-under-deny. Plain deny rows with no reopens beneath them keep today's
+behavior on every harness and mode; the gate below applies only to the
+reopen shape, because that is where a harness can quietly fail to enforce what
+the profile claims:
 
-#### `read_baseline_exclusions` — cataloged Default-baseline restrictions
+* **Claude Code** — allowed, but requires sandbox mode `on`. Under `inherit`
+  or `off`, tclaude cannot guarantee that either the deny or the reopen is
+  applied, so the launch is refused with a typed capability error rather than
+  running with a strict-looking profile and a broad baseline.
+* **Codex** — requires the managed `tclaude-agent` permission profile, Linux,
+  and a verified split-policy bubblewrap probe. tclaude runs an isolated
+  behavioral probe (`use_legacy_landlock = false`, `RequireSplitPolicy`) that
+  proves a denied parent can retain a narrower readable child and determines
+  whether an exact executable leaf must be reopened. Raw Codex `--sandbox`
+  modes are refused. **macOS is refused**: per openai/codex#21081 a deny mask
+  dominates narrower reopens beneath it, so the reopen would silently not
+  apply.
 
-When `minimal` is too restrictive, a profile can keep the harness's broad
-Default read baseline while subtracting audited sensitive categories. The
-portable profile stores stable semantic IDs, never machine paths:
+**The launch contract still holds.** When a deny row covers paths tclaude must
+keep usable, tclaude pairs explicit read reopens automatically: the workspace /
+worktree, declared agent-owned directories, the proof-pinned Git write roots,
+and the agentd Unix socket (so `tclaude agent …` keeps working). On Claude an
+`allowWrite` does not imply readability beneath a denied ancestor, so the read
+reopen is emitted alongside the write grant. Without these an agent could
+neither do its job nor coordinate.
 
-* `secrets.ssh`, `secrets.gnupg`, `secrets.cloud`, and
-  `secrets.vcs-tokens`
-* `toolchain.caches` and `browser.profiles`
-* `home.directory`, the broad Home path itself
+Under a denied Home, Codex reopens only the active workspace and the exact
+verified Git common/admin paths, not the whole repository container. Direct
+sibling-worktree creation is therefore unavailable; create or broker the
+worktree before launch.
 
-The dashboard obtains labels, warnings, and current-platform paths from the
-daemon's versioned catalog. Category paths are resolved and symlink-canonicalized
-at launch, so exports remain portable while enforcement follows the current
-machine. These are audited/default-location restrictions, not a claim to find
-every application-configured credential or cache location. Restrictions
-compose as a union across includes and the global →
-group → explicit scopes, with every contributing profile retained in
-provenance. An ordinary read/write grant that intersects a selected leaf
-category is rejected; each leaf ID remains distinct from `home.directory`
-because (for example) `~/.ssh` can be a symlink outside Home. `home.directory`
-instead uses managed, auditable reopens
-for the workspace, control plane, runtime, agent-owned directories, and
-explicit grants. For Codex, strict Home reopens only the active workspace and
-exact verified Git common/admin paths, not the historical whole repository
-container. Direct sibling-worktree creation is therefore unavailable under
-strict Home; create or broker the worktree before launch.
+**Common rules** are an authoring convenience, not a mechanism. The dashboard's
+**Add common rule** menu inserts audited `deny` rows drawn from a versioned
+catalog of default-location sensitive paths — `~/.ssh`, `~/.gnupg`, cloud
+credentials, VCS tokens, toolchain caches, browser profiles, and the Home
+directory itself — each with a warning shown at insertion. Deny-home in
+particular warns that you must reopen the harness, tclaude, and toolchain
+directories (`~/go`, `~/.cargo`, `~/.codex`, …) or the agent will not function.
+After insertion they are ordinary, editable, deletable rows: no hidden state,
+no stored preset ID, and the profile you export is exactly the rows you see.
+The catalog covers audited default locations; it is not a claim to find every
+application-configured credential or cache path.
 
-Unknown but well-formed IDs survive storage, export, import, and display. They
-fail launch with `unsupported_sandbox_profile_read_exclusions` until the local
-tclaude/platform knows how to enforce them, preventing an older installation
-from silently dropping a newer restriction.
+**Deny-row lineage is contained.** Resume, reincarnation, and agent-initiated
+child spawns cannot weaken a deny: the effective profile they launch under must
+not drop a deny row the recorded parent had, and must not introduce a reopen
+beneath one that the parent lacked. Both are treated as widening and refused
+under the same lineage rules as break-glass.
 
-Harness support is capability-gated:
-
-* **Claude Code:** leaf and Home restrictions require sandbox `on`.
-* **Codex:** leaf restrictions require the managed `tclaude-agent` profile.
-  Home is Linux-only and launches only after an isolated behavioral probe
-  verifies the non-legacy bubblewrap split policy (a denied Home with a
-  narrower readable child). Codex macOS is refused because narrower reopens
-  beneath a denied Home are not currently reliable; raw Codex sandbox modes
-  are also refused.
-
-Minimal remains the stronger allowlist posture. Selecting leaf restrictions
-under Default is useful defense-in-depth, but the catalog is intentionally
-finite and is not a claim that every possible credential or cache path has
-been enumerated.
+Profiles stored or exported before this model existed may still carry the old
+`read_baseline` / `read_baseline_exclusions` fields. They are **silently
+dropped on load** — no error, and no claim that the old restriction is still
+being enforced. Re-express the intent as deny rows.
 
 #### `break_glass_filesystem` — exceptional protected-path access
 
@@ -624,12 +631,12 @@ produce — including bundle-internal nested includes, and honoring the
 will actually be assigned.
 
 **Resume and reincarnation never gain authority.** Both re-resolve ordinary
-rules from the current registry, but the protected-access decision and the read
-baseline restrictions are clamped to what was recorded at launch: break-glass
-is intersected with the frozen snapshot (never added, never widened read →
-write), the baseline takes the stricter of the two, and exclusions can only be
-preserved or strengthened (`home.directory` subsumes its leaves). There is no human in the loop on a
-relaunch to acknowledge new protected access, so it is never granted
+rules from the current registry, but the protected-access decision and the
+recorded deny rows are clamped to what was captured at launch: break-glass is
+intersected with the frozen snapshot (never added, never widened read → write),
+and every deny row in the snapshot must still be present — with no reopen
+beneath it that the snapshot did not already have. There is no human in the
+loop on a relaunch to acknowledge new protected access, so it is never granted
 implicitly. To widen a running agent's protected access, spawn a fresh one and
 acknowledge it.
 
