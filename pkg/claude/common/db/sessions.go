@@ -193,6 +193,37 @@ func SaveSession(s *SessionRow) error {
 	return err
 }
 
+// InsertSessionResumeAnchor persists the minimum trusted launch identity needed
+// to resume a conversation whose prunable session history has disappeared.
+// The caller has already verified the harness conversation and captured the
+// physical resume provenance. This insert is deliberately conditional on the
+// conversation still having no session rows: a concurrent direct resume may
+// have created a fresher row after the caller's read, and recovery must never
+// overwrite that launch. The normal session-new UPSERT later reuses this row
+// (resume rows are keyed by the full conv-id) while SaveSession's insert-only
+// provenance rule preserves the trusted anchor.
+func InsertSessionResumeAnchor(convID, cwd, harness, provenance string, now time.Time) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	if harness == "" {
+		harness = DefaultHarness
+	}
+	stamp := now.Format(time.RFC3339Nano)
+	res, err := d.Exec(`INSERT INTO sessions
+		(id, cwd, conv_id, status, created_at, updated_at, harness, resume_provenance, agent_id)
+		SELECT ?, ?, ?, 'exited', ?, ?, ?, ?, `+agentForConvExpr+`
+		WHERE NOT EXISTS (SELECT 1 FROM sessions WHERE conv_id = ?)
+		ON CONFLICT(id) DO NOTHING`,
+		convID, cwd, convID, stamp, stamp, harness, provenance, convID, convID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // LoadSession loads a session by primary key.
 func LoadSession(id string) (*SessionRow, error) {
 	db, err := Open()

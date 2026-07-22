@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +61,53 @@ func TestSessionResumeProvenanceRoundTripPreserveAndExplicitClear(t *testing.T) 
 	got, err = LoadSession("resume-session")
 	require.NoError(t, err)
 	assert.Empty(t, got.ResumeProvenance)
+}
+
+func TestInsertSessionResumeAnchorIsInsertOnlyPerConversation(t *testing.T) {
+	setupTestDB(t)
+	const raw = `{"version":1,"cwd":{"path":"/tmp/target","device":1,"inode":2},"repository_state":"none"}`
+	now := time.Now()
+
+	agentID, _, err := EnsureAgentForConv("recovered-conv", "test")
+	require.NoError(t, err)
+	inserted, err := InsertSessionResumeAnchor("recovered-conv", "/tmp/target", "codex", raw, now)
+	require.NoError(t, err)
+	assert.True(t, inserted)
+	anchor, err := LoadSession("recovered-conv")
+	require.NoError(t, err)
+	assert.Equal(t, "recovered-conv", anchor.ConvID)
+	assert.Equal(t, "/tmp/target", anchor.Cwd)
+	assert.Equal(t, "codex", anchor.Harness)
+	assert.Equal(t, raw, anchor.ResumeProvenance)
+	assert.Equal(t, "exited", anchor.Status)
+	assert.Equal(t, agentID, sessionAgentID(t, "recovered-conv"))
+
+	inserted, err = InsertSessionResumeAnchor("recovered-conv", "/tmp/replaced", "claude", "replacement", now.Add(time.Second))
+	require.NoError(t, err)
+	assert.False(t, inserted, "an existing generation must win a recovery race")
+	anchor, err = LoadSession("recovered-conv")
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/target", anchor.Cwd)
+	assert.Equal(t, raw, anchor.ResumeProvenance)
+
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "live-session", ConvID: "already-live-conv", Cwd: "/tmp/live", Status: "idle", CreatedAt: now,
+	}))
+	inserted, err = InsertSessionResumeAnchor("already-live-conv", "/tmp/recovery", "claude", raw, now)
+	require.NoError(t, err)
+	assert.False(t, inserted)
+	live, err := LoadSession("live-session")
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/live", live.Cwd, "recovery must not overwrite a concurrent session row")
+}
+
+func sessionAgentID(t *testing.T, sessionID string) string {
+	t.Helper()
+	d, err := Open()
+	require.NoError(t, err)
+	var agentID string
+	require.NoError(t, d.QueryRow(`SELECT agent_id FROM sessions WHERE id = ?`, sessionID).Scan(&agentID))
+	return agentID
 }
 
 func TestSessionResumeProvenanceLaunchBoundaryWinsHookInsertRace(t *testing.T) {

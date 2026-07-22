@@ -276,9 +276,10 @@ func TestResumeOneConv_RetiredAgentSkips(t *testing.T) {
 
 func TestResumeOneConv_OrphanWithoutSessionOrIndexErrors(t *testing.T) {
 	setupTestDB(t)
-	res := resumeOneConv("orphan-conv-id-12345678")
+	res := resumeOneConvWithTrustRoot("orphan-conv-id-12345678", false)
 	assert.Equal(t, "error", res.Action, "action")
-	assert.Contains(t, res.Detail, "no resumable session row")
+	assert.Contains(t, res.Detail, "no trustworthy recovery target")
+	assert.Contains(t, res.Detail, "conversation no longer exists")
 }
 
 func TestResumeOneConv_ConvIndexWithoutProvenanceFailsClosed(t *testing.T) {
@@ -295,9 +296,14 @@ func TestResumeOneConv_ConvIndexWithoutProvenanceFailsClosed(t *testing.T) {
 	}))
 
 	res := resumeOneConv(convID)
-	require.Equal(t, "error", res.Action, "detail=%s", res.Detail)
+	require.Equal(t, "error:resume_provenance", res.Action, "detail=%s", res.Detail)
 	assert.Contains(t, res.Detail, "no resumable session row")
 	assert.Empty(t, rec.convID)
+
+	res = resumeOneConvWithTrustRoot(convID, false)
+	require.Equal(t, "error", res.Action, "detail=%s", res.Detail)
+	assert.Contains(t, res.Detail, "conversation no longer exists")
+	assert.Empty(t, rec.convID, "a stale conv_index row must not become launch authority")
 }
 
 func TestResumeOneConv_CodexNativeStoreWithoutProvenanceFailsClosed(t *testing.T) {
@@ -319,9 +325,29 @@ func TestResumeOneConv_CodexNativeStoreWithoutProvenanceFailsClosed(t *testing.T
 	}))
 
 	res := resumeOneConv(convID)
-	require.Equal(t, "error", res.Action, "detail=%s", res.Detail)
+	require.Equal(t, "error:resume_provenance", res.Action, "detail=%s", res.Detail)
 	assert.Contains(t, res.Detail, "no resumable session row")
 	assert.Empty(t, rec.convID)
+	rows, err := db.FindSessionsByConvID(convID)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "unattended recovery must not persist a resume anchor")
+	staleCachedCwd := t.TempDir()
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: convID, ProjectPath: staleCachedCwd, Harness: harness.CodexName, IndexedAt: time.Now(),
+	}))
+
+	res = resumeOneConvWithTrustRoot(convID, false)
+	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+	assert.Equal(t, convID, rec.convID)
+	assert.Equal(t, physicalTestPath(t, cwd), rec.cwd)
+	assert.NotEqual(t, physicalTestPath(t, staleCachedCwd), rec.cwd,
+		"Codex's native conversation cwd must win over a stale conv_index cache path")
+	assert.Equal(t, harness.CodexName, rec.harness)
+	rows, err = db.FindSessionsByConvID(convID)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.NotEmpty(t, rows[0].ResumeProvenance,
+		"human recovery must persist physical provenance before launch")
 }
 
 // A resume whose recorded launch dir was deleted must NOT spawn into the

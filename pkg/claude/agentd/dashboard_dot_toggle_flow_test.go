@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -177,6 +178,41 @@ func TestDotToggle_ManualWakeRecoversMissingResumeProvenance(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, source.ResumeProvenance,
 		"human recovery must persist the newly trusted physical identity")
+}
+
+// Session pruning may remove every exited row while the durable agent and its
+// real Claude conversation remain. The dashboard is a human trust boundary,
+// so waking that agent reconstructs and persists a fresh resume anchor before
+// launching it through the ordinary pinned path.
+func TestDotToggle_ManualWakeRecoversPrunedSessionRow(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+	mux := agentd.BuildDashboardHandlerForTest()
+
+	const conv = "dtpr-1111-2222-3333-444444444444"
+	const sessionID = "spwn-dtpr"
+	const tmuxSes = "tmux-dtpr"
+	cwd := f.TestCwd("pruned-session")
+	f.HaveConvWithTitle(conv, "old-offline-worker")
+	f.HaveAliveSession(conv, sessionID, tmuxSes, cwd)
+	f.HaveEnrolledAgent(conv)
+	f.MarkOffline(tmuxSes)
+	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
+		ConvID: conv, ProjectPath: cwd, CustomTitle: "old-offline-worker", IndexedAt: time.Now(),
+	}))
+	require.NoError(t, db.DeleteSession(sessionID))
+
+	code, resp := postDotVerb(t, mux, conv, "resume", "")
+	require.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "resumed", resp.Action,
+		"a human dashboard wake must recover a pruned session row; detail=%s", resp.Detail)
+
+	rows, err := db.FindSessionsByConvID(conv)
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	assert.NotEmpty(t, rows[0].ResumeProvenance,
+		"the recovered anchor must carry fresh physical provenance")
+	assert.Equal(t, "claude", rows[0].Harness)
 }
 
 // Scenario: the toggle is safe to mash. The dashboard re-renders
