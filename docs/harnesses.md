@@ -148,11 +148,13 @@ safe and non-blocking:
     rev-parse --git-dir`). That lets an agent create `../<repo>-<branch>` and
     commit there while the rest of `$HOME` stays read-only. A container at/above
     `$HOME` is never granted; in that layout the original worktree is the narrow
-    fallback root. A sandbox profile selecting the strict `home.directory`
-    read exclusion narrows this further: it reopens only the active workspace
+    fallback root. A sandbox profile carrying a `deny` row over `$HOME` narrows
+    this further: beneath the deny, tclaude reopens only the active workspace
     and exact verified Git common/admin paths, never the whole repository
-    container. Direct sibling-worktree creation is incompatible with strict
-    Home and must be created or brokered before launch. The
+    container. Direct sibling-worktree creation is therefore incompatible with a
+    denied Home and must be created or brokered before launch. Such a reopen
+    beneath a deny is Linux-only on Codex and requires the verified split-policy
+    probe; it is refused on macOS. The
     operator, Codex, and Claude Code all use the same canonical state-free
     endpoint; agentd temporarily also serves the legacy
     `~/.tclaude-agentd.sock` and `~/.tclaude/agentd.sock` paths for

@@ -339,22 +339,33 @@ and `write` rows that reopen exactly what the agent needs. There is no separate
 read-baseline or exclusion mechanism — an operator who wants a near-deny-all
 posture composes it from rows and must reopen the harness, tclaude and
 toolchain directories (`~/go`, `~/.cargo`, `~/.codex`, …) themselves or the
-agent cannot function. The editor's **＋ add common rule** menu, folded under
-the filesystem table, offers audited presets for the locations most profiles
-want denied (SSH credentials, cloud configuration, VCS tokens, toolchain
-caches, browser profiles, the whole home directory). Each entry shows its
-description, its warning, and the exact current-machine paths it would insert
-*before* you click; selecting one appends those paths as ordinary `deny` rows
-and repeats the warning in a notice naming what was added. Nothing about the
-preset is stored: afterwards they are plain rows you can edit, retarget, or
-delete, and a path already in the table is left as authored rather than
-duplicated. Profiles saved before this change may still carry the retired
-`read_baseline`/`read_baseline_exclusions` fields; the dashboard ignores them
-rather than rendering an enforcement that no longer exists. **Break-glass protected
+agent cannot function. Claude Code resolves overlapping read rules by
+specificity — the more specific path wins — so a reopen carves out of the deny.
+Codex does **not**: a deny normally dominates any narrower grant regardless of
+specificity, so reopens are available there only under the managed profile on
+Linux with a verified split-policy probe, and are refused on macOS. A reopen
+beneath a deny is likewise capability-gated at launch on Claude Code (sandbox
+`on` required), so a profile a harness cannot faithfully enforce fails with a
+typed error rather than pretending isolation. The editor's **＋ add common
+rule** menu, folded under the filesystem table, offers audited presets for the
+locations most profiles want denied (SSH credentials, cloud configuration, VCS
+tokens, toolchain caches, browser profiles, the whole home directory). Each
+entry shows its description, its warning, and the exact current-machine paths
+it would insert *before* you click; selecting one appends those paths as
+ordinary `deny` rows and repeats the warning in a notice naming what was added.
+Nothing about the preset is stored: afterwards they are plain rows you can
+edit, retarget, or delete, and a path already in the table is left as authored
+rather than duplicated. Profiles saved before this change may still carry the
+retired `read_baseline`/`read_baseline_exclusions` fields; the dashboard
+ignores them rather than rendering an enforcement that no longer exists — such
+a profile is no longer strict despite its name, so audit it and re-express the
+intent as deny rows (see `docs/agent.md`). **Break-glass protected
 access** (`break_glass_filesystem`) is the
 only representation that may touch the normally protected tclaude/harness
-state (`~/.tclaude/data`, `~/.claude/sessions`, `~/.codex`); ordinary
-filesystem rules keep rejecting those paths. Each rule is an exact path with
+state (`~/.tclaude/data`, `~/.claude/sessions`); ordinary
+filesystem rules keep rejecting those paths. `~/.codex` is not among them — it
+is ordinary harness state that a deny row may cover and that a denied Home
+must reopen. Each rule is an exact path with
 `read` or `write` access — read never implies write. It exists solely for
 deliberate debugging of tclaude itself and is rendered as dangerous
 everywhere: the editor, the save diff, profile cards, import previews, the
@@ -365,11 +376,11 @@ breakage), and every commit surface — create, edit, import, global or group
 assignment, and spawning under a resolved policy that carries break-glass —
 requires an explicit fresh acknowledgement (`break_glass_acknowledged`;
 `--i-understand-break-glass-risk` in the CLI). Includes never hide the
-origin: previews attribute every break-glass rule to the profile and scope that
-introduced it. Agent-initiated spawns can neither introduce nor widen
-break-glass access, and the same lineage rules cover deny rows: a child or
-resumed profile cannot drop an effective deny row, nor reopen a path beneath
-one that its parent did not reopen.
+origin: previews attribute every break-glass rule and every filesystem row to
+the profile and scope that introduced them. Agent-initiated spawns can neither
+introduce nor widen break-glass access, and the same lineage rules cover deny
+rows: a child or resumed profile cannot drop an effective deny row, nor reopen
+a path beneath one that its parent did not reopen.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing

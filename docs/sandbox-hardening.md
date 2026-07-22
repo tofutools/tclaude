@@ -213,11 +213,13 @@ Notes:
 - **Do not deny the whole `~/.codex` tree.** Standalone Codex installs its
   executable below `~/.codex/packages` and re-executes it for tool commands;
   a whole-tree deny strands managed Codex agents. Narrower state boundaries
-  require separate runtime/state analysis. Sandbox profiles that select the
-  semantic `home.directory` read exclusion handle this through a capability
-  gate: on Linux, tclaude first runs an isolated Codex behavioral probe that
-  proves a denied Home can retain narrower child reopens and determines
-  whether the exact executable leaf must be reopened. Codex macOS is refused.
+  require separate runtime/state analysis. Sandbox profiles that deny `$HOME`
+  (or any ancestor of `~/.codex`) and reopen narrower paths beneath it handle
+  this through a capability gate: on Linux, tclaude first runs an isolated
+  Codex behavioral probe that proves a denied parent can retain narrower child
+  reopens and determines whether the exact executable leaf must be reopened.
+  Codex macOS is refused — see openai/codex#21081, where a deny mask dominates
+  narrower reopens beneath it.
   Before merging changes to that contract, run the host-only smoke outside any
   nested agent sandbox:
 
