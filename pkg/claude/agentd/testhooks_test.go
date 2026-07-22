@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
@@ -20,6 +21,44 @@ import (
 func BuildHandlerForTest() http.Handler {
 	return buildMux()
 }
+
+// ResetProcessRunRuntimeForTest replaces the daemon-lifetime run manager with
+// a fresh instance. Tests use it to model a daemon restart without replacing
+// the production HTTP mux or SQLite store.
+func ResetProcessRunRuntimeForTest() func() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	_ = processRuns.shutdown(ctx)
+	cancel()
+	processRuns = newProcessRunManager()
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = processRuns.shutdown(ctx)
+		cancel()
+		processRuns = newProcessRunManager()
+	}
+}
+
+// SetProcessProgramExecuteForTest swaps the daemon/executor call boundary so
+// flow tests can place deterministic channels around real executor execution.
+func SetProcessProgramExecuteForTest(fn func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, error)) func() {
+	previous := processProgramExecute
+	processProgramExecute = fn
+	return func() { processProgramExecute = previous }
+}
+
+// RunProcessRunSweepForTest executes the same bounded startup/fallback page
+// used in production.
+func RunProcessRunSweepForTest() { sweepProcessRuns() }
+
+func ProcessRunClaimCountForTest() int {
+	processRuns.mu.Lock()
+	defer processRuns.mu.Unlock()
+	return len(processRuns.claims)
+}
+
+// WaitForProcessRunRuntimeForTest drains active run claims. Flow tests arrange
+// deterministic executor hooks, so no production timeout is involved.
+func WaitForProcessRunRuntimeForTest() { processRuns.wg.Wait() }
 
 // BuildRemoteDashboardHandlerForTest exposes the REAL remote-listener handler
 // (the production remoteAuthMiddleware wrapping the full dashboard route set)

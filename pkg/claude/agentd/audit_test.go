@@ -217,6 +217,16 @@ func TestDescribeRemoteAccessSetup_RedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestNormalizeProcessRunAuthorizationsReturnsDurableEmptyList(t *testing.T) {
+	profiles, err := normalizeProcessRunAuthorizations(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profiles == nil || len(profiles) != 0 {
+		t.Fatalf("empty profiles = %#v, want non-nil empty list", profiles)
+	}
+}
+
 // recordApprovalDecision writes one popup-sourced audit row attributed to
 // the operator, naming the requesting agent as the target and the decided
 // permission in the detail.
