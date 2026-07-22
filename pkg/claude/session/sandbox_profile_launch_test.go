@@ -171,13 +171,16 @@ func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
 		"the mounted parent root is daemon-generated and must skip the caller marker")
 }
 
-// A minimal profile drops `extends = ":workspace"`, which is what used to make
-// the launch directory writable for free. GitWorktreeWriteDirs yields nothing
-// outside a Git repository, so without an explicit grant a minimal agent in a
-// plain directory would have no workspace at all.
-func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
+// A deny covering the workspace masks what `extends = ":workspace"` grants, and
+// GitWorktreeWriteDirs yields nothing outside a Git repository, so without an
+// explicit reopen an agent in a plain directory would have no workspace at all.
+// That reopen is what turns a bare deny row into a reopen-under-deny shape.
+func TestDenyHomeLaunchGatesOnRenderedReopenShape(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
 	t.Setenv("HOME", home)
 
 	// Deliberately NOT a Git repository.
@@ -189,31 +192,84 @@ func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
 	require.NoError(t, os.MkdirAll(outside, 0o755))
 
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
-		Name: "strict", ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+		Name: "deny-home", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
 
-	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
-	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
-	require.NoError(t, err)
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	content := string(raw)
+	// The RENDERED rules — not the authored profile — decide whether this launch
+	// needs the Codex split-policy backend. The profile below has a single deny
+	// row and no reopen of its own, yet tclaude reopens the workspace beneath it,
+	// so the emitted policy IS a reopen-under-deny and must be gated as one.
+	// Computing the shape from the authored rows instead would let this exact
+	// profile (the shipped "Deny access to the Home directory" common rule) skip
+	// the probe and the macOS refusal entirely.
+	writeDirs := denyNarrowedGitWriteDirs(workspace, "", nil)
+	assert.Contains(t, writeDirs, canonicalWorkspace, "the workspace is reopened writable so the agent can work")
+	readDirs := sandboxLaunchContractReadDirs(&snapshot, workspace)
+	rendered := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, sandboxSnapshotDirs(&snapshot, sandboxpolicy.AccessDeny))
 
-	// The workspace is readable and writable...
-	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`,
-		"a minimal agent must still be able to work in its launch directory")
-	// ...the runtime baseline is present so tools can actually run...
-	assert.Contains(t, content, `":minimal" = "read"`)
-	// ...the broad read baseline is gone...
-	assert.NotContains(t, content, `extends = ":workspace"`)
-	// ...and nothing granted the sibling directory.
-	assert.NotContains(t, content, outside)
+	require.False(t, sandboxpolicy.HasReopenUnderDeny(snapshot.Effective.Filesystem),
+		"the authored profile is a bare deny")
+	assert.True(t, sandboxpolicy.HasReopenUnderDeny(rendered),
+		"the rendered rules carve the workspace out from beneath the deny and must be gated")
+	for _, grant := range rendered {
+		assert.NotEqual(t, outside, grant.Path, "nothing granted the sibling directory")
+	}
+
+	// And the launch itself refuses rather than emitting that split policy with
+	// no backend guarantee. (Skipped where a real Codex is installed, since the
+	// probe may then legitimately succeed.)
+	if _, lookErr := exec.LookPath("codex"); lookErr != nil {
+		params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
+		_, _, _, err = ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+		require.Error(t, err, "an unverifiable split policy must refuse, not render silently")
+	}
 }
 
-// The default baseline must keep relying on :workspace, unchanged.
-func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
+// The launch contract pairs an explicit READ for a write-granted directory
+// beneath a deny: on both harnesses a write grant does not imply readability
+// under a denied ancestor.
+func TestDenyHomePairsReadReopenForWriteGrantsAndAgentDirs(t *testing.T) {
+	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "workspace")
+	explicitWrite := filepath.Join(home, "explicit-write")
+	agentCache := filepath.Join(home, "agent-cache")
+	unrelated := filepath.Join(home, "unrelated")
+	for _, dir := range []string{workspace, explicitWrite, agentCache, unrelated} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "deny-home",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
+			{Path: explicitWrite, Access: sandboxpolicy.AccessWrite},
+		},
+	}})
+	require.NoError(t, err)
+	effective.AgentDirectories = []string{"GOCACHE"}
+	effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{Name: "GOCACHE", Value: agentCache})
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+
+	got := sandboxLaunchContractReadDirs(&snapshot, workspace)
+	assert.Equal(t, []string{agentCache, explicitWrite, workspace}, got)
+	assert.NotContains(t, got, unrelated, "only launch-required paths are reopened, never arbitrary ones")
+
+	// Without a covering deny nothing is paired: the ordinary grants already work.
+	open, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "open", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: explicitWrite, Access: sandboxpolicy.AccessWrite}},
+	}})
+	require.NoError(t, err)
+	openSnapshot := sandboxpolicy.NewSnapshot(open, nil)
+	assert.Empty(t, sandboxLaunchContractReadDirs(&openSnapshot, workspace))
+}
+
+// Without a deny the profile must keep relying on :workspace, unchanged.
+func TestOrdinaryProfileDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -233,7 +289,9 @@ func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
 		"today's behavior is unchanged: :workspace already covers the cwd")
 }
 
-func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
+// A leaf deny row (what "Add common rule" inserts) renders as an ordinary
+// Codex "none" entry, with no separate mechanism involved.
+func TestCodexManagedProfileRendersLeafDenyRow(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
 	canonicalHome, err := filepath.EvalSymlinks(home)
@@ -243,7 +301,7 @@ func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
 	ssh := filepath.Join(home, ".ssh")
 	require.NoError(t, os.MkdirAll(ssh, 0o700))
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
-		Name: "no-ssh", ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH},
+		Name: "no-ssh", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: ssh, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
@@ -256,7 +314,7 @@ func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
 	assert.Contains(t, string(raw), `extends = ":workspace"`)
 }
 
-func TestStrictHomeGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T) {
+func TestDenyNarrowedGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T) {
 	container := t.TempDir()
 	workspace := filepath.Join(container, "active")
 	common := filepath.Join(workspace, ".git")
@@ -268,13 +326,13 @@ func TestStrictHomeGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T)
 	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 
-	got := strictHomeGitWriteDirs(workspace, common, []string{container, common, admin, siblingRepo})
+	got := denyNarrowedGitWriteDirs(workspace, common, []string{container, common, admin, siblingRepo})
 	assert.Equal(t, []string{canonicalWorkspace, common, admin}, got)
-	assert.NotContains(t, got, container, "strict Home must not reopen the historical sibling-worktree container")
+	assert.NotContains(t, got, container, "a deny covering the workspace must not reopen the historical sibling-worktree container")
 	assert.NotContains(t, got, siblingRepo)
 }
 
-func TestCodexStrictHomeSessionRendererHostSmoke(t *testing.T) {
+func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_CODEX_SPLIT_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_CODEX_SPLIT_SMOKE=1 on an unsandboxed Linux host with Codex+bubblewrap")
 	}
@@ -301,9 +359,9 @@ func TestCodexStrictHomeSessionRendererHostSmoke(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
-		Name:                   "strict-home",
-		ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionHome},
+		Name: "deny-home",
 		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
 			{Path: explicitRead, Access: sandboxpolicy.AccessRead},
 			{Path: explicitWrite, Access: sandboxpolicy.AccessWrite},
 		},
@@ -333,4 +391,31 @@ func TestCodexStrictHomeSessionRendererHostSmoke(t *testing.T) {
 	}
 	assert.NotContains(t, content, `"`+container+`" = "write"`)
 	assert.NotContains(t, content, sibling)
+}
+
+// Regression: effective grants are fully symlink-resolved by normalization, so
+// a launch path reached through a symlinked ancestor (macOS /var →
+// /private/var, or a symlinked home) must still be recognized as covered by a
+// deny. Comparing the unresolved form silently skipped every launch-contract
+// reopen and left the agent with a masked workspace.
+func TestDenyCoverageResolvesSymlinkedLaunchPaths(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	real := filepath.Join(root, "real")
+	workspace := filepath.Join(real, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(real, link))
+	viaLink := filepath.Join(link, "workspace")
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "deny-real", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: real, Access: sandboxpolicy.AccessDeny}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+
+	assert.True(t, sandboxDenyCoversPath(&snapshot, viaLink),
+		"a deny on the resolved parent covers the same directory reached through a symlink")
+	assert.Equal(t, []string{workspace}, sandboxLaunchContractReadDirs(&snapshot, viaLink),
+		"the emitted reopen must name the resolved path the sandbox will see")
 }

@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +18,12 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-const SandboxCapabilityReadExclusions = "unsupported_sandbox_profile_read_exclusions"
+// SandboxCapabilityReopenUnderDeny is the stable wire kind for refusing the
+// reopen-under-deny SHAPE: a read/write grant strictly beneath a deny grant in
+// the same effective profile. Every supported harness can enforce a plain deny;
+// carving a narrower path back out of one relies on documented
+// path-specificity semantics that only some harness/mode combinations provide.
+const SandboxCapabilityReopenUnderDeny = "unsupported_sandbox_profile_reopen_under_deny"
 
 // CodexSplitPolicyCapability binds a successful split-policy probe to the
 // exact Codex executable that was measured. Strict-Home launches carry this
@@ -46,76 +50,84 @@ var runCodexSplitPolicyProbe = probeCodexSplitPolicy
 var codexExecutableIdentityForProbe = codexExecutableIdentity
 var sandboxRuntimeGOOS = runtime.GOOS
 
-func hasReadExclusion(ids []string, wanted string) bool {
-	for _, id := range ids {
-		if id == wanted {
-			return true
+// describeReopens renders the offending shape so an operator can see exactly
+// which rows to change, without dumping an unbounded rule list into an error.
+func describeReopens(shapes []sandboxpolicy.ReopenUnderDeny) string {
+	const maxShown = 3
+	parts := make([]string, 0, maxShown)
+	for i, shape := range shapes {
+		if i == maxShown {
+			parts = append(parts, fmt.Sprintf("and %d more", len(shapes)-maxShown))
+			break
 		}
+		parts = append(parts, fmt.Sprintf("%s %q beneath deny %q", shape.Reopen.Access, shape.Reopen.Path, shape.Deny))
 	}
-	return false
+	return strings.Join(parts, ", ")
 }
 
-// ValidateSandboxReadExclusions gates semantic Default-baseline exclusions on
-// an adapter that can enforce every selected category. Portable intent is
-// always storable; this check runs only at launch/resume.
-func ValidateSandboxReadExclusions(harnessName, sandboxMode string, ids []string) error {
-	ids, err := sandboxpolicy.NormalizeReadBaselineExclusions(ids)
-	if err != nil || len(ids) == 0 {
-		return err
+// ValidateSandboxReopenUnderDeny gates the reopen-under-deny shape on a
+// harness/mode combination that can actually enforce it. A profile with no such
+// shape passes unconditionally: ordinary deny rows are enforceable everywhere.
+// Storing the shape is always allowed; this check runs only at launch/resume.
+func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sandboxpolicy.FilesystemGrant) error {
+	shapes := sandboxpolicy.ReopensUnderDeny(grants)
+	if len(shapes) == 0 {
+		return nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReadExclusions, Message: "cannot resolve the current home directory required by read exclusions"}
-	}
-	_, unknown, err := sandboxpolicy.ReadExclusionDenyPathsForOS(ids, home, sandboxRuntimeGOOS)
-	if err != nil {
-		return err
-	}
-	if len(unknown) > 0 {
-		sort.Strings(unknown)
-		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReadExclusions, Message: fmt.Sprintf("read exclusion IDs %s are unknown on this tclaude/platform; upgrade tclaude or remove them before launch", strings.Join(unknown, ", "))}
-	}
+	detail := describeReopens(shapes)
 	switch strings.TrimSpace(harnessName) {
 	case DefaultName, "":
+		// Claude Code documents that the more specific path wins when read rules
+		// overlap (denyRead ["~/"] + allowRead ["."]), but only sandbox "on"
+		// guarantees the deny AND the reopen are applied at all. An inherit/off
+		// launch would quietly drop both.
 		if strings.TrimSpace(sandboxMode) != ClaudeSandboxOn {
-			return &SandboxCapabilityError{Harness: DefaultName, Kind: SandboxCapabilityReadExclusions, Message: fmt.Sprintf("read exclusions require Claude sandbox %q; sandbox %q cannot guarantee the denies or managed reopens", ClaudeSandboxOn, sandboxMode)}
+			return &SandboxCapabilityError{Harness: DefaultName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
+				"reopening a path beneath a deny (%s) requires Claude sandbox %q; sandbox %q cannot guarantee the deny or the reopen is enforced",
+				detail, ClaudeSandboxOn, sandboxMode)}
 		}
 		return nil
 	case CodexName:
 		if strings.TrimSpace(sandboxMode) != SandboxManagedProfile {
-			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReadExclusions, Message: fmt.Sprintf("read exclusions require Codex sandbox %q; raw sandbox %q cannot render the managed path policy", SandboxManagedProfile, sandboxMode)}
-		}
-		if !hasReadExclusion(ids, sandboxpolicy.ReadExclusionHome) {
-			return nil
+			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
+				"reopening a path beneath a deny (%s) requires Codex sandbox %q; raw sandbox %q cannot render the managed path policy",
+				detail, SandboxManagedProfile, sandboxMode)}
 		}
 		if sandboxRuntimeGOOS != "linux" {
-			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReadExclusions, Message: "Codex Home exclusion is supported only on Linux with verified split-policy bubblewrap behavior; Codex macOS currently masks narrower reopens beneath a denied Home directory (openai/codex#21081)"}
+			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
+				"Codex can reopen a path beneath a deny (%s) only on Linux with verified split-policy bubblewrap behavior; on macOS a deny mask dominates any narrower reopen (openai/codex#21081), so the reopen would be silently discarded",
+				detail)}
 		}
-		_, err := verifiedCodexSplitPolicyCapability()
-		if err != nil {
-			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReadExclusions, Message: "Codex Home exclusion could not verify the required Linux bubblewrap split policy in an isolated probe: " + sanitizeSplitProbeError(err)}
+		if _, err := verifiedCodexSplitPolicyCapability(); err != nil {
+			return &SandboxCapabilityError{Harness: CodexName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
+				"reopening a path beneath a deny (%s) could not verify the required Linux bubblewrap split policy in an isolated probe: %s",
+				detail, sanitizeSplitProbeError(err))}
 		}
 		return nil
 	default:
-		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReadExclusions, Message: fmt.Sprintf("harness %q cannot enforce sandbox read exclusions", harnessName)}
+		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
+			"harness %q cannot reopen a path beneath a deny (%s)", harnessName, detail)}
 	}
 }
 
-// ValidateSandboxBreakGlassWithReadExclusions is the narrow integration seam
-// for Home+break-glass. A verified Linux Home split policy can reopen an
-// acknowledged protected child while leaving siblings masked. Other Codex
-// shapes retain the existing conservative break-glass guard.
-func ValidateSandboxBreakGlassWithReadExclusions(harnessName, sandboxMode string, grants []sandboxpolicy.BreakGlassGrant, exclusions []string) error {
-	if err := ValidateSandboxReadExclusions(harnessName, sandboxMode, exclusions); err != nil {
+// ValidateSandboxBreakGlassWithReopenUnderDeny is the integration seam between
+// the two gates. When Codex has already proven a verified split policy for the
+// profile's reopen-under-deny shape, it can also reopen an acknowledged
+// protected child while leaving that child's siblings masked — the behavior the
+// conservative break-glass guard otherwise has to refuse. Every other shape
+// retains that guard unchanged.
+func ValidateSandboxBreakGlassWithReopenUnderDeny(harnessName, sandboxMode string, grants []sandboxpolicy.BreakGlassGrant, filesystem []sandboxpolicy.FilesystemGrant) error {
+	if err := ValidateSandboxReopenUnderDeny(harnessName, sandboxMode, filesystem); err != nil {
 		return err
 	}
 	if len(grants) == 0 {
 		return nil
 	}
-	if strings.TrimSpace(harnessName) == CodexName && hasReadExclusion(exclusions, sandboxpolicy.ReadExclusionHome) {
-		// Validation above proved managed-profile + Linux + the behavioral
-		// split probe. The ordinary protected denies remain more-specific than
-		// Home; only these acknowledged child rules reopen beneath them.
+	if strings.TrimSpace(harnessName) == CodexName && sandboxpolicy.HasReopenUnderDeny(filesystem) {
+		// The validation above proved managed-profile + Linux + the behavioral
+		// split probe for this executable. The ordinary protected denies remain
+		// more-specific than the operator's broad deny; only these acknowledged
+		// child rules reopen beneath them.
 		return nil
 	}
 	return ValidateSandboxBreakGlass(harnessName, sandboxMode, grants)

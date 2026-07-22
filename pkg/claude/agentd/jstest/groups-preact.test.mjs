@@ -886,8 +886,15 @@ test('native member rows preserve the legacy field, capability and selector matr
     conv_id: 'conv-fixed', agent_id: 'agt-fixed', title: 'Fixed agent', online: false,
     role: '', descr: '', tags: [], state: { harness: 'codex', exit_reason: 'unexpected', status_detail: 'stale detail' },
   };
+  const background = {
+    conv_id: 'conv-background', agent_id: 'agt-background', title: 'Background agent', online: true,
+    role: '', descr: '', tags: [], state: {
+      status: 'main_agent_idle', status_detail: '1 subagent, 2 background shells running',
+      subagent_count: 1, bg_shell_count: 2,
+    },
+  };
   const fullSnapshot = {
-    ...snapshot([{ name: 'alpha', members: [rich, fixed] }]),
+    ...snapshot([{ name: 'alpha', members: [rich, fixed, background] }]),
     harnesses: [
       { name: 'claude', can_rename: true, can_remote_control: true },
       { name: 'codex', can_rename: false, can_remote_control: false },
@@ -907,6 +914,7 @@ test('native member rows preserve the legacy field, capability and selector matr
   const rows = [...table.querySelectorAll('tbody tr')];
   const richRow = rows.find((row) => row.dataset.key === 'conv-rich');
   const fixedRow = rows.find((row) => row.dataset.key === 'conv-fixed');
+  const backgroundRow = rows.find((row) => row.dataset.key === 'conv-background');
   assert.equal(table.querySelectorAll('thead th').length, 11);
   assert.equal(richRow.children.length, 11, 'header/body alignment follows the shared visible-column list');
   assert.equal(richRow.className, 'dnd-draggable');
@@ -938,6 +946,18 @@ test('native member rows preserve the legacy field, capability and selector matr
   assert.equal(richRow.querySelectorAll('.ctx-seg').length, 10);
   assert.equal(richRow.querySelectorAll('.ctx-seg.lit-green').length, 4);
   assert.equal(richRow.querySelector('.badge-subagents').textContent, '🤖+2');
+
+  const backgroundPill = backgroundRow.querySelector('.state-pill');
+  assert.equal(backgroundPill.textContent, 'idle + work');
+  assert.equal(backgroundPill.classList.contains('state-working'), true,
+    'idle + work keeps the busy treatment while background work is running');
+  assert.match(backgroundPill.title, /1 subagent, 2 background shells running/,
+    'the compact pill retains the full activity detail on hover');
+  assert.match(backgroundPill.getAttribute('aria-label'), /idle; background work is still running/);
+  assert.equal(backgroundRow.querySelector('.badge-subagents').textContent, '🤖+1');
+  assert.match(backgroundRow.querySelector('.badge-subagents').getAttribute('aria-label'), /1 sub-agent still running/);
+  assert.equal(backgroundRow.querySelector('.badge-bg-shells').textContent, '⚙+2');
+  assert.match(backgroundRow.querySelector('.badge-bg-shells').getAttribute('aria-label'), /2 background shell commands still running/);
 
   assert.match(richRow.querySelector('.role-edit').textContent, /builder owner/);
   assert.equal(richRow.querySelector('.role-edit').hasAttribute('data-owner'), false,

@@ -11,9 +11,9 @@ import (
 // SandboxCapabilityError is the typed, actionable refusal an adapter returns
 // when a harness cannot faithfully enforce a requested sandbox policy.
 //
-// TCL-609 is explicit that a harness which cannot represent the requested
-// posture must fail loudly rather than approximate it: an operator who asked
-// for a minimal read baseline and silently received today's broad one would
+// A harness that cannot represent the requested posture must fail loudly rather
+// than approximate it: an operator who denied their home directory and reopened
+// only a workspace, and then silently received today's broad read access, would
 // believe in isolation that does not exist. Kind is stable wire vocabulary for
 // the daemon's HTTP error code.
 type SandboxCapabilityError struct {
@@ -26,68 +26,8 @@ func (e *SandboxCapabilityError) Error() string { return e.Message }
 
 // Stable error kinds. These reach the CLI/dashboard as HTTP error codes.
 const (
-	SandboxCapabilityReadBaseline = "unsupported_sandbox_profile_read_baseline"
-	SandboxCapabilityBreakGlass   = "unsupported_sandbox_profile_break_glass"
+	SandboxCapabilityBreakGlass = "unsupported_sandbox_profile_break_glass"
 )
-
-// claudeMinimalReadUnsupported explains, in the operator's terms, exactly why
-// Claude Code cannot honor a minimal read baseline and what to do instead.
-//
-// Evidence (Claude Code 2.1.x): sandbox.filesystem accepts only allowWrite,
-// denyWrite, denyRead, allowRead, allowManagedReadPathsOnly and disabled. Read
-// always resolves to a denylist shape (denyOnly + allowWithinDeny) — there is
-// no key that makes it allowlist-shaped. allowManagedReadPathsOnly only
-// selects WHICH settings tier's allowRead entries are honored, and is readable
-// only from managed/enterprise tiers, so a per-session `--settings` payload
-// cannot set it. Revisit if Claude Code grows a real allowlist read mode.
-func claudeMinimalReadUnsupported() *SandboxCapabilityError {
-	return &SandboxCapabilityError{
-		Harness: DefaultName,
-		Kind:    SandboxCapabilityReadBaseline,
-		Message: "Claude Code cannot enforce a minimal read baseline: its sandbox read policy is denylist-shaped " +
-			"(sandbox.filesystem exposes only allowRead/denyRead/allowWrite/denyWrite), so there is no way to make " +
-			"reads allowlist-shaped for a launched session. Refusing rather than launching with today's broad read " +
-			"baseline under a strict-looking profile. Use the Codex managed sandbox for a minimal read posture, or " +
-			"remove read_baseline: minimal from the profile.",
-	}
-}
-
-// ValidateSandboxReadBaseline reports whether a harness/mode combination can
-// faithfully enforce the requested read baseline. Callers run it before
-// building a SpawnSpec so a refusal costs no subprocess.
-func ValidateSandboxReadBaseline(harnessName, sandboxMode string, baseline sandboxpolicy.ReadBaseline) error {
-	baseline, err := sandboxpolicy.NormalizeReadBaseline(baseline)
-	if err != nil {
-		return err
-	}
-	if baseline != sandboxpolicy.ReadBaselineMinimal {
-		return nil
-	}
-	switch strings.TrimSpace(harnessName) {
-	case CodexName:
-		// Codex's permission profiles make `extends` optional, and an
-		// extends-less profile resolves to a deny-all filesystem baseline that
-		// only explicit grants (plus the ":minimal" runtime set) reopen. That
-		// is a genuine allowlist read posture — but only the managed-profile
-		// mode renders a permission profile at all.
-		if strings.TrimSpace(sandboxMode) != SandboxManagedProfile {
-			return &SandboxCapabilityError{
-				Harness: CodexName,
-				Kind:    SandboxCapabilityReadBaseline,
-				Message: fmt.Sprintf("a minimal read baseline requires Codex sandbox %q, which renders the managed permission profile; sandbox %q cannot represent it", SandboxManagedProfile, sandboxMode),
-			}
-		}
-		return nil
-	case DefaultName, "":
-		return claudeMinimalReadUnsupported()
-	default:
-		return &SandboxCapabilityError{
-			Harness: harnessName,
-			Kind:    SandboxCapabilityReadBaseline,
-			Message: fmt.Sprintf("harness %q cannot represent a minimal sandbox read baseline", harnessName),
-		}
-	}
-}
 
 // ValidateSandboxBreakGlass reports whether a harness/mode combination can
 // represent the acknowledged protected-path rules.

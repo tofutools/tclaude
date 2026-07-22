@@ -135,14 +135,19 @@ feedback; a green CodeRabbit check that skipped because of quota is not a
 review. Larger, riskier, or more judgment-heavy PRs should get an independent
 fresh-agent review even if CodeRabbit commented.
 
-An independent review must be done by a fresh agent that sees the PR diff cold:
-give it the diff and a review instruction, not the design backstory or how the
-change was built. When practical, prefer a reviewer from a different
-harness/vendor than the implementer (for example Codex reviewing Claude Code
-work, or vice versa); otherwise use the freshest independent reviewer
-available. Triage its findings like CodeRabbit's: fix valid issues and
-document any deliberate skips. Record the review status in the PR description or
-a PR comment, including who reviewed and any important follow-up.
+An independent review must be done by a fresh agent: one uninvolved in the
+work, seeing the diff cold — cold means no exposure to how the change was
+built, not context-free. Give it the diff, a review instruction, and the PR
+description's Background / Purpose section (the same one every PR must open
+with, which is where settled operator decisions and the larger refactor a PR
+belongs to are recorded). That context is what keeps a partial or incremental
+step from being mistaken for reintroducing old limitations or bugs, and keeps
+review effort on defects rather than relitigating direction. What stays out is
+the implementation journey: what was tried, and the implementer's own
+justifications beyond what Background / Purpose already states. Triage its
+findings like CodeRabbit's: fix valid issues and document any deliberate
+skips. Record the review status in the PR description or a PR comment,
+including who reviewed and any important follow-up.
 
 Do not `git add -A`; stage specific paths.
 

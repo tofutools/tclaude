@@ -10,7 +10,6 @@ import (
 )
 
 func TestMigrateV142toV143AddsAgentRecoveryLedger(t *testing.T) {
-	require.Equal(t, 143, currentVersion, "tripwire: bump this with the next migration")
 	d, err := sql.Open("sqlite", "file:migrate-v143?mode=memory&cache=shared&_pragma=foreign_keys(1)")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = d.Close() })

@@ -214,7 +214,7 @@ func TestBreakGlassExportImportRequiresFreshAcknowledgement(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var envelope map[string]any
 	testharness.DecodeJSON(t, rec, &envelope)
-	assert.EqualValues(t, 4, envelope["format_version"], "semantic exclusions use the newest portable format")
+	assert.EqualValues(t, 5, envelope["format_version"], "the deny-row model uses the newest portable format")
 	assert.Contains(t, rec.Body.String(), "break_glass_filesystem")
 	assert.NotContains(t, rec.Body.String(), "break_glass_acknowledged",
 		"an export must never carry an acknowledgement to the next machine")
@@ -264,39 +264,39 @@ func TestOrdinaryImportUnaffectedAndOlderFormatsStillAccepted(t *testing.T) {
 	}
 }
 
-// A minimal read baseline is ordinary (non-dangerous) configuration: it
-// restricts rather than grants, so it must NOT demand an acknowledgement.
-func TestMinimalReadBaselineNeedsNoAcknowledgement(t *testing.T) {
+// A deny row is ordinary (non-dangerous) configuration: it restricts rather
+// than grants, so it must NOT demand an acknowledgement. This is what "Add
+// common rule" inserts.
+func TestDenyRowNeedsNoAcknowledgement(t *testing.T) {
 	f := newFlow(t)
 	_, err := db.CreateAgentGroup("crew", "")
 	require.NoError(t, err)
+	denied := t.TempDir()
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name": "strict", "filesystem": []map[string]any{}, "read_baseline": "minimal",
+		"name": "strict", "filesystem": []map[string]any{{"path": denied, "access": "deny"}},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
 	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/strict", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), `"read_baseline":"minimal"`)
+	assert.Contains(t, rec.Body.String(), `"access":"deny"`)
+	assert.NotContains(t, rec.Body.String(), "read_baseline", "the removed mechanism must not reappear on the wire")
 
 	rec = profileReq(t, f, http.MethodPut, "/v1/sandbox-profile-default", map[string]any{"name": "strict"})
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	// The explicit "default" spelling is accepted and normalized away.
+	// A payload still carrying the removed keys is accepted with them dropped,
+	// never rejected and never silently honored.
 	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name": "explicitly-default", "filesystem": []map[string]any{}, "read_baseline": "default",
+		"name": "legacy-shape", "filesystem": []map[string]any{},
+		"read_baseline": "minimal", "read_baseline_exclusions": []string{"home.directory"},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
-	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/explicitly-default", nil)
+	rec = profileReq(t, f, http.MethodGet, "/v1/sandbox-profiles/legacy-shape", nil)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.NotContains(t, rec.Body.String(), "read_baseline")
-
-	// An unknown value is rejected rather than silently ignored.
-	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name": "bogus", "filesystem": []map[string]any{}, "read_baseline": "strict",
-	})
-	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "home.directory")
 }
 
 // The launch surface: selecting a launch whose RESOLVED policy carries
@@ -395,24 +395,38 @@ func TestAgentSpawnCannotIntroduceBreakGlass(t *testing.T) {
 	assert.Contains(t, string(child.Raw), "not contained by the parent snapshot")
 }
 
-// A minimal read baseline is refused on Claude with a typed capability error
-// rather than silently launching with today's broad read baseline.
-func TestSpawnRejectsMinimalReadBaselineOnClaudeWithTypedError(t *testing.T) {
+// A reopen-under-deny profile is refused on a Claude sandbox mode that cannot
+// enforce it, with a typed capability error rather than a silent launch under a
+// strict-looking profile that is not actually applied.
+func TestSpawnRejectsReopenUnderDenyOnClaudeInheritWithTypedError(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
+	denied, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	workspace := filepath.Join(denied, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name": "strict", "filesystem": []map[string]any{}, "read_baseline": "minimal",
+		"name": "strict", "filesystem": []map[string]any{
+			{"path": denied, "access": "deny"},
+			{"path": workspace, "access": "read"},
+		},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "worker", "approval": "bypassPermissions", "sandbox_profile": "strict",
-		"sandbox": harness.ClaudeSandboxOn,
+		"sandbox": harness.ClaudeSandboxInherit,
 	})
 	require.Equalf(t, http.StatusUnprocessableEntity, spawn.Code, "body=%s", spawn.Raw)
-	assert.Contains(t, string(spawn.Raw), "unsupported_sandbox_profile_read_baseline")
-	assert.Contains(t, string(spawn.Raw), "denylist-shaped")
+	assert.Contains(t, string(spawn.Raw), "unsupported_sandbox_profile_reopen_under_deny")
+
+	// Sandbox "on" is the mode that CAN enforce it.
+	ok := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker-on", "approval": "bypassPermissions", "sandbox_profile": "strict",
+		"sandbox": harness.ClaudeSandboxOn,
+	})
+	require.Equalf(t, http.StatusOK, ok.Code, "body=%s", ok.Raw)
 }
 
 // An EDIT that only adds an include must be gated too: an already-assigned
@@ -605,21 +619,22 @@ func TestResumeCannotAcquireLaterAmbientBreakGlass(t *testing.T) {
 		"resume must not pick up protected access added to an ambient profile after launch")
 }
 
-// The same boundary in the other direction: a minimal launch must not be
-// widened back to the broad default by a later profile edit.
-func TestResumeCannotWidenMinimalBaselineToDefault(t *testing.T) {
+// The same boundary in the other direction: an agent launched under a deny row
+// must not have that deny silently removed by a later profile edit.
+func TestResumeCannotDropLaunchedDenyRow(t *testing.T) {
 	f := newFlow(t)
 	protectedTestDirs(t)
 	f.HaveGroup("crew")
+	denied, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name": "group-policy", "filesystem": []map[string]any{}, "read_baseline": "minimal",
+		"name": "group-policy", "filesystem": []map[string]any{{"path": denied, "access": "deny"}},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "group-policy"})
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 
-	// Codex managed-profile is the harness that can actually enforce minimal.
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "worker", "approval": "never",
 		"harness": harness.CodexName, "sandbox": harness.SandboxManagedProfile,
@@ -628,9 +643,9 @@ func TestResumeCannotWidenMinimalBaselineToDefault(t *testing.T) {
 	launched, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, launched)
-	require.Equal(t, sandboxpolicy.ReadBaselineMinimal, launched.Effective.ReadBaseline)
+	require.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: denied, Access: sandboxpolicy.AccessDeny}}, launched.Effective.Filesystem)
 
-	// Widen the profile back to the default baseline.
+	// Widen the profile by removing the deny entirely.
 	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/group-policy", map[string]any{
 		"name": "group-policy", "filesystem": []map[string]any{},
 	})
@@ -643,8 +658,8 @@ func TestResumeCannotWidenMinimalBaselineToDefault(t *testing.T) {
 	after, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
-	assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
-		"minimal -> default is widening and must not happen implicitly on resume")
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: denied, Access: sandboxpolicy.AccessDeny}}, after.Effective.Filesystem,
+		"dropping a deny the agent launched under is widening and must not happen implicitly on resume")
 }
 
 // A bundle-internal NESTED include chain must be evaluated against the exact
@@ -1024,14 +1039,16 @@ func TestSelfReincarnateCannotAcquireOrWidenAmbientBreakGlass(t *testing.T) {
 	})
 }
 
-// The baseline boundary must hold on reincarnation as well as resume.
-func TestSelfReincarnateCannotWidenMinimalBaselineToDefault(t *testing.T) {
+// The deny boundary must hold on reincarnation as well as resume.
+func TestSelfReincarnateCannotDropLaunchedDenyRow(t *testing.T) {
 	f := newFlow(t)
 	protectedTestDirs(t)
 	f.HaveGroup("crew")
+	denied, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 
 	rec := profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles", map[string]any{
-		"name": "grp", "filesystem": []map[string]any{}, "read_baseline": "minimal",
+		"name": "grp", "filesystem": []map[string]any{{"path": denied, "access": "deny"}},
 	})
 	require.Equalf(t, http.StatusCreated, rec.Code, "body=%s", rec.Body.String())
 	rec = profileReq(t, f, http.MethodPut, "/v1/groups/crew/sandbox-profile", map[string]any{"name": "grp"})
@@ -1052,8 +1069,8 @@ func TestSelfReincarnateCannotWidenMinimalBaselineToDefault(t *testing.T) {
 	after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
 	require.NoError(t, err)
 	require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
-	assert.Equal(t, sandboxpolicy.ReadBaselineMinimal, after.Effective.ReadBaseline,
-		"minimal -> default is widening and must not happen on reincarnation either")
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: denied, Access: sandboxpolicy.AccessDeny}}, after.Effective.Filesystem,
+		"dropping a launched deny is widening and must not happen on reincarnation either")
 }
 
 func TestSelfReincarnatePreservesLegitimateAcknowledgedAuthority(t *testing.T) {

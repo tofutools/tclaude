@@ -333,32 +333,34 @@ saves referencing unknown profiles are rejected, renames follow into
 referrers, and a profile cannot be deleted while another profile includes it.
 Exporting a profile automatically bundles the profiles it includes.
 
-Strict read visibility has no separate editor: it is composed in the same
-filesystem table, as a broad `deny` row plus narrower `read`/`write` rows that
-reopen what the agent needs (`deny ~` + `write ~/git/proj` + `read ~/go`).
-Claude Code resolves overlapping read rules by specificity — the more specific
-path wins — so the reopen carves out of the deny. Codex does **not**: a deny
-normally dominates any narrower grant regardless of specificity, so reopens are
-available there only under the managed profile on Linux with a verified
-split-policy probe, and are refused on macOS. To make that less tedious and less
-error-prone, the editor offers **Add common rule**, a menu that inserts audited
-deny rows from a versioned catalog of default-location sensitive paths: SSH and
-GnuPG keys, cloud credentials, VCS tokens, toolchain caches, browser profiles,
-and the Home directory itself. Each entry shows its description, its concrete
-current-machine paths, and a category-specific warning before insertion —
-deny-home warns that harness, tclaude, and toolchain directories (`~/go`,
-`~/.cargo`, `~/.codex`, …) must be reopened or the agent will not function.
-What it inserts are **ordinary rows**: editable, deletable, visible in the save
-diff and the resolved spawn preview, with no hidden preset state. A reopen
-beneath a deny is capability-gated at launch (Claude Code needs sandbox `on`;
-Codex needs the managed profile on Linux with a verified split-policy probe,
-and is refused on macOS), so a profile a harness cannot faithfully enforce
-fails with a typed error rather than pretending isolation. A profile saved
-before this model existed, carrying the removed `read_baseline` /
-`read_baseline_exclusions` fields, loads **without** them and is therefore no
-longer strict despite its name — audit any such profile and re-express it as
-deny rows (see `docs/agent.md`). **Break-glass
-protected access** (`break_glass_filesystem`) is the
+Strictness is expressed entirely through the ordinary filesystem table:
+a broad `deny` row (for example the home directory) plus the narrower `read`
+and `write` rows that reopen exactly what the agent needs. There is no separate
+read-baseline or exclusion mechanism — an operator who wants a near-deny-all
+posture composes it from rows and must reopen the harness, tclaude and
+toolchain directories (`~/go`, `~/.cargo`, `~/.codex`, …) themselves or the
+agent cannot function. Claude Code resolves overlapping read rules by
+specificity — the more specific path wins — so a reopen carves out of the deny.
+Codex does **not**: a deny normally dominates any narrower grant regardless of
+specificity, so reopens are available there only under the managed profile on
+Linux with a verified split-policy probe, and are refused on macOS. A reopen
+beneath a deny is likewise capability-gated at launch on Claude Code (sandbox
+`on` required), so a profile a harness cannot faithfully enforce fails with a
+typed error rather than pretending isolation. The editor's **＋ add common
+rule** menu, folded under the filesystem table, offers audited presets for the
+locations most profiles want denied (SSH credentials, cloud configuration, VCS
+tokens, toolchain caches, browser profiles, the whole home directory). Each
+entry shows its description, its warning, and the exact current-machine paths
+it would insert *before* you click; selecting one appends those paths as
+ordinary `deny` rows and repeats the warning in a notice naming what was added.
+Nothing about the preset is stored: afterwards they are plain rows you can
+edit, retarget, or delete, and a path already in the table is left as authored
+rather than duplicated. Profiles saved before this change may still carry the
+retired `read_baseline`/`read_baseline_exclusions` fields; the dashboard
+ignores them rather than rendering an enforcement that no longer exists — such
+a profile is no longer strict despite its name, so audit it and re-express the
+intent as deny rows (see `docs/agent.md`). **Break-glass protected
+access** (`break_glass_filesystem`) is the
 only representation that may touch the normally protected tclaude/harness
 state (`~/.tclaude/data`, `~/.claude/sessions`); ordinary
 filesystem rules keep rejecting those paths. `~/.codex` is not among them — it
@@ -377,8 +379,8 @@ requires an explicit fresh acknowledgement (`break_glass_acknowledged`;
 origin: previews attribute every break-glass rule and every filesystem row to
 the profile and scope that introduced them. Agent-initiated spawns can neither
 introduce nor widen break-glass access, and the same lineage rules cover deny
-rows: dropping a recorded deny row, or adding a reopen beneath one the parent
-did not have, both count as widening and are refused.
+rows: a child or resumed profile cannot drop an effective deny row, nor reopen
+a path beneath one that its parent did not reopen.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing

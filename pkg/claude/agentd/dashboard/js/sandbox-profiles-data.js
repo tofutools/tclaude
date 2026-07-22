@@ -20,7 +20,10 @@ async function request(path, options = {}) {
 }
 
 export async function loadSandboxProfiles() { const value = await request(API); return Array.isArray(value) ? value : []; }
-export function loadSandboxReadExclusionCatalog() { return request('/api/sandbox-profile-read-exclusions'); }
+// The common-rule catalog: audited deny presets (labels, descriptions,
+// warnings, per-OS paths) the editor inserts as ordinary filesystem rows. The
+// endpoint keeps its historical read-exclusions path.
+export function loadSandboxCommonRules() { return request('/api/sandbox-profile-read-exclusions'); }
 export async function previewSandboxProfile(name, body) {
   const target = name ? `${API}/${encodeURIComponent(name)}` : API;
   return request(`${target}?dry_run=1`, { method: name ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -37,14 +40,12 @@ export function inspectSandboxDirectories(body) { return request('/api/sandbox-p
 export function createSandboxDirectories(body) { return request('/api/sandbox-profile-directories/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
 
 export function sandboxProfileSummary(profile) {
-  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || []; const bg = profile.break_glass_filesystem || []; const exclusions = profile.read_baseline_exclusions || [];
+  const fs = profile.filesystem || []; const env = profile.environment || []; const inc = profile.includes || []; const own = profile.agent_directories || []; const bg = profile.break_glass_filesystem || [];
   const parts = [['read', 'read'], ['write', 'write'], ['deny', 'deny']].flatMap(([access, label]) => { const count = fs.filter((entry) => entry.access === access).length; return count ? [`${count} ${label}`] : []; });
   if (inc.length) parts.push(`${inc.length} include${inc.length === 1 ? '' : 's'}`);
   if (env.length) parts.push(`${env.length} env key${env.length === 1 ? '' : 's'}`);
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
   if (profile.network_access) parts.push(`network ${profile.network_access}`);
-  if (profile.read_baseline === 'minimal') parts.push('minimal reads');
-  if (exclusions.length) parts.push(`${exclusions.length} read restriction${exclusions.length === 1 ? '' : 's'}`);
   if (bg.length) parts.unshift(`⚠ ${bg.length} break-glass`);
   return parts.join(' · ') || 'no sandbox rules';
 }

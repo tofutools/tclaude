@@ -12,7 +12,7 @@ function mountManagement(harness, state, actions) {
   });
 }
 
-test('sandbox summary marks break-glass and the minimal read baseline', async (t) => {
+test('sandbox summary marks break-glass and ignores retired baseline fields', async (t) => {
   const harness = await createPreactHarness(t);
   const { sandboxProfileSummary } = await harness.importDashboardModule('js/sandbox-profiles-data.js');
   assert.equal(sandboxProfileSummary({ name: 'plain', filesystem: [{ path: '/x', access: 'read' }] }), '1 read');
@@ -20,14 +20,17 @@ test('sandbox summary marks break-glass and the minimal read baseline', async (t
     sandboxProfileSummary({
       name: 'debug',
       filesystem: [{ path: '/x', access: 'read' }],
+      // A profile saved before TCL-623 may still carry these; the summary
+      // must never claim an enforcement that no longer exists.
       read_baseline: 'minimal',
+      read_baseline_exclusions: ['secrets.ssh'],
       break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }, { path: '/home/op/.codex', access: 'write' }],
     }),
-    '⚠ 2 break-glass · 1 read · minimal reads',
+    '⚠ 2 break-glass · 1 read',
   );
 });
 
-test('sandbox manager cards render break-glass as danger and minimal reads as a chip', async (t) => {
+test('sandbox manager cards render break-glass as danger and deny rows as ordinary chips', async (t) => {
   const harness = await createPreactHarness(t);
   const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
   const state = createManagementState();
@@ -35,7 +38,7 @@ test('sandbox manager cards render break-glass as danger and minimal reads as a 
     name: 'debug',
     read_baseline: 'minimal',
     break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'write' }],
-    filesystem: [{ path: '/work', access: 'write' }],
+    filesystem: [{ path: '/work', access: 'write' }, { path: '/home/op/.ssh', access: 'deny' }],
   }]);
   state.openManager('sandbox');
   const { host, unmount } = await mountManagement(harness, state, { load() {}, openSandboxEditor() {}, removeSandbox() {} });
@@ -44,7 +47,8 @@ test('sandbox manager cards render break-glass as danger and minimal reads as a 
   assert.ok(dangerTag, 'break-glass rules render with their own danger tag');
   assert.match(dangerTag.textContent, /break-glass write/);
   assert.match(dangerTag.getAttribute('title'), /credentials and session state/);
-  assert.match(host.querySelector('.sbx-cap-baseline').textContent, /minimal reads/);
+  assert.equal(host.querySelector('.sbx-cap-baseline'), null, 'a retired read_baseline field renders nothing at all');
+  assert.match(host.querySelector('.sbx-cap-deny').textContent, /deny/, 'a deny row is an ordinary grant chip');
   const values = [...host.querySelectorAll('.sbx-cap-val')].map((el) => el.textContent);
   assert.ok(values.some((value) => value.includes('/home/op/.tclaude/data')));
   unmount();
@@ -62,7 +66,6 @@ test('editor renders the break-glass section and refuses to save without the ack
       environment: [],
       includes: [],
       agent_directories: [],
-      read_baseline: 'minimal',
       break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }],
     },
     options: {},
@@ -76,9 +79,7 @@ test('editor renders the break-glass section and refuses to save without the ack
   });
   await harness.act(() => Promise.resolve());
 
-  const baselineSelect = host.querySelector('#sandbox-profile-editor-read-baseline');
-  assert.ok(baselineSelect.querySelector('option[value="minimal"]'), 'minimal is offered');
-  assert.match(baselineSelect.querySelector('option[value=""]').textContent, /Default/, 'omission stays the default posture');
+  assert.equal(host.querySelector('#sandbox-profile-editor-read-baseline'), null, 'the separate read-baseline mechanism is gone');
   const section = host.querySelector('.sbx-break-glass');
   assert.ok(section, 'break-glass has its own dangerous section, not a filesystem row');
   const warning = section.querySelector('.sbx-bg-warning');
@@ -105,7 +106,7 @@ test('editor renders the break-glass section and refuses to save without the ack
   assert.equal(saves.length, 1);
   assert.equal(saves[0].breakGlassAcknowledged, true);
   assert.deepEqual(saves[0].draft.break_glass_filesystem, [{ path: '/home/op/.tclaude/data', access: 'read' }]);
-  assert.equal(saves[0].draft.read_baseline, 'minimal');
+  assert.equal(saves[0].draft.read_baseline, undefined, 'the retired field is dropped from the saved draft');
   unmount();
 });
 
@@ -129,11 +130,11 @@ test('an editor without break-glass rules shows no acknowledgement and saves unt
   assert.equal(saves.length, 1);
   assert.equal(saves[0].breakGlassAcknowledged, false);
   assert.deepEqual(saves[0].draft.break_glass_filesystem, []);
-  assert.equal(saves[0].draft.read_baseline, '');
+  assert.equal(saves[0].draft.read_baseline, undefined);
   unmount();
 });
 
-test('the normalized diff confirmation keeps break-glass and the strict baseline visible', async (t) => {
+test('the normalized diff confirmation keeps break-glass visible', async (t) => {
   const harness = await createPreactHarness(t);
   const { createManagementState } = await harness.importDashboardModule('js/management-state.js');
   const state = createManagementState();
@@ -148,7 +149,7 @@ test('the normalized diff confirmation keeps break-glass and the strict baseline
   assert.ok(banner, 'the confirmation dialog carries the danger banner');
   assert.match(banner.textContent, /write \/home\/op\/\.codex/);
   assert.match(banner.textContent, /host-control sockets/);
-  assert.match(host.querySelector('#sandbox-profile-diff-read-baseline').textContent, /minimal/);
+  assert.equal(host.querySelector('#sandbox-profile-diff-read-baseline'), null, 'the retired baseline line is gone from the diff');
   host.querySelector('#sandbox-profile-diff-cancel').click();
   await harness.act(() => Promise.resolve());
   assert.equal(await decision, false);

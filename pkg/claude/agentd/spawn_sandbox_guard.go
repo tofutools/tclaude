@@ -43,21 +43,19 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	if err != nil {
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem", err.Error()}
 	}
-	// TCL-609 capability gates run FIRST and unconditionally: a minimal read
-	// baseline or an acknowledged protected grant must be refused by a harness
-	// that cannot enforce it even when the profile carries no other rules.
+	// The capability gates run FIRST and unconditionally: a reopen-under-deny
+	// shape or an acknowledged protected grant must be refused by a harness that
+	// cannot enforce it even when the profile carries no other rules.
 	// Approximating either one would hand the operator a false guarantee.
-	if baseline := snapshot.Effective.ReadBaseline; baseline != sandboxpolicy.ReadBaselineDefault {
-		if err := harness.ValidateSandboxReadBaseline(harnessOrDefault(harnessName), sandboxMode, baseline); err != nil {
-			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReadBaseline)
-		}
-	}
-	exclusions := snapshot.Effective.ReadBaselineExclusions
-	if err := harness.ValidateSandboxReadExclusions(harnessOrDefault(harnessName), sandboxMode, exclusions); err != nil {
-		return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReadExclusions)
+	//
+	// The shape is read from the LAUNCH filesystem rather than the raw effective
+	// set, so a deny/reopen pair that is inactive this launch (missing path) is
+	// judged exactly as it will be rendered.
+	if err := harness.ValidateSandboxReopenUnderDeny(harnessOrDefault(harnessName), sandboxMode, filesystem); err != nil {
+		return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityReopenUnderDeny)
 	}
 	if grants := snapshot.Effective.BreakGlassFilesystem; len(grants) > 0 {
-		if err := harness.ValidateSandboxBreakGlassWithReadExclusions(harnessOrDefault(harnessName), sandboxMode, grants, exclusions); err != nil {
+		if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(harnessOrDefault(harnessName), sandboxMode, grants, filesystem); err != nil {
 			return sandboxCapabilitySpawnFailure(err, harness.SandboxCapabilityBreakGlass)
 		}
 		if _, err := sandboxpolicy.BreakGlassForLaunch(snapshot.Effective); err != nil {

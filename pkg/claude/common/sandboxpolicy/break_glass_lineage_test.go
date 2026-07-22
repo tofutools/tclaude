@@ -34,10 +34,10 @@ func protectedHome(t *testing.T) (home, tclaudeData, claudeSessions, codexHome s
 		filepath.Join(canonical, ".codex")
 }
 
-// TestOmittedBaselineIsByteIdenticalToLegacy pins the compatibility
-// requirement: a profile that sets neither new field must normalize, resolve,
-// and serialize exactly as it did before TCL-609.
-func TestOmittedBaselineIsByteIdenticalToLegacy(t *testing.T) {
+// TestOrdinaryProfileIsByteIdenticalToLegacy pins the compatibility
+// requirement: a profile that uses no optional capability must normalize,
+// resolve, and serialize exactly as it always did.
+func TestOrdinaryProfileIsByteIdenticalToLegacy(t *testing.T) {
 	home, _, _, _ := protectedHome(t)
 	workspace := filepath.Join(home, "workspace")
 	require.NoError(t, os.Mkdir(workspace, 0o755))
@@ -48,7 +48,6 @@ func TestOmittedBaselineIsByteIdenticalToLegacy(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, missing)
-	assert.Equal(t, ReadBaselineDefault, profile.ReadBaseline)
 	assert.Nil(t, profile.BreakGlassFilesystem)
 
 	encoded, err := json.Marshal(profile)
@@ -60,9 +59,7 @@ func TestOmittedBaselineIsByteIdenticalToLegacy(t *testing.T) {
 
 	effective, err := Resolve(Scopes{Explicit: &profile})
 	require.NoError(t, err)
-	assert.Equal(t, ReadBaselineDefault, effective.ReadBaseline)
 	assert.Empty(t, effective.BreakGlassFilesystem)
-	assert.Nil(t, effective.Provenance.ReadBaseline)
 	assert.Empty(t, effective.Provenance.BreakGlassFilesystem)
 
 	encodedEffective, err := json.Marshal(effective)
@@ -74,7 +71,6 @@ func TestOmittedBaselineIsByteIdenticalToLegacy(t *testing.T) {
 	snapshot := NewSnapshot(effective, nil)
 	revalidated, err := RevalidateSnapshot(snapshot)
 	require.NoError(t, err)
-	assert.Equal(t, ReadBaselineDefault, revalidated.Effective.ReadBaseline)
 	assert.Nil(t, revalidated.Effective.BreakGlassFilesystem)
 }
 
@@ -83,75 +79,6 @@ func mustJSON(t *testing.T, v string) string {
 	b, err := json.Marshal(v)
 	require.NoError(t, err)
 	return string(b)
-}
-
-func TestNormalizeReadBaseline(t *testing.T) {
-	for _, tc := range []struct {
-		in   ReadBaseline
-		want ReadBaseline
-		err  bool
-	}{
-		{in: ReadBaselineDefault, want: ReadBaselineDefault},
-		{in: ReadBaselineMinimal, want: ReadBaselineMinimal},
-		{in: "default", want: ReadBaselineDefault},
-		{in: "strict", err: true},
-		{in: "MINIMAL", err: true},
-	} {
-		got, err := NormalizeReadBaseline(tc.in)
-		if tc.err {
-			require.Error(t, err, "input %q", tc.in)
-			continue
-		}
-		require.NoError(t, err, "input %q", tc.in)
-		assert.Equal(t, tc.want, got, "input %q", tc.in)
-	}
-}
-
-// The explicit "default" spelling is accepted from a UI selector but must
-// never survive normalization, so persisted profiles have exactly one spelling.
-func TestReadBaselineDefaultAliasNormalizesAway(t *testing.T) {
-	protectedHome(t)
-	profile, _, err := NormalizeForPersistence(Profile{Name: "p", ReadBaseline: "default"})
-	require.NoError(t, err)
-	assert.Equal(t, ReadBaselineDefault, profile.ReadBaseline)
-	encoded, err := json.Marshal(profile)
-	require.NoError(t, err)
-	assert.NotContains(t, string(encoded), "read_baseline")
-}
-
-func TestReadBaselineComposesStrictestWinsAcrossScopes(t *testing.T) {
-	protectedHome(t)
-	minimal := &Profile{Name: "minimal", ReadBaseline: ReadBaselineMinimal}
-	broad := &Profile{Name: "broad"}
-
-	// A later, broader scope cannot widen an earlier minimal one.
-	got, err := Resolve(Scopes{Global: minimal, Group: broad, Explicit: broad})
-	require.NoError(t, err)
-	assert.Equal(t, ReadBaselineMinimal, got.ReadBaseline)
-	require.NotNil(t, got.Provenance.ReadBaseline)
-	assert.Equal(t, ProfileSource{Scope: ScopeGlobal, Profile: "minimal"}, *got.Provenance.ReadBaseline,
-		"provenance must name the scope that imposed minimal")
-
-	// An earlier broad scope does not stop a later scope from tightening.
-	got, err = Resolve(Scopes{Global: broad, Explicit: minimal})
-	require.NoError(t, err)
-	assert.Equal(t, ReadBaselineMinimal, got.ReadBaseline)
-	require.NotNil(t, got.Provenance.ReadBaseline)
-	assert.Equal(t, ScopeExplicit, got.Provenance.ReadBaseline.Scope)
-}
-
-func TestReadBaselineComposesStrictestWinsAcrossIncludes(t *testing.T) {
-	protectedHome(t)
-	registry := map[string]*Profile{
-		"strict-base": {Name: "strict-base", ReadBaseline: ReadBaselineMinimal},
-	}
-	// The including profile omits the field entirely; it must NOT widen the
-	// included minimal back to the default baseline.
-	got, err := Flatten(Profile{Name: "child", Includes: []string{"strict-base"}}, func(name string) (*Profile, error) {
-		return registry[name], nil
-	})
-	require.NoError(t, err)
-	assert.Equal(t, ReadBaselineMinimal, got.ReadBaseline)
 }
 
 func TestOrdinaryFilesystemStillRejectsProtectedPaths(t *testing.T) {
@@ -506,29 +433,6 @@ func TestRequireContainedRefusesBreakGlassEscalation(t *testing.T) {
 	require.NoError(t, RequireContained(read, none))
 }
 
-func TestRequireContainedTreatsMinimalToDefaultAsWidening(t *testing.T) {
-	protectedHome(t)
-	snapshotFor := func(t *testing.T, baseline ReadBaseline) Snapshot {
-		t.Helper()
-		effective, err := Resolve(Scopes{Explicit: &Profile{Name: "p", ReadBaseline: baseline}})
-		require.NoError(t, err)
-		return NewSnapshot(effective, nil)
-	}
-	minimal := snapshotFor(t, ReadBaselineMinimal)
-	broad := snapshotFor(t, ReadBaselineDefault)
-
-	err := RequireContained(minimal, broad)
-	require.Error(t, err, "a minimal parent must not hand a child the broad harness baseline")
-	assert.Contains(t, err.Error(), "read baseline")
-
-	require.NoError(t, RequireContained(minimal, minimal))
-	require.NoError(t, RequireContained(broad, minimal), "tightening is always allowed")
-	require.NoError(t, RequireContained(broad, broad))
-}
-
-// Resume/relaunch must not silently gain authority: a snapshot whose recorded
-// break-glass target has been retargeted or removed fails closed rather than
-// launching with different authority than was acknowledged.
 func TestSnapshotRevalidationFailsClosedOnBreakGlassDrift(t *testing.T) {
 	_, tclaudeData, _, _ := protectedHome(t)
 	effective, err := Resolve(Scopes{Explicit: &Profile{
@@ -592,7 +496,7 @@ func TestLegacySnapshotVersionsUpgradeToCurrent(t *testing.T) {
 	workspace := filepath.Join(home, "workspace")
 	require.NoError(t, os.Mkdir(workspace, 0o755))
 
-	for _, version := range []int{1, 2, 3, SnapshotVersion} {
+	for _, version := range []int{1, 2, 3, 4, SnapshotVersion} {
 		// Decode from real persisted JSON, not a hand-built struct, so this
 		// exercises the same path a stored row takes.
 		raw := `{"version":` + itoa(version) + `,"effective":{` +
@@ -605,8 +509,6 @@ func TestLegacySnapshotVersionsUpgradeToCurrent(t *testing.T) {
 		upgraded, err := NormalizeSnapshotVersion(snapshot)
 		require.NoErrorf(t, err, "version %d must upgrade, not fail closed", version)
 		assert.Equal(t, SnapshotVersion, upgraded.Version)
-		assert.Equal(t, ReadBaselineDefault, upgraded.Effective.ReadBaseline,
-			"a pre-TCL-609 snapshot means today's behavior")
 		assert.Empty(t, upgraded.Effective.BreakGlassFilesystem)
 
 		// And it must still be usable as launch authority.
