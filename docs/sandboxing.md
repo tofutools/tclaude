@@ -57,7 +57,42 @@ for the discrepancies between the documented and actual matching behavior.
 **So: configure both, and understand what each buys.** Layer 1 contains the
 subprocess that layer 2 cannot see. Layer 2 gates the built-in tools that layer
 1 does not reach. [Sandbox hardening](sandbox-hardening.md) walks through
-setting up both for agentd's own state; a sandbox profile drives layer 1 only.
+setting up both for agentd's own state.
+
+### ⚠️ A sandbox profile currently drives layer 1 only
+
+This one deserves to be stated plainly, because a profile reads stricter than it
+enforces.
+
+Your profile's `deny` / `read` / `write` rows render into
+`sandbox.filesystem.*` — layer 1 — and nothing else. tclaude does **not**
+derive the matching `permissions.deny` `Read(…)` / `Edit(…)` rules from them.
+
+So a profile carrying `deny ~/.ssh` confines Bash, but the agent can still read
+`~/.ssh/id_rsa` with the built-in `Read` tool, and still write under the denied
+path with `Write`/`Edit`. The same goes for `deny ~`. The editor,
+`sandbox-profiles show`, and the resolved launch echo all show the deny; only
+one of the two layers is actually carrying it.
+
+**The two protected roots are the exception.** `~/.tclaude/data` and
+`~/.claude/sessions` *are* defended on both layers, because
+`tclaude setup --install-sandbox-hardening` writes a static `permissions.deny`
+block for exactly those paths. Everything you author yourself gets layer 1 only.
+
+Until this is closed in tclaude, treat it as an operator task: if a deny in your
+profile needs to bind the built-in tools too, add the matching rules to your own
+`settings.json` by hand —
+
+```json
+{
+  "permissions": {
+    "deny": ["Read(~/.ssh/**)", "Edit(~/.ssh/**)"]
+  }
+}
+```
+
+— at user scope, where no project's settings can weaken them. Tracked as
+**TCL-666**.
 
 ### What neither layer covers: MCP
 
@@ -271,6 +306,7 @@ read.
 | Git loses identity / credential helper | `~/.gitconfig` is a file and cannot be reopened under `deny ~` |
 | Launch refused, `unsupported_sandbox_profile_reopen_under_deny` | Claude not in sandbox `on`, or Codex not on Linux managed-profile with a verified probe |
 | Profile looks strict but nothing is denied | Claude sandbox `inherit`/`off`, or a legacy `read_baseline` profile (silently dropped — re-express as deny rows) |
+| An agent read a denied path with the `Read` tool, but not from Bash | Expected today — a profile drives layer 1 only ([above](#-a-sandbox-profile-currently-drives-layer-1-only)) |
 | An agent reached something the profile denied | Check whether it went through MCP, which bypasses the Bash sandbox |
 
 ## See also
