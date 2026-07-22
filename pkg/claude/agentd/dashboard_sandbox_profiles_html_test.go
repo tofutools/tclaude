@@ -130,6 +130,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 	for _, retired := range []string{
 		`function paintSandboxProfiles(`,
 		`function bindLegacySandboxProfilesUI(`, `profileCapabilitiesHTML(`,
+		`const current = state.view.value; const descriptor = current.dialog;`,
 		`data-sandbox-profile-action=`, `id="sandbox-profile-global"`, `Validated policy to save:`,
 	} {
 		if strings.Contains(dashboardAssets, retired) {
