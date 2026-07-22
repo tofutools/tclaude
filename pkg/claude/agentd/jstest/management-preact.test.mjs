@@ -298,6 +298,97 @@ test('sandbox manager clones a full profile through the guarded create editor', 
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('sandbox editor and its clone mode save on Ctrl/Cmd+Enter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  for (const [label, options] of [['edit', {}], ['clone', { editExisting: false, cloneSourceName: 'restricted' }]]) {
+    for (const modifier of ['ctrlKey', 'metaKey']) {
+      const state = createManagementState();
+      const saved = [];
+      const actions = {
+        load() {}, openSandboxEditor() {}, removeSandbox() {}, configureSandboxWithAgent() {},
+        loadCommonRuleCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+        inspectDirectories: async () => ({ missing: [], creatable: [] }),
+        saveSandbox: async (payload) => { saved.push(payload); },
+      };
+      state.openDialog({ kind: 'sandbox-editor', seed: { name: 'restricted', filesystem: [] }, options });
+      const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+      mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+      await harness.act(() => Promise.resolve());
+      const name = host.querySelector('#sandbox-profile-editor-modal input');
+      await harness.act(() => harness.fireEvent(name, 'keydown', { key: 'Enter', [modifier]: true, isComposing: true, keyCode: 229 }));
+      assert.equal(saved.length, 0, `${label}: IME composition must not submit`);
+      const plainEnter = harness.fireEvent(name, 'keydown', { key: 'Enter' });
+      assert.equal(plainEnter.defaultPrevented, false, `${label}: plain Enter retains the field default`);
+      assert.equal(saved.length, 0, `${label}: plain Enter must not submit`);
+      let shortcut;
+      await harness.act(() => { shortcut = harness.fireEvent(name, 'keydown', { key: 'Enter', [modifier]: true }); });
+      assert.equal(shortcut.defaultPrevented, true, `${label}: ${modifier}+Enter is claimed by the editor`);
+      assert.equal(saved.length, 1, `${label}: ${modifier}+Enter saves`);
+      assert.equal(saved[0].draft.name, 'restricted');
+      assert.equal(saved[0].options.cloneSourceName, options.cloneSourceName);
+      cleanups.reverse().forEach((fn) => fn());
+      host.remove();
+    }
+  }
+});
+
+// The break-glass guards are the reason the hotkey carries its own block
+// condition rather than leaning on the overlay's `blocked` prop: an
+// unacknowledged rule set, and a daemon refusal whose registry reload failed,
+// must both refuse the keyboard exactly as they refuse the Save button.
+test('sandbox editor Ctrl+Enter respects the break-glass acknowledgement and recovery block', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const baseActions = {
+    load: async () => false, openSandboxEditor() {}, removeSandbox() {}, configureSandboxWithAgent() {},
+    loadCommonRuleCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+    inspectDirectories: async () => ({ missing: [], creatable: [] }),
+  };
+  const mount = (state, actions) => {
+    const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+    mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+    return { host, dispose: () => { cleanups.reverse().forEach((fn) => fn()); host.remove(); } };
+  };
+
+  const unacknowledged = createManagementState();
+  const refused = [];
+  unacknowledged.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'restricted', filesystem: [], break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }] },
+    options: {},
+  });
+  const first = mount(unacknowledged, { ...baseActions, saveSandbox: async (payload) => { refused.push(payload); } });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(first.host.querySelector('#sandbox-profile-editor-modal input'), 'keydown', { key: 'Enter', ctrlKey: true }));
+  assert.equal(refused.length, 0, 'Ctrl+Enter cannot skip the break-glass acknowledgement');
+  assert.match(unacknowledged.error.value, /acknowledgement/);
+  first.dispose();
+
+  const blocked = createManagementState();
+  const attempts = [];
+  blocked.openDialog({ kind: 'sandbox-editor', seed: { name: 'restricted', filesystem: [] }, options: {} });
+  const second = mount(blocked, {
+    ...baseActions,
+    // The daemon refused the commit and its registry reload failed too, so the
+    // editor cannot show the rules a fresh acknowledgement would cover.
+    saveSandbox: async (payload) => { attempts.push(payload); return { breakGlassAckRequired: true, recovered: false }; },
+  });
+  await harness.act(() => Promise.resolve());
+  const input = second.host.querySelector('#sandbox-profile-editor-modal input');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', ctrlKey: true }));
+  assert.equal(attempts.length, 1);
+  await harness.act(() => Promise.resolve());
+  assert.equal(second.host.querySelector('#sandbox-profile-editor-submit').disabled, true, 'the failed recovery disables Save');
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter', ctrlKey: true }));
+  assert.equal(attempts.length, 1, 'Ctrl+Enter cannot save past a blocked break-glass recovery');
+  second.dispose();
+});
+
 test('sandbox clone suggestions stay within the UTF-8 server limit across collisions', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { createManagementActions }] = await Promise.all([

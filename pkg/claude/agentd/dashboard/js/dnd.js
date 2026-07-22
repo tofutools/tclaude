@@ -332,6 +332,13 @@ function bindDnd() {
     // dndDragActive, so it would otherwise preventDefault + clear the shared
     // pill on a template drop.
     if (e.dataTransfer.types.includes('application/x-tclaude-process-template')) return;
+    // A terminal-tab drag (terminal-shell-island.js) detaches or reattaches a
+    // terminal and, like the three above, carries only its own custom MIME. It
+    // also adds a document-level drop listener for the duration of the drag.
+    // Membership boxes live in a tab panel that is hidden while the Terminals
+    // tab is showing, so this is currently unreachable rather than a live bug —
+    // the guard keeps the separation explicit instead of resting on that.
+    if (e.dataTransfer.types.includes('application/x-tclaude-terminal-tab')) return;
     const box = e.target.closest(DND_TARGET_SEL);
     if (!box) return;
     e.preventDefault();

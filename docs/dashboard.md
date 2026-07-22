@@ -882,6 +882,16 @@ margin wide enough that a sloppy reorder cannot trigger it. Once the pointer is
 past that margin the region dims and states what releasing will do; a drag
 cancelled with **Escape**, or released inside the margin, changes nothing.
 
+While a terminal drag is in flight the dashboard page accepts it everywhere, so
+the pointer shows a move cursor rather than the browser's "no drop" sign — a page
+that has not explicitly accepted a drag is drawn as if it would refuse one, which
+made a gesture that works look like one that cannot. Accepting is scoped to a
+live terminal drag and never overrides a target that already claimed the event,
+so the tab strip's own reorder edges keep their meaning. Once the pointer leaves
+the browser window the cursor belongs to the operating system and cannot be
+styled by a page; releasing there still detaches, which is why the hint says
+release *anywhere*.
+
 Where a detached terminal lands depends on how it was detached. A **drag** off
 the strip opens a separate browser *window*, sized to the pane the terminal is
 leaving and positioned where the drag was released — dragging a terminal out is
