@@ -54,12 +54,16 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	var catalog struct {
 		Version       int `json:"version"`
 		Platform      string
+		Home          string
 		Categories    []map[string]any `json:"categories"`
 		Informational []map[string]any `json:"informational"`
 	}
 	testharness.DecodeJSON(t, rec, &catalog)
 	assert.Equal(t, 1, catalog.Version)
 	assert.NotEmpty(t, catalog.Platform)
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, home, catalog.Home)
 	require.Len(t, catalog.Categories, 7)
 	assert.Equal(t, "secrets.ssh", catalog.Categories[0]["id"])
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
