@@ -240,20 +240,43 @@ func sendWithHarness(sessionID, status, cwd, convTitle, harness string) {
 }
 
 // dispatch delivers an already-formatted notification through the
-// configured channel — a custom notification_command if one is set,
-// otherwise the platform default (D-Bus / toast / terminal-notifier) —
-// and falls back to stderr if that fails. sessionID drives the
-// click-to-focus action. Shared by Send and SendHumanMessage so both
-// honor notification_command identically.
+// configured channel(s) — see config.NotificationConfig.Delivery. The OS
+// channel is a custom notification_command if one is set, otherwise the
+// platform default (D-Bus / toast / terminal-notifier); the browser
+// channel queues the banner for the agentd dashboard to raise. sessionID
+// drives the click-to-focus action on both. Shared by Send and
+// SendHumanMessage so every caller honors delivery identically.
+//
+// Delivery failure falls back to stderr, but only when NO channel got the
+// notification out — a queued browser banner is a real delivery, so a
+// missing D-Bus under "both" must not print a scary fallback line.
 func dispatch(sessionID, title, body string) {
-	var err error
 	cfg, cfgErr := config.Load()
-	if cfgErr == nil && cfg.Notifications != nil && len(cfg.Notifications.NotificationCommand) > 0 {
-		err = runCustomCommand(cfg.Notifications.NotificationCommand, sessionID, title, body)
-	} else {
-		err = platformSend(sessionID, title, body)
+	var n *config.NotificationConfig
+	if cfgErr == nil {
+		n = cfg.Notifications
 	}
-	if err != nil {
+
+	delivered := false
+	if n.DeliverToBrowser() {
+		if err := db.EnqueueBrowserNotification(sessionID, title, body); err != nil {
+			slog.Warn("queueing browser notification failed", "err", err, "title", title)
+		} else {
+			delivered = true
+		}
+	}
+	if n.DeliverToOS() {
+		var err error
+		if n != nil && len(n.NotificationCommand) > 0 {
+			err = runCustomCommand(n.NotificationCommand, sessionID, title, body)
+		} else {
+			err = platformSend(sessionID, title, body)
+		}
+		if err == nil {
+			delivered = true
+		}
+	}
+	if !delivered {
 		// Final fallback to stderr
 		fmt.Fprintf(os.Stderr, "[notify] %s: %s\n", title, body)
 	}

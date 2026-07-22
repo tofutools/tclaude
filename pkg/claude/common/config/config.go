@@ -1974,6 +1974,63 @@ type NotificationConfig struct {
 	// also ping the desktop — and is silenced only by an explicit
 	// "human_messages": false. See NotifyHumanMessages.
 	HumanMessages *bool `json:"human_messages,omitempty"`
+
+	// Delivery selects WHERE an already-decided notification is raised.
+	// Every gate above it (enabled, transitions, per-agent/group filters,
+	// cooldown) is unchanged — this only picks the output channel:
+	//
+	//	"os"      — the platform notifier (D-Bus / toast / terminal-notifier),
+	//	            or notification_command when set. The historical
+	//	            behaviour and the default for an empty value.
+	//	"browser" — the notification is queued for the agentd dashboard,
+	//	            which raises a Web Notification from the browser. Works
+	//	            when the human is remote (the dashboard is reachable but
+	//	            the daemon's desktop is not) and when the notifying
+	//	            process is sandboxed away from the session D-Bus.
+	//	"both"    — raise it in both places.
+	//
+	// Browser delivery needs a dashboard tab open, granted the browser's
+	// notification permission, in a secure context (https or localhost).
+	Delivery string `json:"delivery,omitempty"`
+}
+
+// Notification delivery channels — the accepted values of
+// NotificationConfig.Delivery. NotifyDeliveryOS is also the meaning of
+// the empty/unset value.
+const (
+	NotifyDeliveryOS      = "os"
+	NotifyDeliveryBrowser = "browser"
+	NotifyDeliveryBoth    = "both"
+)
+
+// IsNotifyDelivery reports whether s is an accepted delivery value. The
+// empty string is accepted — it is the unset state, which reads as "os".
+func IsNotifyDelivery(s string) bool {
+	switch s {
+	case "", NotifyDeliveryOS, NotifyDeliveryBrowser, NotifyDeliveryBoth:
+		return true
+	}
+	return false
+}
+
+// DeliverToOS reports whether notifications should reach the platform
+// notifier. Unset/unknown → true, so a config written by a newer tclaude
+// (or a typo that slipped past Validate) degrades to the historical
+// desktop behaviour rather than to silence.
+func (c *NotificationConfig) DeliverToOS() bool {
+	if c == nil {
+		return true
+	}
+	return c.Delivery != NotifyDeliveryBrowser
+}
+
+// DeliverToBrowser reports whether notifications should also be queued
+// for the dashboard to raise as Web Notifications.
+func (c *NotificationConfig) DeliverToBrowser() bool {
+	if c == nil {
+		return false
+	}
+	return c.Delivery == NotifyDeliveryBrowser || c.Delivery == NotifyDeliveryBoth
 }
 
 // NotifyHumanMessages reports whether a notify-human message should also
@@ -2325,6 +2382,10 @@ func Validate(c *Config) []string {
 	if c.Notifications != nil {
 		if c.Notifications.CooldownSeconds < 0 {
 			errs = append(errs, "notifications.cooldown_seconds must not be negative")
+		}
+		if !IsNotifyDelivery(c.Notifications.Delivery) {
+			errs = append(errs, fmt.Sprintf("notifications.delivery %q must be one of %q, %q, %q (or absent)",
+				c.Notifications.Delivery, NotifyDeliveryOS, NotifyDeliveryBrowser, NotifyDeliveryBoth))
 		}
 		for i, tr := range c.Notifications.Transitions {
 			if tr.From == "" || tr.To == "" {

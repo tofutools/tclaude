@@ -68,6 +68,7 @@ import {
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
+import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
 // without a server roundtrip when the user types.
@@ -391,6 +392,10 @@ async function settleInitialLayout() {
   // can remain pending at the network layer; later request generations must
   // still get their 2s retry opportunities instead of bootstrap wedging.
   pageCleanups.push(startSnapshotPoll(refresh, { immediate: false }));
+  // Independent of the snapshot cadence on purpose — see browser-notify.js.
+  // Self-gating: it costs one no-op function call per tick until the human
+  // has granted the browser notification permission.
+  pageCleanups.push(startBrowserNotifyPoll());
   await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut);
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);

@@ -1,6 +1,7 @@
 import { createContext, h } from 'preact';
-import { useContext } from 'preact/hooks';
+import { useContext, useState } from 'preact/hooks';
 import htm from 'htm';
+import { browserNotifyPermission, requestBrowserNotifyPermission } from './browser-notify.js';
 
 const html = htm.bind(h);
 const ConfigEventContext = createContext(() => {});
@@ -21,6 +22,26 @@ function ConfigInput(props) { return routedControl('input', props); }
 function ConfigSelect(props) { return routedControl('select', props); }
 function ConfigTextarea(props) { return routedControl('textarea', props); }
 function ConfigButton(props) { return routedControl('button', props); }
+
+// BrowserNotifyPermissionButton is the one-per-browser permission grant for
+// browser delivery. It is a plain button, NOT a ConfigButton: the permission
+// lives in the browser, not in config.json, so clicking it must not route a
+// change event and mark the config form dirty.
+//
+// Browsers only accept requestPermission() from a user gesture, so this
+// button — not page load — is the only place tclaude asks.
+function BrowserNotifyPermissionButton() {
+  const [state, setState] = useState(() => browserNotifyPermission());
+  if (state === 'unsupported') {
+    return html`<span class="cfg-hint" style="padding-left:0">This browser cannot raise notifications here (needs https or localhost).</span>`;
+  }
+  if (state === 'granted') return html`<span class="cfg-inline">✓ browser permission granted</span>`;
+  const denied = state === 'denied';
+  return html`<button type="button" class="cfg-inline" disabled=${denied}
+    onClick=${async () => { setState(await requestBrowserNotifyPermission()); }}>
+    ${denied ? 'Browser permission blocked — allow it in site settings' : 'Grant browser permission'}
+  </button>`;
+}
 
 function appendAndFocus(event, id, values, value, onChange) {
   const container = event.currentTarget.parentElement;
@@ -298,6 +319,16 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <span class="cfg-label">Desktop notifications</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-notif-enabled" /> enabled</label>
+      </div>
+      <div class="cfg-field">
+        <span class="cfg-label">Deliver via</span>
+        <${ConfigSelect} id="cfg-notif-delivery" aria-label="Notification delivery channel">
+          <option value="os">Desktop (this machine)</option>
+          <option value="browser">Browser (this dashboard)</option>
+          <option value="both">Both</option>
+        </${ConfigSelect}>
+        <${BrowserNotifyPermissionButton} />
+        <span class="cfg-hint">Where an already-decided notification is raised — every setting below still applies either way. <strong>Desktop</strong> is the platform notifier on the machine agentd runs on. <strong>Browser</strong> queues the banner for any open dashboard tab to raise through the Web Notification API, which is what reaches you when you are working <em>remotely</em>, and what still works when the notifying process is sandboxed away from the session D-Bus. Browser delivery needs a dashboard tab open, the permission granted (button above, once per browser), and a secure context — https or localhost. Stored as <code>notifications.delivery</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Cooldown</span>

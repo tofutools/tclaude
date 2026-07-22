@@ -72,6 +72,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/config", handleDashboardConfigAPI)
 	mux.HandleFunc("/api/cost-factor", handleDashboardCostFactorAPI)
 	mux.HandleFunc("/api/notifications", handleDashboardNotificationsAPI)
+	mux.HandleFunc("/api/browser-notifications", handleDashboardBrowserNotifications)
 	mux.HandleFunc("/api/claude-settings/default-model", handleDashboardClaudeDefaultModel)
 	mux.HandleFunc("/api/slop/volumes", handleDashboardSlopVolumesAPI)
 	mux.HandleFunc("/api/slop/channel", handleDashboardSlopChannelAPI)
