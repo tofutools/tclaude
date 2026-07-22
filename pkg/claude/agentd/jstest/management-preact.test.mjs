@@ -695,11 +695,16 @@ test('global harness filesystem rows are visible, immutable, attributable, and n
   const state = createManagementState();
   state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [{ path: '/work', access: 'write' }], environment: [], includes: [], agent_directories: [] }, options: {} });
   let saved = null;
-  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async loadCommonRuleCatalog() { return { ...COMMON_RULES, global_config_warnings: ['Claude settings could not be parsed.'] }; },
+    async saveSandbox(value) { saved = value; },
+  });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
 
   const toggle = host.querySelector('#sandbox-profile-editor-show-global-filesystem');
-  assert.equal(toggle.hasAttribute('checked'), true, 'inherited context is visible by default');
+  // LinkeDOM does not implement HTMLInputElement.checked, so use the
+  // state-aware selector rather than asserting only that an attribute exists.
+  assert.equal(toggle.matches(':checked'), true, 'inherited context is visible by default');
   const inherited = [...host.querySelectorAll('.sbx-global-row')];
   assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
   assert.equal(inherited[0].getAttribute('tabindex'), '0', 'provenance tooltip is keyboard reachable');
@@ -717,6 +722,7 @@ test('global harness filesystem rows are visible, immutable, attributable, and n
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'the checkbox folds inherited context without changing the draft');
+  assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/, 'config warnings remain visible when inherited rows are folded');
   unmount();
 });
 
