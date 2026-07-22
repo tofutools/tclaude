@@ -552,6 +552,47 @@ func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 }
 
+func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown-capacity", 1))
+	entered := make(chan struct{}, db.MaxProcessRunReadPage)
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, _ *executor.Run, _ *executor.Dispatch, _ executor.Authorization) (executor.Result, error) {
+		entered <- struct{}{}
+		<-ctx.Done()
+		return executor.Result{}, ctx.Err()
+	}))
+	for i := range db.MaxProcessRunReadPage {
+		created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+			"id": fmt.Sprintf("run_shutdown_%02d", i), "templateId": "shutdown-capacity",
+			"authorizeProgramProfiles": []string{"safe"},
+		})
+		require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	}
+	for range db.MaxProcessRunReadPage {
+		<-entered
+	}
+	require.Equal(t, db.MaxProcessRunReadPage, agentd.ProcessRunClaimCountForTest())
+
+	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
+	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
+	list := processRuntimeRequest(t, f, http.MethodGet,
+		fmt.Sprintf("/v1/process/runs?limit=%d", db.MaxProcessRunReadPage), nil)
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	var views struct {
+		Runs []processRuntimeRunView `json:"runs"`
+	}
+	testharness.DecodeJSON(t, list, &views)
+	require.Len(t, views.Runs, db.MaxProcessRunReadPage)
+	for _, run := range views.Runs {
+		assert.Equal(t, engine.RunRunning, run.Status, run.ID)
+	}
+	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_shutdown_00", nil)
+	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
+	var stopped processRuntimeRunView
+	testharness.DecodeJSON(t, show, &stopped)
+	assert.Equal(t, "needs_reconcile", stopped.Action)
+}
+
 func TestProcessRuntimeUnsupportedTemplateReturnsClearDiagnostic(t *testing.T) {
 	f, _ := processRuntimeFlow(t)
 	tmpl := processRuntimeTemplate("", 1)
