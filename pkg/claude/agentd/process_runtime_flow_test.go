@@ -573,7 +573,10 @@ func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
 	}
 	require.Equal(t, db.MaxProcessRunReadPage, agentd.ProcessRunClaimCountForTest())
 
-	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
+	remaining, restore, shutdownErr := agentd.ShutdownProcessRunRuntimeForTest()
+	t.Cleanup(restore)
+	require.NoError(t, shutdownErr)
+	assert.Zero(t, remaining, "the stopped manager released every original claim")
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 	list := processRuntimeRequest(t, f, http.MethodGet,
 		fmt.Sprintf("/v1/process/runs?limit=%d", db.MaxProcessRunReadPage), nil)
@@ -585,12 +588,14 @@ func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
 	require.Len(t, views.Runs, db.MaxProcessRunReadPage)
 	for _, run := range views.Runs {
 		assert.Equal(t, engine.RunRunning, run.Status, run.ID)
+		show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+run.ID, nil)
+		require.Equal(t, http.StatusOK, show.Code, show.Body.String())
+		var stopped processRuntimeRunView
+		testharness.DecodeJSON(t, show, &stopped)
+		assert.Equal(t, "needs_reconcile", stopped.Action, run.ID)
+		assert.True(t, stopped.NeedsReconcile, run.ID)
+		require.NotNil(t, stopped.Checkpoint.OutstandingCommand, run.ID)
 	}
-	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_shutdown_00", nil)
-	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
-	var stopped processRuntimeRunView
-	testharness.DecodeJSON(t, show, &stopped)
-	assert.Equal(t, "needs_reconcile", stopped.Action)
 }
 
 func TestProcessRuntimeUnsupportedTemplateReturnsClearDiagnostic(t *testing.T) {
