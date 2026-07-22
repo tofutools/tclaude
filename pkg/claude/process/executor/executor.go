@@ -146,30 +146,14 @@ func LoadRun(runID string) (*Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: prepare definition: %v", ErrInvalidRun, err)
 	}
-	return loadPreparedRun(record, definition)
+	return LoadPreparedRun(record, definition)
 }
 
-// LoadCreatedRun reconstructs a run immediately after its creation transaction
-// and returns the first dispatch already committed in that same transaction.
-// Cold recovery always uses LoadRun, which never mints a dispatch for a
-// persisted outstanding command.
-func LoadCreatedRun(record *db.ProcessRun, definition *engine.Definition) (*Run, *Dispatch, error) {
-	run, err := loadPreparedRun(record, definition)
-	if err != nil {
-		return nil, nil, err
-	}
-	if run.checkpoint.OutstandingCommand == nil {
-		return run, nil, nil
-	}
-	dispatch := &Dispatch{
-		owner: run, stateVersion: run.stateVersion,
-		command: cloneCommand(*run.checkpoint.OutstandingCommand),
-	}
-	run.dispatch = dispatch
-	return run, dispatch, nil
-}
-
-func loadPreparedRun(record *db.ProcessRun, definition *engine.Definition) (*Run, error) {
+// LoadPreparedRun reconstructs a newly committed run with the exact Definition
+// already prepared for its creation transaction. It is intentionally narrow:
+// cold recovery still goes through LoadRun and prepares from the persisted
+// immutable snapshot.
+func LoadPreparedRun(record *db.ProcessRun, definition *engine.Definition) (*Run, error) {
 	if record == nil || definition == nil || record.StateVersion <= 0 {
 		return nil, ErrInvalidRun
 	}

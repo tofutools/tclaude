@@ -51,12 +51,9 @@ func TestPreparePersistsBoundCommandBeforeAnyDispatch(t *testing.T) {
 	assert.Equal(t, []string{"program_prepared"}, eventKinds(t, run.ID()))
 }
 
-func TestLoadCreatedRunReusesCreationDefinitionAndMintsOnlyCommittedDispatch(t *testing.T) {
+func TestLoadPreparedRunReusesCreationDefinitionWithoutSnapshotPrepare(t *testing.T) {
 	setupExecutorTest(t)
 	createRun(t, "run_creation_boundary", helperProgram(t, "success"))
-	prepared := mustLoadRun(t, "run_creation_boundary")
-	_, err := Prepare(prepared)
-	require.NoError(t, err)
 	record, err := db.GetProcessRun("run_creation_boundary")
 	require.NoError(t, err)
 	var tmpl model.Template
@@ -68,12 +65,9 @@ func TestLoadCreatedRunReusesCreationDefinitionAndMintsOnlyCommittedDispatch(t *
 	// This narrow reconstruction path must consume the definition directly;
 	// cold LoadRun remains responsible for decoding and preparing snapshots.
 	record.TemplateSnapshotJSON = json.RawMessage(`not-json`)
-	run, dispatch, err := LoadCreatedRun(record, definition)
+	run, err := LoadPreparedRun(record, definition)
 	require.NoError(t, err)
-	require.NotNil(t, dispatch)
-	assert.Equal(t, ActionDispatch, run.Action().Kind)
-	assert.Equal(t, ActionNeedsReconcile, mustLoadRun(t, run.ID()).Action().Kind,
-		"cold LoadRun must never mint a dispatch for persisted work")
+	assert.Equal(t, ActionContinue, run.Action().Kind)
 }
 
 func TestPrepareRollsBackCheckpointWhenEvidenceCannotCommit(t *testing.T) {

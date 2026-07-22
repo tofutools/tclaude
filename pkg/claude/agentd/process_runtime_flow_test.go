@@ -70,8 +70,8 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	var shown processRuntimeRunView
 	testharness.DecodeJSON(t, show, &shown)
 	assert.Equal(t, engine.RunCompleted, shown.Checkpoint.Status)
-	assert.Equal(t, int64(3), shown.StateVersion,
-		"creation plus one atomic observation/advance transaction per task")
+	assert.Equal(t, int64(4), shown.StateVersion,
+		"creation, first prepare, and one atomic observation/advance transaction per task")
 	assert.Nil(t, shown.Checkpoint.OutstandingCommand)
 	assert.Equal(t, "terminal", shown.Action)
 	assert.Equal(t, map[string]string{"branch": "main"}, shown.Params)
@@ -474,7 +474,7 @@ func TestProcessRuntimeConcurrentResumeCannotDoubleDispatch(t *testing.T) {
 	assert.Equal(t, int32(1), dispatches.Load())
 }
 
-func TestProcessRuntimeCapacityLeavesCreatedDispatchReconciliationRequired(t *testing.T) {
+func TestProcessRuntimeCapacityReturnsCreatedRunnableRun(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("capacity", 1))
 	release := make(chan struct{})
@@ -507,7 +507,7 @@ func TestProcessRuntimeCapacityLeavesCreatedDispatchReconciliationRequired(t *te
 	var view processRuntimeRunView
 	testharness.DecodeJSON(t, deferred, &view)
 	assert.Equal(t, "run_capacity_deferred", view.ID)
-	assert.Equal(t, "needs_reconcile", view.Action)
+	assert.Equal(t, "runnable", view.Action)
 	assert.Equal(t, db.MaxProcessRunReadPage, agentd.ProcessRunClaimCountForTest())
 	assert.Equal(t, int32(db.MaxProcessRunReadPage), dispatches.Load())
 
@@ -520,8 +520,8 @@ func TestProcessRuntimeCapacityLeavesCreatedDispatchReconciliationRequired(t *te
 		"the first bounded page advances across the reconciliation-blocked claims")
 	agentd.RunProcessRunSweepForTest()
 	agentd.WaitForProcessRunRuntimeForTest()
-	assert.Equal(t, int32(db.MaxProcessRunReadPage), dispatches.Load(),
-		"cold recovery never remints the capacity-deferred committed dispatch")
+	assert.Equal(t, int32(db.MaxProcessRunReadPage+1), dispatches.Load(),
+		"the bounded fallback sweep later discovers the capacity-deferred committed run")
 }
 
 func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
