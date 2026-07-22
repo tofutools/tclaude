@@ -14,8 +14,7 @@ import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
 import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
-import { HelpDisclosure, HelpField } from './help-field.js';
-import { composeSandboxProfilePolicy } from './sandbox-profile-preview.js';
+import { HelpField } from './help-field.js';
 
 const html = htm.bind(h);
 
@@ -23,36 +22,22 @@ function message(error) { return error?.message || String(error); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function change(setDraft, key, value) { setDraft((draft) => ({ ...draft, [key]: value })); }
 
-/* The exclusion catalog is long, and every entry carries a paragraph of
-   rationale plus its audited paths. Kept inline, the section drowned the rest
-   of the sandbox editor, so the copy lives behind the same [?] disclosure the
-   spawn dialog uses and only the section's one-line gist stays on screen. */
-const EXCLUSION_SECTION_HELP = 'Deny reads of sensitive locations on top of the read baseline. '
-  + 'Default still broadly reads the filesystem root and this catalog is not exhaustive; '
-  + 'Minimal is the true Codex-only allowlist posture. Restrictions compose by union across '
-  + 'includes and the global/group/explicit scopes, so a restriction contributed by another '
-  + 'profile cannot be unchecked here — remove it where it is owned.';
-
-/* One compact exclusion choice: checkbox plus a short label, with the long
-   description, warning, audited paths and inherited provenance reachable
-   through the adjacent [?]. `disabled` doubles as the locked treatment; the
-   badge names why (inherited from another profile, or locked by Minimal).
-
-   The badge cell is always emitted, empty badge included: it is a grid column,
-   and dropping the element for unbadged rows would auto-place their [?] into
-   the badge's content-sized column instead of the reserved trigger column, so
-   the triggers would not line up down a mixed list. */
-function ExclusionRow({ id, label, badge, help, content, checked, disabled, unknown, onChange, helpOpen, setHelpOpen }) {
-  const inputID = `sandbox-exclusion-${id}`;
-  const helpID = `${inputID}-help`;
-  const described = help || content;
-  return html`<div class=${`sbx-exclusion-row${disabled ? ' locked' : ''}${unknown ? ' unknown' : ''}`}>
-    <label class="sbx-exclusion-choice" for=${inputID}><input id=${inputID} type="checkbox" checked=${checked}
-      disabled=${disabled} aria-describedby=${described ? `${helpID}-hint` : null} onChange=${onChange}/><span class="sbx-exclusion-name">${label}</span></label>
-    <span class="sbx-exclusion-badge">${badge}</span>
-    <${HelpDisclosure} id=${helpID} label=${label} help=${help} content=${content}
-      open=${helpOpen === helpID} setOpen=${setHelpOpen}/>
+/* One entry of the common-rule preset menu: a button that inserts the entry's
+   audited paths as ordinary deny rows, with its rationale, warning and the
+   exact paths it would insert visible before the click. Nothing about the
+   entry is stored — after insertion the rows are plain, editable table rows. */
+function CommonRuleEntry({ entry, onAdd }) {
+  const paths = commonRulePaths(entry);
+  return html`<div class="sbx-common-rule-entry" data-rule=${entry.id}>
+    <button type="button" class="sbx-common-rule-add" disabled=${!paths.length} onClick=${() => onAdd(entry)}>＋ ${entry.label || entry.id}</button>
+    <span class="sbx-common-rule-descr">${entry.description || ''}</span>
+    ${entry.warning ? html`<span class="sbx-common-rule-warn">⚠ ${entry.warning}</span>` : null}
+    <code class="sbx-common-rule-paths">${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}</code>
   </div>`;
+}
+
+function commonRulePaths(entry) {
+  return [...new Set((entry?.paths || []).map((path) => String(path || '').trim()).filter(Boolean))];
 }
 
 function RequestList({ request, label, retry, children }) {
@@ -79,7 +64,7 @@ function Manager({ kind, current, state, actions, confirmDiscard }) {
       ${kind === 'sandbox' && html`<button id="sandbox-profile-export-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-export' })}>⇪ export</button><button id="sandbox-profile-import-open" class="tool" onClick=${() => state.openDialog({ kind: 'sandbox-import' })}>⤒ import</button><button id="sandbox-profile-scribe-open" class="tool" onClick=${() => actions.configureSandboxWithAgent({ name: '', filesystem: [], environment: [], network_access: '' })}>🤖 configure with agent</button>`}
       <button id=${profiles ? 'profile-create-open' : roles ? 'role-create-open' : 'sandbox-profile-create-open'} class="primary" onClick=${() => profiles ? actions.openProfileEditor() : roles ? actions.openRoleEditor() : actions.openSandboxEditor()}>${profiles ? html`<span class="profiles-word-regular">+ new profile</span><span class="profiles-word-wizard">+ new pattern</span>` : roles ? html`<span class="roles-word-regular">+ new role</span><span class="roles-word-wizard">+ new class</span>` : html`<span class="sandbox-word-regular">+ new sandbox profile</span><span class="sandbox-word-wizard">+ new ward</span>`}</button>
     </div>
-    <div id=${profiles ? 'profiles-list' : roles ? 'roles-list' : 'sandbox-profiles-list'}><${RequestList} request=${request} label=${kind} retry=${() => actions.load(kind)}>${list.length ? list.map((item) => html`<div key=${item.name} class=${`template-card ${profiles ? 'profile' : roles ? 'role' : 'sandbox-profile'}-card${profiles && item.disabled ? ' profile-card-disabled' : ''}`} data-key=${item.name}><div class="tc-head"><span class="tc-name">${item.name}</span>${profiles && item.disabled ? html`<span class="tc-disabled" aria-label="Disabled profile">🚫 Disabled</span>` : null}${profiles && item.aliases?.length ? html`<span class="tc-aliases">${profileAliasesLabel(item)}</span>` : null}<span class="tc-descr">${profiles ? profileSummary(item) : roles ? roleSummary(item) : sandboxProfileSummary(item)}</span><span class="tc-actions"><button class="tool" onClick=${() => profiles ? actions.openProfileEditor(item) : roles ? actions.openRoleEditor(item) : actions.openSandboxEditor(item)}>edit</button>${kind === 'sandbox' && html`<button class="tool sandbox-profile-clone" onClick=${() => actions.openSandboxClone(item)}>clone</button>`}<button class="tool" onClick=${() => profiles ? actions.removeProfile(item.name) : roles ? actions.removeRole(item.name) : actions.removeSandbox(item.name)}>delete</button></span></div>${profiles && item.disabled && html`<div class="tc-sub tc-disabled-reason">${item.disabled_reason}</div>`}${roles && item.descr && html`<div class="tc-sub">${item.descr}</div>`}${kind === 'sandbox' && html`<div class="sbx-caps">${assignedBreakGlass(item.name, all, 'profile').map((entry) => { const via = entry.origins.filter((origin) => origin !== `profile:${item.name}`).map((origin) => origin.slice('profile:'.length)); return html`<div key=${`bg:${entry.access}:${entry.path}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-bg" title=${BREAK_GLASS_WARNING}>🚨 break-glass ${entry.access}</span><span class="sbx-cap-val" title=${`${entry.path} — protected tclaude/harness state (${entry.origins.join(', ')})`}>${entry.path}${via.length ? ` — via ${via.join(', ')}` : ''}</span></div>`; })}${item.read_baseline === 'minimal' ? html`<div key="read-baseline" class="sbx-cap"><span class="sbx-cap-tag sbx-cap-baseline">minimal reads</span><span class="sbx-cap-val" title="Strict opt-in read baseline; strictest-wins when composed.">strict read baseline</span></div>` : null}${(item.filesystem || []).map((entry) => html`<div key=${`${entry.access}:${entry.path}`} class="sbx-cap"><span class=${`sbx-cap-tag sbx-cap-${entry.access}`}>${entry.access}</span><span class="sbx-cap-val" title=${entry.path}>${entry.path}</span></div>`)}${(item.includes || []).map((name) => html`<div key=${`inc:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-inc">include</span><span class="sbx-cap-val" title=${name}>${name}</span></div>`)}${(item.environment || []).map((entry) => { const binding = `${entry.name} → ${entry.value}`; return html`<div key=${`env:${entry.name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title=${binding}>${binding}</span></div>`; })}${(item.agent_directories || []).map((name) => html`<div key=${`own:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-own">own</span><span class="sbx-cap-val" title=${`${name} — isolated per agent`}>${name}</span></div>`)}</div>`}</div>`) : html`<div class="template-empty">${all.length ? wizWord('No items match the filter.', 'No items match the filter.') : profiles ? wizWord('No spawn profiles yet', 'No familiar patterns yet') : roles ? wizWord('No roles yet', 'No classes yet') : wizWord('No sandbox profiles yet', 'No wards yet')}</div>`}</${RequestList}></div>
+    <div id=${profiles ? 'profiles-list' : roles ? 'roles-list' : 'sandbox-profiles-list'}><${RequestList} request=${request} label=${kind} retry=${() => actions.load(kind)}>${list.length ? list.map((item) => html`<div key=${item.name} class=${`template-card ${profiles ? 'profile' : roles ? 'role' : 'sandbox-profile'}-card${profiles && item.disabled ? ' profile-card-disabled' : ''}`} data-key=${item.name}><div class="tc-head"><span class="tc-name">${item.name}</span>${profiles && item.disabled ? html`<span class="tc-disabled" aria-label="Disabled profile">🚫 Disabled</span>` : null}${profiles && item.aliases?.length ? html`<span class="tc-aliases">${profileAliasesLabel(item)}</span>` : null}<span class="tc-descr">${profiles ? profileSummary(item) : roles ? roleSummary(item) : sandboxProfileSummary(item)}</span><span class="tc-actions"><button class="tool" onClick=${() => profiles ? actions.openProfileEditor(item) : roles ? actions.openRoleEditor(item) : actions.openSandboxEditor(item)}>edit</button>${kind === 'sandbox' && html`<button class="tool sandbox-profile-clone" onClick=${() => actions.openSandboxClone(item)}>clone</button>`}<button class="tool" onClick=${() => profiles ? actions.removeProfile(item.name) : roles ? actions.removeRole(item.name) : actions.removeSandbox(item.name)}>delete</button></span></div>${profiles && item.disabled && html`<div class="tc-sub tc-disabled-reason">${item.disabled_reason}</div>`}${roles && item.descr && html`<div class="tc-sub">${item.descr}</div>`}${kind === 'sandbox' && html`<div class="sbx-caps">${assignedBreakGlass(item.name, all, 'profile').map((entry) => { const via = entry.origins.filter((origin) => origin !== `profile:${item.name}`).map((origin) => origin.slice('profile:'.length)); return html`<div key=${`bg:${entry.access}:${entry.path}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-bg" title=${BREAK_GLASS_WARNING}>🚨 break-glass ${entry.access}</span><span class="sbx-cap-val" title=${`${entry.path} — protected tclaude/harness state (${entry.origins.join(', ')})`}>${entry.path}${via.length ? ` — via ${via.join(', ')}` : ''}</span></div>`; })}${(item.filesystem || []).map((entry) => html`<div key=${`${entry.access}:${entry.path}`} class="sbx-cap"><span class=${`sbx-cap-tag sbx-cap-${entry.access}`}>${entry.access}</span><span class="sbx-cap-val" title=${entry.path}>${entry.path}</span></div>`)}${(item.includes || []).map((name) => html`<div key=${`inc:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-inc">include</span><span class="sbx-cap-val" title=${name}>${name}</span></div>`)}${(item.environment || []).map((entry) => { const binding = `${entry.name} → ${entry.value}`; return html`<div key=${`env:${entry.name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">env</span><span class="sbx-cap-val" title=${binding}>${binding}</span></div>`; })}${(item.agent_directories || []).map((name) => html`<div key=${`own:${name}`} class="sbx-cap"><span class="sbx-cap-tag sbx-cap-own">own</span><span class="sbx-cap-val" title=${`${name} — isolated per agent`}>${name}</span></div>`)}</div>`}</div>`) : html`<div class="template-empty">${all.length ? wizWord('No items match the filter.', 'No items match the filter.') : profiles ? wizWord('No spawn profiles yet', 'No familiar patterns yet') : roles ? wizWord('No roles yet', 'No classes yet') : wizWord('No sandbox profiles yet', 'No wards yet')}</div>`}</${RequestList}></div>
     <div class="modal-buttons"><span class="spacer"></span><button onClick=${state.closeManager}>Close</button></div>
   </${Overlay}>`;
 }
@@ -189,17 +174,17 @@ function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
 function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const seed = descriptor.seed || null; const options = descriptor.options || {};
-  const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: seed?.network_access || '', read_baseline: seed?.read_baseline === 'minimal' ? 'minimal' : '', read_baseline_exclusions: clone(seed?.read_baseline_exclusions || []), break_glass_filesystem: clone(breakGlassRules(seed)) }), [descriptor]);
+  const baseline = useMemo(() => ({ name: seed?.name || '', filesystem: clone(seed?.filesystem || []), environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: seed?.network_access || '', break_glass_filesystem: clone(breakGlassRules(seed)) }), [descriptor]);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(baseline.filesystem, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawBreakGlass, setRawBreakGlass] = useState(() => JSON.stringify(baseline.break_glass_filesystem, null, 2));
-  const [readExclusionCatalog, setReadExclusionCatalog] = useState({ version: 0, categories: [], informational: [] });
-  // Lifted so only one exclusion disclosure is open at a time, keyed by row id.
-  const [exclusionHelpOpen, setExclusionHelpOpen] = useState('');
-  // The restriction catalog is the longest section in the dialog and most
-  // profiles never touch it, so it stays folded until asked for. The summary
-  // carries the active/inherited/unknown counts, so folding hides the controls
-  // but never the fact that restrictions are in force.
-  const [exclusionsOpen, setExclusionsOpen] = useState(false);
-  useEffect(() => { let active = true; if (typeof actions.loadReadExclusionCatalog !== 'function') return () => { active = false; }; actions.loadReadExclusionCatalog().then((value) => { if (active) setReadExclusionCatalog(value || { version: 0, categories: [], informational: [] }); }).catch((error) => { if (active) state.error.value = `Could not load filesystem restriction catalog: ${error.message || String(error)}`; }); return () => { active = false; }; }, []);
+  // The audited common-rule presets. They are pure row inserters: nothing from
+  // the catalog is persisted, so a profile never depends on it being loaded.
+  const [commonRules, setCommonRules] = useState({ version: 0, categories: [], informational: [] });
+  // The menu is long and most profiles never touch it, so it ships folded.
+  const [commonRulesOpen, setCommonRulesOpen] = useState(false);
+  // What the last insertion did, including the entry's warning — the operator
+  // must see the consequence of the rows that just appeared in the table.
+  const [commonRuleNotice, setCommonRuleNotice] = useState(null);
+  useEffect(() => { let active = true; if (typeof actions.loadCommonRuleCatalog !== 'function') return () => { active = false; }; actions.loadCommonRuleCatalog().then((value) => { if (active) setCommonRules(value || { version: 0, categories: [], informational: [] }); }).catch((error) => { if (active) state.error.value = `Could not load the common-rule catalog: ${error.message || String(error)}`; }); return () => { active = false; }; }, []);
   // The acknowledgement is deliberately NOT part of the draft: it never
   // persists, and every editor session must collect it afresh.
   const [breakGlassAck, setBreakGlassAck] = useState(false);
@@ -260,7 +245,16 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const configureWithAgent = () => { let value = draft; if (advanced) { try { value = { ...draft, ...parseRaw() }; } catch (error) { state.error.value = error.message || String(error); return; } } const editExisting = options.editExisting ?? !!seed; const targetName = editExisting ? options.targetName || seed?.name || '' : ''; state.closeDialog(); void actions.configureSandboxWithAgent(value, { targetName, editExisting, cloneSourceName: options.cloneSourceName, onCreate: options.onCreate }); };
   const rawDirty = advanced && [rawFS !== JSON.stringify(draft.filesystem, null, 2), rawEnv !== JSON.stringify(draft.environment, null, 2), rawIncludes !== JSON.stringify(draft.includes, null, 2), rawAgentDirs !== JSON.stringify(draft.agent_directories, null, 2), rawBreakGlass !== JSON.stringify(draft.break_glass_filesystem, null, 2)].some(Boolean);
   const setBG = (index, patch) => setDraft((value) => ({ ...value, break_glass_filesystem: value.break_glass_filesystem.map((row, i) => i === index ? { ...row, ...patch } : row) }));
-  const toggleReadExclusion = (id) => setDraft((value) => ({ ...value, read_baseline_exclusions: value.read_baseline_exclusions.includes(id) ? value.read_baseline_exclusions.filter((item) => item !== id) : [...value.read_baseline_exclusions, id] }));
+  // A preset inserts ordinary deny rows and then forgets it ever existed: no
+  // stored ID, no hidden state. Paths already present in the table are left
+  // exactly as authored rather than silently re-denied, and the notice says so.
+  const addCommonRule = (entry) => {
+    const paths = commonRulePaths(entry);
+    const existing = new Set(draft.filesystem.map((row) => String(row.path || '').trim()));
+    const added = paths.filter((path) => !existing.has(path));
+    if (added.length) setDraft((value) => ({ ...value, filesystem: [...value.filesystem, ...added.map((path) => ({ path, access: 'deny' }))] }));
+    setCommonRuleNotice({ label: entry.label || entry.id, added, skipped: paths.length - added.length, warning: entry.warning || '' });
+  };
   // The warning and acknowledgement must track the profile that would be
   // saved: the raw JSON when advanced mode is authoritative (falling back to
   // the structured rows while it is unparseable), and break-glass carried by
@@ -272,77 +266,25 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   })();
   const draftBreakGlass = candidate.break_glass_filesystem || [];
   const resolvedBG = resolvedBreakGlass(candidate, current.sandboxProfiles, seed?.name || '');
-  const exclusionProfiles = Object.fromEntries(current.sandboxProfiles.map((profile) => [profile.name, profile]));
-  if (candidate.name) exclusionProfiles[candidate.name] = candidate;
-  const effectiveReadExclusions = composeSandboxProfilePolicy([{ scope: 'profile', profile: candidate }], exclusionProfiles).readExclusions || [];
-  const effectiveExclusionByID = new Map(effectiveReadExclusions.map((entry) => [entry.id, entry]));
-  const knownExclusionIDs = new Set((readExclusionCatalog.categories || []).map((entry) => entry.id));
-  // Nothing is "unknown" until the catalog has actually arrived (the daemon
-  // always sends version >= 1). Classifying against the empty initial catalog
-  // would flash every restriction as unknown and — because the auto-open below
-  // latches — leave the section permanently unfolded for any profile that has
-  // restrictions at all.
-  const exclusionCatalogLoaded = (readExclusionCatalog.version || 0) > 0;
-  const unknownExclusions = exclusionCatalogLoaded
-    ? effectiveReadExclusions.filter((entry) => !knownExclusionIDs.has(entry.id)) : [];
-  // An unknown restriction fails launch closed until this tclaude understands
-  // it, so it must never sit unseen behind the fold: its arrival opens the
-  // section. The operator can still collapse it again afterwards.
-  // Keyed on the ID set, not merely on "any unknown": a second unknown
-  // arriving while the first is still present must re-reveal the section, even
-  // if the operator collapsed it in between.
-  const hasUnknownExclusions = unknownExclusions.length > 0;
-  const unknownExclusionKey = unknownExclusions.map((entry) => entry.id).sort().join('\0');
-  useEffect(() => { if (unknownExclusionKey) setExclusionsOpen(true); }, [unknownExclusionKey]);
-  const inheritedExclusionCount = effectiveReadExclusions.filter((entry) => !candidate.read_baseline_exclusions?.includes(entry.id)).length;
-  const exclusionSummary = effectiveReadExclusions.length
-    ? [`${effectiveReadExclusions.length} active`, inheritedExclusionCount ? `${inheritedExclusionCount} inherited` : '', hasUnknownExclusions ? `⚠ ${unknownExclusions.length} unknown` : ''].filter(Boolean).join(' · ')
-    : 'none — reads follow the read baseline';
   return html`<${Overlay} id="sandbox-profile-editor-modal" labelledby="sandbox-profile-editor-title" onClose=${state.closeDialog} dirty=${dirty || rawDirty} blocked=${saving || directoryBusy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.sandbox-profile-editor"><h3 id="sandbox-profile-editor-title">${options.cloneSourceName ? wizWord(`Clone sandbox profile: ${options.cloneSourceName}`, `Mirror ward: ${options.cloneSourceName}`) : seed ? wizWord(`Edit sandbox profile: ${seed.name}`, `Edit ward: ${seed.name}`) : wizWord('New sandbox profile', 'New ward')}</h3><p class="modal-meta">Directory grants widen the sandbox; environment values are injected at launch. Agent-owned directories create a fresh writable cache directory for each spawned agent and set the named environment variable to its path. Network policies control external IP connectivity while retaining the tclaude agent socket. Managed Codex profiles block the host tmux server independently. Environment values are ordinary configuration, not secrets.</p><${Row} label="Name"><input value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="e.g. shared-build-caches" autofocus autocomplete="off" spellcheck="false"/></${Row}><${Row} label="Network"><${Select} id="sandbox-profile-editor-network" value=${draft.network_access} onChange=${(value) => change(setDraft, 'network_access', value)} options=${[['', 'No override (inherit profile layers)'], ['internet', 'Internet access'], ['none', 'Offline (macOS; unavailable on Linux/WSL)']]}/></${Row}>
-    <${Row} label="Read baseline" title="Strictest-wins across includes and global/group/explicit layers: if any applied profile says minimal, the effective read scope is minimal. Requires harness support; launch fails with a typed capability error where it cannot be enforced."><${Select} id="sandbox-profile-editor-read-baseline" value=${draft.read_baseline} onChange=${(value) => change(setDraft, 'read_baseline', value)} options=${[['', "Default — harness baseline (broad reads, today's behavior)"], ['minimal', 'Minimal — strict opt-in: only workspace, required runtime paths, and explicit grants']]}/></${Row}>
-    <fieldset class="sbx-section sbx-read-exclusions" hidden=${advanced}><legend>Additional filesystem restrictions</legend>
+    <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend><div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button>
       ${/* `|| null` rather than a bare boolean: where `open` is not a settable
            DOM property, Preact falls back to setAttribute, and setting it to
            `false` still leaves the attribute present (i.e. open). null removes
            it on both paths. */ ''}
-      <details class="sbx-exclusion-fold" id="sandbox-profile-editor-exclusions-fold" open=${exclusionsOpen || null}
-        onToggle=${(event) => setExclusionsOpen(event.currentTarget.open)}>
-      <summary class="sbx-exclusion-summary"><span class="sbx-exclusion-summary-label">Restrictions</span><span class=${`sbx-exclusion-summary-count${hasUnknownExclusions ? ' unknown' : ''}`}>${exclusionSummary}</span></summary>
-      <div class="sbx-exclusion-intro"><span>Deny reads of sensitive locations. Restrictions compose by union across includes and scopes.</span><${HelpDisclosure} id="sandbox-exclusions-section-help" label="Additional filesystem restrictions" help=${EXCLUSION_SECTION_HELP} open=${exclusionHelpOpen === 'sandbox-exclusions-section-help'} setOpen=${setExclusionHelpOpen}/></div>
-      ${draft.read_baseline === 'minimal' && html`<div class="sbx-exclusion-note">Locked: Minimal already removes the broad Default read baseline. These choices are retained.</div>`}
-      <div class="sbx-exclusion-list">${(readExclusionCatalog.categories || []).map((category) => {
-        const own = candidate.read_baseline_exclusions?.includes(category.id);
-        const effective = effectiveExclusionByID.get(category.id);
-        const locked = draft.read_baseline === 'minimal' || (!!effective && !own);
-        const origins = effective?.origins || [];
-        const paths = (category.paths || []).join(' · ');
-        const help = [category.description, category.warning ? `⚠ ${category.warning}` : '', `Audited paths: ${paths || '(none on this platform)'}`, origins.length ? `From ${origins.join(', ')}` : ''].filter(Boolean).join(' ');
-        const content = [
-          html`<span key="descr">${category.description}</span>`,
-          category.warning ? html`<span key="warn" class="sbx-exclusion-help-warn">⚠ ${category.warning}</span>` : null,
-          html`<code key="paths">${paths || '(no audited paths on this platform)'}</code>`,
-          origins.length ? html`<span key="origins">From ${origins.join(', ')}</span>` : null,
-        ];
-        // Minimal locks every row, but that must not erase the separate fact
-        // that a row is also contributed by another profile — provenance is
-        // what tells the operator where to go to remove it.
-        const badge = [effective && !own ? 'inherited' : '', draft.read_baseline === 'minimal' ? 'locked' : ''].filter(Boolean).join(' · ');
-        return html`<${ExclusionRow} key=${category.id} id=${category.id} label=${category.label}
-          badge=${badge} help=${help} content=${content}
-          checked=${!!effective} disabled=${locked} onChange=${() => toggleReadExclusion(category.id)}
-          helpOpen=${exclusionHelpOpen} setHelpOpen=${setExclusionHelpOpen}/>`;
-      })}
-      ${unknownExclusions.map((entry) => {
-        const own = candidate.read_baseline_exclusions?.includes(entry.id);
-        const help = `${own ? 'Directly owned by this profile; uncheck it to recover on this older catalog.' : 'Inherited and locked; remove it from the profile that owns it.'} It will fail launch closed until this tclaude understands it. From ${entry.origins.join(', ')}`;
-        return html`<${ExclusionRow} key=${entry.id} id=${entry.id} label=${`Unknown restriction: ${entry.id}`}
-          badge=${own ? 'unknown' : 'unknown · inherited'} help=${help} checked=${true} disabled=${!own} unknown=${true}
-          onChange=${() => toggleReadExclusion(entry.id)} helpOpen=${exclusionHelpOpen} setHelpOpen=${setExclusionHelpOpen}/>`;
-      })}</div>
-      <details><summary>Required, non-removable access</summary>${(readExclusionCatalog.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-bg-intro"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>
+      <details class="sbx-common-rules" id="sandbox-profile-editor-common-rules" open=${commonRulesOpen || null}
+        onToggle=${(event) => setCommonRulesOpen(event.currentTarget.open)}>
+        <summary class="sbx-common-rule-summary">＋ add common rule</summary>
+        <div class="sbx-common-rule-intro">Audited presets for locations most profiles want denied. Each one inserts ordinary deny rows into the table above — visible, editable, and yours to adjust or remove afterwards. Nothing else is stored.</div>
+        <div class="sbx-common-rule-list">${(commonRules.categories || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} entry=${entry} onAdd=${addCommonRule}/>`)}</div>
+        ${(commonRules.informational || []).length > 0 && html`<details class="sbx-common-rule-informational"><summary>Required, non-removable access</summary>${(commonRules.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-bg-intro"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>`}
       </details>
+      ${commonRuleNotice && html`<div id="sandbox-profile-editor-common-rule-notice" class="sbx-common-rule-notice" role="status">
+        <span>${commonRuleNotice.added.length ? `Added ${commonRuleNotice.added.length} deny row${commonRuleNotice.added.length === 1 ? '' : 's'} from “${commonRuleNotice.label}”: ${commonRuleNotice.added.join(' · ')}.` : `“${commonRuleNotice.label}” added no rows.`}${commonRuleNotice.skipped ? ` ${commonRuleNotice.skipped} path${commonRuleNotice.skipped === 1 ? ' was' : 's were'} already in the table and left as authored.` : ''}</span>
+        ${commonRuleNotice.warning ? html`<span class="sbx-common-rule-warn">⚠ ${commonRuleNotice.warning}</span>` : null}
+        <button type="button" class="sbx-common-rule-dismiss" onClick=${() => setCommonRuleNotice(null)}>×</button>
+      </div>`}
     </fieldset>
-    <fieldset class="sbx-section" hidden=${advanced}><legend>Filesystem</legend><div class="sbx-rows">${draft.filesystem.map((row, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-access" value=${row.access || 'read'} onChange=${(access) => setFS(index, { access })} options=${[['read', 'read'], ['write', 'write'], ['deny', 'deny']]}/><input class="sbx-path" value=${row.path || ''} onInput=${(event) => setFS(index, { path: event.currentTarget.value })}/><button type="button" onClick=${async () => { const result = await pickDirectory({ startDir: row.path || '', title: 'Select a sandbox directory' }); if (result.path) setFS(index, { path: result.path }); else if (result.error) state.error.value = result.error; }}>Browse…</button><button type="button" onClick=${() => setDraft((value) => ({ ...value, filesystem: value.filesystem.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, filesystem: [...value.filesystem, { path: '', access: 'read' }] }))}>＋ add directory</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend>Environment</legend><div class="sbx-rows">${draft.environment.map((row, index) => html`<div key=${index} class="sbx-row"><input value=${row.name || ''} placeholder="NAME" onInput=${(event) => setEnv(index, { name: event.currentTarget.value })}/><input value=${row.value || ''} placeholder="value" onInput=${(event) => setEnv(index, { value: event.currentTarget.value })}/><button type="button" onClick=${() => setDraft((value) => ({ ...value, environment: value.environment.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => setDraft((value) => ({ ...value, environment: [...value.environment, { name: '', value: '' }] }))}>＋ add variable</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Included profiles apply first, in order; this profile overrides them.">Includes</legend><div class="sbx-rows">${draft.includes.map((name, index) => html`<div key=${index} class="sbx-row"><${Select} class="sbx-inc-name" value=${name} onChange=${(value) => setDraft((old) => ({ ...old, includes: old.includes.map((item, i) => i === index ? value : item) }))} options=${[['', '— choose profile —'], ...current.sandboxProfiles.filter((item) => item.name !== seed?.name || item.name === name).map((item) => [item.name, item.name])]} /><button type="button" onClick=${() => setDraft((old) => ({ ...old, includes: old.includes.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-include-add" onClick=${() => setDraft((old) => ({ ...old, includes: [...old.includes, ''] }))}>＋ include profile</button></fieldset>
     <fieldset class="sbx-section" hidden=${advanced}><legend title="Environment-variable names backed by isolated writable directories created per agent.">Agent-owned directories</legend><div class="sbx-rows">${draft.agent_directories.map((name, index) => html`<div key=${index} class="sbx-row"><input class="sbx-agent-name" value=${name} placeholder="GOCACHE" onInput=${(event) => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.map((item, i) => i === index ? event.currentTarget.value : item) }))}/><button type="button" onClick=${() => setDraft((old) => ({ ...old, agent_directories: old.agent_directories.filter((_, i) => i !== index) }))}>×</button></div>`)}</div><button type="button" class="sbx-add-row sbx-agent-add" onClick=${() => setDraft((old) => ({ ...old, agent_directories: [...old.agent_directories, ''] }))}>＋ add agent-owned directory</button></fieldset>
@@ -532,8 +474,6 @@ function SandboxDiffModal({ model, close, profiles = [] }) {
       <h3 id="sandbox-profile-diff-title">Confirm sandbox profile changes</h3>
       ${afterBreakGlass.length > 0 && html`<div id="sandbox-profile-diff-break-glass" class="sbx-bg-warning" role="alert"><strong>🚨 Break-glass protected access:</strong> ${describeBreakGlassEntries(afterBreakGlass)} — ${BREAK_GLASS_WARNING}</div>`}
       ${!afterBreakGlass.length && beforeBreakGlass.length > 0 && html`<div id="sandbox-profile-diff-break-glass-removed" class="cfg-diff-sub">Break-glass protected access is removed by this change.</div>`}
-      ${model.after?.read_baseline === 'minimal' && html`<div id="sandbox-profile-diff-read-baseline" class="cfg-diff-sub">Read baseline: minimal — strict opt-in read scope (strictest-wins when composed with other profiles).</div>`}
-      ${(model.after?.read_baseline_exclusions || []).length > 0 && html`<div id="sandbox-profile-diff-read-exclusions" class="cfg-diff-sub">Additional filesystem restrictions: ${model.after.read_baseline_exclusions.join(', ')}. These union with restrictions inherited from included and assigned profiles.</div>`}
       <p id="sandbox-profile-diff-sub" class="cfg-diff-sub">${model.before ? `${adds} line(s) added, ${dels} removed — server-normalized preview` : `${adds} line(s) added — new server-normalized profile`}</p>
       <div id="sandbox-profile-diff-body" class="config-diff">${diff.map((line, index) => html`<span key=${index} class=${`dl ${line.t}`}>${sign[line.t]} ${line.s}</span>`)}</div>
       <div class="modal-buttons"><button id="sandbox-profile-diff-cancel" type="button" onClick=${() => close(false)}>Cancel</button><span class="spacer"></span><button ref=${confirmRef} id="sandbox-profile-diff-confirm" class="primary" type="button" onClick=${() => close(true)}>Save sandbox profile</button></div>

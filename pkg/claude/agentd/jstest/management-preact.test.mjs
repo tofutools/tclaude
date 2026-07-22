@@ -272,7 +272,7 @@ test('sandbox manager clones a full profile through the guarded create editor', 
     notify() {},
     summonSandboxScribe: async (...args) => { scribeCall = args; },
     sandboxAPI: {
-      loadSandboxReadExclusionCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+      loadSandboxCommonRules: async () => ({ version: 1, categories: [], informational: [] }),
       inspectSandboxDirectories: async () => ({ missing: [], creatable: [] }),
     },
   });
@@ -366,7 +366,7 @@ test('sandbox scribe return reopens clone drafts in explicit create mode', async
     host,
     state,
     actions: {
-      loadReadExclusionCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+      loadCommonRuleCatalog: async () => ({ version: 1, categories: [], informational: [] }),
       inspectDirectories: async () => ({ missing: [], creatable: [] }),
       createDirectories: async () => {},
       saveSandbox: async () => {},
@@ -456,9 +456,10 @@ test('sandbox actions preserve dry-run, canonical commit, delete, and import bou
   };
   const actions = createManagementActions({ state, confirm: async () => { genericConfirms += 1; return true; }, notify() {}, refreshSandboxSpawn: async () => { refreshed += 1; }, sandboxAPI });
   const draft = { name: 'safe', filesystem: [{ path: '/tmp', access: 'write' }], environment: [], includes: ['base'], agent_directories: ['GOCACHE'], network_access: 'internet' };
-  // The save body always carries the full-replace shape, so the TCL-609
-  // fields ride along explicitly even when untouched.
-  const body = { ...draft, read_baseline: '', read_baseline_exclusions: [], break_glass_filesystem: [] };
+  // The save body always carries the full-replace shape, so break-glass rides
+  // along explicitly even when untouched. The retired read_baseline fields are
+  // gone from the wire entirely.
+  const body = { ...draft, break_glass_filesystem: [] };
   const create = actions.saveSandbox({ draft, original: null }); await Promise.resolve();
   assert.deepEqual(state.sandboxDiff.value, { before: null, after: body }); state.cancelSandboxDiff(true);
   assert.equal(await create, true);
@@ -548,7 +549,109 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   cleanups.reverse().forEach((fn) => fn());
 });
 
-test('sandbox editor keeps Home and external leaves distinct and lets owners remove unknown IDs', async (t) => {
+const COMMON_RULES = {
+  version: 1,
+  categories: [
+    { id: 'secrets.ssh', label: 'Deny SSH credentials', description: 'SSH private keys and known hosts.', warning: 'Breaks git over SSH.', paths: ['/home/op/.ssh'] },
+    { id: 'home.directory', label: 'Deny home directory', description: 'Everything under the home directory.', warning: 'You must reopen the harness, tclaude and toolchain directories (~/go, ~/.cargo, ~/.codex) or the agent cannot function.', paths: ['/home/op'] },
+    { id: 'empty.here', label: 'Nothing on this platform', description: 'Resolves nowhere here.', paths: [] },
+  ],
+  informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
+};
+
+function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {}) {
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host,
+    state,
+    actions: {
+      async loadCommonRuleCatalog() { return COMMON_RULES; },
+      async inspectDirectories() { return { missing: [], creatable: [] }; },
+      async createDirectories() {},
+      async saveSandbox() {},
+      configureSandboxWithAgent() {},
+      ...overrides,
+    },
+    confirmDiscard: async () => true,
+    openProfilePermissions() {},
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
+}
+
+// The presets are row inserters, nothing more: what they add is an ordinary,
+// visible, editable deny row, and the entry's warning must be on screen at the
+// moment the rows appear. Nothing about the preset is retained afterwards.
+test('the common-rule menu inserts plain editable deny rows and warns at insertion', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'hardened', filesystem: [{ path: '/home/op/.ssh', access: 'deny' }], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  let saved = null;
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+
+  // The menu ships folded and lives on the filesystem table, not in a section
+  // of its own — there is only one filesystem mechanism now.
+  const menu = host.querySelector('#sandbox-profile-editor-common-rules');
+  assert.equal(menu.hasAttribute('open'), false, 'the preset menu ships folded');
+  assert.equal(menu.closest('fieldset').querySelector('legend').textContent, 'Filesystem');
+  menu.open = true; menu.dispatchEvent(new harness.window.Event('toggle'));
+  await harness.act(() => Promise.resolve());
+
+  const entries = [...host.querySelectorAll('.sbx-common-rule-entry')];
+  assert.deepEqual(entries.map((entry) => entry.getAttribute('data-rule')), ['secrets.ssh', 'home.directory', 'empty.here']);
+  // Warning and exact paths are readable before the click, not only after it.
+  assert.match(entries[1].querySelector('.sbx-common-rule-warn').textContent, /~\/go, ~\/\.cargo, ~\/\.codex/);
+  assert.equal(entries[1].querySelector('.sbx-common-rule-paths').textContent, '/home/op');
+  assert.equal(entries[2].querySelector('.sbx-common-rule-add').disabled, true, 'an entry with no paths here cannot be inserted');
+
+  entries[1].querySelector('.sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  const rows = [...host.querySelectorAll('.sbx-section .sbx-row')].filter((row) => row.querySelector('.sbx-path'));
+  const inserted = rows[rows.length - 1];
+  assert.equal(inserted.querySelector('.sbx-path').value, '/home/op');
+  assert.equal(inserted.querySelector('.sbx-access').getAttribute('value'), 'deny');
+  assert.notEqual(inserted.querySelector('.sbx-path').disabled, true, 'inserted rows stay ordinary editable rows');
+  const notice = host.querySelector('#sandbox-profile-editor-common-rule-notice');
+  assert.match(notice.textContent, /Added 1 deny row from “Deny home directory”: \/home\/op/);
+  assert.match(notice.querySelector('.sbx-common-rule-warn').textContent, /reopen the harness, tclaude and toolchain directories/);
+
+  // A path already in the table is left exactly as authored rather than
+  // silently re-denied or duplicated, and the notice says so.
+  entries[0].querySelector('.sbx-common-rule-add').click();
+  await harness.act(() => Promise.resolve());
+  assert.match(host.querySelector('#sandbox-profile-editor-common-rule-notice').textContent, /added no rows.*1 path was already in the table/);
+
+  // The inserted row is editable like any other, and the saved draft carries
+  // rows only — no preset ID, no hidden state.
+  const edited = [...host.querySelectorAll('.sbx-path')].find((input) => input.value === '/home/op');
+  edited.value = '/home/op/private';
+  edited.dispatchEvent(new harness.window.Event('input', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
+  host.querySelector('#sandbox-profile-editor-submit').click();
+  await harness.act(() => Promise.resolve());
+  assert.deepEqual(saved.draft.filesystem, [
+    { path: '/home/op/.ssh', access: 'deny' },
+    { path: '/home/op/private', access: 'deny' },
+  ]);
+  assert.equal(saved.draft.read_baseline, undefined);
+  assert.equal(saved.draft.read_baseline_exclusions, undefined);
+  unmount();
+});
+
+// A profile written before TCL-623 may still carry the retired fields. The
+// editor must simply not render them — never error, and never imply they are
+// still enforced.
+test('a profile carrying retired baseline fields loads with no baseline UI at all', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -561,142 +664,45 @@ test('sandbox editor keeps Home and external leaves distinct and lets owners rem
   state.openDialog({
     kind: 'sandbox-editor',
     seed: {
-      name: 'hardened', filesystem: [], environment: [], includes: ['base'], agent_directories: [],
-      read_baseline_exclusions: ['future.secret-store'],
+      name: 'legacy', filesystem: [{ path: '/work', access: 'write' }], environment: [], includes: ['base'], agent_directories: [],
+      read_baseline: 'minimal', read_baseline_exclusions: ['future.secret-store'],
     },
     options: {},
   });
   let saved = null;
-  const actions = {
-    async loadReadExclusionCatalog() {
-      return {
-        version: 1,
-        categories: [
-          { id: 'secrets.ssh', label: 'Deny SSH', description: 'SSH credentials.', tier: 'portable', paths: ['/home/op/.ssh'] },
-          { id: 'home.directory', label: 'Deny Home', description: 'Home baseline.', tier: 'home', paths: ['/home/op'] },
-        ],
-        informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
-      };
-    },
-    async inspectDirectories() { return { missing: [], creatable: [] }; },
-    async createDirectories() {},
-    async saveSandbox(value) { saved = value; },
-    configureSandboxWithAgent() {},
-  };
-  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, { async saveSandbox(value) { saved = value; } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  const exclusions = host.querySelector('.sbx-read-exclusions');
-  // Unknown restrictions fail launch closed, so they unfold the otherwise
-  // collapsed catalog rather than sitting unseen behind the summary.
-  assert.equal(host.querySelector('#sandbox-profile-editor-exclusions-fold').hasAttribute('open'), true,
-    'an unknown restriction unfolds the catalog once it loads');
-  assert.match(exclusions.textContent, /Unknown restriction: future\.secret-store/);
-  assert.match(exclusions.textContent, /Unknown restriction: future\.inherited-store/);
-  const unknownRows = [...exclusions.querySelectorAll('.sbx-exclusion-row.unknown')];
-  const ownedUnknown = unknownRows.find((row) => row.textContent.includes('future.secret-store'));
-  const inheritedUnknown = unknownRows.find((row) => row.textContent.includes('future.inherited-store'));
-  assert.notEqual(ownedUnknown.querySelector('input').disabled, true, 'direct owner can recover on an older catalog');
-  assert.equal(inheritedUnknown.querySelector('input').disabled, true, 'inherited unknown remains locked at its consumer');
-  let choices = host.querySelectorAll('.sbx-exclusion-row:not(.unknown) input');
-  assert.equal(choices.length, 2); assert.notEqual(choices[0].disabled, true); assert.notEqual(choices[1].checked, true);
-  choices[1].checked = true; choices[1].dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  choices = host.querySelectorAll('.sbx-exclusion-row:not(.unknown) input');
-  assert.notEqual(choices[0].checked, true, 'Home does not claim coverage for a leaf that may resolve outside Home');
-  assert.notEqual(choices[0].disabled, true);
-  ownedUnknown.querySelector('input').checked = false;
-  ownedUnknown.querySelector('input').dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  assert.equal(host.querySelector('#sandbox-profile-editor-read-baseline'), null);
+  assert.equal(host.querySelector('.sbx-read-exclusions'), null);
+  assert.equal(host.querySelector('#sandbox-profile-editor-modal').textContent.includes('future.secret-store'), false);
+  assert.equal(host.querySelector('.cron-create-error').textContent, '', 'an old profile loads without an error');
+  host.querySelector('#sandbox-profile-editor-submit').click();
   await harness.act(() => Promise.resolve());
-  host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
-  assert.deepEqual(saved.draft.read_baseline_exclusions, ['home.directory']);
-  cleanups.reverse().forEach((fn) => fn());
+  assert.deepEqual(saved.draft.filesystem, [{ path: '/work', access: 'write' }]);
+  assert.equal('read_baseline' in saved.draft, false, 'the retired fields are dropped, not round-tripped');
+  assert.equal('read_baseline_exclusions' in saved.draft, false);
+  unmount();
 });
 
-test('sandbox exclusion rows stay compact and keep their copy behind [?]', async (t) => {
+// The catalog is a convenience, not a dependency: a feed that fails must never
+// block editing the table by hand.
+test('a failing common-rule feed leaves the filesystem table usable', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
   ]);
   const state = createManagementState();
-  state.sandboxRequest.commitRequest(state.sandboxRequest.beginRequest(), [{
-    name: 'base', filesystem: [], environment: [], includes: [], agent_directories: [],
-    read_baseline_exclusions: ['home.directory'],
-  }]);
-  state.openDialog({
-    kind: 'sandbox-editor',
-    seed: { name: 'hardened', filesystem: [], environment: [], includes: ['base'], agent_directories: [] },
-    options: {},
+  state.openDialog({ kind: 'sandbox-editor', seed: { name: 'plain', filesystem: [], environment: [], includes: [], agent_directories: [] }, options: {} });
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async loadCommonRuleCatalog() { throw new Error('feed offline'); },
   });
-  const actions = {
-    async loadReadExclusionCatalog() {
-      return {
-        version: 1,
-        categories: [
-          { id: 'secrets.ssh', label: 'Deny SSH', description: 'SSH credentials and known hosts.', warning: 'Breaks git over SSH.', tier: 'portable', paths: ['/home/op/.ssh'] },
-          { id: 'home.directory', label: 'Deny Home', description: 'Home baseline.', tier: 'home', paths: ['/home/op'] },
-        ],
-        informational: [{ id: 'agentd.control-plane', label: 'Control plane', description: 'Required socket access.' }],
-      };
-    },
-    async inspectDirectories() { return { missing: [], creatable: [] }; },
-    async createDirectories() {},
-    async saveSandbox() {},
-    configureSandboxWithAgent() {},
-  };
-  const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
-  mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
-  // The catalog ships folded, and the summary carries the counts so collapsing
-  // never hides the fact that a restriction is in force.
-  const fold = host.querySelector('#sandbox-profile-editor-exclusions-fold');
-  assert.equal(fold.hasAttribute('open'), false, 'the restriction catalog is folded by default');
-  assert.match(fold.querySelector('summary').textContent, /1 active · 1 inherited/);
-  // The browser flips .open itself and then fires `toggle`; drive that same
-  // sequence so the component's state stays in sync with the real element.
-  fold.open = true; fold.dispatchEvent(new harness.window.Event('toggle'));
+  assert.match(host.querySelector('.cron-create-error').textContent, /Could not load the common-rule catalog: feed offline/);
+  assert.equal(host.querySelectorAll('.sbx-common-rule-entry').length, 0);
+  host.querySelector('.sbx-section .sbx-add-row').click();
   await harness.act(() => Promise.resolve());
-  const rows = [...host.querySelectorAll('.sbx-exclusion-row')];
-  assert.equal(rows.length, 2);
-  const ssh = rows[0];
-  // Compact: the row itself carries only the short label, never the long copy.
-  assert.equal(ssh.querySelector('.sbx-exclusion-name').textContent, 'Deny SSH');
-  assert.equal(ssh.querySelector('.spawn-field-description').textContent.includes('SSH credentials'), true);
-  assert.equal(ssh.querySelector('.sbx-exclusion-choice').textContent.includes('SSH credentials'), false);
-  // The badge cell is always emitted so the [?] column stays aligned; a freely
-  // toggleable row simply leaves it empty.
-  assert.equal(ssh.querySelector('.sbx-exclusion-badge').textContent, '', 'a freely toggleable row carries no lock badge');
-  // The checkbox is still labelled by the visible text and described by the help.
-  const box = ssh.querySelector('input');
-  assert.equal(ssh.querySelector('label').getAttribute('for'), box.id);
-  assert.equal(box.getAttribute('aria-describedby'), ssh.querySelector('.spawn-field-description').id);
-  // [?] toggles the disclosure, and only one row's help is open at a time.
-  const trigger = ssh.querySelector('.spawn-field-help-trigger');
-  assert.equal(trigger.getAttribute('aria-expanded'), 'false');
-  trigger.click(); await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('.sbx-exclusion-row .spawn-field-help-trigger').getAttribute('aria-expanded'), 'true');
-  const inherited = [...host.querySelectorAll('.sbx-exclusion-row')][1];
-  inherited.querySelector('.spawn-field-help-trigger').click(); await harness.act(() => Promise.resolve());
-  const expanded = [...host.querySelectorAll('.sbx-exclusion-row .spawn-field-help-trigger')].map((node) => node.getAttribute('aria-expanded'));
-  assert.deepEqual(expanded, ['false', 'true'], 'opening one disclosure closes the other');
-  // Inherited rows stay visibly locked, with the provenance behind the help.
-  assert.equal(inherited.querySelector('input').disabled, true);
-  assert.equal(inherited.classList.contains('locked'), true);
-  assert.equal(inherited.querySelector('.sbx-exclusion-badge').textContent, 'inherited');
-  assert.match(inherited.querySelector('.spawn-field-description').textContent, /From .*base/);
-  // Minimal locks every row, but must not erase the inherited provenance that
-  // tells the operator which profile to go remove the restriction from.
-  const baseline = host.querySelector('#sandbox-profile-editor-read-baseline');
-  baseline.querySelector('option[value="minimal"]').selected = true;
-  baseline.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
-  await harness.act(() => Promise.resolve());
-  const badges = [...host.querySelectorAll('.sbx-exclusion-row .sbx-exclusion-badge')].map((node) => node.textContent);
-  assert.deepEqual(badges, ['locked', 'inherited · locked']);
-  assert.deepEqual([...host.querySelectorAll('.sbx-exclusion-row input')].map((node) => node.disabled), [true, true]);
-  // Section-level guidance is behind its own [?] rather than an inline paragraph.
-  const intro = host.querySelector('.sbx-exclusion-intro');
-  assert.ok(intro.querySelector('.spawn-field-help-trigger'));
-  assert.match(intro.querySelector('.spawn-field-description').textContent, /compose by union/);
-  cleanups.reverse().forEach((fn) => fn());
+  assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, 1, 'rows can still be added by hand');
+  unmount();
 });
 
 test('role editor preserves missing profile references and nested permission focus', async (t) => {

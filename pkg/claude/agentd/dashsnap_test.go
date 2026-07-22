@@ -1343,10 +1343,10 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
-			Key:      "management-sandbox-editor-exclusion-help",
-			Title:    "Management — sandbox exclusion help",
-			Caption:  "Compact filesystem-restriction rows — checkbox plus short label — with one row's [?] disclosure expanded over its description, warning, audited paths, and provenance.",
-			JS:       sandboxExclusionHelpJS(),
+			Key:      "management-sandbox-editor-common-rules",
+			Title:    "Management — sandbox common-rule presets",
+			Caption:  "The \"add common rule\" menu expanded on the filesystem table: audited presets with their description, warning, and the exact paths each one would insert as ordinary deny rows.",
+			JS:       sandboxCommonRulesJS(),
 			SettleMS: 700,
 		},
 		{
@@ -3420,31 +3420,27 @@ func managementModalJS(modulePath, opener, readySelector string) string {
 })();`, modulePath, opener, opener, opener, readySelector, readySelector, readySelector)
 }
 
-// sandboxExclusionHelpJS opens the sandbox-profile editor and expands the [?]
-// on the first filesystem-restriction row, so the snapshot captures both the
-// compact rows and one row's help popover at once.
-func sandboxExclusionHelpJS() string {
+// sandboxCommonRulesJS opens the sandbox-profile editor and expands the
+// "add common rule" menu on the filesystem table, so the snapshot captures the
+// preset entries with the warnings and paths they would insert.
+func sandboxCommonRulesJS() string {
 	return `return (async function(){
   var module = await import('/static/js/sandbox-profiles.js');
   module.openSandboxProfileEditor(null);
   var deadline = Date.now() + 5000;
-  while (!document.querySelector('.sbx-exclusion-row .spawn-field-help-trigger') && Date.now() < deadline) {
+  while (!document.querySelector('#sandbox-profile-editor-common-rules') && Date.now() < deadline) {
     await new Promise(function(resolve){ setTimeout(resolve, 40); });
   }
-  // The catalog ships folded; the expanded-help state lives inside it.
-  var fold = document.querySelector('#sandbox-profile-editor-exclusions-fold summary');
-  if (!fold) throw new Error('exclusion fold did not render');
-  fold.click();
+  var menu = document.querySelector('#sandbox-profile-editor-common-rules');
+  if (!menu) throw new Error('common-rule menu did not render');
+  menu.querySelector('summary').click();
   await new Promise(function(resolve){ setTimeout(resolve, 120); });
-  // Descendants stay queryable while collapsed, so assert the fold really
-  // expanded rather than screenshotting a closed section with a clicked [?].
-  if (!fold.closest('details').open) throw new Error('exclusion fold did not expand');
-  var trigger = document.querySelector('.sbx-exclusion-row .spawn-field-help-trigger');
-  if (!trigger) throw new Error('sandbox exclusion rows did not render');
-  trigger.closest('.sbx-read-exclusions').scrollIntoView({ block: 'center' });
-  trigger.click();
+  // Descendants stay queryable while collapsed, so assert the menu really
+  // expanded rather than screenshotting a closed section.
+  if (!menu.open) throw new Error('common-rule menu did not expand');
+  if (!document.querySelector('.sbx-common-rule-entry')) throw new Error('common-rule entries did not render');
+  menu.scrollIntoView({ block: 'center' });
   await new Promise(function(resolve){ setTimeout(resolve, 120); });
-  if (trigger.getAttribute('aria-expanded') !== 'true') throw new Error('exclusion help did not expand');
 })();`
 }
 

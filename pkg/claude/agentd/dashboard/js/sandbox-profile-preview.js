@@ -14,10 +14,7 @@ function flattenProfile(profile, byName, state) {
   const environment = new Map();
   const owned = new Map();
   const breakGlass = new Map();
-  const readExclusions = new Map();
   let network = '';
-  let readBaseline = '';
-  let readBaselineOrigin = '';
   state.onPath.add(profile.name);
   for (const name of profile.includes || []) {
     if (state.onPath.has(name)) {
@@ -43,19 +40,10 @@ function flattenProfile(profile, byName, state) {
       environment.delete(name);
       owned.set(name, true);
     }
-    // Break-glass and the strict read baseline never fold into ordinary
-    // override semantics: break-glass merges as a union (write dominates on
-    // the same path) and minimal wins strictest, both keeping the profile
-    // that introduced them so includes cannot hide the origin.
+    // Break-glass never folds into ordinary override semantics: it merges as
+    // a union (write dominates on the same path) and keeps the profile that
+    // introduced it, so includes cannot hide the origin.
     for (const [path, entry] of flattened.breakGlass) mergeBreakGlass(breakGlass, path, entry.access, entry.origins);
-    for (const [id, origins] of flattened.readExclusions) {
-      const previous = readExclusions.get(id) || [];
-      readExclusions.set(id, [...new Set([...previous, ...origins])]);
-    }
-    if (flattened.readBaseline === 'minimal' && readBaseline !== 'minimal') {
-      readBaseline = 'minimal';
-      readBaselineOrigin = flattened.readBaselineOrigin;
-    }
     if (flattened.network) network = flattened.network;
   }
   state.onPath.delete(profile.name);
@@ -69,33 +57,25 @@ function flattenProfile(profile, byName, state) {
     owned.set(name, true);
   }
   for (const rule of profile.break_glass_filesystem || []) mergeBreakGlass(breakGlass, rule.path, rule.access, [profile.name]);
-  for (const id of profile.read_baseline_exclusions || []) {
-    const previous = readExclusions.get(id) || [];
-    if (!previous.includes(profile.name)) previous.push(profile.name);
-    readExclusions.set(id, previous);
-  }
-  if (profile.read_baseline === 'minimal' && readBaseline !== 'minimal') {
-    readBaseline = 'minimal';
-    readBaselineOrigin = profile.name;
-  }
   if (profile.network_access) network = profile.network_access;
-  return { filesystem, environment, owned, network, breakGlass, readExclusions, readBaseline, readBaselineOrigin };
+  return { filesystem, environment, owned, network, breakGlass };
 }
 
 // composeSandboxProfilePolicy mirrors the daemon's composition semantics for
 // the client-side preview: the deny > write > read lattice for ordinary
-// grants, strictest-wins for read_baseline (any minimal layer makes the
-// effective baseline minimal), and a provenance-preserving union for
-// break_glass_filesystem where write dominates read on the same canonical
-// path. The daemon remains authoritative; this only previews.
+// grants and a provenance-preserving union for break_glass_filesystem where
+// write dominates read on the same canonical path. Strictness is expressed
+// entirely through ordinary deny rows plus narrower read/write reopens, so
+// there is no separate read-baseline mechanism to compose. Profiles that
+// still carry retired read_baseline/read_baseline_exclusions JSON fields are
+// ignored here rather than rendered. The daemon remains authoritative; this
+// only previews.
 export function composeSandboxProfilePolicy(applied, byName = {}) {
   const filesystem = new Map();
   const environment = new Map();
   const owned = new Map();
   const breakGlass = new Map();
-  const readExclusions = new Map();
   let network = '';
-  let readBaseline = null;
   const state = { memo: new Map(), onPath: new Set(), problems: new Set() };
   for (const { scope, profile } of applied) {
     const flattened = flattenProfile(profile, byName, state);
@@ -111,14 +91,6 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
     for (const [path, entry] of flattened.breakGlass) {
       mergeBreakGlass(breakGlass, path, entry.access, entry.origins.map((origin) => `${scope}:${origin}`));
     }
-    for (const [id, origins] of flattened.readExclusions) {
-      const scoped = origins.map((origin) => `${scope}:${origin}`);
-      const previous = readExclusions.get(id) || [];
-      readExclusions.set(id, [...new Set([...previous, ...scoped])]);
-    }
-    if (flattened.readBaseline === 'minimal' && !readBaseline) {
-      readBaseline = { scope, profile: flattened.readBaselineOrigin };
-    }
     if (flattened.network) network = `${flattened.network} (${scope})`;
   }
   const scopes = applied.map((item) => `${item.scope}:${item.profile.name}`).join(' → ')
@@ -128,11 +100,6 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
   const keys = [...environment].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const ownedKeys = [...owned].map(([name, scope]) => `${name} (${scope})`).join(', ');
   const breakGlassEntries = [...breakGlass].map(([path, entry]) => ({ path, access: entry.access, origins: entry.origins }));
-  const readExclusionEntries = [...readExclusions].sort(([a], [b]) => a.localeCompare(b)).map(([id, origins]) => ({ id, origins }));
-  const baseline = readBaseline
-    ? ` · read baseline: minimal — strict (${readBaseline.scope}:${readBaseline.profile})` : '';
-  const exclusions = readExclusionEntries.length
-    ? ` · read restrictions: ${readExclusionEntries.map((entry) => `${entry.id} (${entry.origins.join(', ')})`).join(' · ')}` : '';
   // The ⚠ prefix is load-bearing: HelpField lifts everything from the first ⚠
   // onward into an always-visible caveat, so break-glass access stays on
   // screen in the spawn dialog instead of collapsing into the [?] disclosure.
@@ -145,8 +112,8 @@ export function composeSandboxProfilePolicy(applied, byName = {}) {
     ? ` · ⚠ unresolved includes: ${[...state.problems].sort().join(', ')}` : '';
   const text = `${scopes}${grants ? ` · ${grants}` : ''}${keys ? ` · env: ${keys}` : ''}`
     + `${ownedKeys ? ` · agent dirs: ${ownedKeys}` : ''}`
-    + `${network ? ` · network: ${network}` : ''}${baseline}${exclusions}${breakGlassText}${problems}`;
-  return { text, breakGlass: breakGlassEntries, readBaseline, readExclusions: readExclusionEntries };
+    + `${network ? ` · network: ${network}` : ''}${breakGlassText}${problems}`;
+  return { text, breakGlass: breakGlassEntries };
 }
 
 export function composeSandboxProfilePreview(applied, byName = {}) {

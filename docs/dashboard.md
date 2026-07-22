@@ -333,29 +333,24 @@ saves referencing unknown profiles are rejected, renames follow into
 referrers, and a profile cannot be deleted while another profile includes it.
 Exporting a profile automatically bundles the profiles it includes.
 
-Three opt-in policy fields extend the ordinary profile payload. **Read
-baseline** is `default` (omitted — the harness's broad read baseline,
-today's behavior) or `minimal`, a strict opt-in posture that narrows reads to
-the workspace, required runtime paths, and explicit grants. Minimal composes
-strictest-wins across includes and the global → group → explicit layers: any
-minimal layer makes the effective baseline minimal, and a later default layer
-never widens it back. Where a harness cannot faithfully enforce the strict
-posture, launch fails with a typed capability error rather than pretending
-isolation. **Additional filesystem restrictions**
-(`read_baseline_exclusions`) keep Default while subtracting versioned catalog
-categories for audited/default locations such as SSH credentials, cloud
-configuration, toolchain caches, browser profiles, or the whole Home
-directory. Each editor row stays one line — a checkbox, a short label, and a
-lock badge for inherited or Minimal-locked entries — with the description,
-category-specific warning, concrete current-machine paths, and inherited
-provenance behind the row's `[?]` disclosure, the same affordance the
-spawn-agent dialog uses. Restrictions union across includes/scopes and
-inherited rows are locked. Home does not check or lock leaf IDs because a leaf
-may resolve through a symlink outside Home. Directly owned unknown IDs remain
-removable for downgrade recovery, while inherited unknown IDs stay locked;
-all unknown IDs fail launch closed instead of disappearing. Default plus
-selected categories remains a finite
-denylist; Minimal is the true allowlist posture. **Break-glass protected
+Strictness is expressed entirely through the ordinary filesystem table:
+a broad `deny` row (for example the home directory) plus the narrower `read`
+and `write` rows that reopen exactly what the agent needs. There is no separate
+read-baseline or exclusion mechanism — an operator who wants a near-deny-all
+posture composes it from rows and must reopen the harness, tclaude and
+toolchain directories (`~/go`, `~/.cargo`, `~/.codex`, …) themselves or the
+agent cannot function. The editor's **＋ add common rule** menu, folded under
+the filesystem table, offers audited presets for the locations most profiles
+want denied (SSH credentials, cloud configuration, VCS tokens, toolchain
+caches, browser profiles, the whole home directory). Each entry shows its
+description, its warning, and the exact current-machine paths it would insert
+*before* you click; selecting one appends those paths as ordinary `deny` rows
+and repeats the warning in a notice naming what was added. Nothing about the
+preset is stored: afterwards they are plain rows you can edit, retarget, or
+delete, and a path already in the table is left as authored rather than
+duplicated. Profiles saved before this change may still carry the retired
+`read_baseline`/`read_baseline_exclusions` fields; the dashboard ignores them
+rather than rendering an enforcement that no longer exists. **Break-glass protected
 access** (`break_glass_filesystem`) is the
 only representation that may touch the normally protected tclaude/harness
 state (`~/.tclaude/data`, `~/.claude/sessions`, `~/.codex`); ordinary
@@ -370,11 +365,11 @@ breakage), and every commit surface — create, edit, import, global or group
 assignment, and spawning under a resolved policy that carries break-glass —
 requires an explicit fresh acknowledgement (`break_glass_acknowledged`;
 `--i-understand-break-glass-risk` in the CLI). Includes never hide the
-origin: previews attribute every break-glass rule, read restriction, and a
-minimal baseline to the profile and scope that introduced them. Agent-initiated spawns can
-neither introduce nor widen break-glass access, and `minimal → default` is
-treated as widening under the same lineage rules; dropping any exact exclusion
-ID is also widening. Home never substitutes for a leaf ID in lineage checks.
+origin: previews attribute every break-glass rule to the profile and scope that
+introduced it. Agent-initiated spawns can neither introduce nor widen
+break-glass access, and the same lineage rules cover deny rows: a child or
+resumed profile cannot drop an effective deny row, nor reopen a path beneath
+one that its parent did not reopen.
 
 **🤖 configure with agent** summons a fresh, independently named sandbox scribe
 for either a new profile or the draft currently open in the editor. Existing

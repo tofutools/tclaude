@@ -5,7 +5,7 @@ import {
   composeSandboxProfilePreview,
 } from '../dashboard/js/sandbox-profile-preview.js';
 
-test('profiles without the TCL-609 fields compose exactly as before', () => {
+test('ordinary grants compose through the deny > write > read lattice', () => {
   const base = { name: 'base', filesystem: [{ path: '/data', access: 'read' }] };
   const dev = {
     name: 'dev',
@@ -22,36 +22,10 @@ test('profiles without the TCL-609 fields compose exactly as before', () => {
     'global:dev · write /data (global) · env: GOFLAGS (global) · network: internet (global)',
   );
   assert.deepEqual(policy.breakGlass, []);
-  assert.deepEqual(policy.readExclusions, []);
-  assert.equal(policy.readBaseline, null);
   assert.equal(
     composeSandboxProfilePreview([{ scope: 'global', profile: dev }], { base, dev }),
     policy.text,
   );
-});
-
-test('read baseline composes strictest-wins and names its originating profile', () => {
-  const broad = { name: 'broad' };
-  const strictBase = { name: 'strict-base', read_baseline: 'minimal' };
-  const viaInclude = { name: 'via-include', includes: ['strict-base'] };
-  const policy = composeSandboxProfilePolicy(
-    [
-      { scope: 'global', profile: broad },
-      { scope: 'group', profile: viaInclude },
-      { scope: 'explicit', profile: broad },
-    ],
-    { broad, 'strict-base': strictBase, 'via-include': viaInclude },
-  );
-  // Any minimal layer wins, a later default layer never widens it back, and
-  // the include that introduced it stays attributed.
-  assert.deepEqual(policy.readBaseline, { scope: 'group', profile: 'strict-base' });
-  assert.match(policy.text, /read baseline: minimal — strict \(group:strict-base\)/);
-});
-
-test('an explicit minimal profile reports itself as the baseline origin', () => {
-  const strict = { name: 'strict', read_baseline: 'minimal' };
-  const policy = composeSandboxProfilePolicy([{ scope: 'explicit', profile: strict }], { strict });
-  assert.deepEqual(policy.readBaseline, { scope: 'explicit', profile: 'strict' });
 });
 
 test('break-glass merges as a union with write dominating and origins never hidden by includes', () => {
@@ -109,31 +83,52 @@ test('unresolved includes still surface while break-glass from resolvable ones s
   const debug = {
     name: 'debug',
     break_glass_filesystem: [{ path: '/home/op/.tclaude/data', access: 'read' }],
-    read_baseline: 'minimal',
   };
   const policy = composeSandboxProfilePolicy(
     [{ scope: 'group', profile: wrapper }], { wrapper, debug },
   );
   assert.equal(policy.breakGlass.length, 1);
-  assert.deepEqual(policy.readBaseline, { scope: 'group', profile: 'debug' });
   assert.match(policy.text, /⚠ unresolved includes: missing/);
 });
 
-test('read restrictions union across includes and scopes while preserving their origins', () => {
-  const home = { name: 'home', read_baseline_exclusions: ['home.directory'] };
-  const wrapper = { name: 'wrapper', includes: ['home'] };
-  const leaf = { name: 'leaf', read_baseline_exclusions: ['secrets.ssh'] };
-  const policy = composeSandboxProfilePolicy(
-    [
-      { scope: 'global', profile: wrapper },
-      { scope: 'explicit', profile: leaf },
+test('a deny row and its narrower reopens both survive composition as authored', () => {
+  // Strictness is now expressed purely as table rows: a broad deny plus the
+  // narrower read/write rows that reopen exactly what the agent needs. Only an
+  // identical path folds through the lattice; overlapping ancestors and
+  // descendants must both reach the daemon as authored.
+  const hardened = {
+    name: 'hardened',
+    filesystem: [
+      { path: '/home/op', access: 'deny' },
+      { path: '/home/op/go', access: 'read' },
     ],
-    { home, wrapper, leaf },
+  };
+  const workspace = {
+    name: 'workspace',
+    includes: ['hardened'],
+    filesystem: [{ path: '/home/op/work', access: 'write' }],
+  };
+  const policy = composeSandboxProfilePolicy(
+    [{ scope: 'explicit', profile: workspace }], { hardened, workspace },
   );
-  assert.deepEqual(policy.readExclusions, [
-    { id: 'home.directory', origins: ['global:home'] },
-    { id: 'secrets.ssh', origins: ['explicit:leaf'] },
-  ]);
-  assert.match(policy.text, /home\.directory \(global:home\)/);
-  assert.match(policy.text, /secrets\.ssh \(explicit:leaf\)/);
+  assert.equal(
+    policy.text,
+    'explicit:workspace · deny /home/op (explicit) · read /home/op/go (explicit) · write /home/op/work (explicit)',
+  );
+});
+
+test('retired read_baseline/read_baseline_exclusions JSON is ignored, never rendered', () => {
+  // Profiles saved before TCL-623 may still carry the old fields. They compose
+  // as if absent — no error, and no claim of an enforcement that no longer
+  // exists.
+  const legacy = {
+    name: 'legacy',
+    filesystem: [{ path: '/data', access: 'read' }],
+    read_baseline: 'minimal',
+    read_baseline_exclusions: ['secrets.ssh', 'home.directory'],
+  };
+  const policy = composeSandboxProfilePolicy([{ scope: 'global', profile: legacy }], { legacy });
+  assert.equal(policy.text, 'global:legacy · read /data (global)');
+  assert.equal(policy.readBaseline, undefined);
+  assert.equal(policy.readExclusions, undefined);
 });
