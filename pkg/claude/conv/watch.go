@@ -2374,10 +2374,27 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		}
 		writeDirs = append(gitWriteDirs, writeDirs...)
 	}
+	if workspaceDenied {
+		// A deny covering the workspace masks the harness's ordinary cwd grant,
+		// and resumeGitWorktreeWriteDirs yields nothing outside a Git repository.
+		// The workspace is an invariant launch requirement, so reopen it for
+		// WRITE on every harness — not just Codex — or a resumed agent in a plain
+		// directory silently loses write access it had at spawn.
+		if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
+			writeDirs = appendUniqueResumeDir(writeDirs, workspace)
+		}
+	}
 	// Launch contract: pair explicit read reopens for everything tclaude
 	// requires the resumed agent to reach when a deny covers it. Mirrors the
 	// spawn path — see session.sandboxLaunchContractReadDirs.
 	readDirs = append(readDirs, resumeLaunchContractReadDirs(launchGrants, agentDirPaths, append([]string{resumeCwd}, writeDirs...))...)
+	// Re-gate on the rules that will actually be emitted: the launch contract
+	// above can introduce a reopen beneath a deny that the authored profile did
+	// not contain. Mirrors the spawn path.
+	renderedGrants := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)
+	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, sandboxMode, renderedGrants); err != nil {
+		return "", "", nil, err
+	}
 	spec := harness.SpawnSpec{
 		EnvExports:       clcommon.BuildEnvExports(resumeEnv),
 		ShellEnvironment: shellEnvironment,
@@ -2397,7 +2414,7 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if h.Name == harness.CodexName && sandboxMode == harness.SandboxManagedProfile {
 		resumeWriteDirs := writeDirs
-		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(launchGrants)
+		requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(renderedGrants)
 		if requireSplitPolicy {
 			verified, runtimeErr := harness.VerifyCodexHomeSplitPolicy()
 			if runtimeErr != nil {
@@ -2406,15 +2423,6 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 			splitCapability = &verified
 			if verified.RequiresExecutableReopen {
 				readDirs = append(readDirs, verified.ExecutablePath)
-			}
-		}
-		if workspaceDenied {
-			// Same invariant as the spawn path: a deny covering the workspace
-			// masks what `extends = ":workspace"` grants, and GitWorktreeWriteDirs
-			// is empty outside a Git repository. Resume must not strand an agent
-			// with no workspace.
-			if workspace := canonicalResumeWorkspace(resumeCwd); workspace != "" {
-				resumeWriteDirs = appendUniqueResumeDir(resumeWriteDirs, workspace)
 			}
 		}
 		profileName, profilePath, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{

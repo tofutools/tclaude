@@ -89,7 +89,7 @@ func CommonRuleCatalog(home, goos string) ([]CommonRule, error) {
 	}
 	rules = append(rules, browser, CommonRule{
 		ID: CommonRuleHome, Label: "Deny access to the Home directory", Description: "Deny the whole home directory, then reopen only the workspace and the specific paths the agent needs as ordinary read/write rows.",
-		Warning: "Inserting this row alone leaves the agent unable to work: pair it with read/write rows for your workspace and toolchain dirs (~/go, ~/.cargo, ~/.codex, …). A reopen beneath a deny requires Claude sandbox-on, or Codex on Linux with its split-policy backend verified; Codex macOS and legacy Landlock are refused.",
+		Warning: "Pair this with read/write rows for the toolchain dirs your agent needs (~/go, ~/.cargo, ~/.codex, …); tclaude reopens the workspace, Git admin paths and agent directories for you. Because those reopens sit beneath this deny, the launch requires Claude sandbox-on, or Codex on Linux with its split-policy backend verified; Codex macOS and legacy Landlock are refused.",
 		Tier:    CommonRuleTierHome, Paths: []string{home},
 	})
 	for i := range rules {

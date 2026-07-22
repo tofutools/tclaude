@@ -190,3 +190,35 @@ func TestLegacyStrictBaselineSnapshotDropsRemovedFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "read_baseline")
 }
+
+// The launch contract adds reopens beneath a deny that the authored profile
+// never contained, so shape detection must run over the RENDERED rules. A
+// profile of exactly `deny ~` — what the "Deny access to the Home directory"
+// common rule inserts — renders as a split policy once the workspace is
+// reopened, and must be gated as one.
+func TestGrantsFromDirsExposesLaunchContractReopenShape(t *testing.T) {
+	home, workspace, _ := denyLineageDirs(t)
+
+	authored := []FilesystemGrant{{Path: home, Access: AccessDeny}}
+	require.False(t, HasReopenUnderDeny(authored), "the authored profile alone has no reopen")
+
+	rendered := GrantsFromDirs(nil, []string{workspace}, []string{home})
+	assert.Equal(t, []FilesystemGrant{
+		{Path: home, Access: AccessDeny},
+		{Path: workspace, Access: AccessWrite},
+	}, rendered)
+	assert.True(t, HasReopenUnderDeny(rendered),
+		"once tclaude reopens the workspace the rendered rules ARE a reopen-under-deny")
+}
+
+func TestGrantsFromDirsFoldsDuplicatesDenyDominating(t *testing.T) {
+	home, workspace, _ := denyLineageDirs(t)
+	// The same path arriving as both a read pairing and a write grant folds to
+	// write; a deny on the same path dominates both.
+	got := GrantsFromDirs([]string{workspace, home}, []string{workspace}, []string{home})
+	assert.Equal(t, []FilesystemGrant{
+		{Path: home, Access: AccessDeny},
+		{Path: workspace, Access: AccessWrite},
+	}, got)
+	assert.Empty(t, GrantsFromDirs([]string{"", "  "}, nil, nil), "blank entries are skipped")
+}

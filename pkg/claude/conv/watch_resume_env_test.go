@@ -251,29 +251,33 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 		"an unconfigured override must not inject the suppress sentinel")
 }
 
-// The resume renderer must grant the launch directory under a minimal baseline
-// exactly as the spawn path does — GitWorktreeWriteDirs is empty outside a Git
-// repository, so without it a resumed minimal agent has no workspace at all.
-func TestResumeDenyHomeReopensNonGitWorkspace(t *testing.T) {
+// A Codex resume whose RENDERED rules carve the workspace out from beneath a
+// deny must verify the split-policy backend first. The authored profile here is
+// a single deny row with no reopen of its own — the reopen comes from tclaude's
+// own launch contract — so gating on the authored rows would let this posture
+// launch with no backend guarantee and, on macOS, with the reopen silently
+// masked.
+func TestResumeDenyHomeCodexRequiresVerifiedSplitPolicy(t *testing.T) {
+	if _, err := exec.LookPath("codex"); err == nil {
+		t.Skip("a real Codex is installed; the probe may legitimately succeed")
+	}
 	setupTestDB(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", t.TempDir())
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
 
 	// Deliberately not a Git repository.
 	workspace := filepath.Join(home, "plain-workspace")
 	require.NoError(t, os.MkdirAll(workspace, 0o755))
-	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
-	require.NoError(t, err)
-	sibling := filepath.Join(home, "sibling")
-	require.NoError(t, os.MkdirAll(sibling, 0o755))
 
-	canonicalHome, err := filepath.EvalSymlinks(home)
-	require.NoError(t, err)
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
 		Name: "deny-home", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: canonicalHome, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
+	require.False(t, sandboxpolicy.HasReopenUnderDeny(effective.Filesystem),
+		"the authored profile is a bare deny row")
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
 	agentID, _, err := db.EnsureAgentForConv(resumeConvCodex, "test")
 	require.NoError(t, err)
@@ -283,21 +287,9 @@ func TestResumeDenyHomeReopensNonGitWorkspace(t *testing.T) {
 		Cwd: workspace, SandboxMode: harness.SandboxManagedProfile,
 	}))
 
-	_, path, _, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
-	require.NoError(t, err)
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	content := string(raw)
-
-	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`,
-		"a resumed agent under a home-wide deny must still be able to work in its launch directory")
-	// Codex renders one access level per path and write subsumes read, so the
-	// launch contract's read pairing collapses into the write entry here. The
-	// pairing is load-bearing on Claude, whose allowRead/allowWrite are separate
-	// lists — see harness.TestClaudeRendersDenyWithNarrowerReopens.
-	assert.Contains(t, content, `"`+canonicalHome+`" = "none"`)
-	assert.Contains(t, content, `extends = ":workspace"`)
-	assert.NotContains(t, content, sibling, "nothing outside the workspace is granted")
+	_, _, _, err = resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.Error(t, err, "an unverifiable split policy must refuse, not render silently")
+	assert.ErrorContains(t, err, "beneath a deny")
 }
 
 func TestResumeWithoutDenyKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
@@ -380,4 +372,41 @@ func TestCodexDenyHomeWatchRendererHostSmoke(t *testing.T) {
 	assert.Contains(t, content, `"`+common+`" = "write"`)
 	assert.NotContains(t, content, `"`+container+`" = "write"`, "a home-wide deny must not reopen the sibling-worktree container")
 	assert.NotContains(t, content, sibling)
+}
+
+// Regression: resumeGitWorktreeWriteDirs returns nothing outside a Git
+// repository, and the compensating workspace grant used to live inside the
+// Codex managed-profile branch only. A Claude agent spawned in a plain
+// directory under a home-wide deny therefore had allowWrite for its cwd at
+// spawn and lost it on resume, while denyWrite on the home was still emitted —
+// a silent, resume-only capability loss.
+func TestResumeDenyHomeKeepsClaudeWorkspaceWritableOutsideGitRepository(t *testing.T) {
+	setupTestDB(t)
+	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
+	t.Setenv("HOME", home)
+
+	// Deliberately not a Git repository.
+	workspace := filepath.Join(home, "plain-workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "deny-home", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessDeny}},
+	}})
+	require.NoError(t, err)
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+	agentID, _, err := db.EnsureAgentForConv(resumeConvClaude, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "source-session", ConvID: resumeConvClaude, Harness: harness.DefaultName,
+		Cwd: workspace, SandboxMode: harness.ClaudeSandboxOn,
+	}))
+
+	launch, _, _, err := resumeLaunchCmd(harness.DefaultName, resumeConvClaude[:8], resumeConvClaude, nil)
+	require.NoError(t, err)
+	assert.Contains(t, launch, workspace,
+		"a resumed Claude agent must keep write access to its own working directory")
 }

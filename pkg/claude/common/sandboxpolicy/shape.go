@@ -1,6 +1,9 @@
 package sandboxpolicy
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // This file holds the shape vocabulary that replaced the dedicated
 // read-baseline/exclusion mechanism (TCL-623). Strictness is now composed from
@@ -54,6 +57,43 @@ func ReopensUnderDeny(grants []FilesystemGrant) []ReopenUnderDeny {
 // is required for this profile.
 func HasReopenUnderDeny(grants []FilesystemGrant) bool {
 	return len(ReopensUnderDeny(grants)) > 0
+}
+
+// GrantsFromDirs rebuilds a grant set from the rendered launch dir lists.
+//
+// It exists because the shape that needs a harness capability is a property of
+// what tclaude will ACTUALLY emit, not of what the operator authored. The
+// launch contract adds its own reopens beneath a deny (the workspace, Git admin
+// paths, agent-owned directories), so a profile whose authored rows contain no
+// reopen at all — `deny ~` on its own, exactly what the "Deny access to the
+// Home directory" common rule inserts — still renders as a split policy. Gating
+// on the authored rows alone would let that launch skip the Codex split-policy
+// probe and the macOS refusal.
+//
+// Duplicate paths fold with deny dominating write dominating read, matching
+// normalization, so the result is directly comparable to an effective set.
+func GrantsFromDirs(readDirs, writeDirs, denyDirs []string) []FilesystemGrant {
+	byPath := map[string]Access{}
+	add := func(paths []string, access Access) {
+		for _, path := range paths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				continue
+			}
+			if previous, exists := byPath[path]; !exists || accessRank(access) > accessRank(previous) {
+				byPath[path] = access
+			}
+		}
+	}
+	add(readDirs, AccessRead)
+	add(writeDirs, AccessWrite)
+	add(denyDirs, AccessDeny)
+	out := make([]FilesystemGrant, 0, len(byPath))
+	for path, access := range byPath {
+		out = append(out, FilesystemGrant{Path: path, Access: access})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }
 
 // EffectiveAccessAt reports the access a grant set actually confers at one

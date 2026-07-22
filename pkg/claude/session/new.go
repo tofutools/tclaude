@@ -416,11 +416,13 @@ func runNew(params *NewParams) error {
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
-	// TCL-609 capability gates. Both refuse loudly rather than launching with
-	// a weaker policy than the operator asked for: a strict-looking profile
-	// that silently kept today's broad read baseline, or an acknowledged
-	// protected grant the harness quietly dropped, would both be worse than an
-	// error, because the operator would trust isolation that is not there.
+	// Capability gates. Both refuse loudly rather than launching with a weaker
+	// policy than the operator asked for: a reopen beneath a deny that the
+	// harness silently discards, or an acknowledged protected grant it quietly
+	// dropped, would both be worse than an error, because the operator would
+	// trust isolation that is not there. This is the EARLY gate over the
+	// authored profile; the rendered rules are gated again once the launch
+	// contract has added its own reopens.
 	codexManagedProfile := h.Name == harness.CodexName && params.PermissionProfile == harness.CodexAgentProfile
 	effectiveSandboxMode := sandboxMode
 	if codexManagedProfile {
@@ -861,6 +863,18 @@ func runNew(params *NewParams) error {
 		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
 	}
 	launchContractReadDirs := sandboxLaunchContractReadDirs(launchSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
+	launchWriteDirs := append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...)
+	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
+	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
+	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
+	// gate saw only the authored profile, but the launch contract above adds
+	// reopens beneath a deny (workspace, Git admin paths, agent directories), so
+	// an authored `deny ~` with no reopen of its own still renders as a split
+	// policy and must be gated as one.
+	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode,
+		sandboxpolicy.GrantsFromDirs(launchReadDirs, launchWriteDirs, launchDenyDirs)); err != nil {
+		return err
+	}
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		ExecutablePath:             executablePath,
 		EnvExports:                 envExports,
@@ -872,9 +886,9 @@ func runNew(params *NewParams) error {
 		Model:                      model,
 		ExtraArgs:                  extraArgs,
 		SandboxMode:                sandboxMode,
-		SandboxWriteDirs:           append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
-		SandboxReadDirs:            append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...),
-		SandboxDenyDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny),
+		SandboxWriteDirs:           launchWriteDirs,
+		SandboxReadDirs:            launchReadDirs,
+		SandboxDenyDirs:            launchDenyDirs,
 		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessRead),
 		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessWrite),
 		AskUserQuestionTimeout:     askTimeout,
@@ -1136,9 +1150,6 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		}
 		writeDirs = harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 	}
-	// Codex needs the verified split-policy backend for exactly the shape it
-	// cannot otherwise honor: a narrower reopen beneath a denied ancestor.
-	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(sandboxSnapshotActiveFilesystem(effectiveSandbox))
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
 		// The historical repository grant is the main repository's whole
 		// container so an agent can create sibling worktrees directly. That is
@@ -1154,8 +1165,28 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
 	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
+	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
+		// `extends = ":workspace"` still grants the launch directory, but a deny
+		// covering it masks that grant, and GitWorktreeWriteDirs returns nothing
+		// outside a Git repository. The workspace is an invariant launch
+		// requirement rather than an optional grant, so reopen it explicitly.
+		if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
+			writeDirs = appendUniqueDir(writeDirs, workspace)
+		}
+	}
+	// Codex needs the verified split-policy backend for exactly the shape it
+	// cannot otherwise honor: a narrower reopen beneath a denied ancestor. The
+	// shape is read from the RENDERED rules, not the authored profile — the
+	// launch contract above adds reopens of its own, so `deny ~` on its own
+	// still emits a split policy and must still be probed and refused on macOS.
+	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(
+		sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs))
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if requireSplitPolicy {
+		if err := harness.ValidateSandboxReopenUnderDeny(harness.CodexName, harness.SandboxManagedProfile,
+			sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, denyDirs)); err != nil {
+			return "", "", nil, err
+		}
 		verified, err := harness.VerifyCodexHomeSplitPolicy()
 		if err != nil {
 			return "", "", nil, err
@@ -1166,15 +1197,6 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
-	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
-		// `extends = ":workspace"` still grants the launch directory, but a deny
-		// covering it masks that grant, and GitWorktreeWriteDirs returns nothing
-		// outside a Git repository. The workspace is an invariant launch
-		// requirement rather than an optional grant, so reopen it explicitly.
-		if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
-			writeDirs = appendUniqueDir(writeDirs, workspace)
-		}
-	}
 	profileName, path, err := harness.EnsureCodexAgentLaunchProfileForRules(harness.CodexSandboxRules{
 		ReadDirs:            readDirs,
 		WriteDirs:           writeDirs,

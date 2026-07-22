@@ -171,11 +171,11 @@ func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
 		"the mounted parent root is daemon-generated and must skip the caller marker")
 }
 
-// A deny covering the workspace masks what `extends = ":workspace"` grants,
-// and GitWorktreeWriteDirs yields nothing outside a Git repository, so without
-// an explicit reopen an agent in a plain directory would have no workspace at
-// all. The launch contract must reopen it for BOTH read and write.
-func TestDenyHomeReopensWorkspaceOutsideGitRepository(t *testing.T) {
+// A deny covering the workspace masks what `extends = ":workspace"` grants, and
+// GitWorktreeWriteDirs yields nothing outside a Git repository, so without an
+// explicit reopen an agent in a plain directory would have no workspace at all.
+// That reopen is what turns a bare deny row into a reopen-under-deny shape.
+func TestDenyHomeLaunchGatesOnRenderedReopenShape(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
 	canonicalHome, err := filepath.EvalSymlinks(home)
@@ -197,21 +197,34 @@ func TestDenyHomeReopensWorkspaceOutsideGitRepository(t *testing.T) {
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
 
-	params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
-	_, path, _, err := ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
-	require.NoError(t, err)
-	raw, err := os.ReadFile(path)
-	require.NoError(t, err)
-	content := string(raw)
+	// The RENDERED rules — not the authored profile — decide whether this launch
+	// needs the Codex split-policy backend. The profile below has a single deny
+	// row and no reopen of its own, yet tclaude reopens the workspace beneath it,
+	// so the emitted policy IS a reopen-under-deny and must be gated as one.
+	// Computing the shape from the authored rows instead would let this exact
+	// profile (the shipped "Deny access to the Home directory" common rule) skip
+	// the probe and the macOS refusal entirely.
+	writeDirs := denyNarrowedGitWriteDirs(workspace, "", nil)
+	assert.Contains(t, writeDirs, canonicalWorkspace, "the workspace is reopened writable so the agent can work")
+	readDirs := sandboxLaunchContractReadDirs(&snapshot, workspace)
+	rendered := sandboxpolicy.GrantsFromDirs(readDirs, writeDirs, sandboxSnapshotDirs(&snapshot, sandboxpolicy.AccessDeny))
 
-	// Home is denied...
-	assert.Contains(t, content, `"`+home+`" = "none"`)
-	// ...the workspace is reopened writable so the agent can actually work...
-	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`)
-	// ...:workspace still provides the ordinary runtime baseline...
-	assert.Contains(t, content, `extends = ":workspace"`)
-	// ...and nothing granted the sibling directory.
-	assert.NotContains(t, content, outside)
+	require.False(t, sandboxpolicy.HasReopenUnderDeny(snapshot.Effective.Filesystem),
+		"the authored profile is a bare deny")
+	assert.True(t, sandboxpolicy.HasReopenUnderDeny(rendered),
+		"the rendered rules carve the workspace out from beneath the deny and must be gated")
+	for _, grant := range rendered {
+		assert.NotEqual(t, outside, grant.Path, "nothing granted the sibling directory")
+	}
+
+	// And the launch itself refuses rather than emitting that split policy with
+	// no backend guarantee. (Skipped where a real Codex is installed, since the
+	// probe may then legitimately succeed.)
+	if _, lookErr := exec.LookPath("codex"); lookErr != nil {
+		params := &NewParams{PermissionProfile: harness.CodexAgentProfile, GitWorktreeWriteDirsPinned: true}
+		_, _, _, err = ensureCodexManagedProfileWithSnapshot(params, workspace, "1234567890abcdef", &snapshot)
+		require.Error(t, err, "an unverifiable split policy must refuse, not render silently")
+	}
 }
 
 // The launch contract pairs an explicit READ for a write-granted directory
