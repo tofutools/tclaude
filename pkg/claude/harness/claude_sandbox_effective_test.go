@@ -31,10 +31,12 @@ func writeSettings(t *testing.T, path string, body string) {
 	}
 }
 
-func TestResolveClaudeSandboxEnabledExplicitModesSkipSettings(t *testing.T) {
+func TestResolveClaudeSandboxEnabledExplicitModesSkipUserSettings(t *testing.T) {
 	home, _ := isolateClaudeSettings(t)
 	// A user file saying the opposite must not win: `on`/`off` emit a
-	// `--settings` block, which outranks every user/project file.
+	// `--settings` block, which outranks every user/project file. (Managed
+	// policy is the one tier that still outranks the launch flag — covered by
+	// TestResolveClaudeSandboxEnabledManagedPolicyOutranksLaunchFlag.)
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":false}}`)
 
 	if got := ResolveClaudeSandboxEnabled(ClaudeSandboxOn, home); got.State != ClaudeSandboxStateOn {
@@ -43,6 +45,29 @@ func TestResolveClaudeSandboxEnabledExplicitModesSkipSettings(t *testing.T) {
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
 	if got := ResolveClaudeSandboxEnabled(ClaudeSandboxOff, home); got.State != ClaudeSandboxStateOff {
 		t.Fatalf("sandbox off: got state %v, want off", got.State)
+	}
+}
+
+// Managed policy settings outrank a CLI --settings block, so a sandbox-`on`
+// launch under a managed policy that disables the sandbox is actually
+// UNCONFINED. The resolver must report that (a false all-clear here would hide
+// exactly the exposure this warning exists to surface), and it must report an
+// enabled managed policy as the reason a sandbox-`off` launch is still on.
+func TestResolveClaudeSandboxEnabledManagedPolicyOutranksLaunchFlag(t *testing.T) {
+	_, managed := isolateClaudeSettings(t)
+	writeSettings(t, filepath.Join(managed, "managed-settings.json"), `{"sandbox":{"enabled":false}}`)
+
+	got := ResolveClaudeSandboxEnabled(ClaudeSandboxOn, "")
+	if got.State != ClaudeSandboxStateOff {
+		t.Fatalf("sandbox on under managed off: got state %v, want off", got.State)
+	}
+	if !strings.Contains(got.Source, "managed policy") {
+		t.Fatalf("got source %q, want it to name the managed policy", got.Source)
+	}
+
+	writeSettings(t, filepath.Join(managed, "managed-settings.json"), `{"sandbox":{"enabled":true}}`)
+	if got := ResolveClaudeSandboxEnabled(ClaudeSandboxOff, ""); got.State != ClaudeSandboxStateOn {
+		t.Fatalf("sandbox off under managed on: got state %v, want on", got.State)
 	}
 }
 

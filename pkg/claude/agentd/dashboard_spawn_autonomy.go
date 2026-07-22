@@ -39,15 +39,24 @@ type spawnEffectiveSandboxJSON struct {
 // GET /api/spawn/effective-sandbox?harness=&sandbox=&approval=&dir= — the probe
 // behind the spawn dialog's unsandboxed-autonomy warning (TCL-586).
 //
-// It is read-only and ungated beyond the dashboard's cookie+Origin pin: it
-// reveals whether a sandbox is enabled and which settings file said so, never
-// any other settings content. It deliberately resolves through the same
-// Resolve* helpers the daemon spawn boundary uses, so a blank select answers
-// for the default the spawn would really get instead of for "nothing chosen".
+// The loopback popup server has no global auth middleware — each handler
+// pins itself on the dashboard cookie + Origin, exactly like its neighbours
+// (handleDashboardClaudeDefaultModel, handleDashboardCostFactorAPI). This one
+// must too: it drives filesystem reads off the caller-supplied `dir`, and its
+// verdict is a security-relevant signal, so it is not left ungated.
+//
+// Beyond that pin it is read-only: it reveals only whether a sandbox is enabled
+// and which settings file said so, never any other settings content. It
+// deliberately resolves through the same Resolve* helpers the daemon spawn
+// boundary uses, so a blank select answers for the default the spawn would
+// really get instead of for "nothing chosen".
 //
 // An unknown harness or an invalid mode is a 400, matching the spawn endpoint
 // that would reject the same values.
 func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request) {
+	if !checkDashboardAuth(w, r) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return

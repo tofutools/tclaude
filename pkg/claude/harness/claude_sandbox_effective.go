@@ -83,24 +83,53 @@ type ClaudeSandboxResolution struct {
 // active for a launch with the given (already validated) tclaude sandbox mode,
 // starting the project-settings search at cwd.
 //
-//   - `on` / `off`: tclaude emits a `--settings` sandbox block, which outranks
-//     every user/project file, so the mode alone is the answer.
-//   - `inherit` (the default) or unset: tclaude emits nothing, so the answer is
-//     whatever the operator's own settings say. That is read here.
+// The precedence, most authoritative first, is:
 //
-// A missing file is not an error — it simply says nothing. Only managed policy
-// settings outrank a `--settings` block, so `on`/`off` are reported without
-// consulting them; that is a deliberate simplification, since a managed policy
-// that pins `sandbox.enabled` overrides tclaude on every axis anyway.
+//  1. enterprise managed policy settings — these outrank EVERYTHING, including a
+//     CLI `--settings` block, so they are consulted even for an explicit
+//     `on`/`off`. Skipping them would be a false all-clear: a managed policy
+//     pinning `sandbox.enabled:false` leaves a sandbox-`on` launch unconfined,
+//     which is exactly the case this warning exists to catch.
+//  2. the launch's own `on`/`off` — tclaude emits a `--settings` block that
+//     outranks every user/project file.
+//  3. `inherit` / unset — tclaude emits nothing, so the answer is whatever the
+//     operator's project and user settings say, read here in Claude's own order.
+//
+// A missing file is not an error — it simply says nothing, and the search falls
+// through to the next tier.
 func ResolveClaudeSandboxEnabled(mode, cwd string) ClaudeSandboxResolution {
+	var out ClaudeSandboxResolution
+
+	// The managed tier is above the launch flag, so it is checked before the
+	// on/off short-circuit. A managed file that could not be read leaves the
+	// verdict genuinely uncertain — surface the diagnostic and keep going rather
+	// than trusting the launch flag it might override.
+	for _, path := range claudeManagedSettingsPaths() {
+		enabled, found, diagnostic := readClaudeSandboxEnabled(path)
+		if diagnostic != "" {
+			out.Diagnostics = append(out.Diagnostics, diagnostic)
+			continue
+		}
+		if !found {
+			continue
+		}
+		out.Source = displayClaudeSettingsPath(path) + " (managed policy)"
+		out.State = boolToSandboxState(enabled)
+		return out
+	}
+
 	switch strings.TrimSpace(mode) {
 	case ClaudeSandboxOn:
-		return ClaudeSandboxResolution{State: ClaudeSandboxStateOn, Source: "this launch (sandbox `on`)"}
+		out.State = ClaudeSandboxStateOn
+		out.Source = "this launch (sandbox `on`)"
+		return out
 	case ClaudeSandboxOff:
-		return ClaudeSandboxResolution{State: ClaudeSandboxStateOff, Source: "this launch (sandbox `off`)"}
+		out.State = ClaudeSandboxStateOff
+		out.Source = "this launch (sandbox `off`)"
+		return out
 	}
-	var out ClaudeSandboxResolution
-	for _, path := range claudeSettingsPrecedence(cwd) {
+
+	for _, path := range claudeProjectAndUserSettingsPrecedence(cwd) {
 		enabled, found, diagnostic := readClaudeSandboxEnabled(path)
 		if diagnostic != "" {
 			out.Diagnostics = append(out.Diagnostics, diagnostic)
@@ -110,22 +139,29 @@ func ResolveClaudeSandboxEnabled(mode, cwd string) ClaudeSandboxResolution {
 			continue
 		}
 		out.Source = displayClaudeSettingsPath(path)
-		if enabled {
-			out.State = ClaudeSandboxStateOn
-		} else {
-			out.State = ClaudeSandboxStateOff
-		}
+		out.State = boolToSandboxState(enabled)
 		return out
 	}
 	return out
 }
 
-// claudeSettingsPrecedence lists the settings files Claude Code consults, most
-// authoritative first, so the first one that specifies `sandbox.enabled` decides:
+func boolToSandboxState(enabled bool) ClaudeSandboxState {
+	if enabled {
+		return ClaudeSandboxStateOn
+	}
+	return ClaudeSandboxStateOff
+}
+
+// claudeProjectAndUserSettingsPrecedence lists the NON-managed settings files
+// Claude Code consults, most authoritative first, so the first one that
+// specifies `sandbox.enabled` decides:
 //
-//  1. enterprise managed policy settings (and its drop-in directory);
-//  2. project `.claude/settings.local.json`, then `.claude/settings.json`;
-//  3. the user's `~/.claude/settings.json`.
+//  1. project `.claude/settings.local.json`, then `.claude/settings.json`;
+//  2. the user's `~/.claude/settings.json`.
+//
+// The managed tier sits above these and is handled separately in
+// ResolveClaudeSandboxEnabled (it must be consulted even for an explicit
+// launch flag, which these tiers are not).
 //
 // Claude Code discovers the project `.claude` directory by walking up from the
 // launch directory, so this walks cwd's ancestors nearest-first. The walk stops
@@ -136,14 +172,13 @@ func ResolveClaudeSandboxEnabled(mode, cwd string) ClaudeSandboxResolution {
 //
 // Paths are returned unfiltered (existence is checked by the reader) so the
 // order stays a plain, testable statement of precedence.
-func claudeSettingsPrecedence(cwd string) []string {
+func claudeProjectAndUserSettingsPrecedence(cwd string) []string {
 	home, homeErr := os.UserHomeDir()
 	stop := ""
 	if homeErr == nil {
 		stop = home
 	}
 	paths := make([]string, 0, 8)
-	paths = append(paths, claudeManagedSettingsPaths()...)
 	for _, dir := range ancestorDirs(cwd, stop) {
 		paths = append(paths,
 			filepath.Join(dir, ".claude", "settings.local.json"),

@@ -13,7 +13,7 @@ import (
 func spawnEffectiveSandbox(t *testing.T, query string) (int, spawnEffectiveSandboxJSON) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
-	handleDashboardSpawnEffectiveSandbox(recorder, httptest.NewRequest(http.MethodGet, "/api/spawn/effective-sandbox?"+query, nil))
+	handleDashboardSpawnEffectiveSandbox(recorder, dashboardRequest(http.MethodGet, "/api/spawn/effective-sandbox?"+query, ""))
 	var payload spawnEffectiveSandboxJSON
 	if recorder.Code == http.StatusOK {
 		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
@@ -28,6 +28,7 @@ func spawnEffectiveSandbox(t *testing.T, query string) (int, spawnEffectiveSandb
 // values, and answering those as "nothing chosen, nothing to warn about" would
 // stay silent on exactly the default Claude spawn TCL-586 is about.
 func TestDashboardSpawnEffectiveSandboxAppliesHarnessDefaults(t *testing.T) {
+	withDashboardAuth(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -47,6 +48,7 @@ func TestDashboardSpawnEffectiveSandboxAppliesHarnessDefaults(t *testing.T) {
 }
 
 func TestDashboardSpawnEffectiveSandboxSilentWhenSandboxed(t *testing.T) {
+	withDashboardAuth(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
@@ -76,7 +78,7 @@ func TestDashboardSpawnEffectiveSandboxSilentWhenSandboxed(t *testing.T) {
 func httpBodyOf(t *testing.T, query string) string {
 	t.Helper()
 	recorder := httptest.NewRecorder()
-	handleDashboardSpawnEffectiveSandbox(recorder, httptest.NewRequest(http.MethodGet, "/api/spawn/effective-sandbox?"+query, nil))
+	handleDashboardSpawnEffectiveSandbox(recorder, dashboardRequest(http.MethodGet, "/api/spawn/effective-sandbox?"+query, ""))
 	return recorder.Body.String()
 }
 
@@ -84,6 +86,7 @@ func httpBodyOf(t *testing.T, query string) string {
 // settings and report a clean bill of health for a directory it never looked
 // at — the one failure mode this endpoint must not have.
 func TestDashboardSpawnEffectiveSandboxExpandsTildeCwd(t *testing.T) {
+	withDashboardAuth(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	project := filepath.Join(home, "repo")
@@ -102,6 +105,7 @@ func TestDashboardSpawnEffectiveSandboxExpandsTildeCwd(t *testing.T) {
 }
 
 func TestDashboardSpawnEffectiveSandboxRejectsBadInput(t *testing.T) {
+	withDashboardAuth(t)
 	for _, tc := range []struct{ name, query string }{
 		{"unknown harness", "harness=nope"},
 		{"invalid sandbox", "harness=claude&sandbox=sideways"},
@@ -112,6 +116,21 @@ func TestDashboardSpawnEffectiveSandboxRejectsBadInput(t *testing.T) {
 				t.Fatalf("got status %d, want 400", status)
 			}
 		})
+	}
+}
+
+// The endpoint drives filesystem reads off a caller-supplied dir and reports a
+// security-relevant verdict, so it must reject a request without the dashboard
+// cookie — like every one of its neighbours on the popup mux. A cold review
+// caught the gate missing; this pins it. Calling with a plain (uncookied)
+// request rather than dashboardRequest is the whole point.
+func TestDashboardSpawnEffectiveSandboxRequiresAuth(t *testing.T) {
+	withDashboardAuth(t)
+	recorder := httptest.NewRecorder()
+	handleDashboardSpawnEffectiveSandbox(recorder,
+		httptest.NewRequest(http.MethodGet, "/api/spawn/effective-sandbox?harness=claude", nil))
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("got status %d, want 403 for an uncookied request", recorder.Code)
 	}
 }
 
@@ -127,9 +146,10 @@ func TestDashboardSpawnEffectiveSandboxRouteIsRegistered(t *testing.T) {
 }
 
 func TestDashboardSpawnEffectiveSandboxRejectsNonGET(t *testing.T) {
+	withDashboardAuth(t)
 	recorder := httptest.NewRecorder()
 	handleDashboardSpawnEffectiveSandbox(recorder,
-		httptest.NewRequest(http.MethodPost, "/api/spawn/effective-sandbox", nil))
+		dashboardRequest(http.MethodPost, "/api/spawn/effective-sandbox", ""))
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("got status %d, want 405", recorder.Code)
 	}
