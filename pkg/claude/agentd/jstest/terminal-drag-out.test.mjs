@@ -9,7 +9,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DRAG_OUT_MARGIN, dragOutPoint, draggedOut, dragLeftRegion,
+  DETACH_WINDOW_CHROME_HEIGHT, DETACH_WINDOW_MIN, DRAG_OUT_MARGIN,
+  detachWindowFeatures, dragLeftRegion, dragOutPoint, dragScreenPoint, draggedOut,
 } from '../dashboard/js/terminal-drag-out.js';
 
 const stripRect = { left: 100, top: 0, right: 400, bottom: 30, width: 300, height: 30 };
@@ -41,4 +42,67 @@ test('drag-out geometry only fires well clear of the home region', () => {
     'an unmounted region resolves to the explicit buttons, not a detach');
   assert.equal(dragLeftRegion({ clientX: 200, clientY: 400 }, region, 1000), false,
     'the margin is the caller-tunable slop');
+});
+
+const screen = { availWidth: 1600, availHeight: 900, availLeft: 0, availTop: 0 };
+
+function features(overrides = {}) {
+  return detachWindowFeatures({
+    size: { width: 800, height: 500 }, at: { x: 200, y: 100 }, screen, ...overrides,
+  });
+}
+
+test('a dragged-out terminal asks for a window sized to the pane it is leaving', () => {
+  assert.deepEqual(dragScreenPoint({ screenX: 40, screenY: 60 }), { x: 40, y: 60 });
+  assert.equal(dragScreenPoint({ clientX: 40, clientY: 60 }), null,
+    'a drag with no screen coordinate cannot place a window');
+
+  assert.equal(features(), `popup=yes,width=800,height=${500 + DETACH_WINDOW_CHROME_HEIGHT},left=200,top=100`);
+  assert.match(features(), /^popup=yes/,
+    'the features string is what makes a browser choose a window over a tab');
+
+  assert.equal(features({ at: null }), `popup=yes,width=800,height=${500 + DETACH_WINDOW_CHROME_HEIGHT},left=0,top=0`,
+    'an unplaceable drag still sizes the window');
+  assert.equal(features({ size: { width: 4000, height: 3000 } }),
+    'popup=yes,width=1600,height=900,left=0,top=0', 'a pane larger than the screen is clamped onto it');
+  assert.equal(features({ size: { width: 10, height: 10 } }),
+    `popup=yes,width=${DETACH_WINDOW_MIN.width},height=${DETACH_WINDOW_MIN.height},left=200,top=100`,
+    'a sliver of a pane still opens a usable window');
+  assert.equal(features({ at: { x: 1500, y: 850 } }),
+    'popup=yes,width=800,height=540,left=800,top=360',
+    'a release inside the screen pulls the whole window back on-screen');
+
+  // `screen` describes the display the dashboard is on. A release beyond it is
+  // on a monitor this page cannot measure, so the point survives untouched and
+  // the browser does the placing; clamping it would drag the window back onto
+  // the monitor the operator just left.
+  assert.equal(features({ at: { x: 2400, y: 300 } }),
+    'popup=yes,width=800,height=540,left=2400,top=300',
+    'a release past the right edge keeps the monitor it was dropped on');
+  assert.equal(features({ at: { x: -900, y: 300 } }),
+    'popup=yes,width=800,height=540,left=-900,top=300',
+    'a monitor to the left is reached through negative coordinates');
+  assert.equal(features({ at: { x: 700, y: 1400 } }),
+    'popup=yes,width=800,height=540,left=700,top=1400',
+    'each axis decides on its own whether the point is measurable');
+  assert.equal(
+    detachWindowFeatures({
+      size: { width: 800, height: 500 }, at: { x: 2400, y: 100 },
+      screen: { availWidth: 1600, availHeight: 900, availLeft: 1920, availTop: 0 },
+    }),
+    'popup=yes,width=800,height=540,left=2400,top=100',
+    'a screen with its own origin clamps against that origin, not zero');
+
+  assert.equal(
+    detachWindowFeatures({
+      size: { width: 800, height: 500 }, at: { x: 10, y: 10 },
+      screen: { availWidth: 320, availHeight: 200, availLeft: 0, availTop: 0 },
+    }),
+    'popup=yes,width=320,height=200,left=0,top=0',
+    'a screen smaller than the minimum window still caps the window');
+
+  assert.equal(features({ size: null }), '', 'an unmeasured pane asks for a plain tab, not a guess');
+  assert.equal(features({ screen: null }), '', 'an unmeasured screen asks for a plain tab');
+  assert.equal(features({ size: { width: 0, height: 500 } }), '');
+  assert.equal(detachWindowFeatures(), '');
 });

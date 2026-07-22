@@ -27,6 +27,15 @@ export function dragOutPoint(event) {
   return { x, y };
 }
 
+// dragScreenPoint is the release point in screen coordinates, which is what a
+// detached window has to be positioned in.
+export function dragScreenPoint(event) {
+  const x = Number(event?.screenX);
+  const y = Number(event?.screenY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
 export function draggedOut(point, rect, margin = DRAG_OUT_MARGIN) {
   if (!point || !rect) return false;
   const right = Number.isFinite(rect.right) ? rect.right : rect.left + rect.width;
@@ -41,4 +50,64 @@ export function draggedOut(point, rect, margin = DRAG_OUT_MARGIN) {
 export function dragLeftRegion(event, region, margin = DRAG_OUT_MARGIN) {
   const rect = region?.getBoundingClientRect?.();
   return draggedOut(dragOutPoint(event), rect, margin);
+}
+
+// A tab dragged off the strip lands in a window of its own rather than another
+// tab of the window it just left — dragging a terminal *out* should get it out
+// of the way, which a tab behind the dashboard does not. Only window features
+// make a browser choose a window over a tab; passing none (the ⧉ tab button and
+// the tab context menu) still opens an ordinary tab.
+//
+// Every browser treats the features as a request. A user setting that forces
+// tabs, or a screen too small for the asked-for size, quietly wins; the handoff
+// itself does not care which one it got.
+export const DETACH_WINDOW_MIN = Object.freeze({ width: 480, height: 300 });
+// Popup chrome the terminal does not get to use. Sizing asks for the pane's own
+// height plus this, so the terminal arrives with the columns and rows it had
+// and nothing reflows on the way out.
+export const DETACH_WINDOW_CHROME_HEIGHT = 40;
+
+function clampAxis(length, start, min, availLength, availStart) {
+  // A screen smaller than the minimum is still the whole screen: the cap is the
+  // last word, so an unusually small work area gets a window that fits it rather
+  // than one deliberately larger than the display.
+  const span = Math.min(Math.max(min, Math.round(length)), availLength);
+  // `screen` only ever describes the display the dashboard itself is on; a
+  // release point beyond it landed on some other monitor whose geometry this
+  // page cannot see (that needs the permission-gated Window Management API).
+  // Clamping such a point would yank the window back onto the monitor the user
+  // just dragged away from, so pass it through and let the browser place it.
+  const outside = start < availStart || start > availStart + availLength;
+  const limit = availStart + availLength - span;
+  const placed = outside ? start : Math.max(availStart, Math.min(start, limit));
+  return { span, start: Math.round(placed) };
+}
+
+// detachWindowFeatures sizes the detached window to the pane the terminal is
+// leaving and puts it where the drag was released, kept on-screen when the
+// release point is on the screen this page can measure. It returns '' when
+// either measurement is missing, which asks for a plain tab rather than
+// guessing at a geometry.
+export function detachWindowFeatures({ size, at, screen } = {}) {
+  const width = Number(size?.width);
+  const height = Number(size?.height);
+  const screenWidth = Number(screen?.availWidth);
+  const screenHeight = Number(screen?.availHeight);
+  if (![width, height, screenWidth, screenHeight].every((value) => Number.isFinite(value) && value > 0)) {
+    return '';
+  }
+  const screenLeft = Number.isFinite(Number(screen?.availLeft)) ? Number(screen.availLeft) : 0;
+  const screenTop = Number.isFinite(Number(screen?.availTop)) ? Number(screen.availTop) : 0;
+  const wantLeft = Number(at?.x);
+  const wantTop = Number(at?.y);
+  const horizontal = clampAxis(
+    width, Number.isFinite(wantLeft) ? wantLeft : screenLeft,
+    DETACH_WINDOW_MIN.width, screenWidth, screenLeft,
+  );
+  const vertical = clampAxis(
+    height + DETACH_WINDOW_CHROME_HEIGHT, Number.isFinite(wantTop) ? wantTop : screenTop,
+    DETACH_WINDOW_MIN.height, screenHeight, screenTop,
+  );
+  return `popup=yes,width=${horizontal.span},height=${vertical.span}`
+    + `,left=${horizontal.start},top=${vertical.start}`;
 }

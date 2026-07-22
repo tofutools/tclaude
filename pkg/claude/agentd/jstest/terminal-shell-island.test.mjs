@@ -354,8 +354,8 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
     widgetFactory: fake.factory,
     fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
     windowRef: {
-      open(url, target) {
-        const tab = { opened: [url, target], location: { replace: (next) => opened.push(next) } };
+      open(url, target, features) {
+        const tab = { opened: [url, target, features], location: { replace: (next) => opened.push(next) } };
         opened.push(tab);
         return tab;
       },
@@ -420,6 +420,8 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   assert.equal(fake.widgets.at(-1).disposeCount, 1, 'detach disposes the dashboard widget');
   assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/,
     'detach uses the same standalone terminal handoff as the pane header button');
+  assert.equal(opened.at(-2).opened[2], undefined,
+    'the context menu still detaches into a browser tab — window features are what would make it a window');
   assert.equal(harness.document.activeElement, tab('three'), 'detach focuses the surviving active tab');
 
   await open('two');
@@ -543,7 +545,7 @@ test('terminal button and shortcut route through the mounted Preact operator com
   messageCleanup();
 });
 
-test('dragging a terminal tab clear of the strip detaches it into its own browser tab', async (t) => {
+test('dragging a terminal tab clear of the strip detaches it into its own window', async (t) => {
   const harness = await createPreactHarness(t);
   const { host } = installHosts(harness);
   const fake = fakeWidgetFactory(harness);
@@ -554,7 +556,13 @@ test('dragging a terminal tab clear of the strip detaches it into its own browse
   const cleanup = await mountTerminalsFeature({
     widgetFactory: fake.factory,
     fetchImpl: async (url) => { requests.push(url); return { ok: true }; },
-    windowRef: { open: () => ({ location: { replace: (next) => opened.push(next) } }) },
+    windowRef: {
+      screen: { availWidth: 1600, availHeight: 900, availLeft: 0, availTop: 0 },
+      open: (url, target, features) => {
+        opened.push({ features });
+        return { location: { replace: (next) => { opened.at(-1).url = next; } } };
+      },
+    },
   });
   const open = async (key) => harness.act(async () => {
     controller.openTerminalPane({ ws: `/${key}`, key, label: key, hideConv: `agt_${key}` });
@@ -566,6 +574,8 @@ test('dragging a terminal tab clear of the strip detaches it into its own browse
   // The strip is the home region; the geometry rule is what the browser cannot
   // tell us, so the test supplies the measurement a real layout would.
   strip.getBoundingClientRect = () => ({ left: 0, top: 0, right: 400, bottom: 30, width: 400, height: 30 });
+  host.querySelector('.mux-panes').getBoundingClientRect =
+    () => ({ left: 0, top: 30, right: 900, bottom: 630, width: 900, height: 600 });
   const labels = () => [...host.querySelectorAll('.mux-tab-label')].map((label) => label.textContent);
   const label = (name) => [...host.querySelectorAll('.mux-tab-label')].find((el) => el.textContent === name);
   const tab = (name) => label(name).closest('[role="tab"]');
@@ -586,15 +596,21 @@ test('dragging a terminal tab clear of the strip detaches it into its own browse
     'the strip states the pending detach before the user commits');
   assert.equal(strip.classList.contains('drag-out-armed'), true);
   await harness.act(async () => {
-    harness.fireEvent(label('two'), 'dragend', { dataTransfer: transfer, clientX: 120, clientY: 260 });
+    harness.fireEvent(label('two'), 'dragend', {
+      dataTransfer: transfer, clientX: 120, clientY: 260, screenX: 340, screenY: 260,
+    });
     await Promise.resolve();
     await Promise.resolve();
   });
   assert.deepEqual(labels(), ['one'], 'the dragged terminal leaves the dashboard strip');
   assert.equal(host.querySelector('.mux-drag-out-hint'), null, 'the gesture clears its own hint');
   assert.equal(fake.widgets[1].disposeCount, 1, 'drag detach disposes the dashboard widget');
-  assert.match(opened.at(-1), /^\/terminals\?solo=1#open=/,
+  assert.match(opened.at(-1).url, /^\/terminals\?solo=1#open=/,
     'drag detach reuses the standalone handoff, not a new session');
+  // A terminal dragged OUT of the dashboard lands in its own window, sized to
+  // the pane it left and placed where the drag was released.
+  assert.equal(opened.at(-1).features, 'popup=yes,width=900,height=640,left=340,top=260',
+    'drag detach asks for a separate window, not another tab of this one');
   assert.deepEqual(requests, ['/api/hide/agt_two']);
 
   await open('three');
@@ -602,7 +618,9 @@ test('dragging a terminal tab clear of the strip detaches it into its own browse
   await harness.act(() => harness.fireEvent(tab('one'), 'dragover', { dataTransfer: transfer, clientX: 20 }));
   await harness.act(() => harness.fireEvent(tab('one'), 'drop', { dataTransfer: transfer, clientX: 20 }));
   await harness.act(async () => {
-    harness.fireEvent(label('three'), 'dragend', { dataTransfer: transfer, clientX: 120, clientY: 260 });
+    harness.fireEvent(label('three'), 'dragend', {
+      dataTransfer: transfer, clientX: 120, clientY: 260, screenX: 340, screenY: 260,
+    });
     await Promise.resolve();
   });
   assert.deepEqual(labels(), ['one', 'three'], 'a reorder drop still reorders');
