@@ -37,6 +37,12 @@ type ConversationResumeProfile struct {
 	Harness          string `json:"harness"`
 	Cwd              string `json:"cwd"`
 	ResumeProvenance string `json:"resume_provenance,omitempty"`
+	// SourceSession* is a projection watermark, not resume authority. It keeps
+	// a late hook from an older process generation of the same conversation
+	// from rolling durable state backward.
+	SourceSessionID        string `json:"source_session_id,omitempty"`
+	SourceSessionCreatedAt string `json:"source_session_created_at,omitempty"`
+	SourceSessionRowID     int64  `json:"source_session_row_id,omitempty"`
 	// FallbackRelaunch preserves the last known launch posture for ordinary,
 	// unmanaged conversations. Managed lifecycle always prefers the stable
 	// agent's profile; keeping this copy makes the plain conversation/session
@@ -222,22 +228,28 @@ func SetConversationResumeProvenance(convID, provenance string) error {
 // to the durable owners. This is the only session→profile bridge used after
 // migration. It is called in the same transaction as launch/status/toggle
 // writes, so pruning can never expose an older durable value.
-func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string) error {
+type relaunchProjectionOptions struct {
+	RemoteControl bool
+	AutoMemory    bool
+}
+
+func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts relaunchProjectionOptions) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
-	var convID, cwd, harnessName, sandboxMode, approvalPolicy, modelID, effort, askTimeout, provenance string
+	var rowID int64
+	var convID, cwd, harnessName, sandboxMode, approvalPolicy, modelID, effort, askTimeout, provenance, createdAt string
 	var approvalAutoReview, remoteControl, autoMemory int
 	var contextWindowSize int64
-	err := q.QueryRow(`SELECT conv_id, cwd, harness, sandbox_mode,
+	err := q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
-		auto_memory, resume_provenance
+		auto_memory, resume_provenance, created_at
 		FROM sessions WHERE id = ?`, sessionID).Scan(
-		&convID, &cwd, &harnessName, &sandboxMode,
+		&rowID, &convID, &cwd, &harnessName, &sandboxMode,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
-		&autoMemory, &provenance)
+		&autoMemory, &provenance, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -250,6 +262,22 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string) error {
 	}
 	if strings.TrimSpace(harnessName) == "" {
 		harnessName = DefaultHarness
+	}
+	var existingConversation *ConversationResumeProfile
+	var existingConversationRaw string
+	err = q.QueryRow(`SELECT profile_json FROM conversation_resume_profiles WHERE conv_id = ?`, convID).
+		Scan(&existingConversationRaw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if err == nil {
+		existingConversation, err = decodeConversationResumeProfile(existingConversationRaw)
+		if err != nil {
+			return err
+		}
+		if existingConversation != nil && sessionProjectionIsOlder(existingConversation, createdAt, rowID) {
+			return nil
+		}
 	}
 	// Capability-incompatible legacy flags are process telemetry, not durable
 	// intent. Normalize them while projecting so a stale/hand-edited Codex row
@@ -265,18 +293,47 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string) error {
 	conversation := ConversationResumeProfile{
 		Version: RelaunchProfileVersion, Harness: harnessName,
 		Cwd: strings.TrimSpace(cwd), ResumeProvenance: provenance,
+		SourceSessionID: sessionID, SourceSessionCreatedAt: createdAt, SourceSessionRowID: rowID,
 	}
 	agent := AgentRelaunchProfile{
 		Version:                RelaunchProfileVersion,
 		SandboxMode:            stringPtr(sandboxMode),
 		ApprovalPolicy:         stringPtr(approvalPolicy),
 		ApprovalAutoReview:     boolPtr(approvalAutoReview != 0),
-		ModelID:                stringPtr(modelID),
-		Effort:                 stringPtr(effort),
-		ContextWindowSize:      int64Ptr(contextWindowSize),
 		AskUserQuestionTimeout: stringPtr(askTimeout),
-		RemoteControl:          boolPtr(remoteControl != 0),
-		AutoMemory:             boolPtr(autoMemory != 0),
+	}
+	if modelID != "" {
+		agent.ModelID = stringPtr(modelID)
+	}
+	if effort != "" {
+		agent.Effort = stringPtr(effort)
+	}
+	if contextWindowSize > 0 {
+		agent.ContextWindowSize = int64Ptr(contextWindowSize)
+	}
+	if opts.RemoteControl {
+		agent.RemoteControl = boolPtr(remoteControl != 0)
+	}
+	if opts.AutoMemory {
+		agent.AutoMemory = boolPtr(autoMemory != 0)
+	}
+	if existingConversation != nil && existingConversation.FallbackRelaunch != nil {
+		previous := existingConversation.FallbackRelaunch
+		if agent.ModelID == nil {
+			agent.ModelID = previous.ModelID
+		}
+		if agent.Effort == nil {
+			agent.Effort = previous.Effort
+		}
+		if agent.ContextWindowSize == nil {
+			agent.ContextWindowSize = previous.ContextWindowSize
+		}
+		if agent.RemoteControl == nil {
+			agent.RemoteControl = previous.RemoteControl
+		}
+		if agent.AutoMemory == nil {
+			agent.AutoMemory = previous.AutoMemory
+		}
 	}
 	conversation.FallbackRelaunch = &agent
 	conversationRaw, err := encodeRelaunchProfile(conversation)
@@ -306,11 +363,11 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string) error {
 		return nil
 	}
 
-	var agentID string
-	err = q.QueryRow(`SELECT ac.agent_id
+	var agentID, existingAgentRaw string
+	err = q.QueryRow(`SELECT ac.agent_id, a.relaunch_profile
 		FROM agent_conversations ac
 		JOIN agents a ON a.agent_id = ac.agent_id AND a.current_conv_id = ac.conv_id
-		WHERE ac.conv_id = ?`, convID).Scan(&agentID)
+		WHERE ac.conv_id = ?`, convID).Scan(&agentID, &existingAgentRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Plain conversations and superseded generations keep their own
 		// conversation profile but cannot overwrite current agent intent.
@@ -319,12 +376,55 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	existingAgent, err := decodeAgentRelaunchProfile(existingAgentRaw)
+	if err != nil {
+		return err
+	}
+	if existingAgent != nil {
+		merged := *existingAgent
+		merged.Version = RelaunchProfileVersion
+		merged.SandboxMode = agent.SandboxMode
+		merged.ApprovalPolicy = agent.ApprovalPolicy
+		merged.ApprovalAutoReview = agent.ApprovalAutoReview
+		merged.AskUserQuestionTimeout = agent.AskUserQuestionTimeout
+		if agent.ModelID != nil {
+			merged.ModelID = agent.ModelID
+		}
+		if agent.Effort != nil {
+			merged.Effort = agent.Effort
+		}
+		if agent.ContextWindowSize != nil {
+			merged.ContextWindowSize = agent.ContextWindowSize
+		}
+		if agent.RemoteControl != nil {
+			merged.RemoteControl = agent.RemoteControl
+		}
+		if agent.AutoMemory != nil {
+			merged.AutoMemory = agent.AutoMemory
+		}
+		agent = merged
+	}
 	agentRaw, err := encodeRelaunchProfile(agent)
 	if err != nil {
 		return err
 	}
 	_, err = q.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`, agentRaw, agentID)
 	return err
+}
+
+func sessionProjectionIsOlder(existing *ConversationResumeProfile, createdAt string, rowID int64) bool {
+	if existing == nil || existing.SourceSessionCreatedAt == "" {
+		return false
+	}
+	currentTime, currentErr := time.Parse(time.RFC3339Nano, existing.SourceSessionCreatedAt)
+	incomingTime, incomingErr := time.Parse(time.RFC3339Nano, createdAt)
+	if currentErr == nil && incomingErr == nil && !incomingTime.Equal(currentTime) {
+		return incomingTime.Before(currentTime)
+	}
+	if (currentErr != nil || incomingErr != nil) && createdAt != existing.SourceSessionCreatedAt {
+		return createdAt < existing.SourceSessionCreatedAt
+	}
+	return rowID < existing.SourceSessionRowID
 }
 
 // conservativeCodexApprovalProjection repairs legacy rows whose harness tag
@@ -354,20 +454,22 @@ func projectLatestSessionRelaunchProfilesForConvTx(q dbExecQuerier, convID strin
 	}
 	var sessionID string
 	err := q.QueryRow(`SELECT id FROM sessions WHERE conv_id = ?
-		ORDER BY updated_at DESC, rowid DESC LIMIT 1`, strings.TrimSpace(convID)).Scan(&sessionID)
+		ORDER BY julianday(created_at) DESC, rowid DESC LIMIT 1`, strings.TrimSpace(convID)).Scan(&sessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return projectSessionRelaunchProfilesTx(q, sessionID)
+	return projectSessionRelaunchProfilesTx(q, sessionID, relaunchProjectionOptions{
+		RemoteControl: true, AutoMemory: true,
+	})
 }
 
 // execSessionUpdateAndProject applies an out-of-band session update and its
 // durable projection atomically. The SQL text is compile-time caller-owned;
 // values remain bound parameters.
-func execSessionUpdateAndProject(sessionID, stmt string, args ...any) error {
+func execSessionUpdateAndProject(sessionID string, opts relaunchProjectionOptions, stmt string, args ...any) error {
 	d, err := Open()
 	if err != nil {
 		return err
@@ -380,7 +482,7 @@ func execSessionUpdateAndProject(sessionID, stmt string, args ...any) error {
 	if _, err := tx.Exec(stmt, args...); err != nil {
 		return err
 	}
-	if err := projectSessionRelaunchProfilesTx(tx, sessionID); err != nil {
+	if err := projectSessionRelaunchProfilesTx(tx, sessionID, opts); err != nil {
 		return err
 	}
 	return tx.Commit()

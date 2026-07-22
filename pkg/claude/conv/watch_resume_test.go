@@ -54,6 +54,30 @@ func TestResumeLaunchCmd_PreservesRecordedApprovalPosture(t *testing.T) {
 	assert.True(t, autoReview)
 }
 
+func TestResumeLaunchCmd_PreservesUnmanagedPostureAfterSessionPrune(t *testing.T) {
+	setupTestDB(t)
+	const cwd = "/tmp/plain-codex-resume"
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "plain-codex-pruned", ConvID: resumeConvCodex, Cwd: cwd,
+		Harness: harness.CodexName, SandboxMode: harness.SandboxReadOnly,
+		ApprovalPolicy: harness.ApprovalUntrusted, ApprovalAutoReview: true,
+	}))
+	require.NoError(t, db.DeleteSession("plain-codex-pruned"))
+
+	cmd, _, h, err := resumeLaunchCmd(harness.CodexName, resumeConvCodex[:8], resumeConvCodex, nil)
+	require.NoError(t, err)
+	assert.Contains(t, cmd, "--sandbox read-only")
+	assert.Contains(t, cmd, "--ask-for-approval untrusted")
+	assert.Contains(t, cmd, `approvals_reviewer="auto_review"`)
+	mode, gotCwd := resumeSandboxState(resumeConvCodex)
+	assert.Equal(t, harness.SandboxReadOnly, mode)
+	assert.Equal(t, cwd, gotCwd)
+	policy, autoReview, err := resumeApprovalState(h, resumeConvCodex)
+	require.NoError(t, err)
+	assert.Equal(t, harness.ApprovalUntrusted, policy)
+	assert.True(t, autoReview)
+}
+
 // A Claude conv keeps its existing `claude --resume <id>` launch unchanged.
 func TestResumeLaunchCmd_Claude(t *testing.T) {
 	setupTestDB(t)

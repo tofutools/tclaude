@@ -2,6 +2,7 @@ package db
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,7 @@ func TestConversationFallbackPreservesUnmanagedLaunchShapeAfterPrune(t *testing.
 	require.NoError(t, UpdateSessionModelID(sessionID, "claude-haiku-4-5"))
 	require.NoError(t, UpdateSessionEffort(sessionID, "medium"))
 	require.NoError(t, SetSessionRemoteControl(sessionID, true))
+	require.NoError(t, SetSessionAutoMemory(sessionID, true))
 	require.NoError(t, DeleteSession(sessionID))
 
 	state, err := AgentState(convID)
@@ -85,6 +87,7 @@ func TestConversationFallbackPreservesUnmanagedLaunchShapeAfterPrune(t *testing.
 	assert.Equal(t, "medium", launch.Effort)
 	assert.Equal(t, "10m", mustAskTimeoutForConv(t, convID))
 	assert.True(t, mustRemoteControlForConv(t, convID))
+	assert.True(t, mustAutoMemoryForConv(t, convID))
 }
 
 func TestSupersededSessionCannotOverwriteCurrentAgentRelaunchIntent(t *testing.T) {
@@ -126,6 +129,78 @@ func TestSupersededSessionCannotOverwriteCurrentAgentRelaunchIntent(t *testing.T
 	require.NotNil(t, oldProfile)
 	require.NotNil(t, oldProfile.FallbackRelaunch)
 	assert.Equal(t, "never", *oldProfile.FallbackRelaunch.AskUserQuestionTimeout)
+}
+
+func TestOlderSameConversationSessionCannotRollBackDurableIntent(t *testing.T) {
+	setupTestDB(t)
+	const convID = "same-conversation-generations"
+	_, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	oldCreated := time.Now().Add(-time.Hour)
+	newCreated := time.Now()
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "same-conv-old", ConvID: convID, Cwd: "/tmp/same-old",
+		Harness: "codex", Status: "exited", SandboxMode: "read-only",
+		ApprovalPolicy: "untrusted", CreatedAt: oldCreated,
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "same-conv-new", ConvID: convID, Cwd: "/tmp/same-new",
+		Harness: "codex", Status: "running", SandboxMode: "workspace-write",
+		ApprovalPolicy: "never", CreatedAt: newCreated,
+	}))
+	require.NoError(t, SetSessionRemoteControl("same-conv-old", true))
+	require.NoError(t, UpdateSessionModelID("same-conv-old", "stale-model"))
+
+	conversation, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, conversation)
+	assert.Equal(t, "/tmp/same-new", conversation.Cwd)
+	require.NotNil(t, conversation.FallbackRelaunch)
+	require.NotNil(t, conversation.FallbackRelaunch.ApprovalPolicy)
+	assert.Equal(t, "never", *conversation.FallbackRelaunch.ApprovalPolicy)
+	assert.Equal(t, "same-conv-new", conversation.SourceSessionID)
+	agent, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.NotNil(t, agent.ApprovalPolicy)
+	assert.Equal(t, "never", *agent.ApprovalPolicy)
+	assert.Nil(t, agent.ModelID, "stale model telemetry must not reach stable intent")
+}
+
+func TestBlankInitialSessionProjectionPreservesExactAgentBirthIntent(t *testing.T) {
+	setupTestDB(t)
+	const convID = "birth-profile-before-telemetry"
+	agentID, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	model := "claude-opus-4-8"
+	effort := "high"
+	window := int64(1_000_000)
+	remoteControl := true
+	autoMemory := true
+	require.NoError(t, SetAgentRelaunchProfile(agentID, AgentRelaunchProfile{
+		Version: RelaunchProfileVersion, ModelID: &model, Effort: &effort,
+		ContextWindowSize: &window, RemoteControl: &remoteControl, AutoMemory: &autoMemory,
+	}))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "birth-profile-session", ConvID: convID, Cwd: "/tmp/birth-profile",
+		Harness: DefaultHarness, Status: "idle", SandboxMode: "on", ApprovalPolicy: "auto",
+	}))
+
+	profile, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.ModelID)
+	assert.Equal(t, model, *profile.ModelID)
+	require.NotNil(t, profile.Effort)
+	assert.Equal(t, effort, *profile.Effort)
+	require.NotNil(t, profile.ContextWindowSize)
+	assert.Equal(t, window, *profile.ContextWindowSize)
+	require.NotNil(t, profile.RemoteControl)
+	assert.True(t, *profile.RemoteControl)
+	require.NotNil(t, profile.AutoMemory)
+	assert.True(t, *profile.AutoMemory)
+	require.NotNil(t, profile.SandboxMode)
+	assert.Equal(t, "on", *profile.SandboxMode)
 }
 
 func TestMigrateV145BackfillsThenDecouplesLegacySession(t *testing.T) {

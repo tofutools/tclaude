@@ -2543,11 +2543,27 @@ func appendUniqueResumeDir(dirs []string, dir string) []string {
 }
 
 func resumeSandboxState(convID string) (mode, cwd string) {
+	launch, launchErr := db.SessionLaunchProfileForConv(convID)
+	if launchErr == nil {
+		mode = strings.TrimSpace(launch.SandboxMode)
+	}
+	if profile, err := db.ConversationResumeProfileForConv(convID); err == nil && profile != nil {
+		cwd = strings.TrimSpace(profile.Cwd)
+	}
+	if cwd != "" {
+		return mode, cwd
+	}
+	// Compatibility for a pre-v145/older-binary row that has not yet been
+	// projected. SessionLaunchProfileForConv applies the same fallback for the
+	// mode; only cwd still needs the legacy row here.
 	row, err := db.FindSessionByConvID(convID)
 	if err != nil || row == nil {
-		return "", ""
+		return mode, ""
 	}
-	return strings.TrimSpace(row.SandboxMode), strings.TrimSpace(row.Cwd)
+	if launchErr != nil {
+		mode = strings.TrimSpace(row.SandboxMode)
+	}
+	return mode, strings.TrimSpace(row.Cwd)
 }
 
 func resumeSandboxMode(convID string) string {
@@ -2559,16 +2575,12 @@ func resumeSandboxMode(convID string) string {
 // next session generation. Legacy rows have no posture; pin those to the
 // harness's daemon-safe default instead of creating another unknown row.
 func resumeApprovalState(h *harness.Harness, convID string) (string, bool, error) {
-	row, err := db.FindSessionByConvID(convID)
+	launch, err := db.SessionLaunchProfileForConv(convID)
 	if err != nil {
 		return "", false, fmt.Errorf("load approval posture for conversation %s: %w", convID, err)
 	}
-	policy := ""
-	autoReview := false
-	if row != nil {
-		policy = strings.TrimSpace(row.ApprovalPolicy)
-		autoReview = row.ApprovalAutoReview
-	}
+	policy := strings.TrimSpace(launch.ApprovalPolicy)
+	autoReview := launch.ApprovalAutoReview
 	if policy == "" {
 		policy, err = harness.ResolveApprovalPolicy(h, "")
 	} else {

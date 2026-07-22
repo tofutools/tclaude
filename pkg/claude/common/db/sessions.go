@@ -198,7 +198,7 @@ func SaveSession(s *SessionRow) error {
 	if err != nil {
 		return err
 	}
-	if err := projectSessionRelaunchProfilesTx(tx, s.ID); err != nil {
+	if err := projectSessionRelaunchProfilesTx(tx, s.ID, relaunchProjectionOptions{}); err != nil {
 		return fmt.Errorf("project durable relaunch profiles: %w", err)
 	}
 	return tx.Commit()
@@ -368,8 +368,42 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 	if err != nil {
 		return SessionLaunchProfile{}, err
 	}
-	if durable == nil && resume != nil {
-		durable = resume.FallbackRelaunch
+	if resume != nil && resume.FallbackRelaunch != nil {
+		fallback := resume.FallbackRelaunch
+		if durable == nil {
+			durable = fallback
+		} else {
+			merged := *fallback
+			merged.Version = durable.Version
+			if durable.SandboxMode != nil {
+				merged.SandboxMode = durable.SandboxMode
+			}
+			if durable.ApprovalPolicy != nil {
+				merged.ApprovalPolicy = durable.ApprovalPolicy
+			}
+			if durable.ApprovalAutoReview != nil {
+				merged.ApprovalAutoReview = durable.ApprovalAutoReview
+			}
+			if durable.ModelID != nil {
+				merged.ModelID = durable.ModelID
+			}
+			if durable.Effort != nil {
+				merged.Effort = durable.Effort
+			}
+			if durable.ContextWindowSize != nil {
+				merged.ContextWindowSize = durable.ContextWindowSize
+			}
+			if durable.AskUserQuestionTimeout != nil {
+				merged.AskUserQuestionTimeout = durable.AskUserQuestionTimeout
+			}
+			if durable.RemoteControl != nil {
+				merged.RemoteControl = durable.RemoteControl
+			}
+			if durable.AutoMemory != nil {
+				merged.AutoMemory = durable.AutoMemory
+			}
+			durable = &merged
+		}
 	}
 	if durable != nil {
 		p := SessionLaunchProfile{}
@@ -551,7 +585,7 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 // meaningful here: controlled stop uses it to atomically invalidate an older
 // snapshot when fresh live-pane capture fails.
 func SetSessionResumeProvenance(id, provenance string) error {
-	return execSessionUpdateAndProject(id,
+	return execSessionUpdateAndProject(id, relaunchProjectionOptions{},
 		`UPDATE sessions SET resume_provenance = ? WHERE id = ?`, provenance, id)
 }
 
@@ -801,7 +835,7 @@ func UpdateContextSnapshot(sessionID string, pct float64, tokensInput, tokensOut
 	if pct == 0 && tokensInput == 0 && tokensOutput == 0 && windowSize == 0 {
 		return nil
 	}
-	return execSessionUpdateAndProject(sessionID, `UPDATE sessions
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{}, `UPDATE sessions
 		SET context_pct = ?, tokens_input = ?, tokens_output = ?, context_window_size = ?
 		WHERE id = ?`, pct, tokensInput, tokensOutput, windowSize, sessionID)
 }
@@ -873,7 +907,7 @@ func SetSessionBgShellsIfUnchanged(sessionID, prev, next string) (bool, error) {
 // injection, so the recorded flag stays in step with what was actually typed
 // into the pane. See JOH-256 / JOH-257.
 func SetSessionRemoteControl(sessionID string, on bool) error {
-	return execSessionUpdateAndProject(sessionID,
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{RemoteControl: true},
 		`UPDATE sessions SET remote_control = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
 
@@ -905,7 +939,7 @@ func RemoteControlForConv(convID string) (bool, error) {
 // The launch path sets this once, right after the session row is written, so a
 // later relaunch can reproduce the posture the agent was actually started with.
 func SetSessionAutoMemory(sessionID string, on bool) error {
-	return execSessionUpdateAndProject(sessionID,
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{AutoMemory: true},
 		`UPDATE sessions SET auto_memory = ? WHERE id = ?`, boolToInt(on), sessionID)
 }
 
@@ -991,7 +1025,7 @@ func UpdateSessionModelID(sessionID, modelID string) error {
 	if modelID == "" {
 		return nil
 	}
-	return execSessionUpdateAndProject(sessionID,
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{},
 		`UPDATE sessions SET model_id = ? WHERE id = ?`, modelID, sessionID)
 }
 
@@ -1008,7 +1042,7 @@ func UpdateSessionModelSlug(sessionID, model string) error {
 	if model == "" {
 		return nil
 	}
-	return execSessionUpdateAndProject(sessionID,
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{},
 		`UPDATE sessions SET model = ?, model_id = ? WHERE id = ?`, model, model, sessionID)
 }
 
@@ -1082,7 +1116,7 @@ func UpdateSessionEffort(sessionID, level string) error {
 	if level == "" {
 		return nil
 	}
-	return execSessionUpdateAndProject(sessionID,
+	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{},
 		`UPDATE sessions SET effort_level = ? WHERE id = ?`, level, sessionID)
 }
 
