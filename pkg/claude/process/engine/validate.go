@@ -9,52 +9,121 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
-type definition struct {
-	sequence []string
-	template *model.Template
+// Definition is the immutable executable projection of one pinned template
+// and its immutable run parameters. Its fields stay private so preparation is
+// the only way to construct executable state and callers cannot mutate it.
+type Definition struct {
+	nodes    []definitionNode
+	index    map[string]int
+	terminal RunStatus
 }
 
-func newDefinition(tmpl *model.Template) (definition, error) {
+type definitionNodeKind uint8
+
+const (
+	definitionStart definitionNodeKind = iota + 1
+	definitionTask
+	definitionEnd
+)
+
+type definitionNode struct {
+	id      string
+	kind    definitionNodeKind
+	program ProgramCommand
+}
+
+// Prepare performs all immutable work once: complete authoring validation,
+// sequential-MVP eligibility, sequence derivation, parameter binding, and
+// final bound-program validation. Plan, Apply, and Advance reuse the result.
+func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error) {
 	if err := RequireEligible(tmpl); err != nil {
-		return definition{}, err
+		return nil, err
 	}
-	sequence := make([]string, 0, len(tmpl.Nodes))
+	definition := &Definition{
+		nodes: make([]definitionNode, 0, len(tmpl.Nodes)),
+		index: make(map[string]int, len(tmpl.Nodes)),
+	}
 	for current := tmpl.Start; ; current = soleTarget(tmpl.Nodes[current].Next) {
-		sequence = append(sequence, current)
-		if tmpl.Nodes[current].Type == model.NodeTypeEnd {
+		node := tmpl.Nodes[current]
+		prepared := definitionNode{id: current}
+		switch node.Type {
+		case model.NodeTypeStart:
+			prepared.kind = definitionStart
+		case model.NodeTypeTask:
+			prepared.kind = definitionTask
+			program, err := bindProgram(current, *node.Performer, params)
+			if err != nil {
+				return nil, err
+			}
+			prepared.program = program
+		case model.NodeTypeEnd:
+			prepared.kind = definitionEnd
+			definition.terminal = terminalStatus(node.Result)
+		}
+		definition.index[current] = len(definition.nodes)
+		definition.nodes = append(definition.nodes, prepared)
+		if node.Type == model.NodeTypeEnd {
 			break
 		}
 	}
-	return definition{sequence: sequence, template: tmpl}, nil
+	return definition, nil
 }
 
-// DecodeCheckpoint performs strict shape decoding followed by semantic
-// validation against the pinned template and immutable run parameters.
-func DecodeCheckpoint(data []byte, tmpl *model.Template, params map[string]string) (Checkpoint, error) {
+func bindProgram(nodeID string, performer model.Performer, params map[string]string) (ProgramCommand, error) {
+	for _, reference := range model.ParamReferences(performer.Run) {
+		value, ok := params[reference]
+		if !ok {
+			return ProgramCommand{}, fmt.Errorf("%w: node %q run parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
+		}
+		if strings.TrimSpace(value) == "" {
+			return ProgramCommand{}, fmt.Errorf("%w: node %q run parameter %q is blank", ErrInvalidProgramBinding, nodeID, reference)
+		}
+	}
+	for index, arg := range performer.Args {
+		for _, reference := range model.ParamReferences(arg) {
+			if _, ok := params[reference]; !ok {
+				return ProgramCommand{}, fmt.Errorf("%w: node %q argument %d parameter %q is missing", ErrInvalidProgramBinding, nodeID, index, reference)
+			}
+		}
+	}
+	bound := model.InterpolatePerformer(performer, params)
+	if strings.TrimSpace(bound.Run) == "" {
+		return ProgramCommand{}, fmt.Errorf("%w: node %q run is blank after interpolation", ErrInvalidProgramBinding, nodeID)
+	}
+	return ProgramCommand{
+		Profile: bound.Profile,
+		Run:     bound.Run,
+		Args:    append([]string(nil), bound.Args...),
+		Timeout: bound.Timeout,
+	}, nil
+}
+
+// DecodeCheckpoint is the persistence/load boundary: strict JSON shape
+// decoding is followed by semantic validation against the prepared definition.
+// Pure in-memory engine cycles operate on the typed Checkpoint instead.
+func DecodeCheckpoint(data []byte, definition *Definition) (Checkpoint, error) {
 	var checkpoint Checkpoint
 	if err := strictjson.Decode(data, &checkpoint); err != nil {
 		return Checkpoint{}, fmt.Errorf("%w: decode: %v", ErrInvalidCheckpoint, err)
 	}
-	if err := ValidateCheckpoint(checkpoint, tmpl, params); err != nil {
+	if err := ValidateCheckpoint(checkpoint, definition); err != nil {
 		return Checkpoint{}, err
 	}
 	return checkpoint, nil
 }
 
-// ValidateCheckpoint checks the complete semantic state. Reducer entry and
-// exit paths call the same validator, so malformed loaded state cannot advance
-// and a proposed transition cannot return an inconsistent checkpoint.
-func ValidateCheckpoint(checkpoint Checkpoint, tmpl *model.Template, params map[string]string) error {
-	def, err := newDefinition(tmpl)
-	if err != nil {
-		return err
-	}
-	return validateCheckpoint(checkpoint, def, params)
+// ValidateCheckpoint checks dynamic semantic state against an immutable
+// prepared definition. Reducer entry and exit paths use this same validator.
+func ValidateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
+	return validateCheckpoint(checkpoint, definition)
 }
 
-func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string]string) error {
+func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	invalid := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", ErrInvalidCheckpoint, fmt.Sprintf(format, args...))
+	}
+	if definition == nil || len(definition.nodes) == 0 {
+		return fmt.Errorf("%w: definition was not prepared", ErrInvalidDefinition)
 	}
 	if checkpoint.Version != CheckpointVersion {
 		return invalid("version must be %d; got %d", CheckpointVersion, checkpoint.Version)
@@ -62,16 +131,13 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 	if !validRunID(checkpoint.RunID) {
 		return invalid("runId must be a lowercase runtime identifier of at most 128 bytes")
 	}
-	if len(checkpoint.Nodes) != len(def.sequence) {
-		return invalid("nodes must contain exactly the %d template nodes", len(def.sequence))
+	if len(checkpoint.Nodes) != len(definition.nodes) {
+		return invalid("nodes must contain exactly the %d prepared nodes", len(definition.nodes))
 	}
 	for nodeID := range checkpoint.Nodes {
-		if _, ok := def.template.Nodes[nodeID]; !ok {
+		if _, ok := definitionNodeByID(definition, nodeID); !ok {
 			return invalid("nodes contains unknown node %q", nodeID)
 		}
-	}
-	if err := validateBoundPrograms(def, params); err != nil {
-		return err
 	}
 
 	if checkpoint.OutstandingCommand != nil {
@@ -79,11 +145,11 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 		if command.Kind != CommandProgram {
 			return invalid("outstanding command kind must be %q", CommandProgram)
 		}
-		node, ok := def.template.Nodes[command.NodeID]
-		if !ok || node.Type != model.NodeTypeTask || node.Performer == nil || node.Performer.Kind != model.PerformerProgram {
+		node, ok := definitionNodeByID(definition, command.NodeID)
+		if !ok || node.kind != definitionTask {
 			return invalid("outstanding command node %q is not a program task", command.NodeID)
 		}
-		expected := programCommand(checkpoint.RunID, command.NodeID, *node.Performer, params)
+		expected := programCommand(checkpoint.RunID, node)
 		if !commandsEqual(*command, expected) {
 			return invalid("outstanding command does not match the deterministic bound request for node %q", command.NodeID)
 		}
@@ -92,8 +158,8 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 	switch checkpoint.Status {
 	case RunRunning:
 		active := -1
-		for index, nodeID := range def.sequence {
-			status := checkpoint.Nodes[nodeID]
+		for index, node := range definition.nodes {
+			status := checkpoint.Nodes[node.id]
 			if active < 0 {
 				switch status {
 				case NodeDone:
@@ -101,71 +167,70 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 				case NodeReady, NodeRunning:
 					active = index
 				default:
-					return invalid("running run has non-prefix status %q at node %q", status, nodeID)
+					return invalid("running run has non-prefix status %q at node %q", status, node.id)
 				}
 				continue
 			}
 			if status != NodePending {
-				return invalid("node %q after the active node must be pending; got %q", nodeID, status)
+				return invalid("node %q after the active node must be pending; got %q", node.id, status)
 			}
 		}
 		if active < 0 {
 			return invalid("running run must have one ready or running node")
 		}
-		activeID := def.sequence[active]
-		activeStatus := checkpoint.Nodes[activeID]
+		activeNode := definition.nodes[active]
+		activeStatus := checkpoint.Nodes[activeNode.id]
 		if activeStatus == NodeRunning {
-			if checkpoint.OutstandingCommand == nil || checkpoint.OutstandingCommand.NodeID != activeID {
-				return invalid("running node %q requires its outstanding command", activeID)
+			if checkpoint.OutstandingCommand == nil || checkpoint.OutstandingCommand.NodeID != activeNode.id {
+				return invalid("running node %q requires its outstanding command", activeNode.id)
 			}
-			if def.template.Nodes[activeID].Type != model.NodeTypeTask {
-				return invalid("only a task node may be running; got %q", activeID)
+			if activeNode.kind != definitionTask {
+				return invalid("only a task node may be running; got %q", activeNode.id)
 			}
 		} else if checkpoint.OutstandingCommand != nil {
-			return invalid("ready node %q cannot coexist with an outstanding command", activeID)
+			return invalid("ready node %q cannot coexist with an outstanding command", activeNode.id)
 		}
 	case RunCompleted, RunCanceled:
 		if checkpoint.OutstandingCommand != nil {
 			return invalid("terminal run cannot have an outstanding command")
 		}
-		for _, nodeID := range def.sequence {
-			if checkpoint.Nodes[nodeID] != NodeDone {
-				return invalid("terminal run requires node %q to be done", nodeID)
+		for _, node := range definition.nodes {
+			if checkpoint.Nodes[node.id] != NodeDone {
+				return invalid("terminal run requires node %q to be done", node.id)
 			}
 		}
-		want := terminalStatus(def.template.Nodes[def.sequence[len(def.sequence)-1]].Result)
-		if checkpoint.Status != want {
-			return invalid("terminal run status %q disagrees with end result %q", checkpoint.Status, want)
+		if checkpoint.Status != definition.terminal {
+			return invalid("terminal run status %q disagrees with prepared end status %q", checkpoint.Status, definition.terminal)
 		}
 	case RunFailed:
 		if checkpoint.OutstandingCommand != nil {
 			return invalid("failed run cannot have an outstanding command")
 		}
 		allDone := true
-		for _, nodeID := range def.sequence {
-			allDone = allDone && checkpoint.Nodes[nodeID] == NodeDone
+		for _, node := range definition.nodes {
+			allDone = allDone && checkpoint.Nodes[node.id] == NodeDone
 		}
 		if allDone {
-			if terminalStatus(def.template.Nodes[def.sequence[len(def.sequence)-1]].Result) != RunFailed {
-				return invalid("all-done failed run requires a failed end result")
+			if definition.terminal != RunFailed {
+				return invalid("all-done failed run requires a failed prepared end status")
 			}
 			break
 		}
 		failed := -1
-		for index, nodeID := range def.sequence {
-			status := checkpoint.Nodes[nodeID]
+		for index, node := range definition.nodes {
+			status := checkpoint.Nodes[node.id]
 			switch {
 			case failed < 0 && status == NodeDone:
 				continue
 			case failed < 0 && status == NodeFailed:
 				failed = index
-				if def.template.Nodes[nodeID].Type != model.NodeTypeTask {
-					return invalid("only a program task may fail; got %q", nodeID)
+				if node.kind != definitionTask {
+					return invalid("only a program task may fail; got %q", node.id)
 				}
 			case failed >= 0 && status == NodePending:
 				continue
 			default:
-				return invalid("failed run has inconsistent status %q at node %q", status, nodeID)
+				return invalid("failed run has inconsistent status %q at node %q", status, node.id)
 			}
 		}
 		if failed < 0 {
@@ -177,35 +242,15 @@ func validateCheckpoint(checkpoint Checkpoint, def definition, params map[string
 	return nil
 }
 
-func validateBoundPrograms(def definition, params map[string]string) error {
-	for _, nodeID := range def.sequence {
-		node := def.template.Nodes[nodeID]
-		if node.Type != model.NodeTypeTask {
-			continue
-		}
-		performer := *node.Performer
-		for _, reference := range model.ParamReferences(performer.Run) {
-			value, ok := params[reference]
-			if !ok {
-				return fmt.Errorf("%w: node %q run parameter %q is missing", ErrInvalidProgramBinding, nodeID, reference)
-			}
-			if strings.TrimSpace(value) == "" {
-				return fmt.Errorf("%w: node %q run parameter %q is blank", ErrInvalidProgramBinding, nodeID, reference)
-			}
-		}
-		for index, arg := range performer.Args {
-			for _, reference := range model.ParamReferences(arg) {
-				if _, ok := params[reference]; !ok {
-					return fmt.Errorf("%w: node %q argument %d parameter %q is missing", ErrInvalidProgramBinding, nodeID, index, reference)
-				}
-			}
-		}
-		bound := model.InterpolatePerformer(performer, params)
-		if strings.TrimSpace(bound.Run) == "" {
-			return fmt.Errorf("%w: node %q run is blank after interpolation", ErrInvalidProgramBinding, nodeID)
-		}
+func definitionNodeByID(definition *Definition, nodeID string) (definitionNode, bool) {
+	if definition == nil {
+		return definitionNode{}, false
 	}
-	return nil
+	index, ok := definition.index[nodeID]
+	if !ok {
+		return definitionNode{}, false
+	}
+	return definition.nodes[index], true
 }
 
 func validRunID(runID string) bool {
