@@ -298,6 +298,40 @@ test('sandbox manager clones a full profile through the guarded create editor', 
   cleanups.reverse().forEach((fn) => fn());
 });
 
+test('sandbox editor and its clone mode save on Ctrl/Cmd+Enter', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  for (const [label, options] of [['edit', {}], ['clone', { editExisting: false, cloneSourceName: 'restricted' }]]) {
+    for (const modifier of ['ctrlKey', 'metaKey']) {
+      const state = createManagementState();
+      const saved = [];
+      const actions = {
+        load() {}, openSandboxEditor() {}, removeSandbox() {}, configureSandboxWithAgent() {},
+        loadReadExclusionCatalog: async () => ({ version: 1, categories: [], informational: [] }),
+        inspectDirectories: async () => ({ missing: [], creatable: [] }),
+        saveSandbox: async (payload) => { saved.push(payload); },
+      };
+      state.openDialog({ kind: 'sandbox-editor', seed: { name: 'restricted', filesystem: [] }, options });
+      const cleanups = []; const host = harness.document.createElement('div'); harness.document.body.appendChild(host);
+      mountManagementIsland({ host, state, actions, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+      await harness.act(() => Promise.resolve());
+      const name = host.querySelector('#sandbox-profile-editor-modal input');
+      await harness.act(() => harness.fireEvent(name, 'keydown', { key: 'Enter', [modifier]: true, isComposing: true, keyCode: 229 }));
+      assert.equal(saved.length, 0, `${label}: IME composition must not submit`);
+      await harness.act(() => harness.fireEvent(name, 'keydown', { key: 'Enter' }));
+      assert.equal(saved.length, 0, `${label}: plain Enter must not submit`);
+      await harness.act(() => harness.fireEvent(name, 'keydown', { key: 'Enter', [modifier]: true }));
+      assert.equal(saved.length, 1, `${label}: ${modifier}+Enter saves`);
+      assert.equal(saved[0].draft.name, 'restricted');
+      assert.equal(saved[0].options.cloneSourceName, options.cloneSourceName);
+      cleanups.reverse().forEach((fn) => fn());
+      host.remove();
+    }
+  }
+});
+
 test('sandbox clone suggestions stay within the UTF-8 server limit across collisions', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { createManagementActions }] = await Promise.all([
