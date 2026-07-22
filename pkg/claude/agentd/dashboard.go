@@ -1613,6 +1613,8 @@ type agentState struct {
 	RecoveryLastExitCode *int   `json:"recovery_last_exit_code,omitempty"`
 }
 
+const recoveredStatusMaxAge = time.Minute
+
 // stateForConvIn looks up the most-recent live tmux session row for
 // this conv-id and returns its hook-tracked state. When no tmux session
 // is alive the agent has exited: the hook-recorded Status is frozen at
@@ -1793,8 +1795,8 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		}
 	}
 	if recovery, err := db.AgentRecoveryForConv(pick.ConvID); err == nil && recovery != nil {
-		active := recovery.Status != db.AgentRecoveryStatusCancelled &&
-			(recovery.Status != db.AgentRecoveryStatusRecovered || alive)
+		now := time.Now()
+		active := recoveryStatusVisible(*recovery, pick.LastHook, alive, now)
 		if active {
 			out.RecoveryStatus = recovery.Status
 			out.RecoveryReason = recovery.ReasonCode
@@ -1804,12 +1806,32 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 			if !recovery.NextAttemptAt.IsZero() {
 				out.RecoveryNextAttempt = recovery.NextAttemptAt.UTC().Format(time.RFC3339Nano)
 			}
-			out.RecoveryDetail = recoveryStateDetail(*recovery, time.Now())
+			out.RecoveryDetail = recoveryStateDetail(*recovery, now)
 		}
 	} else if err != nil {
 		slog.Warn("dashboard: read agent recovery failed", "conv", pick.ConvID, "error", err)
 	}
 	return out
+}
+
+// recoveryStatusVisible keeps durable crash-loop history separate from the
+// short-lived operational badge. Recovery remains persisted for the 30-minute
+// healthy reset and audit trail, but a live agent stops looking exceptional on
+// its first post-confirmation hook or after one minute without another hook.
+func recoveryStatusVisible(r db.AgentRecovery, lastHook time.Time, alive bool, now time.Time) bool {
+	if r.Status == db.AgentRecoveryStatusCancelled {
+		return false
+	}
+	if r.Status != db.AgentRecoveryStatusRecovered {
+		return true
+	}
+	if !alive || r.RecoveredAt.IsZero() {
+		return false
+	}
+	if !lastHook.IsZero() && lastHook.After(r.RecoveredAt) {
+		return false
+	}
+	return now.Before(r.RecoveredAt.Add(recoveredStatusMaxAge))
 }
 
 func recoveryStateDetail(r db.AgentRecovery, now time.Time) string {
