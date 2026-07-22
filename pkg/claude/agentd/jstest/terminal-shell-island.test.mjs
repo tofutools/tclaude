@@ -584,17 +584,39 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
     setData(type, value) { this.data[type] = value; },
     getData(type) { return this.data[type] || ''; },
   };
-  const dragOver = (init) => harness.act(() => harness.fireEvent(harness.document, 'dragover', init));
+  const dragOver = async (init) => {
+    let event = null;
+    await harness.act(() => { event = harness.fireEvent(harness.document, 'dragover', init); });
+    return event;
+  };
 
   await harness.act(() => harness.fireEvent(label('two'), 'dragstart', { dataTransfer: transfer }));
-  await dragOver({ clientX: 120, clientY: 60 });
+  const nearMiss = await dragOver({ clientX: 120, clientY: 60, dataTransfer: transfer });
   assert.equal(host.querySelector('.mux-drag-out-hint'), null,
     'a drag hovering just past the strip is still a reorder near-miss');
   assert.equal(strip.classList.contains('drag-out-armed'), false);
-  await dragOver({ clientX: 120, clientY: 260 });
-  assert.match(host.querySelector('.mux-drag-out-hint').textContent, /Release to detach/,
+  // A browser draws the no-drop cursor over anything that has not accepted the
+  // drag, which made a gesture that works look like one that cannot.
+  assert.equal(nearMiss.defaultPrevented, true,
+    'the page accepts a live terminal drag rather than showing a prohibition sign');
+  assert.equal(transfer.dropEffect, 'move');
+  const armedOver = await dragOver({ clientX: 120, clientY: 260, dataTransfer: transfer });
+  assert.equal(armedOver.defaultPrevented, true);
+  assert.match(host.querySelector('.mux-drag-out-hint').textContent, /Release anywhere/,
     'the strip states the pending detach before the user commits');
   assert.equal(strip.classList.contains('drag-out-armed'), true);
+  const dropped = harness.fireEvent(harness.document, 'drop', { dataTransfer: transfer });
+  assert.equal(dropped.defaultPrevented, true,
+    'accepting the drag means consuming the drop it now receives');
+
+  // A target that already claimed the event keeps its own effect: the tab strip
+  // reorder edges must not be flattened into "detach" while hovering them.
+  const claim = (event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; };
+  harness.document.addEventListener('dragover', claim, true);
+  await harness.act(() => harness.fireEvent(strip, 'dragover', { clientX: 120, clientY: 10, dataTransfer: transfer }));
+  harness.document.removeEventListener('dragover', claim, true);
+  assert.equal(transfer.dropEffect, 'copy', 'an already-claimed dragover is left alone');
+  transfer.dropEffect = '';
   await harness.act(async () => {
     harness.fireEvent(label('two'), 'dragend', {
       dataTransfer: transfer, clientX: 120, clientY: 260, screenX: 340, screenY: 260,

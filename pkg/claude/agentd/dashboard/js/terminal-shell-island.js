@@ -35,6 +35,13 @@ function composeTarget(pane, actions) {
 // While a terminal drag is in flight, follow the pointer so the surface can say
 // "release here and this terminal leaves" before the user commits. The same
 // geometry decides the gesture on dragend, so the hint never lies.
+//
+// The listener also accepts the drag across the rest of the page. A browser
+// draws the "no drop" cursor over anything that has not called preventDefault
+// on dragover, so without this the gesture spent its whole life under a
+// prohibition sign while being perfectly willing to fire on release. Accepting
+// is scoped to a live terminal drag and never overrides a target that already
+// claimed the event, so the tab strip's own reorder edges keep their meaning.
 function useDragOutArmed(active, regionRef) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -42,9 +49,24 @@ function useDragOutArmed(active, regionRef) {
       setArmed(false);
       return undefined;
     }
-    const onDragOver = (event) => setArmed(dragLeftRegion(event, regionRef.current));
+    const onDragOver = (event) => {
+      setArmed(dragLeftRegion(event, regionRef.current));
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    };
+    // Accepting the drag means a drop now lands here on release, so consume it:
+    // the gesture is decided on dragend, and an unclaimed drop would otherwise
+    // be offered to whatever else is listening.
+    const onDrop = (event) => {
+      if (!event.defaultPrevented) event.preventDefault();
+    };
     document.addEventListener('dragover', onDragOver);
-    return () => document.removeEventListener('dragover', onDragOver);
+    document.addEventListener('drop', onDrop);
+    return () => {
+      document.removeEventListener('dragover', onDragOver);
+      document.removeEventListener('drop', onDrop);
+    };
   }, [active]);
   return armed;
 }
@@ -176,7 +198,7 @@ function TerminalPane({
             onDragStart=${startTitleDrag}
             onDragEnd=${endTitleDrag}
           >${pane.label}</span>
-          ${reattachArmed ? html`<span class="mux-drag-out-hint">Release to send this terminal back to the dashboard</span>` : null}
+          ${reattachArmed ? html`<span class="mux-drag-out-hint">Release anywhere — even outside the browser — to send this terminal back to the dashboard</span>` : null}
         ` : html`<span class="mux-pane-title">${pane.label}</span>`}
         <span class="mux-pane-status" role="status" aria-live="polite" aria-atomic="true">${status}</span>
         <span class="terminal-interaction-hint">${INTERACTION_HINT}</span>
@@ -592,7 +614,7 @@ function TerminalTabs({
             />
           `)}
         </div>
-        ${detachArmed ? html`<div class="mux-drag-out-hint">Release to detach this terminal into its own window</div>` : null}
+        ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}
       ${tabMenu ? html`<${PaneContextMenu} menu=${tabMenu} actions=${actions} closeMenu=${closeTabMenu} focusAfterAction=${focusAfterTabMenuAction} focusAfterDismiss=${focusAfterTabMenuDismiss} />` : null}
       ${hasPanes || !empty ? html`
