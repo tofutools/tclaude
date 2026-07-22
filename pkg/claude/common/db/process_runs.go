@@ -100,7 +100,8 @@ type ProcessRunCreate struct {
 }
 
 // ProcessRunEvent is one append-only human-facing evidence row. Sequence is
-// caller-assigned, positive, and monotonically increasing within the run.
+// positive and monotonically increasing within the run. A transition may leave
+// every event sequence zero to assign the next sequence(s) transactionally.
 type ProcessRunEvent struct {
 	RunID       string
 	Sequence    int64
@@ -255,19 +256,23 @@ func validateProcessRunCreate(input ProcessRunCreate) error {
 	if err := validateProcessJSONObject("checkpoint", input.CheckpointJSON, MaxProcessRunCheckpointBytes); err != nil {
 		return err
 	}
-	return validateProcessRunEvents(input.InitialEvents)
+	return validateProcessRunEvents(input.InitialEvents, false)
 }
 
-func validateProcessRunEvents(events []ProcessRunEvent) error {
+func validateProcessRunEvents(events []ProcessRunEvent, allowAutoSequence bool) error {
 	if len(events) > MaxProcessRunEventsPerTransition {
 		return fmt.Errorf("%w: at most %d evidence events may commit per transition", ErrProcessRunInvalid, MaxProcessRunEventsPerTransition)
 	}
+	autoSequence := allowAutoSequence && len(events) > 0 && events[0].Sequence == 0
 	var prior int64
 	for index, event := range events {
 		if event.RunID != "" {
 			return fmt.Errorf("%w: event %d must not set run id", ErrProcessRunInvalid, index)
 		}
-		if event.Sequence <= 0 || (index > 0 && event.Sequence <= prior) {
+		if autoSequence && event.Sequence != 0 {
+			return fmt.Errorf("%w: transition evidence sequences must be all zero or all caller-assigned", ErrProcessRunEventSequence)
+		}
+		if !autoSequence && (event.Sequence <= 0 || (index > 0 && event.Sequence <= prior)) {
 			return fmt.Errorf("%w: evidence sequences must be positive and strictly increasing", ErrProcessRunEventSequence)
 		}
 		if !validProcessRunEventTime(event.OccurredAt) {
@@ -349,7 +354,7 @@ func TransitionProcessRun(runID string, transition ProcessRunTransition) (int64,
 	if err := validateProcessJSONObject("checkpoint", transition.CheckpointJSON, MaxProcessRunCheckpointBytes); err != nil {
 		return 0, err
 	}
-	if err := validateProcessRunEvents(transition.Events); err != nil {
+	if err := validateProcessRunEvents(transition.Events, true); err != nil {
 		return 0, err
 	}
 
@@ -385,16 +390,25 @@ func TransitionProcessRun(runID string, transition ProcessRunTransition) (int64,
 		}
 		return 0, &ProcessRunVersionConflictError{Expected: transition.ExpectedStateVersion, Actual: actual}
 	}
-	if len(transition.Events) > 0 {
+	events := transition.Events
+	if len(events) > 0 {
 		var lastSequence int64
 		if err := tx.QueryRow(`SELECT COALESCE(MAX(sequence), 0) FROM process_run_events WHERE run_id = ?`, runID).Scan(&lastSequence); err != nil {
 			return 0, err
 		}
-		if transition.Events[0].Sequence <= lastSequence {
-			return 0, fmt.Errorf("%w: next sequence %d is not after %d", ErrProcessRunEventSequence, transition.Events[0].Sequence, lastSequence)
+		if events[0].Sequence == 0 {
+			if lastSequence > math.MaxInt64-int64(len(events)) {
+				return 0, fmt.Errorf("%w: evidence sequence exhausted", ErrProcessRunEventSequence)
+			}
+			events = append([]ProcessRunEvent(nil), events...)
+			for index := range events {
+				events[index].Sequence = lastSequence + int64(index) + 1
+			}
+		} else if events[0].Sequence <= lastSequence {
+			return 0, fmt.Errorf("%w: next sequence %d is not after %d", ErrProcessRunEventSequence, events[0].Sequence, lastSequence)
 		}
 	}
-	if err := insertProcessRunEvents(tx, runID, transition.Events); err != nil {
+	if err := insertProcessRunEvents(tx, runID, events); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
