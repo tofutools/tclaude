@@ -9,6 +9,7 @@ import { hasShownOverlay } from './overlay-stack.js';
 import { loadXtermRuntime } from './xterm-loader.js';
 import { bindTerminalHandoffReceiver } from './terminal-handoff.js';
 import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
+import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
@@ -293,6 +294,7 @@ function PaneTab({
     <div
       class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
       role="tab"
+      data-pane-key=${pane.key}
       tabIndex="0"
       aria-selected=${active ? 'true' : 'false'}
       aria-controls=${pane.id}
@@ -339,13 +341,28 @@ function GroupStack({
   openMenu, menuOpen, dropActive, onPillDragOver, onPillDragLeave, onPillDrop, renderTab,
 }) {
   const inputRef = useRef(null);
+  // onBlur commits, so a cancel must first mark itself: browsers do not fire
+  // blur when a focused node is removed today, but any future close that moves
+  // focus before unmount would otherwise turn Escape into a commit. The ref is
+  // the guard that keeps Escape meaning "discard" regardless of blur timing.
+  const cancelledRef = useRef(false);
   useLayoutEffect(() => {
-    if (!renaming) return;
+    if (!renaming) return undefined;
+    cancelledRef.current = false;
     inputRef.current?.focus();
     // Selecting the existing name makes retyping it the default gesture.
     // Guarded because the test DOM implements focus() but not select().
     if (typeof inputRef.current?.select === 'function') inputRef.current.select();
+    return undefined;
   }, [renaming]);
+  const cancelRename = () => {
+    cancelledRef.current = true;
+    onRenameCancel();
+  };
+  const commitRename = (value) => {
+    if (cancelledRef.current) return;
+    onRenameCommit(group.id, value);
+  };
   // A collapsed stack still shows the terminal the operator is looking at when
   // there is nowhere outside the stack for activation to move to — collapsing
   // must never leave the strip with no visible active tab.
@@ -381,21 +398,22 @@ function GroupStack({
           ref=${inputRef}
           class="mux-group-rename"
           type="text"
-          maxLength=${40}
+          maxLength=${MAX_TERMINAL_GROUP_NAME_LENGTH}
           aria-label=${`Rename terminal group ${group.name}`}
           value=${group.name}
           onKeyDown=${(event) => {
             event.stopPropagation();
-            if (event.key === 'Enter') onRenameCommit(group.id, event.currentTarget.value);
-            else if (event.key === 'Escape') onRenameCancel();
+            if (event.key === 'Enter') commitRename(event.currentTarget.value);
+            else if (event.key === 'Escape') cancelRename();
           }}
-          onBlur=${(event) => onRenameCommit(group.id, event.currentTarget.value)}
+          onBlur=${(event) => commitRename(event.currentTarget.value)}
         />
       ` : html`
         <button
           type="button"
           class="mux-group-pill"
           aria-expanded=${group.collapsed ? 'false' : 'true'}
+          aria-haspopup="menu"
           title=${`${group.collapsed ? 'Expand' : 'Collapse'} the ${group.name} terminal group · right-click or Shift+F10 for group actions`}
           onClick=${() => actions.toggleGroupCollapsed(group.id)}
           onContextMenu=${openMenuAt}
@@ -410,6 +428,23 @@ function GroupStack({
       `}
       ${visible.map((pane) => renderTab(pane))}
     </div>
+  `;
+}
+
+// StripGap is a thin drop target at a group boundary — the one place a plain
+// tab drop cannot land, because the only tab to drop onto there belongs to the
+// stack and dropping on it would join. It is inert until a drag is in flight,
+// so it never widens the strip or intercepts an ordinary click.
+function StripGap({ active, armed, onDragOver, onDragLeave, onDrop }) {
+  if (!active) return null;
+  return html`
+    <div
+      class=${`mux-strip-gap${armed ? ' armed' : ''}`}
+      aria-hidden="true"
+      onDragOver=${onDragOver}
+      onDragLeave=${onDragLeave}
+      onDrop=${onDrop}
+    ></div>
   `;
 }
 
@@ -540,6 +575,7 @@ function TerminalTabs({
   const [menuFocusRequest, setMenuFocusRequest] = useState(0);
   const [renamingGroup, setRenamingGroup] = useState(null);
   const [groupDropTarget, setGroupDropTarget] = useState(null);
+  const [stripGap, setStripGap] = useState(null);
 
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
   const clearDrag = () => {
@@ -548,6 +584,7 @@ function TerminalTabs({
     setDragKey(null);
     setDropTarget(null);
     setGroupDropTarget(null);
+    setStripGap(null);
   };
   // The live region has to say where a tab landed AND which stack it landed in,
   // because a keyboard move at a stack edge changes both at once.
@@ -555,6 +592,20 @@ function TerminalTabs({
     const where = group ? ` in group ${group.name}`
       : leftGroup ? `, out of group ${leftGroup.name}` : '';
     setReorderAnnouncement(`Moved ${pane.label} to position ${index + 1} of ${count}${where}.`);
+  };
+  const focusPaneTab = (key) => {
+    for (const tab of shellRef.current?.querySelectorAll('.mux-tab[data-pane-key]') || []) {
+      if (tab.getAttribute('data-pane-key') === key) { tab.focus(); return; }
+    }
+  };
+  // A keyboard move can carry a tab across a group boundary, which changes its
+  // DOM parent (group wrapper ⇄ strip), so Preact recreates the node and focus
+  // falls to <body>. Put focus back on the tab the operator is still moving,
+  // after the render that reparented it — otherwise the next arrow keypress is
+  // swallowed. Drops keep the pointer and need no such repair.
+  const announceAndRefocus = (moved) => {
+    announceReorder(moved);
+    queueMicrotask(() => focusPaneTab(moved.pane.key));
   };
   const startTabDrag = (event, key) => {
     event.stopPropagation();
@@ -641,6 +692,32 @@ function TerminalTabs({
     const group = joined && current.groups.find((candidate) => candidate.id === groupID);
     if (group && pane) setReorderAnnouncement(`Moved ${pane.label} into group ${group.name}.`);
   };
+  // Inter-stack drop gaps. A drop adopts the target's membership, and at a
+  // group boundary the only thing to drop onto is a member — which would join.
+  // So the position just before a leading stack, or between two adjacent
+  // stacks, is unreachable by drag (the keyboard hop covers it). These thin
+  // gaps at the group boundaries close that hole: a drop parks the tab there,
+  // ungrouped, beside the stack. `gap` is `${groupID}:before|after`.
+  const gapDragOver = (event, gap) => {
+    if (!dragKeyRef.current || event.defaultPrevented) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (stripGap !== gap) setStripGap(gap);
+  };
+  const gapDragLeave = (event, gap) => {
+    if (stripGap !== gap || event.currentTarget.contains(event.relatedTarget)) return;
+    setStripGap(null);
+  };
+  const dropOnGap = (event, groupID, after) => {
+    event.preventDefault();
+    event.stopPropagation();
+    droppedRef.current = true;
+    const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
+    const moved = key && actions.movePaneOutsideGroup(key, groupID, { after });
+    clearDrag();
+    if (moved) announceReorder(moved);
+  };
   const commitGroupRename = (groupID, name) => {
     setRenamingGroup(null);
     actions.renameGroup(groupID, name);
@@ -680,6 +757,25 @@ function TerminalTabs({
   useEffect(() => {
     if (renamingGroup && !current.groups.some((group) => group.id === renamingGroup)) setRenamingGroup(null);
   }, [current.groups, renamingGroup]);
+
+  // Collapse and expand happen from the pill, the group menu, and implicitly
+  // when a collapsed stack's member is activated — three paths, one place to
+  // announce them. Diffing the collapsed state across renders covers all of
+  // them without each caller having to remember to speak. Focus is often off
+  // the pill (menu just closed) when it changes, so aria-expanded alone is not
+  // enough for a screen reader.
+  const collapsedRef = useRef(new Map());
+  useEffect(() => {
+    const previous = collapsedRef.current;
+    const next = new Map();
+    for (const group of current.groups) {
+      next.set(group.id, group.collapsed);
+      if (previous.has(group.id) && previous.get(group.id) !== group.collapsed) {
+        setReorderAnnouncement(`${group.name} group ${group.collapsed ? 'collapsed' : 'expanded'}.`);
+      }
+    }
+    collapsedRef.current = next;
+  }, [current.groups]);
 
   useLayoutEffect(() => {
     if (solo) return undefined;
@@ -768,7 +864,7 @@ function TerminalTabs({
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
-          ${current.segments.map((segment) => {
+          ${current.segments.map((segment, segmentIndex) => {
             const renderTab = (pane) => html`
               <${PaneTab}
                 key=${pane.key}
@@ -785,28 +881,55 @@ function TerminalTabs({
                 onDragOver=${tabDragOver}
                 onDragLeave=${tabDragLeave}
                 onDrop=${dropTab}
-                onReordered=${announceReorder}
+                onReordered=${announceAndRefocus}
               />
             `;
-            return segment.type === 'group' ? html`
+            if (segment.type !== 'group') return renderTab(segment.pane);
+            const gid = segment.group.id;
+            const dragging = Boolean(dragKey);
+            // A leading gap is only reachable — and only needed — when this
+            // stack is not the very first segment, or when it is: the position
+            // before a leading stack is exactly the unreachable one. A trailing
+            // gap is needed only after the last segment, where no following tab
+            // offers a "before" drop. Redundant gaps elsewhere are harmless but
+            // omitted to keep the strip quiet.
+            const leadingGap = html`
+              <${StripGap}
+                active=${dragging}
+                armed=${stripGap === `${gid}:before`}
+                onDragOver=${(event) => gapDragOver(event, `${gid}:before`)}
+                onDragLeave=${(event) => gapDragLeave(event, `${gid}:before`)}
+                onDrop=${(event) => dropOnGap(event, gid, false)}
+              />`;
+            const trailingGap = segmentIndex === current.segments.length - 1 ? html`
+              <${StripGap}
+                active=${dragging}
+                armed=${stripGap === `${gid}:after`}
+                onDragOver=${(event) => gapDragOver(event, `${gid}:after`)}
+                onDragLeave=${(event) => gapDragLeave(event, `${gid}:after`)}
+                onDrop=${(event) => dropOnGap(event, gid, true)}
+              />` : null;
+            return html`
+              ${leadingGap}
               <${GroupStack}
                 key=${segment.key}
                 group=${segment.group}
                 panes=${segment.panes}
                 activeKey=${current.activeKey}
                 actions=${actions}
-                renaming=${renamingGroup === segment.group.id}
+                renaming=${renamingGroup === gid}
                 onRenameCommit=${commitGroupRename}
                 onRenameCancel=${() => setRenamingGroup(null)}
                 openMenu=${setTabMenu}
-                menuOpen=${tabMenu?.kind === 'group' && tabMenu.id === segment.group.id}
-                dropActive=${groupDropTarget === segment.group.id}
+                menuOpen=${tabMenu?.kind === 'group' && tabMenu.id === gid}
+                dropActive=${groupDropTarget === gid}
                 onPillDragOver=${groupDragOver}
                 onPillDragLeave=${groupDragLeave}
                 onPillDrop=${dropOnGroup}
                 renderTab=${renderTab}
               />
-            ` : renderTab(segment.pane);
+              ${trailingGap}
+            `;
           })}
         </div>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}

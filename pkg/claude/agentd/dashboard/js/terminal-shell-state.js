@@ -33,14 +33,25 @@ function boundPreferredOrder(keys) {
 
 // Group names are operator text rendered into the tab strip and into the
 // accessible announcements, so they are normalized the same way on the way in
-// from a dialog and on the way back off persistence: no control characters, no
+// from a dialog and on the way back off persistence: nothing invisible, no
 // runaway length, never empty.
+//
+// Stripped: C0/DEL, the C1 range, the Unicode line/paragraph separators, and
+// the invisible formatting characters — zero-width joiners/spaces, the soft
+// hyphen, the BOM, and the bidi overrides/isolates. The last group is the one
+// that matters beyond tidiness: U+202E and friends reverse the rendering of the
+// text after them, in the strip AND in the aria-label, which would let a name
+// misrepresent itself. Everything here is invisible, so a name made only of it
+// collapses to empty and takes the fallback.
+const INVISIBLE_NAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]+/g;
+
 export function sanitizeGroupName(name, fallback = 'group') {
   const cleaned = String(name ?? '')
-    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(INVISIBLE_NAME_CHARS, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, MAX_TERMINAL_GROUP_NAME_LENGTH);
+    .slice(0, MAX_TERMINAL_GROUP_NAME_LENGTH)
+    .trim();
   return cleaned || fallback;
 }
 
@@ -200,7 +211,9 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     const openKeys = new Set(panes.value.map((pane) => pane.key));
     const ordered = [...membership.value.entries()]
       .sort((a, b) => Number(openKeys.has(b[0])) - Number(openKeys.has(a[0])));
-    const members = {};
+    // Object.create(null) so a pane key literally named "__proto__" is stored
+    // as data instead of being swallowed by Object.prototype.
+    const members = Object.create(null);
     const encoder = new TextEncoder();
     let bytes = encoder.encode(JSON.stringify({ groups: groups.value, members: {} })).byteLength;
     for (const [key, groupID] of ordered) {
@@ -337,11 +350,18 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     panes.value = next;
     if (!next.some((candidate) => candidate.key === previousActive)) {
       const previousIndex = current.findIndex((candidate) => candidate.key === previousActive);
-      const successor = previousIndex < 0 ? null : current.slice(previousIndex + 1)
-        .find((candidate) => !wanted.has(candidate.key));
-      const predecessor = previousIndex < 0 ? null : current.slice(0, previousIndex).reverse()
-        .find((candidate) => !wanted.has(candidate.key));
-      activeKey.value = successor?.key || predecessor?.key || next[0]?.key || null;
+      // Closing a tab is not a request to open a stack the operator collapsed
+      // to get it out of the way, so succession prefers a tab that is already
+      // visible and only falls back to a collapsed member when nothing else
+      // survives — at which point expanding is the only way to show anything.
+      const visible = (candidate) => !wanted.has(candidate.key)
+        && !groupIndex.value.get(groupIDFor(candidate.key))?.collapsed;
+      const survives = (candidate) => !wanted.has(candidate.key);
+      const search = (test) => (previousIndex < 0 ? null
+        : current.slice(previousIndex + 1).find(test)
+          || current.slice(0, previousIndex).reverse().find(test));
+      const heir = search(visible) || next.find(visible) || search(survives) || next[0];
+      activeKey.value = heir?.key || null;
       if (activeKey.value) expandGroupFor(activeKey.value);
     }
     return removed;
@@ -349,24 +369,6 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
 
   function removePane(key) {
     return removePanes([key])[0] || null;
-  }
-
-  function movePane(key, toIndex) {
-    const current = panes.value;
-    const fromIndex = current.findIndex((pane) => pane.key === key);
-    if (fromIndex < 0 || current.length < 2 || !Number.isInteger(toIndex)) return null;
-    const destination = Math.max(0, Math.min(current.length - 1, toIndex));
-    if (destination === fromIndex) return null;
-    const next = [...current];
-    const [pane] = next.splice(fromIndex, 1);
-    next.splice(destination, 0, pane);
-    if (!commitPaneOrder(next)) return null;
-    return Object.freeze({
-      pane,
-      index: panes.value.findIndex((candidate) => candidate.key === key),
-      count: panes.value.length,
-      group: groupFor(key),
-    });
   }
 
   // reorderPane is the drop path: landing a tab on another tab adopts that
@@ -412,6 +414,48 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     return moved;
   }
 
+  // movePaneOutsideGroup parks a tab immediately before or after a stack,
+  // ungrouped. It is the one placement the "adopt the drop target's
+  // membership" rule cannot express: the only thing to drop onto at the edge
+  // of a stack is one of its members, and that would join. Both the keyboard
+  // edge-step and the strip's inter-stack drop gaps land here.
+  //
+  // The anchor is the outermost REMAINING member, so the tab lands clear of the
+  // span it just left rather than back inside it.
+  function movePaneOutsideGroup(key, groupID, { after = false } = {}) {
+    loadGroups();
+    const current = panes.value;
+    const pane = current.find((candidate) => candidate.key === key);
+    if (!pane || !groupIndex.value.has(groupID)) return null;
+    // The stack being left is the tab's OWN stack, which is not necessarily the
+    // one it is being parked next to: a tab can be dragged straight out of one
+    // stack into the gap beside another.
+    const from = groupIDFor(key);
+    const others = current.filter((candidate) => groupIDFor(candidate.key) === groupID
+      && candidate.key !== key);
+    const next = current.filter((candidate) => candidate.key !== key);
+    if (others.length) {
+      const anchor = after ? others.at(-1) : others[0];
+      const anchorIndex = next.findIndex((candidate) => candidate.key === anchor.key);
+      next.splice(anchorIndex + (after ? 1 : 0), 0, pane);
+    } else if (from === groupID) {
+      // Last member out of its own stack: the tab keeps its position, and the
+      // now-memberless stack is dropped by setMembership.
+      next.splice(current.indexOf(pane), 0, pane);
+    } else {
+      // A memberless OTHER stack is not a place to park next to.
+      return null;
+    }
+    if (!commitGrouping([[key, null]], { order: next })) return null;
+    return Object.freeze({
+      pane,
+      index: panes.value.findIndex((candidate) => candidate.key === key),
+      count: panes.value.length,
+      group: null,
+      leftGroup: groupIndex.value.get(from) || null,
+    });
+  }
+
   function stepPane(key, direction) {
     const current = panes.value;
     const pane = current.find((candidate) => candidate.key === key);
@@ -425,28 +469,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
         return reorderPane(key, members[destination].key, { after: direction > 0 });
       }
       // At the edge of its stack: the next step leaves the stack and parks the
-      // tab immediately outside it, keeping the gesture reversible. The anchor
-      // is the outermost REMAINING member, so the tab lands clear of the stack
-      // it just left instead of back inside its own old span.
-      const others = members.filter((member) => member.key !== key);
-      const next = current.filter((candidate) => candidate.key !== key);
-      if (others.length) {
-        const anchor = direction > 0 ? others.at(-1) : others[0];
-        const anchorIndex = next.findIndex((candidate) => candidate.key === anchor.key);
-        next.splice(anchorIndex + (direction > 0 ? 1 : 0), 0, pane);
-      } else {
-        // Last member out: the tab keeps its position, and the now-memberless
-        // stack is dropped by setMembership.
-        next.splice(current.indexOf(pane), 0, pane);
-      }
-      if (!commitGrouping([[key, null]], { order: next })) return null;
-      return Object.freeze({
-        pane,
-        index: panes.value.findIndex((candidate) => candidate.key === key),
-        count: panes.value.length,
-        group: null,
-        leftGroup: groupIndex.value.get(groupID) || null,
-      });
+      // tab immediately outside it, keeping the gesture reversible.
+      return movePaneOutsideGroup(key, groupID, { after: direction > 0 });
     }
     const strip = segments.value;
     const segmentIndex = strip.findIndex((segment) => segment.type === 'pane' && segment.key === key);
@@ -465,14 +489,40 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     });
   }
 
+  // dormantGroups are the stacks with no tab open right now. They are kept on
+  // purpose — reopening a remembered terminal returns it to its stack — but
+  // they render nothing, so they must never be able to crowd out the stacks the
+  // operator can actually see.
+  function dormantGroups() {
+    const open = new Set(panes.value.map((pane) => groupIDFor(pane.key)));
+    return groups.value.filter((group) => !open.has(group.id));
+  }
+
+  function forgetGroup(id) {
+    groups.value = groups.value.filter((group) => group.id !== id);
+    const next = new Map(membership.value);
+    for (const [key, groupID] of membership.value) if (groupID === id) next.delete(key);
+    membership.value = next;
+  }
+
   function createGroup({ name = '', color = null, keys = [] } = {}) {
     loadGroups();
-    if (groups.value.length >= MAX_TERMINAL_TAB_GROUPS) return null;
+    if (groups.value.length >= MAX_TERMINAL_TAB_GROUPS) {
+      // At the cap, evict the oldest DORMANT stack rather than refusing. A
+      // refusal here is invisible and permanent: dormant stacks have no pill
+      // and no menu, so an operator who closed 24 grouped terminals could never
+      // make another group again, across restarts, with nothing to click.
+      const evictable = dormantGroups()[0];
+      if (!evictable) return null;
+      forgetGroup(evictable.id);
+    }
     groupSequence += 1;
     const group = Object.freeze({
+      // Numbered off the sequence, not the current count, so dissolving a stack
+      // cannot make the next default name collide with a surviving one.
       id: `group-${groupSequence}`,
-      name: sanitizeGroupName(name, `group ${groups.value.length + 1}`),
-      color: normalizeColor(color, groups.value.length),
+      name: sanitizeGroupName(name, `group ${groupSequence}`),
+      color: normalizeColor(color, groupSequence - 1),
       collapsed: false,
     });
     groups.value = [...groups.value, group];
@@ -518,7 +568,11 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
   // refusing a collapse the operator explicitly asked for.
   function setGroupCollapsed(id, collapsed) {
     loadGroups();
-    if (!groupIndex.value.has(id)) return null;
+    const group = groupIndex.value.get(id);
+    if (!group) return null;
+    // Re-asserting the state a stack is already in must not move activation:
+    // only a real collapse displaces the active terminal.
+    if (group.collapsed === (collapsed === true)) return group;
     if (collapsed && groupIDFor(activeKey.value) === id) {
       const outside = panes.value.filter((pane) => groupIDFor(pane.key) !== id);
       const index = panes.value.findIndex((pane) => pane.key === activeKey.value);
@@ -616,6 +670,12 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     panes.value = [];
     activeKey.value = null;
     modal.value = null;
+    // Grouping is prefs-backed, so this drops only the in-memory mirror; a
+    // remount reloads it. Clearing groupsLoaded is what makes that reload
+    // happen instead of the successor starting from an empty registry.
+    groups.value = [];
+    membership.value = new Map();
+    groupsLoaded = false;
   }
 
   return Object.freeze({
@@ -631,8 +691,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     activatePane,
     removePane,
     removePanes,
-    movePane,
     reorderPane,
+    movePaneOutsideGroup,
     movePaneByOffset,
     createGroup,
     renameGroup,

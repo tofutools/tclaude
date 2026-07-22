@@ -929,6 +929,12 @@ or a keystroke will do never disagree.
   two members) or leaves one (dropped among ungrouped tabs). Dropping onto the
   group's pill joins at the end of the group. The context menu carries the same
   moves as *Add to "…"* and *Remove from group*.
+* **Parking beside a group** — the one position a drop onto a tab cannot express
+  is directly before a leading group, or between two adjacent groups, since the
+  only tab there belongs to a group and dropping on it would join. While a drag
+  is in flight a thin drop lane appears at each group boundary; releasing on it
+  parks the tab there, ungrouped. The keyboard reaches the same positions by
+  hopping a whole group.
 * **Keyboard** — **Alt-Shift-Left/Right Arrow** steps a tab between its siblings
   inside a group and, at either edge of the group, steps it out of the group.
   An ungrouped tab hops over a whole group rather than landing inside it, which

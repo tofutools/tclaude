@@ -118,6 +118,19 @@
    that one tab — so collapsing never hides what is on screen. */
 .mux-tab-group.collapsed .mux-tab { max-width: 150px; }
 
+/* Inter-stack drop gap — a thin lane at a group boundary that only exists while
+   a tab is being dragged, so it never widens the strip at rest. It is the drop
+   target for parking a tab beside a stack (ungrouped), the one placement a drop
+   on a tab cannot express. */
+.mux-strip-gap {
+  flex: none; align-self: stretch; width: 10px; margin: 0 -3px;
+  border-radius: 4px;
+}
+.mux-strip-gap.armed {
+  background: #1f6feb;
+  box-shadow: 0 0 8px rgba(88, 166, 255, 0.75);
+}
+
 .mux-tab-menu {
   position: fixed; z-index: 1000; display: flex; flex-direction: column;
   min-width: 170px; padding: 4px;
@@ -236,6 +249,9 @@ body.wizard .mux-group-pill:hover {
   background: color-mix(in srgb, var(--mux-group-accent) 34%, #171024);
 }
 body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
+body.wizard .mux-strip-gap.armed {
+  background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+}
 body.wizard .mux-tab-menu {
   border-color: #7a5db0;
   background: linear-gradient(180deg, #2a1c43 0%, #171024 100%);
