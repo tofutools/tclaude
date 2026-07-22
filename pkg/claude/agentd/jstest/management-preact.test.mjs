@@ -687,7 +687,7 @@ function mountSandboxEditor(harness, mountManagementIsland, state, overrides = {
   return { host, unmount: () => cleanups.reverse().forEach((fn) => fn()) };
 }
 
-test('global harness filesystem rows are visible, immutable, attributable, and never saved', async (t) => {
+test('global harness filesystem rows start folded, remain immutable, and are never saved', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
     harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
@@ -704,19 +704,20 @@ test('global harness filesystem rows are visible, immutable, attributable, and n
   const toggle = host.querySelector('#sandbox-profile-editor-show-global-filesystem');
   // LinkeDOM does not implement HTMLInputElement.checked, so use the
   // state-aware selector rather than asserting only that an attribute exists.
-  assert.equal(toggle.matches(':checked'), true, 'inherited context is visible by default');
+  assert.equal(toggle.matches(':checked'), false, 'inherited context starts folded');
+  assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null);
+  assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/, 'config warnings remain visible while inherited rows are folded');
+
+  toggle.checked = true;
+  toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
+  await harness.act(() => Promise.resolve());
   const inherited = [...host.querySelectorAll('.sbx-global-row')];
   assert.equal(inherited.length, COMMON_RULES.global_filesystem.length);
-  assert.equal(inherited[0].getAttribute('tabindex'), '0', 'provenance tooltip is keyboard reachable');
   assert.equal(inherited[0].getAttribute('role'), 'group');
-  const detailID = inherited[0].getAttribute('aria-describedby');
-  assert.equal(inherited[0].querySelector(`#${detailID}`).getAttribute('role'), 'tooltip');
-  inherited[0].focus();
-  assert.equal(harness.document.activeElement, inherited[0], 'keyboard focus owns the visible provenance detail');
   assert.equal(inherited[0].querySelector('.sbx-path').hasAttribute('readonly'), true);
   assert.equal(inherited[0].querySelectorAll('button').length, 0, 'an inherited row has no browse or delete actions');
   assert.match(inherited[0].textContent, /Claude \+ Codex/);
-  assert.match(inherited[0].querySelector('.sbx-global-detail').textContent, /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
+  assert.match(inherited[0].getAttribute('title'), /settings\.json.*generated tclaude-agent-<launch-id>\.config\.toml/s);
   assert.match(inherited[1].textContent, /deny read.*Claude/);
 
   host.querySelector('#sandbox-profile-editor-submit').click(); await harness.act(() => Promise.resolve());
@@ -726,7 +727,7 @@ test('global harness filesystem rows are visible, immutable, attributable, and n
   toggle.dispatchEvent(new harness.window.Event('change', { bubbles: true }));
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#sandbox-profile-editor-global-filesystem'), null, 'the checkbox folds inherited context without changing the draft');
-  assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/, 'config warnings remain visible when inherited rows are folded');
+  assert.match(host.querySelector('.sbx-global-warning').textContent, /could not be parsed/);
   unmount();
 });
 

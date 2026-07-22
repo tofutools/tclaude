@@ -90,3 +90,20 @@ func TestSandboxGlobalFilesystemRulesMergeAcrossSymlinkedHome(t *testing.T) {
 	require.Len(t, merged.Origins, 2)
 	assert.Equal(t, "~/.claude/settings.json", merged.Origins[0].Source)
 }
+
+func TestMergeSandboxGlobalFilesystemRulesWriteIncludesRead(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, "shared")
+	candidates := []sandboxGlobalFilesystemRuleCandidate{
+		{path: path, access: "read", origin: sandboxGlobalFilesystemRuleOriginJSON{Harness: "claude", Setting: "read-setting"}},
+		{path: path, access: "write", origin: sandboxGlobalFilesystemRuleOriginJSON{Harness: "codex", Setting: "write-setting"}},
+	}
+
+	got := mergeSandboxGlobalFilesystemRules(home, candidates)
+	require.Len(t, got, 1)
+	assert.Equal(t, "~/shared", got[0].Path)
+	assert.Equal(t, "write", got[0].Access)
+	assert.Equal(t, []string{"claude", "codex"}, got[0].Harnesses)
+	require.Len(t, got[0].Origins, 2, "both settings remain visible as provenance")
+}

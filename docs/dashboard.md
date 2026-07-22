@@ -357,13 +357,13 @@ Nothing about the preset is stored: afterwards they are plain rows you can
 edit, retarget, or delete, and a path already in the table is left as authored
 rather than duplicated.
 
-The filesystem table also shows **inherited global config rules** by default.
-These subdued, read-only rows come from Claude Code's user-level
-`~/.claude/settings.json` sandbox filesystem block and tclaude's managed Codex
-baseline rendered into every generated
+The filesystem table can also show **inherited global config rules** through a
+checkbox that starts unchecked. These subdued, read-only rows come from Claude
+Code's user-level `~/.claude/settings.json` sandbox filesystem block and
+tclaude's managed Codex baseline rendered into every generated
 `tclaude-agent-<launch-id>.config.toml` permission profile. A badge says whether
-each rule applies to Claude, Codex, or both, and its keyboard-reachable tooltip
-identifies the source, setting, and whether the Claude sandbox is currently
+each rule applies to Claude, Codex, or both, and its tooltip identifies the
+source, setting, and whether the Claude sandbox is currently
 enabled. They are context for the effective launch policy, not part of the
 named profile: hiding them, opening raw JSON, cloning, exporting, or saving
 never copies them into the profile. The final launch can still add workspace,
