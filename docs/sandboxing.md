@@ -59,10 +59,10 @@ subprocess that layer 2 cannot see. Layer 2 gates the built-in tools that layer
 1 does not reach. [Sandbox hardening](sandbox-hardening.md) walks through
 setting up both for agentd's own state.
 
-### ⚠️ A sandbox profile currently drives layer 1 only
+### A sandbox profile currently drives layer 1 only
 
-This one deserves to be stated plainly, because a profile reads stricter than it
-enforces.
+⚠️ This one deserves to be stated plainly, because a profile reads stricter than
+it enforces.
 
 Your profile's `deny` / `read` / `write` rows render into
 `sandbox.filesystem.*` — layer 1 — and nothing else. tclaude does **not**
@@ -306,7 +306,7 @@ read.
 | Git loses identity / credential helper | `~/.gitconfig` is a file and cannot be reopened under `deny ~` |
 | Launch refused, `unsupported_sandbox_profile_reopen_under_deny` | Claude not in sandbox `on`, or Codex not on Linux managed-profile with a verified probe |
 | Profile looks strict but nothing is denied | Claude sandbox `inherit`/`off`, or a legacy `read_baseline` profile (silently dropped — re-express as deny rows) |
-| An agent read a denied path with the `Read` tool, but not from Bash | Expected today — a profile drives layer 1 only ([above](#-a-sandbox-profile-currently-drives-layer-1-only)) |
+| An agent read a denied path with the `Read` tool, but not from Bash | Expected today — a profile drives layer 1 only ([above](#a-sandbox-profile-currently-drives-layer-1-only)) |
 | An agent reached something the profile denied | Check whether it went through MCP, which bypasses the Bash sandbox |
 
 ## See also
