@@ -34,8 +34,13 @@ function CommonRuleEntry({ entry, onAdd }) {
   const base = `sbx-common-rule-${String(entry.id || '').replace(/[^a-zA-Z0-9_-]+/g, '-')}`;
   const descrID = `${base}-descr`; const warnID = `${base}-warn`; const pathsID = `${base}-paths`;
   const describedBy = [descrID, entry.warning ? warnID : '', pathsID].filter(Boolean).join(' ');
+  // An entry with no paths on this platform is inert, but `disabled` would take
+  // it out of the tab order and take its description — which is precisely the
+  // explanation of WHY it is inert — with it. aria-disabled keeps both
+  // reachable; the handler refuses instead of the DOM.
+  const inert = !paths.length;
   return html`<div class="sbx-common-rule-entry" data-rule=${entry.id}>
-    <button type="button" class="sbx-common-rule-add" aria-describedby=${describedBy} disabled=${!paths.length} onClick=${() => onAdd(entry)}>＋ ${entry.label || entry.id}</button>
+    <button type="button" class="sbx-common-rule-add" aria-describedby=${describedBy} aria-disabled=${inert ? 'true' : null} onClick=${() => { if (!inert) onAdd(entry); }}>＋ ${entry.label || entry.id}</button>
     <span class="sbx-common-rule-descr" id=${descrID}>${entry.description || ''}</span>
     ${entry.warning ? html`<span class="sbx-common-rule-warn" id=${warnID}>⚠ ${entry.warning}</span>` : null}
     <code class="sbx-common-rule-paths" id=${pathsID}>${paths.length ? paths.join(' · ') : '(no audited paths on this platform)'}</code>
@@ -46,24 +51,41 @@ function commonRulePaths(entry) {
   return [...new Set((entry?.paths || []).map((path) => String(path || '').trim()).filter(Boolean))];
 }
 
-/* Comparison-only path identity. Trailing separators, duplicated separators
-   and `.` segments all name the same location, so treating them as distinct
-   lets a preset append a deny for a path the operator already authored as
-   `write` — the daemon canonicalizes and folds deny over write, silently
-   overriding the authored row while the notice claims it was left as
-   authored. `..` segments and symlinks cannot be resolved in the browser, so
-   paths carrying them stay deliberately distinct rather than guessed at. The
-   inserted row always keeps the catalog's own spelling; only the comparison
-   normalizes. `~` is just an ordinary leading segment here: `~/go/` and `~/go`
-   match, `~/go` and `/home/op/go` do not. */
+/* Comparison-only path identity, mirroring the daemon's own `filepath.Clean`:
+   trailing separators, duplicated separators, `.` segments and `..` segments
+   all name the same location there, so treating them as distinct lets a preset
+   append a deny for a path the operator already authored as `write` — the
+   daemon canonicalizes and folds deny over write, silently overriding the
+   authored row while the notice claims it was left as authored. `..` is folded
+   lexically rather than skipped because that is exactly what the daemon does:
+   sandboxpolicy's canonicalization Cleans before it calls EvalSymlinks, so no
+   `..` segment ever survives to be resolved against a symlink. Symlinks
+   themselves stay unresolved — they need the filesystem — so two names for one
+   inode remain distinct here, as they must.
+
+   `~` is an ordinary leading segment: `~/go/` and `~/go` match, `~/go` and
+   `/home/op/go` do NOT, even though the daemon expands `~` to its own home
+   before cleaning. That alias is a real remaining hole with the same
+   silent-override consequence; closing it needs the daemon's home directory,
+   which the catalog payload does not carry today (TCL-635).
+
+   The inserted row always keeps the catalog's own spelling; only the
+   comparison normalizes. */
 function pathIdentity(path) {
   const raw = String(path || '').trim();
   if (!raw) return '';
-  const segments = raw.split('/').filter((segment) => segment && segment !== '.');
-  if (segments.includes('..')) return raw;
   const rooted = raw.startsWith('/');
-  const joined = segments.join('/');
-  return rooted ? `/${joined}` : joined;
+  const out = [];
+  for (const segment of raw.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment !== '..') { out.push(segment); continue; }
+    // `..` past the root is the root, as filepath.Clean has it; on a relative
+    // path a leading `..` has nothing to pop and stays.
+    if (out.length && out[out.length - 1] !== '..') out.pop();
+    else if (!rooted) out.push('..');
+  }
+  if (rooted) return `/${out.join('/')}`;
+  return out.length ? out.join('/') : '.';
 }
 
 function RequestList({ request, label, retry, children }) {
@@ -217,11 +239,16 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   const [commonRuleFeedError, setCommonRuleFeedError] = useState('');
   const [commonRuleFeedBusy, setCommonRuleFeedBusy] = useState(false);
   const commonRuleGeneration = useRef(0);
+  // Retry stays live even while a load is in flight: a request that never
+  // settles would otherwise leave the only way back permanently disabled. A
+  // second attempt simply supersedes the first by generation.
   const loadCommonRules = () => {
     if (typeof actions.loadCommonRuleCatalog !== 'function') return;
     const generation = ++commonRuleGeneration.current;
     setCommonRuleFeedBusy(true);
-    actions.loadCommonRuleCatalog().then((value) => {
+    // Resolve.then rather than a bare call: a feed that throws synchronously
+    // must land in the catch like any other failure, or the busy flag sticks.
+    Promise.resolve().then(() => actions.loadCommonRuleCatalog()).then((value) => {
       if (generation !== commonRuleGeneration.current) return;
       setCommonRules(value || { version: 0, categories: [], informational: [] });
       setCommonRuleFeedError(''); setCommonRuleFeedBusy(false);
@@ -295,6 +322,9 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
   // A preset inserts ordinary deny rows and then forgets it ever existed: no
   // stored ID, no hidden state. Paths already present in the table are left
   // exactly as authored rather than silently re-denied, and the notice says so.
+  // The running set also absorbs an entry whose own paths alias each other,
+  // which no audited entry does today — if one ever did, the notice's skip
+  // count would need to distinguish that from "already in the table".
   const addCommonRule = (entry) => {
     const paths = commonRulePaths(entry);
     const existing = new Set(draft.filesystem.map((row) => pathIdentity(row.path)).filter(Boolean));
@@ -332,9 +362,12 @@ function SandboxEditor({ descriptor, current, state, actions, confirmDiscard }) 
            it on both paths. */ ''}
       <details class="sbx-common-rules" id="sandbox-profile-editor-common-rules" open=${commonRulesOpen || null}
         onToggle=${(event) => setCommonRulesOpen(event.currentTarget.open)}>
-        <summary class="sbx-common-rule-summary">＋ add common rule</summary>
+        ${/* The menu ships folded, and nothing inside a closed <details> is in
+             the accessibility tree — so a feed failure has to be legible on the
+             summary itself or an operator never learns the presets are gone. */ ''}
+        <summary class="sbx-common-rule-summary">＋ add common rule${commonRuleFeedError ? ' — unavailable' : ''}</summary>
         <div class="sbx-common-rule-intro">Audited presets for locations most profiles want denied. Each one inserts ordinary deny rows into the table above — visible, editable, and yours to adjust or remove afterwards. Nothing else is stored.</div>
-        ${commonRuleFeedError && html`<div id="sandbox-profile-editor-common-rule-feed-error" class="sbx-common-rule-feed-error" role="alert">Could not load the common-rule catalog: ${commonRuleFeedError} <button type="button" disabled=${commonRuleFeedBusy} onClick=${loadCommonRules}>${commonRuleFeedBusy ? 'retrying…' : 'retry'}</button></div>`}
+        ${commonRuleFeedError && html`<div id="sandbox-profile-editor-common-rule-feed-error" class="sbx-common-rule-feed-error" role="alert">Could not load the common-rule catalog: ${commonRuleFeedError} <button type="button" onClick=${loadCommonRules}>${commonRuleFeedBusy ? 'retrying…' : 'retry'}</button></div>`}
         <div class="sbx-common-rule-list">${(commonRules.categories || []).map((entry) => html`<${CommonRuleEntry} key=${entry.id} entry=${entry} onAdd=${addCommonRule}/>`)}</div>
         ${(commonRules.informational || []).length > 0 && html`<details class="sbx-common-rule-informational"><summary>Required, non-removable access</summary>${(commonRules.informational || []).map((entry) => html`<div key=${entry.id} class="sbx-bg-intro"><strong>${entry.label}:</strong> ${entry.description}</div>`)}</details>`}
       </details>

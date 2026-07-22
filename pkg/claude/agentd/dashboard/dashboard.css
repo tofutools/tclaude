@@ -3913,7 +3913,9 @@ body.wizard .group-pending-title-wizard { display: inline; }
   color: #c9d1d9; font-family: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer;
 }
 .sbx-common-rule-add:hover { background: #1c2330; border-color: #3a4553; }
-.sbx-common-rule-add:disabled { opacity: .55; cursor: default; }
+.sbx-common-rule-add:disabled,
+.sbx-common-rule-add[aria-disabled="true"] { opacity: .55; cursor: default; }
+.sbx-common-rule-add[aria-disabled="true"]:hover { background: transparent; border-color: #2a3340; }
 .sbx-common-rule-descr { color: #c9d1d9; font-size: 12px; line-height: 1.45; }
 .sbx-common-rule-warn { color: #f0883e; font-size: 12px; line-height: 1.45; }
 .sbx-common-rule-paths {
