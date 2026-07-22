@@ -144,11 +144,10 @@ belongs to are recorded). That context is what keeps a partial or incremental
 step from being mistaken for reintroducing old limitations or bugs, and keeps
 review effort on defects rather than relitigating direction. What stays out is
 the implementation journey: what was tried, and the implementer's own
-justifications beyond what Background / Purpose already states. Prefer the
-newest capable model available for the reviewer. Triage its findings like
-CodeRabbit's: fix valid issues and document any deliberate skips. Record the
-review status in the PR description or a PR comment, including who reviewed
-and any important follow-up.
+justifications beyond what Background / Purpose already states. Triage its
+findings like CodeRabbit's: fix valid issues and document any deliberate
+skips. Record the review status in the PR description or a PR comment,
+including who reviewed and any important follow-up.
 
 Do not `git add -A`; stage specific paths.
 
