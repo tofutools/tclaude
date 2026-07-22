@@ -3,6 +3,7 @@ package agentd
 import (
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -64,26 +65,24 @@ func resolveResumeSandboxPolicy(convID string) (*resumeSandboxPolicy, error) {
 }
 
 // clampResumeProtectedAuthority preserves the protected-access decision and the
-// read-baseline boundary that were recorded when the agent launched.
+// deny lineage that were recorded when the agent launched.
 //
 // Resume deliberately re-resolves the ordinary rules from the current registry
 // so an operator can fix a profile and relaunch. That is fine for grants a
-// human re-confirms implicitly by editing them — but break-glass and the strict
-// read baseline are different: the ticket requires that resume never silently
-// gains protected access from a later ambient profile change, and never widens
-// minimal back to the broad default. Neither can be re-acknowledged here,
-// because resume has no human in the loop.
+// human re-confirms implicitly by editing them — but break-glass and the
+// profile's deny rows are different: resume must never silently gain protected
+// access from a later ambient profile change, and must never drop a deny the
+// launched agent was running under (or reopen a path beneath one). Neither can
+// be re-acknowledged here, because resume has no human in the loop.
 //
 // So this clamps rather than refuses: protected access is intersected with what
 // the previous snapshot already held (never added, never widened read→write),
-// and the baseline takes the strictest of the two. Both directions are
-// fail-safe — a resumed agent can only ever end up with less authority than the
-// ambient registry would grant it. An operator who genuinely wants to widen a
-// running agent's protected access spawns a fresh one, which goes through the
-// acknowledgement gate.
+// and the previous deny lineage is re-imposed. Both directions are fail-safe —
+// a resumed agent can only ever end up with less authority than the ambient
+// registry would grant it. An operator who genuinely wants to widen a running
+// agent spawns a fresh one, which goes through the full gates.
 func clampResumeProtectedAuthority(current, previous sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
-	current.Effective.ReadBaseline = sandboxpolicy.StrictestReadBaseline(
-		current.Effective.ReadBaseline, previous.Effective.ReadBaseline)
+	current = clampResumeDenyLineage(current, previous)
 
 	if len(current.Effective.BreakGlassFilesystem) == 0 {
 		// Nothing to clamp, and dropping access the profile no longer grants is
@@ -112,6 +111,65 @@ func clampResumeProtectedAuthority(current, previous sandboxpolicy.Snapshot) san
 			retained = nil
 		}
 		current.Effective.Provenance.BreakGlassFilesystem = retained
+	}
+	return current
+}
+
+// clampResumeDenyLineage re-imposes the deny rows the agent launched under.
+//
+// Two widenings are possible when the registry is re-resolved: the profile may
+// have DROPPED a deny the agent was running under, and it may have ADDED a
+// read/write row beneath one, carving out a path the running agent could not
+// see. Both are refused the same fail-safe way — the previous deny is restored,
+// and any current reopen the previous snapshot did not itself permit is
+// dropped. What survives is the intersection, so a resume can only narrow.
+//
+// This is the resume-side twin of sandboxpolicy.RequireContained, which enforces
+// the same rule for child spawns; resume clamps instead of erroring because
+// there is no human to re-author the profile mid-resume.
+func clampResumeDenyLineage(current, previous sandboxpolicy.Snapshot) sandboxpolicy.Snapshot {
+	previousGrants := previous.Effective.Filesystem
+	if len(previousGrants) == 0 {
+		return current
+	}
+	kept := make([]sandboxpolicy.FilesystemGrant, 0, len(current.Effective.Filesystem))
+	changed := false
+	for _, grant := range current.Effective.Filesystem {
+		if grant.Access != sandboxpolicy.AccessDeny {
+			if access, covered := sandboxpolicy.EffectiveAccessAt(previousGrants, grant.Path); covered && access == sandboxpolicy.AccessDeny {
+				changed = true
+				continue
+			}
+		}
+		kept = append(kept, grant)
+	}
+	for _, previousGrant := range previousGrants {
+		if previousGrant.Access != sandboxpolicy.AccessDeny {
+			continue
+		}
+		if access, covered := sandboxpolicy.EffectiveAccessAt(kept, previousGrant.Path); covered && access == sandboxpolicy.AccessDeny {
+			continue
+		}
+		kept = append(kept, sandboxpolicy.FilesystemGrant{Path: previousGrant.Path, Access: sandboxpolicy.AccessDeny})
+		changed = true
+	}
+	if !changed {
+		return current
+	}
+	sort.Slice(kept, func(i, j int) bool { return kept[i].Path < kept[j].Path })
+	current.Effective.Filesystem = kept
+	// Provenance must not keep naming a profile for a rule that is no longer
+	// in the effective set, or an audit view would claim authority that is not
+	// applied. A restored deny has no current-registry source, so it simply has
+	// no provenance entry.
+	if current.Effective.Provenance.Filesystem != nil {
+		retained := map[string][]sandboxpolicy.ProfileSource{}
+		for _, grant := range kept {
+			if sources, ok := current.Effective.Provenance.Filesystem[grant.Path]; ok {
+				retained[grant.Path] = sources
+			}
+		}
+		current.Effective.Provenance.Filesystem = retained
 	}
 	return current
 }

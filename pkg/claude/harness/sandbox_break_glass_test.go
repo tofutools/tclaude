@@ -13,41 +13,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-// Claude Code cannot express an allowlist-shaped read policy: sandbox.filesystem
-// offers only allowRead/denyRead/allowWrite/denyWrite (+ two managed-tier keys),
-// so read always resolves denylist-shaped. TCL-609 requires a typed refusal
-// rather than a launch that silently keeps today's broad baseline.
-func TestClaudeRejectsMinimalReadBaselineWithTypedCapabilityError(t *testing.T) {
-	for _, mode := range []string{ClaudeSandboxOn, ClaudeSandboxInherit, ClaudeSandboxOff} {
-		err := ValidateSandboxReadBaseline(DefaultName, mode, sandboxpolicy.ReadBaselineMinimal)
-		require.Error(t, err, "mode %q", mode)
-		var capErr *SandboxCapabilityError
-		require.True(t, errors.As(err, &capErr))
-		assert.Equal(t, SandboxCapabilityReadBaseline, capErr.Kind)
-		assert.Contains(t, capErr.Message, "denylist-shaped",
-			"the refusal must explain WHY, so an operator is not left guessing")
-		assert.Contains(t, capErr.Message, "Codex", "and must point at the harness that can do it")
-	}
-}
-
-func TestCodexAcceptsMinimalReadBaselineOnlyInManagedProfileMode(t *testing.T) {
-	require.NoError(t, ValidateSandboxReadBaseline(CodexName, SandboxManagedProfile, sandboxpolicy.ReadBaselineMinimal))
-	for _, mode := range []string{SandboxWorkspaceWrite, SandboxReadOnly, SandboxDangerFull} {
-		err := ValidateSandboxReadBaseline(CodexName, mode, sandboxpolicy.ReadBaselineMinimal)
-		require.Error(t, err, "mode %q", mode)
-	}
-}
-
-// Omitting the baseline must never trip a capability gate on any harness.
-func TestOmittedReadBaselineIsAlwaysAccepted(t *testing.T) {
-	for _, h := range []string{DefaultName, CodexName, "some-future-harness"} {
-		for _, mode := range []string{"", ClaudeSandboxOn, SandboxManagedProfile, SandboxDangerFull} {
-			require.NoError(t, ValidateSandboxReadBaseline(h, mode, sandboxpolicy.ReadBaselineDefault),
-				"harness %q mode %q", h, mode)
-		}
-	}
-}
-
 func TestBreakGlassCapabilityRequiresPolicyRenderingModes(t *testing.T) {
 	grants := []sandboxpolicy.BreakGlassGrant{{Path: "/home/u/.tclaude/data", Access: sandboxpolicy.AccessRead}}
 
@@ -69,33 +34,34 @@ func TestBreakGlassCapabilityRequiresPolicyRenderingModes(t *testing.T) {
 	require.NoError(t, ValidateSandboxBreakGlass("some-future-harness", "whatever", nil))
 }
 
-// Codex resolves an extends-less permission profile to a deny-all filesystem
-// baseline, so dropping `extends = ":workspace"` (whose resolved policy makes
-// the filesystem root readable) is what actually implements minimal.
-func TestCodexMinimalProfileDropsWorkspaceExtendsAndEnumeratesRuntime(t *testing.T) {
+// The Codex renderer always extends ":workspace" now: the extends-less
+// "minimal" branch is gone (TCL-623). Strictness is expressed as ordinary deny
+// rows plus narrower reopens, which the split-policy backend enforces.
+func TestCodexRendererAlwaysExtendsWorkspace(t *testing.T) {
 	content, err := codexAgentProfileContentForRules("tclaude-agent-test", "/run/agentd.sock", "/home/u/.tclaude/data",
 		CodexSandboxRules{
-			WriteDirs:    []string{"/home/u/project"},
-			ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+			WriteDirs:          []string{"/home/u/project"},
+			DenyDirs:           []string{"/home/u"},
+			ReadDirs:           []string{"/home/u/reference"},
+			RequireSplitPolicy: true,
 		}, sandboxpolicy.NetworkAccessInherit, "linux")
 	require.NoError(t, err)
 
-	assert.NotContains(t, content, `extends = ":workspace"`,
-		"the whole point of minimal is losing :workspace's readable filesystem root")
-	assert.NotContains(t, content, `":root"`, "minimal must not restore a readable root by another spelling")
-	// ":minimal" is Codex's purpose-built runtime baseline (/bin /etc /lib
-	// /lib64 /sbin /usr). Without it an extends-less profile cannot even exec.
-	assert.Contains(t, content, `":minimal" = "read"`)
-	assert.Contains(t, content, `":slash_tmp" = "write"`)
-	assert.Contains(t, content, `":tmpdir" = "write"`)
-	// The launch contract survives: agentd socket readable, private state denied.
+	assert.Contains(t, content, `extends = ":workspace"`)
+	assert.NotContains(t, content, `":minimal"`, "the enumerated minimal runtime set is gone")
+	assert.NotContains(t, content, `":slash_tmp"`)
+	assert.NotContains(t, content, `":tmpdir"`)
+	// The deny and its narrower reopens are ordinary rows.
+	assert.Contains(t, content, `"/home/u" = "none"`)
+	assert.Contains(t, content, `"/home/u/project" = "write"`)
+	assert.Contains(t, content, `"/home/u/reference" = "read"`)
+	assert.Contains(t, content, "use_legacy_landlock = false")
 	assert.Contains(t, content, `"/run/agentd.sock" = "read"`)
 	assert.Contains(t, content, `"/home/u/.tclaude/data" = "none"`)
-	assert.Contains(t, content, `"/home/u/project" = "write"`)
 }
 
-// Omitting the baseline must reproduce today's profile byte-for-byte.
-func TestCodexDefaultBaselineRendersUnchanged(t *testing.T) {
+// The rules struct must reproduce the positional renderer byte-for-byte.
+func TestCodexRulesRenderIdenticallyToPositionalForm(t *testing.T) {
 	rules := CodexSandboxRules{WriteDirs: []string{"/home/u/project"}}
 	got, err := codexAgentProfileContentForRules("tclaude-agent-test", "/run/agentd.sock", "/home/u/.tclaude/data",
 		rules, sandboxpolicy.NetworkAccessInherit, "linux")
@@ -449,4 +415,35 @@ func TestClaudeWriteBreakGlassClearsDenyWrite(t *testing.T) {
 	})), &decoded))
 	assert.NotContains(t, decoded.Sandbox.Filesystem["denyWrite"], tclaudePrivateStateDirTilde)
 	assert.NotContains(t, decoded.Sandbox.Filesystem["denyRead"], tclaudePrivateStateDirTilde)
+}
+
+// The deny-plus-reopen shape end to end on Claude: the deny row renders as
+// denyRead+denyWrite, and the narrower rows render as allowRead/allowWrite,
+// which Claude resolves by path specificity ("the more specific path wins").
+func TestClaudeRendersDenyWithNarrowerReopens(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := home + "/workspace"
+	reference := home + "/reference"
+
+	var decoded struct {
+		Sandbox struct {
+			Filesystem map[string][]string `json:"filesystem"`
+		} `json:"sandbox"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(claudeSettingsJSON(SpawnSpec{
+		SandboxMode:      ClaudeSandboxOn,
+		SandboxDenyDirs:  []string{home},
+		SandboxWriteDirs: []string{workspace},
+		// The launch contract pairs an explicit read for the writable workspace:
+		// allowWrite does not imply read beneath a denied ancestor.
+		SandboxReadDirs: []string{reference, workspace},
+	})), &decoded))
+	fs := decoded.Sandbox.Filesystem
+
+	assert.Contains(t, fs["denyRead"], home)
+	assert.Contains(t, fs["denyWrite"], home)
+	assert.Contains(t, fs["allowWrite"], workspace)
+	assert.Contains(t, fs["allowRead"], workspace, "the workspace must be readable, not just writable")
+	assert.Contains(t, fs["allowRead"], reference)
 }

@@ -171,13 +171,16 @@ func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
 		"the mounted parent root is daemon-generated and must skip the caller marker")
 }
 
-// A minimal profile drops `extends = ":workspace"`, which is what used to make
-// the launch directory writable for free. GitWorktreeWriteDirs yields nothing
-// outside a Git repository, so without an explicit grant a minimal agent in a
-// plain directory would have no workspace at all.
-func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
+// A deny covering the workspace masks what `extends = ":workspace"` grants,
+// and GitWorktreeWriteDirs yields nothing outside a Git repository, so without
+// an explicit reopen an agent in a plain directory would have no workspace at
+// all. The launch contract must reopen it for BOTH read and write.
+func TestDenyHomeReopensWorkspaceOutsideGitRepository(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
 	t.Setenv("HOME", home)
 
 	// Deliberately NOT a Git repository.
@@ -189,7 +192,7 @@ func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
 	require.NoError(t, os.MkdirAll(outside, 0o755))
 
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Global: &sandboxpolicy.Profile{
-		Name: "strict", ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+		Name: "deny-home", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
@@ -201,19 +204,59 @@ func TestMinimalBaselineGrantsWorkspaceOutsideGitRepository(t *testing.T) {
 	require.NoError(t, err)
 	content := string(raw)
 
-	// The workspace is readable and writable...
-	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`,
-		"a minimal agent must still be able to work in its launch directory")
-	// ...the runtime baseline is present so tools can actually run...
-	assert.Contains(t, content, `":minimal" = "read"`)
-	// ...the broad read baseline is gone...
-	assert.NotContains(t, content, `extends = ":workspace"`)
+	// Home is denied...
+	assert.Contains(t, content, `"`+home+`" = "none"`)
+	// ...the workspace is reopened writable so the agent can actually work...
+	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`)
+	// ...:workspace still provides the ordinary runtime baseline...
+	assert.Contains(t, content, `extends = ":workspace"`)
 	// ...and nothing granted the sibling directory.
 	assert.NotContains(t, content, outside)
 }
 
-// The default baseline must keep relying on :workspace, unchanged.
-func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
+// The launch contract pairs an explicit READ for a write-granted directory
+// beneath a deny: on both harnesses a write grant does not imply readability
+// under a denied ancestor.
+func TestDenyHomePairsReadReopenForWriteGrantsAndAgentDirs(t *testing.T) {
+	home := t.TempDir()
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+	home = canonicalHome
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(home, "workspace")
+	explicitWrite := filepath.Join(home, "explicit-write")
+	agentCache := filepath.Join(home, "agent-cache")
+	unrelated := filepath.Join(home, "unrelated")
+	for _, dir := range []string{workspace, explicitWrite, agentCache, unrelated} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "deny-home",
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
+			{Path: explicitWrite, Access: sandboxpolicy.AccessWrite},
+		},
+	}})
+	require.NoError(t, err)
+	effective.AgentDirectories = []string{"GOCACHE"}
+	effective.Environment = append(effective.Environment, sandboxpolicy.EnvironmentEntry{Name: "GOCACHE", Value: agentCache})
+	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
+
+	got := sandboxLaunchContractReadDirs(&snapshot, workspace)
+	assert.Equal(t, []string{agentCache, explicitWrite, workspace}, got)
+	assert.NotContains(t, got, unrelated, "only launch-required paths are reopened, never arbitrary ones")
+
+	// Without a covering deny nothing is paired: the ordinary grants already work.
+	open, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
+		Name: "open", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: explicitWrite, Access: sandboxpolicy.AccessWrite}},
+	}})
+	require.NoError(t, err)
+	openSnapshot := sandboxpolicy.NewSnapshot(open, nil)
+	assert.Empty(t, sandboxLaunchContractReadDirs(&openSnapshot, workspace))
+}
+
+// Without a deny the profile must keep relying on :workspace, unchanged.
+func TestOrdinaryProfileDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -233,7 +276,9 @@ func TestDefaultBaselineDoesNotAddExplicitWorkspaceGrant(t *testing.T) {
 		"today's behavior is unchanged: :workspace already covers the cwd")
 }
 
-func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
+// A leaf deny row (what "Add common rule" inserts) renders as an ordinary
+// Codex "none" entry, with no separate mechanism involved.
+func TestCodexManagedProfileRendersLeafDenyRow(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	home := t.TempDir()
 	canonicalHome, err := filepath.EvalSymlinks(home)
@@ -243,7 +288,7 @@ func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
 	ssh := filepath.Join(home, ".ssh")
 	require.NoError(t, os.MkdirAll(ssh, 0o700))
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
-		Name: "no-ssh", ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionSSH},
+		Name: "no-ssh", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: ssh, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
@@ -256,7 +301,7 @@ func TestCodexManagedProfileRendersSemanticReadExclusion(t *testing.T) {
 	assert.Contains(t, string(raw), `extends = ":workspace"`)
 }
 
-func TestStrictHomeGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T) {
+func TestDenyNarrowedGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T) {
 	container := t.TempDir()
 	workspace := filepath.Join(container, "active")
 	common := filepath.Join(workspace, ".git")
@@ -268,13 +313,13 @@ func TestStrictHomeGitWriteDirsDropsRepositoryContainerAndSiblings(t *testing.T)
 	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
 	require.NoError(t, err)
 
-	got := strictHomeGitWriteDirs(workspace, common, []string{container, common, admin, siblingRepo})
+	got := denyNarrowedGitWriteDirs(workspace, common, []string{container, common, admin, siblingRepo})
 	assert.Equal(t, []string{canonicalWorkspace, common, admin}, got)
-	assert.NotContains(t, got, container, "strict Home must not reopen the historical sibling-worktree container")
+	assert.NotContains(t, got, container, "a deny covering the workspace must not reopen the historical sibling-worktree container")
 	assert.NotContains(t, got, siblingRepo)
 }
 
-func TestCodexStrictHomeSessionRendererHostSmoke(t *testing.T) {
+func TestCodexDenyHomeSessionRendererHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_CODEX_SPLIT_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_CODEX_SPLIT_SMOKE=1 on an unsandboxed Linux host with Codex+bubblewrap")
 	}
@@ -301,9 +346,9 @@ func TestCodexStrictHomeSessionRendererHostSmoke(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dir, 0o700))
 	}
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
-		Name:                   "strict-home",
-		ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionHome},
+		Name: "deny-home",
 		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessDeny},
 			{Path: explicitRead, Access: sandboxpolicy.AccessRead},
 			{Path: explicitWrite, Access: sandboxpolicy.AccessWrite},
 		},

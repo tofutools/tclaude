@@ -893,7 +893,7 @@ func buildMux() http.Handler {
 	// profiles. Payload reads and mutations use sandbox-profiles.manage because
 	// an operator can accidentally place sensitive environment data in one.
 	mux.HandleFunc("/v1/sandbox-profiles", handleSandboxProfiles)
-	mux.HandleFunc("/v1/sandbox-profile-read-exclusions", handleSandboxReadExclusionCatalog)
+	mux.HandleFunc("/v1/sandbox-profile-read-exclusions", handleSandboxCommonRuleCatalog)
 	mux.HandleFunc("/v1/sandbox-profile-default", handleGlobalSandboxProfile)
 	mux.HandleFunc("GET /v1/sandbox-profiles/export", handleSandboxProfilesExport)
 	mux.HandleFunc("POST /v1/sandbox-profiles/import", handleSandboxProfilesImport)

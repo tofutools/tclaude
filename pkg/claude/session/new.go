@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -428,17 +428,12 @@ func runNew(params *NewParams) error {
 		// sandboxMode was cleared above; restore the logical mode for the gates.
 		effectiveSandboxMode = harness.SandboxManagedProfile
 	}
-	if baseline := sandboxSnapshotReadBaseline(launchSandbox); baseline != sandboxpolicy.ReadBaselineDefault {
-		if err := harness.ValidateSandboxReadBaseline(h.Name, effectiveSandboxMode, baseline); err != nil {
-			return err
-		}
-	}
-	readExclusions := sandboxSnapshotReadExclusions(launchSandbox)
-	if err := harness.ValidateSandboxReadExclusions(h.Name, effectiveSandboxMode, readExclusions); err != nil {
+	launchFilesystem := sandboxSnapshotActiveFilesystem(launchSandbox)
+	if err := harness.ValidateSandboxReopenUnderDeny(h.Name, effectiveSandboxMode, launchFilesystem); err != nil {
 		return err
 	}
 	if breakGlass := sandboxSnapshotBreakGlass(launchSandbox); len(breakGlass) > 0 {
-		if err := harness.ValidateSandboxBreakGlassWithReadExclusions(h.Name, effectiveSandboxMode, breakGlass, readExclusions); err != nil {
+		if err := harness.ValidateSandboxBreakGlassWithReopenUnderDeny(h.Name, effectiveSandboxMode, breakGlass, launchFilesystem); err != nil {
 			return err
 		}
 		// A missing protected path fails the launch closed: the operator
@@ -862,9 +857,10 @@ func runNew(params *NewParams) error {
 		executablePath = launchCodexSplitCapability.ExecutablePath
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
-	if sandboxSnapshotHasReadExclusion(launchSandbox, sandboxpolicy.ReadExclusionHome) {
-		launchGitWriteDirs = strictHomeGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
+	if sandboxDenyCoversPath(launchSandbox, cwd) {
+		launchGitWriteDirs = denyNarrowedGitWriteDirs(cwd, params.CodexGitCommonDir, launchGitWriteDirs)
 	}
+	launchContractReadDirs := sandboxLaunchContractReadDirs(launchSandbox, append([]string{cwd}, launchGitWriteDirs...)...)
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		ExecutablePath:             executablePath,
 		EnvExports:                 envExports,
@@ -877,9 +873,8 @@ func runNew(params *NewParams) error {
 		ExtraArgs:                  extraArgs,
 		SandboxMode:                sandboxMode,
 		SandboxWriteDirs:           append(launchGitWriteDirs, sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessWrite)...),
-		SandboxReadDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead),
-		SandboxDenyDirs:            append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny), sandboxSnapshotReadExclusionDenyDirs(launchSandbox)...),
-		SandboxReadBaseline:        string(sandboxSnapshotReadBaseline(launchSandbox)),
+		SandboxReadDirs:            append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...),
+		SandboxDenyDirs:            sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny),
 		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessRead),
 		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessWrite),
 		AskUserQuestionTimeout:     askTimeout,
@@ -1141,20 +1136,24 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		}
 		writeDirs = harness.GitWorktreeWriteDirs(cwd, commonDir, home)
 	}
-	requireSplitPolicy := sandboxSnapshotHasReadExclusion(effectiveSandbox, sandboxpolicy.ReadExclusionHome)
-	if requireSplitPolicy {
+	// Codex needs the verified split-policy backend for exactly the shape it
+	// cannot otherwise honor: a narrower reopen beneath a denied ancestor.
+	requireSplitPolicy := sandboxpolicy.HasReopenUnderDeny(sandboxSnapshotActiveFilesystem(effectiveSandbox))
+	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
 		// The historical repository grant is the main repository's whole
 		// container so an agent can create sibling worktrees directly. That is
-		// incompatible with strict Home: it would reopen every sibling repo and
-		// arbitrary sibling file beneath Home. Keep only the active cwd and exact
-		// daemon-verified Git common/admin identities. Direct sibling-worktree
-		// creation is intentionally unavailable under this posture; tclaude must
-		// broker it before launch instead of granting the container.
-		writeDirs = strictHomeGitWriteDirs(cwd, gitCommonDir, writeDirs)
+		// incompatible with a deny covering the workspace: it would reopen every
+		// sibling repo and arbitrary sibling file beneath the deny. Keep only the
+		// active cwd and exact daemon-verified Git common/admin identities. Direct
+		// sibling-worktree creation is intentionally unavailable under this
+		// posture; tclaude must broker it before launch instead of granting the
+		// container.
+		writeDirs = denyNarrowedGitWriteDirs(cwd, gitCommonDir, writeDirs)
 	}
+	launchContractReadDirs := sandboxLaunchContractReadDirs(effectiveSandbox, append([]string{cwd}, writeDirs...)...)
 	writeDirs = append(writeDirs, sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessWrite)...)
-	readDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead)
-	denyDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny), sandboxSnapshotReadExclusionDenyDirs(effectiveSandbox)...)
+	readDirs := append(sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
+	denyDirs := sandboxSnapshotDirs(effectiveSandbox, sandboxpolicy.AccessDeny)
 	var splitCapability *harness.CodexSplitPolicyCapability
 	if requireSplitPolicy {
 		verified, err := harness.VerifyCodexHomeSplitPolicy()
@@ -1167,14 +1166,12 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(effectiveSandbox)
-	readBaseline := sandboxSnapshotReadBaseline(effectiveSandbox)
-	if readBaseline == sandboxpolicy.ReadBaselineMinimal {
-		// Without `extends = ":workspace"` nothing grants the launch directory:
-		// GitWorktreeWriteDirs returns nothing outside a Git repository, so a
-		// minimal agent in a plain directory would have no workspace at all.
-		// The workspace is an invariant launch requirement, not an optional
-		// grant, so it is added explicitly here.
-		if workspace := canonicalMinimalWorkspace(cwd); workspace != "" {
+	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
+		// `extends = ":workspace"` still grants the launch directory, but a deny
+		// covering it masks that grant, and GitWorktreeWriteDirs returns nothing
+		// outside a Git repository. The workspace is an invariant launch
+		// requirement rather than an optional grant, so reopen it explicitly.
+		if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
 			writeDirs = appendUniqueDir(writeDirs, workspace)
 		}
 	}
@@ -1182,7 +1179,6 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 		ReadDirs:            readDirs,
 		WriteDirs:           writeDirs,
 		DenyDirs:            denyDirs,
-		ReadBaseline:        readBaseline,
 		BreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessRead),
 		BreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(effectiveSandbox, sandboxpolicy.AccessWrite),
 		RequireSplitPolicy:  requireSplitPolicy,
@@ -1193,9 +1189,9 @@ func ensureCodexManagedProfileWithSnapshot(params *NewParams, cwd, launchID stri
 	return profileName, path, splitCapability, nil
 }
 
-func strictHomeGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {
+func denyNarrowedGitWriteDirs(cwd, gitCommonDir string, candidates []string) []string {
 	var out []string
-	if workspace := canonicalMinimalWorkspace(cwd); workspace != "" {
+	if workspace := canonicalLaunchWorkspace(cwd); workspace != "" {
 		out = appendUniqueDir(out, workspace)
 	}
 	common := filepath.Clean(strings.TrimSpace(gitCommonDir))
@@ -1215,11 +1211,11 @@ func strictHomeGitWriteDirs(cwd, gitCommonDir string, candidates []string) []str
 	return out
 }
 
-// canonicalMinimalWorkspace resolves the launch directory for a minimal-baseline
-// grant. It is symlink-resolved so the emitted rule names the same path the
+// canonicalLaunchWorkspace resolves the launch directory for an explicit
+// workspace reopen. It is symlink-resolved so the emitted rule names the same path the
 // sandbox will see, and returns "" when the directory cannot be resolved (the
 // launch then fails on the ordinary cwd checks rather than here).
-func canonicalMinimalWorkspace(cwd string) string {
+func canonicalLaunchWorkspace(cwd string) string {
 	cwd = strings.TrimSpace(cwd)
 	if cwd == "" || !filepath.IsAbs(cwd) {
 		return ""
@@ -1281,43 +1277,65 @@ func sandboxSnapshotBreakGlassDirs(snapshot *sandboxpolicy.Snapshot, access sand
 	return out
 }
 
-func sandboxSnapshotReadBaseline(snapshot *sandboxpolicy.Snapshot) sandboxpolicy.ReadBaseline {
+// sandboxDenyCoversPath reports whether a STRICT ancestor of path is denied by
+// the effective profile. A deny at exactly path is not a "cover": normalization
+// folds a same-path grant to the strongest access, so that path is simply
+// denied and no reopen is owed.
+func sandboxDenyCoversPath(snapshot *sandboxpolicy.Snapshot, path string) bool {
 	if snapshot == nil {
-		return sandboxpolicy.ReadBaselineDefault
+		return false
 	}
-	return snapshot.Effective.ReadBaseline
-}
-
-func sandboxSnapshotReadExclusions(snapshot *sandboxpolicy.Snapshot) []string {
-	if snapshot == nil {
-		return nil
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || !filepath.IsAbs(path) {
+		return false
 	}
-	return snapshot.Effective.ReadBaselineExclusions
-}
-
-func sandboxSnapshotHasReadExclusion(snapshot *sandboxpolicy.Snapshot, wanted string) bool {
-	for _, id := range sandboxSnapshotReadExclusions(snapshot) {
-		if id == wanted {
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access != sandboxpolicy.AccessDeny || grant.Path == path {
+			continue
+		}
+		if sandboxpolicy.PathContainsOrEqual(grant.Path, path) {
 			return true
 		}
 	}
 	return false
 }
 
-func sandboxSnapshotReadExclusionDenyDirs(snapshot *sandboxpolicy.Snapshot) []string {
-	ids := sandboxSnapshotReadExclusions(snapshot)
-	if len(ids) == 0 {
+// sandboxLaunchContractReadDirs is the launch contract under a deny row: every
+// directory tclaude REQUIRES the agent to reach — the workspace, the verified
+// Git admin paths, agent-owned directories, and the profile's own write grants
+// — gets an explicit read reopen when a deny covers it.
+//
+// The Git-write and agent-directory paths are the load-bearing ones. Claude's
+// allowWrite does NOT imply read beneath a denied ancestor (deny/allow are
+// resolved per operation, most-specific-wins), so a workspace that is writable
+// but unreadable is a broken agent rather than a strict one. Codex has the same
+// need: its deny masks the parent, and only an explicit narrower rule reopens.
+// The agentd socket is already re-allowed unconditionally elsewhere.
+func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates ...string) []string {
+	if snapshot == nil {
 		return nil
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil // the capability boundary already returns the actionable error
+	all := append([]string(nil), candidates...)
+	all = append(all, sandboxSnapshotDirs(snapshot, sandboxpolicy.AccessWrite)...)
+	// Agent-owned directories are materialized by agentd and exported by name;
+	// their absolute paths ride in the effective environment.
+	for _, name := range snapshot.Effective.AgentDirectories {
+		for _, entry := range snapshot.Effective.Environment {
+			if entry.Name == name {
+				all = append(all, entry.Value)
+			}
+		}
 	}
-	paths, _, err := sandboxpolicy.ReadExclusionDenyPathsForOS(ids, home, runtime.GOOS)
-	if err != nil {
-		return nil
+	var out []string
+	for _, candidate := range all {
+		candidate = filepath.Clean(strings.TrimSpace(candidate))
+		if candidate == "." || !filepath.IsAbs(candidate) || !sandboxDenyCoversPath(snapshot, candidate) {
+			continue
+		}
+		out = appendUniqueDir(out, candidate)
 	}
-	return paths
+	sort.Strings(out)
+	return out
 }
 
 func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {

@@ -254,7 +254,7 @@ func TestResumeLaunchCmd_NoOverrideWhenUnconfigured(t *testing.T) {
 // The resume renderer must grant the launch directory under a minimal baseline
 // exactly as the spawn path does — GitWorktreeWriteDirs is empty outside a Git
 // repository, so without it a resumed minimal agent has no workspace at all.
-func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
+func TestResumeDenyHomeReopensNonGitWorkspace(t *testing.T) {
 	setupTestDB(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -268,8 +268,10 @@ func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
 	sibling := filepath.Join(home, "sibling")
 	require.NoError(t, os.MkdirAll(sibling, 0o755))
 
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
-		Name: "strict", ReadBaseline: sandboxpolicy.ReadBaselineMinimal,
+		Name: "deny-home", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: canonicalHome, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
@@ -288,13 +290,17 @@ func TestResumeMinimalBaselineGrantsNonGitWorkspace(t *testing.T) {
 	content := string(raw)
 
 	assert.Contains(t, content, `"`+canonicalWorkspace+`" = "write"`,
-		"a resumed minimal agent must still be able to work in its launch directory")
-	assert.Contains(t, content, `":minimal" = "read"`)
-	assert.NotContains(t, content, `extends = ":workspace"`)
+		"a resumed agent under a home-wide deny must still be able to work in its launch directory")
+	// Codex renders one access level per path and write subsumes read, so the
+	// launch contract's read pairing collapses into the write entry here. The
+	// pairing is load-bearing on Claude, whose allowRead/allowWrite are separate
+	// lists — see harness.TestClaudeRendersDenyWithNarrowerReopens.
+	assert.Contains(t, content, `"`+canonicalHome+`" = "none"`)
+	assert.Contains(t, content, `extends = ":workspace"`)
 	assert.NotContains(t, content, sibling, "nothing outside the workspace is granted")
 }
 
-func TestResumeDefaultBaselineKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
+func TestResumeWithoutDenyKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
 	setupTestDB(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -323,7 +329,7 @@ func TestResumeDefaultBaselineKeepsWorkspaceInheritanceUnchanged(t *testing.T) {
 		"default resumes keep relying on the unchanged workspace baseline")
 }
 
-func TestCodexStrictHomeWatchRendererHostSmoke(t *testing.T) {
+func TestCodexDenyHomeWatchRendererHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_CODEX_SPLIT_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_CODEX_SPLIT_SMOKE=1 on an unsandboxed Linux host with Codex+bubblewrap")
 	}
@@ -350,7 +356,7 @@ func TestCodexStrictHomeWatchRendererHostSmoke(t *testing.T) {
 	require.NoError(t, err)
 
 	effective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
-		Name: "strict-home", ReadBaselineExclusions: []string{sandboxpolicy.ReadExclusionHome},
+		Name: "deny-home", Filesystem: []sandboxpolicy.FilesystemGrant{{Path: home, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	snapshot := sandboxpolicy.NewSnapshot(effective, nil)
@@ -372,6 +378,6 @@ func TestCodexStrictHomeWatchRendererHostSmoke(t *testing.T) {
 	content := string(raw)
 	assert.Contains(t, content, `"`+workspace+`" = "write"`)
 	assert.Contains(t, content, `"`+common+`" = "write"`)
-	assert.NotContains(t, content, `"`+container+`" = "write"`, "strict Home must not reopen the sibling-worktree container")
+	assert.NotContains(t, content, `"`+container+`" = "write"`, "a home-wide deny must not reopen the sibling-worktree container")
 	assert.NotContains(t, content, sibling)
 }

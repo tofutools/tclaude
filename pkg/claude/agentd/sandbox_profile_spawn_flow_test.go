@@ -76,15 +76,20 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 	assert.Equal(t, "mutated-after-launch", resumedSnapshot.Effective.Environment[0].Value)
 }
 
-func TestSandboxProfileRestartUsesCurrentExclusionsAndProvenance(t *testing.T) {
+// Restart re-resolves the currently selected profile rather than replaying the
+// launch snapshot — with one exception: a deny the agent launched under is
+// re-imposed, because dropping it would widen a running agent (see
+// clampResumeDenyLineage).
+func TestSandboxProfileRestartUsesCurrentRulesAndProvenance(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
+	launchDeny, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	editedDeny, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
-		Name: "current-restrictions",
-		ReadBaselineExclusions: []string{
-			sandboxpolicy.ReadExclusionHome,
-			sandboxpolicy.ReadExclusionSSH,
-		},
+		Name:       "current-restrictions",
+		Filesystem: []db.SandboxFilesystemGrant{{Path: launchDeny, Access: sandboxpolicy.AccessDeny}},
 	})
 	require.NoError(t, err)
 	parent := f.AsHuman().SpawnWith("crew", map[string]any{
@@ -95,11 +100,11 @@ func TestSandboxProfileRestartUsesCurrentExclusionsAndProvenance(t *testing.T) {
 	before, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, before)
-	assert.Equal(t, []string{sandboxpolicy.ReadExclusionHome, sandboxpolicy.ReadExclusionSSH}, before.Effective.ReadBaselineExclusions)
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: launchDeny, Access: sandboxpolicy.AccessDeny}}, before.Effective.Filesystem)
 
 	profile, err := db.GetSandboxProfileByID(profileID)
 	require.NoError(t, err)
-	profile.ReadBaselineExclusions = []string{sandboxpolicy.ReadExclusionCloud}
+	profile.Filesystem = []db.SandboxFilesystemGrant{{Path: editedDeny, Access: sandboxpolicy.AccessDeny}}
 	require.NoError(t, db.UpdateSandboxProfile(profile))
 
 	f.MarkOffline(parent.TmuxSession)
@@ -108,17 +113,22 @@ func TestSandboxProfileRestartUsesCurrentExclusionsAndProvenance(t *testing.T) {
 	after, ok := f.World.SpawnSandboxPolicy(parent.ConvID)
 	require.True(t, ok)
 	require.NotNil(t, after)
-	assert.Equal(t, []string{sandboxpolicy.ReadExclusionCloud}, after.Effective.ReadBaselineExclusions,
-		"restart must use the current selected sandbox profile without retaining prior Home/leaf IDs")
+	paths := map[string]sandboxpolicy.Access{}
+	for _, grant := range after.Effective.Filesystem {
+		paths[grant.Path] = grant.Access
+	}
+	assert.Equal(t, sandboxpolicy.AccessDeny, paths[editedDeny], "restart picks up the newly authored restriction")
+	assert.Equal(t, sandboxpolicy.AccessDeny, paths[launchDeny], "and keeps the deny the agent launched under")
 	assert.Equal(t, map[string][]sandboxpolicy.ProfileSource{
-		sandboxpolicy.ReadExclusionCloud: {{Scope: sandboxpolicy.ScopeExplicit, Profile: "current-restrictions"}},
-	}, after.Effective.Provenance.ReadBaselineExclusions)
+		editedDeny: {{Scope: sandboxpolicy.ScopeExplicit, Profile: "current-restrictions"}},
+	}, after.Effective.Provenance.Filesystem,
+		"the restored deny has no current-registry source and must not claim one")
 
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(parent.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, persisted)
-	assert.Equal(t, after.Effective.ReadBaselineExclusions, persisted.Effective.ReadBaselineExclusions)
-	assert.Equal(t, after.Effective.Provenance.ReadBaselineExclusions, persisted.Effective.Provenance.ReadBaselineExclusions)
+	assert.Equal(t, after.Effective.Filesystem, persisted.Effective.Filesystem)
+	assert.Equal(t, after.Effective.Provenance.Filesystem, persisted.Effective.Provenance.Filesystem)
 }
 
 func TestSandboxProfileResumeRefreshesComposedPolicyAndCanSpawnChild(t *testing.T) {

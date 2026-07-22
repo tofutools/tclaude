@@ -511,22 +511,20 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	row.SandboxMode = harness.ClaudeSandboxOn
 	require.NoError(t, db.SaveSession(row))
 
+	oldDeny, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	newDeny, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
 		Name:        "changing-policy",
 		Environment: []db.SandboxEnvironmentEntry{{Name: "POLICY_VERSION", Value: "old"}},
-		ReadBaselineExclusions: []string{
-			sandboxpolicy.ReadExclusionHome,
-			sandboxpolicy.ReadExclusionSSH,
-		},
+		Filesystem:  []db.SandboxFilesystemGrant{{Path: oldDeny, Access: sandboxpolicy.AccessDeny}},
 	})
 	require.NoError(t, err)
 	oldEffective, err := sandboxpolicy.Resolve(sandboxpolicy.Scopes{Explicit: &sandboxpolicy.Profile{
 		Name:        "changing-policy",
 		Environment: []sandboxpolicy.EnvironmentEntry{{Name: "POLICY_VERSION", Value: "old"}},
-		ReadBaselineExclusions: []string{
-			sandboxpolicy.ReadExclusionHome,
-			sandboxpolicy.ReadExclusionSSH,
-		},
+		Filesystem:  []sandboxpolicy.FilesystemGrant{{Path: oldDeny, Access: sandboxpolicy.AccessDeny}},
 	}})
 	require.NoError(t, err)
 	previous := sandboxpolicy.NewSnapshot(oldEffective, []sandboxpolicy.AppliedProfile{{
@@ -538,7 +536,7 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	profile, err := db.GetSandboxProfileByID(profileID)
 	require.NoError(t, err)
 	profile.Environment[0].Value = "new"
-	profile.ReadBaselineExclusions = []string{sandboxpolicy.ReadExclusionCloud}
+	profile.Filesystem = []db.SandboxFilesystemGrant{{Path: newDeny, Access: sandboxpolicy.AccessDeny}}
 	require.NoError(t, db.UpdateSandboxProfile(profile))
 
 	res := resumeOneConv(convID)
@@ -546,16 +544,32 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	assert.Contains(t, res.Detail, "launch reservation lost")
 	require.NotNil(t, rec.effectiveSandbox)
 	assert.Equal(t, "new", rec.effectiveSandbox.Effective.Environment[0].Value)
-	assert.Equal(t, []string{sandboxpolicy.ReadExclusionCloud}, rec.effectiveSandbox.Effective.ReadBaselineExclusions)
-	assert.Equal(t, map[string][]sandboxpolicy.ProfileSource{
-		sandboxpolicy.ReadExclusionCloud: {{Scope: sandboxpolicy.ScopeExplicit, Profile: "changing-policy"}},
-	}, rec.effectiveSandbox.Effective.Provenance.ReadBaselineExclusions)
+	// The newly resolved deny applies, and the deny the agent launched under is
+	// re-imposed rather than dropped: resume clamps, never widens.
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{
+		{Path: newDeny, Access: sandboxpolicy.AccessDeny},
+		{Path: oldDeny, Access: sandboxpolicy.AccessDeny},
+	}, sortedGrants(rec.effectiveSandbox.Effective.Filesystem, newDeny, oldDeny))
 
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(convID)
 	require.NoError(t, err)
 	require.NotNil(t, persisted)
 	assert.Equal(t, "old", persisted.Effective.Environment[0].Value,
 		"a failed launch must not commit policy for a pane that never started")
-	assert.Equal(t, []string{sandboxpolicy.ReadExclusionHome, sandboxpolicy.ReadExclusionSSH}, persisted.Effective.ReadBaselineExclusions,
+	assert.Equal(t, []sandboxpolicy.FilesystemGrant{{Path: oldDeny, Access: sandboxpolicy.AccessDeny}}, persisted.Effective.Filesystem,
 		"a failed launch restores the exact previous snapshot rather than persisting the newly resolved profile")
+}
+
+// sortedGrants returns the grants in the caller's stated order so an assertion
+// does not depend on canonical path sorting of two temp dirs.
+func sortedGrants(in []sandboxpolicy.FilesystemGrant, order ...string) []sandboxpolicy.FilesystemGrant {
+	out := make([]sandboxpolicy.FilesystemGrant, 0, len(in))
+	for _, path := range order {
+		for _, grant := range in {
+			if grant.Path == path {
+				out = append(out, grant)
+			}
+		}
+	}
+	return out
 }
