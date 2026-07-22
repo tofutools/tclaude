@@ -183,7 +183,7 @@ func validateProcessJSONObject(name string, data []byte, maximum int) error {
 	return nil
 }
 
-func validateProcessTemplateSnapshot(ref string, snapshot []byte) error {
+func validateProcessTemplateSnapshotCreate(ref string, snapshot []byte) error {
 	if len(ref) == 0 || len(ref) > MaxProcessRunTemplateRef {
 		return fmt.Errorf("%w: template ref must contain 1..%d bytes", ErrProcessRunInvalid, MaxProcessRunTemplateRef)
 	}
@@ -246,7 +246,7 @@ func validateProcessRunCreate(input ProcessRunCreate) error {
 	if !validProcessRuntimeIdentifier(input.Status, MaxProcessRunStatusBytes, false) {
 		return fmt.Errorf("%w: invalid run status", ErrProcessRunInvalid)
 	}
-	if err := validateProcessTemplateSnapshot(input.TemplateRef, input.TemplateSnapshotJSON); err != nil {
+	if err := validateProcessTemplateSnapshotCreate(input.TemplateRef, input.TemplateSnapshotJSON); err != nil {
 		return err
 	}
 	if err := validateProcessJSONObject("params", input.ParamsJSON, MaxProcessRunParamsBytes); err != nil {
@@ -445,9 +445,6 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 		!validProcessRuntimeIdentifier(run.Status, MaxProcessRunStatusBytes, false) ||
 		run.StateVersion <= 0 {
 		return nil, ErrProcessRunCorrupt
-	}
-	if err := validateProcessTemplateSnapshot(run.TemplateRef, []byte(snapshot.String)); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
 	if err := validateProcessJSONObject("params", []byte(params.String), MaxProcessRunParamsBytes); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)

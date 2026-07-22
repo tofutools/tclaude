@@ -15,6 +15,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
 	"github.com/tofutools/tclaude/pkg/claude/process/store/storetest"
+	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
 func processRunFixture(t *testing.T, id, status string, checkpoint json.RawMessage) ProcessRunCreate {
@@ -351,7 +352,9 @@ func TestProcessRunEventTimestampRFC3339YearBoundaries(t *testing.T) {
 
 func TestProcessRunReadsRejectOversizedCorruptRowsBeforeScanningContent(t *testing.T) {
 	setupTestDB(t)
-	input := processRunFixture(t, "run_oversized_corrupt", "running", json.RawMessage(`{}`))
+	snapshotInput := processRunFixture(t, "run_oversized_a_snapshot", "running", json.RawMessage(`{}`))
+	require.NoError(t, CreateProcessRun(snapshotInput))
+	input := processRunFixture(t, "run_oversized_b_checkpoint", "running", json.RawMessage(`{}`))
 	input.InitialEvents = []ProcessRunEvent{processRunEvent(1, "created")}
 	require.NoError(t, CreateProcessRun(input))
 
@@ -361,6 +364,9 @@ func TestProcessRunReadsRejectOversizedCorruptRowsBeforeScanningContent(t *testi
 	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), `PRAGMA ignore_check_constraints = ON`)
 	require.NoError(t, err)
+	overSnapshot := `{"x":"` + strings.Repeat("x", MaxProcessRunTemplateSnapshotBytes) + `"}`
+	_, err = conn.ExecContext(t.Context(), `UPDATE process_runs SET template_snapshot_json = ? WHERE id = ?`, overSnapshot, snapshotInput.ID)
+	require.NoError(t, err)
 	overCheckpoint := `{"x":"` + strings.Repeat("x", MaxProcessRunCheckpointBytes) + `"}`
 	_, err = conn.ExecContext(t.Context(), `UPDATE process_runs SET checkpoint_json = ? WHERE id = ?`, overCheckpoint, input.ID)
 	require.NoError(t, err)
@@ -369,6 +375,8 @@ func TestProcessRunReadsRejectOversizedCorruptRowsBeforeScanningContent(t *testi
 	require.NoError(t, err)
 	require.NoError(t, conn.Close())
 
+	_, err = GetProcessRun(snapshotInput.ID)
+	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
 	_, err = GetProcessRun(input.ID)
 	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
 	_, err = ListActiveProcessRuns("", MaxProcessRunReadPage)
@@ -377,7 +385,7 @@ func TestProcessRunReadsRejectOversizedCorruptRowsBeforeScanningContent(t *testi
 	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
 }
 
-func TestProcessRunTemplateSnapshotIsCanonicalStrictAndPinned(t *testing.T) {
+func TestProcessRunTemplateSnapshotIsPinnedAtCreationAndAuthoritativeAtRuntime(t *testing.T) {
 	setupTestDB(t)
 	input := processRunFixture(t, "run_template", "running", json.RawMessage(`{"step":1}`))
 	require.NoError(t, CreateProcessRun(input))
@@ -394,12 +402,37 @@ func TestProcessRunTemplateSnapshotIsCanonicalStrictAndPinned(t *testing.T) {
 	bad.TemplateRef += "0"
 	assert.ErrorIs(t, CreateProcessRun(bad), ErrProcessRunInvalid)
 
+	var edited model.Template
+	require.NoError(t, json.Unmarshal(input.TemplateSnapshotJSON, &edited))
+	edited.Name = "user-edited runtime definition"
+	encodedEdit, err := json.Marshal(edited)
+	require.NoError(t, err)
+	editedSnapshot := append(json.RawMessage(" \n"), encodedEdit...)
+	newHash, err := model.SemanticHash(&edited)
+	require.NoError(t, err)
+	require.NotEqual(t, input.TemplateRef, model.TemplateRef(edited.ID, newHash))
+
 	d, err := Open()
 	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE process_runs SET template_snapshot_json = ? WHERE id = ?`, string(editedSnapshot), input.ID)
+	require.NoError(t, err)
+	run, err := GetProcessRun(input.ID)
+	require.NoError(t, err)
+	assert.Equal(t, json.RawMessage(editedSnapshot), run.TemplateSnapshotJSON)
+	active, err := ListActiveProcessRuns("", MaxProcessRunReadPage)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, json.RawMessage(editedSnapshot), active[0].TemplateSnapshotJSON)
+
+	var runtimeTemplate model.Template
+	require.NoError(t, strictjson.Decode(run.TemplateSnapshotJSON, &runtimeTemplate))
+	assert.Equal(t, edited.Name, runtimeTemplate.Name)
+
 	_, err = d.Exec(`UPDATE process_runs SET template_snapshot_json = ? WHERE id = ?`, string(unknown), input.ID)
 	require.NoError(t, err)
-	_, err = GetProcessRun(input.ID)
-	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
+	run, err = GetProcessRun(input.ID)
+	require.NoError(t, err, "raw detail reads leave template decoding to the reconstruction boundary")
+	assert.Error(t, strictjson.Decode(run.TemplateSnapshotJSON, &runtimeTemplate))
 }
 
 func TestProcessRunBoundsExactAndPlusOne(t *testing.T) {
