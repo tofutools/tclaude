@@ -434,16 +434,48 @@ the field and therefore remain backward-compatible.
 
 #### Deny rules, reopens, and common rules
 
-By default a sandboxed agent inherits its harness's read baseline, which is
-broad: ordinary files across the operator's home and system are readable even
-though writes are confined. That includes ambient credential locations such as
-`~/.ssh`, `~/.aws`, and `~/.config/gh`. tclaude does not construct that
-baseline — it comes from the harness.
+By default a sandboxed agent inherits its harness's default read visibility,
+which is broad: ordinary files across the operator's home and system are
+readable even though writes are confined. That includes ambient credential
+locations such as `~/.ssh`, `~/.aws`, and `~/.config/gh`. tclaude does not
+construct that posture — it comes from the harness.
 
 Narrowing it does **not** need a separate mechanism. There is exactly one:
 the `filesystem` table. Strictness is composed from ordinary rows — a broad
 `deny` plus narrower `read`/`write` rows that reopen the parts the agent
-actually needs:
+actually needs.
+
+**Read the capability gate before you author one.** A `read`/`write` row
+strictly beneath a `deny` row in the *effective* profile is a
+**reopen-under-deny**, and it is not universally available. Plain deny rows
+with no reopens beneath them keep today's behavior on every harness and mode;
+the gate applies only to the reopen shape, because that is where a harness can
+quietly fail to enforce what the profile claims:
+
+* **Claude Code** — allowed, but requires sandbox mode `on`. A narrower
+  `allowRead` genuinely reopens a broader `denyRead`: the sandboxing docs state
+  that "when read rules overlap, the more specific path wins", with
+  `denyRead: ["~/"]` + `allowRead: ["."]` as the worked example. (Deny
+  directories are applied shallowest-first, so a deny at the *same* depth as a
+  grant would be order-sensitive; tclaude never emits that pairing.) Under
+  sandbox `inherit` or `off`, tclaude cannot guarantee that either the deny or
+  the reopen is applied, so the launch is refused with a typed capability error
+  rather than running with a strict-looking profile and a broad baseline.
+* **Codex** — requires the managed `tclaude-agent` permission profile, Linux,
+  and a verified split-policy bubblewrap probe. Codex does **not** resolve
+  overlaps by specificity in general: normally a deny dominates any narrower
+  grant regardless of specificity or declaration order, which would silently
+  mask the reopen entirely. Narrower reopens work only under the non-legacy
+  landlock split policy, so tclaude runs an isolated behavioral probe
+  (`use_legacy_landlock = false`, `RequireSplitPolicy`) proving a denied parent
+  can retain a narrower readable child, and determining whether an exact
+  executable leaf must be reopened. Raw Codex `--sandbox` modes are refused.
+  **macOS is refused**: per openai/codex#21081 a deny mask dominates narrower
+  reopens beneath it there, with no split-policy equivalent.
+
+With that in hand, a denied-Home profile looks like this — note that the
+reopens are the load-bearing part, and this list is a *starting point*, not a
+complete one for your machine:
 
 ```json
 {
@@ -451,49 +483,40 @@ actually needs:
   "filesystem": [
     { "path": "~", "access": "deny" },
     { "path": "~/git/myproject", "access": "write" },
+    { "path": "~/.claude", "access": "read" },
+    { "path": "~/.codex", "access": "read" },
     { "path": "~/go", "access": "read" },
     { "path": "~/.cargo", "access": "read" }
   ]
 }
 ```
 
-This works because both harnesses resolve overlapping filesystem rules by
-specificity rather than by order. The Claude Code sandboxing docs state it
-directly — "when read rules overlap, the more specific path wins" — and give
-the same shape as an example: `denyRead: ["~/"]` with `allowRead: ["."]`. The
-Claude renderer maps a `deny` row to `denyRead` + `denyWrite` and a `read` row
-to `allowRead`; the Codex renderer maps a `deny` row to `"path" = "none"`.
+Everything the agent's harness, toolchain, and language runtime read out of
+Home must appear as a reopen or the agent will not start or will fail partway
+through a build. tclaude only auto-pairs the launch contract below; the rest is
+yours to enumerate. Author these against a throwaway agent first.
+
+The Claude renderer maps a `deny` row to `denyRead` + `denyWrite` and a `read`
+row to `allowRead`; the Codex renderer maps a `deny` row to `"path" = "none"`.
 
 Rows are normalized only per canonical path (`deny` > `write` > `read` on the
 *same* path). Overlapping but distinct ancestor/descendant paths are kept as
 authored, which is what makes a reopen expressible at all. Cross-scope
 composition is unchanged: `deny` still dominates an exact-path grant from
-another applied profile, so a global or group profile's deny cannot be undone
-by an explicit profile naming the same path — only by a strictly narrower one.
+another applied profile, so a global or group profile's deny cannot be
+neutralized by an explicit profile naming the same path. A strictly narrower
+row from a later scope survives into the effective profile as a
+reopen-under-deny — and is then subject to the harness gate above, which is
+what decides whether it is actually enforced.
 
 There is deliberately **no** "minimal"/allowlist mode and no host-wide preset.
-Deny-all is composed by hand (`deny /`, or `deny ~` plus reopens). Everything
-is visible in the table; nothing is hidden behind a stored mode ID.
-
-**Reopen-under-deny is a shape, and it is capability-gated.** A `read`/`write`
-row strictly beneath a `deny` row in the *effective* profile is a
-reopen-under-deny. Plain deny rows with no reopens beneath them keep today's
-behavior on every harness and mode; the gate below applies only to the
-reopen shape, because that is where a harness can quietly fail to enforce what
-the profile claims:
-
-* **Claude Code** — allowed, but requires sandbox mode `on`. Under `inherit`
-  or `off`, tclaude cannot guarantee that either the deny or the reopen is
-  applied, so the launch is refused with a typed capability error rather than
-  running with a strict-looking profile and a broad baseline.
-* **Codex** — requires the managed `tclaude-agent` permission profile, Linux,
-  and a verified split-policy bubblewrap probe. tclaude runs an isolated
-  behavioral probe (`use_legacy_landlock = false`, `RequireSplitPolicy`) that
-  proves a denied parent can retain a narrower readable child and determines
-  whether an exact executable leaf must be reopened. Raw Codex `--sandbox`
-  modes are refused. **macOS is refused**: per openai/codex#21081 a deny mask
-  dominates narrower reopens beneath it, so the reopen would silently not
-  apply.
+Everything is visible in the table; nothing is hidden behind a stored mode ID.
+Deny-all is composed by hand. `deny ~` is the practical posture. A literal
+`deny /` is substantially harder and is not recommended without careful
+iteration: the harness binary, the language runtime, and system paths such as
+`/usr`, `/etc`, `/lib`, `/bin`, and `/proc` all sit outside Home and are not
+part of the launch contract, so each must be reopened explicitly before
+anything executes.
 
 **The launch contract still holds.** When a deny row covers paths tclaude must
 keep usable, tclaude pairs explicit read reopens automatically: the workspace /
@@ -529,15 +552,23 @@ under the same lineage rules as break-glass.
 Profiles stored or exported before this model existed may still carry the old
 `read_baseline` / `read_baseline_exclusions` fields. They are **silently
 dropped on load** — no error, and no claim that the old restriction is still
-being enforced. Re-express the intent as deny rows.
+being enforced. Note what that
+means: such a profile is no longer strict. It launches with the harness's
+ordinary broad read visibility under its old strict-sounding name, and nothing
+in the effective profile records the restriction it used to carry. Audit any
+profile that used those fields and re-express the intent as deny rows.
 
 #### `break_glass_filesystem` — exceptional protected-path access
 
-tclaude denies every sandboxed agent access to `~/.tclaude/data` (daemon
-database, authorization state, private runtime state), `~/.claude/sessions`,
-and `~/.codex` (Codex configuration, credentials, session state). Ordinary
-`filesystem` rules that intersect those locations are rejected, and that does
-not change.
+tclaude denies every sandboxed agent access to two protected roots:
+`~/.tclaude/data` (daemon database, authorization state, private runtime state)
+and `~/.claude/sessions` (harness session transcripts). Ordinary `filesystem`
+rules that intersect those locations are rejected, and that does not change.
+
+`~/.codex` is **not** a protected root — it is ordinary harness state that an
+agent normally needs to read. An ordinary `deny` row may cover it, and a
+denied Home does; in that case reopen it explicitly (see the deny-home warning
+above) or managed Codex agents will be stranded.
 
 `break_glass_filesystem` is the narrow, operator-controlled exception, for one
 legitimate case: launching a tightly scoped agent to **debug tclaude itself** —

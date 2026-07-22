@@ -353,8 +353,10 @@ and is refused on macOS), so a profile a harness cannot faithfully enforce
 fails with a typed error rather than pretending isolation. **Break-glass
 protected access** (`break_glass_filesystem`) is the
 only representation that may touch the normally protected tclaude/harness
-state (`~/.tclaude/data`, `~/.claude/sessions`, `~/.codex`); ordinary
-filesystem rules keep rejecting those paths. Each rule is an exact path with
+state (`~/.tclaude/data`, `~/.claude/sessions`); ordinary
+filesystem rules keep rejecting those paths. `~/.codex` is not among them — it
+is ordinary harness state that a deny row may cover and that a denied Home
+must reopen. Each rule is an exact path with
 `read` or `write` access — read never implies write. It exists solely for
 deliberate debugging of tclaude itself and is rendered as dangerous
 everywhere: the editor, the save diff, profile cards, import previews, the
