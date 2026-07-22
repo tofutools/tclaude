@@ -42,6 +42,11 @@ func handleSandboxCommonRuleCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", "resolve home directory")
 		return
 	}
+	home, err = sandboxpolicy.CanonicalCommonRuleHome(home)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
 	rules, err := sandboxpolicy.CommonRuleCatalog(home, runtime.GOOS)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())

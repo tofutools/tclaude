@@ -49,6 +49,12 @@ func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *te
 
 func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	f := newFlow(t)
+	realHome := t.TempDir()
+	linkedHome := filepath.Join(t.TempDir(), "home")
+	require.NoError(t, os.Symlink(realHome, linkedHome))
+	t.Setenv("HOME", linkedHome)
+	canonicalHome, err := filepath.EvalSymlinks(linkedHome)
+	require.NoError(t, err)
 	rec := profileReq(t, f, http.MethodGet, "/v1/sandbox-profile-read-exclusions", nil)
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var catalog struct {
@@ -61,13 +67,11 @@ func TestSandboxProfileReadExclusionCatalog(t *testing.T) {
 	testharness.DecodeJSON(t, rec, &catalog)
 	assert.Equal(t, 1, catalog.Version)
 	assert.NotEmpty(t, catalog.Platform)
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	assert.Equal(t, home, catalog.Home)
+	assert.Equal(t, canonicalHome, catalog.Home)
 	require.Len(t, catalog.Categories, 7)
 	assert.Equal(t, "secrets.ssh", catalog.Categories[0]["id"])
 	assert.Equal(t, "home.directory", catalog.Categories[6]["id"])
-	assert.NotEmpty(t, catalog.Categories[6]["paths"])
+	assert.Equal(t, []any{canonicalHome}, catalog.Categories[6]["paths"])
 	assert.NotEmpty(t, catalog.Informational)
 }
 
