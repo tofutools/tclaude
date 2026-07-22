@@ -17,6 +17,13 @@ import (
 // session is tagged "claude", so this is the CC harness and the tokens are
 // the same literals as before the seam.
 func harnessForConv(convID string) *harness.Harness {
+	if profile, err := db.ConversationResumeProfileForConv(convID); err == nil && profile != nil {
+		if h, err := harness.Resolve(profile.Harness); err == nil {
+			return h
+		}
+		slog.Warn("harnessForConv: unknown durable conversation harness; checking live session",
+			"conv", convID, "harness", profile.Harness)
+	}
 	if rows, err := db.FindSessionsByConvID(convID); err == nil {
 		for _, s := range rows {
 			if s.Harness == "" {
@@ -33,6 +40,21 @@ func harnessForConv(convID string) *harness.Harness {
 		}
 	}
 	return harness.Default()
+}
+
+// relaunchSandboxForProfile returns the stable agent's already-selected
+// sandbox mode. A nil field is unknown legacy authority and fails closed; a
+// present empty string retains the historical legacy interpretation.
+func relaunchSandboxForProfile(profile *db.AgentRelaunchProfile, harnessName string) (string, error) {
+	if profile == nil {
+		return "", fmt.Errorf("durable agent relaunch profile is missing")
+	}
+	if profile.SandboxMode == nil {
+		return "", fmt.Errorf("durable agent relaunch profile has unknown sandbox mode")
+	}
+	return relaunchSandboxForSession(&db.SessionRow{
+		Harness: harnessName, SandboxMode: *profile.SandboxMode,
+	})
 }
 
 // resolveSpawnHarness resolves a requested harness name for a daemon
@@ -218,6 +240,8 @@ func approvalForRelaunch(sourceConv, harnessName string) (string, bool) {
 // capability check is defence in depth so a stale flag could never thread
 // `--remote-control` onto a harness that would reject it. A lookup error
 // degrades to false (no re-arm), logged, never fatal.
+// Deprecated: managed lifecycle reads durableRelaunchConfigForConv. Retained
+// for legacy compatibility tests while session-derived readers age out.
 func remoteControlForRelaunch(sourceConv, harnessName string) bool {
 	on, err := db.RemoteControlForConv(sourceConv)
 	if err != nil {
@@ -244,6 +268,7 @@ func remoteControlForRelaunch(sourceConv, harnessName string) bool {
 // is defence in depth: only a Claude Code conv can ever record auto_memory=1
 // (the spawn that set it is gated on CanAutoMemory), so a Codex source is false
 // by construction.
+// Deprecated: managed lifecycle reads durableRelaunchConfigForConv.
 func autoMemoryForRelaunch(sourceConv, harnessName string) bool {
 	on, err := db.AutoMemoryForConv(sourceConv)
 	if err != nil {
@@ -273,6 +298,7 @@ func autoMemoryForRelaunch(sourceConv, harnessName string) bool {
 // would reject it: the forked `tclaude session new` re-validates it per-harness
 // (a Codex relaunch would 400 an ask-timeout), and a Codex source records "" by
 // construction (its spawn path rejects the flag), so this yields "" for Codex.
+// Deprecated: managed lifecycle reads durableRelaunchConfigForConv.
 func askTimeoutForRelaunch(sourceConv string) string {
 	v, err := db.AskTimeoutForConv(sourceConv)
 	if err != nil {

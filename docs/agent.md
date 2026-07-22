@@ -1119,6 +1119,16 @@ the daemon cannot prove an agent can write inside a path that does not yet
 exist. Fresh spawns and caller-selected launch locations still use caller-side
 directory proof.
 
+Relaunch state follows the same lifetime split. Mutable settings such as
+sandbox/approval posture, model/effort, AskUserQuestion timeout, remote control,
+and auto-memory are stored on the stable agent. Harness identity, physical cwd
+provenance, and a fallback launch snapshot for an unmanaged conversation are
+stored with the conversation. A `sessions` row still records the process's
+launch snapshot for history, `session ls`, watch mode, and diagnostics, but it
+is not relaunch authority: pruning every exited process row does not change how
+an agent resumes. When a managed agent exists, its settings override the
+conversation fallback.
+
 ### clone / reincarnate / compact / context-info
 
 Lifecycle commands. By default they target the calling agent itself;

@@ -4,7 +4,7 @@ import "fmt"
 
 // agentForConvExpr is the SQL VALUES expression that resolves a bound conv-id to
 // its owning agent_id via agent_conversations (conv_id is its PK, so at most one
-// row), or '' when the conv is not an actor / unmapped. It is the insert-time
+// row), or ” when the conv is not an actor / unmapped. It is the insert-time
 // dual-write counterpart of the v77 backfill (backfillAgentColSQL): a freshly
 // written row carries the same agent companion the migration computed, so
 // backfilled and new rows agree. Bind the conv-id once per occurrence, in
@@ -21,12 +21,12 @@ const agentForSuccessionExpr = `COALESCE((SELECT agent_id FROM agent_conversatio
 
 // propagateAgentCompanions fills the sessions.agent_id companion for a conv that
 // has just been linked to an agent. A session row is registered before the hook
-// enrolls the agent, so its agent_id derives to '' at insert time — this fills
+// enrolls the agent, so its agent_id derives to ” at insert time — this fills
 // it on enrollment. (Other owner tables resolve at insert because their conv is
 // already enrolled by the time the row is written; succession edges resolve via
 // their predecessor, which is always enrolled — see agentForSuccessionExpr.)
 //
-// Idempotent and best-effort: it only fills rows still '' for this conv, a no-op
+// Idempotent and best-effort: it only fills rows still ” for this conv, a no-op
 // once populated. Runs inside the caller's enrollment transaction (linkConvTx /
 // advanceAgentToNewConv) so it never partially commits.
 func propagateAgentCompanions(x dbExecQuerier, convID, agentID string) error {
@@ -51,6 +51,13 @@ func propagateAgentCompanions(x dbExecQuerier, convID, agentID string) error {
 		`UPDATE sessions SET agent_id = ? WHERE conv_id = ? AND agent_id = ''`,
 		agentID, convID); err != nil {
 		return fmt.Errorf("propagate agent companion sessions.agent_id: %w", err)
+	}
+	// A session is registered before its conversation enrolls, so its first
+	// projection can only populate conversation-owned state. Once the stable
+	// actor binding exists, project the newest launch snapshot again to seed the
+	// agent-owned profile in this same enrollment transaction.
+	if err := projectLatestSessionRelaunchProfilesForConvTx(x, convID); err != nil {
+		return fmt.Errorf("propagate durable relaunch profile: %w", err)
 	}
 	return nil
 }

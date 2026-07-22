@@ -766,19 +766,24 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 // with no conv yet) come back as `skipped:no_conv_id` since we
 // have no .jsonl to resume from — those are template-based
 // spawns, deferred to a future "groups create --team" pass.
-// resolveConvLaunchMetadata resolves how to (re)launch convID — its cwd, the
-// inherited effort/model, and the harness it last ran on — WITHOUT requiring a
-// live session, so an offline conv can be resumed or cloned straight from its
-// stored conversation. The cascade prefers the freshest session row (precise cwd
-// + inherited model/effort + harness; rows are updated_at DESC, [0] is freshest),
-// then conv_index metadata (older/imported convs, which carry no effort/model),
-// then the harness-native conversation store (e.g. a Codex rollout). ok=false
-// when none resolve — the conv isn't locatable to relaunch.
+// resolveConvLaunchMetadata resolves how to (re)launch convID without requiring
+// process history. Durable conversation facts win; an enrolled agent contributes
+// its durable model/effort intent. Legacy session, conv_index, and harness-native
+// fallbacks remain for unmanaged/pre-v145 conversations and standalone export.
 //
 // Shared by resumeOneConv and the clone-based export (JOH-266): the export needs
 // the original's cwd to spawn the summary-writer clone into, and a clone works
 // offline (it resumes from the .jsonl), so it must not depend on a live session.
 func resolveConvLaunchMetadata(convID string) (cwd, effort, model, harnessName string, ok bool) {
+	if conversation, err := db.ConversationResumeProfileForConv(convID); err == nil && conversation != nil {
+		cwd, harnessName = conversation.Cwd, conversation.Harness
+		if agentProfile, aerr := db.AgentRelaunchProfileForConv(convID); aerr == nil && agentProfile != nil {
+			if cfg, cerr := durableRelaunchConfigForConv(convID); cerr == nil {
+				effort, model = cfg.Effort, cfg.Model
+			}
+		}
+		return cwd, effort, model, harnessName, true
+	}
 	if rows, _ := db.FindSessionsByConvID(convID); len(rows) > 0 {
 		effort, model = inheritedLaunchFlags(rows[0].ID)
 		// Relaunch under the harness the conv was last running on — a Codex
@@ -926,23 +931,22 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
 		return res
 	}
-	// Offline managed resume normally requires a session-generation record
-	// carrying daemon-private physical provenance. A human trust root may repair
-	// a missing row from a verified harness conversation; unattended callers may
-	// not turn cache/native-store pathnames into launch authority.
-	sessions, sessionErr := db.FindSessionsByConvID(convID)
-	if sessionErr != nil {
+	// Resume authority is durable agent + conversation state. A human trust root
+	// may establish a missing conversation profile from the real harness store;
+	// a predecessor session row is never required or consulted here.
+	conversationProfile, profileErr := db.ConversationResumeProfileForConv(convID)
+	if profileErr != nil {
 		res.Action = "error"
-		res.Detail = "load resumable session metadata: " + sessionErr.Error()
+		res.Detail = "load durable conversation resume profile: " + profileErr.Error()
 		return res
 	}
-	if len(sessions) == 0 {
+	if conversationProfile == nil {
 		if !trustRoot {
 			res.Action = "error:resume_provenance"
-			res.Detail = "no resumable session row for this agent; a direct human resume or --ask-human approval is required to recover it from the real harness conversation"
+			res.Detail = "no durable conversation resume profile for this agent; a direct human resume or --ask-human approval is required to recover it from the real harness conversation"
 			return res
 		}
-		recovered, recoverErr := recoverMissingSessionResumeAnchor(convID, recreateMissingDir)
+		recovered, recoverErr := recoverMissingConversationResumeProfile(convID, recreateMissingDir)
 		if recoverErr != nil {
 			var missing *missingResumeAnchorCwdError
 			if errors.As(recoverErr, &missing) {
@@ -954,13 +958,16 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			res.Detail = recoverErr.Error()
 			return res
 		}
-		sessions = []*db.SessionRow{recovered}
+		conversationProfile = recovered
 	}
-	sourceSession := sessions[0]
-	effort, model := inheritedLaunchFlags(sourceSession.ID)
-	harnessName := sourceSession.Harness
-	expected, provenanceErr := resumeprovenance.Decode(sourceSession.ResumeProvenance)
-	cwd := strings.TrimSpace(sourceSession.Cwd)
+	launchConfig, configErr := durableRelaunchConfigForConv(convID)
+	if configErr != nil {
+		res.Action = "error:resume_profile"
+		res.Detail = configErr.Error()
+		return res
+	}
+	expected, provenanceErr := resumeprovenance.Decode(launchConfig.ResumeProvenance)
+	cwd := launchConfig.Cwd
 	if provenanceErr == nil {
 		// Never follow the old launch spelling again. It may contain a symlink
 		// that now targets a different directory; the durable physical path is
@@ -1026,21 +1033,21 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			res.Detail = "human recovery could not encode current resume provenance: " + err.Error()
 			return res
 		}
-		if err := db.SetSessionResumeProvenance(sourceSession.ID, encoded); err != nil {
+		if err := db.SetConversationResumeProvenance(convID, encoded); err != nil {
 			res.Action = "error"
 			res.Detail = "human recovery could not persist current resume provenance: " + err.Error()
 			return res
 		}
 		expected = observed
 		slog.Info("resume: human trust root recovered target provenance",
-			"conv", short8(convID), "session", sourceSession.ID, "cwd", expected.Cwd.Path)
+			"conv", short8(convID), "cwd", expected.Cwd.Path)
 	}
 	// Re-arm Remote Access if the conv's own persisted best-known state was on
 	// (JOH-261). Read BEFORE relaunch: resume keeps the conv-id but mints a NEW
 	// session row defaulting remote_control=0, so the freshest row reads OFF the
 	// moment the new pane reports in — the armed flag lives on the old/dead row,
 	// which is still the most-recent until then.
-	remoteControl := remoteControlForRelaunch(convID, harnessName)
+	remoteControl := launchConfig.RemoteControl
 	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(convID)
 	if snapshotErr != nil {
 		res.Action = "error"
@@ -1064,12 +1071,8 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// explicit fresh-spawn opt-in, not persisted per-conv), so AutoReview stays false.
 	// Preserve the mode this conversation was launched under; the harness
 	// default would silently drop an enforced `sandbox on` posture on resume.
-	relaunchSandbox, sandboxErr := relaunchSandboxForSession(sourceSession)
-	if sandboxErr != nil {
-		res.Action = "error"
-		res.Detail = sandboxErr.Error()
-		return res
-	}
+	relaunchSandbox := launchConfig.Sandbox
+	harnessName := launchConfig.Harness
 	if fail := sandboxProfileCapabilityFailure(harnessName, relaunchSandbox, effectiveSandbox); fail != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + fail.Msg
@@ -1182,7 +1185,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			persistedAgentID = agentID
 		}
 	}
-	approval, autoReview := approvalForRelaunch(convID, harnessName)
+	approval, autoReview := launchConfig.Approval, launchConfig.AutoReview
 	if recoveryClaim != nil {
 		commitLock := recoveryLaunchCommitLock(convID)
 		commitLock.Lock()
@@ -1207,15 +1210,15 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
 		GitWorktreeWriteDirs:       gitWriteDirs,
 		GitWorktreeWriteDirsPinned: true,
-		Effort:                     effort,
-		Model:                      model,
+		Effort:                     launchConfig.Effort,
+		Model:                      launchConfig.Model,
 		Harness:                    harnessName,
 		Sandbox:                    relaunchSandbox,
 		Approval:                   approval,
 		AutoReview:                 autoReview,
-		AskUserQuestionTimeout:     askTimeoutForRelaunch(convID),
+		AskUserQuestionTimeout:     launchConfig.AskUserQuestionTimeout,
 		RemoteControl:              remoteControl,
-		AutoMemory:                 autoMemoryForRelaunch(convID, harnessName),
+		AutoMemory:                 launchConfig.AutoMemory,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1255,13 +1258,13 @@ type missingResumeAnchorCwdError struct{ path string }
 
 func (e *missingResumeAnchorCwdError) Error() string { return "missing launch directory: " + e.path }
 
-// recoverMissingSessionResumeAnchor is the compatibility bridge for managed
-// agents that outlived their prunable sessions rows. It is called only at a
+// recoverMissingConversationResumeProfile is the compatibility bridge for
+// managed agents that predate durable conversation profiles. It is called at a
 // real human trust boundary. The harness conversation must still exist; a
 // stale conv_index row alone is not enough. Once resolved, recovery captures
 // the same physical cwd/repository identity as an ordinary trusted launch and
-// persists it before returning to the normal provenance-checked resume path.
-func recoverMissingSessionResumeAnchor(convID string, recreateMissingDir bool) (*db.SessionRow, error) {
+// persists it on the conversation before returning to the normal path.
+func recoverMissingConversationResumeProfile(convID string, recreateMissingDir bool) (*db.ConversationResumeProfile, error) {
 	cwd, harnessName, err := resolveMissingSessionResumeTarget(convID)
 	if err != nil {
 		return nil, err
@@ -1290,22 +1293,49 @@ func recoverMissingSessionResumeAnchor(convID string, recreateMissingDir bool) (
 	if err != nil {
 		return nil, fmt.Errorf("human recovery could not encode current resume provenance: %w", err)
 	}
-	inserted, err := db.InsertSessionResumeAnchor(convID, observed.Cwd.Path, harnessName, encoded, time.Now())
-	if err != nil {
-		return nil, fmt.Errorf("human recovery could not persist a resume anchor: %w", err)
+	empty := ""
+	approval := ""
+	if harnessName == harness.CodexName {
+		// Match the pre-v145 missing-row compatibility rule: ambiguous legacy
+		// Codex authority resumes at its least automatic posture.
+		approval = harness.ApprovalUntrusted
 	}
-	rows, err := db.FindSessionsByConvID(convID)
-	if err != nil {
-		return nil, fmt.Errorf("reload recovered resume anchor: %w", err)
+	no := false
+	zero := int64(0)
+	legacy := db.AgentRelaunchProfile{
+		Version:     db.RelaunchProfileVersion,
+		SandboxMode: &empty, ApprovalPolicy: &approval,
+		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
+		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
+		RemoteControl: &no, AutoMemory: &no,
 	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("human recovery could not persist a resume anchor: the session id is already used by another conversation")
+	profile := db.ConversationResumeProfile{
+		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: observed.Cwd.Path, ResumeProvenance: encoded,
+		FallbackRelaunch: &legacy,
 	}
-	if inserted {
-		slog.Info("resume: human trust root recovered missing session anchor",
-			"conv", short8(convID), "session", rows[0].ID, "harness", harnessName, "cwd", observed.Cwd.Path)
+	if err := db.SetConversationResumeProfile(convID, profile); err != nil {
+		return nil, fmt.Errorf("human recovery could not persist a conversation resume profile: %w", err)
 	}
-	return rows[0], nil
+	// TCL-636's compatibility path historically materialized a blank legacy
+	// session anchor, whose launch readers reconstructed the same explicit
+	// baseline below. Persist that baseline on the stable agent now so the human
+	// recovery remains one-shot and later session pruning cannot erase it.
+	if agentProfile, err := db.AgentRelaunchProfileForConv(convID); err != nil {
+		return nil, fmt.Errorf("human recovery could not inspect agent relaunch profile: %w", err)
+	} else if agentProfile == nil {
+		agentID, err := db.AgentIDForConv(convID)
+		if err != nil {
+			return nil, fmt.Errorf("human recovery could not resolve stable agent: %w", err)
+		}
+		if agentID != "" {
+			if err := db.SetAgentRelaunchProfile(agentID, legacy); err != nil {
+				return nil, fmt.Errorf("human recovery could not persist agent relaunch profile: %w", err)
+			}
+		}
+	}
+	slog.Info("resume: human trust root recovered missing conversation profile",
+		"conv", short8(convID), "harness", harnessName, "cwd", observed.Cwd.Path)
+	return &profile, nil
 }
 
 // resolveMissingSessionResumeTarget first honors the harness tag and cwd cached
@@ -4536,6 +4566,48 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 		slog.Warn("spawn: failed to ensure agent identity", "conv", convID, "error", err)
 	}
 
+	// Persist resolved relaunch intent as soon as the stable actor exists. On
+	// the launch-enrollment path this runs before the fork, so the process can
+	// never become authoritative before its durable agent-level settings exist.
+	// The post-connect/pending path may arrive after a session writer already
+	// projected the same data; preserve any existing profile so an idempotent
+	// enrollment retry cannot roll back a setting changed in the meantime.
+	relaunchProfileBound := false
+	bindRelaunchProfile := func() error {
+		if agentID == "" {
+			return nil
+		}
+		existing, err := db.AgentRelaunchProfileForConv(convID)
+		if err != nil {
+			return err
+		}
+		if existing == nil {
+			profile := relaunchProfileForSpawn(p)
+			// A pending Codex spawn is enrolled after its session row has
+			// materialised. Its persisted pending-spawn intent predates some
+			// launch flags, while SaveSession has already recorded the exact
+			// posture as the unmanaged conversation fallback. Promote that
+			// snapshot when present; pre-fork Claude enrollment has no
+			// conversation profile yet and correctly uses resolved spawnParams.
+			conversation, err := db.ConversationResumeProfileForConv(convID)
+			if err != nil {
+				return err
+			}
+			if conversation != nil && conversation.FallbackRelaunch != nil {
+				profile = *conversation.FallbackRelaunch
+			}
+			if err := db.SetAgentRelaunchProfile(agentID, profile); err != nil {
+				return err
+			}
+		}
+		relaunchProfileBound = true
+		return nil
+	}
+	if err := bindRelaunchProfile(); err != nil {
+		return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
+			"failed to record durable relaunch profile: " + err.Error()}
+	}
+
 	// Record the per-agent task-reference link (dashboard Task column) when
 	// the spawn requested one. The URL was already scheme-validated at the
 	// spawn boundary, so this only ever stores a good value. Fatal, NOT
@@ -4578,6 +4650,12 @@ func enrollSpawnedConv(g *db.AgentGroup, p spawnParams, convID string, briefingI
 			slog.Warn("spawn: failed to re-resolve actor after group add", "conv", convID, "error", rErr)
 		} else {
 			agentID = id
+		}
+	}
+	if !relaunchProfileBound {
+		if err := bindRelaunchProfile(); err != nil {
+			return 0, actorCreated, &spawnFailure{http.StatusInternalServerError, "io",
+				"failed to record durable relaunch profile: " + err.Error()}
 		}
 	}
 

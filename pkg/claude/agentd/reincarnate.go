@@ -332,6 +332,11 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			"target conv "+short8(target)+" has no live tmux session; can't reincarnate without a cwd to spawn into (try `tclaude agent groups resume` first if it's offline)")
 		return
 	}
+	relaunch, relaunchErr := durableRelaunchConfigForConv(target)
+	if relaunchErr != nil {
+		writeError(w, http.StatusConflict, "relaunch_profile", relaunchErr.Error())
+		return
+	}
 	cwd, cwdErr := livePaneCwd(oldSess.TmuxSession)
 	if cwdErr != nil {
 		writeError(w, http.StatusInternalServerError, "io", cwdErr.Error())
@@ -347,34 +352,27 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		effectiveSandbox = relaunchPolicy.Snapshot
 	}
 
-	// 2. Spawn a fresh tclaude session in the same cwd, carrying the
-	// predecessor's live model + reasoning effort (the JOH-36 follow-up:
-	// the statusline hook persists model_id / effort_level on the
-	// session row, so the launch-time flags are now reconstructible).
-	// Fail-open: an agent whose statusbar never reported a model spawns
-	// with no --model, claude's own default — the historical behaviour.
-	effort, model := inheritedLaunchFlags(oldSess.ID)
+	// 2. Spawn a fresh tclaude session in the same cwd, carrying the stable
+	// agent's durable model + reasoning effort. An unknown or removed model is
+	// omitted so the harness can use its default, preserving historical
+	// fail-open behavior for non-authority model selection.
+	effort, model := relaunch.Effort, relaunch.Model
 	label := generateSpawnLabel()
 	// Carry the predecessor's armed Remote Access to the successor (JOH-261):
 	// a reincarnation is a directed handoff of the same identity, so an agent
 	// the operator armed for phone access stays phone-reachable across it.
 	// False (and so omitted) for an unarmed source or a Codex predecessor.
-	remoteControl := remoteControlForRelaunch(target, oldSess.Harness)
-	// Reincarnate under the same harness the predecessor ran on — a Codex
-	// agent must come back as Codex, not Claude Code. oldSess.Harness is ""
-	// for an untagged/claude row, which omits the flag (the default).
+	remoteControl := relaunch.RemoteControl
+	// Reincarnate under the conversation's durable harness — a Codex agent must
+	// come back as Codex, not Claude Code.
 	// Reincarnation is a relaunch, so the experimental auto-review guardian is
 	// never re-engaged (autoReview=false) — it is an explicit fresh-spawn opt-in.
 	// trustDir=false for the same reason: pre-trusting the cwd edits the user's
 	// ~/.codex/config.toml and is only ever an explicit fresh-spawn opt-in.
 	// A successor inherits the predecessor's recorded sandbox posture, not the
 	// harness default — reincarnation must not weaken the sandbox.
-	reincarnateSandbox, sandboxErr := relaunchSandboxForSession(oldSess)
-	if sandboxErr != nil {
-		writeError(w, http.StatusConflict, "sandbox_profile_changed", sandboxErr.Error())
-		return
-	}
-	if fail := sandboxProfileCapabilityFailure(oldSess.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
+	reincarnateSandbox := relaunch.Sandbox
+	if fail := sandboxProfileCapabilityFailure(relaunch.Harness, reincarnateSandbox, effectiveSandbox); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
@@ -414,20 +412,20 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 			}
 		}
 	}
-	approval, autoReview := approvalForRelaunch(target, oldSess.Harness)
+	approval, autoReview := relaunch.Approval, relaunch.AutoReview
 	if err := SpawnDetachedTclaudeNew(clcommon.SpawnArgs{
 		EffectiveSandbox:       effectiveSandbox,
 		Label:                  label,
 		Cwd:                    cwd,
 		Effort:                 effort,
 		Model:                  model,
-		Harness:                oldSess.Harness,
+		Harness:                relaunch.Harness,
 		Sandbox:                reincarnateSandbox,
 		Approval:               approval,
 		AutoReview:             autoReview,
-		AskUserQuestionTimeout: askTimeoutForRelaunch(target),
+		AskUserQuestionTimeout: relaunch.AskUserQuestionTimeout,
 		RemoteControl:          remoteControl,
-		AutoMemory:             autoMemoryForRelaunch(target, oldSess.Harness),
+		AutoMemory:             relaunch.AutoMemory,
 	}); err != nil {
 		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",

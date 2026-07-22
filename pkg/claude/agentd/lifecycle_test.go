@@ -81,6 +81,119 @@ func TestEnrollSpawnedConv_PointerBriefingBornUnread(t *testing.T) {
 	assert.Equal(t, msgID, queued[0].ID)
 }
 
+func TestEnrollSpawnedConv_PersistsResolvedRelaunchProfile(t *testing.T) {
+	setupTestDB(t)
+
+	_, actorCreated, fail := enrollSpawnedConv(nil, spawnParams{
+		Harness:                "claude",
+		SandboxMode:            "danger-full-access",
+		ApprovalPolicy:         "auto",
+		AutoReview:             true,
+		Model:                  "opus[1m]",
+		Effort:                 "high",
+		AskUserQuestionTimeout: "5m",
+		RemoteControl:          true,
+		AutoMemory:             true,
+	}, "durable-spawn-conv", false)
+	require.Nil(t, fail)
+	assert.True(t, actorCreated)
+
+	profile, err := db.AgentRelaunchProfileForConv("durable-spawn-conv")
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.SandboxMode)
+	assert.Equal(t, "danger-full-access", *profile.SandboxMode)
+	require.NotNil(t, profile.ApprovalPolicy)
+	assert.Equal(t, "auto", *profile.ApprovalPolicy)
+	require.NotNil(t, profile.ApprovalAutoReview)
+	assert.True(t, *profile.ApprovalAutoReview)
+	require.NotNil(t, profile.ModelID)
+	assert.Equal(t, "opus", *profile.ModelID)
+	require.NotNil(t, profile.ContextWindowSize)
+	assert.EqualValues(t, oneMillionContextWindow, *profile.ContextWindowSize)
+	require.NotNil(t, profile.Effort)
+	assert.Equal(t, "high", *profile.Effort)
+	require.NotNil(t, profile.AskUserQuestionTimeout)
+	assert.Equal(t, "5m", *profile.AskUserQuestionTimeout)
+	require.NotNil(t, profile.RemoteControl)
+	assert.True(t, *profile.RemoteControl)
+	require.NotNil(t, profile.AutoMemory)
+	assert.True(t, *profile.AutoMemory)
+}
+
+func TestEnrollSpawnedConv_PromotesConversationFallbackForPendingSpawn(t *testing.T) {
+	setupTestDB(t)
+
+	model := "gpt-5.4"
+	effort := "xhigh"
+	sandboxMode := "workspace-write"
+	approvalPolicy := "never"
+	autoReview := false
+	contextWindowSize := int64(200_000)
+	askTimeout := ""
+	remoteControl := false
+	autoMemory := false
+	fallback := db.AgentRelaunchProfile{
+		Version:                db.RelaunchProfileVersion,
+		SandboxMode:            &sandboxMode,
+		ApprovalPolicy:         &approvalPolicy,
+		ApprovalAutoReview:     &autoReview,
+		ModelID:                &model,
+		Effort:                 &effort,
+		ContextWindowSize:      &contextWindowSize,
+		AskUserQuestionTimeout: &askTimeout,
+		RemoteControl:          &remoteControl,
+		AutoMemory:             &autoMemory,
+	}
+	require.NoError(t, db.SetConversationResumeProfile("pending-spawn-conv", db.ConversationResumeProfile{
+		Version:          db.RelaunchProfileVersion,
+		Harness:          "codex",
+		Cwd:              t.TempDir(),
+		FallbackRelaunch: &fallback,
+	}))
+
+	_, _, fail := enrollSpawnedConv(nil, spawnParams{Harness: "codex"}, "pending-spawn-conv", false)
+	require.Nil(t, fail)
+	profile, err := db.AgentRelaunchProfileForConv("pending-spawn-conv")
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.NotNil(t, profile.ModelID)
+	assert.Equal(t, model, *profile.ModelID)
+	require.NotNil(t, profile.Effort)
+	assert.Equal(t, effort, *profile.Effort)
+	require.NotNil(t, profile.SandboxMode)
+	assert.Equal(t, sandboxMode, *profile.SandboxMode)
+	require.NotNil(t, profile.ApprovalPolicy)
+	assert.Equal(t, approvalPolicy, *profile.ApprovalPolicy)
+}
+
+func TestComposeAgentRelaunchProfile_AgentOverridesFallbackFieldByField(t *testing.T) {
+	fallbackSandbox := "on"
+	fallbackApproval := "auto"
+	fallbackModel := "sonnet"
+	agentModel := "opus"
+	agentEffort := "high"
+	fallback := &db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, SandboxMode: &fallbackSandbox,
+		ApprovalPolicy: &fallbackApproval, ModelID: &fallbackModel,
+	}
+	agent := &db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, ModelID: &agentModel, Effort: &agentEffort,
+	}
+
+	merged := composeAgentRelaunchProfile(fallback, agent)
+	require.NotNil(t, merged)
+	require.NotNil(t, merged.SandboxMode)
+	assert.Equal(t, fallbackSandbox, *merged.SandboxMode)
+	require.NotNil(t, merged.ApprovalPolicy)
+	assert.Equal(t, fallbackApproval, *merged.ApprovalPolicy)
+	require.NotNil(t, merged.ModelID)
+	assert.Equal(t, agentModel, *merged.ModelID)
+	require.NotNil(t, merged.Effort)
+	assert.Equal(t, agentEffort, *merged.Effort)
+	assert.Equal(t, fallbackModel, *fallback.ModelID, "composition must not mutate stored fallback")
+}
+
 // TestBuildSpawnWelcome_IncludesIdentityFields confirms the welcome
 // composition surfaces every identity field that's set, and skips
 // the ones that aren't, so the new agent gets a single-line summary

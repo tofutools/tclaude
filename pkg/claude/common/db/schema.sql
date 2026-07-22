@@ -526,7 +526,7 @@ CREATE TABLE agents (
 			retired_by      TEXT NOT NULL DEFAULT '',
 			retire_reason   TEXT NOT NULL DEFAULT '',
 			pending_name    TEXT NOT NULL DEFAULT ''
-		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '');
+		, retired_by_agent TEXT NOT NULL DEFAULT '', initial_spawn_config TEXT NOT NULL DEFAULT '', task_ref_url TEXT NOT NULL DEFAULT '', task_ref_label TEXT NOT NULL DEFAULT '', process_command_id TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', relaunch_profile TEXT NOT NULL DEFAULT '');
 
 CREATE UNIQUE INDEX idx_agents_process_command ON agents(process_command_id) WHERE process_command_id <> '';
 
@@ -897,4 +897,10 @@ CREATE TABLE agent_recovery (
 
 CREATE INDEX idx_agent_recovery_due
 			ON agent_recovery(status, next_attempt_at);
+
+CREATE TABLE conversation_resume_profiles (
+		conv_id      TEXT PRIMARY KEY,
+		profile_json TEXT NOT NULL,
+		updated_at   TEXT NOT NULL
+	);
 

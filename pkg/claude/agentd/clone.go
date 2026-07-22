@@ -53,9 +53,9 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // response `warning` field so the dashboard can show "started but not
 // online yet" instead of a generic success toast.
 //
-// effort and model are the launch flags for the clone's CC instance —
-// callers pass the source's inherited flags (inheritedLaunchFlags) so
-// the clone runs the same model as the original; "" omits the flag.
+// effort and model are retained as conservative standalone-conversation
+// fallbacks. Managed clones resolve their launch flags from durable agent
+// intent inside this function; "" omits the flag.
 //
 // Extracted from runCloneOrchestration so groups-clone can reuse the
 // same race handling without duplicating it.
@@ -63,6 +63,24 @@ func (e *cloneSpawnError) write(w http.ResponseWriter) {
 // roots. cloneSpawnOnce re-asserts they are still canonical immediately before
 // each fork, closing the verify→launch window the same way executeSpawn does.
 func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proofToken string, proofCwd bool, proofDirs []string, codexGitCommonDir string, gitWriteDirs []string) (newConv, newTmux, label, warn string, spawnErr *cloneSpawnError) {
+	relaunch, err := durableRelaunchConfigForConv(sourceConv)
+	if err != nil {
+		state, stateErr := db.AgentState(sourceConv)
+		if stateErr != nil || state != db.AgentStateNone {
+			return "", "", "", "", &cloneSpawnError{Status: http.StatusConflict, Code: "relaunch_profile", Msg: err.Error()}
+		}
+		// Standalone export/conv cloning predates agent enrollment and may have
+		// only a harness-native conversation. Preserve that plain CLI surface
+		// with conservative defaults; managed agents never take this branch.
+		h := harnessForConv(sourceConv).Name
+		approval, autoReview := approvalForRelaunch(sourceConv, h)
+		relaunch = &durableRelaunchConfig{
+			Harness: h, Cwd: cwd, Sandbox: sandboxForHarness(h),
+			Approval: approval, AutoReview: autoReview,
+			Effort: effort, Model: model,
+		}
+	}
+	effort, model = relaunch.Effort, relaunch.Model
 	effectiveSandbox, err := db.AgentEffectiveSandboxConfigForConv(sourceConv)
 	if err != nil {
 		return "", "", "", "", &cloneSpawnError{Status: http.StatusInternalServerError, Code: "io", Msg: "load source sandbox snapshot: " + err.Error()}
@@ -86,14 +104,14 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// Clone under the same harness the source ran on — a Codex agent's
 	// clone must relaunch as Codex. "" for an untagged/claude source omits
 	// the flag (the default).
-	srcHarness := harnessForConv(sourceConv).Name
+	srcHarness := relaunch.Harness
 	// Carry the source's armed Remote Access to the sibling (JOH-261). A clone
 	// becoming a SECOND phone-reachable session alongside the still-running
 	// original is the operator-decided semantics — drive either from the phone.
 	// False (and so omitted) for an unarmed source or a Codex source.
-	remoteControl := remoteControlForRelaunch(sourceConv, srcHarness)
-	autoMemory := autoMemoryForRelaunch(sourceConv, srcHarness)
-	cloneSandbox := sandboxForHarness(srcHarness)
+	remoteControl := relaunch.RemoteControl
+	autoMemory := relaunch.AutoMemory
+	cloneSandbox := relaunch.Sandbox
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -114,8 +132,8 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// Preserve the source's per-agent AskUserQuestion timeout onto the sibling
 	// (schema v97). "" for a source
 	// that recorded none (a non-Claude or pre-column source).
-	askTimeout := askTimeoutForRelaunch(sourceConv)
-	approval, autoReview := approvalForRelaunch(sourceConv, srcHarness)
+	askTimeout := relaunch.AskUserQuestionTimeout
+	approval, autoReview := relaunch.Approval, relaunch.AutoReview
 	if noCopyConv {
 		label = generateSpawnLabel()
 		agentDirectoryCleanup := func() {}
@@ -553,6 +571,11 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"target conv "+short8(target)+" has no live tmux session; can't clone without a cwd to spawn the sibling into")
 		return
 	}
+	relaunch, relaunchErr := durableRelaunchConfigForConv(target)
+	if relaunchErr != nil {
+		writeError(w, http.StatusConflict, "relaunch_profile", relaunchErr.Error())
+		return
+	}
 	cwd := oldSess.Cwd
 	if cwdOverride == "" {
 		var cwdErr error
@@ -564,8 +587,8 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	}
 	var proofDirs []string
 	var proofToken string
-	srcHarness := harnessForConv(target).Name
-	cloneSandbox := sandboxForHarness(srcHarness)
+	srcHarness := relaunch.Harness
+	cloneSandbox := relaunch.Sandbox
 	if cwdOverride != "" {
 		resolved, err := resolveSpawnCwd(cwdOverride)
 		if err != nil {
@@ -720,10 +743,9 @@ func runCloneOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	// 2. Mint the clone's conv-id (and optionally its jsonl). The
 	// branching logic + race-handling lives in cloneSpawnOnce so the
 	// groups-clone orchestration can reuse the same code path without
-	// duplicating it. The clone is launched with the source's live
-	// model + effort (inheritedLaunchFlags; "" falls back to claude's
-	// default) — a fork should run what the original runs.
-	effort, model := inheritedLaunchFlags(oldSess.ID)
+	// duplicating it. The clone is launched with the source agent's durable
+	// model + effort; "" falls back to the harness default.
+	effort, model := relaunch.Effort, relaunch.Model
 	newConv, newTmux, label, warn, spawnErr := cloneSpawnOnce(target, cwd, noCopyConv, effort, model, proofToken, proofToken != "", proofDirs, codexGitCommonDir, gitWriteDirs)
 	if spawnErr != nil {
 		spawnErr.write(w)

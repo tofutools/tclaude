@@ -297,7 +297,7 @@ func TestResumeOneConv_ConvIndexWithoutProvenanceFailsClosed(t *testing.T) {
 
 	res := resumeOneConv(convID)
 	require.Equal(t, "error:resume_provenance", res.Action, "detail=%s", res.Detail)
-	assert.Contains(t, res.Detail, "no resumable session row")
+	assert.Contains(t, res.Detail, "no durable conversation resume profile")
 	assert.Empty(t, rec.convID)
 
 	res = resumeOneConvWithTrustRoot(convID, false)
@@ -326,7 +326,7 @@ func TestResumeOneConv_CodexNativeStoreWithoutProvenanceFailsClosed(t *testing.T
 
 	res := resumeOneConv(convID)
 	require.Equal(t, "error:resume_provenance", res.Action, "detail=%s", res.Detail)
-	assert.Contains(t, res.Detail, "no resumable session row")
+	assert.Contains(t, res.Detail, "no durable conversation resume profile")
 	assert.Empty(t, rec.convID)
 	rows, err := db.FindSessionsByConvID(convID)
 	require.NoError(t, err)
@@ -345,8 +345,11 @@ func TestResumeOneConv_CodexNativeStoreWithoutProvenanceFailsClosed(t *testing.T
 	assert.Equal(t, harness.CodexName, rec.harness)
 	rows, err = db.FindSessionsByConvID(convID)
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	assert.NotEmpty(t, rows[0].ResumeProvenance,
+	assert.Empty(t, rows, "human recovery must not recreate process history")
+	profile, err := db.ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	assert.NotEmpty(t, profile.ResumeProvenance,
 		"human recovery must persist physical provenance before launch")
 }
 
@@ -464,11 +467,11 @@ func TestHandleAgentResume_AgentCannotRecreateMissingDir(t *testing.T) {
 }
 
 type recordingResumeSpawner struct {
-	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, approval, codexGitCommonDir string
-	autoReview, codexGitCommonDirPinned                                                      bool
-	effectiveSandbox                                                                         *sandboxpolicy.Snapshot
-	spawnErr                                                                                 error
-	resumeCalls                                                                              int
+	convID, cwd, cwdWriteProof, effort, model, harness, sandbox, approval, askUserQuestionTimeout, codexGitCommonDir string
+	autoReview, remoteControl, autoMemory, codexGitCommonDirPinned                                                   bool
+	effectiveSandbox                                                                                                 *sandboxpolicy.Snapshot
+	spawnErr                                                                                                         error
+	resumeCalls                                                                                                      int
 }
 
 func installRecordingResumeSpawner(t *testing.T) *recordingResumeSpawner {
@@ -495,6 +498,9 @@ func (s *recordingResumeSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.sandbox = args.Sandbox
 	s.approval = args.Approval
 	s.autoReview = args.AutoReview
+	s.askUserQuestionTimeout = args.AskUserQuestionTimeout
+	s.remoteControl = args.RemoteControl
+	s.autoMemory = args.AutoMemory
 	s.codexGitCommonDir = args.CodexGitCommonDir
 	s.codexGitCommonDirPinned = args.CodexGitCommonDirPinned
 	s.effectiveSandbox = args.EffectiveSandbox
@@ -526,6 +532,66 @@ func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.NotEmpty(t, rec.cwdWriteProof,
 		"daemon must bind the verified target cwd through the child launch")
+}
+
+func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T) {
+	t.Cleanup(SetWaitTimingsForTest(100*time.Millisecond, time.Millisecond))
+	t.Cleanup(WaitForBackgroundForTest)
+	for _, tc := range []struct {
+		name, harnessName, sandbox, approval, model, effort, askTimeout string
+		remoteControl, autoMemory                                       bool
+	}{
+		{
+			name: "claude", harnessName: harness.DefaultName,
+			sandbox: harness.ClaudeSandboxOn, approval: "auto",
+			model: "claude-sonnet-4-6", effort: "high", askTimeout: "5m",
+			remoteControl: true, autoMemory: true,
+		},
+		{
+			name: "codex", harnessName: harness.CodexName,
+			sandbox: harness.SandboxWorkspaceWrite, approval: harness.ApprovalUntrusted,
+			model: "gpt-5-codex", effort: "high",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			rec := installRecordingResumeSpawner(t)
+			convID := "pruned-profile-" + tc.name + "-12345678"
+			sessionID := "pruned-profile-session-" + tc.name
+			cwd := t.TempDir()
+			physicalCwd := physicalTestPath(t, cwd)
+			_, _, err := db.EnsureAgentForConv(convID, "test")
+			require.NoError(t, err)
+			row := saveResumeSession(t, convID, cwd, tc.harnessName)
+			originalSessionID := row.ID
+			row.ID = sessionID
+			row.SandboxMode = tc.sandbox
+			row.ApprovalPolicy = tc.approval
+			row.AskUserQuestionTimeout = tc.askTimeout
+			require.NoError(t, db.SaveSession(row))
+			require.NoError(t, db.UpdateSessionModelID(sessionID, tc.model))
+			require.NoError(t, db.UpdateSessionEffort(sessionID, tc.effort))
+			require.NoError(t, db.SetSessionRemoteControl(sessionID, tc.remoteControl))
+			require.NoError(t, db.SetSessionAutoMemory(sessionID, tc.autoMemory))
+			require.NoError(t, db.DeleteSession(originalSessionID))
+			require.NoError(t, db.DeleteSession(sessionID))
+			rows, err := db.FindSessionsByConvID(convID)
+			require.NoError(t, err)
+			require.Empty(t, rows, "test setup must prune every process-history row")
+
+			res := resumeOneConv(convID)
+			require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
+			assert.Equal(t, physicalCwd, rec.cwd)
+			assert.Equal(t, tc.harnessName, rec.harness)
+			assert.Equal(t, tc.sandbox, rec.sandbox)
+			assert.Equal(t, tc.approval, rec.approval)
+			assert.Equal(t, tc.model, rec.model)
+			assert.Equal(t, tc.effort, rec.effort)
+			assert.Equal(t, tc.askTimeout, rec.askUserQuestionTimeout)
+			assert.Equal(t, tc.remoteControl, rec.remoteControl)
+			assert.Equal(t, tc.autoMemory, rec.autoMemory)
+		})
+	}
 }
 
 func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing.T) {
