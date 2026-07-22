@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -51,6 +52,17 @@ func TestMigrateV146RunAndEventConstraints(t *testing.T) {
 	mustExec(t, d, insertRun)
 	_, err = d.Exec(insertRun)
 	assert.Error(t, err, "run ids are unique")
+	_, err = d.Exec(`INSERT INTO process_runs
+		(id, template_ref, template_snapshot_json, params_json, status, state_version,
+		 checkpoint_json, created_at, updated_at)
+		VALUES (NULL, 't@sha256:x', '{}', '{}', 'running', 1, '{}', 'now', 'now')`)
+	assert.Error(t, err, "the textual primary key must reject NULL")
+	_, err = d.Exec(`INSERT INTO process_runs
+		(id, template_ref, template_snapshot_json, params_json, status, state_version,
+		 checkpoint_json, created_at, updated_at)
+		VALUES ('run_oversized', 't@sha256:x', '{}', '{}', 'running', 1, ?, 'now', 'now')`,
+		strings.Repeat("é", MaxProcessRunCheckpointBytes/2+1))
+	assert.Error(t, err, "checkpoint constraints count bytes and reject oversized values")
 
 	mustExec(t, d, `INSERT INTO process_run_events
 		(run_id, sequence, occurred_at, kind, payload_json) VALUES ('run_one', 1, 'now', 'created', '{}')`)

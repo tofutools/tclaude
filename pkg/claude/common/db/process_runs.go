@@ -163,6 +163,12 @@ func decodeBoundedProcessJSON(name string, data []byte, maximum int, dst any) er
 	if len(data) == 0 || len(data) > maximum {
 		return fmt.Errorf("%w: %s must contain 1..%d bytes", ErrProcessRunInvalid, name, maximum)
 	}
+	if !utf8.Valid(data) {
+		return fmt.Errorf("%w: %s contains invalid UTF-8", ErrProcessRunInvalid, name)
+	}
+	if err := validateProcessJSONValueNames(data); err != nil {
+		return fmt.Errorf("%w: decode %s: %v", ErrProcessRunInvalid, name, err)
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {
@@ -174,6 +180,81 @@ func decodeBoundedProcessJSON(name string, data []byte, maximum int, dst any) er
 			err = errors.New("multiple JSON values")
 		}
 		return fmt.Errorf("%w: decode %s: trailing data: %v", ErrProcessRunInvalid, name, err)
+	}
+	return nil
+}
+
+// validateProcessJSONValueNames rejects duplicate member names recursively.
+// encoding/json otherwise accepts duplicates (later values replace or merge
+// earlier ones), which would make a persisted checkpoint ambiguous. It runs on
+// raw UTF-8 before typed decoding, so escaped-equivalent names also collide.
+func validateProcessJSONValueNames(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := walkProcessJSONValue(decoder); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return fmt.Errorf("trailing data: %w", err)
+	}
+	return nil
+}
+
+func walkProcessJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, composite := token.(json.Delim)
+	if !composite {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("object member name is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate object member %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := walkProcessJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim('}') {
+			return errors.New("object has invalid closing delimiter")
+		}
+	case '[':
+		for decoder.More() {
+			if err := walkProcessJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim(']') {
+			return errors.New("array has invalid closing delimiter")
+		}
+	default:
+		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
 	}
 	return nil
 }
@@ -236,6 +317,15 @@ func validProcessRuntimeText(value string, maximum int, allowEmpty bool) bool {
 	return true
 }
 
+func validProcessRunEventTime(value time.Time) bool {
+	if value.IsZero() {
+		return false
+	}
+	formatted := value.UTC().Format(time.RFC3339Nano)
+	parsed, err := time.Parse(time.RFC3339Nano, formatted)
+	return err == nil && parsed.Equal(value.UTC())
+}
+
 func validateProcessRunCreate(input ProcessRunCreate) error {
 	if !validProcessRuntimeIdentifier(input.ID, MaxProcessRunIDBytes, false) {
 		return fmt.Errorf("%w: invalid run id", ErrProcessRunInvalid)
@@ -267,8 +357,8 @@ func validateProcessRunEvents(events []ProcessRunEvent) error {
 		if event.Sequence <= 0 || (index > 0 && event.Sequence <= prior) {
 			return fmt.Errorf("%w: evidence sequences must be positive and strictly increasing", ErrProcessRunEventSequence)
 		}
-		if event.OccurredAt.IsZero() {
-			return fmt.Errorf("%w: event %d occurrence time is required", ErrProcessRunInvalid, index)
+		if !validProcessRunEventTime(event.OccurredAt) {
+			return fmt.Errorf("%w: event %d occurrence time must be representable as RFC3339", ErrProcessRunInvalid, index)
 		}
 		if !validProcessRuntimeIdentifier(event.NodeID, MaxProcessRunNodeIDBytes, true) {
 			return fmt.Errorf("%w: invalid event node id", ErrProcessRunInvalid)
@@ -426,41 +516,68 @@ type processRunScanner interface{ Scan(...any) error }
 
 func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	var run ProcessRun
-	var snapshot, params, checkpoint, created, updated string
-	if err := scanner.Scan(&run.ID, &run.TemplateRef, &snapshot, &params, &run.Status,
-		&run.StateVersion, &checkpoint, &created, &updated); err != nil {
+	var id, templateRef, snapshot, params, status, checkpoint, created, updated sql.NullString
+	var stateVersion sql.NullInt64
+	if err := scanner.Scan(&id, &templateRef, &snapshot, &params, &status,
+		&stateVersion, &checkpoint, &created, &updated); err != nil {
 		return nil, err
 	}
-	if !validProcessRuntimeIdentifier(run.ID, MaxProcessRunIDBytes, false) ||
-		!validProcessRuntimeIdentifier(run.Status, MaxProcessRunStatusBytes, false) ||
-		len(created) == 0 || len(created) > maxProcessRunTimestampSize ||
-		len(updated) == 0 || len(updated) > maxProcessRunTimestampSize || run.StateVersion <= 0 {
+	if !id.Valid || !templateRef.Valid || !snapshot.Valid || !params.Valid || !status.Valid ||
+		!stateVersion.Valid || !checkpoint.Valid || !created.Valid || !updated.Valid {
 		return nil, ErrProcessRunCorrupt
 	}
-	if err := validateProcessTemplateSnapshot(run.TemplateRef, []byte(snapshot)); err != nil {
+	run.ID, run.TemplateRef, run.Status = id.String, templateRef.String, status.String
+	run.StateVersion = stateVersion.Int64
+	if !validProcessRuntimeIdentifier(run.ID, MaxProcessRunIDBytes, false) ||
+		!validProcessRuntimeIdentifier(run.Status, MaxProcessRunStatusBytes, false) ||
+		run.StateVersion <= 0 {
+		return nil, ErrProcessRunCorrupt
+	}
+	if err := validateProcessTemplateSnapshot(run.TemplateRef, []byte(snapshot.String)); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
-	if err := validateProcessJSONObject("params", []byte(params), MaxProcessRunParamsBytes); err != nil {
+	if err := validateProcessJSONObject("params", []byte(params.String), MaxProcessRunParamsBytes); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
-	if err := validateProcessJSONObject("checkpoint", []byte(checkpoint), MaxProcessRunCheckpointBytes); err != nil {
+	if err := validateProcessJSONObject("checkpoint", []byte(checkpoint.String), MaxProcessRunCheckpointBytes); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
 	var err error
-	if run.CreatedAt, err = time.Parse(time.RFC3339Nano, created); err != nil {
+	if run.CreatedAt, err = time.Parse(time.RFC3339Nano, created.String); err != nil {
 		return nil, fmt.Errorf("%w: invalid created timestamp", ErrProcessRunCorrupt)
 	}
-	if run.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated); err != nil {
+	if run.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated.String); err != nil {
 		return nil, fmt.Errorf("%w: invalid updated timestamp", ErrProcessRunCorrupt)
 	}
-	run.TemplateSnapshotJSON = json.RawMessage(strings.Clone(snapshot))
-	run.ParamsJSON = json.RawMessage(strings.Clone(params))
-	run.CheckpointJSON = json.RawMessage(strings.Clone(checkpoint))
+	run.TemplateSnapshotJSON = json.RawMessage(strings.Clone(snapshot.String))
+	run.ParamsJSON = json.RawMessage(strings.Clone(params.String))
+	run.CheckpointJSON = json.RawMessage(strings.Clone(checkpoint.String))
 	return &run, nil
 }
 
-const processRunSelect = `SELECT id, template_ref, template_snapshot_json, params_json,
-	status, state_version, checkpoint_json, created_at, updated_at FROM process_runs`
+// Every variable-sized column is length-gated inside SQLite before the driver
+// receives it. CAST(... AS BLOB) makes length count bytes, not Unicode code
+// points. A corrupt oversized value becomes NULL and scanProcessRun fails
+// closed without materializing it in Go.
+const processRunSelect = `SELECT
+	CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
+	CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
+	CASE WHEN typeof(template_snapshot_json) = 'text' AND length(CAST(template_snapshot_json AS BLOB)) BETWEEN 1 AND ? THEN template_snapshot_json END,
+	CASE WHEN typeof(params_json) = 'text' AND length(CAST(params_json AS BLOB)) BETWEEN 1 AND ? THEN params_json END,
+	CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
+	CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
+	CASE WHEN typeof(checkpoint_json) = 'text' AND length(CAST(checkpoint_json AS BLOB)) BETWEEN 1 AND ? THEN checkpoint_json END,
+	CASE WHEN typeof(created_at) = 'text' AND length(CAST(created_at AS BLOB)) BETWEEN 1 AND ? THEN created_at END,
+	CASE WHEN typeof(updated_at) = 'text' AND length(CAST(updated_at AS BLOB)) BETWEEN 1 AND ? THEN updated_at END
+	FROM process_runs`
+
+func processRunSelectArgs() []any {
+	return []any{
+		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunTemplateSnapshotBytes,
+		MaxProcessRunParamsBytes, MaxProcessRunStatusBytes, MaxProcessRunCheckpointBytes,
+		maxProcessRunTimestampSize, maxProcessRunTimestampSize,
+	}
+}
 
 // GetProcessRun reads the one canonical checkpoint row. It never consults the
 // evidence table. A missing run returns ErrProcessRunNotFound.
@@ -472,7 +589,8 @@ func GetProcessRun(runID string) (*ProcessRun, error) {
 	if err != nil {
 		return nil, err
 	}
-	run, err := scanProcessRun(d.QueryRow(processRunSelect+` WHERE id = ?`, runID))
+	args := append(processRunSelectArgs(), runID)
+	run, err := scanProcessRun(d.QueryRow(processRunSelect+` WHERE id = ?`, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProcessRunNotFound
 	}
@@ -492,9 +610,10 @@ func ListActiveProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
 	if err != nil {
 		return nil, err
 	}
+	args := append(processRunSelectArgs(), afterID, limit)
 	rows, err := d.Query(processRunSelect+`
 		WHERE id > ? AND status NOT IN ('completed', 'failed', 'canceled')
-		ORDER BY id LIMIT ?`, afterID, limit)
+		ORDER BY id LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -512,27 +631,50 @@ func ListActiveProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
 
 func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {
 	var event ProcessRunEvent
-	var occurred, payload string
-	if err := scanner.Scan(&event.RunID, &event.Sequence, &occurred, &event.NodeID,
-		&event.Kind, &payload, &event.Actor); err != nil {
+	var runID, occurred, nodeID, kind, payload, actor sql.NullString
+	var sequence sql.NullInt64
+	if err := scanner.Scan(&runID, &sequence, &occurred, &nodeID,
+		&kind, &payload, &actor); err != nil {
 		return ProcessRunEvent{}, err
 	}
+	if !runID.Valid || !sequence.Valid || !occurred.Valid || !nodeID.Valid ||
+		!kind.Valid || !payload.Valid || !actor.Valid {
+		return ProcessRunEvent{}, ErrProcessRunCorrupt
+	}
+	event.RunID, event.Sequence, event.NodeID = runID.String, sequence.Int64, nodeID.String
+	event.Kind, event.Actor = kind.String, actor.String
 	if !validProcessRuntimeIdentifier(event.RunID, MaxProcessRunIDBytes, false) || event.Sequence <= 0 ||
 		!validProcessRuntimeIdentifier(event.NodeID, MaxProcessRunNodeIDBytes, true) ||
 		!validProcessRuntimeIdentifier(event.Kind, MaxProcessRunEventKind, false) ||
-		!validProcessRuntimeText(event.Actor, MaxProcessRunEventActor, true) ||
-		len(occurred) == 0 || len(occurred) > maxProcessRunTimestampSize {
+		!validProcessRuntimeText(event.Actor, MaxProcessRunEventActor, true) {
 		return ProcessRunEvent{}, ErrProcessRunCorrupt
 	}
-	if err := validateProcessJSONObject("event payload", []byte(payload), MaxProcessRunEventPayloadBytes); err != nil {
+	if err := validateProcessJSONObject("event payload", []byte(payload.String), MaxProcessRunEventPayloadBytes); err != nil {
 		return ProcessRunEvent{}, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
 	var err error
-	if event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurred); err != nil {
+	if event.OccurredAt, err = time.Parse(time.RFC3339Nano, occurred.String); err != nil {
 		return ProcessRunEvent{}, fmt.Errorf("%w: invalid event timestamp", ErrProcessRunCorrupt)
 	}
-	event.PayloadJSON = json.RawMessage(strings.Clone(payload))
+	event.PayloadJSON = json.RawMessage(strings.Clone(payload.String))
 	return event, nil
+}
+
+const processRunEventSelect = `SELECT
+	CASE WHEN typeof(run_id) = 'text' AND length(CAST(run_id AS BLOB)) BETWEEN 1 AND ? THEN run_id END,
+	CASE WHEN typeof(sequence) = 'integer' AND sequence > 0 THEN sequence END,
+	CASE WHEN typeof(occurred_at) = 'text' AND length(CAST(occurred_at AS BLOB)) BETWEEN 1 AND ? THEN occurred_at END,
+	CASE WHEN typeof(node_id) = 'text' AND length(CAST(node_id AS BLOB)) <= ? THEN node_id END,
+	CASE WHEN typeof(kind) = 'text' AND length(CAST(kind AS BLOB)) BETWEEN 1 AND ? THEN kind END,
+	CASE WHEN typeof(payload_json) = 'text' AND length(CAST(payload_json AS BLOB)) BETWEEN 1 AND ? THEN payload_json END,
+	CASE WHEN typeof(actor) = 'text' AND length(CAST(actor AS BLOB)) <= ? THEN actor END
+	FROM process_run_events`
+
+func processRunEventSelectArgs() []any {
+	return []any{
+		MaxProcessRunIDBytes, maxProcessRunTimestampSize, MaxProcessRunNodeIDBytes,
+		MaxProcessRunEventKind, MaxProcessRunEventPayloadBytes, MaxProcessRunEventActor,
+	}
 }
 
 // ListProcessRunEvents returns evidence after afterSequence, oldest first. It
@@ -548,9 +690,9 @@ func ListProcessRunEvents(runID string, afterSequence int64, limit int) ([]Proce
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT run_id, sequence, occurred_at, node_id, kind, payload_json, actor
-		FROM process_run_events WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`,
-		runID, afterSequence, limit)
+	args := append(processRunEventSelectArgs(), runID, afterSequence, limit)
+	rows, err := d.Query(processRunEventSelect+`
+		WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

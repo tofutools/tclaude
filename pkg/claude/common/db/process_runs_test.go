@@ -262,6 +262,121 @@ func TestProcessRunJSONIsStrict(t *testing.T) {
 	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
 }
 
+func TestProcessRunJSONRejectsDuplicatesAndInvalidUTF8AcrossSurfaces(t *testing.T) {
+	invalidUTF8 := json.RawMessage{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'}
+	cases := map[string]json.RawMessage{
+		"nested duplicate":    json.RawMessage(`{"outer":{"x":1,"x":2}}`),
+		"duplicate known key": json.RawMessage(`{"known":1,"known":2}`),
+		"invalid UTF-8":       invalidUTF8,
+	}
+	decoders := map[string]func(json.RawMessage) error{
+		"checkpoint": func(data json.RawMessage) error {
+			run := ProcessRun{CheckpointJSON: data}
+			var dst struct {
+				Known int            `json:"known"`
+				Outer map[string]int `json:"outer"`
+				X     string         `json:"x"`
+			}
+			return run.DecodeCheckpoint(&dst)
+		},
+		"params": func(data json.RawMessage) error {
+			run := ProcessRun{ParamsJSON: data}
+			var dst map[string]any
+			return run.DecodeParams(&dst)
+		},
+		"evidence payload": func(data json.RawMessage) error {
+			event := ProcessRunEvent{PayloadJSON: data}
+			var dst map[string]any
+			return event.DecodePayload(&dst)
+		},
+	}
+	for surface, decode := range decoders {
+		for name, data := range cases {
+			t.Run(surface+"/"+name, func(t *testing.T) {
+				assert.ErrorIs(t, decode(data), ErrProcessRunInvalid)
+			})
+		}
+	}
+
+	setupTestDB(t)
+	for name, mutate := range map[string]func(*ProcessRunCreate){
+		"checkpoint": func(input *ProcessRunCreate) {
+			input.CheckpointJSON = json.RawMessage(`{"known":1,"known":2}`)
+		},
+		"params": func(input *ProcessRunCreate) {
+			input.ParamsJSON = json.RawMessage(`{"outer":{"x":1,"x":2}}`)
+		},
+		"evidence payload": func(input *ProcessRunCreate) {
+			event := processRunEvent(1, "created")
+			event.PayloadJSON = invalidUTF8
+			input.InitialEvents = []ProcessRunEvent{event}
+		},
+	} {
+		t.Run("create/"+name, func(t *testing.T) {
+			input := processRunFixture(t, "run_strict_"+strings.ReplaceAll(name, " ", "_"), "running", json.RawMessage(`{}`))
+			mutate(&input)
+			assert.ErrorIs(t, CreateProcessRun(input), ErrProcessRunInvalid)
+		})
+	}
+}
+
+func TestProcessRunEventTimestampRFC3339YearBoundaries(t *testing.T) {
+	setupTestDB(t)
+	for _, year := range []int{0, 9999} {
+		t.Run(fmt.Sprintf("accept_%d", year), func(t *testing.T) {
+			input := processRunFixture(t, fmt.Sprintf("run_time_%d", year), "running", json.RawMessage(`{}`))
+			event := processRunEvent(1, "created")
+			event.OccurredAt = time.Date(year, 1, 2, 3, 4, 5, 6, time.UTC)
+			input.InitialEvents = []ProcessRunEvent{event}
+			require.NoError(t, CreateProcessRun(input))
+			stored, err := ListProcessRunEvents(input.ID, 0, 1)
+			require.NoError(t, err)
+			require.Len(t, stored, 1)
+			assert.True(t, stored[0].OccurredAt.Equal(event.OccurredAt))
+		})
+	}
+	for _, year := range []int{-1, 10000} {
+		t.Run(fmt.Sprintf("reject_%d", year), func(t *testing.T) {
+			id := fmt.Sprintf("run_time_reject_%d", year)
+			input := processRunFixture(t, id, "running", json.RawMessage(`{}`))
+			event := processRunEvent(1, "created")
+			event.OccurredAt = time.Date(year, 1, 2, 3, 4, 5, 6, time.UTC)
+			input.InitialEvents = []ProcessRunEvent{event}
+			assert.ErrorIs(t, CreateProcessRun(input), ErrProcessRunInvalid)
+			_, err := GetProcessRun(id)
+			assert.ErrorIs(t, err, ErrProcessRunNotFound, "validation must fail before the transaction inserts the run")
+		})
+	}
+}
+
+func TestProcessRunReadsRejectOversizedCorruptRowsBeforeScanningContent(t *testing.T) {
+	setupTestDB(t)
+	input := processRunFixture(t, "run_oversized_corrupt", "running", json.RawMessage(`{}`))
+	input.InitialEvents = []ProcessRunEvent{processRunEvent(1, "created")}
+	require.NoError(t, CreateProcessRun(input))
+
+	d, err := Open()
+	require.NoError(t, err)
+	conn, err := d.Conn(t.Context())
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(), `PRAGMA ignore_check_constraints = ON`)
+	require.NoError(t, err)
+	overCheckpoint := `{"x":"` + strings.Repeat("x", MaxProcessRunCheckpointBytes) + `"}`
+	_, err = conn.ExecContext(t.Context(), `UPDATE process_runs SET checkpoint_json = ? WHERE id = ?`, overCheckpoint, input.ID)
+	require.NoError(t, err)
+	overPayload := `{"x":"` + strings.Repeat("x", MaxProcessRunEventPayloadBytes) + `"}`
+	_, err = conn.ExecContext(t.Context(), `UPDATE process_run_events SET payload_json = ? WHERE run_id = ?`, overPayload, input.ID)
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	_, err = GetProcessRun(input.ID)
+	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
+	_, err = ListActiveProcessRuns("", MaxProcessRunReadPage)
+	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
+	_, err = ListProcessRunEvents(input.ID, 0, MaxProcessRunEventReadPage)
+	assert.ErrorIs(t, err, ErrProcessRunCorrupt)
+}
+
 func TestProcessRunTemplateSnapshotIsCanonicalStrictAndPinned(t *testing.T) {
 	setupTestDB(t)
 	input := processRunFixture(t, "run_template", "running", json.RawMessage(`{"step":1}`))
