@@ -99,7 +99,7 @@ function HarnessLine({ member }) {
   if (!model) {
     if (!harness || harness === 'claude') return member.online && state.remote_control ? html`<div class="agent-harness">${remote}</div>` : null;
     const title = `${offline ? 'Last used harness' : 'Harness'}: ${labels.long}`;
-    return html`<div class="agent-harness"><span class=${metadataClass} role="note" aria-label=${title} title=${title}><span class="harness-name">${labels.short}</span></span>${remote}</div>`;
+    return html`<div class="agent-harness" title=${title}><span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span></span>${remote}</div>`;
   }
   const effort = state.effort_level || '';
   const cost = Number(state.cost_usd || 0);
@@ -108,8 +108,8 @@ function HarnessLine({ member }) {
   if (effort) title += ` — ${offline ? 'Last used effort' : 'Effort'}: ${effort}`;
   if (cost > 0) title += ` — API cost this session: $${cost.toFixed(4)} (API/enterprise pricing — no subscription limits)`;
   if (virtualCost > 0) title += ` — WHAT-IF cost this session: $${virtualCost.toFixed(4)} (estimated if billed pay-per-token — you're on a subscription, so this is hypothetical, not a real charge)`;
-  return html`<div class="agent-harness">
-    <span class=${metadataClass} role="note" aria-label=${title} title=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model)}</span>
+  return html`<div class="agent-harness" title=${title}>
+    <span class=${metadataClass} role="note" aria-label=${title}><span class="harness-name">${labels.short}</span><span class="harness-sep">·</span><span class="harness-model">${shortModel(model)}</span>
       ${effort ? html`<span class="harness-effort">${effort}</span>` : null}
       ${cost > 0 ? html`<span class="harness-cost">${cost >= 0.005 ? `$${cost.toFixed(2)}` : '<1¢'}</span>` : null}
       ${virtualCost > 0 ? html`<span class="harness-cost harness-cost-whatif" title="Estimated pay-per-token-equivalent cost this session — hypothetical, not a real charge (subscription)">${virtualCost >= 0.005 ? `≈$${virtualCost.toFixed(2)}` : '≈<1¢'}</span>` : null}
