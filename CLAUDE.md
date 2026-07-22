@@ -135,17 +135,20 @@ feedback; a green CodeRabbit check that skipped because of quota is not a
 review. Larger, riskier, or more judgment-heavy PRs should get an independent
 fresh-agent review even if CodeRabbit commented.
 
-An independent review must be done by a fresh agent that sees the PR diff cold:
-give it the diff, a review instruction, and the PR's purpose/background — the
-reviewer must know why the change is being made, including any settled operator
-decisions it implements and the larger refactor it is part of, so a partial or
-incremental step is not mistaken for reintroducing old limitations or bugs, and
-review effort goes to defects rather than relitigating direction. What stays
-out is the implementation journey: how the change was built, what was tried,
-or the implementer's own justifications. Use the freshest independent reviewer
-available. Triage its findings like CodeRabbit's: fix valid issues and document
-any deliberate skips. Record the review status in the PR description or a PR
-comment, including who reviewed and any important follow-up.
+An independent review must be done by a fresh agent: one uninvolved in the
+work, seeing the diff cold — cold means no exposure to how the change was
+built, not context-free. Give it the diff, a review instruction, and the PR
+description's Background / Purpose section (the same one every PR must open
+with, which is where settled operator decisions and the larger refactor a PR
+belongs to are recorded). That context is what keeps a partial or incremental
+step from being mistaken for reintroducing old limitations or bugs, and keeps
+review effort on defects rather than relitigating direction. What stays out is
+the implementation journey: what was tried, and the implementer's own
+justifications beyond what Background / Purpose already states. Prefer the
+newest capable model available for the reviewer. Triage its findings like
+CodeRabbit's: fix valid issues and document any deliberate skips. Record the
+review status in the PR description or a PR comment, including who reviewed
+and any important follow-up.
 
 Do not `git add -A`; stage specific paths.
 
