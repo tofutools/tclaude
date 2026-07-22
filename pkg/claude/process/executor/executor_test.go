@@ -51,6 +51,25 @@ func TestPreparePersistsBoundCommandBeforeAnyDispatch(t *testing.T) {
 	assert.Equal(t, []string{"program_prepared"}, eventKinds(t, run.ID()))
 }
 
+func TestLoadPreparedRunReusesCreationDefinitionWithoutSnapshotPrepare(t *testing.T) {
+	setupExecutorTest(t)
+	createRun(t, "run_creation_boundary", helperProgram(t, "success"))
+	record, err := db.GetProcessRun("run_creation_boundary")
+	require.NoError(t, err)
+	var tmpl model.Template
+	require.NoError(t, json.Unmarshal(record.TemplateSnapshotJSON, &tmpl))
+	definition, err := engine.Prepare(&tmpl, map[string]string{})
+	require.NoError(t, err)
+
+	// A creation caller already prepared the exact snapshot before committing.
+	// This narrow reconstruction path must consume the definition directly;
+	// cold LoadRun remains responsible for decoding and preparing snapshots.
+	record.TemplateSnapshotJSON = json.RawMessage(`not-json`)
+	run, err := LoadPreparedRun(record, definition)
+	require.NoError(t, err)
+	assert.Equal(t, ActionContinue, run.Action().Kind)
+}
+
 func TestPrepareRollsBackCheckpointWhenEvidenceCannotCommit(t *testing.T) {
 	setupExecutorTest(t)
 	createRun(t, "run_prepare_rollback", helperProgram(t, "success"))

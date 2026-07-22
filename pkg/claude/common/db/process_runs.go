@@ -41,8 +41,8 @@ const (
 	MaxProcessRunNodeIDBytes           = 256
 	MaxProcessRunEventKind             = 128
 	MaxProcessRunEventActor            = 256
-	MaxProcessRunAuthorizationProfiles = 256
-	MaxProcessRunAuthorizationProfile  = 4 << 10
+	MaxProcessRunAuthorizationProfiles = model.MaxNormalizedNodes
+	MaxProcessRunAuthorizationProfile  = MaxProcessRunAuthorizationsBytes - 4
 	maxProcessRunTimestampSize         = 64
 )
 
@@ -89,6 +89,18 @@ type ProcessRun struct {
 	CheckpointJSON            json.RawMessage
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
+}
+
+// ProcessRunSummary is the bounded metadata projection used by aggregate
+// reads. It deliberately excludes every potentially multi-megabyte JSON
+// column; callers that need run state must use GetProcessRun for one ID.
+type ProcessRunSummary struct {
+	ID           string
+	TemplateRef  string
+	Status       string
+	StateVersion int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ProcessRunCreate is the immutable and initial mutable state committed when a
@@ -613,9 +625,10 @@ func ListActiveProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
 	return runs, rows.Err()
 }
 
-// ListProcessRuns returns one bounded ID-ordered page of canonical run rows,
-// including terminal runs. afterID is an exclusive cursor.
-func ListProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
+// ListProcessRunSummaries returns one bounded ID-ordered metadata page,
+// including terminal runs. It never selects snapshots, params,
+// authorizations, or checkpoints.
+func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, error) {
 	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
 		return nil, fmt.Errorf("%w: invalid run cursor", ErrProcessRunInvalid)
 	}
@@ -626,21 +639,89 @@ func ListProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := append(processRunSelectArgs(), afterID, limit)
-	rows, err := d.Query(processRunSelect+` WHERE id > ? ORDER BY id LIMIT ?`, args...)
+	rows, err := d.Query(`SELECT
+		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
+		CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
+		CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
+		CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
+		CASE WHEN typeof(created_at) = 'text' AND length(CAST(created_at AS BLOB)) BETWEEN 1 AND ? THEN created_at END,
+		CASE WHEN typeof(updated_at) = 'text' AND length(CAST(updated_at AS BLOB)) BETWEEN 1 AND ? THEN updated_at END
+		FROM process_runs WHERE id > ? ORDER BY id LIMIT ?`,
+		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes,
+		maxProcessRunTimestampSize, maxProcessRunTimestampSize, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	runs := make([]ProcessRun, 0, limit)
+	runs := make([]ProcessRunSummary, 0, limit)
 	for rows.Next() {
-		run, err := scanProcessRun(rows)
-		if err != nil {
+		var id, templateRef, status, createdAt, updatedAt sql.NullString
+		var stateVersion sql.NullInt64
+		if err := rows.Scan(&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		runs = append(runs, *run)
+		if !id.Valid || !templateRef.Valid || !status.Valid || !stateVersion.Valid || !createdAt.Valid || !updatedAt.Valid ||
+			!validProcessRuntimeIdentifier(id.String, MaxProcessRunIDBytes, false) ||
+			!validProcessRuntimeText(templateRef.String, MaxProcessRunTemplateRef, false) ||
+			!validProcessRuntimeIdentifier(status.String, MaxProcessRunStatusBytes, false) {
+			return nil, ErrProcessRunCorrupt
+		}
+		created, err := time.Parse(time.RFC3339Nano, createdAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid run created timestamp", ErrProcessRunCorrupt)
+		}
+		updated, err := time.Parse(time.RFC3339Nano, updatedAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid run updated timestamp", ErrProcessRunCorrupt)
+		}
+		runs = append(runs, ProcessRunSummary{
+			ID: id.String, TemplateRef: templateRef.String, Status: status.String,
+			StateVersion: stateVersion.Int64, CreatedAt: created, UpdatedAt: updated,
+		})
 	}
 	return runs, rows.Err()
+}
+
+// ListRunnableProcessRunIDs returns only active runs whose checkpoint has no
+// outstanding command. The JSON predicate is evaluated by SQLite so recovery
+// does not materialize snapshots or checkpoints merely to reject a run that
+// requires human reconciliation.
+func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, error) {
+	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
+		return nil, fmt.Errorf("%w: invalid runnable-run cursor", ErrProcessRunInvalid)
+	}
+	if limit <= 0 || limit > MaxProcessRunReadPage {
+		return nil, fmt.Errorf("%w: runnable-run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT
+		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END
+		FROM process_runs
+		WHERE id > ?
+			AND status NOT IN ('completed', 'failed', 'canceled')
+			AND CASE WHEN json_valid(checkpoint_json) = 1
+				THEN json_type(checkpoint_json, '$.outstandingCommand') IS NULL
+				ELSE 0 END
+		ORDER BY id LIMIT ?`, MaxProcessRunIDBytes, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	ids := make([]string, 0, limit)
+	for rows.Next() {
+		var id sql.NullString
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if !id.Valid || !validProcessRuntimeIdentifier(id.String, MaxProcessRunIDBytes, false) {
+			return nil, ErrProcessRunCorrupt
+		}
+		ids = append(ids, id.String)
+	}
+	return ids, rows.Err()
 }
 
 func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {

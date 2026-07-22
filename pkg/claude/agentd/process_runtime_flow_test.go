@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -56,9 +57,9 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	testharness.DecodeJSON(t, list, &listed)
 	require.Len(t, listed.Runs, 1)
 	assert.Equal(t, engine.RunCompleted, listed.Runs[0].Status)
-	assert.Equal(t, "terminal", listed.Runs[0].Action)
-	assert.Equal(t, map[string]string{"branch": "main"}, listed.Runs[0].Params)
-	assert.Equal(t, []string{"safe"}, listed.Runs[0].ProgramAuthorizations)
+	assert.NotContains(t, list.Body.String(), `"checkpoint"`)
+	assert.NotContains(t, list.Body.String(), `"params"`)
+	assert.NotContains(t, list.Body.String(), `"programAuthorizations"`)
 
 	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+createdRun.ID, nil)
 	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
@@ -66,6 +67,9 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	testharness.DecodeJSON(t, show, &shown)
 	assert.Equal(t, engine.RunCompleted, shown.Checkpoint.Status)
 	assert.Nil(t, shown.Checkpoint.OutstandingCommand)
+	assert.Equal(t, "terminal", shown.Action)
+	assert.Equal(t, map[string]string{"branch": "main"}, shown.Params)
+	assert.Equal(t, []string{"safe"}, shown.ProgramAuthorizations)
 
 	events, err := db.ListProcessRunEvents(createdRun.ID, 0, db.MaxProcessRunEventReadPage)
 	require.NoError(t, err)
@@ -91,6 +95,11 @@ func TestProcessRuntimeRefusesImplicitProgramAuthorization(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), "process_program_unauthorized")
 	assert.Zero(t, dispatched.Load())
+
+	duplicate := testharness.Serve(f.Mux, agentd.AsHumanPeer(httptest.NewRequest(http.MethodPost,
+		"/v1/process/runs", strings.NewReader(`{"templateId":"authorization","authorizeProgramProfiles":["safe"],"authorizeProgramProfiles":[]}`))))
+	assert.Equal(t, http.StatusBadRequest, duplicate.Code, duplicate.Body.String())
+	assert.Zero(t, dispatched.Load(), "duplicate authorization fields must fail closed")
 
 	list := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
@@ -123,7 +132,10 @@ func TestProcessRuntimeColdOutstandingNeedsReconcileWithoutRedispatch(t *testing
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
 	agentd.RunProcessRunSweepForTest()
 	agentd.WaitForProcessRunRuntimeForTest()
+	agentd.RunProcessRunSweepForTest()
+	agentd.WaitForProcessRunRuntimeForTest()
 	assert.Equal(t, int32(1), attempts.Load())
+	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 
 	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+run.ID, nil)
 	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
@@ -243,6 +255,36 @@ func TestProcessRuntimeConcurrentResumeCannotDoubleDispatch(t *testing.T) {
 	close(release)
 	agentd.WaitForProcessRunRuntimeForTest()
 	assert.Equal(t, int32(1), dispatches.Load())
+}
+
+func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown", 1))
+	entered := make(chan struct{})
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, error) {
+		close(entered)
+		<-ctx.Done()
+		return executor.Execute(ctx, run, dispatch, authorization)
+	}))
+
+	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
+		"templateId": "shutdown", "authorizeProgramProfiles": []string{"safe"},
+	})
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var run processRuntimeRunView
+	testharness.DecodeJSON(t, created, &run)
+	<-entered
+
+	// Reset uses the production shutdown path: cancel every claim, wait for the
+	// executor observation to commit, then discard the process-local handles.
+	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
+	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+run.ID, nil)
+	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
+	var stopped processRuntimeRunView
+	testharness.DecodeJSON(t, show, &stopped)
+	assert.Equal(t, engine.RunFailed, stopped.Status)
+	assert.Equal(t, "terminal", stopped.Action)
+	assert.Nil(t, stopped.Checkpoint.OutstandingCommand)
 }
 
 func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {

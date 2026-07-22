@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/claude/process/store"
+	"github.com/tofutools/tclaude/pkg/claude/process/strictjson"
 )
 
 const (
@@ -81,6 +82,15 @@ type processRunView struct {
 	UpdatedAt             time.Time         `json:"updatedAt"`
 }
 
+type processRunSummaryView struct {
+	ID           string           `json:"id"`
+	TemplateRef  string           `json:"templateRef"`
+	Status       engine.RunStatus `json:"status"`
+	StateVersion int64            `json:"stateVersion"`
+	CreatedAt    time.Time        `json:"createdAt"`
+	UpdatedAt    time.Time        `json:"updatedAt"`
+}
+
 type processRunCreateRequest struct {
 	ID                       string            `json:"id,omitempty"`
 	TemplateID               string            `json:"templateId"`
@@ -135,6 +145,17 @@ func (m *processRunManager) claimed(runID string) bool {
 }
 
 func (m *processRunManager) begin(runID string, start processRunStart) (bool, error) {
+	return m.beginRun(runID, nil, start)
+}
+
+func (m *processRunManager) beginPrepared(run *executor.Run, start processRunStart) (bool, error) {
+	if run == nil || run.ID() == "" {
+		return false, executor.ErrInvalidRun
+	}
+	return m.beginRun(run.ID(), run, start)
+}
+
+func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start processRunStart) (bool, error) {
 	claim, acquired, err := m.claim(runID)
 	if err != nil || !acquired {
 		if !acquired && start.mode != processRunResume {
@@ -149,9 +170,12 @@ func (m *processRunManager) begin(runID string, start processRunStart) (bool, er
 		}
 	}()
 
-	run, err := executor.LoadRun(runID)
-	if err != nil {
-		return false, err
+	run := prepared
+	if run == nil {
+		run, err = executor.LoadRun(runID)
+		if err != nil {
+			return false, err
+		}
 	}
 	claim.run = run
 	if claim.ctx.Err() != nil {
@@ -287,8 +311,10 @@ func startProcessRunRuntime(stop <-chan struct{}) {
 	}()
 }
 
-// sweepProcessRuns loads at most one store page. A cursor rotates the coarse
-// fallback across larger active sets; events never trigger a full scan.
+// sweepProcessRuns loads at most one ID-only store page. SQLite excludes
+// terminal and outstanding-command rows before the reconstruction boundary, so
+// the periodic fallback never materializes aggregate snapshots/checkpoints or
+// repeatedly prepares definitions awaiting human reconciliation.
 func sweepProcessRuns() {
 	if !processRoutesEnabled() {
 		return
@@ -296,22 +322,22 @@ func sweepProcessRuns() {
 	processRuns.mu.Lock()
 	after := processRuns.sweepCursor
 	processRuns.mu.Unlock()
-	runs, err := db.ListActiveProcessRuns(after, db.MaxProcessRunReadPage)
+	runIDs, err := db.ListRunnableProcessRunIDs(after, db.MaxProcessRunReadPage)
 	if err != nil {
 		slog.Warn("process runtime: active-run sweep failed", "error", err)
 		return
 	}
 	next := ""
-	if len(runs) == db.MaxProcessRunReadPage {
-		next = runs[len(runs)-1].ID
+	if len(runIDs) == db.MaxProcessRunReadPage {
+		next = runIDs[len(runIDs)-1]
 	}
 	processRuns.mu.Lock()
 	processRuns.sweepCursor = next
 	processRuns.mu.Unlock()
-	for i := range runs {
-		if _, err := processRuns.begin(runs[i].ID, processRunStart{mode: processRunResume}); err != nil &&
+	for _, runID := range runIDs {
+		if _, err := processRuns.begin(runID, processRunStart{mode: processRunResume}); err != nil &&
 			!errors.Is(err, executor.ErrNeedsReconcile) && !errors.Is(err, errProcessRuntimeStopped) {
-			slog.Warn("process runtime: active run did not start", "run", runs[i].ID, "error", err)
+			slog.Warn("process runtime: active run did not start", "run", runID, "error", err)
 		}
 	}
 }
@@ -341,19 +367,18 @@ func handleProcessRunList(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 	after := strings.TrimSpace(r.URL.Query().Get("after"))
-	runs, err := db.ListProcessRuns(after, limit)
+	runs, err := db.ListProcessRunSummaries(after, limit)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
 	}
-	views := make([]processRunView, 0, len(runs))
+	views := make([]processRunSummaryView, 0, len(runs))
 	for i := range runs {
-		view, err := processRunViewOf(&runs[i])
-		if err != nil {
-			writeProcessRuntimeError(w, err)
-			return
-		}
-		views = append(views, view)
+		views = append(views, processRunSummaryView{
+			ID: runs[i].ID, TemplateRef: runs[i].TemplateRef,
+			Status: engine.RunStatus(runs[i].Status), StateVersion: runs[i].StateVersion,
+			CreatedAt: runs[i].CreatedAt, UpdatedAt: runs[i].UpdatedAt,
+		})
 	}
 	next := ""
 	if len(runs) == limit {
@@ -377,17 +402,17 @@ func handleProcessRunCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
 		return
 	}
-	runID, err := createProcessRun(r.Context(), request, string(actor))
+	run, err := createProcessRun(r.Context(), request, string(actor))
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
 	}
-	if _, err := processRuns.begin(runID, processRunStart{mode: processRunResume}); err != nil {
+	if _, err := processRuns.beginPrepared(run, processRunStart{mode: processRunResume}); err != nil {
 		writeError(w, http.StatusInternalServerError, "process_run_created_not_started",
-			fmt.Sprintf("run %q was created but could not start: %v", runID, err))
+			fmt.Sprintf("run %q was created but could not start: %v", run.ID(), err))
 		return
 	}
-	view, err := loadProcessRunView(runID)
+	view, err := loadProcessRunView(run.ID())
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -489,22 +514,22 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
 }
 
-func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (string, error) {
+func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, error) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	if templateID == "" {
-		return "", fmt.Errorf("%w: templateId is required", db.ErrProcessRunInvalid)
+		return nil, fmt.Errorf("%w: templateId is required", db.ErrProcessRunInvalid)
 	}
 	fs, err := store.NewFS(processStoreRoot())
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	head, err := fs.GetTemplateHead(ctx, templateID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	tmpl, err := fs.GetTemplate(ctx, head.Ref)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	params := request.Params
 	if params == nil {
@@ -512,14 +537,14 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	}
 	definition, err := engine.Prepare(tmpl, params)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	authorizations, err := normalizeProcessRunAuthorizations(request.AuthorizeProgramProfiles)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if missing := missingProcessProgramAuthorizations(tmpl, authorizations); len(missing) > 0 {
-		return "", &processProgramAuthorizationError{Profiles: missing}
+		return nil, &processProgramAuthorizationError{Profiles: missing}
 	}
 	runID := strings.TrimSpace(request.ID)
 	if runID == "" {
@@ -527,44 +552,50 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	}
 	checkpoint, err := engine.Initialize(runID, definition)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	snapshot, err := model.CanonicalSemanticJSON(tmpl)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	authorizationsJSON, err := json.Marshal(authorizations)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	checkpointJSON, err := json.Marshal(checkpoint)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	payload, err := json.Marshal(struct {
 		TemplateRef           string   `json:"templateRef"`
 		ProgramAuthorizations []string `json:"programAuthorizations"`
 	}{TemplateRef: head.Ref, ProgramAuthorizations: authorizations})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	err = db.CreateProcessRun(db.ProcessRunCreate{
+	record := &db.ProcessRun{
 		ID: runID, TemplateRef: head.Ref, TemplateSnapshotJSON: snapshot,
 		ParamsJSON: paramsJSON, ProgramAuthorizationsJSON: authorizationsJSON,
-		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON,
+		Status: string(checkpoint.Status), StateVersion: db.InitialProcessRunStateVersion,
+		CheckpointJSON: checkpointJSON,
+	}
+	err = db.CreateProcessRun(db.ProcessRunCreate{
+		ID: record.ID, TemplateRef: record.TemplateRef, TemplateSnapshotJSON: record.TemplateSnapshotJSON,
+		ParamsJSON: record.ParamsJSON, ProgramAuthorizationsJSON: record.ProgramAuthorizationsJSON,
+		Status: record.Status, CheckpointJSON: record.CheckpointJSON,
 		InitialEvents: []db.ProcessRunEvent{{
 			Sequence: 1, OccurredAt: time.Now().UTC(), Kind: "run_created",
 			PayloadJSON: payload, Actor: actor,
 		}},
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return runID, nil
+	return executor.LoadPreparedRun(record, definition)
 }
 
 type processProgramAuthorizationError struct{ Profiles []string }
@@ -664,15 +695,11 @@ func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
 
 func decodeProcessRuntimeRequest(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxProcessRunRequestBytes)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(dst); err != nil {
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
 		return err
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return fmt.Errorf("request must contain one JSON value")
-		}
+	if err := strictjson.Decode(data, dst); err != nil {
 		return err
 	}
 	return nil

@@ -127,7 +127,7 @@ func (r *Run) Action() Action {
 	return action
 }
 
-// LoadRun is the only reconstruction boundary. Evidence is not read. Any
+// LoadRun is the cold reconstruction boundary. Evidence is not read. Any
 // cold-loaded outstanding command is ambiguous and therefore needs reconcile.
 func LoadRun(runID string) (*Run, error) {
 	record, err := db.GetProcessRun(runID)
@@ -142,6 +142,21 @@ func LoadRun(runID string) (*Run, error) {
 	if err := record.DecodeParams(&params); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRun, err)
 	}
+	definition, err := engine.Prepare(&tmpl, params)
+	if err != nil {
+		return nil, fmt.Errorf("%w: prepare definition: %v", ErrInvalidRun, err)
+	}
+	return LoadPreparedRun(record, definition)
+}
+
+// LoadPreparedRun reconstructs a newly committed run with the exact Definition
+// already prepared for its creation transaction. It is intentionally narrow:
+// cold recovery still goes through LoadRun and prepares from the persisted
+// immutable snapshot.
+func LoadPreparedRun(record *db.ProcessRun, definition *engine.Definition) (*Run, error) {
+	if record == nil || definition == nil || record.StateVersion <= 0 {
+		return nil, ErrInvalidRun
+	}
 	var authorizationProfiles []string
 	if err := record.DecodeProgramAuthorizations(&authorizationProfiles); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidRun, err)
@@ -149,10 +164,6 @@ func LoadRun(runID string) (*Run, error) {
 	authorized := make(map[string]struct{}, len(authorizationProfiles))
 	for _, profile := range authorizationProfiles {
 		authorized[profile] = struct{}{}
-	}
-	definition, err := engine.Prepare(&tmpl, params)
-	if err != nil {
-		return nil, fmt.Errorf("%w: prepare definition: %v", ErrInvalidRun, err)
 	}
 	checkpoint, err := engine.DecodeCheckpoint(record.CheckpointJSON, definition)
 	if err != nil {
