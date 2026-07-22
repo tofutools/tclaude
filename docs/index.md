@@ -217,6 +217,8 @@ focus on workflows and the behavior that is easy to miss from help text.
   access, managed per agent or group.
 - [Remote access](remote-access.md) — securely expose the fleet dashboard over
   a LAN, mesh VPN, or tunnel.
+- [Sandboxing](sandboxing.md) — how the sandbox actually behaves: enforcement
+  layers, deny + reopen, gotchas, and symptom-to-cause triage.
 - [Sandbox hardening](sandbox-hardening.md) — protect agentd state while keeping
   the coordination socket available.
 - [Processes](processes.md) — opt-in process templates, runs, evidence, and
