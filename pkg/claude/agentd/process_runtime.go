@@ -252,7 +252,6 @@ func (m *processRunManager) drive(ctx context.Context, runID string, claim *proc
 			slog.Warn("process runtime: program drive stopped", "run", runID, "error", err)
 			return
 		}
-		dispatch = nil
 		switch claim.run.Action().Kind {
 		case executor.ActionContinue:
 			var err error
