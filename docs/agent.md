@@ -447,10 +447,22 @@ actually needs.
 
 **Read the capability gate before you author one.** A `read`/`write` row
 strictly beneath a `deny` row in the *effective* profile is a
-**reopen-under-deny**, and it is not universally available. Plain deny rows
-with no reopens beneath them keep today's behavior on every harness and mode;
-the gate applies only to the reopen shape, because that is where a harness can
-quietly fail to enforce what the profile claims:
+**reopen-under-deny**, and it is not universally available.
+
+Two things to be clear about before the matrix. First, a deny row binds only
+where tclaude actually renders the policy: on Claude, a launch with sandbox
+`off` drops the deny entirely, and an `inherit` launch emits it without
+enabling the sandbox, so it takes effect only if the operator's own settings
+already have the sandbox on. A deny row is not a promise by itself. Second,
+**a broad deny is almost always a reopen-under-deny in practice**, because the
+launch contract below auto-pairs reopens for the workspace, agent-owned
+directories, Git roots, and the agentd socket. A bare `deny ~` with no
+operator-authored reopens still resolves to the reopen shape, and is gated
+accordingly. The narrow case that escapes the gate is a deny over a path the
+launch contract does not touch — `deny ~/.ssh` on its own, say.
+
+The gate exists because the reopen shape is where a harness can quietly fail
+to enforce what the profile claims:
 
 * **Claude Code** — allowed, but requires sandbox mode `on`. A narrower
   `allowRead` genuinely reopens a broader `denyRead`: the sandboxing docs state
@@ -483,8 +495,8 @@ complete one for your machine:
   "filesystem": [
     { "path": "~", "access": "deny" },
     { "path": "~/git/myproject", "access": "write" },
-    { "path": "~/.claude", "access": "read" },
     { "path": "~/.codex", "access": "read" },
+    { "path": "~/.claude/plugins", "access": "read" },
     { "path": "~/go", "access": "read" },
     { "path": "~/.cargo", "access": "read" }
   ]
@@ -495,6 +507,25 @@ Everything the agent's harness, toolchain, and language runtime read out of
 Home must appear as a reopen or the agent will not start or will fail partway
 through a build. tclaude only auto-pairs the launch contract below; the rest is
 yours to enumerate. Author these against a throwaway agent first.
+
+Two limits shape what you can write, and both bite hardest under `deny ~`:
+
+* **Rows are directories, not files.** A path that is not a directory is
+  rejected outright. Home-level dotfiles — `~/.gitconfig`, `~/.netrc`,
+  `~/.npmrc`, shell rc files — therefore cannot be reopened individually under
+  a Home deny; they stay denied. Losing `~/.gitconfig` is the usual first
+  symptom (Git loses your identity and credential helper). If an agent needs
+  that configuration, relocate it into a directory you reopen, or supply it
+  through the profile's `environment` instead.
+* **You cannot reopen a directory that contains a protected root.** `~/.claude`
+  contains `~/.claude/sessions`, which is protected, and an ordinary
+  (non-`deny`) row intersecting a protected root is rejected — ancestors count.
+  So under `deny ~` the Claude harness state directory cannot be reopened
+  wholesale; reopen the specific children the harness needs (`~/.claude/plugins`,
+  `~/.claude/skills`, …) and expect to discover that list empirically.
+
+The practical consequence: a denied Home is materially easier to run under
+Codex than under Claude Code today.
 
 The Claude renderer maps a `deny` row to `denyRead` + `denyWrite` and a `read`
 row to `allowRead`; the Codex renderer maps a `deny` row to `"path" = "none"`.
@@ -531,7 +562,8 @@ verified Git common/admin paths, not the whole repository container. Direct
 sibling-worktree creation is therefore unavailable; create or broker the
 worktree before launch.
 
-**Common rules** are an authoring convenience, not a mechanism. The dashboard's
+**Common rules** are an authoring convenience, not the "preset" disclaimed
+above — they store nothing and change no behavior. The dashboard's
 **Add common rule** menu inserts audited `deny` rows drawn from a versioned
 catalog of default-location sensitive paths — `~/.ssh`, `~/.gnupg`, cloud
 credentials, VCS tokens, toolchain caches, browser profiles, and the Home

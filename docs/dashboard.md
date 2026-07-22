@@ -335,9 +335,12 @@ Exporting a profile automatically bundles the profiles it includes.
 
 Strict read visibility has no separate editor: it is composed in the same
 filesystem table, as a broad `deny` row plus narrower `read`/`write` rows that
-reopen what the agent needs (`deny ~` + `write ~/git/proj` + `read ~/go`). Both
-harnesses resolve overlaps by specificity — the more specific path wins — so
-the reopen carves out of the deny. To make that less tedious and less
+reopen what the agent needs (`deny ~` + `write ~/git/proj` + `read ~/go`).
+Claude Code resolves overlapping read rules by specificity — the more specific
+path wins — so the reopen carves out of the deny. Codex does **not**: a deny
+normally dominates any narrower grant regardless of specificity, so reopens are
+available there only under the managed profile on Linux with a verified
+split-policy probe, and are refused on macOS. To make that less tedious and less
 error-prone, the editor offers **Add common rule**, a menu that inserts audited
 deny rows from a versioned catalog of default-location sensitive paths: SSH and
 GnuPG keys, cloud credentials, VCS tokens, toolchain caches, browser profiles,
@@ -350,7 +353,11 @@ diff and the resolved spawn preview, with no hidden preset state. A reopen
 beneath a deny is capability-gated at launch (Claude Code needs sandbox `on`;
 Codex needs the managed profile on Linux with a verified split-policy probe,
 and is refused on macOS), so a profile a harness cannot faithfully enforce
-fails with a typed error rather than pretending isolation. **Break-glass
+fails with a typed error rather than pretending isolation. A profile saved
+before this model existed, carrying the removed `read_baseline` /
+`read_baseline_exclusions` fields, loads **without** them and is therefore no
+longer strict despite its name — audit any such profile and re-express it as
+deny rows (see `docs/agent.md`). **Break-glass
 protected access** (`break_glass_filesystem`) is the
 only representation that may touch the normally protected tclaude/harness
 state (`~/.tclaude/data`, `~/.claude/sessions`); ordinary
