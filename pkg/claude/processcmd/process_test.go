@@ -31,16 +31,17 @@ func TestRuntimeVerbsRemainDiscoverableAndReturnNoEngine(t *testing.T) {
 	assert.Contains(t, err.Error(), "temporarily unavailable: no engine is installed")
 }
 
-func TestRuntimeVerbKeepsFeatureOffBehavior(t *testing.T) {
+func TestRuntimeVerbIsDiscoverableAndReturnsNoEngineByDefault(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	root := Cmd()
+	assert.False(t, root.Hidden)
+	command, _, err := root.Find([]string{"run"})
+	require.NoError(t, err)
+	assert.Equal(t, "run", command.Name())
 	root.SilenceUsage = true
 	root.SilenceErrors = true
 	root.SetArgs([]string{"run", "template.yaml"})
-	err := root.Execute()
+	err = root.Execute()
 	require.Error(t, err)
-	assert.Equal(t,
-		"process commands are disabled; set features.processes=true in tclaude config to use this experimental surface",
-		err.Error(),
-	)
+	assert.Equal(t, "process runtime is temporarily unavailable: no engine is installed", err.Error())
 }

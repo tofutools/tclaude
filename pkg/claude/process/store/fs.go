@@ -1159,24 +1159,16 @@ func (s *FS) RemoveLegacyRuntimeData() error {
 	if err := os.RemoveAll(filepath.Join(s.root, "runs")); err != nil {
 		return fmt.Errorf("remove legacy process runs: %w", err)
 	}
-	lockDir := filepath.Join(s.root, ".locks")
-	entries, err := os.ReadDir(lockDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	return removeLegacyRunLocks(s.root)
+}
+
+func isLegacyRunLockName(name string) bool {
+	runID, ok := strings.CutPrefix(name, "run-")
+	if !ok {
+		return false
 	}
-	if err != nil {
-		return fmt.Errorf("read process lock directory: %w", err)
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasPrefix(name, "run-") || !strings.HasSuffix(name, ".lock") {
-			continue
-		}
-		if err := os.Remove(filepath.Join(lockDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove legacy process run lock %q: %w", name, err)
-		}
-	}
-	return nil
+	runID, ok = strings.CutSuffix(runID, ".lock")
+	return ok && safeSegmentPattern.MatchString(runID)
 }
 
 func (s *FS) ListTemplates(ctx context.Context) ([]TemplateRecord, error) {

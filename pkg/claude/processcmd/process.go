@@ -41,7 +41,6 @@ func Cmd() *cobra.Command {
 			_ = cmd.Help()
 		},
 	}.ToCobra()
-	cmd.Hidden = !processesEnabled()
 	return cmd
 }
 
@@ -50,9 +49,6 @@ func unavailableRuntimeCmd(use, short string) *cobra.Command {
 		Use:   use,
 		Short: short + " (temporarily unavailable: no engine)",
 		Args:  cobra.ArbitraryArgs,
-		PreRunE: func(_ *cobra.Command, _ []string) error {
-			return requireProcessesEnabled()
-		},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return noEngineError()
 		},
