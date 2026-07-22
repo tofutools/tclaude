@@ -56,6 +56,15 @@ func ProcessRunClaimCountForTest() int {
 	return len(processRuns.claims)
 }
 
+// ProcessRunSweepCursorForTest exposes the bounded fallback scan position.
+// Flow tests use it to prove pages containing only reconciliation-blocked
+// rows still advance without reconstructing those runs.
+func ProcessRunSweepCursorForTest() string {
+	processRuns.mu.Lock()
+	defer processRuns.mu.Unlock()
+	return processRuns.sweepCursor
+}
+
 // WaitForProcessRunRuntimeForTest drains active run claims. Flow tests arrange
 // deterministic executor hooks, so no production timeout is involved.
 func WaitForProcessRunRuntimeForTest() { processRuns.wg.Wait() }
