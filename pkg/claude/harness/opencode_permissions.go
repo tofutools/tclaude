@@ -109,7 +109,7 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	}}
 	if sandboxMode == OpenCodeSandboxOff {
 		rules = appendOpenCodeOffRules(rules, approval, network)
-		return appendOpenCodeEnvReadRules(rules, approval), nil
+		return appendOpenCodeEnvReadRules(rules, approval, "."), nil
 	}
 
 	ordinary := map[string]openCodePathAccess{cwd: openCodePathWrite}
@@ -210,15 +210,22 @@ func appendOpenCodeWebRules(rules []OpenCodePermissionRule, approval string, net
 	return rules
 }
 
-func appendOpenCodeEnvReadRules(rules []OpenCodePermissionRule, approval string) []OpenCodePermissionRule {
+func appendOpenCodeEnvReadRules(
+	rules []OpenCodePermissionRule,
+	approval, relativeRoot string,
+) []OpenCodePermissionRule {
 	action := openCodeActionDeny
 	if approval != OpenCodeApprovalDeny {
 		action = openCodeActionAsk
 	}
+	prefix := ""
+	if relativeRoot != "." {
+		prefix = strings.TrimSuffix(relativeRoot, "/") + "/"
+	}
 	return append(rules,
-		OpenCodePermissionRule{Permission: "read", Pattern: "*.env", Action: action},
-		OpenCodePermissionRule{Permission: "read", Pattern: "*.env.*", Action: action},
-		OpenCodePermissionRule{Permission: "read", Pattern: "*.env.example", Action: openCodeActionAllow},
+		OpenCodePermissionRule{Permission: "read", Pattern: prefix + "*.env", Action: action},
+		OpenCodePermissionRule{Permission: "read", Pattern: prefix + "*.env.*", Action: action},
+		OpenCodePermissionRule{Permission: "read", Pattern: prefix + "*.env.example", Action: openCodeActionAllow},
 	)
 }
 
@@ -315,7 +322,7 @@ func appendOpenCodeRootRules(
 			Action:     externalAction,
 		})
 		if constrainEnv && roots[root] != openCodePathDeny {
-			rules = appendOpenCodeEnvReadRules(rules, approval)
+			rules = appendOpenCodeEnvReadRules(rules, approval, relative)
 		}
 	}
 	return rules, nil

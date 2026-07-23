@@ -51,7 +51,7 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 		OpenCodePermissionRule{Permission: "read", Pattern: "service/*", Action: "allow"},
 		OpenCodePermissionRule{Permission: "read", Pattern: "service/secret/*", Action: "deny"})
 	assertRuleBefore(t, rules,
-		OpenCodePermissionRule{Permission: "read", Pattern: "*.env.example", Action: "allow"},
+		OpenCodePermissionRule{Permission: "read", Pattern: "service/*.env.example", Action: "allow"},
 		OpenCodePermissionRule{Permission: "read", Pattern: "service/secret/*", Action: "deny"})
 	assert.Contains(t, rules,
 		OpenCodePermissionRule{Permission: "edit", Pattern: "service/*", Action: "allow"})
@@ -188,20 +188,26 @@ func TestBuildOpenCodePermissionRulesRejectsWildcardMetacharactersInRoots(t *tes
 
 func TestBuildOpenCodePermissionRulesReopensOrdinaryDenyBySpecificity(t *testing.T) {
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
-		Cwd:            "/repo",
-		Worktree:       "/repo",
+		Cwd:            "/project",
+		Worktree:       "/project",
 		SandboxMode:    OpenCodeSandboxAccessControl,
-		ApprovalPolicy: OpenCodeApprovalDeny,
-		ReadDirs:       []string{"/repo/private/public"},
-		DenyDirs:       []string{"/repo/private"},
+		ApprovalPolicy: OpenCodeApprovalAsk,
+		ReadDirs:       []string{"/project/secret/public"},
+		DenyDirs:       []string{"/project/secret"},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", "private/public/nested/file.txt"))
-	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "edit", "private/public/nested/file.txt"))
-	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "private/sibling/file.txt"))
-	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "private/public/nested/config.env"))
-	assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", "private/public/nested/config.env.example"))
+	assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", "secret/public/nested/file.txt"))
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "edit", "secret/public/nested/file.txt"))
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "secret/sibling/file.txt"))
+
+	// A scoped environment rule for the reopened child must not reach back
+	// into its denied parent or a denied sibling, even though OpenCode's *
+	// wildcard crosses path separators.
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "secret/x.env"))
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "secret/config.env.example"))
+	assert.Equal(t, "ask", lastMatchingOpenCodeAction(rules, "read", "secret/public/nested/config.env"))
+	assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", "secret/public/nested/config.env.example"))
 }
 
 func assertRuleBefore(t *testing.T, rules []OpenCodePermissionRule, before, after OpenCodePermissionRule) {
