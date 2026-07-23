@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,13 +78,127 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	assert.Equal(t, map[string]string{"branch": "main"}, shown.Params)
 	assert.Equal(t, []string{"safe"}, shown.ProgramAuthorizations)
 
-	events, err := db.ListProcessRunEvents(createdRun.ID, 0, db.MaxProcessRunEventReadPage)
-	require.NoError(t, err)
-	kinds := make([]string, 0, len(events))
-	for _, event := range events {
+	firstPage := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/"+createdRun.ID+"/events?limit=2", nil)
+	require.Equal(t, http.StatusOK, firstPage.Code, firstPage.Body.String())
+	var paged processRuntimeEventPage
+	testharness.DecodeJSON(t, firstPage, &paged)
+	require.Len(t, paged.Events, 2)
+	assert.Equal(t, []int64{1, 2}, []int64{paged.Events[0].Sequence, paged.Events[1].Sequence})
+	assert.Equal(t, int64(2), paged.Next)
+
+	secondPage := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/"+createdRun.ID+"/events?after=2&limit=2", nil)
+	require.Equal(t, http.StatusOK, secondPage.Code, secondPage.Body.String())
+	testharness.DecodeJSON(t, secondPage, &paged)
+	require.Len(t, paged.Events, 2)
+	assert.Equal(t, []int64{3, 4}, []int64{paged.Events[0].Sequence, paged.Events[1].Sequence})
+	assert.Equal(t, int64(4), paged.Next)
+
+	evidence := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/"+createdRun.ID+"/events", nil)
+	require.Equal(t, http.StatusOK, evidence.Code, evidence.Body.String())
+	var eventPage processRuntimeEventPage
+	testharness.DecodeJSON(t, evidence, &eventPage)
+	kinds := make([]string, 0, len(eventPage.Events))
+	for _, event := range eventPage.Events {
 		kinds = append(kinds, event.Kind)
+		assert.NotEmpty(t, event.Payload)
 	}
 	assert.Equal(t, []string{"run_created", "program_prepared", "program_observed", "program_prepared", "program_observed", "engine_advanced"}, kinds)
+	assert.Zero(t, eventPage.Next)
+	assert.NotEmpty(t, eventPage.Events[0].Actor)
+	assert.Equal(t, "task-01", eventPage.Events[1].NodeID)
+}
+
+func TestProcessRuntimeEventsEmptyNotFoundAndInvalidInputs(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	tmpl := processRuntimeTemplate("empty-events", 1)
+	record := putProcessRuntimeTemplate(t, root, tmpl)
+	createRunnableProcessRunFixture(t, "run_empty_events", record.Ref, tmpl)
+
+	empty := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_empty_events/events", nil)
+	require.Equal(t, http.StatusOK, empty.Code, empty.Body.String())
+	var page processRuntimeEventPage
+	testharness.DecodeJSON(t, empty, &page)
+	assert.Empty(t, page.Events)
+	assert.Zero(t, page.Next)
+
+	missing := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_missing/events", nil)
+	assert.Equal(t, http.StatusNotFound, missing.Code, missing.Body.String())
+	assert.Contains(t, missing.Body.String(), `"code":"process_run_not_found"`)
+
+	invalidRun := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/INVALID!/events", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, invalidRun.Code, invalidRun.Body.String())
+	assert.Contains(t, invalidRun.Body.String(), `"code":"process_run_invalid"`)
+
+	for _, path := range []string{
+		"/v1/process/runs/run_empty_events/events?after=-1",
+		"/v1/process/runs/run_empty_events/events?after=nope",
+		"/v1/process/runs/run_empty_events/events?limit=0",
+		"/v1/process/runs/run_empty_events/events?limit=17",
+	} {
+		refused := processRuntimeRequest(t, f, http.MethodGet, path, nil)
+		assert.Equal(t, http.StatusBadRequest, refused.Code, refused.Body.String())
+	}
+}
+
+func TestProcessRuntimeEventsPublicMaximumAndExactFinalPage(t *testing.T) {
+	const publicMaximum = 16
+	f, root := processRuntimeFlow(t)
+	tmpl := processRuntimeTemplate("maximum-events", 1)
+	record := putProcessRuntimeTemplate(t, root, tmpl)
+	definition, err := engine.Prepare(tmpl, map[string]string{})
+	require.NoError(t, err)
+	checkpoint, err := engine.Initialize("run_maximum_events", definition)
+	require.NoError(t, err)
+	payload := json.RawMessage(`{"x":"` + strings.Repeat("x", db.MaxProcessRunEventPayloadBytes-8) + `"}`)
+	require.Len(t, payload, db.MaxProcessRunEventPayloadBytes)
+	events := make([]db.ProcessRunEvent, publicMaximum+1)
+	for i := range events {
+		events[i] = db.ProcessRunEvent{
+			Sequence: int64(i + 1), OccurredAt: time.Date(2026, 7, 23, 12, i, 0, 0, time.UTC),
+			Kind: "bounded", PayloadJSON: payload,
+		}
+	}
+	createProcessRunFixtureWithEvents(t, "run_maximum_events", record.Ref, tmpl, checkpoint, events)
+
+	first := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?limit=16", nil)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var page processRuntimeEventPage
+	testharness.DecodeJSON(t, first, &page)
+	require.Len(t, page.Events, publicMaximum)
+	assert.Equal(t, int64(1), page.Events[0].Sequence)
+	assert.Equal(t, int64(publicMaximum), page.Events[publicMaximum-1].Sequence)
+	assert.Equal(t, int64(publicMaximum), page.Next)
+	for _, event := range page.Events {
+		assert.Len(t, event.Payload, db.MaxProcessRunEventPayloadBytes)
+	}
+
+	exactFinal := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?after=1&limit=16", nil)
+	require.Equal(t, http.StatusOK, exactFinal.Code, exactFinal.Body.String())
+	testharness.DecodeJSON(t, exactFinal, &page)
+	require.Len(t, page.Events, publicMaximum)
+	assert.Equal(t, int64(2), page.Events[0].Sequence)
+	assert.Equal(t, int64(publicMaximum+1), page.Events[publicMaximum-1].Sequence)
+	assert.Zero(t, page.Next, "an exact-full final page must not advertise an empty continuation")
+
+	highCursor := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?after=999&limit=16", nil)
+	require.Equal(t, http.StatusOK, highCursor.Code, highCursor.Body.String())
+	testharness.DecodeJSON(t, highCursor, &page)
+	assert.Empty(t, page.Events)
+	assert.Zero(t, page.Next)
+
+	overMaximum := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?limit=17", nil)
+	assert.Equal(t, http.StatusBadRequest, overMaximum.Code, overMaximum.Body.String())
+	assert.Contains(t, overMaximum.Body.String(), `"code":"process_run_limit"`)
 }
 
 func TestProcessRuntimeRefusesImplicitProgramAuthorization(t *testing.T) {
@@ -667,6 +782,9 @@ func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
 	readDenied := agentReq(t, f, worker, http.MethodGet, "/v1/process/runs", nil)
 	assert.Equal(t, http.StatusForbidden, readDenied.Code, readDenied.Body.String())
 	assert.Contains(t, readDenied.Body.String(), agentd.PermProcessRunsRead)
+	eventsDenied := agentReq(t, f, worker, http.MethodGet, "/v1/process/runs/run_denied/events", nil)
+	assert.Equal(t, http.StatusForbidden, eventsDenied.Code, eventsDenied.Body.String())
+	assert.Contains(t, eventsDenied.Body.String(), agentd.PermProcessRunsRead)
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsRead))
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsManage))
 }
@@ -748,6 +866,18 @@ type processRuntimeRunView struct {
 	Checkpoint            engine.Checkpoint `json:"checkpoint"`
 }
 
+type processRuntimeEventPage struct {
+	Events []struct {
+		Sequence   int64           `json:"sequence"`
+		OccurredAt time.Time       `json:"occurredAt"`
+		NodeID     string          `json:"nodeId"`
+		Kind       string          `json:"kind"`
+		Payload    json.RawMessage `json:"payload"`
+		Actor      string          `json:"actor"`
+	} `json:"events"`
+	Next int64 `json:"next"`
+}
+
 func processRuntimeFlow(t *testing.T) (*testharness.Flow, string) {
 	t.Helper()
 	f := newFlow(t)
@@ -802,6 +932,11 @@ func createRunnableProcessRunFixture(t *testing.T, id, ref string, tmpl *model.T
 
 func createProcessRunFixtureWithCheckpoint(t *testing.T, id, ref string, tmpl *model.Template, checkpoint engine.Checkpoint) {
 	t.Helper()
+	createProcessRunFixtureWithEvents(t, id, ref, tmpl, checkpoint, nil)
+}
+
+func createProcessRunFixtureWithEvents(t *testing.T, id, ref string, tmpl *model.Template, checkpoint engine.Checkpoint, events []db.ProcessRunEvent) {
+	t.Helper()
 	snapshot, err := model.CanonicalSemanticJSON(tmpl)
 	require.NoError(t, err)
 	checkpointJSON, err := json.Marshal(checkpoint)
@@ -809,6 +944,6 @@ func createProcessRunFixtureWithCheckpoint(t *testing.T, id, ref string, tmpl *m
 	require.NoError(t, db.CreateProcessRun(db.ProcessRunCreate{
 		ID: id, TemplateRef: ref, TemplateSnapshotJSON: snapshot,
 		ParamsJSON: json.RawMessage(`{}`), ProgramAuthorizationsJSON: json.RawMessage(`["safe"]`),
-		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON,
+		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON, InitialEvents: events,
 	}))
 }

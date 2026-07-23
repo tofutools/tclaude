@@ -963,6 +963,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
 	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRuns))
 	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
+	mux.HandleFunc("GET /v1/process/runs/{id}/events", processRoute(handleProcessRunEvents))
 	mux.HandleFunc("POST /v1/process/runs/{id}/resume", processRoute(handleProcessRunResume))
 	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", processRoute(handleProcessRunReissue))
 	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
