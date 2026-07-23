@@ -54,8 +54,10 @@ type SandboxCatalog interface {
 //   - Claude Code: an empty request resolves to its DefaultMode (inherit), which
 //     ValidateMode normalizes back to "" — so an un-chosen Claude spawn imposes
 //     no `--settings` override and keeps the operator's settings.json posture.
-//   - OpenCode: an empty daemon request resolves to its sole explicit `off`
-//     posture, making the absence of OS containment visible and persistable.
+//   - OpenCode: an empty daemon request resolves to its DefaultMode
+//     (access-control) — a soft, tool-level access policy, not an OS sandbox.
+//     SpawnSandboxWarnings surfaces that distinction so the mode is not mistaken
+//     for real containment.
 //
 // requested is trimmed first, so surrounding whitespace never leaks into
 // the flag.
@@ -85,4 +87,39 @@ func ValidateSandboxMode(h *Harness, requested string) (string, error) {
 			"(its sandbox is configured out of band, not via --sandbox)", h.Name)
 	}
 	return h.Sandbox.ValidateMode(requested)
+}
+
+// SpawnSandboxWarnings is the single harness-neutral entry point every spawn
+// surface uses to describe a launch posture whose sandboxing is weaker than it
+// looks — the HTTP effective-sandbox probe behind the spawn dialog and the
+// profile/role editors, template/wave deploys, `tclaude session new`, and the
+// daemon spawn response. Routing all of them through one function keeps every
+// surface saying the same sentence for the same inputs.
+//
+// It dispatches by harness because the "your sandbox may not be doing what you
+// think" failure mode is harness-specific:
+//
+//   - Claude Code: an unattended command-running permission mode paired with an
+//     OS sandbox tclaude cannot prove is active (TCL-586) — see
+//     UnsandboxedAutonomyWarnings, which also reads settings.json under cwd.
+//   - OpenCode: the `access-control` mode reads like a sandbox but only does
+//     soft lexical path matching, and tclaude sandbox profiles compile into
+//     those same toothless rules rather than an OS sandbox — see
+//     openCodeSandboxWarnings.
+//
+// Codex resolves autonomy and sandbox together against its managed profile, so
+// it has no such gap and returns nil. approvalPolicy and sandboxMode must be
+// the FINAL resolved values (after profile overlay and ResolveApprovalPolicy /
+// ResolveSandboxMode), so a blank select is judged for the posture it resolves
+// to, not for "nothing chosen".
+func SpawnSandboxWarnings(h *Harness, approvalPolicy, sandboxMode, cwd string) []string {
+	if h == nil {
+		return nil
+	}
+	switch normalizeLineageHarness(h.Name) {
+	case OpenCodeName:
+		return openCodeSandboxWarnings(sandboxMode)
+	default:
+		return UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd)
+	}
 }

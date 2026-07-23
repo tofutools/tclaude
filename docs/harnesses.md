@@ -76,9 +76,15 @@ edits follow relative path patterns, while bash, glob, grep, LSP, task, and
 skill remain available. This is deliberately described as lexical soft access
 control, not an OS sandbox: OpenCode does not resolve symlinks before permission
 evaluation, and tool permissions such as bash/glob/grep cannot be scoped to the
-same lexical disk boundary, so they can reach outside the authored paths. The
-explicit `off` mode removes path scoping but keeps the selected approval policy;
-bash is never auto-approved there. A bare direct `session new --harness
+same lexical disk boundary, so they can reach outside the authored paths.
+Because `access-control` reads like a sandbox without confining like one, the
+spawn dialog, profile/role editors, and `session new` surface an operator
+warning whenever it is selected (the same channel as Claude Code's
+unsandboxed-autonomy warning) — attaching a filesystem/network sandbox profile
+does not change this, since those profiles compile into the same soft OpenCode
+rules rather than an OS sandbox, pending a future OS sandbox layer for OpenCode.
+The explicit `off` mode removes path scoping but keeps the selected approval
+policy; bash is never auto-approved there. A bare direct `session new --harness
 opencode` is refused because it has no authenticated managed-server handoff;
 the pane is never allowed to start an independent OpenCode server.
 

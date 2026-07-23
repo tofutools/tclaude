@@ -82,7 +82,7 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 	// failure mode this endpoint must not have.
 	cwd := expandTilde(strings.TrimSpace(query.Get("dir")))
 	resolution := harness.ResolveClaudeSandboxEnabled(sandboxMode, cwd)
-	warnings := harness.UnsandboxedAutonomyWarnings(h, approval, sandboxMode, cwd)
+	warnings := harness.SpawnSandboxWarnings(h, approval, sandboxMode, cwd)
 	if warnings == nil {
 		// A JSON null here would make every consumer guard the array.
 		warnings = []string{}
