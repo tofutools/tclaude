@@ -1,6 +1,11 @@
 package agentd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -140,6 +145,7 @@ func TestConvIDForPID_HarnessNameWithoutRecordedRowIsAgentUnknown(t *testing.T) 
 		Harness: "codex",
 		Status:  "working",
 	}))
+	t.Setenv("TCLAUDE_SESSION_ID", "victim-conv")
 
 	fakeProcTree{
 		name:   map[int]string{forgedPID: "codex", shellPID: "sh"},
@@ -152,6 +158,78 @@ func TestConvIDForPID_HarnessNameWithoutRecordedRowIsAgentUnknown(t *testing.T) 
 	assert.Equal(t, classAgentUnknown,
 		classify(&peer{PID: forgedPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}),
 		"fail closed: a forged harness name never inherits another agent's identity")
+
+	// Exercise a permission-gated endpoint with the same peer verdict. The
+	// planted environment value must not promote the forged process to the
+	// victim or bypass the classAgentUnknown denial.
+	req := httptest.NewRequest(http.MethodPost, "/v1/whoami/task",
+		bytes.NewBufferString(`{"url":"https://example.com/forged"}`))
+	req = req.WithContext(context.WithValue(req.Context(), peerKey{}, &peer{
+		PID: forgedPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor,
+	}))
+	rec := httptest.NewRecorder()
+	buildMux().ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), "no resolvable conv-id")
+}
+
+func TestDaemonEndpoints_IgnorePlantedSessionEnvironment(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID   = 9101
+		codexPID  = 9050
+		paneSh    = 9040
+		callerA   = "aaaaaaaa-2222-3333-4444-555555555555"
+		plantedB  = "bbbbbbbb-2222-3333-4444-555555555555"
+		taskURL   = "https://linear.app/example/issue/TCL-695"
+		sessionID = "caller-a-session"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, PID: paneSh, ConvID: callerA, Harness: "codex", Status: "working",
+	}))
+	callerAgentID, _, err := db.EnsureAgentForConv(callerA, "test")
+	require.NoError(t, err)
+	plantedAgentID, _, err := db.EnsureAgentForConv(plantedB, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentPermissionOverride(
+		callerA, PermSelfTask, db.PermEffectGrant, "test"))
+	t.Setenv("TCLAUDE_SESSION_ID", plantedB)
+
+	fakeProcTree{
+		name:   map[int]string{peerPID: "tclaude", codexPID: "codex", paneSh: "sh"},
+		parent: map[int]int{peerPID: codexPID, codexPID: paneSh},
+	}.install(t)
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	require.True(t, hasAncestor)
+	require.Equal(t, callerA, gotConv)
+	resolvedPeer := &peer{PID: peerPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}
+
+	serve := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		req = req.WithContext(context.WithValue(req.Context(), peerKey{}, resolvedPeer))
+		rec := httptest.NewRecorder()
+		buildMux().ServeHTTP(rec, req)
+		return rec
+	}
+
+	whoami := serve(http.MethodGet, "/v1/whoami", "")
+	require.Equal(t, http.StatusOK, whoami.Code, whoami.Body.String())
+	var identity whoamiResp
+	require.NoError(t, json.Unmarshal(whoami.Body.Bytes(), &identity))
+	assert.Equal(t, callerA, identity.ConvID,
+		"peer-recorded caller A wins over planted environment caller B")
+
+	task := serve(http.MethodPost, "/v1/whoami/task", `{"url":"`+taskURL+`"}`)
+	require.Equal(t, http.StatusOK, task.Code, task.Body.String())
+	callerRef, err := db.GetAgentTaskRef(callerAgentID)
+	require.NoError(t, err)
+	assert.Equal(t, taskURL, callerRef.URL)
+	plantedRef, err := db.GetAgentTaskRef(plantedAgentID)
+	require.NoError(t, err)
+	assert.Empty(t, plantedRef.URL,
+		"self-scoped permission-gated write must not target the planted environment identity")
 }
 
 // TestConvIDForPID_ClaudeAncestorViaSessionFile guards that the Claude

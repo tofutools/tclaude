@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,66 @@ func setupTestDB(t *testing.T) {
 	t.Setenv("HOME", dir)
 	// Hide any inherited env that would resolve `.` to a real conv-id.
 	t.Setenv("TCLAUDE_SESSION_ID", "")
+	// currentConvID now prefers agentd over the environment fallback. Unit
+	// tests must never identify themselves through the operator's live daemon.
+	prevWhoami := whoamiViaDaemon
+	whoamiViaDaemon = func() string { return "" }
+	t.Cleanup(func() { whoamiViaDaemon = prevWhoami })
 	db.ResetForTest()
+}
+
+func TestCurrentConvID_PrefersDaemonOverEnvironment(t *testing.T) {
+	setupTestDB(t)
+	const (
+		peerDerived = "aaaaaaaa-1111-2222-3333-444444444444"
+		plantedEnv  = "bbbbbbbb-1111-2222-3333-444444444444"
+	)
+	t.Setenv("TCLAUDE_SESSION_ID", plantedEnv)
+	calls := 0
+	whoamiViaDaemon = func() string {
+		calls++
+		return peerDerived
+	}
+
+	got, err := currentConvID()
+	require.NoError(t, err)
+	assert.Equal(t, peerDerived, got)
+	assert.Equal(t, 1, calls)
+}
+
+func TestCurrentConvID_FallsBackToEnvironment(t *testing.T) {
+	setupTestDB(t)
+	const fallback = "cccccccc-1111-2222-3333-444444444444"
+	t.Setenv("TCLAUDE_SESSION_ID", fallback)
+
+	got, err := currentConvID()
+	require.NoError(t, err)
+	assert.Equal(t, fallback, got)
+}
+
+func TestCurrentConvIDViaDaemonUsesBoundedNoRetryProbe(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previous := DaemonRequestImpl
+	t.Cleanup(func() { DaemonRequestImpl = previous })
+
+	const peerDerived = "dddddddd-1111-2222-3333-444444444444"
+	calls := 0
+	DaemonRequestImpl = func(method, path string, in, out any, opts DaemonOpts) error {
+		calls++
+		assert.Equal(t, http.MethodGet, method)
+		assert.Equal(t, "/v1/whoami", path)
+		assert.Nil(t, in)
+		assert.Equal(t, whoamiLookupTimeout, opts.Timeout)
+		assert.True(t, opts.NoRetry)
+		assert.NotNil(t, opts.RetryOutput)
+		resp, ok := out.(*daemonWhoamiResp)
+		require.True(t, ok)
+		resp.ConvID = peerDerived
+		return nil
+	}
+
+	assert.Equal(t, peerDerived, currentConvIDViaDaemon())
+	assert.Equal(t, 1, calls)
 }
 
 func upsertConvIndex(t *testing.T, convID, customTitle, summary, firstPrompt string) {

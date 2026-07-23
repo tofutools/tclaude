@@ -718,7 +718,11 @@ func runNew(params *NewParams) error {
 		}
 	}
 
-	// Build claude command with all environment variables forwarded
+	// TCLAUDE_SESSION_ID is the stable session-row/routing key consumed by
+	// hooks, statusline, focus, and resume flows. It is caller-controlled
+	// compatibility state, not proof of daemon caller identity; agentd
+	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
+	// Build the harness command with all environment variables forwarded.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID":      sessionID,

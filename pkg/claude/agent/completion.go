@@ -349,10 +349,11 @@ func completePermissionTargets(cmd *cobra.Command, args []string, toComplete str
 // the caller's inbox, with sender + subject as the description. Used
 // by `inbox read <id>` and `reply <id>`.
 //
-// The caller's conv-id is resolved the same way every CLI command
-// resolves it: CC's per-pid session file first, then $TCLAUDE_SESSION_ID.
-// Fails silently to no-completion if neither is available — this is a
-// completion path, not a control flow error.
+// The caller's conv-id is resolved the same way every CLI command resolves
+// it: CC's per-pid session file first, then a bounded agentd peer-identity
+// lookup, then $TCLAUDE_SESSION_ID as a compatibility fallback. Fails
+// silently to no-completion if none is available — this is a completion
+// path, not a control flow error.
 func completeInboxMessageIDs(_ *cobra.Command, _ []string, toComplete string) []string {
 	myID, err := currentConvID()
 	if err != nil || myID == "" {
