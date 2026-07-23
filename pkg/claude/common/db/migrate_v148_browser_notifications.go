@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// migrateV145toV146 adds browser_notifications — the hand-off queue for
+// migrateV147toV148 adds browser_notifications — the hand-off queue for
 // notifications delivered through the agentd dashboard's Web Notification
 // API instead of (or alongside) the platform notifier.
 //
@@ -19,10 +19,10 @@ import (
 // Rows are cursor-consumed (each dashboard tab tracks its own last-seen
 // id) and pruned by age, so nothing here is authoritative state — it is a
 // short-lived outbox.
-func migrateV145toV146(db *sql.DB) error {
+func migrateV147toV148(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("migrate v145→v146 (browser notifications): begin: %w", err)
+		return fmt.Errorf("migrate v147→v148 (browser notifications): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -37,14 +37,14 @@ func migrateV145toV146(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_browser_notifications_created
 			ON browser_notifications(created_at);
 	`); err != nil {
-		return fmt.Errorf("migrate v145→v146 (create browser_notifications): %w", err)
+		return fmt.Errorf("migrate v147→v148 (create browser_notifications): %w", err)
 	}
 
-	if _, err := tx.Exec(`UPDATE schema_version SET version = 146`); err != nil {
-		return fmt.Errorf("migrate v145→v146 (version): %w", err)
+	if _, err := tx.Exec(`UPDATE schema_version SET version = 148`); err != nil {
+		return fmt.Errorf("migrate v147→v148 (version): %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate v145→v146 (commit): %w", err)
+		return fmt.Errorf("migrate v147→v148 (commit): %w", err)
 	}
 	return nil
 }

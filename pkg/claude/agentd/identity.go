@@ -327,6 +327,8 @@ const (
 	PermProcessAdvance         = "process.advance"
 	PermProcessTemplatesRead   = "process.templates.read"
 	PermProcessTemplatesManage = "process.templates.manage"
+	PermProcessRunsRead        = "process.runs.read"
+	PermProcessRunsManage      = "process.runs.manage"
 	PermHumanNotify            = "human.notify"
 	PermHumanClipboard         = "human.clipboard"
 	// PermSettingsDefaultModel gates writing the user-level default

@@ -897,15 +897,12 @@ func TestDashboardProcessRESTRequiresDashboardAuth(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
-func TestProcessRuntimeHTTPRoutesAreAbsentWithoutEngine(t *testing.T) {
+func TestDeferredProcessRuntimeHTTPRoutesRemainAbsent(t *testing.T) {
 	f, _ := processAuthoringFlow(t)
 	for _, test := range []struct {
 		method string
 		path   string
 	}{
-		{http.MethodGet, "/v1/process/runs"},
-		{http.MethodPost, "/v1/process/runs"},
-		{http.MethodGet, "/v1/process/runs/legacy"},
 		{http.MethodPost, "/v1/process/runs/legacy/nodes/work/report"},
 		{http.MethodGet, "/v1/process/worklist"},
 	} {

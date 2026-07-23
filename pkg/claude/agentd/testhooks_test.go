@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/remoteaccess"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
@@ -20,6 +21,74 @@ import (
 func BuildHandlerForTest() http.Handler {
 	return buildMux()
 }
+
+// ResetProcessRunRuntimeForTest replaces the daemon-lifetime run manager with
+// a fresh instance. Tests use it to model a daemon restart without replacing
+// the production HTTP mux or SQLite store.
+func ResetProcessRunRuntimeForTest() func() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	_ = processRuns.shutdown(ctx)
+	cancel()
+	processRuns = newProcessRunManager()
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = processRuns.shutdown(ctx)
+		cancel()
+		processRuns = newProcessRunManager()
+	}
+}
+
+// ShutdownProcessRunRuntimeForTest runs the production manager shutdown and
+// reports the old manager's retained claims before installing a fresh host.
+// Unlike ResetProcessRunRuntimeForTest, callers can assert that shutdown
+// actually drained rather than merely observing the replacement manager.
+func ShutdownProcessRunRuntimeForTest() (remaining int, restore func(), err error) {
+	old := processRuns
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	err = old.shutdown(ctx)
+	cancel()
+	old.mu.Lock()
+	remaining = len(old.claims)
+	old.mu.Unlock()
+	processRuns = newProcessRunManager()
+	return remaining, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = processRuns.shutdown(ctx)
+		cancel()
+		processRuns = newProcessRunManager()
+	}, err
+}
+
+// SetProcessProgramExecuteForTest swaps the daemon/executor call boundary so
+// flow tests can place deterministic channels around real executor execution.
+func SetProcessProgramExecuteForTest(fn func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error)) func() {
+	previous := processProgramExecute
+	processProgramExecute = fn
+	return func() { processProgramExecute = previous }
+}
+
+// RunProcessRunSweepForTest executes the same bounded startup/fallback page
+// used in production.
+func RunProcessRunSweepForTest() { sweepProcessRuns() }
+
+func ProcessRunClaimCountForTest() int {
+	processRuns.mu.Lock()
+	defer processRuns.mu.Unlock()
+	return len(processRuns.claims)
+}
+
+// ProcessRunSweepCursorForTest exposes the bounded fallback scan position.
+// Flow tests use it to prove pages containing only reconciliation-blocked
+// rows still advance without reconstructing those runs.
+func ProcessRunSweepCursorForTest() string {
+	processRuns.mu.Lock()
+	defer processRuns.mu.Unlock()
+	return processRuns.sweepCursor
+}
+
+// WaitForProcessRunRuntimeForTest drains active run claims. Flow tests arrange
+// deterministic executor hooks, so no production timeout is involved.
+func WaitForProcessRunRuntimeForTest() { processRuns.wg.Wait() }
 
 // BuildRemoteDashboardHandlerForTest exposes the REAL remote-listener handler
 // (the production remoteAuthMiddleware wrapping the full dashboard route set)

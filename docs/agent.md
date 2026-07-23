@@ -403,6 +403,11 @@ new `--reason` to replace it on a later disable. Profile writes require
 
 ### sandbox profiles
 
+> New to this? Read [Sandboxing](sandboxing.md) first — it covers the
+> enforcement layers, the deny + reopen shape, and the failure modes (silent
+> writes, missing toolchains, MCP bypass) that this reference assumes you
+> already understand.
+
 Sandbox profiles are operator-authored bundles of filesystem access rules,
 environment configuration, optional agent-owned directory declarations, and
 an optional `network_access` posture. Filesystem access accepts `read`,

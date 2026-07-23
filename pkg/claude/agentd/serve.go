@@ -19,6 +19,7 @@ import (
 
 	"fyne.io/systray"
 	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/gofrs/flock"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
@@ -61,6 +62,26 @@ func serveCmd() *cobra.Command {
 // hands to xdg-open. Empty when no popup listener is up — in that
 // case ask-human flows return immediately denied.
 var popupBaseURL string
+
+func acquireAgentdSingletonLock() (func(), error) {
+	dataDir := common.TclaudeDataDir()
+	if dataDir == "" {
+		return nil, fmt.Errorf("could not determine private agentd data directory")
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("create agentd data directory: %w", err)
+	}
+	lock := flock.New(filepath.Join(dataDir, "agentd.lock"))
+	locked, err := lock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("lock agentd data directory: %w", err)
+	}
+	if !locked {
+		return nil, fmt.Errorf("another agentd already owns %s", dataDir)
+	}
+	var once sync.Once
+	return func() { once.Do(func() { _ = lock.Unlock() }) }, nil
+}
 
 // prepareSocketPath creates the parent and removes a stale Unix socket without
 // ever clobbering a regular file or a live daemon endpoint.
@@ -172,6 +193,11 @@ func runServe(p *serveParams) error {
 	if sockPath == "" {
 		return fmt.Errorf("could not determine socket path; pass --socket")
 	}
+	releaseSingleton, err := acquireAgentdSingletonLock()
+	if err != nil {
+		return err
+	}
+	defer releaseSingleton()
 	legacySockPaths := socketPaths[1:]
 	for _, path := range socketPaths {
 		if err := prepareSocketPath(path); err != nil {
@@ -180,11 +206,10 @@ func runServe(p *serveParams) error {
 	}
 
 	// Relocate any pre-split daemon state into ~/.tclaude/data BEFORE opening
-	// the DB — but AFTER prepareSocketPath above rejected an already-running
-	// daemon, so exactly one process ever migrates (a second `agentd serve`
-	// aborts before reaching here). The DB and its sidecars must be moved as a
-	// group before the first Open() so we never open a db.sqlite whose -wal/-shm
-	// were left behind at the old path.
+	// the DB. The per-data-directory singleton lock above covers custom socket
+	// paths too, so exactly one process ever migrates or drives runtime state.
+	// The DB and its sidecars must be moved as a group before the first Open() so
+	// we never open a db.sqlite whose -wal/-shm were left behind at the old path.
 	if err := migrateStateIntoDataDir(); err != nil {
 		return fmt.Errorf("relocate daemon state into data dir: %w", err)
 	}
@@ -195,9 +220,8 @@ func runServe(p *serveParams) error {
 		return err
 	}
 
-	// Open (and, if needed, migrate) the SQLite DB now — AFTER rejecting an
-	// already-running daemon above (so a second `agentd serve` never migrates a
-	// DB the live daemon is using, then aborts), but BEFORE net.Listen and
+	// Open (and, if needed, migrate) the SQLite DB now — AFTER claiming the
+	// data-directory singleton above, but BEFORE net.Listen and
 	// every listener/dashboard/goroutine below. The daemon owns the DB and all
 	// of those depend on it, so a failed schema migration must fail startup
 	// here, loudly, before anything comes up on a half-migrated store.
@@ -351,6 +375,10 @@ func runServe(p *serveParams) error {
 	cronStop := make(chan struct{})
 	defer close(cronStop)
 	startCronScheduler(cronStop)
+	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
+	// Each actively advancing run is claimed by exactly one daemon-owned drive;
+	// SQLite remains the only authoritative checkpoint writer.
+	startProcessRunRuntime(cronStop)
 
 	// Staged-spawn wave runner (JOH-244). Advances any in-flight deploy
 	// choreography: spawns each deferred wave once the prior wave's agents are
@@ -564,6 +592,9 @@ func runServe(p *serveParams) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	if err := processRuns.shutdown(ctx); err != nil {
+		slog.Warn("process runtime: shutdown did not drain", "error", err)
+	}
 	_ = srv.Shutdown(ctx)
 	if popupSrv != nil {
 		_ = popupSrv.Shutdown(ctx)
@@ -927,6 +958,14 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("DELETE /v1/process/templates/{id}", processRoute(handleProcessTemplate))
 	mux.HandleFunc("POST /v1/process/validate", processRoute(handleProcessValidate))
+	// Runtime mutations stay behind the same hot-reloaded feature flag, but are
+	// daemon-owned and SQLite-backed rather than part of filesystem authoring.
+	mux.HandleFunc("GET /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("POST /v1/process/runs", processRoute(handleProcessRuns))
+	mux.HandleFunc("GET /v1/process/runs/{id}", processRoute(handleProcessRun))
+	mux.HandleFunc("POST /v1/process/runs/{id}/resume", processRoute(handleProcessRunResume))
+	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", processRoute(handleProcessRunReissue))
+	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
 	return idempotencyRequests(logRequest(auditRequests(mux)))
 }
 

@@ -220,6 +220,10 @@ var auditRoutes = []auditRoute{
 	// id, irreversibly. No describer is needed — the path already carries the id,
 	// and the request has no body.
 	{method: http.MethodDelete, segs: []string{"process", "templates", "{id}"}, verb: "process.template.delete"},
+	{method: http.MethodPost, segs: []string{"process", "runs"}, verb: "process.run.create"},
+	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "resume"}, verb: "process.run.resume"},
+	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "reissue"}, verb: "process.run.reissue"},
+	{method: http.MethodPost, segs: []string{"process", "runs", "{id}", "record-outcome"}, verb: "process.run.record-outcome"},
 
 	// Remote-access administration (dashboard, cert-admin gated). Issuing a
 	// client cert / adding SAN hosts / (re)running setup are security-
