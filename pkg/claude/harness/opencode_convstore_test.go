@@ -106,7 +106,7 @@ func TestOpenCodeConvStore_TitleExistsAndColdRenameRoundTrip(t *testing.T) {
 	assert.True(t, ok)
 	ok, err = store.Exists("ses_alpha111", "/work/b")
 	require.NoError(t, err)
-	assert.False(t, ok)
+	assert.True(t, ok, "globally indexed OpenCode ids must ignore caller cwd")
 
 	require.NoError(t, store.SetTitle("ses_alpha111", "Cold local rename"))
 	title, err = store.Title("ses_alpha111")
@@ -126,6 +126,8 @@ func TestOpenCodeConvStore_TitleExistsAndColdRenameRoundTrip(t *testing.T) {
 func TestOpenCodeConvStore_LiveRenamePrefersAPI(t *testing.T) {
 	withTestDB(t)
 	sessions := openCodeTestSessions()
+	require.NoError(t, db.SetConvIndexCustomTitle(
+		"ses_alpha111", "Stale cold rename", OpenCodeName))
 	called := false
 	store := openCodeConvStore{
 		listSessions: func() ([]openCodeSession, error) { return sessions, nil },
@@ -150,9 +152,20 @@ func TestOpenCodeConvStore_LiveRenamePrefersAPI(t *testing.T) {
 
 	require.NoError(t, store.SetTitle("ses_alpha111", "Live rename"))
 	assert.True(t, called)
+	row, err := db.GetConvIndex("ses_alpha111")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, "Live rename", row.CustomTitle,
+		"live success replaces any stale cold-title override")
+
 	title, err := store.Title("ses_alpha111")
 	require.NoError(t, err)
 	assert.Equal(t, "Live rename", title)
+	row, err = db.GetConvIndex("ses_alpha111")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Empty(t, row.CustomTitle,
+		"native title convergence clears the temporary cache override")
 }
 
 func TestWriteOpenCodeTitleUsesAuthenticatedManagedAPI(t *testing.T) {

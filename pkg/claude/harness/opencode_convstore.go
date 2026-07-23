@@ -306,7 +306,7 @@ func (s openCodeConvStore) SetTitle(convID, title string) error {
 			writer = writeOpenCodeTitle
 		}
 		if err := writer(*runtime, convID, title); err == nil {
-			return nil
+			return db.SetConvIndexCustomTitle(convID, title, OpenCodeName)
 		} else {
 			slog.Warn("opencode SetTitle: live API unavailable; using local title cache",
 				"conv", convID, "error", err)
@@ -345,11 +345,15 @@ func writeOpenCodeTitle(runtime db.OpenCodeRuntime, convID, title string) error 
 	return nil
 }
 
-func (s openCodeConvStore) Exists(convID, cwd string) (bool, error) {
+func (s openCodeConvStore) Exists(convID, _ string) (bool, error) {
 	if convID == "" {
 		return false, nil
 	}
-	entries, err := s.ListConvs(cwd)
+	// OpenCode session ids are globally indexed: the CLI snapshot contains
+	// every directory, and a ses_… id identifies the same conversation from
+	// any cwd. Ignoring cwd avoids false "absent" results for symlinked or
+	// relocated callers.
+	entries, err := s.ListConvs("")
 	if err != nil {
 		return false, err
 	}
