@@ -49,6 +49,9 @@ var bgShellReconcileMu struct {
 	last map[string]bgShellReadThrough
 }
 
+// Test-only callers replace this through SetBgShellDescendantCommandLinesForTest.
+var bgShellDescendantCommandLines = session.DescendantCommandLines
+
 // bgShellReadThrough is one session's cached reconcile verdict. ledgerJSON
 // is the exact stored ledger the count was derived from: a hook that adds
 // or removes an entry changes it, which invalidates the cache immediately
@@ -89,7 +92,7 @@ func bgShellCountOnRead(sess *db.SessionRow, alive bool) int {
 		return cached
 	}
 
-	cmdlines, ok := session.DescendantCommandLines(sess.PID)
+	cmdlines, ok := bgShellDescendantCommandLines(sess.PID)
 	if !ok {
 		// No process-table evidence either way. Do NOT retire anything —
 		// see DescendantCommandLines on why ok=false and "nothing running"
