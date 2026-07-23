@@ -922,7 +922,8 @@ CREATE TABLE process_runs (
 			                           CHECK(length(CAST(created_at AS BLOB)) BETWEEN 1 AND 64),
 			updated_at             TEXT NOT NULL
 			                           CHECK(length(CAST(updated_at AS BLOB)) BETWEEN 1 AND 64)
-		);
+		, program_authorizations_json TEXT NOT NULL DEFAULT '[]'
+			CHECK(length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND 262144));
 
 CREATE INDEX idx_process_runs_active
 			ON process_runs(id)

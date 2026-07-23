@@ -29,18 +29,21 @@ const (
 	MaxProcessRunTemplateSnapshotBytes = 4 << 20
 	MaxProcessRunCheckpointBytes       = 4 << 20
 	MaxProcessRunParamsBytes           = 256 << 10
+	MaxProcessRunAuthorizationsBytes   = 256 << 10
 	MaxProcessRunEventPayloadBytes     = 256 << 10
 	MaxProcessRunEventsPerTransition   = 256
 	MaxProcessRunReadPage              = 32
 	MaxProcessRunEventReadPage         = 256
 
-	MaxProcessRunIDBytes       = 128
-	MaxProcessRunTemplateRef   = 512
-	MaxProcessRunStatusBytes   = 64
-	MaxProcessRunNodeIDBytes   = 256
-	MaxProcessRunEventKind     = 128
-	MaxProcessRunEventActor    = 256
-	maxProcessRunTimestampSize = 64
+	MaxProcessRunIDBytes               = 128
+	MaxProcessRunTemplateRef           = 512
+	MaxProcessRunStatusBytes           = 64
+	MaxProcessRunNodeIDBytes           = 256
+	MaxProcessRunEventKind             = 128
+	MaxProcessRunEventActor            = 256
+	MaxProcessRunAuthorizationProfiles = model.MaxNormalizedNodes
+	MaxProcessRunAuthorizationProfile  = MaxProcessRunAuthorizationsBytes - 4
+	maxProcessRunTimestampSize         = 64
 )
 
 const (
@@ -76,27 +79,41 @@ func (e *ProcessRunVersionConflictError) Unwrap() error { return ErrProcessRunVe
 // exactly as stored; evidence is intentionally absent and has a separate,
 // paginated reader because it is not a state reconstruction source.
 type ProcessRun struct {
-	ID                   string
-	TemplateRef          string
-	TemplateSnapshotJSON json.RawMessage
-	ParamsJSON           json.RawMessage
-	Status               string
-	StateVersion         int64
-	CheckpointJSON       json.RawMessage
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                        string
+	TemplateRef               string
+	TemplateSnapshotJSON      json.RawMessage
+	ParamsJSON                json.RawMessage
+	ProgramAuthorizationsJSON json.RawMessage
+	Status                    string
+	StateVersion              int64
+	CheckpointJSON            json.RawMessage
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+}
+
+// ProcessRunSummary is the bounded metadata projection used by aggregate
+// reads. It deliberately excludes every potentially multi-megabyte JSON
+// column; callers that need run state must use GetProcessRun for one ID.
+type ProcessRunSummary struct {
+	ID           string
+	TemplateRef  string
+	Status       string
+	StateVersion int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ProcessRunCreate is the immutable and initial mutable state committed when a
 // run is created. InitialEvents, when present, commit with the checkpoint.
 type ProcessRunCreate struct {
-	ID                   string
-	TemplateRef          string
-	TemplateSnapshotJSON json.RawMessage
-	ParamsJSON           json.RawMessage
-	Status               string
-	CheckpointJSON       json.RawMessage
-	InitialEvents        []ProcessRunEvent
+	ID                        string
+	TemplateRef               string
+	TemplateSnapshotJSON      json.RawMessage
+	ParamsJSON                json.RawMessage
+	ProgramAuthorizationsJSON json.RawMessage
+	Status                    string
+	CheckpointJSON            json.RawMessage
+	InitialEvents             []ProcessRunEvent
 }
 
 // ProcessRunEvent is one append-only human-facing evidence row. Sequence is
@@ -149,6 +166,16 @@ func (r *ProcessRun) DecodeParams(dst any) error {
 	return decodeBoundedProcessJSON("params", r.ParamsJSON, MaxProcessRunParamsBytes, dst)
 }
 
+// DecodeProgramAuthorizations decodes the immutable, explicit program
+// profiles authorized when the run was created. An empty list authorizes no
+// program, including a command whose profile is empty.
+func (r *ProcessRun) DecodeProgramAuthorizations(dst *[]string) error {
+	if r == nil {
+		return fmt.Errorf("%w: nil process run", ErrProcessRunInvalid)
+	}
+	return decodeProcessRunAuthorizations(r.ProgramAuthorizationsJSON, dst)
+}
+
 // DecodePayload strictly decodes an evidence payload into dst.
 func (e *ProcessRunEvent) DecodePayload(dst any) error {
 	if e == nil {
@@ -181,6 +208,34 @@ func validateProcessJSONObject(name string, data []byte, maximum int) error {
 	if object == nil {
 		return fmt.Errorf("%w: %s must be a JSON object", ErrProcessRunInvalid, name)
 	}
+	return nil
+}
+
+func decodeProcessRunAuthorizations(data []byte, dst *[]string) error {
+	if dst == nil {
+		return fmt.Errorf("%w: program authorizations decode destination is nil", ErrProcessRunInvalid)
+	}
+	if len(data) < 2 || len(data) > MaxProcessRunAuthorizationsBytes || !utf8.Valid(data) {
+		return fmt.Errorf("%w: program authorizations must contain 2..%d bytes of UTF-8", ErrProcessRunInvalid, MaxProcessRunAuthorizationsBytes)
+	}
+	var profiles []string
+	if err := strictjson.Decode(data, &profiles); err != nil || profiles == nil {
+		return fmt.Errorf("%w: decode program authorizations", ErrProcessRunInvalid)
+	}
+	if len(profiles) > MaxProcessRunAuthorizationProfiles {
+		return fmt.Errorf("%w: at most %d program authorization profiles are allowed", ErrProcessRunInvalid, MaxProcessRunAuthorizationProfiles)
+	}
+	seen := make(map[string]struct{}, len(profiles))
+	for _, profile := range profiles {
+		if !validProcessRuntimeText(profile, MaxProcessRunAuthorizationProfile, true) {
+			return fmt.Errorf("%w: invalid program authorization profile", ErrProcessRunInvalid)
+		}
+		if _, exists := seen[profile]; exists {
+			return fmt.Errorf("%w: duplicate program authorization profile %q", ErrProcessRunInvalid, profile)
+		}
+		seen[profile] = struct{}{}
+	}
+	*dst = profiles
 	return nil
 }
 
@@ -253,6 +308,10 @@ func validateProcessRunCreate(input ProcessRunCreate) error {
 	if err := validateProcessJSONObject("params", input.ParamsJSON, MaxProcessRunParamsBytes); err != nil {
 		return err
 	}
+	var authorizations []string
+	if err := decodeProcessRunAuthorizations(input.ProgramAuthorizationsJSON, &authorizations); err != nil {
+		return err
+	}
 	if err := validateProcessJSONObject("checkpoint", input.CheckpointJSON, MaxProcessRunCheckpointBytes); err != nil {
 		return err
 	}
@@ -298,6 +357,13 @@ func validateProcessRunEvents(events []ProcessRunEvent, allowAutoSequence bool) 
 // CreateProcessRun atomically inserts the initial canonical checkpoint and any
 // initial evidence. The state version always starts at one.
 func CreateProcessRun(input ProcessRunCreate) error {
+	if len(input.ProgramAuthorizationsJSON) == 0 {
+		// Pre-runtime integration callers construct no authorization field. Keep
+		// that source-compatible while failing closed: an omitted value means the
+		// explicit empty authorization set, never authorization inferred from the
+		// template.
+		input.ProgramAuthorizationsJSON = json.RawMessage(`[]`)
+	}
 	if err := validateProcessRunCreate(input); err != nil {
 		return err
 	}
@@ -313,11 +379,11 @@ func CreateProcessRun(input ProcessRunCreate) error {
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	result, err := tx.Exec(`INSERT INTO process_runs
-		(id, template_ref, template_snapshot_json, params_json, status,
+		(id, template_ref, template_snapshot_json, params_json, program_authorizations_json, status,
 		 state_version, checkpoint_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING`,
-		input.ID, input.TemplateRef, string(input.TemplateSnapshotJSON), string(input.ParamsJSON), input.Status,
+		input.ID, input.TemplateRef, string(input.TemplateSnapshotJSON), string(input.ParamsJSON), string(input.ProgramAuthorizationsJSON), input.Status,
 		InitialProcessRunStateVersion, string(input.CheckpointJSON), now, now)
 	if err != nil {
 		return fmt.Errorf("create process run: %w", err)
@@ -443,13 +509,13 @@ type processRunScanner interface{ Scan(...any) error }
 
 func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	var run ProcessRun
-	var id, templateRef, snapshot, params, status, checkpoint, created, updated sql.NullString
+	var id, templateRef, snapshot, params, authorizations, status, checkpoint, created, updated sql.NullString
 	var stateVersion sql.NullInt64
-	if err := scanner.Scan(&id, &templateRef, &snapshot, &params, &status,
+	if err := scanner.Scan(&id, &templateRef, &snapshot, &params, &authorizations, &status,
 		&stateVersion, &checkpoint, &created, &updated); err != nil {
 		return nil, err
 	}
-	if !id.Valid || !templateRef.Valid || !snapshot.Valid || !params.Valid || !status.Valid ||
+	if !id.Valid || !templateRef.Valid || !snapshot.Valid || !params.Valid || !authorizations.Valid || !status.Valid ||
 		!stateVersion.Valid || !checkpoint.Valid || !created.Valid || !updated.Valid {
 		return nil, ErrProcessRunCorrupt
 	}
@@ -461,6 +527,10 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 		return nil, ErrProcessRunCorrupt
 	}
 	if err := validateProcessJSONObject("params", []byte(params.String), MaxProcessRunParamsBytes); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
+	}
+	var authorizationProfiles []string
+	if err := decodeProcessRunAuthorizations([]byte(authorizations.String), &authorizationProfiles); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProcessRunCorrupt, err)
 	}
 	if err := validateProcessJSONObject("checkpoint", []byte(checkpoint.String), MaxProcessRunCheckpointBytes); err != nil {
@@ -475,6 +545,7 @@ func scanProcessRun(scanner processRunScanner) (*ProcessRun, error) {
 	}
 	run.TemplateSnapshotJSON = json.RawMessage(strings.Clone(snapshot.String))
 	run.ParamsJSON = json.RawMessage(strings.Clone(params.String))
+	run.ProgramAuthorizationsJSON = json.RawMessage(strings.Clone(authorizations.String))
 	run.CheckpointJSON = json.RawMessage(strings.Clone(checkpoint.String))
 	return &run, nil
 }
@@ -488,6 +559,7 @@ const processRunSelect = `SELECT
 	CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
 	CASE WHEN typeof(template_snapshot_json) = 'text' AND length(CAST(template_snapshot_json AS BLOB)) BETWEEN 1 AND ? THEN template_snapshot_json END,
 	CASE WHEN typeof(params_json) = 'text' AND length(CAST(params_json AS BLOB)) BETWEEN 1 AND ? THEN params_json END,
+	CASE WHEN typeof(program_authorizations_json) = 'text' AND length(CAST(program_authorizations_json AS BLOB)) BETWEEN 2 AND ? THEN program_authorizations_json END,
 	CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
 	CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
 	CASE WHEN typeof(checkpoint_json) = 'text' AND length(CAST(checkpoint_json AS BLOB)) BETWEEN 1 AND ? THEN checkpoint_json END,
@@ -498,7 +570,7 @@ const processRunSelect = `SELECT
 func processRunSelectArgs() []any {
 	return []any{
 		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunTemplateSnapshotBytes,
-		MaxProcessRunParamsBytes, MaxProcessRunStatusBytes, MaxProcessRunCheckpointBytes,
+		MaxProcessRunParamsBytes, MaxProcessRunAuthorizationsBytes, MaxProcessRunStatusBytes, MaxProcessRunCheckpointBytes,
 		maxProcessRunTimestampSize, maxProcessRunTimestampSize,
 	}
 }
@@ -551,6 +623,121 @@ func ListActiveProcessRuns(afterID string, limit int) ([]ProcessRun, error) {
 		runs = append(runs, *run)
 	}
 	return runs, rows.Err()
+}
+
+// ListProcessRunSummaries returns one bounded ID-ordered metadata page,
+// including terminal runs. It never selects snapshots, params,
+// authorizations, or checkpoints.
+func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, error) {
+	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
+		return nil, fmt.Errorf("%w: invalid run cursor", ErrProcessRunInvalid)
+	}
+	if limit <= 0 || limit > MaxProcessRunReadPage {
+		return nil, fmt.Errorf("%w: run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT
+		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
+		CASE WHEN typeof(template_ref) = 'text' AND length(CAST(template_ref AS BLOB)) BETWEEN 1 AND ? THEN template_ref END,
+		CASE WHEN typeof(status) = 'text' AND length(CAST(status AS BLOB)) BETWEEN 1 AND ? THEN status END,
+		CASE WHEN typeof(state_version) = 'integer' AND state_version > 0 THEN state_version END,
+		CASE WHEN typeof(created_at) = 'text' AND length(CAST(created_at AS BLOB)) BETWEEN 1 AND ? THEN created_at END,
+		CASE WHEN typeof(updated_at) = 'text' AND length(CAST(updated_at AS BLOB)) BETWEEN 1 AND ? THEN updated_at END
+		FROM process_runs WHERE id > ? ORDER BY id LIMIT ?`,
+		MaxProcessRunIDBytes, MaxProcessRunTemplateRef, MaxProcessRunStatusBytes,
+		maxProcessRunTimestampSize, maxProcessRunTimestampSize, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	runs := make([]ProcessRunSummary, 0, limit)
+	for rows.Next() {
+		var id, templateRef, status, createdAt, updatedAt sql.NullString
+		var stateVersion sql.NullInt64
+		if err := rows.Scan(&id, &templateRef, &status, &stateVersion, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		if !id.Valid || !templateRef.Valid || !status.Valid || !stateVersion.Valid || !createdAt.Valid || !updatedAt.Valid ||
+			!validProcessRuntimeIdentifier(id.String, MaxProcessRunIDBytes, false) ||
+			!validProcessRuntimeText(templateRef.String, MaxProcessRunTemplateRef, false) ||
+			!validProcessRuntimeIdentifier(status.String, MaxProcessRunStatusBytes, false) {
+			return nil, ErrProcessRunCorrupt
+		}
+		created, err := time.Parse(time.RFC3339Nano, createdAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid run created timestamp", ErrProcessRunCorrupt)
+		}
+		updated, err := time.Parse(time.RFC3339Nano, updatedAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid run updated timestamp", ErrProcessRunCorrupt)
+		}
+		runs = append(runs, ProcessRunSummary{
+			ID: id.String, TemplateRef: templateRef.String, Status: status.String,
+			StateVersion: stateVersion.Int64, CreatedAt: created, UpdatedAt: updated,
+		})
+	}
+	return runs, rows.Err()
+}
+
+// ListRunnableProcessRunIDs examines one raw ID-ordered active page and returns
+// the runnable IDs within it plus an exclusive cursor for the last examined
+// row. Applying LIMIT inside the subquery bounds JSON classification even when
+// every row requires human reconciliation; snapshots and checkpoint bytes are
+// never returned to Go.
+func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, error) {
+	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
+		return nil, "", fmt.Errorf("%w: invalid runnable-run cursor", ErrProcessRunInvalid)
+	}
+	if limit <= 0 || limit > MaxProcessRunReadPage {
+		return nil, "", fmt.Errorf("%w: runnable-run page size must be 1..%d", ErrProcessRunInvalid, MaxProcessRunReadPage)
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, "", err
+	}
+	rows, err := d.Query(`SELECT
+		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
+		CASE WHEN json_valid(checkpoint_json) = 1
+			AND json_type(checkpoint_json, '$.outstandingCommand') IS NULL
+			THEN 1 ELSE 0 END
+		FROM (
+			SELECT id, checkpoint_json FROM process_runs
+			WHERE id > ? AND status NOT IN ('completed', 'failed', 'canceled')
+			ORDER BY id LIMIT ?
+		) AS active_page
+		ORDER BY id`, MaxProcessRunIDBytes, afterID, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = rows.Close() }()
+	ids := make([]string, 0, limit)
+	lastExamined := ""
+	examined := 0
+	for rows.Next() {
+		var id sql.NullString
+		var runnable bool
+		if err := rows.Scan(&id, &runnable); err != nil {
+			return nil, "", err
+		}
+		if !id.Valid || !validProcessRuntimeIdentifier(id.String, MaxProcessRunIDBytes, false) {
+			return nil, "", ErrProcessRunCorrupt
+		}
+		examined++
+		lastExamined = id.String
+		if runnable {
+			ids = append(ids, id.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if examined < limit {
+		lastExamined = ""
+	}
+	return ids, lastExamined, nil
 }
 
 func scanProcessRunEvent(scanner processRunScanner) (ProcessRunEvent, error) {

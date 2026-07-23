@@ -280,6 +280,14 @@ var permissionRegistry = []PermSlug{
 		Description: "Create and edit process templates through tclaude agent process-templates save. Does not execute or instantiate a process. Not default-granted; requires an explicit grant or one-shot human approval.",
 	},
 	{
+		Slug:        PermProcessRunsRead,
+		Description: "List and inspect daemon-owned process runs and reconciliation state. Not default-granted; runtime state can contain bound command details and parameters.",
+	},
+	{
+		Slug:        PermProcessRunsManage,
+		Description: "Create, resume, and explicitly reconcile daemon-owned process runs, including executing the run's persisted authorized program profiles. Not default-granted; requires an explicit grant or one-shot human approval.",
+	},
+	{
 		Slug:          PermHumanNotify,
 		OwnerImplied:  true,
 		AutoGrantable: true,

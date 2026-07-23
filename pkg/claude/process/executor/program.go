@@ -10,8 +10,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 )
+
+var programPerform = performProgram
 
 const (
 	DefaultProgramTimeout     = 10 * time.Minute
@@ -44,21 +47,24 @@ type Result struct {
 }
 
 // Execute validates explicit per-run authorization, dispatches argv without a
-// shell, waits for process cleanup, and then commits the observation. A commit
-// failure leaves the durable outstanding command for explicit reconciliation.
-func Execute(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, error) {
+// shell, waits for process cleanup, and atomically commits the observation plus
+// the next prepared command (or terminal state). It returns that committed
+// next dispatch to the same live owner. A commit failure leaves the durable
+// outstanding command for explicit reconciliation.
+func Execute(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, *Dispatch, error) {
 	result, err := runProgram(ctx, run, dispatch, authorization)
 	if err != nil {
-		return Result{}, err
+		return Result{}, nil, err
 	}
-	if err := recordResult(run, dispatch, result); err != nil {
+	next, err := recordResult(run, dispatch, result)
+	if err != nil {
 		// The program may have executed, so the spent in-memory permission must
 		// never become dispatchable again. Dropping it exposes the same explicit
 		// reconciliation actions as a cold load of the durable outstanding row.
 		run.dispatch = nil
-		return result, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
+		return result, nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
 	}
-	return result, nil
+	return result, next, nil
 }
 
 func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, error) {
@@ -77,6 +83,10 @@ func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization
 	dispatch.used = true
 	dispatch.mu.Unlock()
 
+	return programPerform(ctx, run.id, command)
+}
+
+func performProgram(ctx context.Context, runID string, command engine.Command) (Result, error) {
 	started := time.Now().UTC()
 	result := Result{
 		StartedAt: started,
@@ -91,7 +101,7 @@ func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization
 		result.Observation.Error = boundedError(err.Error())
 		return result, nil
 	}
-	environment, err := programEnvironment(run.id, command.ID)
+	environment, err := programEnvironment(runID, command.ID)
 	if err != nil {
 		result.FinishedAt = time.Now().UTC()
 		result.Observation.Error = boundedError(err.Error())
@@ -143,21 +153,42 @@ func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization
 	return result, nil
 }
 
-func recordResult(run *Run, dispatch *Dispatch, result Result) error {
+func recordResult(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	if run == nil || dispatch == nil || dispatch.owner != run || dispatch.stateVersion != run.stateVersion || run.dispatch != dispatch || !dispatch.wasUsed() {
-		return ErrStaleDispatch
+		return nil, ErrStaleDispatch
 	}
 	command := dispatch.command
 	if result.Observation.CommandID != command.ID || result.Observation.NodeID != command.NodeID {
-		return ErrStaleDispatch
+		return nil, ErrStaleDispatch
 	}
 	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
 		Kind: engine.TransitionProgramObserved, Observation: &result.Observation,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return persist(run, next, event("program_observed", &command, executorActor, result))
+	observed := event("program_observed", &command, executorActor, result)
+	advanced, err := engine.AdvanceUntilQuiescent(next, run.definition)
+	if err != nil {
+		return nil, err
+	}
+	events := []db.ProcessRunEvent{observed}
+	if advanced.OutstandingCommand != nil {
+		events = append(events, event("program_prepared", advanced.OutstandingCommand, executorActor, preparedEvidence{Command: cloneCommand(*advanced.OutstandingCommand)}))
+	} else {
+		events = append(events, event("engine_advanced", nil, executorActor, struct {
+			Status engine.RunStatus `json:"status"`
+		}{Status: advanced.Status}))
+	}
+	if err := persistEvents(run, advanced, events); err != nil {
+		return nil, err
+	}
+	if advanced.OutstandingCommand != nil {
+		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*advanced.OutstandingCommand)}
+		run.dispatch = d
+		return d, nil
+	}
+	return nil, nil
 }
 
 func validateProgram(program engine.ProgramCommand) (time.Duration, error) {

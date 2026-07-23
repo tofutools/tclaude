@@ -67,7 +67,13 @@ func runTemplatesLs(cmd *cobra.Command, p *templatesLsParams, out io.Writer) err
 }
 
 func runsCmd() *cobra.Command {
-	cmd := unavailableRuntimeCmd("runs", "Inspect process runs")
-	cmd.AddCommand(unavailableRuntimeCmd("ls", "List process runs"))
-	return cmd
+	return boa.CmdT[struct{}]{
+		Use:         "runs",
+		Short:       "Inspect daemon-owned process runs",
+		ParamEnrich: common.DefaultParamEnricher(),
+		SubCmds:     []*cobra.Command{processRunsLsCmd()},
+		RunFunc: func(_ *struct{}, cmd *cobra.Command, _ []string) {
+			_ = cmd.Help()
+		},
+	}.ToCobra()
 }
