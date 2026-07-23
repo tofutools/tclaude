@@ -15,7 +15,8 @@ type ConvRef struct {
 	// For CC it's the cwd stamped onto the conv's turns; for Codex it's
 	// SessionMeta.cwd / threads.cwd.
 	ProjectPath string
-	// Harness is which harness owns the conversation ("claude", "codex").
+	// Harness is which harness owns the conversation ("claude", "codex",
+	// "opencode").
 	Harness string
 }
 
@@ -59,16 +60,18 @@ type ConvStore interface {
 	// Title returns the conversation's display title from the harness's
 	// title store: CC's customTitle turn (falling back to summary / first
 	// prompt); Codex's threads.title (falling back to a title derived
-	// from the first user message). An unknown conv yields ("", nil), not
-	// an error.
+	// from the first user message); OpenCode's supported session-list title
+	// plus any cold local override. An unknown conv yields ("", nil), not an
+	// error.
 	Title(convID string) (string, error)
 
 	// SetTitle persists a new title in the harness's title store WITHOUT a
-	// live pane — for harnesses whose title is a directly-writable record
-	// (Codex's threads.title). A harness that renames only via an in-pane
-	// slash command (CC's `/rename`) returns an error here; agentd routes
-	// such harnesses through the injection path instead (gated on
-	// Lifecycle.RenameCommand), so this is never reached for them.
+	// live pane — for harnesses whose title has an out-of-band write surface
+	// (Codex's threads.title; OpenCode's managed server API with a local cache
+	// fallback). A harness that renames only via an in-pane slash command
+	// (CC's `/rename`) returns an error here; agentd routes such harnesses
+	// through the injection path instead (gated on Lifecycle.RenameCommand),
+	// so this is never reached for them.
 	SetTitle(convID, title string) error
 
 	// Exists reports whether convID's conversation is still present in the

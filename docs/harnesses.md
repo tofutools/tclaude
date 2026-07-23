@@ -5,10 +5,10 @@ It is now **harness-agnostic**: the session, conversation, agent-coordination,
 and dashboard machinery can drive more than one coding *harness* (the underlying
 agentic CLI). **Claude Code, OpenAI Codex CLI, and OpenCode are registered
 harnesses.** OpenCode support currently covers the managed serve-and-attach
-launch path described below; its broader conversation and permission adapters
-remain intentionally capability-gated. Claude remains the default so existing
-commands and databases keep their historical behavior when no harness is
-recorded.
+launch path and its conversation store; permission, ask, and full status
+adapters remain intentionally capability-gated. Claude remains the default so
+existing commands and databases keep their historical behavior when no harness
+is recorded.
 
 A *harness* is whichever CLI actually runs the model in the tmux pane —
 `claude`, `codex`, or an `opencode attach` client. tclaude owns everything
@@ -107,27 +107,27 @@ through capability flags and degrades gracefully where a harness lacks a feature
 (for example, Codex has no in-pane rename, so renames use Codex's title store
 instead of slash-command injection).
 
-| Capability | `claude` — Claude Code | `codex` — Codex CLI |
-|---|---|---|
-| **Spawn** | ✅ `claude` | ✅ `codex` |
-| **Resume** | ✅ `claude --resume <id>` | ✅ `codex resume <id>` |
-| **Ad-hoc ask** ([guide](ask.md)) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn |
-| **Live-streamed ask output** (print mode → a TTY) | ✅ `--output-format stream-json`, answer rendered token-by-token | ➖ buffered (`codex exec` prints the final message at the end) |
-| **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB |
-| **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) |
-| **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` |
-| **Graceful stop** | ✅ `/exit` | ✅ `/quit` |
-| **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access |
-| **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) |
-| **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) |
-| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag |
-| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents |
-| **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog |
-| **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) |
-| **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system |
-| **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items |
-| **Background shell tracking** ([dashboard](dashboard.md)) | ✅ `Bash` with `run_in_background` — tracked per task id and reconciled against live descendant processes, so an agent waiting on one shows `⚙+N` instead of `idle` | ➖ no background-shell mechanism |
-| **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) |
+| Capability | `claude` — Claude Code | `codex` — Codex CLI | `opencode` — OpenCode |
+|---|---|---|---|
+| **Spawn** | ✅ `claude` | ✅ `codex` | ✅ managed `serve` + pane `attach` |
+| **Resume** | ✅ `claude --resume <id>` | ✅ `codex resume <id>` | ✅ managed server + `attach --session <id>` |
+| **Ad-hoc ask** ([guide](ask.md)) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn | ❌ adapter pending |
+| **Live-streamed ask output** (print mode → a TTY) | ✅ `--output-format stream-json`, answer rendered token-by-token | ➖ buffered (`codex exec` prints the final message at the end) | ❌ adapter pending |
+| **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB | ✅ cold `session list --format json` + tclaude cache |
+| **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) | ✅ authenticated server API; local title cache when cold |
+| **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` | ✅ in-pane `/compact` |
+| **Graceful stop** | ✅ `/exit` | ✅ `/quit` | ✅ `/exit` |
+| **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
+| **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
+| **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
+| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ❌ no native OS sandbox |
+| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ❌ adapter pending |
+| **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
+| **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) | ❌ no reviewer equivalent |
+| **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system | ➖ no auto-memory system |
+| **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items | ⚠️ OpenCode TUI status only |
+| **Background shell tracking** ([dashboard](dashboard.md)) | ✅ `Bash` with `run_in_background` — tracked per task id and reconciled against live descendant processes, so an agent waiting on one shows `⚙+N` instead of `idle` | ➖ no background-shell mechanism | ➖ no background-shell mechanism |
+| **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) | ✅ (harness badge + managed launch) |
 
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·
 ❌ not available.
@@ -288,11 +288,18 @@ session's liveness contract. Resume reconstructs the same topology around the
 recorded `ses_…` conversation. Model and reasoning-variant choices are loaded
 from `opencode models openai --verbose` rather than a hard-coded catalog.
 
-This first slice deliberately leaves OpenCode's conversation store, permissions
-and sandbox integration, ad-hoc ask, and full SSE-to-status mapping unimplemented.
-Those controls stay hidden or rejected through the harness capability checks;
-see [the OpenCode exploration](opencode-exploration.md) for the researched
-follow-up contracts.
+OpenCode conversations are enumerated through the supported
+`opencode session list --format json` surface, including when no managed server
+is live. Its per-session `directory` is the cwd/resume identity; tclaude mirrors
+the list into `conv_index` for common dashboard and title readers. Rename uses
+the authenticated managed-server API when available and a tclaude-local title
+overlay when the conversation is cold. Direct reads or writes of OpenCode's
+private `opencode.db` schema are deliberately avoided.
+
+Permissions and sandbox integration, ad-hoc ask, and full SSE-to-status mapping
+remain unimplemented. Those controls stay hidden or rejected through the
+harness capability checks; see [the OpenCode
+exploration](opencode-exploration.md) for the researched follow-up contracts.
 
 The dashboard spawn dialog and spawn-profile editor show Codex's **Approval
 reviewer** as a separate control: leave it unset/use the human reviewer, or
@@ -312,13 +319,12 @@ a human. See [Agent coordination](agent.md#spawn) for the capability matrix.
 
 ## What stays the same across harnesses
 
-The common tclaude surfaces remain harness-agnostic. OpenCode currently omits
-the conversation-store-specific operations called out below:
+The common tclaude surfaces remain harness-agnostic:
 
 - **Sessions** — tmux detach/reattach, `session ls`, attach, kill.
-- **Conversations** — `conv ls`/`search` enumerate Claude and Codex conversations
-  side by side; OpenCode listing/search is a follow-up, while durable managed
-  agent resume already works with its recorded `ses_…` ID.
+- **Conversations** — `conv ls`/`search` enumerate Claude, Codex, and OpenCode
+  conversations side by side; `conv resume` resolves each through its owning
+  harness and relaunches it in the recorded cwd.
 - **Agent coordination** — groups, cross-session messaging, the inbox,
   permissions, cron nudges. A group can mix all three harnesses.
 - **Dashboard** — one console for all agents, with a per-agent harness badge.

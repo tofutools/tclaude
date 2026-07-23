@@ -18,8 +18,14 @@ func TestOpenCodeDescriptor(t *testing.T) {
 	if !slicesContains(SpawnBinaries(), "opencode") {
 		t.Fatalf("SpawnBinaries() = %v, want opencode", SpawnBinaries())
 	}
-	if h.Sandbox != nil || h.Approval != nil || h.Ask != nil || h.Convs != nil {
+	if h.Sandbox != nil || h.Approval != nil || h.Ask != nil || h.Convs == nil {
 		t.Fatalf("out-of-scope OpenCode contracts must degrade as nil: %+v", h)
+	}
+	if h.SupportsRename() {
+		t.Fatal("OpenCode rename must use the out-of-band ConvStore API path")
+	}
+	if !h.CanRename() {
+		t.Fatal("OpenCode ConvStore must expose the rename affordance")
 	}
 }
 
