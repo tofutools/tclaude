@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
@@ -39,6 +40,117 @@ func TestRuntimeMVPVerbsAndDeferredVerbsRemainDiscoverable(t *testing.T) {
 	err := root.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "temporarily unavailable: no engine is installed")
+}
+
+func TestRuntimeReadCommandsExposeAskHumanFlagAndCompletion(t *testing.T) {
+	for name, command := range map[string]*cobra.Command{
+		"runs ls":   processRunsLsCmd(),
+		"show":      processShowCmd(),
+		"events":    processEventsCmd(),
+		"reconcile": processReconcileCmd(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			flag := command.Flags().Lookup("ask-human")
+			require.NotNil(t, flag)
+			assert.Empty(t, flag.DefValue)
+			assert.Contains(t, flag.Usage, "permission denial")
+
+			complete, ok := command.GetFlagCompletionFunc("ask-human")
+			require.True(t, ok)
+			suggestions, _ := complete(command, nil, "3")
+			assert.Contains(t, suggestions, "30s")
+		})
+	}
+}
+
+func TestRuntimeReadCommandsPassAskHumanAndRetryOutput(t *testing.T) {
+	tests := map[string]struct {
+		run      func(stdout, stderr *bytes.Buffer) error
+		wantPath string
+	}{
+		"runs ls": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessRunsLs(&processRunsLsParams{AskHuman: "30s"}, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs",
+		},
+		"show": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessShow("run_1", "30s", false, false, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1",
+		},
+		"events": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessEvents(&processEventsParams{
+					RunID: "run_1", Limit: 16, PayloadBytes: defaultProcessEventPayloadDisplayBytes, AskHuman: "30s",
+				}, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/events?limit=16",
+		},
+		"reconcile": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessShow("run_1", "30s", true, false, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var gotPath string
+			var gotOpts agent.DaemonOpts
+			stubProcessRuntime(t, func(_ string, path string, _ any, out any, opts agent.DaemonOpts) error {
+				gotPath, gotOpts = path, opts
+				switch typed := out.(type) {
+				case *processRunJSON:
+					typed.ID = "run_1"
+					typed.Action = "complete"
+				}
+				return nil
+			})
+			var stdout, stderr bytes.Buffer
+
+			require.NoError(t, test.run(&stdout, &stderr))
+
+			assert.Equal(t, test.wantPath, gotPath)
+			assert.Equal(t, 30*time.Second, gotOpts.AskHuman)
+			assert.Same(t, &stderr, gotOpts.RetryOutput)
+		})
+	}
+}
+
+func TestRuntimeReadCommandsRejectInvalidAskHumanBeforeRequest(t *testing.T) {
+	tests := map[string]func(stdout, stderr *bytes.Buffer) error{
+		"runs ls": func(stdout, stderr *bytes.Buffer) error {
+			return runProcessRunsLs(&processRunsLsParams{AskHuman: "later"}, stdout, stderr)
+		},
+		"show": func(stdout, stderr *bytes.Buffer) error {
+			return runProcessShow("run_1", "later", false, false, stdout, stderr)
+		},
+		"events": func(stdout, stderr *bytes.Buffer) error {
+			return runProcessEvents(&processEventsParams{
+				RunID: "run_1", Limit: 16, PayloadBytes: defaultProcessEventPayloadDisplayBytes, AskHuman: "later",
+			}, stdout, stderr)
+		},
+		"reconcile": func(stdout, stderr *bytes.Buffer) error {
+			return runProcessShow("run_1", "later", true, false, stdout, stderr)
+		},
+	}
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			stubProcessRuntime(t, func(_ string, _ string, _ any, _ any, _ agent.DaemonOpts) error {
+				calls++
+				return nil
+			})
+
+			err := run(&bytes.Buffer{}, &bytes.Buffer{})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid --ask-human value")
+			assert.Zero(t, calls)
+		})
+	}
 }
 
 func TestRuntimeMutationUsesDaemonAndNeverOpensSQLite(t *testing.T) {
@@ -158,7 +270,7 @@ func TestRuntimeShowJSONEmitsCompleteRunSnapshot(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	require.NoError(t, runProcessShow(" run_json ", false, true, &stdout, &stderr))
+	require.NoError(t, runProcessShow(" run_json ", "", false, true, &stdout, &stderr))
 	assert.Empty(t, stderr.String())
 	expected, err := json.Marshal(want)
 	require.NoError(t, err)

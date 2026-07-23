@@ -21,7 +21,9 @@ agentd-backed commands below; do not write directly into the process store.
 A scribe needs both independent slugs:
 
 - `process.templates.read` for `ls`, `show`, and `validate`. The optional
-  default-permission installer grants this low-risk read slug.
+  default-permission installer grants this low-risk read slug. When it is
+  absent, use `--ask-human 30s` on the individual read command for one-shot
+  approval instead of asking the human to run the command manually.
 - `process.templates.manage` for `save`. It is not default-granted. Ask the
   human to grant it, or use `save --ask-human 30s` for one-shot approval.
 

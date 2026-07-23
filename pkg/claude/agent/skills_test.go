@@ -102,6 +102,8 @@ func TestProcessTemplateSkillPinsSafeAuthoringContract(t *testing.T) {
 	for _, required := range []string{
 		"process.templates.read",
 		"process.templates.manage",
+		"--ask-human 30s",
+		"one-shot",
 		"--expect-source-hash",
 		"process_template_conflict",
 		"never blind-overwrite",
