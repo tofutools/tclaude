@@ -75,10 +75,11 @@ func TestGroupTemplateAgent_ProfileInlineRoundTrip(t *testing.T) {
 
 	tr := true
 	inline := &SpawnProfile{
-		Harness:                "codex",
+		Harness:                "opencode",
 		Model:                  "gpt-5.5",
 		Effort:                 "high",
-		Sandbox:                "tclaude-agent",
+		Sandbox:                "access-control",
+		ToolGovernance:         "deny",
 		AskUserQuestionTimeout: "",
 		TrustDir:               &tr,
 		IsOwner:                &tr,
@@ -101,10 +102,11 @@ func TestGroupTemplateAgent_ProfileInlineRoundTrip(t *testing.T) {
 
 	lead := got.Agents[0]
 	require.NotNil(t, lead.ProfileInline, "inline profile round-trips")
-	assert.Equal(t, "codex", lead.ProfileInline.Harness)
+	assert.Equal(t, "opencode", lead.ProfileInline.Harness)
 	assert.Equal(t, "gpt-5.5", lead.ProfileInline.Model)
 	assert.Equal(t, "high", lead.ProfileInline.Effort)
-	assert.Equal(t, "tclaude-agent", lead.ProfileInline.Sandbox)
+	assert.Equal(t, "access-control", lead.ProfileInline.Sandbox)
+	assert.Equal(t, "deny", lead.ProfileInline.ToolGovernance)
 	require.NotNil(t, lead.ProfileInline.TrustDir)
 	assert.True(t, *lead.ProfileInline.TrustDir)
 	require.NotNil(t, lead.ProfileInline.IsOwner)
