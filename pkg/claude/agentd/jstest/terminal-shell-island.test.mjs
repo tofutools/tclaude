@@ -377,9 +377,14 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   await harness.act(() => harness.fireEvent(tab('two'), 'contextmenu', { clientX: 24, clientY: 32 }));
   const pointerMenu = getByRole(host, 'menu', { name: 'Actions for two' });
   assert.equal(tab('two').getAttribute('aria-expanded'), 'true');
-  assert.equal(pointerMenu.querySelectorAll('[role="menuitem"]').length, 4);
-  assert.equal(pointerMenu.querySelectorAll('[role="separator"]').length, 1);
-  assert.equal(harness.document.activeElement.textContent, 'Detach tab', 'opening focuses the first action');
+  // Detach / close / close-others / close-all, plus the grouping commands the
+  // ungrouped case offers: start a group from this tab (no stacks exist yet, so
+  // no join items and no leave item).
+  assert.deepEqual([...pointerMenu.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
+    ['New group from this tab', 'Detach tab', 'Close tab', 'Close other tabs', 'Close all tabs']);
+  assert.equal(pointerMenu.querySelectorAll('[role="separator"]').length, 2);
+  assert.equal(harness.document.activeElement.textContent, 'New group from this tab',
+    'opening focuses the first action');
   await harness.act(() => harness.fireEvent(pointerMenu, 'keydown', { key: 'Escape' }));
   assert.equal(host.querySelector('[role="menu"]'), null);
   assert.equal(harness.document.activeElement, tab('two'), 'Escape restores focus to the invoking tab');
@@ -431,6 +436,8 @@ test('terminal tab context menu supports pointer and keyboard detach and close a
   });
   assert.equal(keyboardOpen.defaultPrevented, true, 'Shift+F10 is the keyboard context-menu gesture');
   const keyboardMenu = getByRole(host, 'menu', { name: 'Actions for three' });
+  harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
+  assert.equal(harness.document.activeElement.textContent, 'Detach tab');
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });
   assert.equal(harness.document.activeElement.textContent, 'Close tab');
   harness.fireEvent(keyboardMenu, 'keydown', { key: 'ArrowDown' });

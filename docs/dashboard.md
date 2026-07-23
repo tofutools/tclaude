@@ -909,6 +909,54 @@ appended at the end of the current strip. Simply opening, closing, switching, or
 popping out a terminal does not rewrite the stored order. Remembered history is
 bounded to 512 keys and 60 KiB.
 
+### Terminal tab groups
+
+Terminal tabs can be collected into named, collapsible **groups** — coloured
+stacks inside the same strip, for keeping the terminals of one piece of work
+together when many are open. Groups are created and named by the operator; they
+are not derived from tclaude agent groups, so a group can hold whatever mix of
+agent terminals and shells the work actually needs.
+
+A group is always a *contiguous* run of tabs. Every operation that could break
+that — creating a group, joining one, reordering across one — pulls the members
+back together next to the first of them, so what the strip shows and what a drag
+or a keystroke will do never disagree.
+
+* **Create** — a tab's context menu (right-click or **Shift-F10**) offers *New
+  group from this tab*, which makes the group and opens its name for editing.
+* **Join and leave** — dropping a tab onto another tab adopts that tab's
+  membership, so the same drag that reorders also joins a group (dropped between
+  two members) or leaves one (dropped among ungrouped tabs). Dropping onto the
+  group's pill joins at the end of the group. The context menu carries the same
+  moves as *Add to "…"* and *Remove from group*.
+* **Parking beside a group** — the one position a drop onto a tab cannot express
+  is directly before a leading group, or between two adjacent groups, since the
+  only tab there belongs to a group and dropping on it would join. While a drag
+  is in flight a thin drop lane appears at each group boundary; releasing on it
+  parks the tab there, ungrouped. The keyboard reaches the same positions by
+  hopping a whole group.
+* **Keyboard** — **Alt-Shift-Left/Right Arrow** steps a tab between its siblings
+  inside a group and, at either edge of the group, steps it out of the group.
+  An ungrouped tab hops over a whole group rather than landing inside it, which
+  the contiguity rule would immediately undo. Each move is announced in the
+  strip's live region, including the group it moved into or out of.
+* **Collapse** — clicking the group's pill collapses it to the pill alone.
+  Collapsing over the terminal you are looking at moves activation to the
+  nearest tab outside the group; when there is no such tab, the active member
+  stays visible in the collapsed group rather than the strip losing its
+  selection. Activating a member of a collapsed group re-expands it.
+* **Rename, ungroup, close** — the pill's own context menu renames the group,
+  dissolves it (*Ungroup tabs*, which keeps every terminal and its position), or
+  closes the terminals in it.
+
+Group descriptors and membership are stored as one more presentation preference
+alongside the tab order, so they survive reloads and are shared by every
+dashboard client. Membership is remembered for terminals that are not currently
+open, exactly as the order is: closing every tab of a group and later reopening
+one restores it to its group. A group whose last member explicitly *leaves* it
+has nothing left to render, drop onto, or name, and is dropped. Stored groups
+are bounded to 24 groups, 40-character names and 60 KiB.
+
 In 🧙 wizard mode, the Terminals tab and its popped-out browser terminals use
 the same purple-and-gold portal chrome as the rest of the dashboard. Each pane
 header has an **Arcane palette** checkbox beside **Copy** and **⧉ tab**. It

@@ -86,7 +86,7 @@ test('terminal pane order persists, restores known keys, appends new keys, and n
 
   const moved = state.reorderPane('three', 'two');
   assert.deepEqual(state.panes.value.map((pane) => pane.key), ['three', 'two', 'one']);
-  assert.deepEqual(moved, { pane: three, index: 0, count: 3 });
+  assert.deepEqual(moved, { pane: three, index: 0, count: 3, group: null });
   assert.equal(state.activeKey.value, 'three', 'moving the active pane never switches terminals');
   assert.equal(state.panes.value.find((pane) => pane.key === 'one'), one,
     'reordering preserves stable pane descriptors');
