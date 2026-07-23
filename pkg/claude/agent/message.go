@@ -37,6 +37,12 @@ type messageParams struct {
 	Gen       string   `long:"gen" optional:"true" help:"Deliver to a SPECIFIC previous generation of the target agent: a conv-id that must belong to the agent the target resolves to. Normally a message follows the agent to its current generation; --gen pins it to that exact past conv. Direct (non-group, non-cc) sends only."`
 	To        string   `long:"to" optional:"true" help:"Target recipient as a flag instead of the first positional argument"`
 	Recipient string   `long:"recipient" optional:"true" help:"Target recipient as a flag instead of the first positional argument (alias of --to)"`
+
+	// Cobra's Changed state distinguishes an omitted recipient flag from an
+	// explicitly empty one. Boa binds values into the public fields above;
+	// messageCmd records presence here before runMessage validates them.
+	toSet        bool
+	recipientSet bool
 }
 
 func messageCmd() *cobra.Command {
@@ -50,17 +56,33 @@ func messageCmd() *cobra.Command {
 			"The sender must be a member or owner of the group to broadcast. Add --role to broadcast only to members holding a given role.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *messageParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeMessageTargets)
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completePositionalMessageTarget)
 			boa.GetParamT(ctx, &p.To).SetAlternativesFunc(completeMessageTargets)
 			boa.GetParamT(ctx, &p.Recipient).SetAlternativesFunc(completeMessageTargets)
 			boa.GetParamT(ctx, &p.Cc).SetAlternativesFunc(completeConvSelectors)
 			boa.GetParamT(ctx, &p.Role).SetAlternativesFunc(completeRoles)
 			return nil
 		},
-		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *messageParams, cmd *cobra.Command, _ []string) {
+			recordMessageTargetFlags(p, cmd)
 			os.Exit(runMessage(p, os.Stdout, os.Stderr, os.Stdin))
 		},
 	}.ToCobra()
+}
+
+func recordMessageTargetFlags(p *messageParams, cmd *cobra.Command) {
+	p.toSet = cmd.Flags().Changed("to")
+	p.recipientSet = cmd.Flags().Changed("recipient")
+}
+
+// completePositionalMessageTarget offers recipient selectors only while the
+// first positional argument is actually the recipient. Once a recipient flag
+// is present, that position is the free-form body and should not suggest peers.
+func completePositionalMessageTarget(cmd *cobra.Command, args []string, toComplete string) []string {
+	if cmd.Flags().Changed("to") || cmd.Flags().Changed("recipient") {
+		return nil
+	}
+	return completeMessageTargets(cmd, args, toComplete)
 }
 
 func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int {
@@ -105,13 +127,21 @@ func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int
 func normalizeMessageTarget(p *messageParams) error {
 	flagTarget := ""
 	flagName := ""
-	if p.To != "" {
+	toSet := p.toSet || p.To != ""
+	recipientSet := p.recipientSet || p.Recipient != ""
+	if toSet && recipientSet {
+		return fmt.Errorf("pass only one of --to or --recipient")
+	}
+	if toSet {
+		if strings.TrimSpace(p.To) == "" {
+			return fmt.Errorf("--to requires a non-empty recipient")
+		}
 		flagTarget = p.To
 		flagName = "--to"
 	}
-	if p.Recipient != "" {
-		if flagTarget != "" {
-			return fmt.Errorf("pass only one of --to or --recipient")
+	if recipientSet {
+		if strings.TrimSpace(p.Recipient) == "" {
+			return fmt.Errorf("--recipient requires a non-empty recipient")
 		}
 		flagTarget = p.Recipient
 		flagName = "--recipient"

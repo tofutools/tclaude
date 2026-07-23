@@ -148,6 +148,24 @@ func TestMessageCmdSupportsRecipientFlags(t *testing.T) {
 	assert.Contains(t, cmd.UseLine(), "[target]", "positional target remains supported but is optional")
 }
 
+func TestMessageCmdRejectsExplicitlyEmptyRecipientFlag(t *testing.T) {
+	cmd := messageCmd()
+	require.NoError(t, cmd.Flags().Set("to", ""))
+
+	params := messageParams{Target: "worker", Text: "hello"}
+	recordMessageTargetFlags(&params, cmd)
+	err := normalizeMessageTarget(&params)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--to requires a non-empty recipient")
+}
+
+func TestMessageCmdDoesNotCompleteBodyAsRecipient(t *testing.T) {
+	cmd := messageCmd()
+	require.NoError(t, cmd.Flags().Set("recipient", "reviewer"))
+	assert.Empty(t, completePositionalMessageTarget(cmd, nil, ""),
+		"the first positional argument is the body when a recipient flag is set")
+}
+
 func TestNormalizeMessageTarget(t *testing.T) {
 	tests := []struct {
 		name       string
