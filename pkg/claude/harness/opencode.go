@@ -8,6 +8,7 @@ func init() {
 		Name:                OpenCodeName,
 		DisplayName:         "OpenCode",
 		Spawn:               openCodeSpawner{},
+		Ask:                 openCodeAsker{},
 		Models:              openCodeModels{},
 		Sandbox:             openCodeSandbox{},
 		Convs:               openCodeConvStore{},
