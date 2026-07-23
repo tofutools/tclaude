@@ -280,14 +280,16 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 	}
 	// Capability-incompatible legacy flags are process telemetry, not durable
-	// intent. Normalize them while projecting so a stale/hand-edited Codex row
-	// cannot arm Claude-only features if the stable agent later relaunches.
-	// Do this only for Codex: another non-Claude harness may legitimately
-	// represent "no launch-time approval policy" with the empty string.
-	if strings.EqualFold(harnessName, "codex") {
+	// intent. Normalize them while projecting so a stale/hand-edited non-Claude
+	// row cannot arm Claude-only features if the stable agent later relaunches.
+	if !strings.EqualFold(harnessName, DefaultHarness) {
 		remoteControl = 0
 		autoMemory = 0
 		askTimeout = ""
+	}
+	// Approval-policy normalization is Codex-specific. OpenCode legitimately
+	// represents "no launch-time approval policy" with the empty string.
+	if strings.EqualFold(harnessName, "codex") {
 		if normalized, ok := conservativeCodexApprovalProjection(approvalPolicy); ok {
 			approvalPolicy = normalized
 		}

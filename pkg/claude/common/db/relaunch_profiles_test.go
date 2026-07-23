@@ -174,8 +174,11 @@ func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "server-authoritative-session", ConvID: convID, Cwd: "/tmp/server-authoritative",
-		Harness: "opencode", Status: "idle",
+		Harness: "opencode", Status: "idle", AskUserQuestionTimeout: "5m",
+		RemoteControl: true, AutoMemory: true,
 	}))
+	require.NoError(t, SetSessionRemoteControl("server-authoritative-session", true))
+	require.NoError(t, SetSessionAutoMemory("server-authoritative-session", true))
 
 	conversation, err := ConversationResumeProfileForConv(convID)
 	require.NoError(t, err)
@@ -189,6 +192,12 @@ func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
 	require.NotNil(t, agent)
 	require.NotNil(t, agent.ApprovalPolicy)
 	assert.Empty(t, *agent.ApprovalPolicy)
+	require.NotNil(t, agent.AskUserQuestionTimeout)
+	assert.Empty(t, *agent.AskUserQuestionTimeout)
+	require.NotNil(t, agent.RemoteControl)
+	assert.False(t, *agent.RemoteControl)
+	require.NotNil(t, agent.AutoMemory)
+	assert.False(t, *agent.AutoMemory)
 }
 
 func TestBlankInitialSessionProjectionPreservesExactAgentBirthIntent(t *testing.T) {

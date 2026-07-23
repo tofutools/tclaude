@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,6 +49,45 @@ func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ses_test123", convID)
 	assert.True(t, sawCreate)
+}
+
+func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {
+	const password = "private-password"
+	healthCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		healthCalls++
+		user, pass, ok := r.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, openCodeServerUsername, user)
+		assert.Equal(t, password, pass)
+		if healthCalls < 3 {
+			http.Error(w, "warming up", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"healthy":true}`))
+	}))
+	defer server.Close()
+
+	runtime := db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: server.URL, Password: password,
+	}
+	assert.True(t, openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL))
+	const foreignPID = 99_999_999
+	assert.False(t, openCodeProcessOwnsEndpoint(foreignPID, runtime.ServerURL))
+	foreignRuntime := runtime
+	foreignRuntime.PID = foreignPID
+	assert.False(t, openCodeHealthyAfterRetries(foreignRuntime, 1, 0))
+	assert.Zero(t, healthCalls, "credentials must not be sent to a listener owned by another PID")
+	assert.True(t, openCodeHealthyAfterRetries(runtime, 3, time.Millisecond))
+	assert.Equal(t, 3, healthCalls)
+
+	bareOK := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer bareOK.Close()
+	assert.False(t, openCodeHealthy(db.OpenCodeRuntime{
+		ServerURL: bareOK.URL, Password: password,
+	}))
 }
 
 func TestOpenCodeLaunchPromptCarriesModelAndVariant(t *testing.T) {

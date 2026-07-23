@@ -26,8 +26,12 @@ import (
 )
 
 const (
-	openCodeServerUsername = "opencode"
-	openCodeStartupTimeout = 12 * time.Second
+	openCodeServerUsername    = "opencode"
+	openCodeStartupTimeout    = 12 * time.Second
+	openCodeHealthAttempts    = 3
+	openCodeHealthRetryDelay  = 250 * time.Millisecond
+	openCodeProcessStopWait   = 2 * time.Second
+	openCodeEndpointCloseWait = 2 * time.Second
 )
 
 type openCodeLaunch struct {
@@ -49,6 +53,7 @@ var openCodeProcesses = struct {
 }{bySession: map[string]*openCodeProcess{}}
 
 var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
+var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
 
 // These seams keep flow tests independent of a locally-installed OpenCode
 // binary while still exercising executeSpawn's production orchestration.
@@ -63,7 +68,8 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID string) (*openCodeLaun
 		return nil, fmt.Errorf("look up OpenCode runtime: %w", err)
 	}
 	if existing != nil {
-		if openCodeHealthy(*existing) {
+		if openCodeHealthyAfterRetries(*existing,
+			openCodeHealthAttempts, openCodeHealthRetryDelay) {
 			ensureOpenCodeSSE(*existing)
 			return &openCodeLaunch{
 				SessionID: sessionID, ConvID: existing.ConvID,
@@ -173,11 +179,23 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 				"stderr_truncated", stderr.Truncated())
 		}
 	}()
+	runtime.PID = cmd.Process.Pid
 	deadline := time.Now().Add(openCodeStartupTimeout)
 	for time.Now().Before(deadline) {
-		if openCodeHealthy(db.OpenCodeRuntime{
-			ServerURL: runtime.ServerURL, Password: runtime.Password,
-		}) {
+		select {
+		case err := <-process.done:
+			if err == nil {
+				err = fmt.Errorf("server exited before health check")
+			}
+			return nil, fmt.Errorf("OpenCode server failed during startup: %w: %s", err, stderr.String())
+		default:
+		}
+		// Port allocation necessarily has a bind-close-exec gap because
+		// OpenCode does not accept a pre-bound listener. Never disclose the
+		// password to that endpoint until the launched PID (or a child) is
+		// positively observed owning its listening socket.
+		if openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL) &&
+			openCodeHealthy(runtime) {
 			return process, nil
 		}
 		select {
@@ -240,12 +258,36 @@ func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
 	if err != nil {
 		return false
 	}
-	response, err := openCodeHTTPClient.Do(request)
+	response, err := openCodeHealthHTTPClient.Do(request)
 	if err != nil {
 		return false
 	}
 	defer response.Body.Close()
-	return response.StatusCode == http.StatusOK
+	if response.StatusCode != http.StatusOK {
+		return false
+	}
+	var health struct {
+		Healthy bool `json:"healthy"`
+	}
+	return json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&health) == nil &&
+		health.Healthy
+}
+
+func openCodeRuntimeHealthy(runtime db.OpenCodeRuntime) bool {
+	return openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL) &&
+		openCodeHealthy(runtime)
+}
+
+func openCodeHealthyAfterRetries(runtime db.OpenCodeRuntime, attempts int, delay time.Duration) bool {
+	for attempt := 0; attempt < attempts; attempt++ {
+		if openCodeRuntimeHealthy(runtime) {
+			return true
+		}
+		if attempt+1 < attempts {
+			time.Sleep(delay)
+		}
+	}
+	return false
 }
 
 func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, error) {
@@ -318,11 +360,17 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 	if err != nil || runtime == nil {
 		return false
 	}
-	if openCodeHealthy(*runtime) {
+	if openCodeHealthyAfterRetries(*runtime,
+		openCodeHealthAttempts, openCodeHealthRetryDelay) {
 		ensureOpenCodeSSE(*runtime)
 		return true
 	}
 	stopOpenCodeProcess(*runtime, nil)
+	if !waitForOpenCodeEndpointRelease(runtime.ServerURL, openCodeEndpointCloseWait) {
+		slog.Error("OpenCode server endpoint remained occupied after stop",
+			"session", sessionID, "endpoint", runtime.ServerURL)
+		return false
+	}
 	process, err := startOpenCodeProcess(*runtime)
 	if err != nil {
 		slog.Error("OpenCode server restart failed", "session", sessionID, "error", err)
@@ -368,8 +416,12 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			select {
 			case <-process.done:
 				return
-			case <-time.After(2 * time.Second):
+			case <-time.After(openCodeProcessStopWait):
 				_ = process.cmd.Process.Kill()
+				select {
+				case <-process.done:
+				case <-time.After(openCodeProcessStopWait):
+				}
 				return
 			}
 		}
@@ -380,6 +432,25 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			// recovered PID to close the unlikely PID-reuse window.
 			_ = recovered.Kill()
 		}
+	}
+}
+
+func waitForOpenCodeEndpointRelease(endpoint string, timeout time.Duration) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		listener, listenErr := net.Listen("tcp", parsed.Host)
+		if listenErr == nil {
+			_ = listener.Close()
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
