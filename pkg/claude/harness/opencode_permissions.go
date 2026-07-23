@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/common/skillroots"
 )
 
 // OpenCodePermissionRule is OpenCode v1.18.4's stored per-session permission
@@ -129,6 +130,23 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	// later narrow denies still dominate them, while a narrow reopen does not
 	// accidentally grant unrestricted access to environment files.
 	rules, err = appendOpenCodeRootRules(rules, worktree, ordinary, approval, true)
+	if err != nil {
+		return nil, err
+	}
+
+	skills, err := skillroots.All()
+	if err != nil {
+		return nil, err
+	}
+	skillRoots := make(map[string]openCodePathAccess, len(skills))
+	if err := mergeOpenCodeRoots(skillRoots, skills, openCodePathRead); err != nil {
+		return nil, err
+	}
+	// Skill discovery is part of the OpenCode access-control baseline, not an
+	// operator-authored filesystem grant. Render it after ordinary roots so it
+	// stays readable in every approval mode, while the read access type emits
+	// explicit edit denies. Protected state is re-denied immediately below.
+	rules, err = appendOpenCodeRootRules(rules, worktree, skillRoots, approval, false)
 	if err != nil {
 		return nil, err
 	}
@@ -316,11 +334,13 @@ func appendOpenCodeRootRules(
 				OpenCodePermissionRule{Permission: "edit", Pattern: pattern, Action: editAction},
 			)
 		}
-		rules = append(rules, OpenCodePermissionRule{
-			Permission: "external_directory",
-			Pattern:    openCodeAbsoluteDescendantPattern(root),
-			Action:     externalAction,
-		})
+		for _, pattern := range openCodeAbsolutePatterns(root) {
+			rules = append(rules, OpenCodePermissionRule{
+				Permission: "external_directory",
+				Pattern:    pattern,
+				Action:     externalAction,
+			})
+		}
 		if constrainEnv && roots[root] != openCodePathDeny {
 			rules = appendOpenCodeEnvReadRules(rules, approval, relative)
 		}
@@ -335,12 +355,12 @@ func openCodeRelativePatterns(relative string) []string {
 	return []string{relative, strings.TrimSuffix(relative, "/") + "/*"}
 }
 
-func openCodeAbsoluteDescendantPattern(root string) string {
+func openCodeAbsolutePatterns(root string) []string {
 	root = filepath.ToSlash(filepath.Clean(root))
 	if root == "/" {
-		return "/*"
+		return []string{"/", "/*"}
 	}
-	return strings.TrimSuffix(root, "/") + "/*"
+	return []string{root, strings.TrimSuffix(root, "/") + "/*"}
 }
 
 func openCodePathDepth(path string) int {

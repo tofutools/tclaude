@@ -7,7 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/skillroots"
 )
 
 // skillsFS holds the canonical skill files shipped with the binary. The CLI
@@ -48,7 +49,11 @@ type InstalledSkill struct {
 // is skipped and ErrSkillExists is returned alongside whatever did install
 // successfully.
 func InstallSkills(force bool) ([]InstalledSkill, error) {
-	return installSkillsInHome(filepath.Join(".claude", "skills"), force)
+	root, err := skillroots.Claude()
+	if err != nil {
+		return nil, err
+	}
+	return installSkillsInRoot(root, force)
 }
 
 // InstallCodexSkills writes every bundled skill into Codex's user-scope skill
@@ -83,14 +88,6 @@ func InstallCodexSkills(force bool) ([]InstalledSkill, error) {
 	return installed, nil
 }
 
-func installSkillsInHome(relRoot string, force bool) ([]InstalledSkill, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("user home: %w", err)
-	}
-	return installSkillsInRoot(filepath.Join(home, relRoot), force)
-}
-
 func installSkillsInRoot(root string, force bool) ([]InstalledSkill, error) {
 	var installed []InstalledSkill
 	var firstExistsErr error
@@ -116,29 +113,7 @@ func installSkillsInRoot(root string, force bool) ([]InstalledSkill, error) {
 }
 
 func codexSkillRoots() ([]string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("user home: %w", err)
-	}
-
-	agentsRoot := filepath.Join(home, ".agents", "skills")
-	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	if codexHome == "" {
-		codexHome = filepath.Join(home, ".codex")
-	}
-	codexRoot := filepath.Join(codexHome, "skills")
-
-	seen := make(map[string]bool, 2)
-	var roots []string
-	for _, root := range []string{agentsRoot, codexRoot} {
-		clean := filepath.Clean(root)
-		if seen[clean] {
-			continue
-		}
-		seen[clean] = true
-		roots = append(roots, clean)
-	}
-	return roots, nil
+	return skillroots.Codex()
 }
 
 // writeSkillTree copies the embedded skills/<name>/ subtree into dst.
