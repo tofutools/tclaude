@@ -79,6 +79,14 @@ export function createTerminalShellActions({
     return disposed ? null : state.movePaneOutsideGroup(key, groupID, options);
   }
 
+  function moveGroup(groupID, anchorKey, options) {
+    return disposed ? null : state.moveGroup(groupID, anchorKey, options);
+  }
+
+  function moveGroupByOffset(groupID, offset) {
+    return disposed ? null : state.moveGroupByOffset(groupID, offset);
+  }
+
   // Tab-stack commands are thin pass-throughs: grouping is view state, so the
   // actions layer only adds the disposed guard every other pane command has.
   // closeGroupPanes is the one that is not, because closing terminals has to go
@@ -303,6 +311,8 @@ export function createTerminalShellActions({
     reorderPane,
     movePaneByOffset,
     movePaneOutsideGroup,
+    moveGroup,
+    moveGroupByOffset,
     createGroup,
     renameGroup,
     setGroupColor,

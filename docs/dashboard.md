@@ -945,6 +945,12 @@ or a keystroke will do never disagree.
   An ungrouped tab hops over a whole group rather than landing inside it, which
   the contiguity rule would immediately undo. Each move is announced in the
   strip's live region, including the group it moved into or out of.
+* **Move the whole group** — drag the group's pill to relocate the entire stack
+  as one block; it drops before/after whatever tab or group it is released on,
+  keeping its members and their order. A stack always lands *beside* another
+  stack, never nested inside it. **Alt-Shift-Left/Right Arrow** on the focused
+  pill is the keyboard equivalent, hopping the stack over one neighbouring
+  segment per press; focus follows the moved pill.
 * **Collapse** — clicking the group's pill collapses it to the pill alone.
   Collapsing over the terminal you are looking at moves activation to the
   nearest tab outside the group; when there is no such tab, the active member

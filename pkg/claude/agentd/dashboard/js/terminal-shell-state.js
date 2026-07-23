@@ -395,6 +395,41 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     });
   }
 
+  // moveGroup relocates a whole stack — the contiguous run of its member tabs —
+  // as one block, without changing which tabs belong to it. The anchor is any
+  // tab it is being dropped next to; if that anchor is itself in a stack, the
+  // dragged stack lands cleanly before or after that WHOLE stack rather than
+  // inside it (which the contiguity rule would immediately undo). Dropping a
+  // stack on one of its own tabs is a no-op.
+  function moveGroup(groupID, anchorKey, { after = false } = {}) {
+    loadGroups();
+    const group = groupIndex.value.get(groupID);
+    if (!group) return null;
+    const members = panes.value.filter((pane) => groupIDFor(pane.key) === groupID);
+    if (!members.length || groupIDFor(anchorKey) === groupID) return null;
+    const memberKeys = new Set(members.map((pane) => pane.key));
+    const rest = panes.value.filter((pane) => !memberKeys.has(pane.key));
+    // Resolve the anchor to a concrete insertion point in `rest`, expanding a
+    // grouped anchor out to its own stack's near/far edge.
+    const anchorGroup = groupIDFor(anchorKey);
+    const anchorKeyResolved = anchorGroup
+      ? (after
+        ? rest.filter((pane) => groupIDFor(pane.key) === anchorGroup).at(-1)?.key
+        : rest.filter((pane) => groupIDFor(pane.key) === anchorGroup)[0]?.key)
+      : anchorKey;
+    const anchorIndex = rest.findIndex((pane) => pane.key === anchorKeyResolved);
+    if (anchorIndex < 0) return null;
+    const insertAt = anchorIndex + (after ? 1 : 0);
+    const next = [...rest.slice(0, insertAt), ...members, ...rest.slice(insertAt)];
+    const normalized = normalizeGrouping(next, groupIDFor);
+    if (normalized.length === panes.value.length
+      && normalized.every((pane, index) => panes.value[index] === pane)) return null;
+    panes.value = normalized;
+    persistPreferredOrder();
+    const firstIndex = normalized.findIndex((pane) => groupIDFor(pane.key) === groupID);
+    return Object.freeze({ group, index: firstIndex, count: members.length });
+  }
+
   // movePaneByOffset is the keyboard mirror of the drag gesture and moves in
   // strip terms, not raw array terms. Inside a stack it steps between siblings
   // and then steps OUT of the stack at either edge; outside one it hops whole
@@ -408,6 +443,27 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     let moved = null;
     for (let step = 0; step < steps; step += 1) {
       const outcome = stepPane(key, direction);
+      if (!outcome) break;
+      moved = outcome;
+    }
+    return moved;
+  }
+
+  // moveGroupByOffset is the keyboard mirror of dragging a stack: it hops the
+  // whole stack over one neighbouring segment per step, which is the same
+  // block move the drag performs.
+  function moveGroupByOffset(groupID, offset) {
+    loadGroups();
+    if (!groupIndex.value.has(groupID) || !Number.isInteger(offset) || offset === 0) return null;
+    const direction = offset > 0 ? 1 : -1;
+    let moved = null;
+    for (let step = 0; step < Math.abs(offset); step += 1) {
+      const strip = segments.value;
+      const index = strip.findIndex((segment) => segment.type === 'group' && segment.group.id === groupID);
+      const neighbour = strip[index + direction];
+      if (index < 0 || !neighbour) break;
+      const anchor = direction > 0 ? neighbour.panes.at(-1) : neighbour.panes[0];
+      const outcome = moveGroup(groupID, anchor.key, { after: direction > 0 });
       if (!outcome) break;
       moved = outcome;
     }
@@ -694,6 +750,8 @@ export function createTerminalShellState({ prefs = dashPrefs, persistOrder = tru
     reorderPane,
     movePaneOutsideGroup,
     movePaneByOffset,
+    moveGroup,
+    moveGroupByOffset,
     createGroup,
     renameGroup,
     setGroupColor,

@@ -14,6 +14,7 @@ import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
 const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
+const TERMINAL_GROUP_DRAG_MIME = 'application/x-tclaude-terminal-group';
 // A pointer click on a group pill waits this long before collapsing so a
 // double-click (rename) can cancel it. Roughly the platform double-click
 // threshold; keyboard clicks bypass it entirely.
@@ -359,7 +360,8 @@ function PaneTab({
 // itself is a button, not a tab: it selects nothing, it only opens and closes.
 function GroupStack({
   group, panes, activeKey, actions, renaming, onRenameStart, onRenameCommit, onRenameCancel,
-  openMenu, menuOpen, dropActive, onPillDragOver, onPillDragLeave, onPillDrop, renderTab,
+  openMenu, menuOpen, dropActive, dragging, onPillDragOver, onPillDragLeave, onPillDrop,
+  onPillDragStart, onPillDragEnd, onKeyboardMove, renderTab,
 }) {
   const inputRef = useRef(null);
   // A single click collapses, a double click renames — the two share the pill.
@@ -449,11 +451,19 @@ function GroupStack({
       startRename();
       return;
     }
+    // Alt+Shift+Left/Right moves the whole stack among its neighbours — the
+    // keyboard mirror of dragging the pill.
+    if (event.altKey && event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      event.stopPropagation();
+      onKeyboardMove(group.id, event.key === 'ArrowRight' ? 1 : -1);
+      return;
+    }
     openMenuAt(event);
   };
   return html`
     <div
-      class=${`mux-tab-group mux-group-${group.color}${group.collapsed ? ' collapsed' : ''}${dropActive ? ' drop-into' : ''}`}
+      class=${`mux-tab-group mux-group-${group.color}${group.collapsed ? ' collapsed' : ''}${dropActive ? ' drop-into' : ''}${dragging ? ' dragging' : ''}`}
       role="group"
       aria-label=${`${group.name} — ${panes.length} terminal${panes.length === 1 ? '' : 's'}`}
       onDragOver=${(event) => onPillDragOver(event, group.id)}
@@ -479,14 +489,19 @@ function GroupStack({
         <button
           type="button"
           class="mux-group-pill"
+          draggable="true"
+          data-group-id=${group.id}
           aria-expanded=${group.collapsed ? 'false' : 'true'}
           aria-haspopup="menu"
           aria-describedby="terminal-group-pill-help"
-          title=${`Click to ${group.collapsed ? 'expand' : 'collapse'} the ${group.name} terminal group · double-click or F2 to rename · right-click or Shift+F10 for group actions`}
+          aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+          title=${`Drag to move the whole ${group.name} group · click to ${group.collapsed ? 'expand' : 'collapse'} · double-click or F2 to rename · right-click or Shift+F10 for group actions`}
           onClick=${onPillClick}
           onDblClick=${renameOnDblClick}
           onContextMenu=${openMenuAt}
           onKeyDown=${onPillKeyDown}
+          onDragStart=${(event) => onPillDragStart(event, group.id)}
+          onDragEnd=${onPillDragEnd}
           aria-label=${`${group.name}, ${panes.length} terminal${panes.length === 1 ? '' : 's'}`}
           data-menu-open=${menuOpen ? 'true' : 'false'}
         >
@@ -643,8 +658,10 @@ function TerminalTabs({
   const tabsRef = useRef(null);
   const panesRef = useRef(null);
   const dragKeyRef = useRef(null);
+  const dragGroupIdRef = useRef(null);
   const droppedRef = useRef(false);
   const [dragKey, setDragKey] = useState(null);
+  const [dragGroupId, setDragGroupId] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [reorderAnnouncement, setReorderAnnouncement] = useState('');
   const [tabMenu, setTabMenu] = useState(null);
@@ -656,8 +673,10 @@ function TerminalTabs({
   const detachArmed = useDragOutArmed(Boolean(dragKey), tabsRef);
   const clearDrag = () => {
     dragKeyRef.current = null;
+    dragGroupIdRef.current = null;
     droppedRef.current = false;
     setDragKey(null);
+    setDragGroupId(null);
     setDropTarget(null);
     setGroupDropTarget(null);
     setStripGap(null);
@@ -712,6 +731,40 @@ function TerminalTabs({
     setDragKey(key);
     setDropTarget(null);
   };
+  // A stack moves as one block. Dragging its pill is a distinct gesture from
+  // dragging a member tab (which reorders that one tab), so it carries its own
+  // drag id; the drop handlers below route to moveGroup instead of reorderPane
+  // when a group drag is in flight. A group is never detached off the strip.
+  const announceGroupMove = ({ group, index, count }) => {
+    setReorderAnnouncement(
+      `Moved group ${group.name} (${count} terminal${count === 1 ? '' : 's'}) to position ${index + 1}.`,
+    );
+  };
+  const focusGroupPill = (groupID) => {
+    for (const pill of shellRef.current?.querySelectorAll('.mux-group-pill[data-group-id]') || []) {
+      if (pill.getAttribute('data-group-id') === groupID) { pill.focus(); return; }
+    }
+  };
+  const announceGroupAndRefocus = (moved) => {
+    announceGroupMove(moved);
+    queueMicrotask(() => focusGroupPill(moved.group.id));
+  };
+  const moveGroupKeyboard = (groupID, offset) => {
+    const moved = actions.moveGroupByOffset(groupID, offset);
+    if (moved) announceGroupAndRefocus(moved);
+  };
+  const startGroupDrag = (event, groupID) => {
+    event.stopPropagation();
+    event.dataTransfer.setData(TERMINAL_GROUP_DRAG_MIME, groupID);
+    event.dataTransfer.effectAllowed = 'move';
+    dragGroupIdRef.current = groupID;
+    dragKeyRef.current = null;
+    droppedRef.current = false;
+    setDragGroupId(groupID);
+    setDragKey(null);
+    setDropTarget(null);
+  };
+  const endGroupDrag = () => clearDrag();
   // Nothing in the strip accepted the drag and it ended clear of the strip:
   // treat that as "pull this terminal out of the dashboard". A drop on a
   // sibling tab (reorder) or a cancelled drag never reaches the detach.
@@ -732,7 +785,24 @@ function TerminalTabs({
       },
     });
   };
+  // A before/after split, no centre group zone — used while dragging a whole
+  // stack, which drops next to a tab rather than combining with it.
+  const beforeAfter = (event, element) => {
+    const bounds = element.getBoundingClientRect();
+    return event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+  };
   const tabDragOver = (event, targetKey) => {
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) {
+      // A stack cannot land on one of its own tabs.
+      if (groupIdOfKey(targetKey) === groupDrag) { setDropTarget(null); return; }
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      const side = beforeAfter(event, event.currentTarget);
+      if (dropTarget?.key !== targetKey || dropTarget.side !== side) setDropTarget({ key: targetKey, side });
+      return;
+    }
     const sourceKey = dragKeyRef.current;
     if (!sourceKey || sourceKey === targetKey) {
       setDropTarget(null);
@@ -754,6 +824,14 @@ function TerminalTabs({
     event.preventDefault();
     event.stopPropagation();
     droppedRef.current = true;
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) {
+      const moved = groupIdOfKey(targetKey) !== groupDrag
+        && actions.moveGroup(groupDrag, targetKey, { after: beforeAfter(event, event.currentTarget) === 'after' });
+      clearDrag();
+      if (moved) announceGroupMove(moved);
+      return;
+    }
     const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
     // A tab dropped on itself is a no-op. tabDragOver already declines to accept
     // a self-hover, so a real browser never fires this drop; the guard keeps a
@@ -787,7 +865,18 @@ function TerminalTabs({
   // Dropping ON a stack (its pill or its padding) joins the stack at the end.
   // Dropping on a member TAB is handled by that tab and adopts its membership,
   // so the same gesture covers "join here" and "join at this exact position".
+  const groupMembers = (groupID) =>
+    current.segments.find((segment) => segment.type === 'group' && segment.group.id === groupID)?.panes || [];
   const groupDragOver = (event, groupID) => {
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) {
+      // Dropping one stack on another places it beside that stack, never inside.
+      if (groupDrag === groupID || event.defaultPrevented) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      if (groupDropTarget !== groupID) setGroupDropTarget(groupID);
+      return;
+    }
     const sourceKey = dragKeyRef.current;
     if (!sourceKey || event.defaultPrevented) return;
     event.preventDefault();
@@ -803,6 +892,15 @@ function TerminalTabs({
     event.preventDefault();
     event.stopPropagation();
     droppedRef.current = true;
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) {
+      const anchor = groupMembers(groupID)[0]?.key;
+      const moved = groupDrag !== groupID && anchor
+        && actions.moveGroup(groupDrag, anchor, { after: beforeAfter(event, event.currentTarget) === 'after' });
+      clearDrag();
+      if (moved) announceGroupMove(moved);
+      return;
+    }
     const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
     const pane = key && current.panes.find((candidate) => candidate.key === key);
     const joined = key && actions.assignPaneToGroup(key, groupID);
@@ -817,7 +915,7 @@ function TerminalTabs({
   // gaps at the group boundaries close that hole: a drop parks the tab there,
   // ungrouped, beside the stack. `gap` is `${groupID}:before|after`.
   const gapDragOver = (event, gap) => {
-    if (!dragKeyRef.current || event.defaultPrevented) return;
+    if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
@@ -831,6 +929,17 @@ function TerminalTabs({
     event.preventDefault();
     event.stopPropagation();
     droppedRef.current = true;
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) {
+      // A group boundary gap places the dragged stack just before/after the
+      // gap's stack.
+      const members = groupMembers(groupID);
+      const anchor = after ? members.at(-1)?.key : members[0]?.key;
+      const moved = groupDrag !== groupID && anchor && actions.moveGroup(groupDrag, anchor, { after });
+      clearDrag();
+      if (moved) announceGroupMove(moved);
+      return;
+    }
     const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
     const moved = key && actions.movePaneOutsideGroup(key, groupID, { after });
     clearDrag();
@@ -984,6 +1093,7 @@ function TerminalTabs({
         </span>
         <span id="terminal-group-pill-help" class="mux-tab-a11y">
           Enter or Space collapses or expands this group. Press F2 to rename it, or Shift+F10 for its actions menu.
+          Drag this pill, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow, to move the whole group among the other tabs.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
@@ -1009,7 +1119,7 @@ function TerminalTabs({
             `;
             if (segment.type !== 'group') return renderTab(segment.pane);
             const gid = segment.group.id;
-            const dragging = Boolean(dragKey);
+            const dragging = Boolean(dragKey) || Boolean(dragGroupId);
             // A leading gap is only reachable — and only needed — when this
             // stack is not the very first segment, or when it is: the position
             // before a leading stack is exactly the unreachable one. A trailing
@@ -1049,9 +1159,13 @@ function TerminalTabs({
                 openMenu=${setTabMenu}
                 menuOpen=${tabMenu?.kind === 'group' && tabMenu.id === gid}
                 dropActive=${groupDropTarget === gid}
+                dragging=${dragGroupId === gid}
                 onPillDragOver=${groupDragOver}
                 onPillDragLeave=${groupDragLeave}
                 onPillDrop=${dropOnGroup}
+                onPillDragStart=${startGroupDrag}
+                onPillDragEnd=${endGroupDrag}
+                onKeyboardMove=${moveGroupKeyboard}
                 renderTab=${renderTab}
               />
               ${trailingGap}

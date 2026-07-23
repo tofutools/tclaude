@@ -101,11 +101,15 @@
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   margin-bottom: 3px; padding: 4px 8px; font: inherit; font-size: 12px;
   border: 1px solid color-mix(in srgb, var(--mux-group-accent) 55%, #2a3340);
-  border-radius: 11px; cursor: pointer; white-space: nowrap;
+  border-radius: 11px; cursor: grab; white-space: nowrap;
   background: color-mix(in srgb, var(--mux-group-accent) 20%, #0d1117);
   color: color-mix(in srgb, var(--mux-group-accent) 45%, #c9d1d9);
 }
 .mux-group-pill:hover { background: color-mix(in srgb, var(--mux-group-accent) 32%, #0d1117); }
+/* A stack being dragged as a block dims the whole run — pill and members — so
+   it reads as one moving unit. */
+.mux-tab-group.dragging { opacity: 0.5; }
+.mux-tab-group.dragging .mux-group-pill { cursor: grabbing; }
 .mux-group-pill:focus-visible { outline: 2px solid var(--mux-group-accent); outline-offset: 1px; }
 .mux-group-caret { font-size: 10px; opacity: 0.85; }
 .mux-group-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
