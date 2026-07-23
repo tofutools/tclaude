@@ -27,6 +27,16 @@ export function terminalTabReorderOffset(event) {
   return null;
 }
 
+// The whole tab is the drag handle, so a drag whose gesture started on the
+// close button has to be declined — otherwise pressing × and moving would drag
+// the tab (a browser drags the nearest draggable ancestor even from a
+// draggable=false child). This predicate is the guard; it is exported so it can
+// be unit-tested against real rendered nodes, because the test DOM cannot
+// deliver a bubbled/target-spoofed dragstart to the tab's own listener.
+export function tabDragStartedOnClose(target) {
+  return Boolean(target?.closest?.('.mux-tab-close'));
+}
+
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
   return Object.freeze({
@@ -294,33 +304,40 @@ function PaneTab({
   const onKeyDown = (event) => {
     if (!openContextMenu(event)) activate(event);
   };
+  // The whole tab is the drag handle, not just the label, so the grab target is
+  // the full tab. A drag that starts on the close button is cancelled, so the ×
+  // stays a click target and never begins a tab drag.
+  const startDrag = (event) => {
+    if (tabDragStartedOnClose(event.target)) {
+      event.preventDefault();
+      return;
+    }
+    onDragStart(event, pane.key);
+  };
   return html`
     <div
       class=${`mux-tab${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropSide ? ` drop-${dropSide}` : ''}`}
       role="tab"
       data-pane-key=${pane.key}
       tabIndex="0"
+      draggable="true"
       aria-selected=${active ? 'true' : 'false'}
       aria-controls=${pane.id}
       aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
       aria-describedby="terminal-tab-reorder-help"
       aria-haspopup="menu"
       aria-expanded=${menuOpen ? 'true' : 'false'}
-      title="Right-click or press Shift+F10 for terminal tab actions"
+      title="Drag to reorder · drop onto another tab to group them · drag off the strip to detach · Alt+Shift+Left/Right to move · Right-click or Shift+F10 for actions"
       onClick=${activate}
       onKeyDown=${onKeyDown}
       onContextMenu=${openContextMenu}
+      onDragStart=${startDrag}
+      onDragEnd=${onDragEnd}
       onDragOver=${(event) => onDragOver(event, pane.key)}
       onDragLeave=${(event) => onDragLeave(event, pane.key)}
       onDrop=${(event) => onDrop(event, pane.key)}
     >
-      <span
-        class="mux-tab-label"
-        draggable="true"
-        title="Drag to reorder · drop onto another tab to group them · drag off the strip to detach into its own window · Alt+Shift+Left/Right to move with the keyboard"
-        onDragStart=${(event) => onDragStart(event, pane.key)}
-        onDragEnd=${onDragEnd}
-      >${pane.label}</span>
+      <span class="mux-tab-label">${pane.label}</span>
       <button
         type="button"
         class="mux-tab-close"

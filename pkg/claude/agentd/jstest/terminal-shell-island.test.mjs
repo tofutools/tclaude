@@ -197,7 +197,7 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
     setData(type, value) { this.data[type] = value; },
     getData(type) { return this.data[type] || ''; },
   };
-  await harness.act(() => harness.fireEvent(twoTab.querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(twoTab, 'dragstart', {
     dataTransfer: transfer,
   }));
   assert.equal(transfer.data['application/x-tclaude-terminal-tab'], 'two');
@@ -239,7 +239,7 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.equal(host.querySelector('[role="tab"][aria-selected="true"] .mux-tab-label').textContent, 'one');
 
   twoTab.getBoundingClientRect = () => ({ left: 10, width: 100 });
-  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(movedOneTab, 'dragstart', {
     dataTransfer: transfer,
   }));
   await harness.act(() => harness.fireEvent(twoTab, 'dragover', {
@@ -252,13 +252,13 @@ test('dashboard terminal feature owns three hosts while preserving opaque xterm 
   assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
     ['two', 'one'], 'drop coordinates, not a stale hover render, choose the committed edge');
 
-  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(movedOneTab, 'dragstart', {
     dataTransfer: transfer,
   }));
   await harness.act(() => harness.fireEvent(twoTab, 'dragover', {
     dataTransfer: transfer, clientX: 20,
   }));
-  await harness.act(() => harness.fireEvent(movedOneTab.querySelector('.mux-tab-label'), 'dragend', {
+  await harness.act(() => harness.fireEvent(movedOneTab, 'dragend', {
     dataTransfer: transfer,
   }));
   assert.deepEqual([...host.querySelectorAll('[role="tab"] .mux-tab-label')].map((tab) => tab.textContent),
@@ -603,7 +603,7 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   // tab strip's reorder edges alone.
   const claim = (event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; };
   harness.document.addEventListener('dragover', claim);
-  await harness.act(() => harness.fireEvent(label('two'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(() => harness.fireEvent(tab('two'), 'dragstart', { dataTransfer: transfer }));
   await harness.act(() => harness.fireEvent(strip, 'dragover', { clientX: 120, clientY: 10, dataTransfer: transfer }));
   assert.equal(transfer.dropEffect, 'copy', 'an already-claimed dragover is left alone');
   // Deferring on the effect must not also silence the hint. Which target claimed
@@ -637,7 +637,7 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   assert.equal(dropped.defaultPrevented, true,
     'accepting the drag means consuming the drop it now receives');
   await harness.act(async () => {
-    harness.fireEvent(label('two'), 'dragend', {
+    harness.fireEvent(tab('two'), 'dragend', {
       dataTransfer: transfer, clientX: 120, clientY: 260, screenX: 340, screenY: 260,
     });
     await Promise.resolve();
@@ -655,11 +655,11 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   assert.deepEqual(requests, ['/api/hide/agt_two']);
 
   await open('three');
-  await harness.act(() => harness.fireEvent(label('three'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(() => harness.fireEvent(tab('three'), 'dragstart', { dataTransfer: transfer }));
   await harness.act(() => harness.fireEvent(tab('one'), 'dragover', { dataTransfer: transfer, clientX: 20 }));
   await harness.act(() => harness.fireEvent(tab('one'), 'drop', { dataTransfer: transfer, clientX: 20 }));
   await harness.act(async () => {
-    harness.fireEvent(label('three'), 'dragend', {
+    harness.fireEvent(tab('three'), 'dragend', {
       dataTransfer: transfer, clientX: 120, clientY: 260, screenX: 340, screenY: 260,
     });
     await Promise.resolve();
@@ -667,9 +667,9 @@ test('dragging a terminal tab clear of the strip detaches it into its own window
   assert.deepEqual(labels(), ['one', 'three'], 'a reorder drop still reorders');
   assert.equal(opened.length, 1, 'a tab that accepted the drop is never also detached');
 
-  await harness.act(() => harness.fireEvent(label('three'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(() => harness.fireEvent(tab('three'), 'dragstart', { dataTransfer: transfer }));
   await harness.act(async () => {
-    harness.fireEvent(label('three'), 'dragend', { dataTransfer: transfer });
+    harness.fireEvent(tab('three'), 'dragend', { dataTransfer: transfer });
     await Promise.resolve();
   });
   assert.deepEqual(labels(), ['one', 'three'], 'a cancelled drag reports no end point and detaches nothing');
