@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,6 +34,10 @@ const (
 	openCodeHealthRetryDelay  = 250 * time.Millisecond
 	openCodeProcessStopWait   = 2 * time.Second
 	openCodeEndpointCloseWait = 2 * time.Second
+	openCodeSSERetryDelay     = time.Second
+	openCodeMaxSSEEventBytes  = 4 << 20
+	openCodeHookRowWait       = 2 * time.Second
+	openCodeHookRowRetryDelay = 25 * time.Millisecond
 )
 
 type openCodeLaunch struct {
@@ -458,11 +464,13 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 	go consumeOpenCodeSSE(ctx, runtime)
 }
 
-// consumeOpenCodeSSE lands the authenticated transport/reconnect plumbing.
-// TCL-672 will map event names onto tclaude's status model; this slice only
-// proves the managed topology has one durable consumer per server.
 func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {
+	consumeOpenCodeSSEWithRetry(ctx, runtime, openCodeSSERetryDelay)
+}
+
+func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime, retryDelay time.Duration) {
 	endpoint := runtime.ServerURL + "/event?directory=" + url.QueryEscape(runtime.Cwd)
+	projector := newOpenCodeEventProjector(runtime.ConvID, runtime.Cwd)
 	for ctx.Err() == nil {
 		request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
 		if err == nil {
@@ -470,17 +478,26 @@ func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {
 			var response *http.Response
 			response, err = http.DefaultClient.Do(request)
 			if err == nil && response.StatusCode == http.StatusOK {
+				// The stream is live before snapshots are read, so events that
+				// race reconciliation remain buffered on this response and are
+				// applied afterward in server order.
+				if reconcileErr := reconcileOpenCodeSSE(ctx, runtime, projector); reconcileErr != nil {
+					slog.Debug("OpenCode SSE reconciliation failed",
+						"session", runtime.SessionID, "error", reconcileErr)
+				}
 				scanner := bufio.NewScanner(response.Body)
+				scanner.Buffer(make([]byte, 64<<10), openCodeMaxSSEEventBytes)
 				for scanner.Scan() {
 					line := scanner.Text()
 					if strings.HasPrefix(line, "data:") {
-						consumeOpenCodeEvent(runtime.SessionID,
+						consumeOpenCodeEvent(ctx, runtime, projector,
 							json.RawMessage(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
 					}
 				}
 				_ = response.Body.Close()
 				err = scanner.Err()
 			} else if response != nil {
+				err = fmt.Errorf("OpenCode SSE returned HTTP %d", response.StatusCode)
 				_ = response.Body.Close()
 			}
 		}
@@ -494,17 +511,126 @@ func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Second):
+		case <-time.After(retryDelay):
 		}
 	}
 }
 
-func consumeOpenCodeEvent(sessionID string, event json.RawMessage) {
-	var envelope struct {
-		Type string `json:"type"`
+func reconcileOpenCodeSSE(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	projector *openCodeEventProjector,
+) error {
+	statuses := make(map[string]openCodeSessionStatus)
+	var questions []openCodeQuestionRequest
+	var permissions []openCodePermissionRequest
+	for _, snapshot := range []struct {
+		path   string
+		target any
+	}{
+		{path: "/session/status", target: &statuses},
+		{path: "/question", target: &questions},
+		{path: "/permission", target: &permissions},
+	} {
+		endpoint := runtime.ServerURL + snapshot.path +
+			"?directory=" + url.QueryEscape(runtime.Cwd)
+		request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
+		if err != nil {
+			return err
+		}
+		request = request.WithContext(ctx)
+		response, err := openCodeHTTPClient.Do(request)
+		if err != nil {
+			return err
+		}
+		if response.StatusCode != http.StatusOK {
+			_ = response.Body.Close()
+			return fmt.Errorf("OpenCode snapshot %s returned HTTP %d",
+				snapshot.path, response.StatusCode)
+		}
+		err = json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(snapshot.target)
+		_ = response.Body.Close()
+		if err != nil {
+			return fmt.Errorf("decode OpenCode snapshot %s: %w", snapshot.path, err)
+		}
 	}
-	if json.Unmarshal(event, &envelope) == nil && envelope.Type != "" {
-		slog.Debug("OpenCode SSE event", "session", sessionID, "type", envelope.Type)
+	projector.resetToolsForSnapshot()
+
+	// Attention snapshots override "busy". OpenCode reports a session waiting
+	// on a question or permission as busy, so applying status first would
+	// briefly erase the more useful state and re-notify on every reconnect.
+	for _, permission := range permissions {
+		if projected := projector.projectPermission(permission); len(projected) > 0 {
+			applyOpenCodeHooks(ctx, runtime, projected)
+			return nil
+		}
+	}
+	for _, question := range questions {
+		if projected := projector.projectQuestion(question); len(projected) > 0 {
+			applyOpenCodeHooks(ctx, runtime, projected)
+			return nil
+		}
+	}
+	projector.pendingAttention = false
+	if status, ok := statuses[runtime.ConvID]; ok {
+		// Force the authoritative snapshot through even when its OpenCode
+		// status equals the pre-disconnect value. The tclaude state may still
+		// be awaiting a permission/question that was answered while offline.
+		if projected := projector.projectStatus(status, true); len(projected) > 0 {
+			applyOpenCodeHooks(ctx, runtime, projected)
+			return nil
+		}
+	}
+	// OpenCode 1.18.4 may omit an idle session from /session/status. Empty
+	// attention snapshots plus no usable status therefore mean "not blocked
+	// and not known busy": settle to idle. The SSE stream is already open, so
+	// genuine concurrent work is buffered and immediately reasserts busy.
+	applyOpenCodeHooks(ctx, runtime,
+		projector.projectStatus(openCodeSessionStatus{Type: "idle"}, true))
+	return nil
+}
+
+func consumeOpenCodeEvent(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	projector *openCodeEventProjector,
+	event json.RawMessage,
+) {
+	projected, err := projector.project(event)
+	if err != nil {
+		slog.Debug("OpenCode SSE event could not be projected",
+			"session", runtime.SessionID, "error", err)
+		return
+	}
+	applyOpenCodeHooks(ctx, runtime, projected)
+}
+
+func applyOpenCodeHooks(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	projected []session.HookCallbackInput,
+) {
+	for _, input := range projected {
+		deadline := time.Now().Add(openCodeHookRowWait)
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			err := session.ApplyHook(input, runtime.SessionID)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, sql.ErrNoRows) || time.Now().After(deadline) {
+				slog.Debug("OpenCode status event could not be applied",
+					"session", runtime.SessionID, "event", input.HookEventName, "error", err)
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(openCodeHookRowRetryDelay):
+			}
+		}
 	}
 }
 
