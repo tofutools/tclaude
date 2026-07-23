@@ -208,6 +208,16 @@ tokens unchanged. An explicitly exported token always wins. Sandboxed agents
 cannot read the private file and continue to authenticate through their
 Unix-socket peer identity.
 
+Agentd-managed harness sessions also inherit `TCLAUDE_AGENT_HINT=1`, including
+their harness-native subagents. The CLI uses this advisory hint to skip the
+human-token file lookup and sends it to agentd so a failed identity resolution
+gets agent-oriented recovery guidance instead of instructions to export a
+human credential. It is deliberately only a UX hint: manually setting it
+grants no authority, and the daemon continues to classify every caller from
+Unix-socket peer credentials and process ancestry. Older, dangling, or unusual
+agent processes may lack the hint; all existing identity checks remain in
+place.
+
 **A coding-harness ancestor always wins over the token.** Because the
 human exports `TCLAUDE_HUMAN_TOKEN` into their shell, a harness session
 launched from that shell would inherit it — so the daemon classifies

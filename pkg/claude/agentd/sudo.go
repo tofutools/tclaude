@@ -268,7 +268,7 @@ func handleSudoRequest(w http.ResponseWriter, r *http.Request) {
 		writeAgentUnknown(w)
 		return
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 		return
 	}
 
@@ -524,7 +524,7 @@ func handleSudoList(w http.ResponseWriter, r *http.Request) {
 		writeAgentUnknown(w)
 		return
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 		return
 	}
 	rows, err := db.ListActiveSudoGrants(p.ConvID)

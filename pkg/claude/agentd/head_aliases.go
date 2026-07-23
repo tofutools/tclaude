@@ -186,7 +186,7 @@ func requireHuman(w http.ResponseWriter, r *http.Request, action string) bool {
 		writeError(w, http.StatusUnauthorized, "auth",
 			"could not determine peer PID; refusing to "+action)
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 	default: // classAgent, classAgentUnknown
 		writeError(w, http.StatusForbidden, "auth",
 			"only the human operator may "+action+"; this endpoint has no agent path")

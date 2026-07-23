@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -297,16 +296,24 @@ const (
 	RequestDigestHeader  = "X-Tclaude-Request-Digest"
 )
 
-// attachHumanToken adds the operator-token header to a daemon request. An
-// explicit TCLAUDE_HUMAN_TOKEN wins; otherwise it best-effort reads the
-// persistent file fallback from tclaude's private data directory.
+// attachCallerIdentity adds the caller's non-peer-credential identity inputs
+// to a daemon request. An explicit TCLAUDE_HUMAN_TOKEN wins; otherwise a
+// non-agent-hinted process best-effort reads the persistent file fallback from
+// tclaude's private data directory.
 //
 // Sandboxed agents cannot read that directory, so the fallback is a silent
 // no-op for them. An unsandboxed agent may be able to read it, but such a
 // process can already read all same-uid tclaude state; more importantly,
 // agentd classifies a harness ancestor as an agent before considering this
 // token, so attaching it can never promote an agent to the human operator.
-func attachHumanToken(req *http.Request) {
+//
+// TCLAUDE_AGENT_HINT is deliberately advisory. It avoids a pointless private
+// file read and lets agentd tailor identity-failure help, but agentd never
+// trusts it for authorization.
+func attachCallerIdentity(req *http.Request) {
+	if hasAgentHint() {
+		req.Header.Set(agentipc.AgentHintHeader, "1")
+	}
 	if tok := humanToken(); tok != "" {
 		req.Header.Set(HumanTokenHeader, tok)
 	}
@@ -316,16 +323,22 @@ func humanToken() string {
 	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
 		return tok
 	}
-	dataDir := tcommon.TclaudeDataDir()
-	if dataDir == "" {
+	if hasAgentHint() {
 		return ""
 	}
-	path := filepath.Join(dataDir, "operator_token")
+	path := tcommon.TclaudeStatePath("operator_token")
+	if path == "" {
+		return ""
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+func hasAgentHint() bool {
+	return strings.TrimSpace(os.Getenv(agentipc.AgentHintEnvVar)) == "1"
 }
 
 // DaemonRequestImpl is the indirection point for DaemonRequest so CLI
@@ -355,7 +368,7 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	if err != nil {
 		return err
 	}
-	attachHumanToken(req)
+	attachCallerIdentity(req)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -428,7 +441,7 @@ func daemonGetRaw(path string) ([]byte, http.Header, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	attachHumanToken(req)
+	attachCallerIdentity(req)
 	resp, err := doDaemonRequest(httpClientWithTimeout(daemonRawTimeout), req, os.Stderr, defaultRetryPolicy())
 	if err != nil {
 		return nil, nil, err
@@ -459,7 +472,7 @@ func DaemonPostRawWithOptions(path, contentType string, body []byte, headers htt
 	if err != nil {
 		return err
 	}
-	attachHumanToken(req)
+	attachCallerIdentity(req)
 	req.Header.Set("Content-Type", contentType)
 	for key, values := range headers {
 		for _, value := range values {
@@ -583,7 +596,7 @@ func daemonSupportsIdempotency(client *http.Client, stderr io.Writer) (bool, err
 	if err != nil {
 		return false, err
 	}
-	attachHumanToken(req)
+	attachCallerIdentity(req)
 	resp, err := doDaemonRequest(client, req, stderr, defaultRetryPolicy())
 	if err != nil {
 		return false, err

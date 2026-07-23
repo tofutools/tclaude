@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // TestClassify exercises the single classification chokepoint across
@@ -118,6 +119,17 @@ func TestFailClosed_EndToEndAtHumanEndpoint(t *testing.T) {
 
 	w := newReq(AsUnconfirmedPeer)
 	assert.Equal(t, http.StatusForbidden, w.Code, "unconfirmed caller refused; body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "TCLAUDE_HUMAN_TOKEN")
+
+	w = newReq(func(r *http.Request) *http.Request {
+		r.Header.Set(agentipc.AgentHintHeader, "1")
+		return AsUnconfirmedPeer(r)
+	})
+	assert.Equal(t, http.StatusForbidden, w.Code, "hinted unconfirmed caller stays refused; body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "unconfirmed managed-agent caller")
+	assert.Contains(t, w.Body.String(), "dangling")
+	assert.NotContains(t, w.Body.String(), "TCLAUDE_HUMAN_TOKEN",
+		"agent-oriented recovery must not tell an agent to export the human credential")
 
 	w = newReq(AsHumanPeer)
 	assert.Less(t, w.Code, 400, "human operator creates the group; body=%s", w.Body.String())
