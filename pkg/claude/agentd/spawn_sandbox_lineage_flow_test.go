@@ -311,9 +311,10 @@ func haveSpawnCapableSandboxParent(t *testing.T, f *testharness.Flow, group, con
 	f.HaveMember(group, convID)
 	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsSpawn, "test"))
 	approval := "bypassPermissions"
-	if h == harness.CodexName {
+	switch h {
+	case harness.CodexName:
 		approval = harness.ApprovalNever
-	} else if h == harness.OpenCodeName {
+	case harness.OpenCodeName:
 		approval = harness.OpenCodeApprovalDeny
 	}
 	require.NoError(t, db.SaveSession(&db.SessionRow{

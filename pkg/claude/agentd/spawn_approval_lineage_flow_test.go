@@ -478,9 +478,10 @@ func haveSpawnCapableApprovalParent(t *testing.T, f *testharness.Flow, group, co
 	f.HaveMember(group, convID)
 	require.NoError(t, db.GrantAgentPermission(convID, agentd.PermGroupsSpawn, "test"))
 	sandbox := harness.ClaudeSandboxOff
-	if h == harness.CodexName {
+	switch h {
+	case harness.CodexName:
 		sandbox = harness.SandboxDangerFull
-	} else if h == harness.OpenCodeName {
+	case harness.OpenCodeName:
 		sandbox = harness.OpenCodeSandboxAccessControl
 	}
 	require.NoError(t, db.SaveSession(&db.SessionRow{
