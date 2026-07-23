@@ -56,6 +56,8 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	assert.Contains(t, rules,
 		OpenCodePermissionRule{Permission: "edit", Pattern: "service/*", Action: "allow"})
 	assert.Contains(t, rules,
+		OpenCodePermissionRule{Permission: "external_directory", Pattern: "/outside/read", Action: "allow"})
+	assert.Contains(t, rules,
 		OpenCodePermissionRule{Permission: "external_directory", Pattern: "/outside/read/*", Action: "allow"})
 	assert.Contains(t, rules,
 		OpenCodePermissionRule{Permission: "edit", Pattern: "../outside/read/*", Action: "deny"})
@@ -109,6 +111,67 @@ func TestBuildOpenCodePermissionRulesApprovalAndNetworkMatrix(t *testing.T) {
 			assert.Contains(t, rules, OpenCodePermissionRule{Permission: "webfetch", Pattern: "*", Action: tt.wantWeb})
 			assert.Equal(t, tt.wantEnv, lastExactOpenCodeAction(rules, "read", "*.env"))
 			assert.Equal(t, "deny", lastExactOpenCodeAction(rules, "bash", "*"))
+		})
+	}
+}
+
+func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", "")
+
+	const worktree = "/repo"
+	skillRoots := []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".agents", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+	}
+	protected, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+
+	for _, approval := range []string{
+		OpenCodeApprovalDeny,
+		OpenCodeApprovalAsk,
+		OpenCodeApprovalAllowTools,
+	} {
+		t.Run(approval, func(t *testing.T) {
+			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+				Cwd:            worktree,
+				Worktree:       worktree,
+				SandboxMode:    OpenCodeSandboxAccessControl,
+				ApprovalPolicy: approval,
+			})
+			require.NoError(t, err)
+
+			for _, root := range skillRoots {
+				relativeRoot := relativeOpenCodeTestPattern(t, worktree, root)
+				skillFile := relativeRoot + "/agent-coord/SKILL.md"
+
+				assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", relativeRoot))
+				assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", skillFile))
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "edit", relativeRoot))
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "edit", skillFile))
+				assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "external_directory", root))
+				assert.Equal(t, "allow", lastMatchingOpenCodeAction(
+					rules, "external_directory", filepath.Join(root, "agent-coord", "SKILL.md")))
+			}
+
+			for _, path := range []string{
+				filepath.Join(home, ".claude"),
+				filepath.Join(home, ".claude", "settings.json"),
+			} {
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(
+					rules, "external_directory", path),
+					"skill-root carve-out must not allow non-skill Claude paths")
+			}
+
+			for _, root := range protected {
+				protectedFile := relativeOpenCodeTestPattern(t, worktree, filepath.Join(root, "whatever"))
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", protectedFile))
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(
+					rules, "external_directory", filepath.Join(root, "whatever")))
+			}
 		})
 	}
 }
