@@ -957,3 +957,14 @@ CREATE TABLE browser_notifications (
 CREATE INDEX idx_browser_notifications_created
 			ON browser_notifications(created_at);
 
+CREATE TABLE opencode_runtimes (
+			session_id TEXT PRIMARY KEY,
+			conv_id    TEXT NOT NULL DEFAULT '',
+			server_url TEXT NOT NULL,
+			password   TEXT NOT NULL,
+			pid        INTEGER NOT NULL DEFAULT 0,
+			cwd        TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+

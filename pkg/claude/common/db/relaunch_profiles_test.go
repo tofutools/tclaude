@@ -167,6 +167,39 @@ func TestOlderSameConversationSessionCannotRollBackDurableIntent(t *testing.T) {
 	assert.Nil(t, agent.ModelID, "stale model telemetry must not reach stable intent")
 }
 
+func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
+	setupTestDB(t)
+	const convID = "server-authoritative-conversation"
+	_, _, err := EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "server-authoritative-session", ConvID: convID, Cwd: "/tmp/server-authoritative",
+		Harness: "opencode", Status: "idle", AskUserQuestionTimeout: "5m",
+		RemoteControl: true, AutoMemory: true,
+	}))
+	require.NoError(t, SetSessionRemoteControl("server-authoritative-session", true))
+	require.NoError(t, SetSessionAutoMemory("server-authoritative-session", true))
+
+	conversation, err := ConversationResumeProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, conversation)
+	require.NotNil(t, conversation.FallbackRelaunch)
+	require.NotNil(t, conversation.FallbackRelaunch.ApprovalPolicy)
+	assert.Empty(t, *conversation.FallbackRelaunch.ApprovalPolicy)
+
+	agent, err := AgentRelaunchProfileForConv(convID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	require.NotNil(t, agent.ApprovalPolicy)
+	assert.Empty(t, *agent.ApprovalPolicy)
+	require.NotNil(t, agent.AskUserQuestionTimeout)
+	assert.Empty(t, *agent.AskUserQuestionTimeout)
+	require.NotNil(t, agent.RemoteControl)
+	assert.False(t, *agent.RemoteControl)
+	require.NotNil(t, agent.AutoMemory)
+	assert.False(t, *agent.AutoMemory)
+}
+
 func TestBlankInitialSessionProjectionPreservesExactAgentBirthIntent(t *testing.T) {
 	setupTestDB(t)
 	const convID = "birth-profile-before-telemetry"

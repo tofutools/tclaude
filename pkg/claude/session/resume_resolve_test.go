@@ -53,3 +53,15 @@ func TestResolveResumeConv_CodexUsesConvStore(t *testing.T) {
 	_, _, err = resolveResumeConv(h, "bogus", false, "/home/u/proj")
 	require.Error(t, err, "an unresolvable codex conv must error via the ConvStore path")
 }
+
+func TestOpenCodeResumeKeepsServerIssuedID(t *testing.T) {
+	h, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
+	const convID = "ses_0718ccb56ffeOAOc3daRakigy3"
+
+	assert.Equal(t, convID, resumeIDFromParam(h, convID))
+	full, proj, err := resolveResumeConv(h, resumeIDFromParam(h, convID), true, "/home/u/proj")
+	require.NoError(t, err)
+	assert.Equal(t, convID, full)
+	assert.Equal(t, "/home/u/proj", proj)
+}

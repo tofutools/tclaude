@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // The tmux client refuses an initial command whose packed argv exceeds
@@ -31,6 +32,7 @@ import (
 type launchRecordingTmux struct {
 	argv           [][]string
 	failNewSession bool
+	paneCwd        string
 }
 
 func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
@@ -38,6 +40,14 @@ func (r *launchRecordingTmux) Command(args ...string) *exec.Cmd {
 	r.argv = append(r.argv, copied)
 	if r.failNewSession && len(args) > 0 && args[0] == "new-session" {
 		return exec.Command("false")
+	}
+	if len(args) > 0 && args[0] == "display-message" &&
+		len(args) > 1 && args[len(args)-1] == "#{pane_current_path}" {
+		return exec.Command("printf", "%s", r.paneCwd)
+	}
+	if len(args) > 0 && args[0] == "list-panes" &&
+		len(args) > 1 && args[len(args)-1] == "#{pane_pid}" {
+		return exec.Command("printf", "123\\n")
 	}
 	return exec.Command("true")
 }
@@ -111,6 +121,40 @@ func TestLaunchArgvIsConstantSizeThroughProductionPath(t *testing.T) {
 	info, err := os.Stat(scriptPath)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "script must be owner-private")
+}
+
+func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TCLAUDE_OPENCODE_SERVER_URL", "http://127.0.0.1:43210")
+	t.Setenv("OPENCODE_SERVER_PASSWORD", "private-password")
+
+	rec := &launchRecordingTmux{}
+	swapTmux(t, rec)
+	cwd := t.TempDir()
+	h, err := harness.Resolve(harness.OpenCodeName)
+	require.NoError(t, err)
+	cmd := h.Spawn.BuildCommand(harness.SpawnSpec{
+		ExecutablePath: "/opt/opencode", Cwd: cwd,
+		ServerURL: "http://127.0.0.1:43210", SessionID: "ses_test",
+		EnvExports: clcommon.BuildEnvExports(nil),
+	})
+	require.NoError(t, launchDetachedTmuxSession("spwn-opencode", cwd, cmd))
+	launches := rec.newSessions()
+	require.Len(t, launches, 1)
+	argv := strings.Join(launches[0], " ")
+	assert.NotContains(t, argv, "private-password")
+	assert.NotContains(t, argv, "43210")
+
+	scriptPath := launches[0][7]
+	raw, err := os.ReadFile(scriptPath)
+	require.NoError(t, err)
+	content := string(raw)
+	assert.Contains(t, content, "export OPENCODE_SERVER_PASSWORD=private-password")
+	assert.Contains(t, content, "opencode attach http://127.0.0.1:43210")
+	assert.Contains(t, content, "--session ses_test")
+	info, err := os.Stat(scriptPath)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestLaunchPreflightRejectsOversizedArgvBeforeTmux(t *testing.T) {
