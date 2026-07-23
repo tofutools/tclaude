@@ -342,6 +342,27 @@ func TestStopOpenCodeProcessVerifiesRecoveredPIDBeforeKill(t *testing.T) {
 	assert.Equal(t, 99_999_999, asked.PID, "the gate must be asked about the recorded pid")
 }
 
+func TestStopOpenCodeProcessNeverSelfKillsOnRecoveredPID(t *testing.T) {
+	// Subtree endpoint ownership would match agentd's own pid (managed serves
+	// are its children), so a stale row whose pid coincided with ours after
+	// reuse must be short-circuited before the ownership gate — no self-kill.
+	prev := openCodeRuntimeVerified
+	t.Cleanup(func() { openCodeRuntimeVerified = prev })
+	consulted := false
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool {
+		consulted = true
+		return true
+	}
+
+	stopOpenCodeProcess(db.OpenCodeRuntime{
+		SessionID: "spwn-self-pid", PID: os.Getpid(),
+		ServerURL: "http://127.0.0.1:3",
+	}, nil)
+
+	assert.False(t, consulted,
+		"a recorded pid equal to our own must be excluded before the ownership gate")
+}
+
 func TestRandomOpenCodePassword(t *testing.T) {
 	first, err := randomOpenCodePassword()
 	require.NoError(t, err)

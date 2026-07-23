@@ -348,9 +348,13 @@ var openCodeRuntimeVerified = openCodeRuntimeOwnsRecordedPID
 // endpoint), while a live managed server always holds its own port. Endpoint
 // ownership is a stronger identity signal than start-time/argv because it binds
 // the pid to the exact host:port we minted, and it reuses the same proof the
-// per-request auth gate already trusts. agentd itself can never match: it does
-// not listen on a managed server's port, so a corrupted pid equal to our own
-// still fails closed here.
+// per-request auth gate already trusts.
+//
+// NOTE: ownership matches the pid's whole subtree (ProcessOwnsEndpoint walks
+// /proc children), and every managed serve is a child of agentd, so passing
+// agentd's own pid here would match. Callers that turn a match into a kill must
+// therefore still exclude os.Getpid() themselves (see stopOpenCodeProcess); the
+// identity path is unaffected because a serve ancestor is never agentd's pid.
 func openCodeRuntimeOwnsRecordedPID(runtime db.OpenCodeRuntime) bool {
 	return runtime.PID > 1 &&
 		openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL)
@@ -775,10 +779,12 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	// No in-memory handle: this is a recovered PID (e.g. after an agentd
 	// restart). Only kill it once it is positively identified as our managed
 	// server via endpoint ownership. This closes the PID-reuse window the old
-	// `>1 && != getpid()` guards left open — a freed pid reassigned to an
-	// unrelated same-user process no longer owns runtime.ServerURL, so it is
-	// left untouched.
-	if openCodeRuntimeVerified(runtime) {
+	// `>1` guard left open — a freed pid reassigned to an unrelated same-user
+	// process no longer owns runtime.ServerURL, so it is left untouched. The
+	// `!= os.Getpid()` guard is retained on top of ownership: subtree ownership
+	// would match agentd's own pid (managed serves are its children), so if a
+	// stale row's pid coincided with our own after reuse we must never self-kill.
+	if runtime.PID != os.Getpid() && openCodeRuntimeVerified(runtime) {
 		if recovered, err := os.FindProcess(runtime.PID); err == nil {
 			_ = recovered.Kill()
 		}
