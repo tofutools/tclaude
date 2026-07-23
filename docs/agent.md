@@ -247,6 +247,8 @@ count. The JSON form exposes those fields under `state`.
 ```bash
 # direct
 tclaude agent message <peer> "your message text"
+tclaude agent send --to <peer> "your message text"       # explicit recipient flag
+tclaude agent send --recipient <peer> --body "your message text"
 tclaude agent message <peer> --body "your message text"  # equivalent flag form
 tclaude agent message <peer> --subject "ack" --stdin <<EOF
 multi-line body
@@ -265,6 +267,11 @@ tclaude agent reply <id> --body "got it"  # equivalent flag form
 `reply` takes its body from the same four interchangeable sources as
 `message`: positional text, `--body`, `--stdin`, or `--file`. Exactly one
 may be given.
+
+`message` (also available as `msg` or `send`) takes its recipient either as
+the first positional argument or through the interchangeable `--to` and
+`--recipient` flags. Give exactly one recipient source. With a recipient flag,
+an optional positional argument is the message body.
 
 For direct messages the sender and target must share a group (or be
 bridged by an inter-group [link](#groups)), otherwise the daemon
