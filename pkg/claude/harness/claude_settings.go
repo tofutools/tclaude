@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"strings"
 )
@@ -75,6 +76,24 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		}
 		appendSandboxFilesystemDirs(filesystem, "denyRead", dirs)
 		appendSandboxFilesystemDirs(filesystem, "denyWrite", dirs)
+		// Mirror the same denies onto the tool-permission surface so one
+		// authored row binds the built-in Read/Write/Edit tools too, not just
+		// Bash (TCL-666). Break-glass grants join the reopen set: an
+		// acknowledged protected path must not be re-denied here after
+		// claudeSandboxBlockWithBreakGlass suppressed its OS-sandbox deny.
+		breakGlass := append(append([]string{}, spec.SandboxBreakGlassReadDirs...),
+			spec.SandboxBreakGlassWriteDirs...)
+		rules, skipped := claudeToolPermissionDenyRules(
+			spec.SandboxReadDirs, spec.SandboxWriteDirs, spec.SandboxDenyDirs, breakGlass,
+		)
+		appendClaudePermissionDeny(settings, rules)
+		if len(skipped) > 0 {
+			// Not silent: these denies bind Bash but NOT the built-in file
+			// tools, and nothing else in the launch says so.
+			slog.Warn("claude sandbox: deny rows enforced for Bash only, not the built-in file tools",
+				"paths", skipped,
+				"reason", "a reopen beneath the deny cannot be expressed as a permission rule (deny precedes allow)")
+		}
 	}
 	// Break-glass rides the SAME allowRead/allowWrite keys as ordinary grants,
 	// because that is exactly Claude's documented re-open mechanism ("Paths to
