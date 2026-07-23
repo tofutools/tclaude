@@ -799,12 +799,14 @@ func runNew(params *NewParams) error {
 			h.Name, cwd, sandboxDescr(sandboxMode, params.PermissionProfile), harness.SandboxDangerFull)
 	}
 
-	// Unsandboxed-autonomy warning (TCL-586). Unlike the daemon spawn path this
-	// one applies no approval default, so it only ever fires on a posture the
-	// human asked for by name — but a human who typed `--permission-mode auto`
-	// still deserves to know tclaude found nothing that confines it. It stays a
-	// warning on stderr, never a refusal: the human is the trust root here.
-	for _, warning := range harness.UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd) {
+	// Spawn-posture warnings: the Claude unsandboxed-autonomy pairing (TCL-586)
+	// and OpenCode's look-like-a-sandbox access-control mode. Unlike the daemon
+	// spawn path this one applies no approval default, so the Claude case only
+	// ever fires on a posture the human asked for by name — but a human who typed
+	// `--permission-mode auto` still deserves to know tclaude found nothing that
+	// confines it. It stays a warning on stderr, never a refusal: the human is
+	// the trust root here.
+	for _, warning := range harness.SpawnSandboxWarnings(h, approvalPolicy, sandboxMode, cwd) {
 		fmt.Fprintf(os.Stderr, "%s\n", warning)
 	}
 

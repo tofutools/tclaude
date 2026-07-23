@@ -75,6 +75,50 @@ func TestDashboardSpawnEffectiveSandboxSilentWhenSandboxed(t *testing.T) {
 	}
 }
 
+// The same probe that drives the Claude TCL-586 warning must also surface
+// OpenCode's "access-control is not a real sandbox" line, so the spawn dialog
+// and the profile/role editors warn when an OpenCode agent's sandbox is on.
+func TestDashboardSpawnEffectiveSandboxOpenCodeAccessControl(t *testing.T) {
+	withDashboardAuth(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// A blank sandbox select resolves to OpenCode's access-control default —
+	// the exact posture a user gets without choosing one — and must warn.
+	status, payload := spawnEffectiveSandbox(t, "harness=opencode&sandbox=&approval=&dir="+home)
+	if status != http.StatusOK {
+		t.Fatalf("got status %d, want 200", status)
+	}
+	if payload.SandboxMode != "access-control" {
+		t.Fatalf("got sandbox_mode %q, want the resolved access-control default", payload.SandboxMode)
+	}
+	if len(payload.Warnings) == 0 || !strings.Contains(payload.Warnings[0], "no built-in OS sandbox") {
+		t.Fatalf("got warnings %v, want the OpenCode sandbox warning", payload.Warnings)
+	}
+	// SandboxState/SandboxSource describe Claude's settings.json sandbox; they
+	// must not be resolved (and possibly report "on") for an OpenCode spawn,
+	// which would contradict the warning above. Set a Claude sandbox in the same
+	// HOME to prove the OpenCode path ignores it.
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"),
+		[]byte(`{"sandbox":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	_, again := spawnEffectiveSandbox(t, "harness=opencode&sandbox=&approval=&dir="+home)
+	if again.SandboxState != "unconfigured" || again.SandboxSource != "" {
+		t.Fatalf("opencode echoed Claude sandbox state %q/%q, want unconfigured/\"\"",
+			again.SandboxState, again.SandboxSource)
+	}
+
+	// Explicitly turning scoping off is a deliberate opt-out with its own ⚠ in
+	// the mode help, so the probe stays silent there.
+	if _, off := spawnEffectiveSandbox(t, "harness=opencode&sandbox=off&approval=&dir="+home); len(off.Warnings) != 0 {
+		t.Fatalf("opencode off: got warnings %v, want none", off.Warnings)
+	}
+}
+
 func httpBodyOf(t *testing.T, query string) string {
 	t.Helper()
 	recorder := httptest.NewRecorder()

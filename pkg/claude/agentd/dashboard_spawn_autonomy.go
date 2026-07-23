@@ -81,8 +81,18 @@ func handleDashboardSpawnEffectiveSandbox(w http.ResponseWriter, r *http.Request
 	// the project-settings walk find nothing — a silent all-clear, the one
 	// failure mode this endpoint must not have.
 	cwd := expandTilde(strings.TrimSpace(query.Get("dir")))
-	resolution := harness.ResolveClaudeSandboxEnabled(sandboxMode, cwd)
-	warnings := harness.UnsandboxedAutonomyWarnings(h, approval, sandboxMode, cwd)
+	// SandboxState/SandboxSource describe Claude Code's settings.json OS sandbox
+	// specifically. Resolving them for another harness would walk Claude's
+	// settings for an agent that never reads them and could echo `on` from the
+	// operator's own ~/.claude config while the warnings below correctly say the
+	// OpenCode agent is unsandboxed. Leave them at the zero resolution
+	// (unconfigured / no source) off the Claude path. h.Name is the registry's
+	// canonical harness id, so the direct compare is exact.
+	var resolution harness.ClaudeSandboxResolution
+	if h.Name == harness.DefaultName {
+		resolution = harness.ResolveClaudeSandboxEnabled(sandboxMode, cwd)
+	}
+	warnings := harness.SpawnSandboxWarnings(h, approval, sandboxMode, cwd)
 	if warnings == nil {
 		// A JSON null here would make every consumer guard the array.
 		warnings = []string{}
