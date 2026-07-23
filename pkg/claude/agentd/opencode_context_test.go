@@ -157,18 +157,62 @@ func TestPersistOpenCodeContextUsage(t *testing.T) {
 		ProviderID: "openai", ModelID: "gpt-5.4",
 		Input: 100000, Output: 2000, Reasoning: 500, CacheRead: 30000, CacheWrite: 0,
 	}
-	persistOpenCodeContextUsage(runtime, usage)
+	persistOpenCodeContextUsage(context.Background(), runtime, usage)
 
 	snap, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
-	assert.Equal(t, int64(130000), snap.TokensInput)  // 100000 + 30000 cache read + 0 cache write
-	assert.Equal(t, int64(2500), snap.TokensOutput)   // 2000 + 500 reasoning
+	assert.Equal(t, int64(130000), snap.TokensInput) // 100000 + 30000 cache read + 0 cache write
+	assert.Equal(t, int64(2500), snap.TokensOutput)  // 2000 + 500 reasoning
 	assert.InDelta(t, float64(132500)/272000*100, snap.ContextPct, 1e-6)
 
 	// A second persist reuses the cached limits: no extra /config/providers hit.
-	persistOpenCodeContextUsage(runtime, usage)
+	persistOpenCodeContextUsage(context.Background(), runtime, usage)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&hits), "provider limits are cached within the TTL")
+}
+
+// TestPersistOpenCodeContextUsageUnknownModel proves the graceful-degrade path:
+// when /config/providers reports no limit for the active model, the snapshot
+// still records token counts but leaves the window (and pct) unresolved rather
+// than crashing or inventing a figure.
+func TestPersistOpenCodeContextUsageUnknownModel(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+
+	const (
+		sessionID = "opencode-ctx-unknown"
+		convID    = "ses_ctx_unknown"
+		password  = "pw-unknown"
+	)
+	var hits int32
+	server := newOpenCodeConfigServer(t, password, &hits)
+	defer server.Close()
+
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "oc-pane3", Status: "idle",
+		Harness: harness.OpenCodeName, CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.SaveSession(sess))
+
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID,
+		ServerURL: server.URL, Password: password, PID: os.Getpid(),
+		Cwd: t.TempDir(),
+	}
+	// The mock server knows only openai/gpt-5.4[-mini]; this model has no limit.
+	usage := openCodeContextUsage{
+		ProviderID: "anthropic", ModelID: "claude-sonnet-5",
+		Input: 5000, Output: 1000, Reasoning: 0, CacheRead: 0, CacheWrite: 0,
+	}
+	persistOpenCodeContextUsage(context.Background(), runtime, usage)
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.ContextWindowSize, "unknown model resolves no window")
+	assert.Zero(t, snap.ContextPct, "pct is unresolved without a window")
+	assert.Equal(t, int64(5000), snap.TokensInput)
+	assert.Equal(t, int64(1000), snap.TokensOutput)
 }
 
 // TestConsumeOpenCodeEventPersistsContext drives the production SSE dispatch

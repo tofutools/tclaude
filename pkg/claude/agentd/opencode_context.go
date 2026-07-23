@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -89,6 +91,12 @@ func parseOpenCodeContextUsage(event json.RawMessage, convID string) (openCodeCo
 	if convID == "" {
 		return openCodeContextUsage{}, false
 	}
+	// The SSE stream is dominated by message.part.updated / status events; skip
+	// the full unmarshal (already paid once by the lifecycle projector) unless
+	// the raw event could be a message.updated.
+	if !bytes.Contains(event, []byte(`"message.updated"`)) {
+		return openCodeContextUsage{}, false
+	}
 	var decoded openCodeMessageUpdatedEvent
 	if err := json.Unmarshal(event, &decoded); err != nil {
 		return openCodeContextUsage{}, false
@@ -143,14 +151,19 @@ func openCodeContextSnapshot(usage openCodeContextUsage, windowSize int64) (pct 
 // writes the occupancy snapshot to the session row. All-zero writes are a no-op
 // at the DB chokepoint (db.UpdateContextSnapshot), so a usage that resolves to
 // nothing meaningful degrades to leaving the prior snapshot untouched.
-func persistOpenCodeContextUsage(runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
-	windowSize := openCodeContextWindow(runtime, usage.ProviderID, usage.ModelID)
+func persistOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
+	windowSize := openCodeContextWindow(ctx, runtime, usage.ProviderID, usage.ModelID)
 	pct, tokensInput, tokensOutput := openCodeContextSnapshot(usage, windowSize)
 	if err := db.UpdateContextSnapshot(runtime.SessionID, pct, tokensInput, tokensOutput, windowSize); err != nil {
 		slog.Debug("OpenCode context snapshot could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}
 }
+
+// openCodeConfigHTTPClient is the shared client for /config/providers reads, so
+// limit fetches reuse connections and idle transports rather than allocating a
+// client per call.
+var openCodeConfigHTTPClient = &http.Client{Timeout: openCodeConfigTimeout}
 
 // openCodeLimitCache memoizes the per-model context-window limits fetched from
 // each managed server's /config/providers, keyed by server URL. Each session
@@ -176,17 +189,17 @@ type openCodeLimitEntry struct {
 // providerID/modelID as reported by the managed server, or 0 when the limit is
 // unavailable (unknown model, fetch failure, or missing provider metadata). A
 // 0 return degrades gracefully: the snapshot persists token counts with pct 0.
-func openCodeContextWindow(runtime db.OpenCodeRuntime, providerID, modelID string) int64 {
+func openCodeContextWindow(ctx context.Context, runtime db.OpenCodeRuntime, providerID, modelID string) int64 {
 	providerID = strings.TrimSpace(providerID)
 	modelID = strings.TrimSpace(modelID)
 	if providerID == "" || modelID == "" {
 		return 0
 	}
-	limits := openCodeModelLimits(runtime)
+	limits := openCodeModelLimits(ctx, runtime)
 	return limits[providerID+"/"+modelID]
 }
 
-func openCodeModelLimits(runtime db.OpenCodeRuntime) map[string]int64 {
+func openCodeModelLimits(ctx context.Context, runtime db.OpenCodeRuntime) map[string]int64 {
 	openCodeLimitCache.Lock()
 	if openCodeLimitCache.byServer == nil {
 		openCodeLimitCache.byServer = map[string]openCodeLimitEntry{}
@@ -198,10 +211,14 @@ func openCodeModelLimits(runtime db.OpenCodeRuntime) map[string]int64 {
 	}
 	openCodeLimitCache.Unlock()
 
-	limits, err := fetchOpenCodeModelLimits(runtime)
+	limits, err := fetchOpenCodeModelLimits(ctx, runtime)
 
 	openCodeLimitCache.Lock()
 	defer openCodeLimitCache.Unlock()
+	// Each spawned session mints a fresh random server URL, so evict entries
+	// whose servers are long gone to keep this map from growing unbounded over a
+	// long-lived daemon's lifetime.
+	evictStaleOpenCodeLimitEntries()
 	if err != nil {
 		slog.Debug("OpenCode provider limits could not be fetched",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
@@ -219,17 +236,29 @@ func openCodeModelLimits(runtime db.OpenCodeRuntime) map[string]int64 {
 	return limits
 }
 
+// evictStaleOpenCodeLimitEntries drops cache entries not refreshed within a
+// generous multiple of the success TTL. Callers must hold openCodeLimitCache.
+func evictStaleOpenCodeLimitEntries() {
+	const staleAfter = 4 * openCodeLimitCacheTTL
+	for server, entry := range openCodeLimitCache.byServer {
+		if time.Since(entry.at) > staleAfter {
+			delete(openCodeLimitCache.byServer, server)
+		}
+	}
+}
+
 // fetchOpenCodeModelLimits reads /config/providers and flattens it into a
 // "providerID/modelID" -> context-window map, the same shape OpenCode's own run
-// runtime builds from provider.models[modelID].limit.context.
-func fetchOpenCodeModelLimits(runtime db.OpenCodeRuntime) (map[string]int64, error) {
+// runtime builds from provider.models[modelID].limit.context. The request is
+// bound to ctx so daemon teardown or session exit cancels an in-flight fetch
+// rather than pinning the SSE goroutine for the full timeout.
+func fetchOpenCodeModelLimits(ctx context.Context, runtime db.OpenCodeRuntime) (map[string]int64, error) {
 	endpoint := runtime.ServerURL + "/config/providers?directory=" + url.QueryEscape(runtime.Cwd)
 	request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: openCodeConfigTimeout}
-	response, err := client.Do(request)
+	response, err := openCodeConfigHTTPClient.Do(request.WithContext(ctx))
 	if err != nil {
 		return nil, err
 	}
