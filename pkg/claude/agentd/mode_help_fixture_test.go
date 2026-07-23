@@ -30,6 +30,9 @@ func collectModeHelp(t *testing.T) map[string]string {
 		for mode, text := range entry.ApprovalModeHelp {
 			help[entry.Name+"/approval/"+mode] = text
 		}
+		for mode, text := range entry.ToolsModeHelp {
+			help[entry.Name+"/tools/"+mode] = text
+		}
 		for mode, text := range entry.AskTimeoutModeHelp {
 			help[entry.Name+"/ask_timeout/"+mode] = text
 		}

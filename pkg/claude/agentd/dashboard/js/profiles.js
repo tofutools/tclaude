@@ -238,6 +238,9 @@ function profileSummary(p) {
   // value not worth a chip. An explicit 'inherit' is a real override (it drops
   // the profile back to the operator's settings.json posture) and does show.
   if (p.approval && p.approval !== 'auto') parts.push(`approval ${p.approval}`);
+  // OpenCode defaults tool governance to allow. Surface the restrictive modes
+  // while keeping the default profile summary compact.
+  if (p.tools && p.tools !== 'allow') parts.push(`tools ${p.tools}`);
   // Birth-time access controls: a chip for the owner default and the
   // override count, when the profile carries them.
   if (p.is_owner != null) parts.push(`owner ${p.is_owner ? 'on' : 'off'}`);
@@ -262,6 +265,7 @@ function profileDetailChips(p) {
   text('sandbox', p.sandbox);
   text('approval', p.approval);
   text('ask-timeout', p.ask_user_question_timeout);
+  text('tools', p.tools);
   toggle('auto-review', p.auto_review);
   toggle('trust-dir', p.trust_dir);
   toggle('remote-control', p.remote_control);

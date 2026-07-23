@@ -136,8 +136,8 @@ type GroupTemplateAgent struct {
 
 	// Per-role launch profile (JOH-239). SpawnProfile is the current display
 	// name for the stable SpawnProfileID reference (existence is validated at
-	// the wire boundary, following resolveGroupDefaultProfileName). The five inline
-	// fields are per-agent launch overrides that win over the referenced
+	// the wire boundary, following resolveGroupDefaultProfileName). The legacy
+	// inline fields are per-agent launch overrides that win over the referenced
 	// profile. All "" = unset: the resolver falls through to the referenced
 	// profile, then the group default profile, then the harness default. At
 	// instantiate the effective launch shape is
@@ -161,7 +161,7 @@ type GroupTemplateAgent struct {
 	// Only the fields the template deploy path honours are persisted (launch
 	// fields, ask-timeout, trust_dir/auto_review/remote_control toggles, owner +
 	// permission overrides) — see inlineProfileToJSON. Resolution order at
-	// instantiate: the five legacy inline fields above → ProfileInline →
+	// instantiate: the legacy inline fields above → ProfileInline →
 	// SpawnProfile (the registry reference) → role tiers → harness default.
 	ProfileInline *SpawnProfile
 
@@ -187,6 +187,7 @@ type templateInlineProfileJSON struct {
 	Effort                 string            `json:"effort,omitempty"`
 	Sandbox                string            `json:"sandbox,omitempty"`
 	Approval               string            `json:"approval,omitempty"`
+	ToolGovernance         string            `json:"tools,omitempty"`
 	AskUserQuestionTimeout string            `json:"ask_user_question_timeout,omitempty"`
 	AutoReview             *bool             `json:"auto_review,omitempty"`
 	TrustDir               *bool             `json:"trust_dir,omitempty"`
@@ -209,6 +210,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		Effort:                 p.Effort,
 		Sandbox:                p.Sandbox,
 		Approval:               p.Approval,
+		ToolGovernance:         p.ToolGovernance,
 		AskUserQuestionTimeout: p.AskUserQuestionTimeout,
 		AutoReview:             p.AutoReview,
 		TrustDir:               p.TrustDir,
@@ -240,6 +242,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		Effort:                 j.Effort,
 		Sandbox:                j.Sandbox,
 		Approval:               j.Approval,
+		ToolGovernance:         j.ToolGovernance,
 		AskUserQuestionTimeout: j.AskUserQuestionTimeout,
 		AutoReview:             j.AutoReview,
 		TrustDir:               j.TrustDir,

@@ -17,6 +17,7 @@ type durableRelaunchConfig struct {
 	ResumeProvenance       string
 	Sandbox                string
 	Approval               string
+	ToolGovernance         string
 	AutoReview             bool
 	Model                  string
 	Effort                 string
@@ -40,6 +41,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	}
 	sandboxMode := p.SandboxMode
 	approvalPolicy := p.ApprovalPolicy
+	toolGovernance := p.ToolGovernance
 	autoReview := p.AutoReview
 	effort := p.Effort
 	askTimeout := p.AskUserQuestionTimeout
@@ -49,6 +51,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		Version:                db.RelaunchProfileVersion,
 		SandboxMode:            &sandboxMode,
 		ApprovalPolicy:         &approvalPolicy,
+		ToolGovernance:         &toolGovernance,
 		ApprovalAutoReview:     &autoReview,
 		ModelID:                &model,
 		Effort:                 &effort,
@@ -77,6 +80,9 @@ func composeAgentRelaunchProfile(fallback, agent *db.AgentRelaunchProfile) *db.A
 	}
 	if agent.ApprovalPolicy != nil {
 		merged.ApprovalPolicy = agent.ApprovalPolicy
+	}
+	if agent.ToolGovernance != nil {
+		merged.ToolGovernance = agent.ToolGovernance
 	}
 	if agent.ApprovalAutoReview != nil {
 		merged.ApprovalAutoReview = agent.ApprovalAutoReview
@@ -170,6 +176,14 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 			return nil, fmt.Errorf("invalid durable auto-review posture: %w", err)
 		}
 	}
+	toolGovernance := ""
+	if agentProfile.ToolGovernance != nil {
+		toolGovernance = strings.TrimSpace(*agentProfile.ToolGovernance)
+	}
+	toolGovernance, err = harness.ResolveToolGovernance(h, toolGovernance)
+	if err != nil {
+		return nil, fmt.Errorf("invalid durable tool-governance policy: %w", err)
+	}
 
 	model := ""
 	if agentProfile.ModelID != nil {
@@ -224,6 +238,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		ResumeProvenance:       conversation.ResumeProvenance,
 		Sandbox:                sandboxMode,
 		Approval:               approval,
+		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,
 		Model:                  model,
 		Effort:                 effort,

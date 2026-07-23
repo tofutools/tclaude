@@ -34,6 +34,7 @@ export function harnessDefaults(harness) {
   return {
     sandbox: harness?.default_sandbox || harness?.sandbox_modes?.[0] || '',
     approval: harness?.default_approval || harness?.approval_modes?.[0] || '',
+    tools: harness?.default_tools || harness?.tools_modes?.[0] || '',
     approval_reviewer: '',
     ask_user_question_timeout: harness?.default_ask_timeout || harness?.ask_timeout_modes?.[0] || '',
   };
@@ -47,7 +48,8 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     name: !local && editExisting ? seed?.name || '' : '', aliases_text: (seed?.aliases || []).join(', '), harness,
     disabled: !!seed?.disabled, disabled_reason: seed?.disabled_reason || '',
     model: seed?.model || '', effort: seed?.effort || '', sandbox: seed?.sandbox || defaults.sandbox,
-    approval: seed?.approval || defaults.approval, ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
+    approval: seed?.approval || defaults.approval, tools: seed?.tools || defaults.tools,
+    ask_user_question_timeout: seed?.ask_user_question_timeout || defaults.ask_user_question_timeout,
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
@@ -71,6 +73,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (h?.can_sandbox && draft.sandbox) body.sandbox = draft.sandbox;
   const surfacesApproval = !!(h?.can_approval && h.approval_modes?.length);
   if (surfacesApproval && draft.approval) body.approval = draft.approval;
+  const surfacesTools = !!(h?.can_tools && h.tools_modes?.length);
+  if (surfacesTools && draft.tools) body.tools = draft.tools;
   const reviewer = h?.can_auto_review ? readReviewer(draft.approval_reviewer) : null;
   if (reviewer != null) body.auto_review = reviewer;
   if (h?.can_ask_timeout && h.ask_timeout_modes?.length && draft.ask_user_question_timeout) body.ask_user_question_timeout = draft.ask_user_question_timeout;
@@ -87,6 +91,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   const norm = (name) => name || 'claude';
   if (original && norm(original.harness) === norm(draft.harness)) {
     if (!surfacesApproval && original.approval) body.approval = original.approval;
+    if (!surfacesTools && original.tools) body.tools = original.tools;
     if (!h?.can_auto_review && original.auto_review != null) body.auto_review = original.auto_review;
   }
   if (local) {
@@ -102,7 +107,8 @@ export function roleDraft(seed = null, catalog = []) {
   return {
     name: seed?.name || '', descr: seed?.descr || '', brief: seed?.brief || '',
     harness, model: seed?.model || '', effort: seed?.effort || '',
-    sandbox: seed?.sandbox || defaults.sandbox, approval: seed?.approval || defaults.approval, spawn_profile: seed?.spawn_profile || '',
+    sandbox: seed?.sandbox || defaults.sandbox, approval: seed?.approval || defaults.approval,
+    tools: seed?.tools || defaults.tools, spawn_profile: seed?.spawn_profile || '',
     permissions: [...(seed?.permissions || [])],
   };
 }
@@ -116,6 +122,7 @@ export function rolePayload(draft, catalog = []) {
   };
   if (h?.can_sandbox && draft.sandbox) body.sandbox = draft.sandbox;
   if (h?.can_approval && h.approval_modes?.length && draft.approval) body.approval = draft.approval;
+  if (h?.can_tools && h.tools_modes?.length && draft.tools) body.tools = draft.tools;
   return body;
 }
 

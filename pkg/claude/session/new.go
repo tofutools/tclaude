@@ -132,6 +132,11 @@ type NewParams struct {
 	// JOH-200.
 	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = no override (each harness uses its own config)"`
 
+	// ToolGovernance controls OpenCode's homogeneous built-in tool block. A
+	// direct session launch validates but does not default it; daemon launches
+	// resolve blank to allow and pass the concrete value through this flag.
+	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/task/skill: allow | ask | deny. Unset = no override for a direct launch. Not applicable to claude/codex"`
+
 	// AutoReview opts into the harness's guardian subagent (Codex's `-c
 	// approvals_reviewer=auto_review`), which auto-decides approval prompts in
 	// your place. Off by default (you review). Gated on the harness having an
@@ -518,6 +523,12 @@ func runNew(params *NewParams) error {
 		recordedApprovalPolicy = harness.ClaudePermissionInherit
 	}
 	params.Approval = approvalPolicy
+
+	toolGovernance, err := harness.ValidateToolGovernance(h, params.ToolGovernance)
+	if err != nil {
+		return err
+	}
+	params.ToolGovernance = toolGovernance
 
 	// Gate --auto-review the same way: it is allowed only for a harness with an
 	// approvals subsystem (Codex), so setting it for Claude Code errors here.

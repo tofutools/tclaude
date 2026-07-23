@@ -37,6 +37,7 @@ type wireProfile struct {
 	Effort         string   `json:"effort"`
 	Sandbox        string   `json:"sandbox"`
 	Approval       string   `json:"approval"`
+	Tools          string   `json:"tools"`
 	AutoReview     *bool    `json:"auto_review"`
 	SyncWorktree   *bool    `json:"sync_worktree"`
 }
@@ -80,6 +81,30 @@ func TestSpawnProfiles_OpenCodeSandboxRoundTripAndResolve(t *testing.T) {
 	resolved, ok := f.World.SpawnSandbox(spawn.ConvID)
 	require.True(t, ok)
 	assert.Equal(t, "off", resolved)
+}
+
+func TestSpawnProfiles_OpenCodeToolGovernanceRoundTrip(t *testing.T) {
+	f := newFlow(t)
+	for i, tools := range []string{"", "allow", "ask", "deny"} {
+		name := fmt.Sprintf("opencode-tools-%d", i)
+		rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+			"name": name, "harness": "opencode", "tools": tools,
+		})
+		require.Equalf(t, http.StatusCreated, rec.Code, "create %q body=%s", tools, rec.Body.String())
+
+		rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/"+name, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got wireProfile
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		assert.Equal(t, tools, got.Tools)
+	}
+
+	for _, harnessName := range []string{"claude", "codex"} {
+		rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+			"name": "bad-tools-" + harnessName, "harness": harnessName, "tools": "ask",
+		})
+		assert.Equalf(t, http.StatusBadRequest, rec.Code, "%s must reject OpenCode tools; body=%s", harnessName, rec.Body.String())
+	}
 }
 
 func TestSpawnProfiles_DisabledStateAndRememberedReasonRoundTrip(t *testing.T) {

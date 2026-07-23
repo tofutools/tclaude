@@ -11,7 +11,7 @@ import (
 )
 
 func openCodePermissionJSONForLaunch(
-	cwd, sandboxMode, approvalPolicy string,
+	cwd, sandboxMode, approvalPolicy, toolGovernance string,
 	snapshot *sandboxpolicy.Snapshot,
 ) (string, error) {
 	var err error
@@ -24,6 +24,7 @@ func openCodePermissionJSONForLaunch(
 		Worktree:       harness.OpenCodeWorktree(cwd),
 		SandboxMode:    sandboxMode,
 		ApprovalPolicy: approvalPolicy,
+		ToolGovernance: toolGovernance,
 	}
 	if snapshot != nil {
 		filesystem, err := sandboxpolicy.FilesystemForLaunch(snapshot.Effective)

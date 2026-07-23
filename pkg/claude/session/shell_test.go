@@ -22,6 +22,7 @@ func TestRunNewShell_RejectsCodingHarnessFlags(t *testing.T) {
 		{"sandbox", NewParams{Sandbox: "workspace-write"}, "--sandbox"},
 		{"permission-profile", NewParams{PermissionProfile: "tclaude-agent"}, "--permission-profile"},
 		{"approval", NewParams{Approval: "never"}, "--ask-for-approval"},
+		{"tools", NewParams{ToolGovernance: "deny"}, "--tools"},
 		{"auto-review", NewParams{AutoReview: true}, "--auto-review"},
 		{"trust-dir", NewParams{TrustDir: true}, "--trust-dir"},
 		{"remote-control", NewParams{RemoteControl: true}, "--remote-control"},

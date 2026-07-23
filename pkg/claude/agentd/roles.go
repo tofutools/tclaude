@@ -15,7 +15,7 @@ import (
 // Roles — the role library (JOH-240): named, reusable bundles of defaults a
 // template roster agent can reference instead of re-typing them. A role
 // carries a canonical role-brief (guidance folded into a "## Role" block in the
-// referencing agent's startup context), a default launch shape (the same six
+// referencing agent's startup context), a default launch shape (the same
 // launch fields template agents carry — JOH-239), and a default permission
 // set. See pkg/claude/common/db/roles.go for the row shape.
 //
@@ -37,18 +37,19 @@ import (
 // response-only (ignored on input). Permissions is non-omitempty so a consumer
 // can range over it safely.
 type roleJSON struct {
-	Name         string   `json:"name"`
-	Descr        string   `json:"descr,omitempty"`
-	Brief        string   `json:"brief,omitempty"`
-	SpawnProfile string   `json:"spawn_profile,omitempty"`
-	Harness      string   `json:"harness,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Effort       string   `json:"effort,omitempty"`
-	Sandbox      string   `json:"sandbox,omitempty"`
-	Approval     string   `json:"approval,omitempty"`
-	Permissions  []string `json:"permissions"`
-	CreatedAt    string   `json:"created_at,omitempty"`
-	UpdatedAt    string   `json:"updated_at,omitempty"`
+	Name           string   `json:"name"`
+	Descr          string   `json:"descr,omitempty"`
+	Brief          string   `json:"brief,omitempty"`
+	SpawnProfile   string   `json:"spawn_profile,omitempty"`
+	Harness        string   `json:"harness,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	Sandbox        string   `json:"sandbox,omitempty"`
+	Approval       string   `json:"approval,omitempty"`
+	ToolGovernance string   `json:"tools,omitempty"`
+	Permissions    []string `json:"permissions"`
+	CreatedAt      string   `json:"created_at,omitempty"`
+	UpdatedAt      string   `json:"updated_at,omitempty"`
 }
 
 // roleToJSON projects a db.Role onto the wire shape, with a non-nil
@@ -59,16 +60,17 @@ func roleToJSON(rl *db.Role) roleJSON {
 		perms = []string{}
 	}
 	out := roleJSON{
-		Name:         rl.Name,
-		Descr:        rl.Descr,
-		Brief:        rl.Brief,
-		SpawnProfile: rl.SpawnProfile,
-		Harness:      rl.Harness,
-		Model:        rl.Model,
-		Effort:       rl.Effort,
-		Sandbox:      rl.Sandbox,
-		Approval:     rl.Approval,
-		Permissions:  perms,
+		Name:           rl.Name,
+		Descr:          rl.Descr,
+		Brief:          rl.Brief,
+		SpawnProfile:   rl.SpawnProfile,
+		Harness:        rl.Harness,
+		Model:          rl.Model,
+		Effort:         rl.Effort,
+		Sandbox:        rl.Sandbox,
+		Approval:       rl.Approval,
+		ToolGovernance: rl.ToolGovernance,
+		Permissions:    perms,
 	}
 	if !rl.CreatedAt.IsZero() {
 		out.CreatedAt = rl.CreatedAt.Format(time.RFC3339)
@@ -131,6 +133,10 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
 	}
+	toolGovernance, err := harness.ValidateToolGovernance(h, body.ToolGovernance)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()}
+	}
 
 	// A referenced spawn profile must exist here — same existence check the
 	// template-agent launch validation applies.
@@ -161,16 +167,17 @@ func buildRoleFromJSON(body roleJSON) (*db.Role, *spawnFailure) {
 	}
 
 	return &db.Role{
-		Name:         name,
-		Descr:        strings.TrimSpace(body.Descr),
-		Brief:        brief,
-		SpawnProfile: profRef,
-		Harness:      hName,
-		Model:        model,
-		Effort:       effort,
-		Sandbox:      sandbox,
-		Approval:     approval,
-		Permissions:  perms,
+		Name:           name,
+		Descr:          strings.TrimSpace(body.Descr),
+		Brief:          brief,
+		SpawnProfile:   profRef,
+		Harness:        hName,
+		Model:          model,
+		Effort:         effort,
+		Sandbox:        sandbox,
+		Approval:       approval,
+		ToolGovernance: toolGovernance,
+		Permissions:    perms,
 	}, nil
 }
 

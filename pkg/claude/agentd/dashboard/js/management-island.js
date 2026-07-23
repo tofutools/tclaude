@@ -196,9 +196,11 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
   const modelID = profile ? 'profile-editor-model' : 'role-editor-model';
   const approvalID = profile ? 'profile-editor-approval' : 'role-editor-approval';
   const sandboxID = profile ? 'profile-editor-sandbox' : 'role-editor-sandbox';
+  const toolsID = profile ? 'profile-editor-tools' : 'role-editor-tools';
   const approvalLabel = draft.harness === 'codex' ? 'Approval policy' : 'Permission mode';
   const approvalHelp = hEntry?.approval_mode_help?.[draft.approval] || '';
   const sandboxHelp = hEntry?.sandbox_mode_help?.[draft.sandbox] || '';
+  const toolsHelp = hEntry?.tools_mode_help?.[draft.tools] || '';
   const askTimeoutHelp = hEntry?.ask_timeout_mode_help?.[draft.ask_user_question_timeout] || '';
   const reviewerHelp = approvalReviewerHelp(draft.approval_reviewer, draft.approval);
   const modelControl = hasModelList ? html`<div class="cron-create-target"><${Select} id=${modelID} value=${customModel ? '__custom__' : draft.model} onChange=${(value) => { if (value === '__custom__') { setCustomModel(true); change(setDraft, 'model', ''); } else { setCustomModel(false); change(setDraft, 'model', value); } }} options=${[['', 'Default (unset)'], ...models.map((model) => [model, model]), ['__custom__', 'Custom model id…']]} />${customModel && html`<input id=${`${modelID}-custom`} type="text" aria-label="Custom model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="model id or alias" autocomplete="off" spellcheck="false" autofocus />`}</div>` : html`<input id=${modelID} type="text" aria-label="Model id" value=${draft.model} onInput=${(event) => change(setDraft, 'model', event.currentTarget.value)} placeholder="blank = unset; model id or alias" autocomplete="off" spellcheck="false"/>`;
@@ -218,6 +220,12 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
       onChange=${(event) => change(setDraft, 'approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_approval} />
+    <${HelpField} id=${toolsID} label="Tool governance" title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."
+      value=${draft.tools}
+      options=${(hEntry?.tools_modes || []).map((value) => ({ value, label: value + (value === hEntry.default_tools ? ' (recommended)' : '') }))}
+      onChange=${(event) => change(setDraft, 'tools', event.currentTarget.value)}
+      help=${toolsHelp} open=${helpOpen === toolsID} setOpen=${setHelpOpen}
+      disabled=${!hEntry?.can_tools} />
     ${autonomyWarnings.length > 0 && html`<div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-autonomy-warning`}>
       <span class="cron-create-label"></span>
       <div class="cron-create-target" role="alert">

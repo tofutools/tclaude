@@ -162,10 +162,14 @@ type dashHarness struct {
 	ApprovalModes    []string          `json:"approval_modes"`
 	DefaultApproval  string            `json:"default_approval"`
 	ApprovalModeHelp map[string]string `json:"approval_mode_help"`
+	ToolsModes       []string          `json:"tools_modes"`
+	DefaultTools     string            `json:"default_tools"`
+	ToolsModeHelp    map[string]string `json:"tools_mode_help"`
 	CanRename        bool              `json:"can_rename"`
 	CanCompact       bool              `json:"can_compact"`
 	CanSandbox       bool              `json:"can_sandbox"`
 	CanApproval      bool              `json:"can_approval"`
+	CanTools         bool              `json:"can_tools"`
 	CanAutoReview    bool              `json:"can_auto_review"`
 	CanRemoteControl bool              `json:"can_remote_control"`
 }

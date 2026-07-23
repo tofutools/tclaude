@@ -92,6 +92,10 @@ type Harness struct {
 	// explicit per-agent / per-profile opt-in — the default (inherit) adds no
 	// override, so an un-chosen spawn keeps the operator's settings.json value.
 	AskTimeout AskTimeoutCatalog
+	// ToolGovernance names the uniform allow/ask/deny action applied to a
+	// harness-defined built-in tool group. OpenCode supplies this catalog for
+	// bash/glob/grep/lsp/task/skill; Claude Code and Codex leave it nil.
+	ToolGovernance ToolGovernanceCatalog
 
 	// TmuxScrollback marks a harness that relies on tmux for scroll-back
 	// history rather than rendering its own. The spawn path turns tmux mouse
@@ -344,6 +348,12 @@ func (h *Harness) SupportsApproval() bool {
 // SupportsSandbox.
 func (h *Harness) SupportsAskTimeout() bool {
 	return h != nil && h.AskTimeout != nil
+}
+
+// SupportsToolGovernance reports whether the harness exposes the independent
+// built-in tool-governance axis. OpenCode is currently the only implementation.
+func (h *Harness) SupportsToolGovernance() bool {
+	return h != nil && h.ToolGovernance != nil
 }
 
 // SupportsAutoReview reports whether the harness has a guardian/reviewer

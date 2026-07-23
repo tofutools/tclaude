@@ -226,6 +226,7 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 			Effort:                  launch.Effort,
 			SandboxMode:             launch.Sandbox,
 			ApprovalPolicy:          launch.Approval,
+			ToolGovernance:          launch.ToolGovernance,
 			TrustDir:                launch.TrustDir,
 			TrustDirSet:             launch.TrustDirSet,
 			AutoReview:              launch.AutoReview,

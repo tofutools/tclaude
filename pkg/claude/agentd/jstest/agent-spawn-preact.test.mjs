@@ -21,6 +21,7 @@ const harnesses = [{
   sandbox_mode_help: { inherit: 'keep settings', on: 'force on', off: 'force off' },
   can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit',
   approval_mode_help: { inherit: 'keep rules', plan: 'read only' },
+  can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {},
   can_auto_review: false,
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
@@ -37,6 +38,7 @@ const harnesses = [{
     never: 'never prompt', untrusted: 'ask for untrusted',
     'on-failure': 'deprecated retry', 'on-request': 'ask when requested',
   },
+  can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {},
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
@@ -49,6 +51,8 @@ const harnesses = [{
   sandbox_mode_help: { off: '⚠ No tclaude OS containment' },
   can_approval: false, approval_modes: [], default_approval: '',
   approval_mode_help: {},
+  can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow',
+  tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' },
   can_auto_review: false,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
@@ -154,6 +158,7 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
 
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   assert.equal(openCode.sandbox, 'off');
+  assert.equal(openCode.tools, 'allow');
   assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, false);
 
   const sparseCodex = model.applySpawnProfile(draft, {
@@ -262,10 +267,11 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   assert.equal(codexBody.auto_review, true);
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   const openCodeBody = model.buildSpawnRequest({
-    ...openCode, name: 'worker', sandboxProfile: 'stale',
+    ...openCode, name: 'worker', sandboxProfile: 'stale', tools: 'deny',
   }, context, { path: '', branch: '' }).body;
   assert.equal(openCodeBody.sandbox, 'off');
   assert.equal(openCodeBody.sandbox_profile, 'stale');
+  assert.equal(openCodeBody.tools, 'deny');
   const humanBody = model.buildSpawnRequest({
     ...codex, name: 'worker', approvalReviewer: 'human',
   }, context, { path: '', branch: '' }).body;
@@ -429,6 +435,13 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.equal(selectedValue(openCodeSandbox), 'off');
   assert.match(host.querySelector('#agent-spawn-sandbox-caveat').textContent, /No tclaude OS containment/);
   assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, false);
+  const openCodeTools = host.querySelector('#agent-spawn-tools');
+  assert.equal(openCodeTools.closest('.cron-create-row').hidden, false);
+  assert.deepEqual([...openCodeTools.options].map((option) => option.value), ['allow', 'ask', 'deny']);
+  assert.equal(selectedValue(openCodeTools), 'allow');
+  setValue(harnessSelect, 'claude');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  assert.equal(host.querySelector('#agent-spawn-tools-row').hidden, true);
   mounted.cleanup();
 });
 

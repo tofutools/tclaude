@@ -64,7 +64,7 @@ type templateAgentJSON struct {
 	RoleRef string `json:"role_ref,omitempty"`
 
 	// Per-role launch profile (JOH-239). SpawnProfile references a spawn
-	// profile by name (validated to exist at save); the five inline fields are
+	// profile by name (validated to exist at save); the inline fields are
 	// per-agent launch overrides that win over the referenced profile. All
 	// omitempty — an absent value = unset, and the resolver at instantiate
 	// falls through: per-agent inline → referenced profile → group default →
@@ -85,7 +85,7 @@ type templateAgentJSON struct {
 	// library, and travels with the template on export/import. Identity fields
 	// (name/agent_name/role/descr/initial_message) and the spawn-dialog-only
 	// toggles are rejected at save — those live on the template agent itself.
-	// Resolution: the five inline fields above → profile_inline → spawn_profile.
+	// Resolution: the inline fields above → profile_inline → spawn_profile.
 	ProfileInline *spawnProfileJSON `json:"profile_inline,omitempty"`
 
 	// Wave is the agent's staged-spawn wave (JOH-244), default 0. Waves spawn
@@ -704,12 +704,13 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // + harness secure defaults — the resolved shape the instantiator threads into
 // spawnParams.
 type templateAgentLaunch struct {
-	SpawnProfile string
-	Harness      string
-	Model        string
-	Effort       string
-	Sandbox      string
-	Approval     string
+	SpawnProfile   string
+	Harness        string
+	Model          string
+	Effort         string
+	Sandbox        string
+	Approval       string
+	ToolGovernance string
 	// TrustDir / AutoReview are the two *bool launch toggles a referenced spawn
 	// profile carries (the same pair applyDefaultProfile overlays from a group's
 	// default profile). They are resolved (not just validated) here so the
@@ -879,6 +880,9 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if _, err := harness.ValidateApprovalPolicy(h, p.Approval); err != nil {
 		return wrap("invalid_approval", err.Error())
 	}
+	if _, err := harness.ValidateToolGovernance(h, p.ToolGovernance); err != nil {
+		return wrap("invalid_tools", err.Error())
+	}
 	if _, err := harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
 		return wrap("invalid_ask_user_question_timeout", err.Error())
 	}
@@ -985,6 +989,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		roleInline = &db.SpawnProfile{
 			Name: "role " + role.Name + " inline", Harness: role.Harness,
 			Model: role.Model, Effort: role.Effort, Sandbox: role.Sandbox, Approval: role.Approval,
+			ToolGovernance: role.ToolGovernance,
 		}
 	}
 	inlineProfile := a.ProfileInline
@@ -1055,6 +1060,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if note != "" {
 		notes = append(notes, note)
 	}
+	toolGovernance, _, note, fail := resolveStringLaunchField("tools", "", h.Name, tiers,
+		func(p *db.SpawnProfile) string { return p.ToolGovernance },
+		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if note != "" {
+		notes = append(notes, note)
+	}
 	askTimeout, _, note, fail := resolveStringLaunchField("ask_user_question_timeout", "", h.Name, tiers,
 		func(p *db.SpawnProfile) string { return p.AskUserQuestionTimeout }, func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
 	if fail != nil {
@@ -1069,6 +1083,9 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	}
 	if approval, err = harness.ResolveApprovalPolicy(h, approval); err != nil {
 		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
+	}
+	if toolGovernance, err = harness.ResolveToolGovernance(h, toolGovernance); err != nil {
+		return templateAgentLaunch{}, &spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()}
 	}
 	// Preserve the semantic difference between an omitted approval and a posture
 	// chosen by the template/profile chain. Before TCL-585 this resolver applied
@@ -1151,6 +1168,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		Effort:                 effort,
 		Sandbox:                sandbox,
 		Approval:               approval,
+		ToolGovernance:         toolGovernance,
 		TrustDir:               trustDir,
 		TrustDirSet:            trustDirSet,
 		AutoReview:             autoReview,
@@ -3594,8 +3612,8 @@ func handleTemplateFromGroup(w http.ResponseWriter, r *http.Request) {
 // profile (prev) with the freshly re-traced one (traced) for an update-mode
 // from-group re-snapshot. The traced profile's OBSERVABLE fields win (harness /
 // model / effort / sandbox + the member's live permission grants); prev's
-// NON-observable, curated fields carry forward: approval (never recorded on a
-// session row), the ask-timeout, the trust_dir / auto_review / remote_control
+// NON-observable, curated fields carry forward: approval and tool governance
+// (never recorded on a session row), the ask-timeout, the trust_dir / auto_review / remote_control
 // toggles, and any deny permission overrides (only grants are observable).
 // prev's is_owner is deliberately dropped — ownership IS observable and rides
 // the agent row's own owner flag. Returns nil when neither side carries
@@ -3611,6 +3629,9 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	}
 	if out.Approval == "" {
 		out.Approval = prev.Approval
+	}
+	if out.ToolGovernance == "" {
+		out.ToolGovernance = prev.ToolGovernance
 	}
 	if out.AskUserQuestionTimeout == "" {
 		out.AskUserQuestionTimeout = prev.AskUserQuestionTimeout
@@ -3630,7 +3651,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 		}
 	}
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
-		out.Approval == "" && out.AskUserQuestionTimeout == "" &&
+		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil

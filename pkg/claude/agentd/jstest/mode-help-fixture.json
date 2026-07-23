@@ -26,5 +26,8 @@
   "opencode/approval/ask": "Access-control tools remain enabled. Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting; with sandbox off, bash also requires approval.",
   "opencode/approval/deny": "Fail-closed approval default: path-scoped reads and the access-control tool baseline run, while edits, web, and unlisted tools are denied without prompting.",
   "opencode/sandbox/access-control": "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules.",
-  "opencode/sandbox/off": "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
+  "opencode/sandbox/off": "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved.",
+  "opencode/tools/allow": "In access-control mode, allow bash, glob, grep, lsp, task, and skill, matching tclaude's existing OpenCode behaviour. Sandbox off ignores this setting.",
+  "opencode/tools/ask": "In access-control mode, ask before bash, glob, grep, lsp, task, or skill runs. Sandbox off ignores this setting. ⚠ Detached agents can block waiting for a human response.",
+  "opencode/tools/deny": "In access-control mode, deny bash, glob, grep, lsp, task, and skill without prompting. Sandbox off ignores this setting."
 }

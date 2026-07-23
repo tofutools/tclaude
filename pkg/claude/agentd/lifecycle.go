@@ -1341,6 +1341,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		Approval:                   approval,
 		AutoReview:                 autoReview,
 		AskUserQuestionTimeout:     launchConfig.AskUserQuestionTimeout,
+		ToolGovernance:             launchConfig.ToolGovernance,
 		RemoteControl:              remoteControl,
 		AutoMemory:                 launchConfig.AutoMemory,
 	}); err != nil {
@@ -2730,7 +2731,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
-	var sandboxNote, approvalNote, askTimeoutNote string
+	var sandboxNote, approvalNote, toolsNote, askTimeoutNote string
 	body.SandboxMode, _, sandboxNote, fieldFail = resolveStringLaunchField(
 		"sandbox", body.SandboxMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
 		func(raw string) (string, error) { return harness.ValidateSandboxMode(h, raw) })
@@ -2741,6 +2742,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	body.ApprovalPolicy, _, approvalNote, fieldFail = resolveStringLaunchField(
 		"approval", body.ApprovalPolicy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Approval },
 		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	body.ToolGovernance, _, toolsNote, fieldFail = resolveStringLaunchField(
+		"tools", body.ToolGovernance, h.Name, profileTiers,
+		func(p *db.SpawnProfile) string { return p.ToolGovernance },
+		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -2789,7 +2798,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
 	}
-	for _, note := range []string{sandboxNote, approvalNote, askTimeoutNote, autoReviewNote, trustDirNote, autoMemoryNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoReviewNote, trustDirNote, autoMemoryNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -2830,6 +2839,11 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
 				callerNarrowedApprovalNote(approvalPolicy, defaultApprovalPolicy))
 		}
+	}
+	toolGovernance, tgErr := harness.ResolveToolGovernance(h, body.ToolGovernance)
+	if tgErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_tools", tgErr.Error())
+		return
 	}
 	// Both axes are final here (profile overlay, harness default, caller
 	// narrowing), which is the only point where "autonomous but unconfined" is
@@ -3156,6 +3170,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		SandboxMode:                sandboxMode,
 		AskUserQuestionTimeout:     askTimeout,
 		ApprovalPolicy:             approvalPolicy,
+		ToolGovernance:             toolGovernance,
 		AutoReview:                 autoReview,
 		AutoReviewSet:              autoReviewSet,
 		TrustDir:                   trustDir,
@@ -3337,6 +3352,9 @@ type spawnParams struct {
 	// before building the params; it forwards to `tclaude session new
 	// --ask-for-approval <policy>`. See JOH-200.
 	ApprovalPolicy string
+	// ToolGovernance is OpenCode's resolved uniform action for the
+	// bash/glob/grep/lsp/task/skill block. It forwards as --tools.
+	ToolGovernance string
 	// AutoReview opts the spawn into the harness's guardian subagent (Codex's
 	// `-c approvals_reviewer=auto_review` — auto-decides approval prompts in
 	// the human's place), forwarding `--auto-review` to `tclaude session new`.
@@ -3796,6 +3814,12 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	if fail != nil {
 		return fail
 	}
+	p.ToolGovernance, _, _, fail = resolveStringLaunchField("tools", p.ToolGovernance, h.Name, tiers,
+		func(prof *db.SpawnProfile) string { return prof.ToolGovernance },
+		func(raw string) (string, error) { return harness.ValidateToolGovernance(h, raw) })
+	if fail != nil {
+		return fail
+	}
 	p.AskUserQuestionTimeout, _, _, fail = resolveStringLaunchField("ask_user_question_timeout", p.AskUserQuestionTimeout, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.AskUserQuestionTimeout },
 		func(raw string) (string, error) { return harness.ResolveAskTimeoutMode(h, raw) })
@@ -3827,6 +3851,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	if approvalUnset {
 		p.ApprovalPolicy = narrowDefaultApprovalToCaller(p.SpawnedByConv, h.Name, p.ApprovalPolicy)
+	}
+	if p.ToolGovernance, err = harness.ResolveToolGovernance(h, p.ToolGovernance); err != nil {
+		return &spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()}
 	}
 	if p.AskUserQuestionTimeout, err = harness.ResolveAskTimeoutMode(h, p.AskUserQuestionTimeout); err != nil {
 		return &spawnFailure{http.StatusBadRequest, "invalid_ask_user_question_timeout", err.Error()}
@@ -3996,6 +4023,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		Sandbox:                    p.SandboxMode,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		Approval:                   p.ApprovalPolicy,
+		ToolGovernance:             p.ToolGovernance,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		RemoteControl:              p.RemoteControl,
@@ -4015,7 +4043,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		p.Cwd = resolvedCwd
 		spawnArgs.Cwd = resolvedCwd
 		permissionJSON, err := openCodePermissionJSONForLaunch(
-			p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.EffectiveSandbox)
+			p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 				"could not build OpenCode access-control policy: " + err.Error()}
@@ -5617,6 +5645,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
+	args = appendToolGovernanceFlag(args, a.ToolGovernance)
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	args = appendTrustDirFlag(args, a.TrustDir)
 	args = appendRemoteControlFlag(args, a.RemoteControl)
@@ -5707,6 +5736,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args = appendSandboxArgs(args, a.Harness, a.Sandbox)
 	args = appendAskTimeoutFlag(args, a.AskUserQuestionTimeout)
 	args = appendApprovalFlag(args, a.Approval)
+	args = appendToolGovernanceFlag(args, a.ToolGovernance)
 	args = appendAutoReviewFlag(args, a.AutoReview)
 	// Re-arm Claude Code's built-in Remote Access on the relaunched pane when
 	// the SOURCE conv was armed (JOH-261). claudeSpawner.BuildCommand emits
@@ -5831,6 +5861,15 @@ func appendPermissionProfileFlag(args []string, profile string) []string {
 func appendApprovalFlag(args []string, policy string) []string {
 	if policy != "" {
 		args = append(args, "--ask-for-approval", policy)
+	}
+	return args
+}
+
+// appendToolGovernanceFlag carries OpenCode's resolved homogeneous tool action
+// through the internal session-new round trip. Empty omits the axis.
+func appendToolGovernanceFlag(args []string, policy string) []string {
+	if policy != "" {
+		args = append(args, "--tools", policy)
 	}
 	return args
 }
@@ -6004,7 +6043,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		a.Cwd = resolvedCwd
 		permissionJSON, policyErr := openCodePermissionJSONForLaunch(
-			a.Cwd, a.Sandbox, a.Approval, a.EffectiveSandbox)
+			a.Cwd, a.Sandbox, a.Approval, a.ToolGovernance, a.EffectiveSandbox)
 		if policyErr != nil {
 			return policyErr
 		}

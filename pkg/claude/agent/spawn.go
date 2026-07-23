@@ -261,6 +261,10 @@ type SpawnRequest struct {
 	// (settings.json-driven), which rejects a non-empty value. See JOH-200.
 	ApprovalPolicy string `json:"approval,omitempty"`
 
+	// ToolGovernance controls OpenCode's bash/glob/grep/lsp/task/skill block
+	// uniformly. Empty is resolved by agentd to the OpenCode default (allow).
+	ToolGovernance string `json:"tools,omitempty"`
+
 	// AutoReview opts the spawned agent into the harness's guardian subagent
 	// (Codex's `-c approvals_reviewer=auto_review`), which auto-decides approval
 	// prompts in the human's place — the orthogonal "who answers" axis to
@@ -535,6 +539,9 @@ type SpawnParams struct {
 	// the caller's own same-harness posture when the caller cannot grant it.
 	Approval string `long:"ask-for-approval" optional:"true" help:"Launch approval/permission posture for the new agent (per-harness). Codex policy: untrusted|on-failure|on-request|never. Claude Code permission mode: inherit|plan|acceptEdits|default|auto|dontAsk|bypassPermissions. Unset = filled by the profile chain, then the harness default (Codex: never; Claude: auto); an agent caller that cannot grant that default gets its own same-harness posture instead (disclosed in the resolved launch notes)"`
 
+	// ToolGovernance is OpenCode's independent built-in tool action.
+	ToolGovernance string `long:"tools" optional:"true" help:"OpenCode tool governance for bash/glob/grep/lsp/task/skill: allow | ask | deny. Unset = filled by the profile chain, then allow. Not applicable to claude/codex"`
+
 	// AutoReview is a bool flag declared last (no explicit short) for the same
 	// reason as the fields above — boa's short-flag enricher must not steal a
 	// letter. Experimental opt-in (off by default). See JOH-200 part 2.
@@ -635,6 +642,7 @@ type resolvedSpawnFields struct {
 	Sandbox                string
 	AskUserQuestionTimeout string
 	Approval               string
+	ToolGovernance         string
 
 	Name           string
 	Role           string
@@ -740,6 +748,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Sandbox = pick(p.Sandbox, prof.Sandbox)
 		out.AskUserQuestionTimeout = pick(p.AskUserQuestionTimeout, prof.AskUserQuestionTimeout)
 		out.Approval = pick(p.Approval, prof.Approval)
+		out.ToolGovernance = pick(p.ToolGovernance, prof.ToolGovernance)
 		if !out.AutoReview && prof.AutoReview != nil {
 			out.AutoReview = *prof.AutoReview
 		}
@@ -753,6 +762,7 @@ func mergeProfileIntoSpawn(p *SpawnParams, explicitMessage string, prof *profile
 		out.Sandbox = strings.TrimSpace(p.Sandbox)
 		out.AskUserQuestionTimeout = strings.TrimSpace(p.AskUserQuestionTimeout)
 		out.Approval = strings.TrimSpace(p.Approval)
+		out.ToolGovernance = strings.TrimSpace(p.ToolGovernance)
 	}
 
 	// Harness-agnostic toggles / access — inherited from the profile regardless
@@ -925,6 +935,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	model := strings.TrimSpace(p.Model)
 	sandboxMode := strings.TrimSpace(p.Sandbox)
 	approvalPolicy := strings.TrimSpace(p.Approval)
+	toolGovernance := strings.TrimSpace(p.ToolGovernance)
 	askTimeout := strings.TrimSpace(p.AskUserQuestionTimeout)
 	autoReview := p.AutoReview
 	trustDir := false
@@ -945,8 +956,9 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 		validationFields := resolvedSpawnFields{
 			Model: p.Model, Effort: p.Effort, Sandbox: p.Sandbox,
-			Approval: p.Approval, AskUserQuestionTimeout: p.AskUserQuestionTimeout,
-			AutoReview: p.AutoReview,
+			Approval: p.Approval, ToolGovernance: p.ToolGovernance,
+			AskUserQuestionTimeout: p.AskUserQuestionTimeout,
+			AutoReview:             p.AutoReview,
 		}
 		if validateMergedProfile {
 			validationFields = merged
@@ -980,6 +992,10 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		// an explicit `inherit` is preserved; a policy for a harness with no launch
 		// approval flag is rejected fast here.
 		if _, err = harness.ValidateApprovalPolicy(h, validationFields.Approval); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
+		if _, err = harness.ValidateToolGovernance(h, validationFields.ToolGovernance); err != nil {
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
@@ -1048,6 +1064,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		SandboxMode:            sandboxMode,
 		AskUserQuestionTimeout: askTimeout,
 		ApprovalPolicy:         approvalPolicy,
+		ToolGovernance:         toolGovernance,
 		AutoReview:             autoReview,
 		TrustDir:               trustDir,
 		IsOwner:                merged.IsOwner,

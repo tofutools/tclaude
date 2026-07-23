@@ -12,7 +12,8 @@ import (
 
 func TestOpenCodePermissionJSONForLaunchResolvesBlankCwd(t *testing.T) {
 	encoded, err := openCodePermissionJSONForLaunch("",
-		harness.OpenCodeSandboxAccessControl, harness.OpenCodeApprovalDeny, nil)
+		harness.OpenCodeSandboxAccessControl, harness.OpenCodeApprovalDeny,
+		harness.OpenCodeToolsAllow, nil)
 	require.NoError(t, err)
 
 	var rules []harness.OpenCodePermissionRule

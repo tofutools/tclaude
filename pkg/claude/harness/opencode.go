@@ -12,6 +12,7 @@ func init() {
 		Models:              openCodeModels{},
 		Sandbox:             openCodeSandbox{},
 		Approval:            openCodeApproval{},
+		ToolGovernance:      openCodeToolGovernance{},
 		ApprovalsReviewer:   false,
 		Convs:               openCodeConvStore{},
 		Life:                openCodeLifecycle{},

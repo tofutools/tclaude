@@ -143,6 +143,11 @@ type SpawnArgs struct {
 	// deadlocks on an approval prompt no one can answer (JOH-200).
 	Approval string
 
+	// ToolGovernance is OpenCode's uniform allow/ask/deny action for the
+	// bash/glob/grep/lsp/task/skill block. Empty omits --tools; daemon-owned
+	// launches resolve it to allow before constructing SpawnArgs.
+	ToolGovernance string
+
 	// AutoReview opts the spawn into the harness's guardian subagent (Codex's
 	// `-c approvals_reviewer=auto_review`); false (the default) leaves the human
 	// as reviewer. Experimental/undocumented-upstream opt-in, only ever true via

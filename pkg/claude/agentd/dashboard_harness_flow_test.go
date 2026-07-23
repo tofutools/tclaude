@@ -60,6 +60,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	// inherit-first (presentation), but `auto` is what the dialog pre-selects
 	// and tags "(recommended)" — the JS matches DefaultApproval by value.
 	assert.True(t, claude.CanApproval, "claude exposes a permission-mode (approval) catalog")
+	assert.False(t, claude.CanTools, "OpenCode tool governance must stay hidden for Claude")
 	assert.False(t, claude.CanAutoReview, "claude has no separate approvals reviewer control")
 	assert.Equal(t, []string{"inherit", "plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}, claude.ApprovalModes)
 	assert.Equal(t, "auto", claude.DefaultApproval, "auto (supervisor-classifier) is pre-selected")
@@ -96,6 +97,7 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.NotContains(t, codex.SandboxModeHelp["tclaude-agent"], "⚠", "recommended profile carries no caveat marker")
 	assert.Contains(t, codex.SandboxModeHelp["read-only"], "⚠", "read-only flags its no-agentd caveat")
 	assert.True(t, codex.CanApproval, "codex supports approval (daemon default + CLI)")
+	assert.False(t, codex.CanTools, "OpenCode tool governance must stay hidden for Codex")
 	assert.True(t, codex.CanAutoReview, "codex exposes its separate approvals reviewer")
 	assert.Equal(t, []string{"never", "untrusted", "on-failure", "on-request"}, codex.ApprovalModes)
 	assert.Equal(t, "never", codex.DefaultApproval)
@@ -118,6 +120,12 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Equal(t, "deny", opencode.DefaultApproval)
 	for _, mode := range opencode.ApprovalModes {
 		assert.NotEmpty(t, opencode.ApprovalModeHelp[mode], "help for %s", mode)
+	}
+	assert.True(t, opencode.CanTools)
+	assert.Equal(t, []string{"allow", "ask", "deny"}, opencode.ToolsModes)
+	assert.Equal(t, "allow", opencode.DefaultTools)
+	for _, mode := range opencode.ToolsModes {
+		assert.NotEmpty(t, opencode.ToolsModeHelp[mode], "tool help for %s", mode)
 	}
 	assert.False(t, opencode.CanAutoReview)
 	assert.False(t, opencode.CanRemoteControl)

@@ -170,15 +170,17 @@ func TestEnrollSpawnedConv_PromotesConversationFallbackForPendingSpawn(t *testin
 func TestComposeAgentRelaunchProfile_AgentOverridesFallbackFieldByField(t *testing.T) {
 	fallbackSandbox := "on"
 	fallbackApproval := "auto"
+	fallbackTools := "allow"
 	fallbackModel := "sonnet"
 	agentModel := "opus"
 	agentEffort := "high"
+	agentTools := "deny"
 	fallback := &db.AgentRelaunchProfile{
 		Version: db.RelaunchProfileVersion, SandboxMode: &fallbackSandbox,
-		ApprovalPolicy: &fallbackApproval, ModelID: &fallbackModel,
+		ApprovalPolicy: &fallbackApproval, ToolGovernance: &fallbackTools, ModelID: &fallbackModel,
 	}
 	agent := &db.AgentRelaunchProfile{
-		Version: db.RelaunchProfileVersion, ModelID: &agentModel, Effort: &agentEffort,
+		Version: db.RelaunchProfileVersion, ToolGovernance: &agentTools, ModelID: &agentModel, Effort: &agentEffort,
 	}
 
 	merged := composeAgentRelaunchProfile(fallback, agent)
@@ -187,11 +189,22 @@ func TestComposeAgentRelaunchProfile_AgentOverridesFallbackFieldByField(t *testi
 	assert.Equal(t, fallbackSandbox, *merged.SandboxMode)
 	require.NotNil(t, merged.ApprovalPolicy)
 	assert.Equal(t, fallbackApproval, *merged.ApprovalPolicy)
+	require.NotNil(t, merged.ToolGovernance)
+	assert.Equal(t, agentTools, *merged.ToolGovernance)
 	require.NotNil(t, merged.ModelID)
 	assert.Equal(t, agentModel, *merged.ModelID)
 	require.NotNil(t, merged.Effort)
 	assert.Equal(t, agentEffort, *merged.Effort)
 	assert.Equal(t, fallbackModel, *fallback.ModelID, "composition must not mutate stored fallback")
+	assert.Equal(t, fallbackTools, *fallback.ToolGovernance, "composition must not mutate stored fallback")
+}
+
+func TestRelaunchProfileForSpawn_FreezesToolGovernance(t *testing.T) {
+	profile := relaunchProfileForSpawn(spawnParams{
+		Harness: "opencode", ToolGovernance: "ask",
+	})
+	require.NotNil(t, profile.ToolGovernance)
+	assert.Equal(t, "ask", *profile.ToolGovernance)
 }
 
 // TestBuildSpawnWelcome_IncludesIdentityFields confirms the welcome

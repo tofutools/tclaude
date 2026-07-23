@@ -150,6 +150,15 @@ func TestDashboardHTML_SpawnHarnessMenusWired(t *testing.T) {
 	must("if (draft.harness) body.harness = draft.harness", "selected harness is always sent in the spawn body")
 	must("if (view.sandbox.visible && draft.sandbox) body.sandbox = draft.sandbox", "the chosen sandbox is sent in the spawn body")
 
+	// OpenCode's independent built-in-tool axis is catalog-gated, rendered, and
+	// forwarded without appearing for Claude/Codex.
+	must(`id="agent-spawn-tools"`, "spawn dialog has an OpenCode tool-governance selector")
+	must("tools: ['can_tools', 'tools_modes', 'default_tools', 'tools_mode_help']", "tool governance gates on the harness catalog")
+	must("if (view.tools.visible && draft.tools) body.tools = draft.tools", "the chosen tool governance is sent in the spawn body")
+	must(`id=${toolsID} label="Tool governance"`, "profile and role editors share the tool-governance selector")
+	must("if (surfacesTools && draft.tools) body.tools = draft.tools", "the profile editor persists tool governance")
+	must("if (h?.can_tools && h.tools_modes?.length && draft.tools) body.tools = draft.tools", "the role editor persists tool governance")
+
 	// AskUserQuestion idle-timeout (Claude-Code-only) — the row + selector exist,
 	// reshape per harness off the catalog's can_ask_timeout gate, and the chosen
 	// value is forwarded in the spawn body. Pins the JS/HTML so a JS-stale

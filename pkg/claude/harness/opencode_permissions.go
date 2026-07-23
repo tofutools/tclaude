@@ -27,6 +27,7 @@ type OpenCodePermissionSpec struct {
 	Worktree            string
 	SandboxMode         string
 	ApprovalPolicy      string
+	ToolGovernance      string
 	ReadDirs            []string
 	WriteDirs           []string
 	DenyDirs            []string
@@ -84,6 +85,14 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 			return nil, err
 		}
 		return nil, fmt.Errorf("opencode approval policy is required")
+	}
+	toolGovernance := strings.TrimSpace(spec.ToolGovernance)
+	if toolGovernance == "" {
+		toolGovernance = (openCodeToolGovernance{}).DefaultPolicy()
+	}
+	toolGovernance, err = (openCodeToolGovernance{}).ValidatePolicy(toolGovernance)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(spec.ReadBaseline) != "" {
 		return nil, fmt.Errorf("opencode access control cannot accept legacy read baseline %q", spec.ReadBaseline)
@@ -178,11 +187,12 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 
 	// These tool permissions are separate from read/edit/external_directory
 	// and cannot express the authored lexical filesystem boundary. Keep the
-	// tools available despite that soft-sandbox limitation; explicit allows
-	// are required to reopen them after the leading catch-all deny.
+	// tools available despite that soft-sandbox limitation by default; the
+	// independent tool-governance axis can instead make the whole block ask or
+	// deny. Explicit rules are required after the leading catch-all deny.
 	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
 		rules = append(rules, OpenCodePermissionRule{
-			Permission: permission, Pattern: "*", Action: openCodeActionAllow,
+			Permission: permission, Pattern: "*", Action: toolGovernance,
 		})
 	}
 	rules = appendOpenCodeWebRules(rules, approval, network)

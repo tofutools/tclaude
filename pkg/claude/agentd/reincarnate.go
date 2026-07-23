@@ -422,6 +422,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		Harness:                relaunch.Harness,
 		Sandbox:                reincarnateSandbox,
 		Approval:               approval,
+		ToolGovernance:         relaunch.ToolGovernance,
 		AutoReview:             autoReview,
 		AskUserQuestionTimeout: relaunch.AskUserQuestionTimeout,
 		RemoteControl:          remoteControl,

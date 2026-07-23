@@ -88,5 +88,5 @@ func TestFreshSchemaHasProcessRuntimeStore(t *testing.T) {
 }
 
 func TestMigrateV150IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 150, currentVersion, "tripwire: bump this with the next migration")
+	require.Equal(t, 151, currentVersion, "tripwire: bump this with the next migration")
 }

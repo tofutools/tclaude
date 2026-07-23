@@ -19,6 +19,7 @@ type AgentRelaunchProfile struct {
 	Version                int     `json:"version"`
 	SandboxMode            *string `json:"sandbox_mode,omitempty"`
 	ApprovalPolicy         *string `json:"approval_policy,omitempty"`
+	ToolGovernance         *string `json:"tools,omitempty"`
 	ApprovalAutoReview     *bool   `json:"approval_auto_review,omitempty"`
 	ModelID                *string `json:"model_id,omitempty"`
 	Effort                 *string `json:"effort,omitempty"`
@@ -334,6 +335,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.ContextWindowSize == nil {
 			agent.ContextWindowSize = previous.ContextWindowSize
 		}
+		if agent.ToolGovernance == nil {
+			agent.ToolGovernance = previous.ToolGovernance
+		}
 		if sameSourceGeneration && agent.RemoteControl == nil {
 			agent.RemoteControl = previous.RemoteControl
 		}
@@ -393,6 +397,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		merged.ApprovalPolicy = agent.ApprovalPolicy
 		merged.ApprovalAutoReview = agent.ApprovalAutoReview
 		merged.AskUserQuestionTimeout = agent.AskUserQuestionTimeout
+		if agent.ToolGovernance != nil {
+			merged.ToolGovernance = agent.ToolGovernance
+		}
 		if agent.ModelID != nil {
 			merged.ModelID = agent.ModelID
 		}
@@ -501,6 +508,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 	var spawn struct {
 		SandboxMode            *string `json:"sandbox"`
 		ApprovalPolicy         *string `json:"approval"`
+		ToolGovernance         *string `json:"tools"`
 		ApprovalAutoReview     *bool   `json:"auto_review"`
 		ModelID                *string `json:"model"`
 		Effort                 *string `json:"effort"`
@@ -515,6 +523,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 		Version:                RelaunchProfileVersion,
 		SandboxMode:            spawn.SandboxMode,
 		ApprovalPolicy:         spawn.ApprovalPolicy,
+		ToolGovernance:         spawn.ToolGovernance,
 		ApprovalAutoReview:     spawn.ApprovalAutoReview,
 		ModelID:                spawn.ModelID,
 		Effort:                 spawn.Effort,

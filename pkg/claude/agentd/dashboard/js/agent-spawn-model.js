@@ -109,6 +109,7 @@ export function launchSetting(harness, key) {
   const specs = {
     sandbox: ['can_sandbox', 'sandbox_modes', 'default_sandbox', 'sandbox_mode_help'],
     approval: ['can_approval', 'approval_modes', 'default_approval', 'approval_mode_help'],
+    tools: ['can_tools', 'tools_modes', 'default_tools', 'tools_mode_help'],
     askTimeout: ['can_ask_timeout', 'ask_timeout_modes', 'default_ask_timeout', 'ask_timeout_mode_help'],
   };
   const [capability, modesKey, defaultKey, helpKey] = specs[key];
@@ -132,6 +133,7 @@ export function spawnCapabilityView(draft, context) {
   const hasModelList = !harness || models.length > 0;
   const sandbox = launchSetting(harness, 'sandbox');
   const approval = launchSetting(harness, 'approval');
+  const tools = launchSetting(harness, 'tools');
   const askTimeout = launchSetting(harness, 'askTimeout');
   const sandboxProfilesDisabled = draft.harness === 'codex'
     && draft.sandbox === 'danger-full-access';
@@ -143,6 +145,7 @@ export function spawnCapabilityView(draft, context) {
       ? harness.effort_levels : DEFAULT_EFFORTS,
     sandbox,
     approval,
+    tools,
     askTimeout,
     showApprovalReviewer: !!harness?.can_auto_review,
     showTrustDir: draft.harness === 'codex',
@@ -175,6 +178,7 @@ export function spawnModelDefaultLabel(draft, context, profiles = []) {
 function harnessDefaults(harness, rememberedEffort = () => '') {
   const sandbox = launchSetting(harness, 'sandbox').value;
   const approval = launchSetting(harness, 'approval').value;
+  const tools = launchSetting(harness, 'tools').value;
   const askTimeout = launchSetting(harness, 'askTimeout').value;
   return {
     harness: text(harness?.name),
@@ -183,6 +187,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     effort: rememberedEffort('') || '',
     sandbox,
     approval,
+    tools,
     approvalReviewer: '',
     askTimeout,
     trustDir: false,
@@ -292,6 +297,9 @@ export function applySpawnProfile(
   if (profile.approval) {
     next.approval = compatibleValue(profile.approval, view.approval.modes, next.approval);
   }
+  if (profile.tools) {
+    next.tools = compatibleValue(profile.tools, view.tools.modes, next.tools);
+  }
   if (view.showApprovalReviewer) {
     // A sparse profile means "inherit", not "keep the last selected profile's
     // reviewer". Clear the prior selection so switching from an auto-review
@@ -356,6 +364,7 @@ export function clearSpawnProfileFields(draft, context, {
     effort: defaults.effort,
     sandbox: defaults.sandbox,
     approval: defaults.approval,
+    tools: defaults.tools,
     approvalReviewer: defaults.approvalReviewer,
     askTimeout: defaults.askTimeout,
     trustDir: false,
@@ -449,6 +458,7 @@ export function spawnProfileSeed(draft, context) {
   }
   if (view.sandbox.visible) seed.sandbox = draft.sandbox;
   if (view.approval.visible) seed.approval = draft.approval;
+  if (view.tools.visible) seed.tools = draft.tools;
   const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;
   if (reviewer != null) seed.auto_review = reviewer;
   if (view.askTimeout.visible) seed.ask_user_question_timeout = draft.askTimeout;
@@ -464,7 +474,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -526,6 +536,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     body.sandbox_profile = draft.sandboxProfile;
   }
   if (view.approval.visible && draft.approval) body.approval = draft.approval;
+  if (view.tools.visible && draft.tools) body.tools = draft.tools;
   const reviewer = view.showApprovalReviewer ? readReviewer(draft.approvalReviewer) : null;
   if (reviewer != null) body.auto_review = reviewer;
   if (view.askTimeout.visible && draft.askTimeout) {
