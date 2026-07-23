@@ -90,6 +90,60 @@ test('keyboard tab movement steps inside a group, out at its edges, and hops who
   assert.deepEqual(state.groups.value, [], 'a stack with no members left is dropped');
 });
 
+test('a whole group moves as one block, preserving its membership', async (t) => {
+  const harness = await createPreactHarness(t);
+  const state = await openState(harness, memoryPrefs());
+  const infra = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
+  assert.deepEqual(stripOf(state), ['a', 'infra[b,c]', 'd']);
+
+  // Move the whole stack after the trailing standalone tab.
+  const moved = state.moveGroup(infra.id, 'd', { after: true });
+  assert.deepEqual(stripOf(state), ['a', 'd', 'infra[b,c]'], 'the block lands after the anchor, order intact');
+  assert.equal(moved.count, 2);
+  assert.deepEqual(state.groupMembers(infra.id).map((pane) => pane.key), ['b', 'c'],
+    'membership and internal order are unchanged');
+
+  // Move it before the leading tab.
+  state.moveGroup(infra.id, 'a', { after: false });
+  assert.deepEqual(stripOf(state), ['infra[b,c]', 'a', 'd']);
+
+  // Dropping a stack onto one of its own tabs is a no-op.
+  assert.equal(state.moveGroup(infra.id, 'b', { after: true }), null);
+  assert.equal(state.moveGroup('missing', 'a', {}), null);
+});
+
+test('a group dropped next to another group lands beside the whole stack, not inside it', async (t) => {
+  const harness = await createPreactHarness(t);
+  const state = await openState(harness, memoryPrefs());
+  const left = state.createGroup({ name: 'left', keys: ['a', 'b'] });
+  const right = state.createGroup({ name: 'right', keys: ['c', 'd'] });
+  assert.deepEqual(stripOf(state), ['left[a,b]', 'right[c,d]']);
+
+  // Anchor on a MEMBER of the right stack; the left stack must not tunnel into
+  // it — it lands cleanly after the whole right stack.
+  state.moveGroup(left.id, 'c', { after: true });
+  assert.deepEqual(stripOf(state), ['right[c,d]', 'left[a,b]']);
+  assert.deepEqual(state.groupMembers(left.id).map((pane) => pane.key), ['a', 'b']);
+  assert.deepEqual(state.groupMembers(right.id).map((pane) => pane.key), ['c', 'd']);
+});
+
+test('keyboard group movement hops the stack over whole neighbouring segments', async (t) => {
+  const harness = await createPreactHarness(t);
+  const state = await openState(harness, memoryPrefs());
+  const infra = state.createGroup({ name: 'infra', keys: ['b', 'c'] });
+  assert.deepEqual(stripOf(state), ['a', 'infra[b,c]', 'd']);
+
+  const right = state.moveGroupByOffset(infra.id, 1);
+  assert.deepEqual(stripOf(state), ['a', 'd', 'infra[b,c]'], 'one step right hops over the standalone d');
+  assert.equal(right.group.id, infra.id);
+  assert.equal(state.moveGroupByOffset(infra.id, 1), null, 'already at the end of the strip');
+
+  state.moveGroupByOffset(infra.id, -2);
+  assert.deepEqual(stripOf(state), ['infra[b,c]', 'a', 'd'], 'two steps left hop over d then a');
+  assert.equal(state.moveGroupByOffset('missing', 1), null);
+  assert.equal(state.moveGroupByOffset(infra.id, 0), null);
+});
+
 test('collapsing a group never hides the terminal the operator is looking at', async (t) => {
   const harness = await createPreactHarness(t);
   const state = await openState(harness, memoryPrefs());
@@ -549,6 +603,43 @@ test('the whole tab is the drag handle, not just its title', async (t) => {
     'a gesture on the title is allowed');
   assert.equal(tabDragStartedOnClose(aTab), false, 'a gesture on the tab body is allowed');
   assert.equal(tabDragStartedOnClose(null), false, 'a missing target is allowed (no crash)');
+});
+
+test('dragging a group pill moves the whole stack; Alt+Shift moves it by keyboard', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  state.createGroup({ name: 'infra', keys: ['a', 'b'] });
+  await harness.act(() => {});
+  const groupId = state.groups.value[0].id;
+  const pill = () => getByRole(container, 'button', { name: /^infra, 2 terminals$/ });
+  const stripKeys = () => state.segments.value.map((segment) => (segment.type === 'group'
+    ? `[${segment.panes.map((pane) => pane.key).join(',')}]` : segment.pane.key));
+  const cTab = [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'c');
+  const transfer = dragTransfer();
+  assert.deepEqual(stripKeys(), ['[a,b]', 'c']);
+
+  // Drag the pill and drop it after the trailing standalone tab.
+  await harness.act(() => harness.fireEvent(pill(), 'dragstart', { dataTransfer: transfer }));
+  assert.equal(container.querySelector('.mux-tab-group').classList.contains('dragging'), true,
+    'the whole stack dims while its pill is dragged');
+  cTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
+  await harness.act(() => harness.fireEvent(cTab, 'dragover', { dataTransfer: transfer, clientX: 90 }));
+  assert.equal(cTab.classList.contains('drop-after'), true, 'the target tab shows where the group will land');
+  await harness.act(() => harness.fireEvent(cTab, 'drop', { dataTransfer: transfer, clientX: 90 }));
+  assert.deepEqual(stripKeys(), ['c', '[a,b]'], 'the group moved as one block, after c');
+  assert.equal(state.groupMembers(groupId).map((pane) => pane.key).join(), 'a,b', 'membership intact');
+  assert.match(container.querySelector('[role="status"]').textContent, /Moved group infra \(2 terminals\)/);
+  assert.equal(container.querySelector('.mux-tab-group.dragging'), null, 'the drag state clears on drop');
+
+  // Keyboard: Alt+Shift+Left hops the stack back over c.
+  const back = pill();
+  back.focus();
+  await harness.act(() => harness.fireEvent(back, 'keydown', { key: 'ArrowLeft', altKey: true, shiftKey: true }));
+  assert.deepEqual(stripKeys(), ['[a,b]', 'c'], 'the keyboard move mirrors the drag');
+  // Focus follows the moved pill so the next keypress still lands on it.
+  await new Promise((resolve) => { queueMicrotask(resolve); });
+  assert.equal(harness.document.activeElement, pill(), 'focus stays on the moved group');
 });
 
 test('a rename committed by blur still respects a preceding Escape', async (t) => {
