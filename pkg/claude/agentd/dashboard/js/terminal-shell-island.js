@@ -527,10 +527,10 @@ function GroupStack({
 // source silently aborts the native drag. Grabbing a grouped tab then "did
 // nothing" most of the time. Keeping the node present and toggling a class
 // never disturbs the drag source.
-function StripGap({ active, armed, onDragOver, onDragLeave, onDrop }) {
+function StripGap({ active, armed, grow = false, onDragOver, onDragLeave, onDrop }) {
   return html`
     <div
-      class=${`mux-strip-gap${active ? ' active' : ''}${armed ? ' armed' : ''}`}
+      class=${`mux-strip-gap${grow ? ' grow' : ''}${active ? ' active' : ''}${armed ? ' armed' : ''}`}
       aria-hidden="true"
       onDragOver=${onDragOver}
       onDragLeave=${onDragLeave}
@@ -945,6 +945,58 @@ function TerminalTabs({
     clearDrag();
     if (moved) announceReorder(moved);
   };
+  // The strip's empty right margin is one large drop zone. Releasing anywhere
+  // past the last tab or group lands the drag at the very end — the whole
+  // far-right area counts as the right edge of the furthest-right segment, not
+  // just that segment's own right quarter. The zone grows to fill the free
+  // space during a drag (see .mux-strip-gap.grow) and resolves to the last
+  // segment here, so it covers a trailing plain tab and a trailing group alike.
+  const lastSegment = () => current.segments.at(-1);
+  // Dropping the furthest-right segment onto the end is a no-op — a tab already
+  // last, or the group being dragged. Skip arming so the marker never promises
+  // a move that will not happen.
+  const endZoneActive = () => {
+    const segment = lastSegment();
+    if (!segment) return false;
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) return !(segment.type === 'group' && segment.group.id === groupDrag);
+    const key = dragKeyRef.current;
+    return Boolean(key) && !(segment.type === 'pane' && segment.pane.key === key);
+  };
+  const endZoneDragOver = (event) => {
+    if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
+    if (!endZoneActive()) { if (stripGap === 'end') setStripGap(null); return; }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (stripGap !== 'end') setStripGap('end');
+  };
+  const endZoneDragLeave = (event) => {
+    if (stripGap !== 'end' || event.currentTarget.contains(event.relatedTarget)) return;
+    setStripGap(null);
+  };
+  const dropOnEnd = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    droppedRef.current = true;
+    const segment = lastSegment();
+    const groupDrag = dragGroupIdRef.current;
+    if (groupDrag) {
+      const anchor = segment?.panes.at(-1)?.key;
+      const moved = anchor && !(segment.type === 'group' && segment.group.id === groupDrag)
+        && actions.moveGroup(groupDrag, anchor, { after: true });
+      clearDrag();
+      if (moved) announceGroupMove(moved);
+      return;
+    }
+    const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
+    if (!key || !segment) { clearDrag(); return; }
+    const moved = segment.type === 'group'
+      ? actions.movePaneOutsideGroup(key, segment.group.id, { after: true })
+      : actions.reorderPane(key, segment.pane.key, { after: true });
+    clearDrag();
+    if (moved) announceReorder(moved);
+  };
   const commitGroupRename = (groupID, name) => {
     setRenamingGroup(null);
     actions.renameGroup(groupID, name);
@@ -1097,7 +1149,7 @@ function TerminalTabs({
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
-          ${current.segments.map((segment, segmentIndex) => {
+          ${current.segments.map((segment) => {
             const renderTab = (pane) => html`
               <${PaneTab}
                 key=${pane.key}
@@ -1122,10 +1174,11 @@ function TerminalTabs({
             const dragging = Boolean(dragKey) || Boolean(dragGroupId);
             // A leading gap is only reachable — and only needed — when this
             // stack is not the very first segment, or when it is: the position
-            // before a leading stack is exactly the unreachable one. A trailing
-            // gap is needed only after the last segment, where no following tab
-            // offers a "before" drop. Redundant gaps elsewhere are harmless but
-            // omitted to keep the strip quiet.
+            // before a leading stack is exactly the unreachable one. The
+            // position after the last segment is covered by the strip's trailing
+            // end-zone (rendered after this map), so no per-group trailing gap is
+            // needed. Redundant gaps elsewhere are harmless but omitted to keep
+            // the strip quiet.
             const leadingGap = html`
               <${StripGap}
                 key=${`${gid}:gap-before`}
@@ -1135,15 +1188,6 @@ function TerminalTabs({
                 onDragLeave=${(event) => gapDragLeave(event, `${gid}:before`)}
                 onDrop=${(event) => dropOnGap(event, gid, false)}
               />`;
-            const trailingGap = segmentIndex === current.segments.length - 1 ? html`
-              <${StripGap}
-                key=${`${gid}:gap-after`}
-                active=${dragging}
-                armed=${stripGap === `${gid}:after`}
-                onDragOver=${(event) => gapDragOver(event, `${gid}:after`)}
-                onDragLeave=${(event) => gapDragLeave(event, `${gid}:after`)}
-                onDrop=${(event) => dropOnGap(event, gid, true)}
-              />` : null;
             return html`
               ${leadingGap}
               <${GroupStack}
@@ -1168,9 +1212,18 @@ function TerminalTabs({
                 onKeyboardMove=${moveGroupKeyboard}
                 renderTab=${renderTab}
               />
-              ${trailingGap}
             `;
           })}
+          ${hasPanes ? html`
+            <${StripGap}
+              key="strip-end"
+              grow=${true}
+              active=${Boolean(dragKey) || Boolean(dragGroupId)}
+              armed=${stripGap === 'end'}
+              onDragOver=${endZoneDragOver}
+              onDragLeave=${endZoneDragLeave}
+              onDrop=${dropOnEnd}
+            />` : null}
         </div>
         ${detachArmed ? html`<div class="mux-drag-out-hint">Release anywhere — even outside the browser — to detach this terminal into its own window</div>` : null}
       ` : null}

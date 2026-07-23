@@ -551,6 +551,79 @@ test('a drop gap parks a tab at a group boundary a tab drop cannot reach', async
   assert.match(container.querySelector('[role="status"]').textContent, /out of group right/);
 });
 
+test('a drop past the last tab lands the drag at the far end of the strip', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  await harness.act(() => {});
+  const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
+  const endZone = () => container.querySelector('.mux-strip-gap.grow');
+  const keys = () => state.panes.value.map((pane) => pane.key);
+
+  assert.ok(endZone(), 'the strip renders a trailing end-zone');
+  assert.equal(endZone().classList.contains('active'), false, 'the end-zone is inert at rest');
+
+  // Releasing anywhere in the strip's open right margin drops the tab at the
+  // very end, even though the release never touched the last tab's hit area.
+  const transfer = dragTransfer();
+  await harness.act(() => harness.fireEvent(tabFor('a'), 'dragstart', { dataTransfer: transfer }));
+  assert.equal(endZone().classList.contains('active'), true,
+    'the end-zone grows to claim the free margin during a drag');
+  await harness.act(() => harness.fireEvent(endZone(), 'dragover', { dataTransfer: transfer }));
+  assert.equal(endZone().classList.contains('armed'), true, 'the end-zone shows it will accept the drop');
+  await harness.act(() => harness.fireEvent(endZone(), 'drop', { dataTransfer: transfer }));
+  assert.deepEqual(keys(), ['b', 'c', 'a'], 'the tab lands after the last segment');
+  assert.match(container.querySelector('[role="status"]').textContent, /Moved a to position 3 of 3/);
+  assert.equal(endZone().classList.contains('active'), false, 'the end-zone deactivates once the drag ends');
+
+  // The tab that is already last has nowhere past itself to go, so the end-zone
+  // stays quiet rather than dangling a marker that commits to a no-op.
+  await harness.act(() => harness.fireEvent(tabFor('a'), 'dragstart', { dataTransfer: transfer }));
+  await harness.act(() => harness.fireEvent(endZone(), 'dragover', { dataTransfer: transfer }));
+  assert.equal(endZone().classList.contains('armed'), false,
+    'the furthest-right tab does not arm the end-zone');
+  await harness.act(() => harness.fireEvent(tabFor('a'), 'dragend', { dataTransfer: transfer }));
+  assert.deepEqual(keys(), ['b', 'c', 'a'], 'and dropping there changes nothing');
+});
+
+test('the far-end drop parks a tab after a trailing group and moves a dragged group to the end', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  state.createGroup({ name: 'right', keys: ['b', 'c'] });
+  await harness.act(() => {});
+  const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
+  const endZone = () => container.querySelector('.mux-strip-gap.grow');
+  const pill = () => getByRole(container, 'button', { name: /^right, 2 terminals$/ });
+  assert.deepEqual(stripOf(state), ['a', 'right[b,c]']);
+
+  // A tab released past a trailing group lands ungrouped after the whole stack —
+  // the placement the boundary gap gave, now reachable from the open margin too.
+  const t1 = dragTransfer();
+  await harness.act(() => harness.fireEvent(tabFor('a'), 'dragstart', { dataTransfer: t1 }));
+  await harness.act(() => harness.fireEvent(endZone(), 'drop', { dataTransfer: t1 }));
+  assert.deepEqual(stripOf(state), ['right[b,c]', 'a'], 'the tab parks after the trailing group');
+  assert.equal(state.groupFor('a'), null, 'and stays ungrouped');
+
+  // Dragging the group pill to the far end moves the whole stack past the last tab.
+  const t2 = dragTransfer();
+  await harness.act(() => harness.fireEvent(pill(), 'dragstart', { dataTransfer: t2 }));
+  assert.equal(endZone().classList.contains('active'), true, 'a group drag grows the end-zone too');
+  await harness.act(() => harness.fireEvent(endZone(), 'dragover', { dataTransfer: t2 }));
+  assert.equal(endZone().classList.contains('armed'), true, 'the end-zone accepts the group');
+  await harness.act(() => harness.fireEvent(endZone(), 'drop', { dataTransfer: t2 }));
+  assert.deepEqual(stripOf(state), ['a', 'right[b,c]'], 'the whole stack moves to the end');
+  assert.match(container.querySelector('[role="status"]').textContent, /Moved group right \(2 terminals\)/);
+
+  // A trailing group cannot move past itself, so the end-zone stays quiet.
+  const t3 = dragTransfer();
+  await harness.act(() => harness.fireEvent(pill(), 'dragstart', { dataTransfer: t3 }));
+  await harness.act(() => harness.fireEvent(endZone(), 'dragover', { dataTransfer: t3 }));
+  assert.equal(endZone().classList.contains('armed'), false,
+    'the already-trailing group does not arm the end-zone');
+  await harness.act(() => harness.fireEvent(pill(), 'dragend', { dataTransfer: t3 }));
+});
+
 test('starting a drag on a grouped tab preserves its DOM node so the native drag survives', async (t) => {
   const harness = await createPreactHarness(t);
   const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);

@@ -141,6 +141,23 @@
   background: #1f6feb;
   box-shadow: 0 0 8px rgba(88, 166, 255, 0.75);
 }
+/* The trailing end-zone grows to fill the strip's empty right margin while a
+   drag is in flight, so releasing anywhere past the last tab or group lands the
+   drag at the very end rather than only on that segment's right edge. It
+   collapses to nothing at rest and shrinks to zero when the tabs already fill
+   the strip (then the last tab's own right quarter is the far right), so it
+   never forces the strip to scroll. Its insertion marker is a bar on the left
+   edge, against the last segment, so "drop at the end" reads the same whether
+   that segment is a tab or a group instead of flooding the margin with colour. */
+.mux-strip-gap.grow.active {
+  position: relative; flex: 1 1 0; min-width: 0; width: auto; margin: 0;
+  background: none; box-shadow: none;
+}
+.mux-strip-gap.grow.armed { background: none; box-shadow: none; }
+.mux-strip-gap.grow.armed::before {
+  content: ""; position: absolute; left: 0; top: 2px; bottom: 1px; width: 3px;
+  border-radius: 2px; background: #58a6ff; box-shadow: 0 0 7px rgba(88, 166, 255, 0.75);
+}
 
 .mux-tab-menu {
   position: fixed; z-index: 1000; display: flex; flex-direction: column;
@@ -266,6 +283,12 @@ body.wizard .mux-group-pill:hover {
 body.wizard .mux-group-rename { background: #171024; color: #f3e6c0; }
 body.wizard .mux-strip-gap.armed {
   background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+}
+/* The trailing end-zone keeps its left-edge insertion bar in wizard chrome too,
+   rather than flooding the grown margin with the gap's fill colour. */
+body.wizard .mux-strip-gap.grow.armed { background: none; box-shadow: none; }
+body.wizard .mux-strip-gap.grow.armed::before {
+  background: #d9b45a; box-shadow: 0 0 7px rgba(217, 180, 90, 0.78);
 }
 body.wizard .mux-tab-menu {
   border-color: #7a5db0;
