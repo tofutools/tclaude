@@ -21,5 +21,6 @@
   "codex/sandbox/danger-full-access": "⚠ Sandbox OFF — full read/write access to your machine (the agent can run `tclaude agent`). Explicit opt-in only.",
   "codex/sandbox/read-only": "Raw Codex sandbox — no filesystem writes at all. ⚠ No agentd access: the agent CANNOT run `tclaude agent`.",
   "codex/sandbox/tclaude-agent": "Recommended. Workspace-write containment (only the working directory is writable; ~/.tclaude is inaccessible) PLUS access to agentd's state-free socket — the agent CAN run `tclaude agent` (coordinate, reincarnate, notify-human).",
-  "codex/sandbox/workspace-write": "Raw Codex sandbox — only the working directory is writable ($HOME read-only). ⚠ No agentd access: the agent CANNOT run `tclaude agent`."
+  "codex/sandbox/workspace-write": "Raw Codex sandbox — only the working directory is writable ($HOME read-only). ⚠ No agentd access: the agent CANNOT run `tclaude agent`.",
+  "opencode/sandbox/off": "⚠ No tclaude OS containment — OpenCode runs without tclaude filesystem or network sandboxing. OpenCode's own tool permission rules still apply."
 }
