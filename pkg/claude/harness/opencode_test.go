@@ -2,6 +2,7 @@ package harness
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -18,14 +19,39 @@ func TestOpenCodeDescriptor(t *testing.T) {
 	if !slicesContains(SpawnBinaries(), "opencode") {
 		t.Fatalf("SpawnBinaries() = %v, want opencode", SpawnBinaries())
 	}
-	if h.Sandbox != nil || h.Approval != nil || h.Ask != nil || h.Convs == nil {
-		t.Fatalf("out-of-scope OpenCode contracts must degrade as nil: %+v", h)
+	if h.Sandbox == nil || h.Approval != nil || h.Ask != nil || h.Convs == nil {
+		t.Fatalf("unexpected OpenCode capability contracts: %+v", h)
 	}
 	if h.SupportsRename() {
 		t.Fatal("OpenCode rename must use the out-of-band ConvStore API path")
 	}
 	if !h.CanRename() {
 		t.Fatal("OpenCode ConvStore must expose the rename affordance")
+	}
+}
+
+func TestOpenCodeSandboxCatalog(t *testing.T) {
+	h, ok := Get(OpenCodeName)
+	if !ok {
+		t.Fatal("opencode harness is not registered")
+	}
+	if got := h.Sandbox.DefaultMode(); got != OpenCodeSandboxOff {
+		t.Fatalf("DefaultMode() = %q, want %q", got, OpenCodeSandboxOff)
+	}
+	if got := h.Sandbox.Modes(); !slices.Equal(got, []string{OpenCodeSandboxOff}) {
+		t.Fatalf("Modes() = %v, want [%s]", got, OpenCodeSandboxOff)
+	}
+	if help := h.Sandbox.ModeHelp(OpenCodeSandboxOff); !strings.Contains(help, "without tclaude filesystem or network sandboxing") {
+		t.Fatalf("ModeHelp(%q) = %q, want explicit no-containment warning", OpenCodeSandboxOff, help)
+	}
+	if got, err := ResolveSandboxMode(h, ""); err != nil || got != OpenCodeSandboxOff {
+		t.Fatalf("ResolveSandboxMode(opencode, blank) = %q, %v; want %q, nil", got, err, OpenCodeSandboxOff)
+	}
+	if got, err := ValidateSandboxMode(h, OpenCodeSandboxOff); err != nil || got != OpenCodeSandboxOff {
+		t.Fatalf("ValidateSandboxMode(opencode, off) = %q, %v; want %q, nil", got, err, OpenCodeSandboxOff)
+	}
+	if _, err := ValidateSandboxMode(h, SandboxWorkspaceWrite); err == nil {
+		t.Fatal("OpenCode must reject sandbox modes it cannot enforce")
 	}
 }
 

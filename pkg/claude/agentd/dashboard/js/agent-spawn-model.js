@@ -133,8 +133,9 @@ export function spawnCapabilityView(draft, context) {
   const sandbox = launchSetting(harness, 'sandbox');
   const approval = launchSetting(harness, 'approval');
   const askTimeout = launchSetting(harness, 'askTimeout');
-  const sandboxProfilesDisabled = draft.harness === 'codex'
-    && draft.sandbox === 'danger-full-access';
+  const sandboxProfilesDisabled = (draft.harness === 'codex'
+      && draft.sandbox === 'danger-full-access')
+    || (draft.harness === 'opencode' && draft.sandbox === 'off');
   return {
     harness,
     models,

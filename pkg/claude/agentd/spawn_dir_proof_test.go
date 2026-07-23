@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -124,5 +125,19 @@ func TestChildSandboxGrantsDirWrite(t *testing.T) {
 	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxManagedProfile))
 	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxInherit))
 	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxOn))
+	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxOff))
+	assert.False(t, childSandboxGrantsDirWrite(harness.OpenCodeName, "unknown"))
 	assert.True(t, childSandboxGrantsDirWrite("", ""))
+}
+
+func TestOpenCodeOffParentIsDirWriteProofExempt(t *testing.T) {
+	setupTestDB(t)
+	const convID = "opencode-off-parent"
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-opencode-off-parent", ConvID: convID, Cwd: t.TempDir(),
+		Harness: harness.OpenCodeName, SandboxMode: harness.OpenCodeSandboxOff,
+	}))
+	exempt, err := dirWriteProofCallerExempt(convID)
+	require.NoError(t, err)
+	assert.True(t, exempt)
 }

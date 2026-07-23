@@ -104,6 +104,10 @@ func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sa
 				detail, sanitizeSplitProbeError(err))}
 		}
 		return nil
+	case OpenCodeName:
+		return &SandboxCapabilityError{Harness: OpenCodeName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
+			"OpenCode sandbox %q provides no tclaude OS containment and cannot reopen a path beneath a deny (%s)",
+			sandboxMode, detail)}
 	default:
 		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"harness %q cannot reopen a path beneath a deny (%s)", harnessName, detail)}

@@ -70,9 +70,12 @@ codex` there when resuming a Codex conversation, or use `conv resume`, which
 detects the harness for you.
 
 OpenCode's supported launch surface is currently the agentd-owned
-`agent spawn`/agent resume path. A bare direct `session new --harness opencode`
-is refused because it has no authenticated managed-server handoff; the pane is
-never allowed to start an independent OpenCode server.
+`agent spawn`/agent resume path. Its sandbox selector has one explicit `off`
+mode: OpenCode has no OS sandbox, so this runs without tclaude filesystem or
+network containment (OpenCode's own tool permission rules still apply).
+A bare direct `session new --harness opencode` is refused because it has no
+authenticated managed-server handoff; the pane is never allowed to start an
+independent OpenCode server.
 
 ## Per-harness setup
 

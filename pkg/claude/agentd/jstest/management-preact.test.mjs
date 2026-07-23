@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_auto_review: true, can_remote_control: false, can_auto_memory: false }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true }, { name: 'codex', models: [], can_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_auto_review: true, can_remote_control: false, can_auto_memory: false }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, sandbox_modes: ['off'], default_sandbox: 'off', sandbox_mode_help: { off: '⚠ No tclaude OS containment' }, can_approval: false, approval_modes: [], default_approval: '', can_auto_review: false, can_remote_control: false, can_auto_memory: false }];
 
 function choose(select, value) {
   for (const option of select.options) {
@@ -98,6 +98,36 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
   assert.equal(saves[2].payload.approval, 'untrusted', 'saved mode displays when reopened');
   assert.equal(saves[2].payload.auto_review, true, 'saved reviewer displays when reopened');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
+test('OpenCode profile editor surfaces and saves the explicit off sandbox mode', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'opencode-off', harness: 'opencode', sandbox: 'off' }, options: {}, catalog });
+  const saves = [];
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host, state,
+    actions: { async saveProfile(value) { saves.push(value); }, async loadUnsandboxedAutonomy() { return { warnings: [] }; } },
+    confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const sandbox = host.querySelector('#profile-editor-sandbox');
+  assert.equal(sandbox.closest('.cron-create-row').hidden, false);
+  assert.deepEqual([...sandbox.options].map((option) => option.value), ['off']);
+  assert.equal(selectedValue(sandbox), 'off');
+  assert.match(host.querySelector('#profile-editor-sandbox-caveat').textContent, /No tclaude OS containment/);
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-submit'), 'click'));
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].payload.harness, 'opencode');
+  assert.equal(saves[0].payload.sandbox, 'off');
   cleanups.reverse().forEach((fn) => fn());
 });
 

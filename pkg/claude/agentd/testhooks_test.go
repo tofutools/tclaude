@@ -22,6 +22,42 @@ func BuildHandlerForTest() http.Handler {
 	return buildMux()
 }
 
+// OpenCodeRuntimeFixture is the subprocess-free result flow tests return from
+// the managed OpenCode server boundary.
+type OpenCodeRuntimeFixture struct {
+	SessionID string
+	ConvID    string
+	ServerURL string
+	Password  string
+	PID       int
+}
+
+// SetOpenCodeRuntimeForTest swaps the managed-server subprocess and prompt
+// boundaries so flow tests can exercise OpenCode's production spawn path
+// without requiring a locally installed OpenCode binary.
+func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string) (OpenCodeRuntimeFixture, error)) func() {
+	previousStart := startOpenCodeRuntimeForSpawn
+	previousSend := sendOpenCodePromptForSpawn
+	startOpenCodeRuntimeForSpawn = func(sessionID, cwd, title, resumeID string) (*openCodeLaunch, error) {
+		fixture, err := start(sessionID, cwd, title, resumeID)
+		if err != nil {
+			return nil, err
+		}
+		return &openCodeLaunch{
+			SessionID: fixture.SessionID,
+			ConvID:    fixture.ConvID,
+			ServerURL: fixture.ServerURL,
+			Password:  fixture.Password,
+			PID:       fixture.PID,
+		}, nil
+	}
+	sendOpenCodePromptForSpawn = func(*openCodeLaunch, string, string, string, string) error { return nil }
+	return func() {
+		startOpenCodeRuntimeForSpawn = previousStart
+		sendOpenCodePromptForSpawn = previousSend
+	}
+}
+
 // ResetProcessRunRuntimeForTest replaces the daemon-lifetime run manager with
 // a fresh instance. Tests use it to model a daemon restart without replacing
 // the production HTTP mux or SQLite store.

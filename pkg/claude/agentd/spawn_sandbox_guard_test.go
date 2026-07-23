@@ -67,11 +67,34 @@ func TestSandboxProfileCapabilityFailureIgnoresMissingAllowRulesButRejectsMissin
 	require.Contains(t, failure.Msg, "cannot be enforced")
 }
 
-func TestSandboxProfilesDisabledOnlyForCodexDangerFullAccess(t *testing.T) {
+func TestSandboxProfilesDisabledForExplicitNoContainmentModes(t *testing.T) {
 	require.True(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxDangerFull))
+	require.True(t, sandboxProfilesDisabled(harness.OpenCodeName, harness.OpenCodeSandboxOff))
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxManagedProfile))
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxReadOnly))
 	require.False(t, sandboxProfilesDisabled(harness.DefaultName, harness.ClaudeSandboxOff))
+	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, ""))
+}
+
+func TestOpenCodePolicyRepresentabilityFailsClosedIfBypassIsMissed(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: root, Access: sandboxpolicy.AccessRead}},
+	}}
+	failure := sandboxProfileCapabilityFailure(harness.OpenCodeName, harness.OpenCodeSandboxOff, snapshot)
+	require.NotNil(t, failure)
+	require.Equal(t, "unsupported_sandbox_profile_filesystem", failure.Kind)
+	require.Contains(t, failure.Msg, "no tclaude OS containment")
+}
+
+func TestOpenCodeOffIsClassifiedAsUnsandboxedForLineage(t *testing.T) {
+	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff}
+	require.True(t, spawnSandboxLineageAllowed(openCodeOff, openCodeOff))
+	require.False(t, spawnSandboxLineageAllowed(
+		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
+		openCodeOff,
+	))
 }
 
 func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *testing.T) {

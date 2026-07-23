@@ -92,6 +92,9 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 		}
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("Codex filesystem rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
+	case harness.OpenCodeName:
+		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
+			fmt.Sprintf("OpenCode sandbox %q provides no tclaude OS containment and cannot represent sandbox filesystem rules", sandboxMode)}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
@@ -101,12 +104,19 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 // sandboxProfilesDisabled reports launch modes whose explicit contract is to
 // run without tclaude's sandbox policy. A Codex danger-full-access launch uses
 // the raw --sandbox opt-out, which cannot be combined with the managed
-// permission profile that renders filesystem rules. Treating the policy as
-// absent also keeps environment-only profiles from being applied under a UI
-// choice that says the sandbox profile is disabled.
+// permission profile that renders filesystem rules. OpenCode has no OS sandbox,
+// so its sole explicit off mode follows the same policy-omission contract.
+// Treating the policy as absent also keeps environment-only profiles from being
+// applied under a UI choice that says the sandbox profile is disabled.
 func sandboxProfilesDisabled(harnessName, sandboxMode string) bool {
-	return harnessOrDefault(harnessName) == harness.CodexName &&
-		strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull
+	switch harnessOrDefault(harnessName) {
+	case harness.CodexName:
+		return strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull
+	case harness.OpenCodeName:
+		return strings.TrimSpace(sandboxMode) == harness.OpenCodeSandboxOff
+	default:
+		return false
+	}
 }
 
 func filesystemHasDeny(filesystem []sandboxpolicy.FilesystemGrant) bool {
@@ -188,6 +198,9 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return childIsCodex(child, harness.SandboxReadOnly)
 		}
 	}
+	if parent.Harness == harness.OpenCodeName && parent.Mode == harness.OpenCodeSandboxOff {
+		return true
+	}
 	return false
 }
 
@@ -206,6 +219,10 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 	case harness.CodexName:
 		switch s.Mode {
 		case harness.SandboxManagedProfile, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxDangerFull:
+			return s, true
+		}
+	case harness.OpenCodeName:
+		if s.Mode == harness.OpenCodeSandboxOff {
 			return s, true
 		}
 	}

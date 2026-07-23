@@ -28,6 +28,9 @@ func TestBreakGlassCapabilityRequiresPolicyRenderingModes(t *testing.T) {
 	assert.Equal(t, SandboxCapabilityBreakGlass, capErr.Kind)
 
 	require.Error(t, ValidateSandboxBreakGlass(CodexName, SandboxWorkspaceWrite, grants))
+	openCodeErr := ValidateSandboxBreakGlass(OpenCodeName, OpenCodeSandboxOff, grants)
+	require.Error(t, openCodeErr)
+	assert.ErrorContains(t, openCodeErr, "no tclaude OS containment")
 	require.Error(t, ValidateSandboxBreakGlass("some-future-harness", "whatever", grants))
 
 	// No grants is always fine — this is the omitted-field compatibility path.

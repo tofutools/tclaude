@@ -65,6 +65,12 @@ func ValidateSandboxBreakGlass(harnessName, sandboxMode string, grants []sandbox
 			}
 		}
 		return nil
+	case OpenCodeName:
+		return &SandboxCapabilityError{
+			Harness: OpenCodeName,
+			Kind:    SandboxCapabilityBreakGlass,
+			Message: fmt.Sprintf("OpenCode sandbox %q provides no tclaude OS containment and cannot represent break-glass protected access", sandboxMode),
+		}
 	default:
 		return &SandboxCapabilityError{
 			Harness: harnessName,

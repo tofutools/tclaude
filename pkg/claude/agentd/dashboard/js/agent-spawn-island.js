@@ -831,7 +831,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         touched.current.add('sandbox');
         setDraft((before) => ({
           ...before, sandbox: value,
-          sandboxProfile: before.harness === 'codex' && value === 'danger-full-access' ? '' : before.sandboxProfile,
+          sandboxProfile: (before.harness === 'codex' && value === 'danger-full-access')
+            || (before.harness === 'opencode' && value === 'off') ? '' : before.sandboxProfile,
         }));
       }} help=${sandboxHelp} open=${helpOpen === 'agent-spawn-sandbox'} setOpen=${setHelpOpen}
       disabled=${!view.sandbox.visible} busy=${busy} />

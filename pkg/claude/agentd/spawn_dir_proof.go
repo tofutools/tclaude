@@ -315,6 +315,9 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 	if parent.Harness == harness.CodexName && parent.Mode == harness.SandboxDangerFull {
 		return true, nil
 	}
+	if parent.Harness == harness.OpenCodeName && parent.Mode == harness.OpenCodeSandboxOff {
+		return true, nil
+	}
 	return false, nil
 }
 
@@ -325,6 +328,9 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 // profile, Claude on/inherit) or is fully open (gated by the lineage guard
 // to fully-open parents, which are proof-exempt anyway).
 func childSandboxGrantsDirWrite(harnessName, mode string) bool {
+	if harnessOrDefault(harnessName) == harness.OpenCodeName {
+		return strings.TrimSpace(mode) == harness.OpenCodeSandboxOff
+	}
 	return harnessOrDefault(harnessName) != harness.CodexName ||
 		strings.TrimSpace(mode) != harness.SandboxReadOnly
 }
@@ -535,6 +541,8 @@ func spawnUsesPinnedGitCommonDir(harnessName, sandboxMode string) bool {
 		return strings.TrimSpace(sandboxMode) == harness.SandboxManagedProfile
 	case harness.DefaultName:
 		return strings.TrimSpace(sandboxMode) != harness.ClaudeSandboxOff
+	case harness.OpenCodeName:
+		return false
 	default:
 		return false
 	}
