@@ -125,14 +125,15 @@
    that one tab — so collapsing never hides what is on screen. */
 .mux-tab-group.collapsed .mux-tab { max-width: 150px; }
 
-/* Inter-stack drop gap — a thin lane at a group boundary that only exists while
-   a tab is being dragged, so it never widens the strip at rest. It is the drop
-   target for parking a tab beside a stack (ungrouped), the one placement a drop
-   on a tab cannot express. */
+/* Inter-stack drop gap — a thin lane at a group boundary for parking a tab
+   beside a stack (ungrouped), the one placement a drop on a tab cannot express.
+   The node is always present but collapses to zero width at rest so it neither
+   widens the strip nor changes the DOM when a drag begins; only the `active`
+   class (set while a drag is in flight) gives it a hit lane. */
 .mux-strip-gap {
-  flex: none; align-self: stretch; width: 10px; margin: 0 -3px;
-  border-radius: 4px;
+  flex: none; align-self: stretch; width: 0; border-radius: 4px;
 }
+.mux-strip-gap.active { width: 10px; margin: 0 -3px; }
 .mux-strip-gap.armed {
   background: #1f6feb;
   box-shadow: 0 0 8px rgba(88, 166, 255, 0.75);
