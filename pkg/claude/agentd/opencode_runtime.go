@@ -889,9 +889,16 @@ func consumeOpenCodeEvent(
 	if err != nil {
 		slog.Debug("OpenCode SSE event could not be projected",
 			"session", runtime.SessionID, "error", err)
-		return
+	} else {
+		applyOpenCodeHooks(ctx, runtime, projected)
 	}
-	applyOpenCodeHooks(ctx, runtime, projected)
+	// Context-window usage rides on the same directory-wide SSE stream as the
+	// lifecycle hooks but is a session-row side effect, not a hook event, so it
+	// is projected independently of the lifecycle projector — and after it, so
+	// a slow model-limit fetch can never delay a status transition. See TCL-701.
+	if usage, ok := parseOpenCodeContextUsage(event, runtime.ConvID); ok {
+		persistOpenCodeContextUsage(runtime, usage)
+	}
 }
 
 func applyOpenCodeHooks(
