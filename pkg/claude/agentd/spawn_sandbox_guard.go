@@ -114,19 +114,16 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 	}
 }
 
-// sandboxProfilesDisabled reports launch modes whose explicit contract is to
-// run without tclaude's sandbox policy. A Codex danger-full-access launch uses
-// the raw --sandbox opt-out, which cannot be combined with the managed
-// permission profile that renders filesystem rules. OpenCode has no OS sandbox,
-// so its sole explicit off mode follows the same policy-omission contract.
-// Treating the policy as absent also keeps environment-only profiles from being
-// applied under a UI choice that says the sandbox profile is disabled.
+// sandboxProfilesDisabled reports launch modes whose explicit contract omits
+// every tclaude sandbox-profile tier. Codex danger-full-access uses the raw
+// --sandbox opt-out, which cannot be combined with the managed permission
+// profile that renders filesystem rules. OpenCode off remains profile-aware so
+// an incompatible filesystem or network profile fails loudly instead of being
+// silently discarded; an empty policy is still a valid off launch.
 func sandboxProfilesDisabled(harnessName, sandboxMode string) bool {
 	switch harnessOrDefault(harnessName) {
 	case harness.CodexName:
 		return strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull
-	case harness.OpenCodeName:
-		return strings.TrimSpace(sandboxMode) == harness.OpenCodeSandboxOff
 	default:
 		return false
 	}

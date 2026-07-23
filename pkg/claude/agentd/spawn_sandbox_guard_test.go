@@ -69,7 +69,7 @@ func TestSandboxProfileCapabilityFailureIgnoresMissingAllowRulesButRejectsMissin
 
 func TestSandboxProfilesDisabledForExplicitNoContainmentModes(t *testing.T) {
 	require.True(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxDangerFull))
-	require.True(t, sandboxProfilesDisabled(harness.OpenCodeName, harness.OpenCodeSandboxOff))
+	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, harness.OpenCodeSandboxOff))
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxManagedProfile))
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxReadOnly))
 	require.False(t, sandboxProfilesDisabled(harness.DefaultName, harness.ClaudeSandboxOff))

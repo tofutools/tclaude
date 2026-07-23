@@ -312,7 +312,10 @@ automatically accepts scoped edits and explicitly enabled web tools. In
 `access-control`, bash, glob, grep, LSP, task, and skill remain disabled because
 OpenCode 1.18.4 cannot bind those tools to the same directory policy. Therefore
 a scoped OpenCode agent cannot build, test, or use git through bash. In `off`,
-bash may ask under `ask` or `allow-tools`, but is never automatic.
+bash may ask under `ask` or `allow-tools`, but is never automatic. An `off`
+launch rejects an assigned filesystem or network sandbox profile rather than
+silently discarding it; select `access-control` or remove the incompatible
+profile.
 
 Sandbox-profile network access controls OpenCode's `webfetch` and `websearch`
 tools only; it is not process-level network isolation. Protected tclaude,

@@ -119,20 +119,16 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	if err := mergeOpenCodeRoots(ordinary, spec.WriteDirs, openCodePathWrite); err != nil {
 		return nil, err
 	}
-	rules, err = appendOpenCodeRootRules(rules, worktree, ordinary, approval)
-	if err != nil {
+	if err := mergeOpenCodeRoots(ordinary, spec.DenyDirs, openCodePathDeny); err != nil {
 		return nil, err
 	}
-
-	// Environment-file restrictions narrow the ordinary readable roots. Hard
-	// directory denies follow them so the `.env.example` exception can never
-	// reopen a denied subtree merely because its filename is conventional.
-	rules = appendOpenCodeEnvReadRules(rules, approval)
-	denied := map[string]openCodePathAccess{}
-	if err := mergeOpenCodeRoots(denied, spec.DenyDirs, openCodePathDeny); err != nil {
-		return nil, err
-	}
-	rules, err = appendOpenCodeRootRules(rules, worktree, denied, approval)
+	// OpenCode applies the last matching rule, not the most-specific matching
+	// rule. Render ordinary allows and denies together from broadest to
+	// narrowest so a specific read/write grant can reopen beneath a broader
+	// deny. Reassert the environment-file restrictions after every allow:
+	// later narrow denies still dominate them, while a narrow reopen does not
+	// accidentally grant unrestricted access to environment files.
+	rules, err = appendOpenCodeRootRules(rules, worktree, ordinary, approval, true)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +141,7 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	if err := mergeOpenCodeRoots(protectedRoots, protected, openCodePathDeny); err != nil {
 		return nil, err
 	}
-	rules, err = appendOpenCodeRootRules(rules, worktree, protectedRoots, approval)
+	rules, err = appendOpenCodeRootRules(rules, worktree, protectedRoots, approval, false)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +153,7 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 	if err := mergeOpenCodeRoots(breakGlass, spec.BreakGlassWriteDirs, openCodePathWrite); err != nil {
 		return nil, err
 	}
-	rules, err = appendOpenCodeRootRules(rules, worktree, breakGlass, approval)
+	rules, err = appendOpenCodeRootRules(rules, worktree, breakGlass, approval, false)
 	if err != nil {
 		return nil, err
 	}
@@ -261,13 +257,24 @@ func validateOpenCodePolicyRoot(label, root string) (string, error) {
 		return "", fmt.Errorf("opencode %s must be an absolute path, got %q", label, root)
 	}
 	root = filepath.Clean(root)
-	if strings.ContainsAny(filepath.ToSlash(root), "*?") {
-		return "", fmt.Errorf("opencode %s %q contains an unrepresentable wildcard", label, root)
+	// Permission roots are embedded in OpenCode wildcard patterns. Refuse the
+	// complete reserved glob-syntax set rather than trying to escape it: a
+	// literal operator-authored deny that is reinterpreted as a pattern would
+	// silently fail open. Backslash is included because OpenCode normalizes it
+	// to slash before matching.
+	if strings.ContainsAny(filepath.ToSlash(root), `*?[]{}!\`) {
+		return "", fmt.Errorf("opencode %s %q contains an unrepresentable wildcard metacharacter", label, root)
 	}
 	return root, nil
 }
 
-func appendOpenCodeRootRules(rules []OpenCodePermissionRule, worktree string, roots map[string]openCodePathAccess, approval string) ([]OpenCodePermissionRule, error) {
+func appendOpenCodeRootRules(
+	rules []OpenCodePermissionRule,
+	worktree string,
+	roots map[string]openCodePathAccess,
+	approval string,
+	constrainEnv bool,
+) ([]OpenCodePermissionRule, error) {
 	paths := make([]string, 0, len(roots))
 	for root := range roots {
 		paths = append(paths, root)
@@ -307,6 +314,9 @@ func appendOpenCodeRootRules(rules []OpenCodePermissionRule, worktree string, ro
 			Pattern:    openCodeAbsoluteDescendantPattern(root),
 			Action:     externalAction,
 		})
+		if constrainEnv && roots[root] != openCodePathDeny {
+			rules = appendOpenCodeEnvReadRules(rules, approval)
+		}
 	}
 	return rules, nil
 }

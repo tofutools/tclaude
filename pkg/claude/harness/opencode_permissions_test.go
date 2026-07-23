@@ -2,6 +2,8 @@ package harness
 
 import (
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +28,7 @@ func TestOpenCodeCatalogDefaultsAreFailClosed(t *testing.T) {
 func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	protected, err := sandboxpolicy.ProtectedPaths()
 	require.NoError(t, err)
-	require.NotEmpty(t, protected)
+	require.GreaterOrEqual(t, len(protected), 2)
 	breakGlass := filepath.Join(protected[0], "debug")
 
 	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
@@ -169,6 +171,39 @@ func TestBuildOpenCodePermissionRulesRejectsUnrepresentableInputs(t *testing.T) 
 	require.ErrorContains(t, err, "approval policy is required")
 }
 
+func TestBuildOpenCodePermissionRulesRejectsWildcardMetacharactersInRoots(t *testing.T) {
+	for _, metachar := range []string{"*", "?", "[", "]", "{", "}", "!", `\`} {
+		t.Run(metachar, func(t *testing.T) {
+			_, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+				Cwd:            "/repo",
+				Worktree:       "/repo",
+				SandboxMode:    OpenCodeSandboxAccessControl,
+				ApprovalPolicy: OpenCodeApprovalDeny,
+				DenyDirs:       []string{"/repo/private" + metachar + "cache"},
+			})
+			require.ErrorContains(t, err, "unrepresentable wildcard metacharacter")
+		})
+	}
+}
+
+func TestBuildOpenCodePermissionRulesReopensOrdinaryDenyBySpecificity(t *testing.T) {
+	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+		Cwd:            "/repo",
+		Worktree:       "/repo",
+		SandboxMode:    OpenCodeSandboxAccessControl,
+		ApprovalPolicy: OpenCodeApprovalDeny,
+		ReadDirs:       []string{"/repo/private/public"},
+		DenyDirs:       []string{"/repo/private"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", "private/public/nested/file.txt"))
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "edit", "private/public/nested/file.txt"))
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "private/sibling/file.txt"))
+	assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "private/public/nested/config.env"))
+	assert.Equal(t, "allow", lastMatchingOpenCodeAction(rules, "read", "private/public/nested/config.env.example"))
+}
+
 func assertRuleBefore(t *testing.T, rules []OpenCodePermissionRule, before, after OpenCodePermissionRule) {
 	t.Helper()
 	left, right := -1, -1
@@ -193,6 +228,29 @@ func lastExactOpenCodeAction(rules []OpenCodePermissionRule, permission, pattern
 		}
 	}
 	return action
+}
+
+func lastMatchingOpenCodeAction(rules []OpenCodePermissionRule, permission, pattern string) string {
+	action := ""
+	for _, rule := range rules {
+		if openCodeWildcardMatch(permission, rule.Permission) &&
+			openCodeWildcardMatch(pattern, rule.Pattern) {
+			action = rule.Action
+		}
+	}
+	return action
+}
+
+// openCodeWildcardMatch mirrors OpenCode v1.18.4's permission matcher for the
+// path patterns exercised here: regex syntax is literal, while * and ? span
+// path separators. The command-only trailing " *" special case is irrelevant.
+func openCodeWildcardMatch(value, pattern string) bool {
+	value = strings.ReplaceAll(value, `\`, "/")
+	pattern = strings.ReplaceAll(pattern, `\`, "/")
+	expression := regexp.QuoteMeta(pattern)
+	expression = strings.ReplaceAll(expression, `\*`, ".*")
+	expression = strings.ReplaceAll(expression, `\?`, ".")
+	return regexp.MustCompile("(?s)^" + expression + "$").MatchString(value)
 }
 
 func relativeOpenCodeTestPattern(t *testing.T, worktree, path string) string {

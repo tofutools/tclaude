@@ -34,7 +34,7 @@ func (openCodeSandbox) ModeHelp(mode string) string {
 	case OpenCodeSandboxAccessControl:
 		return "Lexical soft access control: built-in reads/edits follow relative path rules and shell is disabled. This is not an OS sandbox and does not resolve or contain symlink targets; the agent cannot build, test, or use git through bash."
 	case OpenCodeSandboxOff:
-		return "⚠ No directory scoping or OS containment. The selected tool approval policy still applies; bash is never auto-approved."
+		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
 	default:
 		return ""
 	}

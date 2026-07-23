@@ -26,5 +26,5 @@
   "opencode/approval/ask": "Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting; shell is available only with sandbox off.",
   "opencode/approval/deny": "Read-only, fail-closed default: edits, shell, web, and unlisted tools are denied without prompting.",
   "opencode/sandbox/access-control": "Lexical soft access control: built-in reads/edits follow relative path rules and shell is disabled. This is not an OS sandbox and does not resolve or contain symlink targets; the agent cannot build, test, or use git through bash.",
-  "opencode/sandbox/off": "⚠ No directory scoping or OS containment. The selected tool approval policy still applies; bash is never auto-approved."
+  "opencode/sandbox/off": "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
 }
