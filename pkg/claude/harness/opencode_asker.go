@@ -50,8 +50,9 @@ func (openCodeAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Model != "" {
 		argv = append(argv, "--model", spec.Model)
 	}
-	// TuiThreadCommand passes --prompt straight into the initial message; it
-	// is an option value, never reparsed as flags, so a leading dash is safe.
+	// Interactive prompts are human-typed and rarely begin with a dash. The
+	// capture path above carries untrusted piped input and therefore uses the
+	// robust `--` guard; the TUI accepts its launch prompt via --prompt.
 	if spec.Prompt != "" {
 		argv = append(argv, "--prompt", spec.Prompt)
 	}

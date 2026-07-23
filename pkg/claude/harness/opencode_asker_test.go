@@ -71,6 +71,22 @@ func TestOpenCodeAskerBuildAskArgv(t *testing.T) {
 				"opencode", "--prompt", "--looks-like-a-flag",
 			},
 		},
+		{
+			name: "capture without prompt omits guard and positional",
+			spec: AskSpec{
+				Print: true,
+			},
+			want: []string{
+				"opencode", "run", "--agent", "plan",
+			},
+		},
+		{
+			name: "interactive without prompt omits prompt option",
+			spec: AskSpec{},
+			want: []string{
+				"opencode",
+			},
+		},
 	}
 
 	for _, tt := range tests {
