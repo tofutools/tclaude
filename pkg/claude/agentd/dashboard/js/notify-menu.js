@@ -92,9 +92,12 @@ export function createNotifyActions({
     close,
     toggle,
     openConfig,
+    // Deliberately channel-agnostic wording: the master switch gates every
+    // delivery channel (see notifications.delivery), so a toast that said
+    // "OS notifications" would be wrong whenever delivery is browser/both.
     setEnabled: (enabled) => post(
       { enabled: !!enabled },
-      enabled ? 'OS notifications ON' : 'OS notifications OFF (everything muted)',
+      enabled ? 'Notifications ON' : 'Notifications OFF (everything muted)',
     ),
     setType: (type, enabled) => post({ types: { [type]: !!enabled } }),
     setHumanMessages: (enabled) => post({ human_messages: !!enabled }),
