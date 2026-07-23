@@ -154,6 +154,36 @@ test('profile editor shows the unsandboxed-autonomy warning and clears it on a s
   cleanups.reverse().forEach((fn) => fn());
 });
 
+// The role editor shares HarnessFields, so it must show the same warning under
+// its own element id — asserted here, not just by comment.
+test('role editor shows the unsandboxed-autonomy warning', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'role-editor', seed: { name: 'risky-role', harness: 'claude', sandbox: 'off', approval: 'auto' }, options: {}, catalog });
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  const loadUnsandboxedAutonomy = async ({ sandbox, approval }) => ({
+    warnings: sandbox === 'off' && approval === 'auto' ? ['⚠ this role runs commands unattended with no sandbox.'] : [],
+  });
+  mountManagementIsland({
+    host, state,
+    actions: { async saveRole() {}, loadUnsandboxedAutonomy },
+    confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+
+  const warning = host.querySelector('#role-editor-autonomy-warning');
+  assert.ok(warning, 'the role editor renders the warning under its own id');
+  assert.equal(warning.querySelector('[role="alert"]').getAttribute('role'), 'alert');
+  assert.match(warning.textContent, /commands unattended/);
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 // A role editor shares HarnessFields, so it gets the same warning; and an
 // actions object without the probe method (older callers, or a harness that
 // never wires it) must simply render no warning rather than throw.
