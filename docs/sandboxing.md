@@ -80,10 +80,11 @@ agent's own workspace — with no allow rule able to reopen it. The OS sandbox
 resolves the same overlap by most-specific-wins, which is exactly why the
 deny + reopen shape works there and cannot work here.
 
-> ⚠️ **Under `deny ~`, the built-in `Read`/`Write`/`Edit` tools are confined by
-> layer 1 only.** Since layer 1 does not gate those tools on its own, a
-> reopen-under-deny profile does not stop the `Read` tool from reading a denied
-> path. tclaude logs a warning naming each deny it could not mirror.
+> ⚠️ **Under `deny ~`, that broad deny reaches layer 1 only.** Layer 1 does not
+> gate the built-in `Read`/`Write`/`Edit` tools on its own, so a
+> reopen-under-deny profile does **not** stop the `Read` tool from reading a
+> denied path — those tools are left unconfined for it. tclaude logs a warning
+> naming each deny it could not mirror.
 
 If you need a specific path to bind the built-in tools under a `deny ~` profile,
 add a leaf rule to your own `settings.json` at user scope, where no project's

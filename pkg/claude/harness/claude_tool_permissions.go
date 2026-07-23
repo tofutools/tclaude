@@ -108,7 +108,17 @@ func claudeToolPermissionDenyRules(readDirs, writeDirs, denyDirs, breakGlassDirs
 // path. (Claude Code does the same escaping when it materializes a rule from an
 // approved literal path.)
 func claudeAbsolutePermissionPattern(dir string) string {
-	return "//" + escapeGitignoreGlobs(strings.TrimPrefix(dir, "/")) + "/**"
+	trimmed := escapeGitignoreGlobs(strings.TrimPrefix(dir, "/"))
+	if trimmed == "" {
+		// A root deny. `//path/**` for path="" degenerates to the brittle
+		// `///**`; the documented whole-filesystem form is `//**` (`//` anchors
+		// at the filesystem root, `**` matches everything beneath). In practice
+		// a `deny /` never reaches here — the launch contract always reopens the
+		// workspace, so root is a reopen-under-deny and gets skipped — but emit
+		// the correct pattern rather than a degenerate one if it ever does.
+		return "//**"
+	}
+	return "//" + trimmed + "/**"
 }
 
 // escapeGitignoreGlobs backslash-escapes the gitignore metacharacters so a path

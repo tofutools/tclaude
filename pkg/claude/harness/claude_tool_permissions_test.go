@@ -127,6 +127,16 @@ func TestClaudeToolPermissionPatternEscapesGlobs(t *testing.T) {
 	}
 }
 
+// A root deny must not degenerate to the brittle `///**` (which is prone to a
+// known Claude Code root-pattern edge case); it must be the documented
+// whole-filesystem `//**`. Root is skipped in practice — the workspace reopen
+// always sits beneath it — but the pattern builder must still be correct.
+func TestClaudeToolPermissionPatternRoot(t *testing.T) {
+	if got := claudeAbsolutePermissionPattern("/"); got != "//**" {
+		t.Fatalf("root pattern = %q, want //**", got)
+	}
+}
+
 // inherit emits the OS-sandbox denies (inert unless the operator's own settings
 // enable the sandbox) AND the tool-permission denies. The tool layer is
 // independent of sandbox.enabled by design, so a profile's `deny ~/.ssh` should
