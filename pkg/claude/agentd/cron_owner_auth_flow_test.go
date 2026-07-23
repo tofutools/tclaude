@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -261,11 +262,19 @@ func TestCronPatchOwner_EmptyAndRelativeSelectorsPreserveCanonicalBehavior(t *te
 			f := newFlow(t)
 			const caller = "croa-relative-caller-aaaa-bbbb-cccc-000000000001"
 			const priorOwner = "croa-relative-prior-aaaa-bbbb-cccc-000000000002"
+			const ambient = "croa-relative-ambient-aaaa-bbbb-cccc-00000000003"
 			f.HaveConvWithTitle(caller, "relative-owner-caller")
 			f.HaveEnrolledAgent(caller)
 			f.HaveConvWithTitle(priorOwner, "relative-prior-owner")
 			f.HaveEnrolledAgent(priorOwner)
-			t.Setenv("TCLAUDE_SESSION_ID", caller)
+			f.HaveConvWithTitle(ambient, "relative-ambient-owner")
+			f.HaveEnrolledAgent(ambient)
+			// "." / "-" must resolve to the AUTHENTICATED PEER (the caller),
+			// never the daemon's own ambient identity. Point TCLAUDE_SESSION_ID
+			// at a decoy conv so a regression that reads the process identity —
+			// the leak that made this test flake under a tclaude-managed agent
+			// (TCL-702) — resolves the wrong owner and fails deterministically.
+			t.Setenv("TCLAUDE_SESSION_ID", ambient)
 			require.NoError(t, db.SetAgentPermissionOverride(
 				caller, agentd.PermSelfSchedule, db.PermEffectGrant, "test"))
 			job := createCronAsHuman(t, f, map[string]any{
@@ -276,7 +285,8 @@ func TestCronPatchOwner_EmptyAndRelativeSelectorsPreserveCanonicalBehavior(t *te
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			after, err := db.GetAgentCronJob(job.ID)
 			require.NoError(t, err)
-			assert.True(t, sameCronActor(t, after.OwnerConv, caller))
+			assert.True(t, sameCronActor(t, after.OwnerConv, caller),
+				"relative owner resolved to the peer, not the ambient identity")
 		})
 	}
 }
@@ -457,6 +467,45 @@ func TestCronPatchOwner_RefreshesStoredOwnerBeforeCanonicalDecision(t *testing.T
 			assert.True(t, sameCronActor(t, after.OwnerConv, caller))
 			assert.Zero(t, msgRowCount(t, caller))
 			assert.Zero(t, msgRowCount(t, foreignOwner))
+		})
+	}
+}
+
+// TestCronCreate_RelativeTargetResolvesToPeerNotAmbient locks in the same
+// peer-anchored self-selector contract for the CREATE path (TCL-702). The
+// CLI sends a self-targeted `tclaude agent cron add` as target "." and
+// expects the daemon to resolve it to the caller. Resolving "." against the
+// daemon's own process identity (or an ambient TCLAUDE_SESSION_ID) instead
+// mis-targets the job — and denies the caller who lacks agent.schedule for
+// the decoy — under any tclaude-managed agent environment.
+func TestCronCreate_RelativeTargetResolvesToPeerNotAmbient(t *testing.T) {
+	for _, selector := range []string{".", "-"} {
+		t.Run("relative target "+selector+" resolves to peer", func(t *testing.T) {
+			f := newFlow(t)
+			const caller = "croa-ctgt-caller-aaaa-bbbb-cccc-000000000001"
+			const ambient = "croa-ctgt-ambient-aaaa-bbbb-cccc-00000000002"
+			f.HaveConvWithTitle(caller, "ctgt-caller")
+			f.HaveEnrolledAgent(caller)
+			f.HaveConvWithTitle(ambient, "ctgt-ambient")
+			f.HaveEnrolledAgent(ambient)
+			require.NoError(t, db.SetAgentPermissionOverride(
+				caller, agentd.PermSelfSchedule, db.PermEffectGrant, "test"))
+			t.Setenv("TCLAUDE_SESSION_ID", ambient)
+
+			rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(testharness.JSONRequest(
+				t, http.MethodPost, "/v1/cron", map[string]any{
+					"target": selector, "interval": "1h", "body": "hi",
+				}), caller))
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			var out struct {
+				ID int64 `json:"id"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+			job, err := db.GetAgentCronJob(out.ID)
+			require.NoError(t, err)
+			assert.Equal(t, caller, job.TargetConv,
+				"relative target resolved to the peer, not the ambient identity")
+			assert.Equal(t, caller, job.OwnerConv, "self-scheduled job is owned by the peer")
 		})
 	}
 }
