@@ -291,6 +291,32 @@ func TestOpenCodeEventProjectorKeepsAttentionUntilReply(t *testing.T) {
 	assert.False(t, projector.pendingAttention)
 }
 
+func TestOpenCodeEventProjectorErrorClearsAttentionForRetry(t *testing.T) {
+	const convID = "ses_target"
+	projector := newOpenCodeEventProjector(convID, "/tmp/project")
+
+	_, err := projector.project(json.RawMessage(openCodeTestEvent(
+		"evt_permission", "permission.asked", convID,
+		`"id":"per_1","permission":"external_directory"`)))
+	require.NoError(t, err)
+	assert.True(t, projector.pendingAttention)
+
+	got, err := projector.project(json.RawMessage(openCodeTestEvent(
+		"evt_error", "session.error", convID,
+		`"error":{"name":"APIError","data":{"message":"retrying"}}`)))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "StopFailure", got[0].HookEventName)
+	assert.False(t, projector.pendingAttention)
+
+	got, err = projector.project(json.RawMessage(openCodeTestEvent(
+		"evt_retry", "session.status", convID, `"status":{"type":"retry"}`)))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "UserPromptSubmit", got[0].HookEventName,
+		"a retry after an error must not remain suppressed by stale attention")
+}
+
 func TestOpenCodeEventProjectorSessionFilteringIsStateIsolated(t *testing.T) {
 	const convID = "ses_target"
 	projector := newOpenCodeEventProjector(convID, "/tmp/project")

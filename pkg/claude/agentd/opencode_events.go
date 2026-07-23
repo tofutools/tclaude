@@ -146,6 +146,7 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 	case "session.error":
 		clear(p.activeToolStates)
 		p.deferredIdle = false
+		p.pendingAttention = false
 		input := p.hook("StopFailure")
 		input.ErrorType = openCodeHookErrorType(envelope.Properties.Error)
 		input.ErrorMessage = boundedOpenCodeDetail(envelope.Properties.Error.Data.Message)
