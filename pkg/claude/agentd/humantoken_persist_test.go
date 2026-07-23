@@ -53,9 +53,64 @@ func TestShouldPersistOperatorToken(t *testing.T) {
 	}
 }
 
+func TestShouldPersistOperatorTokenKeychain(t *testing.T) {
+	cases := []struct {
+		name string
+		flag bool
+		cfg  *config.Config
+		want bool
+	}{
+		{"default off", false, &config.Config{}, false},
+		{"flag on", true, &config.Config{}, true},
+		{"config on", false, &config.Config{Agent: &config.AgentConfig{PersistOperatorTokenKeychain: true}}, true},
+		{"flag OR config", true, &config.Config{Agent: &config.AgentConfig{PersistOperatorTokenKeychain: false}}, true},
+		{"ordinary persistence does not select keychain", false, &config.Config{Agent: &config.AgentConfig{PersistOperatorToken: true}}, false},
+		{"nil cfg", false, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldPersistOperatorTokenKeychain(tc.flag, tc.cfg); got != tc.want {
+				t.Fatalf("shouldPersistOperatorTokenKeychain(%v, %+v) = %v, want %v", tc.flag, tc.cfg, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveOperatorTokenPersistence(t *testing.T) {
+	cases := []struct {
+		name                      string
+		persistFlag, keychainFlag bool
+		cfg                       *config.Config
+		wantPersist, wantKeychain bool
+	}{
+		{name: "default ephemeral", cfg: &config.Config{}},
+		{name: "file flag", persistFlag: true, cfg: &config.Config{}, wantPersist: true},
+		{name: "file config", cfg: &config.Config{Agent: &config.AgentConfig{PersistOperatorToken: true}}, wantPersist: true},
+		{name: "keychain flag implies persistence", keychainFlag: true, cfg: &config.Config{}, wantPersist: true, wantKeychain: true},
+		{name: "keychain config implies persistence", cfg: &config.Config{Agent: &config.AgentConfig{PersistOperatorTokenKeychain: true}}, wantPersist: true, wantKeychain: true},
+		{
+			name:        "keychain wins when both selected",
+			persistFlag: true,
+			cfg: &config.Config{Agent: &config.AgentConfig{
+				PersistOperatorToken: true, PersistOperatorTokenKeychain: true,
+			}},
+			wantPersist: true, wantKeychain: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			persist, keychain := resolveOperatorTokenPersistence(tc.persistFlag, tc.keychainFlag, tc.cfg)
+			if persist != tc.wantPersist || keychain != tc.wantKeychain {
+				t.Fatalf("resolveOperatorTokenPersistence() = (%v, %v), want (%v, %v)",
+					persist, keychain, tc.wantPersist, tc.wantKeychain)
+			}
+		})
+	}
+}
+
 func TestResolveOperatorToken_EphemeralByDefault(t *testing.T) {
 	withTokenTestEnv(t)
-	tok, src := resolveOperatorToken(false)
+	tok, src := resolveOperatorToken(false, false)
 	if src.kind != tokenSourceEphemeral {
 		t.Fatalf("source = %q, want ephemeral", src.kind)
 	}
@@ -71,10 +126,18 @@ func TestResolveOperatorToken_EphemeralByDefault(t *testing.T) {
 	}
 }
 
-func TestResolveOperatorToken_FileFallbackWhenNoKeychain(t *testing.T) {
-	fp := withTokenTestEnv(t) // keychain unavailable by default
+func TestResolveOperatorToken_FileBackedByDefault(t *testing.T) {
+	fp := withTokenTestEnv(t)
+	keychainGet = func(string, string) (string, error) {
+		t.Fatal("default file persistence must not inspect the keychain")
+		return "", nil
+	}
+	keychainSet = func(string, string, string) error {
+		t.Fatal("default file persistence must not write the keychain")
+		return nil
+	}
 
-	tok, src := resolveOperatorToken(true)
+	tok, src := resolveOperatorToken(true, false)
 	if src.kind != tokenSourceFile {
 		t.Fatalf("source = %q, want file", src.kind)
 	}
@@ -98,12 +161,29 @@ func TestResolveOperatorToken_FileFallbackWhenNoKeychain(t *testing.T) {
 	}
 
 	// Persistence: a second resolve (a "restart") returns the SAME token.
-	tok2, src2 := resolveOperatorToken(true)
+	tok2, src2 := resolveOperatorToken(true, false)
 	if tok2 != tok {
 		t.Fatalf("token changed across restart: %q -> %q", tok, tok2)
 	}
 	if src2.kind != tokenSourceFile {
 		t.Fatalf("second source = %q, want file", src2.kind)
+	}
+}
+
+func TestResolveOperatorToken_KeychainOptIn(t *testing.T) {
+	withTokenTestEnv(t)
+	const stored = "tclo_explicit_keychain_value"
+	keychainGet = func(string, string) (string, error) { return stored, nil }
+
+	tok, src := resolveOperatorToken(true, true)
+	if tok != stored || src.kind != tokenSourceKeychain {
+		t.Fatalf("resolveOperatorToken(keychain) = (%q, %q), want (%q, keychain)", tok, src.kind, stored)
+	}
+	if currentOperatorToken() != stored {
+		t.Fatalf("live token = %q, want %q", currentOperatorToken(), stored)
+	}
+	if _, err := os.Stat(operatorTokenFilePath()); !os.IsNotExist(err) {
+		t.Fatalf("explicit keychain resolve wrote file backend (stat err = %v)", err)
 	}
 }
 
@@ -119,7 +199,7 @@ func TestLoadOrCreateOperatorToken_KeychainHit(t *testing.T) {
 	setCalled := false
 	keychainSet = func(string, string, string) error { setCalled = true; return nil }
 
-	tok, src := loadOrCreateOperatorToken()
+	tok, src := loadOrCreateOperatorTokenKeychain()
 	if src.kind != tokenSourceKeychain {
 		t.Fatalf("source = %q, want keychain", src.kind)
 	}
@@ -129,7 +209,7 @@ func TestLoadOrCreateOperatorToken_KeychainHit(t *testing.T) {
 	if setCalled {
 		t.Fatal("keychainSet should not be called on a hit")
 	}
-	// A keychain hit must not write the file fallback.
+	// A keychain hit must not write the independent file backend.
 	if _, err := os.Stat(operatorTokenFilePath()); !os.IsNotExist(err) {
 		t.Fatalf("keychain hit wrote a file (stat err = %v)", err)
 	}
@@ -141,7 +221,7 @@ func TestLoadOrCreateOperatorToken_KeychainEmptyMintsAndStores(t *testing.T) {
 	var setTok string
 	keychainSet = func(_, _, secret string) error { setTok = secret; return nil }
 
-	tok, src := loadOrCreateOperatorToken()
+	tok, src := loadOrCreateOperatorTokenKeychain()
 	if src.kind != tokenSourceKeychain {
 		t.Fatalf("source = %q, want keychain", src.kind)
 	}
@@ -152,30 +232,50 @@ func TestLoadOrCreateOperatorToken_KeychainEmptyMintsAndStores(t *testing.T) {
 		t.Fatalf("stored %q != returned %q", setTok, tok)
 	}
 	if _, err := os.Stat(operatorTokenFilePath()); !os.IsNotExist(err) {
-		t.Fatal("keychain-store path should not write the file fallback")
+		t.Fatal("keychain-store path should not write the file backend")
 	}
 }
 
-func TestLoadOrCreateOperatorToken_FileFallbackWhenKeychainStoreFails(t *testing.T) {
+func TestLoadOrCreateOperatorToken_KeychainStoreFailureDoesNotWriteFile(t *testing.T) {
 	fp := withTokenTestEnv(t)
-	// Backend reachable but holds no token, and the store fails — we must
-	// fall back to the file rather than lose persistence.
 	keychainGet = func(string, string) (string, error) { return "", keyring.ErrNotFound }
 	keychainSet = func(string, string, string) error { return errors.New("set denied") }
 
-	tok, src := loadOrCreateOperatorToken()
-	if src.kind != tokenSourceFile {
-		t.Fatalf("source = %q, want file", src.kind)
+	tok, src := loadOrCreateOperatorTokenKeychain()
+	if src.kind != tokenSourceEphemeral {
+		t.Fatalf("source = %q, want ephemeral", src.kind)
 	}
-	if src.path != fp {
-		t.Fatalf("path = %q, want %q", src.path, fp)
+	if !strings.HasPrefix(tok, humanTokenPrefix) {
+		t.Fatalf("token %q missing prefix", tok)
+	}
+	if _, err := os.Stat(fp); !os.IsNotExist(err) {
+		t.Fatalf("explicit keychain failure touched file backend (stat err = %v)", err)
+	}
+}
+
+func TestLoadOrCreateOperatorToken_KeychainUnavailableDoesNotReadFile(t *testing.T) {
+	fp := withTokenTestEnv(t)
+	if err := os.MkdirAll(filepath.Dir(fp), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const fileTok = "tclo_existing_file_token"
+	if err := os.WriteFile(fp, []byte(fileTok+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tok, src := loadOrCreateOperatorTokenKeychain()
+	if src.kind != tokenSourceEphemeral {
+		t.Fatalf("source = %q, want ephemeral", src.kind)
+	}
+	if tok == fileTok {
+		t.Fatal("explicit keychain failure unexpectedly adopted the file token")
 	}
 	got, err := os.ReadFile(fp)
 	if err != nil {
-		t.Fatalf("expected file written: %v", err)
+		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(got)) != tok {
-		t.Fatalf("file contents %q != returned token %q", strings.TrimSpace(string(got)), tok)
+	if strings.TrimSpace(string(got)) != fileTok {
+		t.Fatalf("file token changed: got %q want %q", strings.TrimSpace(string(got)), fileTok)
 	}
 }
 
@@ -230,9 +330,8 @@ func TestLoadOrCreateOperatorTokenFile_EmptyPathErrors(t *testing.T) {
 	}
 }
 
-func TestLoadOrCreateOperatorToken_KeychainEmptyAdoptsExistingFileToken(t *testing.T) {
+func TestLoadOrCreateOperatorToken_KeychainDoesNotMigrateExistingFileToken(t *testing.T) {
 	fp := withTokenTestEnv(t)
-	// An earlier keychain-less boot left a token in the file.
 	if err := os.MkdirAll(filepath.Dir(fp), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -240,21 +339,26 @@ func TestLoadOrCreateOperatorToken_KeychainEmptyAdoptsExistingFileToken(t *testi
 	if err := os.WriteFile(fp, []byte(fileTok+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Now the keychain is reachable but empty.
 	keychainGet = func(string, string) (string, error) { return "", keyring.ErrNotFound }
 	var stored string
 	keychainSet = func(_, _, secret string) error { stored = secret; return nil }
 
-	tok, src := loadOrCreateOperatorToken()
+	tok, src := loadOrCreateOperatorTokenKeychain()
 	if src.kind != tokenSourceKeychain {
 		t.Fatalf("source = %q, want keychain", src.kind)
 	}
-	// It must ADOPT the file token (converge the stores), not mint a new one.
-	if tok != fileTok {
-		t.Fatalf("token = %q, want adopted file token %q", tok, fileTok)
+	if tok == fileTok {
+		t.Fatalf("keychain unexpectedly adopted file token %q", fileTok)
 	}
-	if stored != fileTok {
-		t.Fatalf("keychain stored %q, want adopted %q", stored, fileTok)
+	if stored != tok {
+		t.Fatalf("keychain stored %q, want newly minted %q", stored, tok)
+	}
+	got, err := os.ReadFile(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(got)) != fileTok {
+		t.Fatalf("file token changed during keychain opt-in: got %q want %q", strings.TrimSpace(string(got)), fileTok)
 	}
 }
 
@@ -368,10 +472,8 @@ func TestLoadOrCreateOperatorTokenFile_ForcesPermsWhenOverwritingEmptyFile(t *te
 
 func TestLoadOrCreateOperatorToken_DegradesToEphemeralWhenFileUnavailable(t *testing.T) {
 	withTokenTestEnv(t)
-	// Keychain unavailable AND no resolvable file path → ephemeral, so the
-	// daemon still has a working token.
 	operatorTokenFilePath = func() string { return "" }
-	tok, src := loadOrCreateOperatorToken()
+	tok, src := loadOrCreateOperatorTokenFileBacked()
 	if src.kind != tokenSourceEphemeral {
 		t.Fatalf("source = %q, want ephemeral", src.kind)
 	}

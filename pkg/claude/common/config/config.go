@@ -1633,15 +1633,19 @@ type AgentConfig struct {
 	// and it keeps working across restarts. The `agentd serve
 	// --persist-operator-token` flag ORs with this — either turns it on.
 	//
-	// The persisted secret is stored by agentd (see
-	// agentd.loadOrCreateOperatorToken): the OS keychain when one is
-	// reachable (macOS Keychain / Linux Secret Service / Windows
-	// Credential Manager), else a 0600 ~/.tclaude/operator_token file.
+	// The persisted secret is stored in a 0600
+	// ~/.tclaude/data/operator_token file by default.
 	// The secret is deliberately NOT held in this config file — config.json
 	// is plaintext and shows up in the Config-tab diff / backups, and the
-	// agent sandbox already denies reads to ~/.tclaude (so the file
-	// fallback keeps the same threat model as the in-memory token).
+	// agent sandbox already denies reads to ~/.tclaude/data.
 	PersistOperatorToken bool `json:"persist_operator_token,omitempty"`
+
+	// PersistOperatorTokenKeychain explicitly selects the OS keychain instead
+	// of the private file for persistent operator-token storage. It implies
+	// persistence even when PersistOperatorToken is false. Keychain access is
+	// not a portable agent-sandbox boundary, so it is opt-in rather than the
+	// default. Existing values are never copied between the two stores.
+	PersistOperatorTokenKeychain bool `json:"persist_operator_token_keychain,omitempty"`
 }
 
 // AccessRequestAutoOpenBrowser reports whether an agent-triggered
