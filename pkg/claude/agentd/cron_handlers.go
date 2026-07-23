@@ -453,7 +453,11 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		intervalSeconds = int64(d.Seconds())
 	}
 
-	ct, err := resolveCronTarget(body.Target)
+	targetSelector, ok := expandCronSelfSelector(w, r, body.Target)
+	if !ok {
+		return
+	}
+	ct, err := resolveCronTarget(targetSelector)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "resolve target: "+err.Error())
 		return
@@ -533,7 +537,11 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 		// body.GroupID (the conv-routing override) is irrelevant here.
 		job.OwnerConv = caller
 		if caller == "" && strings.TrimSpace(body.Owner) != "" {
-			ownerConv, ok := resolveCronOwner(w, body.Owner)
+			ownerSelector, ok := expandCronSelfSelector(w, r, body.Owner)
+			if !ok {
+				return
+			}
+			ownerConv, ok := resolveCronOwner(w, ownerSelector)
 			if !ok {
 				return
 			}
@@ -553,7 +561,11 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 			// Reasonable default; humans can override via `owner`.
 			owner = targetConv
 			if strings.TrimSpace(body.Owner) != "" {
-				ownerConv, ok := resolveCronOwner(w, body.Owner)
+				ownerSelector, ok := expandCronSelfSelector(w, r, body.Owner)
+				if !ok {
+					return
+				}
+				ownerConv, ok := resolveCronOwner(w, ownerSelector)
 				if !ok {
 					return
 				}
@@ -693,6 +705,33 @@ func resolveGroupToken(token string) (*db.AgentGroup, error) {
 	return nil, fmt.Errorf("no group named or numbered %q", token)
 }
 
+// expandCronSelfSelector expands the relative "." / "-" selectors — which
+// mean "the conversation invoking this command" — from the AUTHENTICATED
+// PEER. The selector travels from the CLI to the shared daemon, so letting
+// agent.ResolveSelector see "." / "-" here would inspect the daemon's own
+// process identity (or an ambient TCLAUDE_SESSION_ID) and answer for the
+// wrong conversation — the exact leak behind a cron `--target .` /
+// `--owner .` mis-resolving under an agent-run environment. Non-relative
+// selectors (including a "group:" multicast token) pass through untouched.
+// A relative selector with no resolvable peer conv (a human, or an
+// unidentified caller) writes the error and returns ok=false. This mirrors
+// the peer-substitution the permissions endpoint already performs.
+func expandCronSelfSelector(w http.ResponseWriter, r *http.Request, selector string) (string, bool) {
+	if selector != "." && selector != "-" {
+		return selector, true
+	}
+	callerConv, isHuman, ok := authedCaller(w, r)
+	if !ok {
+		return "", false // authedCaller already wrote the refusal
+	}
+	if isHuman || callerConv == "" {
+		writeError(w, http.StatusNotFound, "not_found",
+			fmt.Sprintf("%q means the calling conversation; this invocation has none — pass an explicit conv selector", selector))
+		return "", false
+	}
+	return callerConv, true
+}
+
 // resolveCronOwner resolves a human-supplied `owner` selector to a conv
 // id. On a resolution failure the 404 response is already written and
 // ok is false.
@@ -753,7 +792,11 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	// by whether the response waited behind scheduler/mutation contention.
 	var targetResolveErr error
 	if decoded.targetSelector != nil {
-		ct, err := resolveCronTarget(*decoded.targetSelector)
+		targetSelector, ok := expandCronSelfSelector(w, r, *decoded.targetSelector)
+		if !ok {
+			return
+		}
+		ct, err := resolveCronTarget(targetSelector)
 		if err != nil {
 			targetResolveErr = err
 		} else {
@@ -775,13 +818,17 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 	var resolvedOwner cronActor
 	var ownerResolveErr error
 	if decoded.owner != nil {
+		ownerSelector, ok := expandCronSelfSelector(w, r, *decoded.owner)
+		if !ok {
+			return
+		}
 		resolveOwner := agent.ResolveSelectorCached
 		if classify(peerFromContext(r.Context())) == classHuman {
 			// The operator is entitled to discovery and precise diagnostics;
 			// retain the compatibility refresh for a newly indexed conversation.
 			resolveOwner = agent.ResolveSelector
 		}
-		res, _, err := resolveOwner(*decoded.owner)
+		res, _, err := resolveOwner(ownerSelector)
 		if err != nil {
 			ownerResolveErr = err
 		} else {
