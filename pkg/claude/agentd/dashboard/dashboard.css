@@ -2586,6 +2586,19 @@ details[data-group-key][open] > summary .group-sandbox-profile {
   text-align: center;
 }
 .notify-pop-config:hover { color: #d4d4d4; border-color: #58a6ff; }
+/* The delivery selector is a row with a label on the left and the <select>
+   pushed to the right, unlike the checkbox rows whose control leads. */
+.notify-pop-delivery { justify-content: space-between; gap: 10px; }
+.notify-pop-delivery select {
+  background: #0d1117; border: 1px solid #2a3340; border-radius: 4px;
+  color: #c9d1d9; cursor: pointer; padding: 3px 6px; font: inherit; font-size: 12px;
+}
+.notify-pop-delivery select:hover { border-color: #58a6ff; }
+/* Delivery stays usable while the master is off — a remote operator may
+   pre-select "Browser" before flipping notifications on — so it is exempt
+   from the master-off dimming that the per-type rows get. */
+#notify-pop.master-off .notify-pop-delivery,
+#notify-pop.master-off #notify-pop-delivery-note { opacity: 1; }
 .group-max-members-input {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;

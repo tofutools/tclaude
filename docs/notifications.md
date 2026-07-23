@@ -144,8 +144,13 @@ its desktop, which a sandboxed agent often cannot.
 }
 ```
 
-The Config tab has the same setting (**Notifications → Deliver via**),
-next to the one-time **Grant browser permission** button.
+Two places in the dashboard set this:
+
+- the header notification **bell** popover has a **Deliver via** quick
+  selector — picking a browser channel there also asks the browser for
+  permission on the spot;
+- the **Config tab** has the same setting (**Notifications → Deliver via**),
+  next to the one-time **Grant browser permission** button.
 
 `delivery` chooses *where* an already-decided notification goes — never
 *whether*. The `enabled` master switch, the transition rules, the

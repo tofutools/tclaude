@@ -22,6 +22,7 @@ const enabledSettings = {
   },
   human_messages: false,
   access_requests: true,
+  delivery: 'both',
 };
 
 test('notification state normalizes daemon settings and keeps the bell on snapshot state', async (t) => {
@@ -33,6 +34,10 @@ test('notification state normalizes daemon settings and keeps the bell on snapsh
   assert.equal(normalized.types.idle, true);
   assert.equal(normalized.types.exited, false);
   assert.equal(normalized.humanMessages, true, 'human messages default on unless explicitly false');
+  assert.equal(normalized.delivery, 'os', 'absent delivery is the desktop default');
+  assert.equal(normalizeNotifySettings({ delivery: 'browser' }).delivery, 'browser');
+  assert.equal(normalizeNotifySettings({ delivery: 'carrier-pigeon' }).delivery, 'os',
+    'an unrecognised delivery falls back to os');
 
   const snapshot = harness.signals.signal(null);
   const state = createNotifyState({ snapshot });
@@ -104,6 +109,42 @@ test('notification actions GET on every open, repaint from POST, and reload afte
   nav.remove();
 });
 
+test('setDelivery persists the channel and asks the browser for permission when it includes the browser', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createNotifyState }, { createNotifyActions }] = await Promise.all([
+    harness.importDashboardModule('js/notify-state.js'),
+    harness.importDashboardModule('js/notify-menu.js'),
+  ]);
+  const state = createNotifyState({ snapshot: harness.signals.signal({ notifications_enabled: true }) });
+  const calls = [];
+  // A stub Notification so requestBrowserNotifyPermission has something to
+  // call — the LinkeDOM window has none by default.
+  let permissionRequests = 0;
+  globalThis.Notification = class {
+    static permission = 'default';
+    static requestPermission = async () => { permissionRequests += 1; return 'granted'; };
+  };
+  t.after(() => { delete globalThis.Notification; });
+
+  const actions = createNotifyActions({
+    state,
+    notify: () => {},
+    documentRef: harness.document,
+    fetchImpl: async (path, options = {}) => {
+      calls.push([path, options]);
+      return response({ ...enabledSettings, delivery: JSON.parse(options.body).delivery });
+    },
+  });
+
+  assert.equal(await actions.setDelivery('both'), true);
+  assert.deepEqual(JSON.parse(calls.at(-1)[1].body), { delivery: 'both' });
+  assert.equal(state.view.value.settings.delivery, 'both', 'POST response is authoritative');
+  assert.equal(permissionRequests, 1, 'a browser channel asks for permission from this click');
+
+  await actions.setDelivery('os');
+  assert.equal(permissionRequests, 1, 'the desktop-only channel does not prompt');
+});
+
 test('notification island preserves markup, dismisses outside/Escape, and cleans document listeners', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createNotifyState }, { NotifyApp, mountNotifyIsland }] = await Promise.all([
@@ -120,6 +161,7 @@ test('notification island preserves markup, dismisses outside/Escape, and cleans
     setType: (type, value) => calls.push(['type', type, value]),
     setHumanMessages: (value) => calls.push(['human', value]),
     setAccessRequests: (value) => calls.push(['access', value]),
+    setDelivery: (value) => calls.push(['delivery', value]),
     openConfig: () => calls.push('config'),
   };
   const mounted = await harness.mount(
@@ -131,7 +173,7 @@ test('notification island preserves markup, dismisses outside/Escape, and cleans
   assert.equal(bell.getAttribute('aria-expanded'), 'false');
   assert.equal(bell.dataset.enabled, '1');
   assert.equal(bell.textContent.trim(), '🔔');
-  assert.equal(bell.title, 'OS notifications ON — click to choose which notifications you want');
+  assert.equal(bell.title, 'Notifications ON — click to choose which notifications you want');
   const pop = mounted.container.querySelector('#notify-pop');
   assert.equal(pop.getAttribute('role'), 'group');
   assert.equal(pop.getAttribute('aria-label'), 'Notification settings');
@@ -142,6 +184,16 @@ test('notification island preserves markup, dismisses outside/Escape, and cleans
   assert.match(pop.querySelector('#notify-pop-human').parentElement.title, /notify-human/);
   assert.match(pop.querySelector('#notify-pop-access').parentElement.title, /--ask-human/);
   assert.match(pop.querySelector('#notify-pop-config').title, /full notifications settings/);
+  // Delivery selector reflects the committed setting and drives setDelivery.
+  const delivery = pop.querySelector('#notify-pop-delivery');
+  const selectedOption = [...delivery.querySelectorAll('option')].find((o) => o.selected);
+  assert.equal(selectedOption?.value, 'both', 'the selector shows the committed channel');
+  assert.equal(delivery.querySelectorAll('option').length, 3);
+  const browserOption = [...delivery.querySelectorAll('option')].find((o) => o.value === 'browser');
+  selectedOption.selected = false;
+  browserOption.selected = true;
+  await harness.act(() => harness.fireEvent(delivery, 'change'));
+  assert.deepEqual(calls.at(-1), ['delivery', 'browser']);
 
   await harness.act(() => harness.fireEvent(bell, 'click'));
   assert.equal(pop.classList.contains('open'), true);

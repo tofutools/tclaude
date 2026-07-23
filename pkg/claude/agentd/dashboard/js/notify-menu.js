@@ -3,6 +3,8 @@
 // notify-island.js; this module is the only layer that knows the API route or
 // how the Config-tab shortcut is reached.
 
+import { requestBrowserNotifyPermission } from './browser-notify.js';
+
 function detail(error) {
   return error?.message || String(error);
 }
@@ -97,5 +99,17 @@ export function createNotifyActions({
     setType: (type, enabled) => post({ types: { [type]: !!enabled } }),
     setHumanMessages: (enabled) => post({ human_messages: !!enabled }),
     setAccessRequests: (enabled) => post({ access_requests: !!enabled }),
+    // Choosing a channel that includes the browser also asks the browser
+    // for permission (from this real click) so the very next notification
+    // can actually be raised — the daemon persists the routing, but the
+    // browser is the one that must consent. Best-effort: the persisted
+    // choice stands even if the human dismisses the prompt.
+    setDelivery: async (delivery) => {
+      const committed = await post({ delivery });
+      if (committed && (delivery === 'browser' || delivery === 'both')) {
+        await requestBrowserNotifyPermission(globalThis);
+      }
+      return committed;
+    },
   });
 }
