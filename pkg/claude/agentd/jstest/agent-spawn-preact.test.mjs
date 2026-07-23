@@ -344,6 +344,7 @@ async function mountSpawn(t, overrides = {}) {
       worktrees: [], branches: ['main'], defaultBranch: 'main', subRepos: [],
     }),
     loadSandboxPolicy: async (_group, selected) => ({ profiles: [], selected, preview: 'no profiles applied' }),
+    loadUnsandboxedAutonomy: async () => ({ warnings: [], sandboxState: '', sandboxSource: '' }),
     resolveWorktree: async () => ({ path: '', branch: '' }),
     uploadAttachments: async () => [],
     spawn: async () => ({ conv_id: 'abcdef1234' }),
@@ -721,6 +722,54 @@ test('Preact agent-spawn collapses mode help behind [?] and keeps only ⚠ cavea
   // help-field.test.mjs.
   assert.equal(host.querySelector('.spawn-field-caveat'), null);
   mounted.cleanup();
+});
+
+// The unsandboxed-autonomy warning (TCL-586): the dialog probes the daemon for
+// the effective sandbox and, when the daemon says the chosen posture runs
+// unconfined, renders the warning as a live alert between the sandbox and
+// permission-mode fields. Nothing gates submit on it — it is advisory, and the
+// daemon repeats it on the spawn response.
+test('Preact agent-spawn shows the daemon unsandboxed-autonomy warning and clears it', async (t) => {
+  const probes = [];
+  let warn = true;
+  const mounted = await mountSpawn(t, {
+    loadUnsandboxedAutonomy: async (input) => {
+      probes.push(input);
+      return warn
+        ? { warnings: ['⚠ permission mode "auto" lets this agent run commands unattended, but no sandbox.'], sandboxState: 'unconfigured', sandboxSource: '' }
+        : { warnings: [], sandboxState: 'on', sandboxSource: '~/.claude/settings.json' };
+    },
+  });
+  const { harness, host, state } = mounted;
+  try {
+    state.open({ groupName: 'alpha' });
+    await flush(harness);
+    // The debounced probe fires on a timer; let it land.
+    await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await flush(harness);
+
+    const alert = host.querySelector('#agent-spawn-autonomy-warning');
+    assert.ok(alert, 'the warning row renders when the daemon reports unconfined autonomy');
+    assert.equal(alert.querySelector('[role="alert"]').getAttribute('role'), 'alert');
+    assert.match(alert.textContent, /run commands unattended/);
+    assert.ok(probes.length >= 1, 'the dialog probed the daemon for the effective sandbox');
+
+    // Submit is NOT blocked by the warning: it is advisory only.
+    assert.equal(host.querySelector('#agent-spawn-submit').disabled, false);
+
+    // A subsequent probe that comes back clean (e.g. the operator picked sandbox
+    // `on`) removes the alert rather than leaving a stale warning on screen.
+    warn = false;
+    const sandbox = host.querySelector('#agent-spawn-sandbox');
+    setValue(sandbox, 'on');
+    await harness.act(() => harness.fireEvent(sandbox, 'change'));
+    await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    await flush(harness);
+    assert.equal(host.querySelector('#agent-spawn-autonomy-warning'), null,
+      'a clean re-probe clears the warning');
+  } finally {
+    mounted.cleanup();
+  }
 });
 
 // The spawn dialog's auto-memory checkbox. Off is the load-bearing default:

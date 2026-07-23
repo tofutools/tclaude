@@ -139,6 +139,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   // sandboxPolicy binding is stale, but revalidation must see the latest.
   const sandboxPolicyRef = useRef(sandboxPolicy);
   sandboxPolicyRef.current = sandboxPolicy;
+  // Warnings about the posture this draft would actually launch with — today,
+  // an unattended command-running permission mode with nothing confining it
+  // (TCL-586). Advisory only: it never gates submit, because the operator may
+  // legitimately want that combination and the daemon repeats the warning on
+  // the spawn response regardless.
+  const [autonomyWarnings, setAutonomyWarnings] = useState([]);
   const [attachments, setAttachments] = useState([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -153,6 +159,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const profileRequest = useRef(0);
   const worktreeRequest = useRef(0);
   const sandboxRequest = useRef(0);
+  const autonomyRequest = useRef(0);
   const directoryRequest = useRef(0);
   const worktreesRef = useRef(worktrees);
   const draftRef = useRef(draft);
@@ -277,6 +284,25 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     });
     return undefined;
   }, [draft.group, draft.sandboxProfile, view.sandboxProfilesDisabled, current.sandboxRevision]);
+
+  // Re-probe the effective sandbox whenever an input to it changes. CWD is a
+  // free-text field, so the same 350ms debounce the worktree-repo probe uses
+  // keeps a typed path from firing a request per keystroke; the other three are
+  // selects, and the debounce is imperceptible there. The request counter drops
+  // a stale answer that lands after a newer one.
+  useEffect(() => {
+    const request = ++autonomyRequest.current;
+    const generation = current.generation;
+    const timer = setTimeout(() => {
+      actions.loadUnsandboxedAutonomy({
+        harness: draft.harness, sandbox: draft.sandbox, approval: draft.approval, dir: draft.cwd,
+      }).then((value) => {
+        if (request !== autonomyRequest.current || !state.isCurrent(generation)) return;
+        setAutonomyWarnings(value.warnings || []);
+      });
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [draft.harness, draft.sandbox, draft.approval, draft.cwd]);
 
   const update = (key, value) => {
     touched.current.add(key);
@@ -828,6 +854,20 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => update('approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === 'agent-spawn-approval'} setOpen=${setHelpOpen}
       disabled=${!view.approval.visible} busy=${busy} />
+    ${/* Sits between the two selects it is about — the sandbox above and the
+          permission mode right here — because the warning is a statement about
+          their combination, not about either field alone. role="alert" so a
+          screen reader hears it when a mode change introduces it; the per-field
+          caveats above are aria-hidden precisely because they duplicate the
+          select's own description, while this one has no other voice. */
+      autonomyWarnings.length > 0 && html`
+      <div class="cron-create-row" id="agent-spawn-autonomy-warning">
+        <span class="cron-create-label"></span>
+        <div class="cron-create-target" role="alert">
+          ${autonomyWarnings.map((warning) => html`
+            <div class="spawn-field-hint warn" key=${warning}>${warning}</div>`)}
+        </div>
+      </div>`}
     <${HelpField} id="agent-spawn-approval-reviewer" label="Approval reviewer"
       title="Controls who decides eligible approval requests; it does not change the approval policy or sandbox."
       value=${draft.approvalReviewer} options=${approvalReviewerOptions(false)}

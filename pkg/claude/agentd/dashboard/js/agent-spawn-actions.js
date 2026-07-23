@@ -175,6 +175,32 @@ export function createAgentSpawnActions({
       };
     },
 
+    /* Ask the daemon whether this draft would actually be confined (TCL-586).
+       The browser cannot work this out: Claude's usual sandbox mode is
+       `inherit`, whose meaning lives in settings.json files on the daemon's
+       host. The daemon applies the same harness defaults the spawn will, so a
+       select left on its blank "default" option is answered for the posture it
+       resolves to rather than for "nothing chosen".
+
+       A failed probe resolves to no warnings rather than rejecting: this is an
+       advisory line beside the controls, and turning a transient fetch error
+       into a blocked or alarming spawn dialog would be worse than saying
+       nothing. The Go side is the authority that still runs the check at spawn
+       time, and its warning rides the spawn response either way. */
+    async loadUnsandboxedAutonomy({ harness = '', sandbox = '', approval = '', dir = '' } = {}) {
+      const query = new URLSearchParams({ harness, sandbox, approval, dir });
+      try {
+        const payload = await jsonRequest(fetchImpl, `/api/spawn/effective-sandbox?${query}`);
+        return {
+          warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+          sandboxState: String(payload.sandbox_state || ''),
+          sandboxSource: String(payload.sandbox_source || ''),
+        };
+      } catch (_) {
+        return { warnings: [], sandboxState: '', sandboxSource: '' };
+      }
+    },
+
     async uploadAttachments(attachments) {
       if (!attachments?.length) return [];
       const form = new FormData();

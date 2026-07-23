@@ -2706,6 +2706,13 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 				callerNarrowedApprovalNote(approvalPolicy, defaultApprovalPolicy))
 		}
 	}
+	// Both axes are final here (profile overlay, harness default, caller
+	// narrowing), which is the only point where "autonomous but unconfined" is
+	// a true statement about the launch that is about to happen. Warn, don't
+	// refuse: forcing sandbox `on` would override the operator's settings.json
+	// on the one axis tclaude deliberately leaves to them (TCL-586).
+	resolvedLaunch.Warnings = append(resolvedLaunch.Warnings,
+		harness.UnsandboxedAutonomyWarnings(h, approvalPolicy, sandboxMode, cwd)...)
 	autoReview, arErr := harness.ResolveAutoReview(h, body.AutoReview)
 	if arErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_auto_review", arErr.Error())
