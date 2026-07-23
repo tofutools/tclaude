@@ -149,6 +149,12 @@
    never forces the strip to scroll. Its insertion marker is a bar on the left
    edge, against the last segment, so "drop at the end" reads the same whether
    that segment is a tab or a group instead of flooding the margin with colour. */
+/* At rest the zero-width end-zone would still draw the strip's 4px flex gap
+   before it, widening the content box by 4px and, in the exact-fill case, arming
+   a phantom horizontal scrollbar. A -4px left margin cancels that one gap so the
+   idle strip measures exactly as it did without an end-zone; .grow.active
+   restores margin:0 for the grown hit lane during a drag. */
+.mux-strip-gap.grow { margin-left: -4px; }
 .mux-strip-gap.grow.active {
   position: relative; flex: 1 1 0; min-width: 0; width: auto; margin: 0;
   background: none; box-shadow: none;

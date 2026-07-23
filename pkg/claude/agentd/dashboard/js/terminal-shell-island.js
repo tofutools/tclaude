@@ -967,9 +967,14 @@ function TerminalTabs({
     if ((!dragKeyRef.current && !dragGroupIdRef.current) || event.defaultPrevented) return;
     if (!endZoneActive()) { if (stripGap === 'end') setStripGap(null); return; }
     event.preventDefault();
-    event.stopPropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     if (stripGap !== 'end') setStripGap('end');
+    // Deliberately NOT stopPropagation, unlike the boundary gaps: letting the
+    // dragover reach the document-level drag-out listener lets it recompute the
+    // detach hint, which clears a stale "release to detach" affordance if the
+    // pointer wandered out past the strip and then back onto this end-zone. The
+    // point is inside the strip, so that recompute can only ever disarm detach,
+    // and preventDefault above keeps it from touching the drop effect.
   };
   const endZoneDragLeave = (event) => {
     if (stripGap !== 'end' || event.currentTarget.contains(event.relatedTarget)) return;
