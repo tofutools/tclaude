@@ -288,7 +288,7 @@ Modes() []string                       // selectable policies (drives the spawn 
 ModeHelp(policy string) string         // one-line description per policy (e.g. "safe unattended?"); "" if unknown
 
 // AskTimeoutCatalog — Claude Code's askUserQuestionTimeout, via --settings.
-DefaultMode() string                   // "" (inherit) — an un-chosen spawn keeps the operator's setting
+DefaultMode() string                   // "inherit" (ValidateMode normalizes it to "") — an un-chosen spawn keeps the operator's setting
 ValidateMode(mode string) (string, error)
 Modes() []string                       // selectable values (inherit first)
 ModeHelp(mode string) string           // one-line description per value; "" if unknown
@@ -359,10 +359,15 @@ still wired to Claude Code / Codex by hand and do **not** yet have a descriptor
 seam — a new harness inherits nothing for them, and adding support means editing
 those call sites directly (and ideally lifting them into a contract):
 
-- **Usage / cost.** There is no `Cost`/`Usage` field on `Harness`. Codex's
-  figures come from harness-specific readers (`codex_usage.go`, `codex_cost.go`)
-  that the daemon's `usage.go` / `costs.go` call directly; a new harness's usage
-  won't appear until similar code exists and is invoked.
+- **Usage / cost.** There is no `Cost`/`Usage` field on `Harness`. Usage is read
+  by harness-specific code the daemon calls directly (Codex's `codex_usage.go`,
+  surfaced through `agentd/usage.go` and a Codex-specific DB cache row). Cost
+  works differently: `agentd/costs.go` is a *generic* aggregator over the
+  harness-agnostic `session_cost_daily` table, so each harness must get its own
+  numbers into that table — Codex computes its virtual cost inside its hook
+  projection (`codex_projection.go`, using `codex_cost.go`). Either way there is
+  no descriptor seam, so a new harness's usage/cost won't appear until similar
+  harness-specific code exists.
 - **Statusline install.** `harness.go` names a *future* `StatuslineInstaller`
   seam that isn't factored out yet. Claude Code installs a command-backed
   renderer; Codex curates its native footer items (`statusbar/codex_install.go`).
