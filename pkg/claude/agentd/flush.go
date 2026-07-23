@@ -9,6 +9,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // flushSender delivers a single undelivered nudge. The production
@@ -289,17 +290,26 @@ func realFlushSender(m *db.AgentMessage, nudge string) bool {
 	return sendNudgeBracket(m.ToConv, m.ID, nudge)
 }
 
-// sendNudgeBracket finds an alive tmux session for toConv and sends
-// the bracketed nudge for msgID. Shares injectTextAndSubmit with
-// lifecycle/ephemeral injectors — see that helper for why the
-// text and the submit Enter are split with a sleep.
+// sendNudgeBracket finds an alive session for toConv and sends the bracketed
+// nudge for msgID. Server-authoritative OpenCode receives the same text through
+// its managed prompt API; every other harness keeps the established tmux
+// injectTextAndSubmit path byte-for-byte unchanged.
 //
 // Caller is responsible for marking delivered_at; this function
-// only does the tmux work.
+// only does the external delivery work.
 func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
 	sess := pickNudgeSession(toConv)
 	if sess == nil || isAwaitingHumanInput(sess.Status) {
 		return false
+	}
+	if sess.Harness == harness.OpenCodeName {
+		if err := sendOpenCodeNudge(toConv, nudge); err != nil {
+			slog.Warn("OpenCode nudge prompt failed",
+				"error", err, "conv", toConv, "msg_id", msgID,
+				"tmux", sess.TmuxSession)
+			return false
+		}
+		return true
 	}
 	// This recheck belongs to the exact row selected for injection: the
 	// pre-claim gate may have observed a different live session, or this pane
