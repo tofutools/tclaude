@@ -43,6 +43,47 @@ func completeGroupNames(_ *cobra.Command, _ []string, toComplete string) []strin
 	return out
 }
 
+// completeReachableGroupNames suggests the group names usable with
+// `agent ls --group`. Like completeConvSelectors it reads the shared SQLite
+// directly when it can — fast, and the human operator at a shell is entitled
+// to every group — and falls back to the caller-scoped daemon peer list when
+// SQLite is unreadable. A sandboxed agent is denied ~/.tclaude/data by design
+// (TCL-611), so /v1/peers is its only view of which groups it can reach; the
+// daemon fallback keeps completion working there instead of offering nothing.
+// The daemon view is narrower than the local index (it omits empty groups),
+// which is the right trade for a completion path.
+func completeReachableGroupNames(_ *cobra.Command, _ []string, toComplete string) []string {
+	groups, err := db.ListAgentGroups()
+	if err != nil {
+		return groupNamesFromDaemon(toComplete)
+	}
+	out := []string{}
+	for _, g := range groups {
+		if strings.HasPrefix(g.Name, toComplete) {
+			out = append(out, g.Name)
+		}
+	}
+	return out
+}
+
+// groupNamesFromDaemon derives the caller-reachable group names from the
+// daemon peer list — the union of every visible peer's Groups — prefix
+// filtered. Used only when this process cannot read the shared SQLite itself.
+func groupNamesFromDaemon(toComplete string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, p := range fetchPeersFromDaemon() {
+		for _, g := range p.Groups {
+			if g == "" || seen[g] || !strings.HasPrefix(g, toComplete) {
+				continue
+			}
+			seen[g] = true
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
 // completeSpawnProfileNames returns every spawn-profile name (JOH-210),
 // prefix-filtered — for the profile-name argument of
 // `groups set-default-profile`.
@@ -378,8 +419,9 @@ func fetchSlugsFromDaemon() []slugEntry {
 
 // peerCompletionEntry is the slice of /v1/peers completion needs.
 type peerCompletionEntry struct {
-	ConvID string `json:"conv_id"`
-	Title  string `json:"title"`
+	ConvID string   `json:"conv_id"`
+	Title  string   `json:"title"`
+	Groups []string `json:"groups"`
 }
 
 // fetchPeersFromDaemon does a 250ms GET on /v1/peers — the daemon-side

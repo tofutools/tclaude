@@ -912,6 +912,7 @@ func lookupID(agentID, convID string) string {
 // --- ls (peers in my groups) ---
 
 type lsParams struct {
+	Group string `long:"group" optional:"true" help:"Only show agents in this group (name or numeric ID). Groups you cannot reach are never matchable, even when named explicitly."`
 	State string `long:"state" optional:"true" help:"Filter: online | offline"`
 	JSON  bool   `long:"json" help:"Output JSON"`
 }
@@ -922,6 +923,7 @@ func lsCmd() *cobra.Command {
 		Short:       "List agents reachable to me (members of my groups)",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *lsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeReachableGroupNames)
 			boa.GetParamT(ctx, &p.State).SetAlternativesFunc(completeStateFilterValues)
 			return nil
 		},
@@ -978,8 +980,12 @@ func runLs(p *lsParams, stdout, stderr io.Writer) int {
 }
 
 func runLsDaemon(p *lsParams, stdout, stderr io.Writer) int {
+	path := "/v1/peers"
+	if g := strings.TrimSpace(p.Group); g != "" {
+		path += "?group=" + url.QueryEscape(g)
+	}
 	var peers []*peerEntry
-	if err := DaemonGet("/v1/peers", &peers); err != nil {
+	if err := DaemonGet(path, &peers); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

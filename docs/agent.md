@@ -260,6 +260,7 @@ they're for.
 tclaude agent whoami           # who am I (stable agent_id + name, or <human>)
 tclaude agent lookup <name>    # resolve prefix / title to the stable agent_id
 tclaude agent ls               # peers in any group I'm in (runtime, activity, role, group, worktree)
+tclaude agent ls --group <name|id>   # restrict to one group (tab-completes reachable groups)
 tclaude agent ls --json
 ```
 
@@ -267,6 +268,13 @@ tclaude agent ls --json
 group acts as an allow-list. Each row includes the peer's harness, reported
 model and reasoning effort, dashboard-aligned state, and live sub-agent
 count. The JSON form exposes those fields under `state`.
+
+`--group` narrows the listing to a single group, named by its name or its
+numeric ID. The name/ID is resolved only against the groups the caller can
+already reach, so it never widens visibility: an agent naming a group it has
+no approved link to gets a "no group reachable by you" error, never that
+group's members. A reachable group with no other members lists empty rather
+than erroring.
 
 ### message / reply / inbox
 

@@ -234,6 +234,23 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
 	}
+	// Optional `--group` filter. Resolve the requested name/ID against ONLY
+	// the caller-visible group set computed above, so an agent can never widen
+	// its view to a group it has no approved link to — even by naming that
+	// group explicitly. A miss (nothing in the visible set matches) is a
+	// scoped 404: for a human that means the group truly doesn't exist; for an
+	// agent it means "not one of yours", revealing nothing about groups out of
+	// its scope.
+	groupFilter := strings.TrimSpace(r.URL.Query().Get("group"))
+	if groupFilter != "" {
+		matched := matchVisibleGroup(groups, groupFilter)
+		if matched == nil {
+			writeError(w, http.StatusNotFound, "not_found",
+				fmt.Sprintf("no group %q reachable by you", groupFilter))
+			return
+		}
+		groups = []*db.AgentGroup{matched}
+	}
 	// One tmux ls for the whole listing — every isConvOnlineIn below
 	// is a map lookup against this snapshot, not a per-row subprocess.
 	aliveSessions, _ := session.LiveTmuxSessions()
@@ -277,7 +294,11 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 	// or in a group the caller cannot see — and in the latter case it
 	// must stay hidden, preserving the group-scoping an agent caller
 	// relies on. ListActiveAgents excludes retired agents.
-	if active, err := db.ListActiveAgents(); err == nil {
+	//
+	// Skipped entirely under a `--group` filter: the caller asked for the
+	// members of one specific group, and an ungrouped agent is by definition
+	// in no group, so it can never belong to the requested one.
+	if active, err := db.ListActiveAgents(); err == nil && groupFilter == "" {
 		for _, e := range active {
 			conv := e.CurrentConvID
 			if conv == "" || conv == myID {
@@ -314,6 +335,31 @@ func handlePeers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, pe)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// matchVisibleGroup resolves a `--group` filter value against the
+// caller-visible group set. It accepts either the group name or its numeric
+// ID. Name match takes precedence over ID, so a group literally named "5"
+// still resolves by name rather than being shadowed by a group whose ID is 5.
+//
+// It only ever inspects the slice it is handed — the caller has already scoped
+// that to what the requester may see — so it cannot resolve a group the caller
+// has no approved link to. Returns nil when nothing matches; the caller turns
+// that into a scoped 404.
+func matchVisibleGroup(groups []*db.AgentGroup, sel string) *db.AgentGroup {
+	for _, g := range groups {
+		if g.Name == sel {
+			return g
+		}
+	}
+	if id, err := strconv.ParseInt(sel, 10, 64); err == nil {
+		for _, g := range groups {
+			if g.ID == id {
+				return g
+			}
+		}
+	}
+	return nil
 }
 
 func peerEntriesFromResolved(rs []*agent.Resolved) []*peerEntry {
