@@ -180,12 +180,23 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 	h := harnessForConv(convID)
 	if h.SupportsSoftExit() {
 		exitCmd := h.Life.SoftExitCommand()
+		if h.Name == harness.OpenCodeName && openCodeControlInputBlocked(sess.Status) {
+			res.Action = "error"
+			res.Detail = "OpenCode TUI is " + sess.Status + "; retry soft stop when idle or force kill"
+			return res
+		}
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
 			res.Action, res.Detail = "error", "selected launch intent became stale"
 			return res
 		}
-		if injectSoftExitTarget(target, exitCmd, "soft-exit", intentSet) {
+		delivered := false
+		if h.Name == harness.OpenCodeName {
+			delivered = injectOpenCodeSoftExitTarget(target, "soft-exit", intentSet)
+		} else {
+			delivered = injectSoftExitTarget(target, exitCmd, "soft-exit", intentSet)
+		}
+		if delivered {
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
 				// separately from an unclassified user pane close.
@@ -198,7 +209,11 @@ func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEv
 		} else {
 			clearFailedExitIntent(intentSet)
 			res.Action = "error"
-			res.Detail = "send-keys " + exitCmd + " failed"
+			if h.Name == harness.OpenCodeName {
+				res.Detail = "managed OpenCode TUI exit dispatch failed"
+			} else {
+				res.Detail = "send-keys " + exitCmd + " failed"
+			}
 		}
 		return res
 	}
@@ -355,6 +370,105 @@ func setExitIntentTargetBestEffort(target *lifecycleTarget, action, relatedEvent
 		}
 	}
 	return &ref
+}
+
+// injectOpenCodeSoftExitTarget asks the managed server to dispatch app.exit to
+// the attached TUI's command registry. This is the semantic equivalent of
+// /exit without prompt-state or keybinding risk. The selected session ID and
+// pane identity remain bound across the API send and bounded retry.
+func injectOpenCodeSoftExitTarget(
+	target *lifecycleTarget,
+	reason string,
+	intentRef *db.SessionExitIntentRef,
+) bool {
+	if target == nil {
+		return false
+	}
+	if beforeSoftExitTargetRevalidateForTest != nil {
+		beforeSoftExitTargetRevalidateForTest()
+	}
+	if _, err := target.revalidate(); err != nil {
+		logLifecycleStopFailure("revalidate", target.paneID, target.sessionID, err)
+		clearFailedExitIntentTarget(intentRef, target.tmuxSession)
+		return false
+	}
+	if err := sendOpenCodeTUICommand(
+		target.convID, target.sessionID, openCodeTUIExit,
+	); err != nil {
+		logLifecycleStopFailure("OpenCode TUI API", target.paneID, target.sessionID, err)
+		return false
+	}
+	if afterSoftExitTargetSendForTest != nil {
+		afterSoftExitTargetSendForTest()
+	}
+	probe, _ := probeLifecyclePane(target.tmuxSession)
+	if probe.state == paneProbeUnknown {
+		if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+			return true
+		}
+		scheduleUnknownIntentCleanup(target, intentRef)
+		return true
+	}
+	if probe.state == paneProbeDead || !lifecycleProbeMatchesTarget(probe, target) {
+		return true
+	}
+	scheduleOpenCodeSoftExitRetryTarget(target, reason, intentRef)
+	return true
+}
+
+func scheduleOpenCodeSoftExitRetryTarget(
+	target *lifecycleTarget,
+	reason string,
+	intentRef *db.SessionExitIntentRef,
+) {
+	goBackground(func() {
+		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
+			time.Sleep(softExitRetryDelay)
+			if beforeSoftExitTargetRetryProbeForTest != nil {
+				beforeSoftExitTargetRetryProbeForTest(attempt)
+			}
+			probe, err := probeLifecyclePane(target.tmuxSession)
+			if err != nil || probe.state == paneProbeUnknown {
+				if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+					return
+				}
+				scheduleUnknownIntentCleanup(target, intentRef)
+				return
+			}
+			if probe.state == paneProbeDead || !lifecycleProbeMatchesTarget(probe, target) {
+				return
+			}
+			sess := aliveSessionForConv(target.convID)
+			if sess == nil || sess.ID != target.sessionID {
+				return
+			}
+			if openCodeControlInputBlocked(sess.Status) {
+				slog.Info("OpenCode soft-exit retry deferred while TUI is not idle",
+					"conv_id", target.convID, "tmux_session", target.tmuxSession,
+					"status", sess.Status, "attempt", attempt, "reason", reason)
+				if attempt == softExitMaxAttempts {
+					scheduleUnknownIntentCleanup(target, intentRef)
+				}
+				continue
+			}
+			if err := sendOpenCodeTUICommand(
+				target.convID, target.sessionID, openCodeTUIExit,
+			); err != nil {
+				slog.Warn("OpenCode soft-exit retry API dispatch failed",
+					"error", err, "conv_id", target.convID,
+					"tmux_session", target.tmuxSession, "attempt", attempt,
+					"reason", reason)
+				if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
+					return
+				}
+				scheduleUnknownIntentCleanup(target, intentRef)
+				return
+			}
+			if attempt == softExitMaxAttempts {
+				scheduleUnknownIntentCleanup(target, intentRef)
+			}
+		}
+	})
 }
 
 func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
@@ -4964,7 +5078,7 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 }
 
 // runSpawnPostInit fires asynchronously after a successful spawn. It
-// waits for the new tmux pane to come online, then injects, in order:
+// waits for the new tmux pane to come online, then delivers, in order:
 //
 //  1. /rename <name> — when name is a valid rename title. This is the
 //     agent's single name; it becomes the conversation title.
@@ -4973,8 +5087,9 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 // Each is its own turn. Failures are logged, never bubbled — the spawn
 // already succeeded as far as the caller is concerned.
 //
-// The agent's startup briefing (group context + task brief) is NOT
-// typed into the pane — the handler already placed it in the agent's
+// OpenCode's welcome uses its managed prompt API; legacy harness paths type
+// the welcome into the pane. The agent's startup briefing (group context +
+// task brief) is never typed into the pane — the handler placed it in the agent's
 // inbox as agent_messages row #spawnContextMsgID, which keeps newlines
 // verbatim and sidesteps CC's input-box size limit. The welcome line
 // names that message id; once the welcome lands we mark the message
@@ -5046,7 +5161,13 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		welcome := buildSpawnWelcome(name, role, descr, groupName,
 			spawnContextMsgID, hasInitialMessage, worktreePath, worktreeBranch,
 			resolveSpawnerTitle(spawnedByConv, spawnedByAgent))
-		if err := injectTextAndSubmit(target, welcome); err != nil {
+		var err error
+		if h.Name == harness.OpenCodeName {
+			err = sendOpenCodeNudge(convID, welcome)
+		} else {
+			err = injectTextAndSubmit(target, welcome)
+		}
+		if err != nil {
 			slog.Warn("spawn: welcome injection failed", "conv", convID, "error", err)
 			return
 		}

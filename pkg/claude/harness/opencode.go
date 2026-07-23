@@ -20,9 +20,9 @@ func init() {
 }
 
 // OpenCode's pane is an attach client. Compact and exit remain TUI commands,
-// while rename is deliberately out-of-band through ConvStore.SetTitle: the
-// managed server's authenticated PATCH endpoint is safer than typing a
-// user-controlled title into the pane.
+// but agentd dispatches them through the managed server's authenticated
+// tui.command.execute event API rather than prompt keystrokes. Rename is
+// deliberately out-of-band through ConvStore.SetTitle for the same reason.
 type openCodeLifecycle struct{}
 
 func (openCodeLifecycle) RenameCommand() string        { return "" }
