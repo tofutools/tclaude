@@ -57,7 +57,6 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`openSandboxProfileEditor(null, { onCreate:`:                                 "quick-create assignment handoff",
 		`id="agent-spawn-sandbox-profile"`:                                           "explicit spawn selector",
 		`descriptionID="agent-spawn-sandbox-profile-preview"`:                        "redacted effective preview",
-		`|| (draft.harness === 'opencode' && draft.sandbox === 'off')`:               "OpenCode no-containment compatibility predicate",
 		`disabled=${view.sandboxProfilesDisabled}`:                                   "sandbox changes update profile visibility",
 		`if (!view.sandboxProfilesDisabled && draft.sandboxProfile)`:                 "disabled profiles are omitted from spawn requests",
 		`function bindSandboxProfilesUI()`:                                           "compatibility binder",

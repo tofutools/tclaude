@@ -11,6 +11,8 @@ func init() {
 		Ask:                 openCodeAsker{},
 		Models:              openCodeModels{},
 		Sandbox:             openCodeSandbox{},
+		Approval:            openCodeApproval{},
+		ApprovalsReviewer:   false,
 		Convs:               openCodeConvStore{},
 		Life:                openCodeLifecycle{},
 		TmuxScrollback:      true,

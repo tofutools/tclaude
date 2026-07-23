@@ -18,6 +18,7 @@ func TestBreakGlassCapabilityRequiresPolicyRenderingModes(t *testing.T) {
 
 	require.NoError(t, ValidateSandboxBreakGlass(CodexName, SandboxManagedProfile, grants))
 	require.NoError(t, ValidateSandboxBreakGlass(DefaultName, ClaudeSandboxOn, grants))
+	require.NoError(t, ValidateSandboxBreakGlass(OpenCodeName, OpenCodeSandboxAccessControl, grants))
 
 	// Claude only emits its protected denies under sandbox `on`; in any other
 	// mode there is nothing to re-open and no guarantee about the policy.

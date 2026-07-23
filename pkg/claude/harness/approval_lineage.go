@@ -52,7 +52,22 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 // only ever name a mode that would actually be allowed. Suggesting a mode that
 // earns a second 403 is worse than saying nothing.
 func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string) string {
-	if normalizeLineageHarness(childHarness) != DefaultName {
+	switch normalizeLineageHarness(childHarness) {
+	case OpenCodeName:
+		if strings.TrimSpace(childPolicy) != OpenCodeApprovalAllowTools {
+			return ""
+		}
+		for _, mode := range []string{OpenCodeApprovalAsk, OpenCodeApprovalDeny} {
+			if ApprovalLineageAllowed(parentHarness, parentPolicy, parentAutoReview,
+				OpenCodeName, mode, false) {
+				return fmt.Sprintf("%q automatically accepts scoped edits; pass %q for a human-gated, non-escalating child posture",
+					OpenCodeApprovalAllowTools, mode)
+			}
+		}
+		return fmt.Sprintf("%q automatically accepts scoped edits and can only be minted by a parent that already holds that capability, or by a human",
+			OpenCodeApprovalAllowTools)
+	case DefaultName:
+	default:
 		return ""
 	}
 	switch strings.TrimSpace(childPolicy) {
@@ -207,6 +222,23 @@ func classifyApprovalLineage(harnessName, policy string, autoReview bool, child 
 				capability |= approvalAutoReviewer
 			}
 			return approvalLineagePosture{capability: capability, valid: true}
+		default:
+			return approvalLineagePosture{}
+		}
+	case OpenCodeName:
+		// OpenCode has no guardian; carrying auto-review is malformed even
+		// though the catalog itself is otherwise valid.
+		if autoReview {
+			return approvalLineagePosture{}
+		}
+		switch policy {
+		case OpenCodeApprovalDeny, OpenCodeApprovalAsk:
+			return approvalLineagePosture{capability: approvalAutoBaseline, valid: true}
+		case OpenCodeApprovalAllowTools:
+			// allow-tools may accept built-in edits automatically, but never
+			// accepts bash. Network reach is constrained separately by the
+			// inherited sandbox profile.
+			return approvalLineagePosture{capability: approvalAutoEdits, valid: true}
 		default:
 			return approvalLineagePosture{}
 		}

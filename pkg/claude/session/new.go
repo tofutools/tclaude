@@ -423,6 +423,10 @@ func runNew(params *NewParams) error {
 		h.Name == harness.DefaultName && sandboxMode != harness.ClaudeSandboxOn {
 		return fmt.Errorf("unsupported_sandbox_profile_filesystem: Claude filesystem deny rules require sandbox %s", harness.ClaudeSandboxOn)
 	}
+	if len(sandboxSnapshotActiveFilesystem(launchSandbox)) > 0 &&
+		h.Name == harness.OpenCodeName && sandboxMode != harness.OpenCodeSandboxAccessControl {
+		return fmt.Errorf("unsupported_sandbox_profile_filesystem: OpenCode filesystem rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
+	}
 	// Capability gates. Both refuse loudly rather than launching with a weaker
 	// policy than the operator asked for: a reopen beneath a deny that the
 	// harness silently discards, or an acknowledged protected grant it quietly
@@ -453,15 +457,21 @@ func runNew(params *NewParams) error {
 		}
 	}
 	networkAccess := sandboxSnapshotNetworkAccess(launchSandbox)
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && h.Name != harness.CodexName {
-		return fmt.Errorf("unsupported_sandbox_profile_network: network policies are currently supported only by the Codex managed sandbox")
-	}
-	if networkAccess != sandboxpolicy.NetworkAccessInherit && params.PermissionProfile != harness.CodexAgentProfile {
-		return fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
-	}
 	if networkAccess != sandboxpolicy.NetworkAccessInherit {
-		if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
-			return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+		switch h.Name {
+		case harness.CodexName:
+			if params.PermissionProfile != harness.CodexAgentProfile {
+				return fmt.Errorf("unsupported_sandbox_profile_network: codex network rules require sandbox %s", harness.SandboxManagedProfile)
+			}
+			if err := harness.ValidateCodexAgentNetworkAccess(networkAccess); err != nil {
+				return fmt.Errorf("unsupported_sandbox_profile_network: %w", err)
+			}
+		case harness.OpenCodeName:
+			if sandboxMode != harness.OpenCodeSandboxAccessControl {
+				return fmt.Errorf("unsupported_sandbox_profile_network: OpenCode web-tool network rules require soft access-control mode %s", harness.OpenCodeSandboxAccessControl)
+			}
+		default:
+			return fmt.Errorf("unsupported_sandbox_profile_network: network policies are supported by the Codex managed sandbox or as OpenCode web-tool access control")
 		}
 	}
 

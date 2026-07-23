@@ -966,5 +966,5 @@ CREATE TABLE opencode_runtimes (
 			cwd        TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
-		);
+		, permission_json TEXT NOT NULL DEFAULT '');
 

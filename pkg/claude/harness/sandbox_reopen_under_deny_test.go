@@ -91,6 +91,10 @@ func TestReopenUnderDenyCapabilityMatrix(t *testing.T) {
 	require.NoError(t, ValidateSandboxReopenUnderDeny(CodexName, SandboxManagedProfile, shape))
 	assertCapabilityKind(t, ValidateSandboxReopenUnderDeny(CodexName, SandboxWorkspaceWrite, shape), SandboxCapabilityReopenUnderDeny)
 
+	// OpenCode's ordered rule list deliberately places narrower reopens after
+	// broader denies, so access-control can represent this shape.
+	require.NoError(t, ValidateSandboxReopenUnderDeny(OpenCodeName, OpenCodeSandboxAccessControl, shape))
+
 	// An unknown harness cannot promise anything.
 	assertCapabilityKind(t, ValidateSandboxReopenUnderDeny("someone-else", SandboxManagedProfile, shape), SandboxCapabilityReopenUnderDeny)
 	openCodeErr := ValidateSandboxReopenUnderDeny(OpenCodeName, OpenCodeSandboxOff, shape)

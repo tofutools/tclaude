@@ -75,10 +75,26 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		{"codex untrusted reviewer to same", CodexName, ApprovalUntrusted, true, CodexName, ApprovalUntrusted, true, true},
 		{"codex reviewer to codex reviewer", CodexName, ApprovalOnRequest, true, CodexName, ApprovalUntrusted, true, true},
 
+		// --- OpenCode postures share the same capability axes ---
+		{"opencode deny to opencode ask", OpenCodeName, OpenCodeApprovalDeny, false, OpenCodeName, OpenCodeApprovalAsk, false, true},
+		{"opencode ask to opencode deny", OpenCodeName, OpenCodeApprovalAsk, false, OpenCodeName, OpenCodeApprovalDeny, false, true},
+		{"opencode deny cannot mint allow tools", OpenCodeName, OpenCodeApprovalDeny, false, OpenCodeName, OpenCodeApprovalAllowTools, false, false},
+		{"opencode allow tools to same", OpenCodeName, OpenCodeApprovalAllowTools, false, OpenCodeName, OpenCodeApprovalAllowTools, false, true},
+		{"opencode allow tools can mint claude accept edits", OpenCodeName, OpenCodeApprovalAllowTools, false, DefaultName, claudePermAccept, false, true},
+		{"opencode allow tools cannot mint claude auto", OpenCodeName, OpenCodeApprovalAllowTools, false, DefaultName, claudePermAuto, false, false},
+		{"opencode allow tools cannot mint codex never", OpenCodeName, OpenCodeApprovalAllowTools, false, CodexName, ApprovalNever, false, false},
+		{"claude accept edits can mint opencode allow tools", DefaultName, claudePermAccept, false, OpenCodeName, OpenCodeApprovalAllowTools, false, true},
+		{"codex never can mint opencode allow tools", CodexName, ApprovalNever, false, OpenCodeName, OpenCodeApprovalAllowTools, false, true},
+
 		// --- Malformed / unclassifiable postures fail closed ---
 		{"legacy blank codex parent fails closed", CodexName, "", false, CodexName, ApprovalNever, false, false},
 		{"legacy blank claude parent fails closed", DefaultName, "", false, DefaultName, claudePermAuto, false, false},
 		{"legacy blank claude child fails closed", DefaultName, claudePermBypass, false, DefaultName, "", false, false},
+		{"legacy blank opencode parent fails closed", OpenCodeName, "", false, OpenCodeName, OpenCodeApprovalDeny, false, false},
+		{"legacy blank opencode child fails closed", DefaultName, claudePermBypass, false, OpenCodeName, "", false, false},
+		{"unknown opencode policy fails closed", OpenCodeName, "anything", false, OpenCodeName, OpenCodeApprovalDeny, false, false},
+		{"opencode auto-review parent is malformed", OpenCodeName, OpenCodeApprovalAllowTools, true, OpenCodeName, OpenCodeApprovalDeny, false, false},
+		{"opencode auto-review child is malformed", DefaultName, claudePermBypass, false, OpenCodeName, OpenCodeApprovalDeny, true, false},
 		{"claude auto-review is malformed on the parent", DefaultName, claudePermDefault, true, DefaultName, claudePermDefault, false, false},
 		{"claude auto-review is malformed on the child", DefaultName, claudePermBypass, false, DefaultName, claudePermAuto, true, false},
 		{"unknown harness fails closed", "gemini", "whatever", false, DefaultName, claudePermPlan, false, false},
@@ -152,5 +168,15 @@ func TestApprovalLineageDenialHint(t *testing.T) {
 	}
 	if got := ApprovalLineageDenialHint(CodexName, ApprovalNever, false, DefaultName, claudePermAuto); got != "" {
 		t.Fatalf("a provable mode needs no hint, got %q", got)
+	}
+
+	openCode := ApprovalLineageDenialHint(OpenCodeName, OpenCodeApprovalDeny, false,
+		OpenCodeName, OpenCodeApprovalAllowTools)
+	if !strings.Contains(openCode, OpenCodeApprovalAsk) {
+		t.Fatalf("OpenCode allow-tools denial must name a delegable human-gated posture, got %q", openCode)
+	}
+	if got := ApprovalLineageDenialHint(OpenCodeName, OpenCodeApprovalDeny, false,
+		OpenCodeName, OpenCodeApprovalDeny); got != "" {
+		t.Fatalf("a provable OpenCode mode needs no hint, got %q", got)
 	}
 }

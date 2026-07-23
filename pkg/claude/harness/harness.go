@@ -319,7 +319,8 @@ func (h *Harness) UsesAuthoritativeServer() bool {
 // SupportsSandbox reports whether the harness has a launch-time sandbox
 // catalog. Callers gate sandbox handling on this. Codex supplies native
 // --sandbox modes and Claude Code supplies inherit/on/off through a `--settings`
-// override. OpenCode currently leaves the capability absent.
+// override. OpenCode supplies soft tool-level access-control/off modes; that
+// catalog does not imply an OS sandbox.
 func (h *Harness) SupportsSandbox() bool {
 	return h != nil && h.Sandbox != nil
 }
@@ -327,9 +328,9 @@ func (h *Harness) SupportsSandbox() bool {
 // SupportsApproval reports whether the harness has a launch-time approval /
 // permission catalog. Callers gate approval handling on this. Codex supplies
 // --ask-for-approval and Claude Code supplies its --permission-mode enum
-// (carried through the same Approval field). OpenCode currently leaves the
-// capability absent. NOTE: this does NOT imply a guardian reviewer — that is
-// the separate SupportsAutoReview axis. See JOH-200.
+// (carried through the same Approval field). OpenCode supplies tclaude's
+// per-session deny/ask/allow-tools policy compiler. NOTE: this does NOT imply a
+// guardian reviewer — that is the separate SupportsAutoReview axis. See JOH-200.
 func (h *Harness) SupportsApproval() bool {
 	return h != nil && h.Approval != nil
 }

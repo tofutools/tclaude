@@ -93,27 +93,37 @@ func sandboxProfileCapabilityFailure(harnessName, sandboxMode string, snapshot *
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("Codex filesystem rules require sandbox %q; sandbox %q cannot represent them", harness.SandboxManagedProfile, sandboxMode)}
 	case harness.OpenCodeName:
-		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
-			fmt.Sprintf("OpenCode sandbox %q provides no tclaude OS containment and cannot represent sandbox filesystem rules", sandboxMode)}
+		if strings.TrimSpace(sandboxMode) == harness.OpenCodeSandboxAccessControl {
+			// OpenCode represents these as ordered, per-session tool rules.
+			// NetworkAccess gates webfetch/websearch only; it is intentionally
+			// not described as process-level network isolation.
+			return nil
+		}
+		kind := "unsupported_sandbox_profile_filesystem"
+		detail := "filesystem"
+		if len(filesystem) == 0 && len(snapshot.Effective.AgentDirectories) == 0 && hasNetworkPolicy {
+			kind = "unsupported_sandbox_profile_network"
+			detail = "tool-level network"
+		}
+		return &spawnFailure{http.StatusUnprocessableEntity, kind,
+			fmt.Sprintf("OpenCode sandbox %q cannot represent sandbox profile %s rules; use %q",
+				sandboxMode, detail, harness.OpenCodeSandboxAccessControl)}
 	default:
 		return &spawnFailure{http.StatusUnprocessableEntity, "unsupported_sandbox_profile_filesystem",
 			fmt.Sprintf("harness %q cannot represent sandbox filesystem rules", harnessName)}
 	}
 }
 
-// sandboxProfilesDisabled reports launch modes whose explicit contract is to
-// run without tclaude's sandbox policy. A Codex danger-full-access launch uses
-// the raw --sandbox opt-out, which cannot be combined with the managed
-// permission profile that renders filesystem rules. OpenCode has no OS sandbox,
-// so its sole explicit off mode follows the same policy-omission contract.
-// Treating the policy as absent also keeps environment-only profiles from being
-// applied under a UI choice that says the sandbox profile is disabled.
+// sandboxProfilesDisabled reports launch modes whose explicit contract omits
+// every tclaude sandbox-profile tier. Codex danger-full-access uses the raw
+// --sandbox opt-out, which cannot be combined with the managed permission
+// profile that renders filesystem rules. OpenCode off remains profile-aware so
+// an incompatible filesystem or network profile fails loudly instead of being
+// silently discarded; an empty policy is still a valid off launch.
 func sandboxProfilesDisabled(harnessName, sandboxMode string) bool {
 	switch harnessOrDefault(harnessName) {
 	case harness.CodexName:
 		return strings.TrimSpace(sandboxMode) == harness.SandboxDangerFull
-	case harness.OpenCodeName:
-		return strings.TrimSpace(sandboxMode) == harness.OpenCodeSandboxOff
 	default:
 		return false
 	}
@@ -198,8 +208,15 @@ func spawnSandboxLineageAllowed(parent, child spawnLineageSandbox) bool {
 			return childIsCodex(child, harness.SandboxReadOnly)
 		}
 	}
-	if parent.Harness == harness.OpenCodeName && parent.Mode == harness.OpenCodeSandboxOff {
-		return true
+	if parent.Harness == harness.OpenCodeName {
+		switch parent.Mode {
+		case harness.OpenCodeSandboxOff:
+			return true
+		case harness.OpenCodeSandboxAccessControl:
+			return child.Harness == harness.OpenCodeName && child.Mode == harness.OpenCodeSandboxAccessControl ||
+				childIsClaude(child, harness.ClaudeSandboxOn) ||
+				childIsCodex(child, harness.SandboxReadOnly, harness.SandboxWorkspaceWrite, harness.SandboxManagedProfile)
+		}
 	}
 	return false
 }
@@ -222,7 +239,8 @@ func normalizeSpawnLineageSandbox(s spawnLineageSandbox) (spawnLineageSandbox, b
 			return s, true
 		}
 	case harness.OpenCodeName:
-		if s.Mode == harness.OpenCodeSandboxOff {
+		switch s.Mode {
+		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxOff:
 			return s, true
 		}
 	}

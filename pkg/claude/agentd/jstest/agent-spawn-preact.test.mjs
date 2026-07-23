@@ -154,7 +154,7 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
 
   const openCode = model.selectSpawnHarness(draft, 'opencode', context);
   assert.equal(openCode.sandbox, 'off');
-  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, true);
+  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, false);
 
   const sparseCodex = model.applySpawnProfile(draft, {
     name: 'codex-default-reviewer', harness: 'codex',
@@ -265,7 +265,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     ...openCode, name: 'worker', sandboxProfile: 'stale',
   }, context, { path: '', branch: '' }).body;
   assert.equal(openCodeBody.sandbox, 'off');
-  assert.equal('sandbox_profile' in openCodeBody, false);
+  assert.equal(openCodeBody.sandbox_profile, 'stale');
   const humanBody = model.buildSpawnRequest({
     ...codex, name: 'worker', approvalReviewer: 'human',
   }, context, { path: '', branch: '' }).body;
@@ -428,7 +428,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.deepEqual([...openCodeSandbox.options].map((option) => option.value), ['off']);
   assert.equal(selectedValue(openCodeSandbox), 'off');
   assert.match(host.querySelector('#agent-spawn-sandbox-caveat').textContent, /No tclaude OS containment/);
-  assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, true);
+  assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, false);
   mounted.cleanup();
 });
 

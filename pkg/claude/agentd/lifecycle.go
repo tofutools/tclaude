@@ -4007,8 +4007,19 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	spawnHarness, _ := harness.Resolve(p.Harness)
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
-		var err error
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(label, p.Cwd, p.Name, "")
+		resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+		}
+		p.Cwd = resolvedCwd
+		spawnArgs.Cwd = resolvedCwd
+		permissionJSON, err := openCodePermissionJSONForLaunch(
+			p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.EffectiveSandbox)
+		if err != nil {
+			return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
+				"could not build OpenCode access-control policy: " + err.Error()}
+		}
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(label, p.Cwd, p.Name, "", permissionJSON)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 				"failed to start managed OpenCode server: " + err.Error()}
@@ -5986,8 +5997,18 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 func liveSpawnResume(a clcommon.SpawnArgs) error {
 	var openCodeLaunch *openCodeLaunch
 	if a.Harness == harness.OpenCodeName {
+		resolvedCwd, cwdErr := resolveOpenCodeLaunchCwd(a.Cwd)
+		if cwdErr != nil {
+			return cwdErr
+		}
+		a.Cwd = resolvedCwd
+		permissionJSON, policyErr := openCodePermissionJSONForLaunch(
+			a.Cwd, a.Sandbox, a.Approval, a.EffectiveSandbox)
+		if policyErr != nil {
+			return policyErr
+		}
 		var err error
-		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(a.ConvID, a.Cwd, "", a.ConvID)
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(a.ConvID, a.Cwd, "", a.ConvID, permissionJSON)
 		if err != nil {
 			return err
 		}

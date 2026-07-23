@@ -19,7 +19,8 @@ func TestOpenCodeDescriptor(t *testing.T) {
 	if !slicesContains(SpawnBinaries(), "opencode") {
 		t.Fatalf("SpawnBinaries() = %v, want opencode", SpawnBinaries())
 	}
-	if h.Sandbox == nil || h.Approval != nil || h.Ask == nil || h.Convs == nil {
+	if h.Sandbox == nil || h.Approval == nil || h.Ask == nil || h.Convs == nil ||
+		h.ApprovalsReviewer {
 		t.Fatalf("unexpected OpenCode capability contracts: %+v", h)
 	}
 	if h.SupportsRename() {
@@ -35,23 +36,26 @@ func TestOpenCodeSandboxCatalog(t *testing.T) {
 	if !ok {
 		t.Fatal("opencode harness is not registered")
 	}
-	if got := h.Sandbox.DefaultMode(); got != OpenCodeSandboxOff {
-		t.Fatalf("DefaultMode() = %q, want %q", got, OpenCodeSandboxOff)
+	if got := h.Sandbox.DefaultMode(); got != OpenCodeSandboxAccessControl {
+		t.Fatalf("DefaultMode() = %q, want %q", got, OpenCodeSandboxAccessControl)
 	}
-	if got := h.Sandbox.Modes(); !slices.Equal(got, []string{OpenCodeSandboxOff}) {
-		t.Fatalf("Modes() = %v, want [%s]", got, OpenCodeSandboxOff)
+	if got := h.Sandbox.Modes(); !slices.Equal(got, []string{OpenCodeSandboxAccessControl, OpenCodeSandboxOff}) {
+		t.Fatalf("Modes() = %v, want [%s %s]", got, OpenCodeSandboxAccessControl, OpenCodeSandboxOff)
 	}
-	if help := h.Sandbox.ModeHelp(OpenCodeSandboxOff); !strings.Contains(help, "without tclaude filesystem or network sandboxing") {
+	if help := h.Sandbox.ModeHelp(OpenCodeSandboxOff); !strings.Contains(help, "No directory scoping or OS containment") {
 		t.Fatalf("ModeHelp(%q) = %q, want explicit no-containment warning", OpenCodeSandboxOff, help)
 	}
-	if got, err := ResolveSandboxMode(h, ""); err != nil || got != OpenCodeSandboxOff {
-		t.Fatalf("ResolveSandboxMode(opencode, blank) = %q, %v; want %q, nil", got, err, OpenCodeSandboxOff)
+	if got, err := ResolveSandboxMode(h, ""); err != nil || got != OpenCodeSandboxAccessControl {
+		t.Fatalf("ResolveSandboxMode(opencode, blank) = %q, %v; want %q, nil", got, err, OpenCodeSandboxAccessControl)
 	}
 	if got, err := ValidateSandboxMode(h, OpenCodeSandboxOff); err != nil || got != OpenCodeSandboxOff {
 		t.Fatalf("ValidateSandboxMode(opencode, off) = %q, %v; want %q, nil", got, err, OpenCodeSandboxOff)
 	}
 	if _, err := ValidateSandboxMode(h, SandboxWorkspaceWrite); err == nil {
 		t.Fatal("OpenCode must reject sandbox modes it cannot enforce")
+	}
+	if got, err := ResolveApprovalPolicy(h, ""); err != nil || got != OpenCodeApprovalDeny {
+		t.Fatalf("ResolveApprovalPolicy(opencode, blank) = %q, %v; want %q, nil", got, err, OpenCodeApprovalDeny)
 	}
 }
 
