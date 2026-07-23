@@ -174,7 +174,7 @@ func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "server-authoritative-session", ConvID: convID, Cwd: "/tmp/server-authoritative",
-		Harness: "opencode", Status: "idle", AskUserQuestionTimeout: "5m",
+		Harness: "opencode", Status: "idle", SandboxMode: "off", AskUserQuestionTimeout: "5m",
 		RemoteControl: true, AutoMemory: true,
 	}))
 	require.NoError(t, SetSessionRemoteControl("server-authoritative-session", true))
@@ -184,12 +184,16 @@ func TestNonCodexSessionProjectionDoesNotInventCodexApproval(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, conversation)
 	require.NotNil(t, conversation.FallbackRelaunch)
+	require.NotNil(t, conversation.FallbackRelaunch.SandboxMode)
+	assert.Equal(t, "off", *conversation.FallbackRelaunch.SandboxMode)
 	require.NotNil(t, conversation.FallbackRelaunch.ApprovalPolicy)
 	assert.Empty(t, *conversation.FallbackRelaunch.ApprovalPolicy)
 
 	agent, err := AgentRelaunchProfileForConv(convID)
 	require.NoError(t, err)
 	require.NotNil(t, agent)
+	require.NotNil(t, agent.SandboxMode)
+	assert.Equal(t, "off", *agent.SandboxMode)
 	require.NotNil(t, agent.ApprovalPolicy)
 	assert.Empty(t, *agent.ApprovalPolicy)
 	require.NotNil(t, agent.AskUserQuestionTimeout)

@@ -93,6 +93,9 @@ func TestReopenUnderDenyCapabilityMatrix(t *testing.T) {
 
 	// An unknown harness cannot promise anything.
 	assertCapabilityKind(t, ValidateSandboxReopenUnderDeny("someone-else", SandboxManagedProfile, shape), SandboxCapabilityReopenUnderDeny)
+	openCodeErr := ValidateSandboxReopenUnderDeny(OpenCodeName, OpenCodeSandboxOff, shape)
+	assertCapabilityKind(t, openCodeErr, SandboxCapabilityReopenUnderDeny)
+	assert.ErrorContains(t, openCodeErr, "no tclaude OS containment")
 }
 
 func TestCodexReopenUnderDenyRefusedOnMacOS(t *testing.T) {

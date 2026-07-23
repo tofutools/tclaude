@@ -24,9 +24,10 @@ func findDashHarness(snap dashSnapshot, name string) *dashHarness {
 // (JOH-162). The catalog must list all spawnable harnesses with the right
 // menu values and capability flags — in particular the subtle pair the
 // per-row controls gate on: Codex CAN rename (via its ConvStore, even with
-// no in-pane /rename) but CANNOT compact. Both harnesses expose a sandbox
-// selector now — Codex's native `--sandbox` modes and Claude Code's
-// inherit/on/off `--settings` override — with their own mode sets + help.
+// no in-pane /rename) but CANNOT compact. Every harness exposes its honest
+// sandbox posture now: Codex's native `--sandbox` modes, Claude Code's
+// inherit/on/off `--settings` override, and OpenCode's sole explicit
+// no-containment mode.
 func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
@@ -107,7 +108,10 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	assert.Equal(t, "OpenCode", opencode.DisplayName)
 	assert.True(t, opencode.CanRename, "OpenCode attached TUI supports /rename")
 	assert.True(t, opencode.CanCompact, "OpenCode attached TUI supports /compact")
-	assert.False(t, opencode.CanSandbox, "OpenCode OS sandbox mapping is TCL-671")
+	assert.True(t, opencode.CanSandbox, "OpenCode surfaces its explicit no-containment posture")
+	assert.Equal(t, []string{"off"}, opencode.SandboxModes)
+	assert.Equal(t, "off", opencode.DefaultSandbox)
+	assert.Contains(t, opencode.SandboxModeHelp["off"], "without tclaude filesystem or network sandboxing")
 	assert.False(t, opencode.CanApproval, "OpenCode approval mapping is TCL-671")
 	assert.False(t, opencode.CanAutoReview)
 	assert.False(t, opencode.CanRemoteControl)

@@ -109,6 +109,17 @@ func TestSpawnSandboxLineage_Matrix(t *testing.T) {
 			},
 			wantStatus: http.StatusOK,
 		},
+		{
+			name:          "sandboxed parent cannot spawn unsandboxed opencode",
+			parentHarness: harness.DefaultName,
+			parentSandbox: harness.ClaudeSandboxOn,
+			body: map[string]any{
+				"name":    "worker",
+				"harness": harness.OpenCodeName,
+				"sandbox": harness.OpenCodeSandboxOff,
+			},
+			wantStatus: http.StatusForbidden,
+		},
 	}
 
 	for i, tt := range tests {

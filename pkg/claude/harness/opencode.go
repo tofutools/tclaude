@@ -9,6 +9,7 @@ func init() {
 		DisplayName:         "OpenCode",
 		Spawn:               openCodeSpawner{},
 		Models:              openCodeModels{},
+		Sandbox:             openCodeSandbox{},
 		Convs:               openCodeConvStore{},
 		Life:                openCodeLifecycle{},
 		TmuxScrollback:      true,

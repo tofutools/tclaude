@@ -48,12 +48,14 @@ type SandboxCatalog interface {
 // agentd-spawned agent is the untrusted party that must be sandboxed:
 //
 //   - Harness with no sandbox catalog: an explicit mode is an error; an empty
-//     request resolves to "" (omit). OpenCode currently takes this branch.
+//     request resolves to "" (omit).
 //   - Codex: an empty request resolves to the secure DefaultMode (the managed
 //     profile); any explicit mode is validated.
 //   - Claude Code: an empty request resolves to its DefaultMode (inherit), which
 //     ValidateMode normalizes back to "" — so an un-chosen Claude spawn imposes
 //     no `--settings` override and keeps the operator's settings.json posture.
+//   - OpenCode: an empty daemon request resolves to its sole explicit `off`
+//     posture, making the absence of OS containment visible and persistable.
 //
 // requested is trimmed first, so surrounding whitespace never leaks into
 // the flag.
@@ -72,8 +74,7 @@ func ResolveSandboxMode(h *Harness, requested string) (string, error) {
 // (Codex's config.toml sandbox_mode, Claude Code's settings.json) — it emits a
 // sandbox value only when they pass one explicitly (the daemon spawn path uses
 // ResolveSandboxMode for the secure default instead). An explicit mode for a
-// harness with no sandbox catalog is still an error (no shipped harness hits
-// this — Claude Code now validates inherit/on/off and normalizes inherit to "").
+// harness with no sandbox catalog is still an error.
 func ValidateSandboxMode(h *Harness, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {

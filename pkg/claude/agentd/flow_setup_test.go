@@ -59,6 +59,15 @@ func newFlow(t *testing.T) *testharness.Flow {
 	t.Cleanup(agentd.SetInjectSettleDelayForTest(time.Millisecond))
 	// Likewise the remote-control disable-confirm pause (700ms in prod).
 	t.Cleanup(agentd.SetRemoteControlConfirmDelayForTest(time.Millisecond))
+	t.Cleanup(agentd.SetOpenCodeRuntimeForTest(func(sessionID, _, _, _ string) (agentd.OpenCodeRuntimeFixture, error) {
+		return agentd.OpenCodeRuntimeFixture{
+			SessionID: sessionID,
+			ConvID:    "ses_" + sessionID,
+			ServerURL: "http://127.0.0.1:43210",
+			Password:  "test-password",
+			PID:       1234,
+		}, nil
+	}))
 	// And the background soft-exit retry's per-attempt wait (a few seconds
 	// in prod). The simulator honours /exit synchronously, so this is pure
 	// dead wait that every stop/retire/reincarnate flow — and the

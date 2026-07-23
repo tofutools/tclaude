@@ -58,6 +58,30 @@ func TestSpawnProfiles_CodexApprovalPoliciesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSpawnProfiles_OpenCodeSandboxRoundTripAndResolve(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{
+		"name": "opencode-off", "harness": "opencode", "sandbox": "off",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	rec = profileReq(t, f, http.MethodGet, "/v1/spawn-profiles/opencode-off", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got wireProfile
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "opencode", got.Harness)
+	assert.Equal(t, "off", got.Sandbox)
+
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "profile": "opencode-off",
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "profile spawn body=%s", spawn.Raw)
+	resolved, ok := f.World.SpawnSandbox(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "off", resolved)
+}
+
 func TestSpawnProfiles_DisabledStateAndRememberedReasonRoundTrip(t *testing.T) {
 	f := newFlow(t)
 	rec := profileReq(t, f, http.MethodPost, "/v1/spawn-profiles", map[string]any{

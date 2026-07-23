@@ -40,6 +40,18 @@ const harnesses = [{
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
+}, {
+  name: 'opencode', display_name: 'OpenCode',
+  models: [], effort_levels: [],
+  can_sandbox: true,
+  sandbox_modes: ['off'],
+  default_sandbox: 'off',
+  sandbox_mode_help: { off: '⚠ No tclaude OS containment' },
+  can_approval: false, approval_modes: [], default_approval: '',
+  approval_mode_help: {},
+  can_auto_review: false,
+  can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
+  can_remote_control: false, can_auto_memory: false,
 }];
 
 const profiles = [{
@@ -139,6 +151,10 @@ test('agent-spawn model preserves precedence, sparse profiles, gates, and hidden
   assert.equal(draft.trustDirSpecified, true, 'profile false is explicit');
   assert.equal(draft.remoteControl, false, 'unsupported hidden remote state is cleared');
   assert.equal(model.spawnCapabilityView(draft, context).sandboxProfilesDisabled, true);
+
+  const openCode = model.selectSpawnHarness(draft, 'opencode', context);
+  assert.equal(openCode.sandbox, 'off');
+  assert.equal(model.spawnCapabilityView(openCode, context).sandboxProfilesDisabled, true);
 
   const sparseCodex = model.applySpawnProfile(draft, {
     name: 'codex-default-reviewer', harness: 'codex',
@@ -244,6 +260,12 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
   assert.equal('remote_control' in codexBody, false);
   assert.equal(codexBody.approval, 'on-request');
   assert.equal(codexBody.auto_review, true);
+  const openCode = model.selectSpawnHarness(draft, 'opencode', context);
+  const openCodeBody = model.buildSpawnRequest({
+    ...openCode, name: 'worker', sandboxProfile: 'stale',
+  }, context, { path: '', branch: '' }).body;
+  assert.equal(openCodeBody.sandbox, 'off');
+  assert.equal('sandbox_profile' in openCodeBody, false);
   const humanBody = model.buildSpawnRequest({
     ...codex, name: 'worker', approvalReviewer: 'human',
   }, context, { path: '', branch: '' }).body;
@@ -399,6 +421,14 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   assert.match(host.querySelector('#agent-spawn-approval-reviewer-hint').textContent, /No effect with/);
   assert.equal(host.querySelector('#agent-spawn-remote-control-row').hidden, true);
   assert.equal(host.querySelector('#agent-spawn-trust-dir-row').hidden, false);
+  setValue(harnessSelect, 'opencode');
+  await harness.act(() => harness.fireEvent(harnessSelect, 'change'));
+  const openCodeSandbox = host.querySelector('#agent-spawn-sandbox');
+  assert.equal(openCodeSandbox.closest('.cron-create-row').hidden, false);
+  assert.deepEqual([...openCodeSandbox.options].map((option) => option.value), ['off']);
+  assert.equal(selectedValue(openCodeSandbox), 'off');
+  assert.match(host.querySelector('#agent-spawn-sandbox-caveat').textContent, /No tclaude OS containment/);
+  assert.equal(host.querySelector('#agent-spawn-sandbox-profile-row').hidden, true);
   mounted.cleanup();
 });
 

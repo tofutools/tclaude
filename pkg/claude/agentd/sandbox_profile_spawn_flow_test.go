@@ -564,3 +564,28 @@ func TestDangerFullAccessOmitsAssignedAndExplicitSandboxProfiles(t *testing.T) {
 	assert.Empty(t, snapshot.Effective.Filesystem)
 	assert.Empty(t, snapshot.Effective.Environment)
 }
+
+func TestOpenCodeOffOmitsFilesystemSandboxPolicyAndSpawns(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	root := t.TempDir()
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "filesystem", Filesystem: []db.SandboxFilesystemGrant{{Path: root, Access: "read"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetGlobalSandboxProfile("filesystem"))
+
+	resp := f.AsHuman().SpawnWith("crew", map[string]any{
+		"name": "worker", "harness": harness.OpenCodeName, "sandbox": harness.OpenCodeSandboxOff,
+	})
+	require.Equalf(t, http.StatusOK, resp.Code, "OpenCode off spawn body=%s", resp.Raw)
+
+	got, ok := f.World.SpawnSandbox(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, harness.OpenCodeSandboxOff, got)
+	snapshot, err := db.AgentEffectiveSandboxConfigForConv(resp.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	assert.Empty(t, snapshot.Applied)
+	assert.Empty(t, snapshot.Effective.Filesystem)
+}
