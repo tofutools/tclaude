@@ -207,6 +207,10 @@ func asDashboardHumanPeer(r *http.Request) *http.Request {
 // carries, and attaches the result to the request context. Handlers turn
 // that peer into an authorization decision via classify().
 //
+// Caller-controlled environment values, including TCLAUDE_SESSION_ID, may
+// support client-side session routing but must never establish or override
+// the caller identity attached here.
+//
 // Resolving a non-empty conv-id also opportunistically flushes any
 // nudges queued for this conv while it was offline. The flush is
 // debounced per-conv and runs on its own goroutine, so chatty agents

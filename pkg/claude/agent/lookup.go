@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -653,21 +655,25 @@ func freshConvRow(convID string) *db.ConvIndexRow {
 	return conv.RefreshConvIndexEntry(convID)
 }
 
-// currentConvID returns the conv-id of the conversation invoking us. We
-// prefer Claude Code's per-pid session file (tracks `/clear` and `/resume`)
-// and fall back to the env var that tclaude sets at session launch.
+// currentConvID returns the conv-id of the conversation invoking us. It
+// prefers Claude Code's per-pid session file (tracks `/clear` and `/resume`),
+// then agentd's peer-credential identity, and finally the environment value
+// tclaude sets at session launch.
 //
 // $TCLAUDE_SESSION_ID is sometimes set to the 8-char prefix rather than
 // the full UUID, so we expand prefixes via the DB before returning, so
 // downstream callers can rely on getting the canonical full ID.
 //
-// Final fallback: ask the daemon via /v1/whoami. The daemon resolves
-// identity from the Unix socket's peer credentials (host PID), which
-// works even when our process tree is hidden by a sandbox PID
-// namespace (e.g. bwrap with --unshare-pid). Cheap roundtrip — the
-// daemon is local and the lookup is one query.
+// TCLAUDE_SESSION_ID is caller-controlled and therefore only a compatibility
+// fallback for local routing/display. It must never establish or override
+// daemon caller identity. The daemon resolves /v1/whoami from the Unix
+// socket's peer credentials (host PID), which also works when a sandbox PID
+// namespace hides our local process tree.
 func currentConvID() (string, error) {
 	if id := readCCSessionID(); id != "" {
+		return id, nil
+	}
+	if id := whoamiViaDaemon(); id != "" {
 		return id, nil
 	}
 	if id := os.Getenv("TCLAUDE_SESSION_ID"); id != "" {
@@ -681,29 +687,32 @@ func currentConvID() (string, error) {
 		}
 		return id, nil
 	}
-	if id := whoamiViaDaemon(); id != "" {
-		return id, nil
-	}
 	return "", fmt.Errorf("could not detect current conversation; pass an explicit conv ID")
+}
+
+const whoamiLookupTimeout = 250 * time.Millisecond
+
+type daemonWhoamiResp struct {
+	IsHuman bool   `json:"is_human"`
+	ConvID  string `json:"conv_id"`
 }
 
 // whoamiViaDaemon asks the running agentd "who am I?" via peer-cred.
 // Returns "" if the daemon isn't running, or the caller is a human
 // (no Claude ancestor from the daemon's view), or any other failure.
-// Side-effect-free for the not-running case so command-line tools
-// don't error on hosts without agentd.
-//
-// Indirected through a variable so tests can stub it (the test runner
-// itself shouldn't reach a real daemon).
-var whoamiViaDaemon = func() string {
+// The lookup has a small, no-retry budget because currentConvID also backs
+// shell completion. A miss immediately falls through to TCLAUDE_SESSION_ID;
+// successful results are deliberately not cached so `/clear` and resume
+// rotations are observed on the next invocation.
+func currentConvIDViaDaemon() string {
 	if SocketPath() == "" {
 		return ""
 	}
-	var resp struct {
-		IsHuman bool   `json:"is_human"`
-		ConvID  string `json:"conv_id"`
-	}
-	if err := DaemonGet("/v1/whoami", &resp); err != nil {
+	var resp daemonWhoamiResp
+	if err := DaemonRequest(
+		http.MethodGet, "/v1/whoami", nil, &resp,
+		DaemonOpts{Timeout: whoamiLookupTimeout, RetryOutput: io.Discard, NoRetry: true},
+	); err != nil {
 		return ""
 	}
 	if resp.IsHuman {
@@ -711,6 +720,10 @@ var whoamiViaDaemon = func() string {
 	}
 	return resp.ConvID
 }
+
+// Indirected through a variable so currentConvID tests can stub it (the test
+// runner itself shouldn't reach a real daemon).
+var whoamiViaDaemon = currentConvIDViaDaemon
 
 // readCCSessionID walks up to the parent CC pid and reads
 // ~/.claude/sessions/<pid>.json for its `sessionId`.

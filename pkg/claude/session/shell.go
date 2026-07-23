@@ -73,6 +73,9 @@ func runNewShell(params *NewParams) error {
 
 	shellBin := shellBinary()
 
+	// TCLAUDE_SESSION_ID is a stable session-row/routing key for local session
+	// operations. It is caller-controlled compatibility state, never proof of
+	// daemon caller identity.
 	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID":      sessionID,

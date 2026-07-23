@@ -258,6 +258,10 @@ type DaemonOpts struct {
 	// RetryOutput receives retry notices. Nil writes to os.Stderr. This is
 	// primarily useful to callers that already expose an injectable stderr.
 	RetryOutput io.Writer
+	// NoRetry disables both connection and HTTP 5xx retries. Use it for
+	// best-effort probes on latency-sensitive paths such as shell completion;
+	// normal agent commands should retain the default restart-tolerant policy.
+	NoRetry bool
 }
 
 // DaemonGet performs a GET against the daemon and decodes the JSON body
@@ -389,6 +393,10 @@ func daemonReq(method, path string, in, out any, opts DaemonOpts) error {
 	policy, err := retryPolicyForRequest(client, req, retryOutput(opts.RetryOutput))
 	if err != nil {
 		return err
+	}
+	if opts.NoRetry {
+		policy.connectionBackoffs = nil
+		policy.serverBackoffs = nil
 	}
 	resp, err := doDaemonRequest(client, req, retryOutput(opts.RetryOutput), policy)
 	if err != nil {

@@ -170,6 +170,23 @@ checks the request for an operator token. The verdict is one of:
   whose PID can't be read at all → `401`. There is **no** fail-open
   "assume human" path — an unproven caller is always refused.
 
+### Session routing is not caller identity
+
+Harness sessions inherit `TCLAUDE_SESSION_ID` as a stable session-row and
+routing key. Statusline and lifecycle hooks use it to keep model, context,
+cost, workspace, and conversation-rotation updates attached to the same
+tclaude session; focus, resume, replay, shell, and task flows also carry it.
+The name is historical and does not make the value an authentication token.
+
+Environment variables are caller-controlled. `TCLAUDE_SESSION_ID` may assist
+local routing and remains a compatibility fallback, but it never establishes
+or overrides daemon caller identity. For local "current conversation" lookup,
+tclaude checks Claude Code's per-PID session file, then performs a bounded
+`/v1/whoami` lookup using Unix-socket peer credentials, and only then falls
+back to `TCLAUDE_SESSION_ID`. Agentd itself never reads the variable for
+authorization: its gates use the kernel-supplied peer PID and daemon-recorded
+process state described above.
+
 ### The operator token
 
 The operator token is how a CLI human proves who they are. The daemon
