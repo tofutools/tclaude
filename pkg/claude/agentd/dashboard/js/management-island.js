@@ -157,11 +157,35 @@ function Manager({ kind, current, state, actions, confirmDiscard }) {
 function Select({ value, onChange, options, ...props }) { return html`<select ...${props} value=${value} onChange=${(event) => onChange(event.currentTarget.value)}>${options.map(([key, label]) => html`<option key=${key} value=${key}>${label}</option>`)}</select>`; }
 function Row({ label, hidden = false, title = '', children }) { return html`<label class="cron-create-row" hidden=${hidden} title=${title}><span class="cron-create-label">${label}</span>${children}</label>`; }
 
-function HarnessFields({ draft, setDraft, catalog, profile = false }) {
+function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
   const hEntry = harnessByName(catalog, draft.harness);
   const models = hEntry?.models || [];
   const hasModelList = models.length > 0;
   const [customModel, setCustomModel] = useState(() => hasModelList && !!draft.model && !models.includes(draft.model));
+
+  // TCL-586: warn, before save, when this profile pairs an unattended
+  // command-running permission mode with a sandbox that will not confine it.
+  // The daemon decides — an explicit `off` is unsafe on any machine, while
+  // `inherit` is unsafe only when the host's global settings enable no sandbox,
+  // which the browser cannot know. loadUnsandboxedAutonomy probes with no dir,
+  // so the verdict reflects the portable, machine-global tiers.
+  const [autonomyWarnings, setAutonomyWarnings] = useState([]);
+  const autonomyRequest = useRef(0);
+  useEffect(() => {
+    if (typeof actions?.loadUnsandboxedAutonomy !== 'function') return undefined;
+    const request = ++autonomyRequest.current;
+    // Selects fire on change, not per keystroke, so a short debounce only
+    // collapses a rapid harness→mode retap; it is imperceptible otherwise.
+    const timer = setTimeout(() => {
+      Promise.resolve(actions.loadUnsandboxedAutonomy({
+        harness: draft.harness, sandbox: draft.sandbox, approval: draft.approval,
+      })).then((result) => {
+        if (request !== autonomyRequest.current) return;
+        setAutonomyWarnings(result?.warnings || []);
+      });
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [draft.harness, draft.sandbox, draft.approval]);
   const updateHarness = (harness) => {
     const h = harnessByName(catalog, harness);
     const defaults = harnessDefaults(h);
@@ -194,6 +218,12 @@ function HarnessFields({ draft, setDraft, catalog, profile = false }) {
       onChange=${(event) => change(setDraft, 'approval', event.currentTarget.value)}
       help=${approvalHelp} open=${helpOpen === approvalID} setOpen=${setHelpOpen}
       disabled=${!hEntry?.can_approval} />
+    ${autonomyWarnings.length > 0 && html`<div class="cron-create-row" id=${`${profile ? 'profile' : 'role'}-editor-autonomy-warning`}>
+      <span class="cron-create-label"></span>
+      <div class="cron-create-target" role="alert">
+        ${autonomyWarnings.map((warning) => html`<div class="spawn-field-hint warn" key=${warning}>${warning}</div>`)}
+      </div>
+    </div>`}
     ${profile && html`<${HelpField} id="profile-editor-approval-reviewer" label="Approval reviewer" title="Controls who decides eligible approval requests; it does not change the approval policy or sandbox."
       value=${draft.approval_reviewer} options=${approvalReviewerOptions(true)}
       onChange=${(event) => change(setDraft, 'approval_reviewer', event.currentTarget.value)}
@@ -227,7 +257,7 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Aliases" hidden=${local} title="Alternate handles for this same profile. Separate multiple aliases with commas."><input id="profile-editor-aliases" value=${draft.aliases_text} onInput=${(event) => change(setDraft, 'aliases_text', event.currentTarget.value)} placeholder="e.g. codex-reviewer, cold-reviewer" autocomplete="off" spellcheck="false" /></${Row}>
     <${Row} label="Disabled" hidden=${local} title="Keep this profile visible and editable, but block every spawn that would use it."><input id="profile-editor-disabled" type="checkbox" checked=${draft.disabled} onChange=${(event) => change(setDraft, 'disabled', event.currentTarget.checked)} /></${Row}>
     <${Row} label="Disable reason" hidden=${local} title="Required while disabled. Retained when enabled so it can be reviewed or reused later."><textarea id="profile-editor-disabled-reason" value=${draft.disabled_reason} onInput=${(event) => change(setDraft, 'disabled_reason', event.currentTarget.value)} rows="2" placeholder="required when disabled — retained after re-enabling" spellcheck="true" /></${Row}>
-    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} profile />
+    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions} profile />
     <${Row} label="Trust dir" hidden=${draft.harness !== 'codex'}><${Select} id="profile-editor-trust-dir" value=${draft.trust_dir} onChange=${(value) => change(setDraft, 'trust_dir', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Remote control" hidden=${hEntry && !hEntry.can_remote_control}><${Select} id="profile-editor-remote-control" value=${draft.remote_control} onChange=${(value) => change(setDraft, 'remote_control', value)} options=${TRI_OPTIONS}/></${Row}>
     <${Row} label="Auto memory" hidden=${hEntry && !hEntry.can_auto_memory} title="Claude Code's built-in auto memory. tclaude disables it by default: agents sharing a repo all read one per-project memory store and cross-pollute each other's notes. Does not affect CLAUDE.md."><${Select} id="profile-editor-auto-memory" value=${draft.auto_memory} onChange=${(value) => change(setDraft, 'auto_memory', value)} options=${AUTO_MEMORY_TRI_OPTIONS}/></${Row}>
@@ -250,7 +280,7 @@ function RoleEditor({ descriptor, current, state, actions, confirmDiscard }) {
   const submit = async () => { state.error.value = ''; if (!draft.name.trim()) { state.error.value = 'role name is required'; return; } await actions.saveRole({ draft, original: seed, payload: rolePayload(draft, catalog) }); };
   return html`<${Overlay} id="role-editor-modal" labelledby="role-editor-title" onClose=${state.closeDialog} dirty=${dirty} blocked=${saving} confirmDiscard=${confirmDiscard} registerClose=${registerClose}><h3 id="role-editor-title">${seed ? `Edit role: ${seed.name}` : 'New role'}</h3>
     <${Row} label="Name"><input id="role-editor-name" value=${draft.name} onInput=${(event) => change(setDraft, 'name', event.currentTarget.value)} placeholder="role name — kebab-or-snake-case label (e.g. reviewer)" autofocus autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Descr"><input id="role-editor-descr" value=${draft.descr} onInput=${(event) => change(setDraft, 'descr', event.currentTarget.value)} placeholder="optional — short one-line description" autocomplete="off" spellcheck="false" /></${Row}><${Row} label="Brief"><textarea id="role-editor-brief" rows="5" value=${draft.brief} onInput=${(event) => change(setDraft, 'brief', event.currentTarget.value)} placeholder="canonical role-brief — prepended to a referencing agent's startup context (newlines OK)" spellcheck="false" /></${Row}>
-    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog}/><${Row} label="Spawn profile"><${Select} value=${draft.spawn_profile} onChange=${(value) => change(setDraft, 'spawn_profile', value)} options=${[['', '(none)'], ...choices.map((choice) => [choice.value, choice.label])]} /></${Row}>
+    <${HarnessFields} draft=${draft} setDraft=${setDraft} catalog=${catalog} actions=${actions}/><${Row} label="Spawn profile"><${Select} value=${draft.spawn_profile} onChange=${(value) => change(setDraft, 'spawn_profile', value)} options=${[['', '(none)'], ...choices.map((choice) => [choice.value, choice.label])]} /></${Row}>
     <div class="cron-create-row"><span class="cron-create-label">Permissions (${draft.permissions.length})</span><div class="ta-perms-list">${slugs.map((slug) => html`<label key=${slug.slug} title=${slug.description || ''}><input type="checkbox" checked=${draft.permissions.includes(slug.slug)} onChange=${() => toggle(slug.slug)} /> ${slug.slug}</label>`)}</div></div>
     <div class="cron-create-error" role="alert">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button id="role-editor-submit" class="primary" disabled=${saving} onClick=${submit}>${saving ? 'Saving…' : 'Save role'}</button></div>
   </${Overlay}>`;

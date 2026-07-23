@@ -101,6 +101,79 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   cleanups.reverse().forEach((fn) => fn());
 });
 
+// TCL-586 follow-up: the profile editor warns, before save, when the chosen
+// posture pairs an unattended command-running mode with a sandbox that won't
+// confine it. The daemon decides (an explicit `off` is unsafe anywhere;
+// `inherit` only when the host's global settings enable no sandbox), so the
+// editor probes /api/spawn/effective-sandbox with no dir and renders whatever
+// warning comes back.
+test('profile editor shows the unsandboxed-autonomy warning and clears it on a safe change', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  // Seed the dangerous pairing directly: the fixture catalog doesn't list
+  // off/auto as options, but the draft carries the values the probe reads.
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'risky', harness: 'claude', sandbox: 'off', approval: 'auto' }, options: {}, catalog });
+
+  const probes = [];
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  // Mimic the daemon: warn only for an unconfined command-running posture.
+  const loadUnsandboxedAutonomy = async ({ harness: h, sandbox, approval }) => {
+    probes.push({ h, sandbox, approval });
+    const dangerous = h === 'claude' && sandbox === 'off' && (approval === 'auto' || approval === 'bypassPermissions');
+    return { warnings: dangerous ? [`⚠ permission mode "${approval}" lets this agent run commands unattended, but this launch forces the OS sandbox off.`] : [] };
+  };
+  mountManagementIsland({
+    host, state,
+    actions: { async saveProfile() {}, loadUnsandboxedAutonomy },
+    confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); },
+  });
+  await harness.act(() => Promise.resolve());
+  // The probe is debounced; let the timer fire and the state settle.
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+
+  const warning = host.querySelector('#profile-editor-autonomy-warning');
+  assert.ok(warning, 'off + auto renders the warning row');
+  assert.equal(warning.querySelector('[role="alert"]').getAttribute('role'), 'alert');
+  assert.match(warning.textContent, /run commands unattended/);
+  assert.ok(probes.some((p) => p.sandbox === 'off' && p.approval === 'auto'), 'the editor probed the daemon for the off+auto posture');
+
+  // The warning is advisory — it never disables save.
+  assert.equal(host.querySelector('#profile-editor-submit').disabled, false);
+
+  // Picking a confining sandbox (`on` is a catalog option) clears it.
+  choose(host.querySelector('#profile-editor-sandbox'), 'on');
+  await harness.act(() => harness.fireEvent(host.querySelector('#profile-editor-sandbox'), 'change'));
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null, 'a safe sandbox clears the warning');
+
+  cleanups.reverse().forEach((fn) => fn());
+});
+
+// A role editor shares HarnessFields, so it gets the same warning; and an
+// actions object without the probe method (older callers, or a harness that
+// never wires it) must simply render no warning rather than throw.
+test('profile editor tolerates an actions object without the autonomy probe', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'), harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({ kind: 'profile-editor', seed: { name: 'risky', harness: 'claude', sandbox: 'off', approval: 'auto' }, options: {}, catalog });
+  const cleanups = [];
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({ host, state, actions: { async saveProfile() {} }, confirmDiscard: async () => true, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } });
+  await harness.act(() => Promise.resolve());
+  await harness.act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+  assert.equal(host.querySelector('#profile-editor-autonomy-warning'), null, 'no probe method → no warning, no crash');
+  cleanups.reverse().forEach((fn) => fn());
+});
+
 test('profile choices expose aliases as distinct handles tied to one profile', async (t) => {
   const harness = await createPreactHarness(t);
   const profiles = await harness.importDashboardModule('js/profiles.js');

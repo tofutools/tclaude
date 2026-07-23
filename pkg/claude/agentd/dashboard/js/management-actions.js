@@ -9,6 +9,7 @@ import {
 } from './profiles.js';
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { BREAK_GLASS_ACK_CODE } from './sandbox-break-glass.js';
+import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
@@ -989,6 +990,14 @@ export function createManagementActions({
     return sandbox.loadSandboxCommonRules();
   }
 
+  // Profile/role editors probe with NO dir: a saved profile is portable, so
+  // only the machine-global settings tiers are knowable at edit time — which is
+  // exactly what the daemon reads when dir is empty. (The spawn dialog passes a
+  // real CWD; both share fetchUnsandboxedAutonomy.)
+  function loadUnsandboxedAutonomy({ harness = '', sandbox: sandboxMode = '', approval = '' } = {}) {
+    return fetchUnsandboxedAutonomy(fetch, { harness, sandbox: sandboxMode, approval, dir: '' });
+  }
+
   return Object.freeze({
     load,
     openManager,
@@ -1039,6 +1048,7 @@ export function createManagementActions({
     inspectDirectories,
     createDirectories,
     loadCommonRuleCatalog,
+    loadUnsandboxedAutonomy,
   });
 }
 // dashboard-imperative-boundary: browser-io
