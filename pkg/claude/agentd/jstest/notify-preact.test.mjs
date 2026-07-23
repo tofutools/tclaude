@@ -109,6 +109,32 @@ test('notification actions GET on every open, repaint from POST, and reload afte
   nav.remove();
 });
 
+test('the master-toggle toast is channel-agnostic, not "OS notifications"', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createNotifyState }, { createNotifyActions }] = await Promise.all([
+    harness.importDashboardModule('js/notify-state.js'),
+    harness.importDashboardModule('js/notify-menu.js'),
+  ]);
+  const state = createNotifyState({ snapshot: harness.signals.signal({ notifications_enabled: true }) });
+  const notices = [];
+  const actions = createNotifyActions({
+    state,
+    notify: (message) => notices.push(message),
+    documentRef: harness.document,
+    // The master switch gates every delivery channel, so the toast must not
+    // claim "OS" — it would be wrong whenever delivery is browser/both.
+    fetchImpl: async (_path, options = {}) => response({ ...enabledSettings, enabled: JSON.parse(options.body).enabled }),
+  });
+
+  assert.equal(await actions.setEnabled(true), true);
+  assert.equal(notices.at(-1), 'Notifications ON');
+  assert.doesNotMatch(notices.at(-1), /\bOS\b/);
+
+  assert.equal(await actions.setEnabled(false), true);
+  assert.equal(notices.at(-1), 'Notifications OFF (everything muted)');
+  assert.doesNotMatch(notices.at(-1), /\bOS\b/);
+});
+
 test('setDelivery persists the channel and asks the browser for permission when it includes the browser', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createNotifyState }, { createNotifyActions }] = await Promise.all([
