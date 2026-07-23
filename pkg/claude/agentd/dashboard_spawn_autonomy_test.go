@@ -95,6 +95,22 @@ func TestDashboardSpawnEffectiveSandboxOpenCodeAccessControl(t *testing.T) {
 	if len(payload.Warnings) == 0 || !strings.Contains(payload.Warnings[0], "no built-in OS sandbox") {
 		t.Fatalf("got warnings %v, want the OpenCode sandbox warning", payload.Warnings)
 	}
+	// SandboxState/SandboxSource describe Claude's settings.json sandbox; they
+	// must not be resolved (and possibly report "on") for an OpenCode spawn,
+	// which would contradict the warning above. Set a Claude sandbox in the same
+	// HOME to prove the OpenCode path ignores it.
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", "settings.json"),
+		[]byte(`{"sandbox":{"enabled":true}}`), 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	_, again := spawnEffectiveSandbox(t, "harness=opencode&sandbox=&approval=&dir="+home)
+	if again.SandboxState != "unconfigured" || again.SandboxSource != "" {
+		t.Fatalf("opencode echoed Claude sandbox state %q/%q, want unconfigured/\"\"",
+			again.SandboxState, again.SandboxSource)
+	}
 
 	// Explicitly turning scoping off is a deliberate opt-out with its own ⚠ in
 	// the mode help, so the probe stays silent there.
