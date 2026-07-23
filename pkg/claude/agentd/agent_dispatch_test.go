@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -255,6 +256,137 @@ func TestHandlePeers_HumanSeesAllGroups(t *testing.T) {
 	body := w.Body.String()
 	assert.Contains(t, body, "agent-1", "human caller should see agent-1")
 	assert.Contains(t, body, "agent-2", "human caller should see agent-2")
+}
+
+// peersRequest builds a GET /v1/peers request (optionally with a group
+// filter) carrying the given caller identity.
+func peersRequest(query string, p *peer) *http.Request {
+	path := "/v1/peers"
+	if query != "" {
+		path += "?" + query
+	}
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	return r.WithContext(context.WithValue(r.Context(), peerKey{}, p))
+}
+
+func TestHandlePeers_GroupFilterByName(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("alpha", "")
+	g2, _ := db.CreateAgentGroup("beta", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "agent-alpha"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "agent-beta"})
+
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest("group=alpha", &peer{PID: 1, HumanTokenValid: true}))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, "agent-alpha", "--group alpha should include alpha's member")
+	assert.NotContains(t, body, "agent-beta", "--group alpha should exclude beta's member")
+}
+
+func TestHandlePeers_GroupFilterByID(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("alpha", "")
+	g2, _ := db.CreateAgentGroup("beta", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "agent-alpha"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "agent-beta"})
+
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest(fmt.Sprintf("group=%d", g2), &peer{PID: 1, HumanTokenValid: true}))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, "agent-beta", "--group <id-of-beta> should include beta's member")
+	assert.NotContains(t, body, "agent-alpha", "--group <id-of-beta> should exclude alpha's member")
+}
+
+// A real, reachable group with no other members yields an empty listing (200),
+// NOT a 404 — distinguishing "empty group" from "unreachable/absent group".
+func TestHandlePeers_GroupFilterEmptyReachableGroupIsOK(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("solo", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "me"})
+
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest("group=solo", &peer{PID: 1, HasClaudeAncestor: true, ConvID: "me"}))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.JSONEq(t, "[]", w.Body.String(), "a reachable group with no other members is an empty list, not a 404")
+}
+
+// An agent naming a group it has no approved link to gets a scoped 404 and no
+// leak of that group's members — the core security requirement of --group.
+func TestHandlePeers_GroupFilterAgentCannotReachForeignGroupByName(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("mine", "")
+	g2, _ := db.CreateAgentGroup("secret", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "me"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "insider"})
+
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest("group=secret", &peer{PID: 1, HasClaudeAncestor: true, ConvID: "me"}))
+	assert.Equal(t, http.StatusNotFound, w.Code, "filtering by an unreachable group must 404")
+	assert.NotContains(t, w.Body.String(), "insider", "the 404 must not leak members of an unreachable group")
+}
+
+// The numeric-ID path must be scoped exactly like the name path: an agent
+// cannot reach a foreign group by naming its ID either.
+func TestHandlePeers_GroupFilterAgentCannotReachForeignGroupByID(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("mine", "")
+	g2, _ := db.CreateAgentGroup("secret", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "me"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "insider"})
+
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest(fmt.Sprintf("group=%d", g2), &peer{PID: 1, HasClaudeAncestor: true, ConvID: "me"}))
+	assert.Equal(t, http.StatusNotFound, w.Code, "filtering by an unreachable group's ID must 404")
+	assert.NotContains(t, w.Body.String(), "insider", "the 404 must not leak members of an unreachable group")
+}
+
+// A --group filter is a request for one group's members; ungrouped active
+// agents (pass 2) must be excluded so the filter doesn't smuggle them in.
+func TestHandlePeers_GroupFilterExcludesUngroupedAgents(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("alpha", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "agent-alpha"})
+	_, err := db.AllocateAgent("loner-conv", "spawn")
+	require.NoError(t, err, "allocate ungrouped agent")
+
+	// Unfiltered: the human sees the ungrouped loner via pass 2.
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest("", &peer{PID: 1, HumanTokenValid: true}))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.Contains(t, w.Body.String(), "loner-conv", "unfiltered listing includes ungrouped agents")
+
+	// Filtered to alpha: the loner is gone.
+	w = httptest.NewRecorder()
+	handlePeers(w, peersRequest("group=alpha", &peer{PID: 1, HumanTokenValid: true}))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, "agent-alpha", "--group alpha keeps alpha's member")
+	assert.NotContains(t, body, "loner-conv", "--group alpha must exclude ungrouped agents")
+}
+
+func TestMatchVisibleGroup(t *testing.T) {
+	groups := []*db.AgentGroup{
+		{ID: 5, Name: "alpha"},
+		{ID: 7, Name: "beta"},
+	}
+	require.NotNil(t, matchVisibleGroup(groups, "alpha"), "name resolves")
+	assert.Equal(t, int64(5), matchVisibleGroup(groups, "alpha").ID, "name resolves to its group")
+	require.NotNil(t, matchVisibleGroup(groups, "7"), "numeric id resolves")
+	assert.Equal(t, "beta", matchVisibleGroup(groups, "7").Name, "id resolves to its group")
+	assert.Nil(t, matchVisibleGroup(groups, "gamma"), "unknown name is a miss")
+	assert.Nil(t, matchVisibleGroup(groups, "999"), "unknown id is a miss")
+
+	// Name takes precedence over ID: a group literally named "5" wins over the
+	// group whose ID is 5, so the human-facing name is never shadowed.
+	ambiguous := []*db.AgentGroup{
+		{ID: 5, Name: "alpha"},
+		{ID: 9, Name: "5"},
+	}
+	got := matchVisibleGroup(ambiguous, "5")
+	require.NotNil(t, got)
+	assert.Equal(t, int64(9), got.ID, `a group named "5" wins over the group whose ID is 5`)
 }
 
 func TestHandlePeers_AgentScopedToOwnGroups(t *testing.T) {
