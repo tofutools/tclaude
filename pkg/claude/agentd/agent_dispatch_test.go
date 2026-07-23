@@ -312,6 +312,25 @@ func TestHandlePeers_GroupFilterEmptyReachableGroupIsOK(t *testing.T) {
 	assert.JSONEq(t, "[]", w.Body.String(), "a reachable group with no other members is an empty list, not a 404")
 }
 
+// The positive agent-scoped path: an agent filtering to a group it IS in sees
+// that group's other members and nothing from a group it can't reach.
+func TestHandlePeers_GroupFilterAgentSeesOwnGroupPeer(t *testing.T) {
+	setupTestDB(t)
+	g1, _ := db.CreateAgentGroup("mine", "")
+	g2, _ := db.CreateAgentGroup("secret", "")
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "me"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g1, ConvID: "teammate"})
+	_ = db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: g2, ConvID: "insider"})
+
+	w := httptest.NewRecorder()
+	handlePeers(w, peersRequest("group=mine", &peer{PID: 1, HasClaudeAncestor: true, ConvID: "me"}))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	body := w.Body.String()
+	assert.Contains(t, body, "teammate", "agent --group mine should see its group peer")
+	assert.NotContains(t, body, "insider", "agent --group mine must not see another group's member")
+	assert.NotContains(t, body, `"conv_id":"me"`, "the caller must not list itself")
+}
+
 // An agent naming a group it has no approved link to gets a scoped 404 and no
 // leak of that group's members — the core security requirement of --group.
 func TestHandlePeers_GroupFilterAgentCannotReachForeignGroupByName(t *testing.T) {
