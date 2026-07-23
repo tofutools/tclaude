@@ -765,7 +765,7 @@ func requireExportJobAccess(w http.ResponseWriter, r *http.Request, job *db.Expo
 			"caller has a Claude Code ancestor but no resolvable conv-id")
 		return false
 	default: // classUnconfirmed
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 		return false
 	}
 }

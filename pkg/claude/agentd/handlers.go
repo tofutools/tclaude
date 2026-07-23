@@ -3717,7 +3717,7 @@ func requireGroupContextAccess(w http.ResponseWriter, r *http.Request, g *db.Age
 		writeAgentUnknown(w)
 		return "", false
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 		return "", false
 	case classAgent:
 		// Confirmed agent — evaluate slug + owner bypass below.

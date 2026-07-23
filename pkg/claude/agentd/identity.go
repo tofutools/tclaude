@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -131,7 +132,13 @@ func classify(p *peer) callerClass {
 // writeUnconfirmed writes the standard fail-closed 403 for a caller the
 // daemon could neither confirm as an agent nor as the human. The body is
 // self-explanatory and points the human operator at the fix.
-func writeUnconfirmed(w http.ResponseWriter) {
+func writeUnconfirmed(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get(agentipc.AgentHintHeader)) == "1" {
+		writeError(w, http.StatusForbidden, "unconfirmed",
+			"unconfirmed managed-agent caller: agentd could not resolve this process to a known harness session. "+
+				"The agent may be dangling or its session identity may be stale; ask the human operator to inspect or resume it.")
+		return
+	}
 	writeError(w, http.StatusForbidden, "unconfirmed",
 		"unconfirmed caller: not a known agent, and no valid operator token. "+
 			"If you are the human operator, set TCLAUDE_HUMAN_TOKEN to the "+
@@ -170,7 +177,7 @@ func authedCaller(w http.ResponseWriter, r *http.Request) (convID string, isHuma
 	case classAgentUnknown:
 		writeAgentUnknown(w)
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 	}
 	return "", false, false
 }
@@ -475,7 +482,7 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ow
 			"caller has a Claude Code ancestor but no resolvable conv-id; cannot evaluate permission")
 		return "", false
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 		return "", false
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.

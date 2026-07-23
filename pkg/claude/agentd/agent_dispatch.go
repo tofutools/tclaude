@@ -145,7 +145,7 @@ func requireCrossAgentPermission(w http.ResponseWriter, r *http.Request, perm, t
 		writeAgentUnknown(w)
 		return "", false
 	case classUnconfirmed:
-		writeUnconfirmed(w)
+		writeUnconfirmed(w, r)
 		return "", false
 	case classAgent:
 		// Confirmed agent — fall through to the per-conv evaluation below.

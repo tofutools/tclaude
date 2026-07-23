@@ -724,6 +724,7 @@ func runNew(params *NewParams) error {
 		"TCLAUDE_SESSION_ID":      sessionID,
 		"TCLAUDE_EXIT_GENERATION": exitGeneration,
 	}
+	applyManagedAgentHint(params.ManagedLaunch, additionalEnv)
 	if effectiveSandbox != nil {
 		for _, entry := range effectiveSandbox.Effective.Environment {
 			additionalEnv[entry.Name] = entry.Value

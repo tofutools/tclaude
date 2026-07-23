@@ -76,7 +76,9 @@ only once.
   down — that's deliberate, so the auth model can't be bypassed by
   killing the daemon. On startup the daemon prints an **operator
   token**; the human exports it as `TCLAUDE_HUMAN_TOKEN` to run
-  human-only commands (see [Identity](#identity)).
+  human-only commands. When persistent-token mode uses the private
+  file fallback, the CLI reads that file automatically instead
+  (see [Identity](#identity)).
 
 The daemon binds one canonical socket plus two temporary compatibility sockets:
 
@@ -198,6 +200,23 @@ fallback keeps the same boundary as the in-memory token, since the agent
 sandbox already denies reads to `~/.tclaude`. You can also pin your own
 token by writing that file directly. Default (off) is the
 fresh-token-each-boot behaviour described above.
+
+When `TCLAUDE_HUMAN_TOKEN` is unset, the CLI silently tries that private
+`operator_token` file before sending a request. This removes the export step
+on hosts using the file fallback while leaving ephemeral and OS-keychain
+tokens unchanged. An explicitly exported token always wins. Sandboxed agents
+cannot read the private file and continue to authenticate through their
+Unix-socket peer identity.
+
+Agentd-managed harness sessions also inherit `TCLAUDE_AGENT_HINT=1`, including
+their harness-native subagents. The CLI uses this advisory hint to skip the
+human-token file lookup and sends it to agentd so a failed identity resolution
+gets agent-oriented recovery guidance instead of instructions to export a
+human credential. It is deliberately only a UX hint: manually setting it
+grants no authority, and the daemon continues to classify every caller from
+Unix-socket peer credentials and process ancestry. Older, dangling, or unusual
+agent processes may lack the hint; all existing identity checks remain in
+place.
 
 **A coding-harness ancestor always wins over the token.** Because the
 human exports `TCLAUDE_HUMAN_TOKEN` into their shell, a harness session
