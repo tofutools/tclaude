@@ -25,16 +25,15 @@
   position: relative; display: flex; align-items: center; gap: 6px;
   padding: 5px 8px; border: 1px solid #2a3340; border-bottom: none;
   border-radius: 6px 6px 0 0; background: #0d1117; color: #7d8590;
-  cursor: pointer; white-space: nowrap; max-width: 240px;
+  cursor: grab; white-space: nowrap; max-width: 240px;
 }
 .mux-tab:hover { color: #c9d1d9; }
 .mux-tab.active { background: #21262d; color: #c9d1d9; border-color: #3d4451; }
 .mux-tab-label {
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
-  cursor: grab; user-select: none;
+  user-select: none;
 }
-.mux-tab.dragging { opacity: 0.48; }
-.mux-tab.dragging .mux-tab-label { cursor: grabbing; }
+.mux-tab.dragging { opacity: 0.48; cursor: grabbing; }
 .mux-tab.drop-before::before,
 .mux-tab.drop-after::after {
   content: ""; position: absolute; top: 2px; bottom: 1px; width: 3px;

@@ -322,7 +322,7 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
   };
   const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
     .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
-  await harness.act(() => harness.fireEvent(tabFor('c').querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(tabFor('c'), 'dragstart', {
     dataTransfer: transfer,
   }));
   await harness.act(() => harness.fireEvent(container.querySelector('.mux-tab-group'), 'dragover', {
@@ -477,10 +477,9 @@ test('a drop gap parks a tab at a group boundary a tab drop cannot reach', async
     setData(type, value) { this.data[type] = value; },
     getData(type) { return this.data[type] || ''; },
   };
-  const cLabel = [...container.querySelectorAll('[role="tab"]')]
-    .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'c')
-    .querySelector('.mux-tab-label');
-  await harness.act(() => harness.fireEvent(cLabel, 'dragstart', { dataTransfer: transfer }));
+  const cTab = [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'c');
+  await harness.act(() => harness.fireEvent(cTab, 'dragstart', { dataTransfer: transfer }));
   const gaps = container.querySelectorAll('.mux-strip-gap.active');
   assert.ok(gaps.length >= 2, 'gaps activate at the group boundaries while a drag is in flight');
 
@@ -513,7 +512,8 @@ test('starting a drag on a grouped tab preserves its DOM node so the native drag
     setData(type, value) { this.data[type] = value; },
     getData(type) { return this.data[type] || ''; },
   };
-  await harness.act(() => harness.fireEvent(bLabel, 'dragstart', { dataTransfer: transfer }));
+  // The whole tab is the drag source now, so the drag starts on the tab itself.
+  await harness.act(() => harness.fireEvent(bTab, 'dragstart', { dataTransfer: transfer }));
 
   // The dragstart re-render (which activates the boundary gaps) must NOT
   // recreate the grouped tab or its drag-source label: a browser aborts a
@@ -522,6 +522,23 @@ test('starting a drag on a grouped tab preserves its DOM node so the native drag
   assert.equal(tabFor('b'), bTab, 'the grouped tab element is reused, not recreated');
   assert.equal(tabFor('b').querySelector('.mux-tab-label'), bLabel, 'the drag-source label is preserved');
   assert.equal(bTab.classList.contains('dragging'), true, 'and the drag actually started');
+});
+
+test('the whole tab is the drag handle, not just its title', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { container } = await mountStrip(harness, ['a', 'b']);
+  await harness.act(() => {});
+  const aTab = [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'a');
+  const transfer = dragTransfer();
+
+  // The drag source is the tab element itself (not the small title span), so a
+  // dragstart on the tab — from anywhere on it — begins the drag. (PaneTab's
+  // startDrag additionally cancels a drag that originates on the close button,
+  // and the close button stays draggable=false; that exclusion relies on the
+  // browser's native bubbling, which the test DOM does not reproduce.)
+  await harness.act(() => harness.fireEvent(aTab, 'dragstart', { dataTransfer: transfer }));
+  assert.equal(aTab.classList.contains('dragging'), true, 'grabbing the tab starts the drag');
 });
 
 test('a rename committed by blur still respects a preceding Escape', async (t) => {
@@ -575,7 +592,7 @@ test('dropping a tab on the centre of another tab groups the two', async (t) => 
 
   const aTab = tabFor('a');
   aTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
-  await harness.act(() => harness.fireEvent(tabFor('c').querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(tabFor('c'), 'dragstart', {
     dataTransfer: transfer,
   }));
   // Centre of the target (fraction 0.5) is the grouping zone; the outer
@@ -604,7 +621,7 @@ test('an outer-edge drop still reorders instead of grouping', async (t) => {
 
   const aTab = tabFor('a');
   aTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
-  await harness.act(() => harness.fireEvent(tabFor('c').querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(tabFor('c'), 'dragstart', {
     dataTransfer: transfer,
   }));
   // Fraction 0.1 is well inside the left reorder quarter.
@@ -627,7 +644,7 @@ test('dropping a tab on the centre of a grouped tab joins that group', async (t)
 
   const aTab = tabFor('a');
   aTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
-  await harness.act(() => harness.fireEvent(tabFor('b').querySelector('.mux-tab-label'), 'dragstart', {
+  await harness.act(() => harness.fireEvent(tabFor('b'), 'dragstart', {
     dataTransfer: transfer,
   }));
   await harness.act(() => harness.fireEvent(aTab, 'dragover', { dataTransfer: transfer, clientX: 50 }));
