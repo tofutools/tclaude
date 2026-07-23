@@ -59,29 +59,36 @@ subprocess that layer 2 cannot see. Layer 2 gates the built-in tools that layer
 1 does not reach. [Sandbox hardening](sandbox-hardening.md) walks through
 setting up both for agentd's own state.
 
-### A sandbox profile currently drives layer 1 only
+### Which denies reach both layers
 
-⚠️ This one deserves to be stated plainly, because a profile reads stricter than
-it enforces.
+A profile's rows always render into `sandbox.filesystem.*` (layer 1). tclaude
+*also* mirrors them onto layer 2 as `permissions.deny` `Read(…)` / `Edit(…)`
+rules — **but only the denies it can express there**, and the exception matters.
 
-Your profile's `deny` / `read` / `write` rows render into
-`sandbox.filesystem.*` — layer 1 — and nothing else. tclaude does **not**
-derive the matching `permissions.deny` `Read(…)` / `Edit(…)` rules from them.
+**A leaf deny reaches both layers.** `deny ~/.ssh` emits the OS-sandbox rule
+*and* `Read(//home/you/.ssh/**)` + `Edit(//home/you/.ssh/**)`, so the built-in
+`Read` tool cannot open `~/.ssh/id_rsa` either. This covers the whole portable
+common-rule tier — SSH keys, GnuPG, cloud credentials, VCS tokens, browser
+profiles.
 
-So a profile carrying `deny ~/.ssh` confines Bash, but the agent can still read
-`~/.ssh/id_rsa` with the built-in `Read` tool, and still write under the denied
-path with `Write`/`Edit`. The same goes for `deny ~`. The editor,
-`sandbox-profiles show`, and the resolved launch echo all show the deny; only
-one of the two layers is actually carrying it.
+**A deny with a reopen beneath it reaches layer 1 only.** This is not an
+oversight — it is unrepresentable. Claude Code evaluates permission rules
+*"in order: deny, then ask, then allow"*, and *"rule specificity doesn't change
+the order"*: a deny rule cannot carry allowlist exceptions. So mirroring
+`deny ~` would deny the built-in tools **everything** beneath it — including the
+agent's own workspace — with no allow rule able to reopen it. The OS sandbox
+resolves the same overlap by most-specific-wins, which is exactly why the
+deny + reopen shape works there and cannot work here.
 
-**The two protected roots are the exception.** `~/.tclaude/data` and
-`~/.claude/sessions` *are* defended on both layers, because
-`tclaude setup --install-sandbox-hardening` writes a static `permissions.deny`
-block for exactly those paths. Everything you author yourself gets layer 1 only.
+> ⚠️ **Under `deny ~`, that broad deny reaches layer 1 only.** Layer 1 does not
+> gate the built-in `Read`/`Write`/`Edit` tools on its own, so a
+> reopen-under-deny profile does **not** stop the `Read` tool from reading a
+> denied path — those tools are left unconfined for it. tclaude logs a warning
+> naming each deny it could not mirror.
 
-Until this is closed in tclaude, treat it as an operator task: if a deny in your
-profile needs to bind the built-in tools too, add the matching rules to your own
-`settings.json` by hand —
+If you need a specific path to bind the built-in tools under a `deny ~` profile,
+add a leaf rule to your own `settings.json` at user scope, where no project's
+settings can weaken it:
 
 ```json
 {
@@ -91,8 +98,15 @@ profile needs to bind the built-in tools too, add the matching rules to your own
 }
 ```
 
-— at user scope, where no project's settings can weaken them. Tracked as
-**TCL-666**.
+Note the path syntax differs between the two surfaces. Layer 1 takes plain
+directory paths; layer 2 takes gitignore-style patterns where a **single**
+leading slash anchors at the settings source, not the filesystem root — so an
+absolute rule needs `//`, and `~/` is home-relative. tclaude emits the `//`
+form; hand-written user-settings rules are usually clearest as `~/`.
+
+The two protected roots (`~/.tclaude/data`, `~/.claude/sessions`) are defended
+on both layers independently of any profile, via the static block
+`tclaude setup --install-sandbox-hardening` writes.
 
 ### What neither layer covers: MCP
 
@@ -306,7 +320,7 @@ read.
 | Git loses identity / credential helper | `~/.gitconfig` is a file and cannot be reopened under `deny ~` |
 | Launch refused, `unsupported_sandbox_profile_reopen_under_deny` | Claude not in sandbox `on`, or Codex not on Linux managed-profile with a verified probe |
 | Profile looks strict but nothing is denied | Claude sandbox `inherit`/`off`, or a legacy `read_baseline` profile (silently dropped — re-express as deny rows) |
-| An agent read a denied path with the `Read` tool, but not from Bash | Expected today — a profile drives layer 1 only ([above](#a-sandbox-profile-currently-drives-layer-1-only)) |
+| An agent read a denied path with the `Read` tool, but not from Bash | Expected under a `deny ~` profile — that shape reaches layer 1 only ([above](#which-denies-reach-both-layers)) |
 | An agent reached something the profile denied | Check whether it went through MCP, which bypasses the Bash sandbox |
 
 ## See also
