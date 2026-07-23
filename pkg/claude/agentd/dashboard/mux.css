@@ -42,6 +42,13 @@
 }
 .mux-tab.drop-before::before { left: -3px; }
 .mux-tab.drop-after::after { right: -3px; }
+/* Centre-drop: releasing here combines the two tabs into a group, so the whole
+   target tab lights up rather than showing an insertion line — a different
+   outcome deserves a different signal. */
+.mux-tab.drop-group {
+  background: #1f2d43; border-color: #58a6ff;
+  box-shadow: inset 0 0 0 1px #58a6ff, 0 0 8px rgba(88, 166, 255, 0.55);
+}
 /* Drag-out gesture: the strip (dashboard) or the pane header (solo pop-out) is
    the terminal's home region. Once the pointer is clear of it, releasing hands
    the terminal to the other surface, so the region dims and states what will
@@ -232,6 +239,10 @@ body.wizard .mux-tab.active {
 body.wizard .mux-tab.drop-before::before,
 body.wizard .mux-tab.drop-after::after {
   background: #d9b45a; box-shadow: 0 0 8px rgba(217, 180, 90, 0.78);
+}
+body.wizard .mux-tab.drop-group {
+  background: #34234f; border-color: #d9b45a;
+  box-shadow: inset 0 0 0 1px #d9b45a, 0 0 8px rgba(217, 180, 90, 0.55);
 }
 body.wizard .mux-tab-close:hover { color: #f0a868; }
 /* Group accents keep their hue in the portal frame but are mixed against the

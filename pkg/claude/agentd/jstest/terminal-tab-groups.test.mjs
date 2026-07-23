@@ -526,3 +526,117 @@ test('a rename committed by blur still respects a preceding Escape', async (t) =
   assert.equal(state.groups.value[0].name, 'platform', 'Escape wins even if a blur commit fires afterward');
   assert.equal(group.id, state.groups.value[0].id);
 });
+
+const dragTransfer = () => ({
+  data: {}, effectAllowed: '', dropEffect: '',
+  setData(type, value) { this.data[type] = value; },
+  getData(type) { return this.data[type] || ''; },
+});
+
+test('dropping a tab on the centre of another tab groups the two', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  await harness.act(() => {});
+  const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
+  const transfer = dragTransfer();
+
+  const aTab = tabFor('a');
+  aTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
+  await harness.act(() => harness.fireEvent(tabFor('c').querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  // Centre of the target (fraction 0.5) is the grouping zone; the outer
+  // quarters stay reorder.
+  await harness.act(() => harness.fireEvent(aTab, 'dragover', { dataTransfer: transfer, clientX: 50 }));
+  assert.equal(aTab.classList.contains('drop-group'), true,
+    'the whole target tab highlights to show a group will form');
+  assert.equal(aTab.classList.contains('drop-before') || aTab.classList.contains('drop-after'), false,
+    'the centre zone shows the group highlight, not a reorder insertion line');
+
+  await harness.act(() => harness.fireEvent(aTab, 'drop', { dataTransfer: transfer, clientX: 50 }));
+  assert.equal(state.groups.value.length, 1, 'a brand-new group is created by the drop');
+  const group = state.groups.value[0];
+  assert.deepEqual(state.groupMembers(group.id).map((pane) => pane.key), ['a', 'c'],
+    'the group holds the drop target followed by the dragged tab');
+  assert.match(container.querySelector('[role="status"]').textContent, /Grouped c with a as/);
+});
+
+test('an outer-edge drop still reorders instead of grouping', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  await harness.act(() => {});
+  const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
+  const transfer = dragTransfer();
+
+  const aTab = tabFor('a');
+  aTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
+  await harness.act(() => harness.fireEvent(tabFor('c').querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  // Fraction 0.1 is well inside the left reorder quarter.
+  await harness.act(() => harness.fireEvent(aTab, 'dragover', { dataTransfer: transfer, clientX: 10 }));
+  assert.equal(aTab.classList.contains('drop-before'), true, 'the outer quarter shows a reorder insertion line');
+  assert.equal(aTab.classList.contains('drop-group'), false);
+  await harness.act(() => harness.fireEvent(aTab, 'drop', { dataTransfer: transfer, clientX: 10 }));
+  assert.equal(state.groups.value.length, 0, 'an edge drop never creates a group');
+  assert.deepEqual(state.panes.value.map((pane) => pane.key), ['c', 'a', 'b'], 'it reorders c before a');
+});
+
+test('dropping a tab on the centre of a grouped tab joins that group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  const group = state.createGroup({ name: 'infra', keys: ['a'] });
+  await harness.act(() => {});
+  const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
+  const transfer = dragTransfer();
+
+  const aTab = tabFor('a');
+  aTab.getBoundingClientRect = () => ({ left: 0, width: 100 });
+  await harness.act(() => harness.fireEvent(tabFor('b').querySelector('.mux-tab-label'), 'dragstart', {
+    dataTransfer: transfer,
+  }));
+  await harness.act(() => harness.fireEvent(aTab, 'dragover', { dataTransfer: transfer, clientX: 50 }));
+  assert.equal(aTab.classList.contains('drop-group'), true);
+  await harness.act(() => harness.fireEvent(aTab, 'drop', { dataTransfer: transfer, clientX: 50 }));
+  assert.equal(state.groups.value.length, 1, 'no second group is created');
+  assert.deepEqual(state.groupMembers(group.id).map((pane) => pane.key), ['a', 'b'],
+    'the dragged tab joins the existing group');
+  assert.match(container.querySelector('[role="status"]').textContent, /Grouped b into infra/);
+});
+
+test('double-click and F2 rename a group; double-click leaves its collapse state unchanged', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b']);
+  state.createGroup({ name: 'infra', keys: ['a', 'b'] });
+  await harness.act(() => {});
+
+  // A real double-click is a click (which toggles collapse) followed by a
+  // dblclick; the dblclick undoes that toggle before renaming, so the group
+  // ends where it began — expanded.
+  const pill = getByRole(container, 'button', { name: 'infra, 2 terminals' });
+  assert.equal(pill.getAttribute('aria-expanded'), 'true');
+  await harness.act(() => harness.fireEvent(pill, 'click'));
+  assert.equal(state.groups.value[0].collapsed, true, 'the first click of the pair collapses');
+  await harness.act(() => harness.fireEvent(pill, 'dblclick'));
+  const input = container.querySelector('.mux-group-rename');
+  assert.ok(input, 'the double-click opens the inline rename field');
+  assert.equal(harness.document.activeElement, input, 'and focuses it');
+  input.value = 'platform';
+  await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
+  assert.equal(state.groups.value[0].name, 'platform', 'the typed name is committed');
+  assert.equal(state.groups.value[0].collapsed, false,
+    'renaming by double-click restores the collapse state the first click flipped');
+
+  // F2 on the focused pill is the keyboard equivalent.
+  const renamedPill = getByRole(container, 'button', { name: 'platform, 2 terminals' });
+  renamedPill.focus();
+  await harness.act(() => harness.fireEvent(renamedPill, 'keydown', { key: 'F2' }));
+  const keyboardInput = container.querySelector('.mux-group-rename');
+  assert.ok(keyboardInput, 'F2 opens the rename field');
+  keyboardInput.value = 'infra-2';
+  await harness.act(() => harness.fireEvent(keyboardInput, 'keydown', { key: 'Enter' }));
+  assert.equal(state.groups.value[0].name, 'infra-2');
+});

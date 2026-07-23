@@ -922,13 +922,18 @@ that — creating a group, joining one, reordering across one — pulls the memb
 back together next to the first of them, so what the strip shows and what a drag
 or a keystroke will do never disagree.
 
-* **Create** — a tab's context menu (right-click or **Shift-F10**) offers *New
-  group from this tab*, which makes the group and opens its name for editing.
-* **Join and leave** — dropping a tab onto another tab adopts that tab's
-  membership, so the same drag that reorders also joins a group (dropped between
-  two members) or leaves one (dropped among ungrouped tabs). Dropping onto the
-  group's pill joins at the end of the group. The context menu carries the same
-  moves as *Add to "…"* and *Remove from group*.
+* **Create** — drop one tab onto the **middle** of another to combine the two
+  into a new group; the target tab lights up while the pointer is over its
+  grouping zone so the outcome is clear before release. A tab's context menu
+  (right-click or **Shift-F10**) offers the same as *New group from this tab*,
+  which also opens the new name for editing.
+* **Join and leave** — each tab has three drop zones: the outer quarter on
+  either side reorders the dragged tab before/after it, and the centre half
+  groups them. Dropping on the centre of a tab that is already in a group joins
+  that group; dropping on the outer edges reorders and adopts that tab's
+  membership (so a drop among ungrouped tabs leaves the group). Dropping onto
+  the group's pill joins at the end of the group. The context menu carries the
+  same moves as *Add to "…"* and *Remove from group*.
 * **Parking beside a group** — the one position a drop onto a tab cannot express
   is directly before a leading group, or between two adjacent groups, since the
   only tab there belongs to a group and dropping on it would join. While a drag
@@ -945,9 +950,13 @@ or a keystroke will do never disagree.
   nearest tab outside the group; when there is no such tab, the active member
   stays visible in the collapsed group rather than the strip losing its
   selection. Activating a member of a collapsed group re-expands it.
-* **Rename, ungroup, close** — the pill's own context menu renames the group,
-  dissolves it (*Ungroup tabs*, which keeps every terminal and its position), or
-  closes the terminals in it.
+* **Rename** — double-click the group's pill, or focus it and press **F2**, to
+  edit the name inline; **Enter** commits, **Escape** discards. The pill's
+  context menu also offers *Rename group*. Double-clicking to rename leaves the
+  group's collapse state unchanged.
+* **Ungroup, close** — the pill's own context menu dissolves the group
+  (*Ungroup tabs*, which keeps every terminal and its position) or closes the
+  terminals in it.
 
 Group descriptors and membership are stored as one more presentation preference
 alongside the tab order, so they survive reloads and are shared by every
