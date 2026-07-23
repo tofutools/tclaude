@@ -26,7 +26,11 @@ import (
 const (
 	processRunFallbackInterval = time.Minute
 	processRunListDefault      = 20
-	processRunEventListDefault = 32
+	// Evidence payloads may each reach 256 KiB. Keep the public page at a
+	// deliberate 4 MiB worst-case payload instead of exposing the store's
+	// larger transition/read bound as a wire contract.
+	processRunEventListMax     = 16
+	processRunEventListDefault = processRunEventListMax
 	processRunMaxClaims        = db.MaxProcessRunReadPage
 	maxProcessRunRequestBytes  = db.MaxProcessRunParamsBytes + db.MaxProcessRunAuthorizationsBytes + 16<<10
 )
@@ -464,15 +468,15 @@ func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
 	limit := processRunEventListDefault
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed <= 0 || parsed > db.MaxProcessRunEventReadPage {
+		if err != nil || parsed <= 0 || parsed > processRunEventListMax {
 			writeError(w, http.StatusBadRequest, "process_run_limit",
-				fmt.Sprintf("limit must be 1..%d", db.MaxProcessRunEventReadPage))
+				fmt.Sprintf("limit must be 1..%d", processRunEventListMax))
 			return
 		}
 		limit = parsed
 	}
 	runID := r.PathValue("id")
-	events, err := db.ListProcessRunEvents(runID, after, limit)
+	events, err := db.ListProcessRunEvents(runID, after, limit+1)
 	if err != nil {
 		writeProcessRuntimeError(w, err)
 		return
@@ -486,6 +490,10 @@ func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	hasMore := len(events) > limit
+	if hasMore {
+		events = events[:limit]
+	}
 	views := make([]processRunEventView, 0, len(events))
 	for i := range events {
 		views = append(views, processRunEventView{
@@ -495,7 +503,7 @@ func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	var next int64
-	if len(events) == limit {
+	if hasMore {
 		next = events[len(events)-1].Sequence
 	}
 	writeProcessJSON(w, http.StatusOK, map[string]any{"events": views, "next": next})

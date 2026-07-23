@@ -139,11 +139,66 @@ func TestProcessRuntimeEventsEmptyNotFoundAndInvalidInputs(t *testing.T) {
 		"/v1/process/runs/run_empty_events/events?after=-1",
 		"/v1/process/runs/run_empty_events/events?after=nope",
 		"/v1/process/runs/run_empty_events/events?limit=0",
-		fmt.Sprintf("/v1/process/runs/run_empty_events/events?limit=%d", db.MaxProcessRunEventReadPage+1),
+		"/v1/process/runs/run_empty_events/events?limit=17",
 	} {
 		refused := processRuntimeRequest(t, f, http.MethodGet, path, nil)
 		assert.Equal(t, http.StatusBadRequest, refused.Code, refused.Body.String())
 	}
+}
+
+func TestProcessRuntimeEventsPublicMaximumAndExactFinalPage(t *testing.T) {
+	const publicMaximum = 16
+	f, root := processRuntimeFlow(t)
+	tmpl := processRuntimeTemplate("maximum-events", 1)
+	record := putProcessRuntimeTemplate(t, root, tmpl)
+	definition, err := engine.Prepare(tmpl, map[string]string{})
+	require.NoError(t, err)
+	checkpoint, err := engine.Initialize("run_maximum_events", definition)
+	require.NoError(t, err)
+	payload := json.RawMessage(`{"x":"` + strings.Repeat("x", db.MaxProcessRunEventPayloadBytes-8) + `"}`)
+	require.Len(t, payload, db.MaxProcessRunEventPayloadBytes)
+	events := make([]db.ProcessRunEvent, publicMaximum+1)
+	for i := range events {
+		events[i] = db.ProcessRunEvent{
+			Sequence: int64(i + 1), OccurredAt: time.Date(2026, 7, 23, 12, i, 0, 0, time.UTC),
+			Kind: "bounded", PayloadJSON: payload,
+		}
+	}
+	createProcessRunFixtureWithEvents(t, "run_maximum_events", record.Ref, tmpl, checkpoint, events)
+
+	first := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?limit=16", nil)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var page processRuntimeEventPage
+	testharness.DecodeJSON(t, first, &page)
+	require.Len(t, page.Events, publicMaximum)
+	assert.Equal(t, int64(1), page.Events[0].Sequence)
+	assert.Equal(t, int64(publicMaximum), page.Events[publicMaximum-1].Sequence)
+	assert.Equal(t, int64(publicMaximum), page.Next)
+	for _, event := range page.Events {
+		assert.Len(t, event.Payload, db.MaxProcessRunEventPayloadBytes)
+	}
+
+	exactFinal := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?after=1&limit=16", nil)
+	require.Equal(t, http.StatusOK, exactFinal.Code, exactFinal.Body.String())
+	testharness.DecodeJSON(t, exactFinal, &page)
+	require.Len(t, page.Events, publicMaximum)
+	assert.Equal(t, int64(2), page.Events[0].Sequence)
+	assert.Equal(t, int64(publicMaximum+1), page.Events[publicMaximum-1].Sequence)
+	assert.Zero(t, page.Next, "an exact-full final page must not advertise an empty continuation")
+
+	highCursor := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?after=999&limit=16", nil)
+	require.Equal(t, http.StatusOK, highCursor.Code, highCursor.Body.String())
+	testharness.DecodeJSON(t, highCursor, &page)
+	assert.Empty(t, page.Events)
+	assert.Zero(t, page.Next)
+
+	overMaximum := processRuntimeRequest(t, f, http.MethodGet,
+		"/v1/process/runs/run_maximum_events/events?limit=17", nil)
+	assert.Equal(t, http.StatusBadRequest, overMaximum.Code, overMaximum.Body.String())
+	assert.Contains(t, overMaximum.Body.String(), `"code":"process_run_limit"`)
 }
 
 func TestProcessRuntimeRefusesImplicitProgramAuthorization(t *testing.T) {
@@ -877,6 +932,11 @@ func createRunnableProcessRunFixture(t *testing.T, id, ref string, tmpl *model.T
 
 func createProcessRunFixtureWithCheckpoint(t *testing.T, id, ref string, tmpl *model.Template, checkpoint engine.Checkpoint) {
 	t.Helper()
+	createProcessRunFixtureWithEvents(t, id, ref, tmpl, checkpoint, nil)
+}
+
+func createProcessRunFixtureWithEvents(t *testing.T, id, ref string, tmpl *model.Template, checkpoint engine.Checkpoint, events []db.ProcessRunEvent) {
+	t.Helper()
 	snapshot, err := model.CanonicalSemanticJSON(tmpl)
 	require.NoError(t, err)
 	checkpointJSON, err := json.Marshal(checkpoint)
@@ -884,6 +944,6 @@ func createProcessRunFixtureWithCheckpoint(t *testing.T, id, ref string, tmpl *m
 	require.NoError(t, db.CreateProcessRun(db.ProcessRunCreate{
 		ID: id, TemplateRef: ref, TemplateSnapshotJSON: snapshot,
 		ParamsJSON: json.RawMessage(`{}`), ProgramAuthorizationsJSON: json.RawMessage(`["safe"]`),
-		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON,
+		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON, InitialEvents: events,
 	}))
 }

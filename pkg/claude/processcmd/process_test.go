@@ -153,20 +153,27 @@ func TestRuntimeEventsEmptyAndInvalidInputs(t *testing.T) {
 	t.Cleanup(func() { agent.DaemonRequestImpl = previousRequest })
 
 	var stdout bytes.Buffer
-	require.NoError(t, runProcessEvents(&processEventsParams{RunID: "run_empty", Limit: 32}, &stdout, &bytes.Buffer{}))
+	require.NoError(t, runProcessEvents(&processEventsParams{RunID: "run_empty", Limit: 16}, &stdout, &bytes.Buffer{}))
 	assert.Equal(t, "No evidence recorded for process run run_empty.\n", stdout.String())
 	assert.Equal(t, 1, calls)
 
+	stdout.Reset()
+	require.NoError(t, runProcessEvents(&processEventsParams{
+		RunID: "run_empty", After: 9, Limit: 16,
+	}, &stdout, &bytes.Buffer{}))
+	assert.Equal(t, "No evidence after sequence 9 for process run run_empty.\n", stdout.String())
+	assert.Equal(t, 2, calls)
+
 	for _, params := range []*processEventsParams{
-		{RunID: "", Limit: 32},
-		{RunID: "run_invalid", After: -1, Limit: 32},
+		{RunID: "", Limit: 16},
+		{RunID: "run_invalid", After: -1, Limit: 16},
 		{RunID: "run_invalid", Limit: 0},
-		{RunID: "run_invalid", Limit: 257},
+		{RunID: "run_invalid", Limit: 17},
 	} {
 		err := runProcessEvents(params, &bytes.Buffer{}, &bytes.Buffer{})
 		require.Error(t, err)
 	}
-	assert.Equal(t, 1, calls, "locally invalid inputs must not reach the daemon")
+	assert.Equal(t, 2, calls, "locally invalid inputs must not reach the daemon")
 }
 
 func TestProcessEventPayloadRenderingIsUTF8AndByteBounded(t *testing.T) {

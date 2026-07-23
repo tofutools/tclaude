@@ -17,12 +17,14 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-const maxProcessEventPayloadDisplayBytes = 512
+const (
+	processEventPageMax                = 16
+	maxProcessEventPayloadDisplayBytes = 512
+)
 
 var errProcessDaemonAlreadyReported = errors.New("daemon requirement already reported")
 
@@ -190,7 +192,7 @@ func processShowCmd() *cobra.Command {
 type processEventsParams struct {
 	RunID string `pos:"true" help:"Process run id"`
 	After int64  `long:"after" optional:"true" help:"Exclusive event-sequence cursor"`
-	Limit int    `long:"limit" optional:"true" default:"32" help:"Maximum rows (1..256)"`
+	Limit int    `long:"limit" optional:"true" default:"16" help:"Maximum rows (1..16)"`
 }
 
 func processEventsCmd() *cobra.Command {
@@ -215,8 +217,8 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 	if p.After < 0 {
 		return fmt.Errorf("--after must be a non-negative sequence")
 	}
-	if p.Limit < 1 || p.Limit > db.MaxProcessRunEventReadPage {
-		return fmt.Errorf("--limit must be 1..%d", db.MaxProcessRunEventReadPage)
+	if p.Limit < 1 || p.Limit > processEventPageMax {
+		return fmt.Errorf("--limit must be 1..%d", processEventPageMax)
 	}
 	query := url.Values{}
 	if p.After != 0 {
@@ -236,7 +238,11 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 		return err
 	}
 	if len(response.Events) == 0 {
-		fmt.Fprintf(stdout, "No evidence recorded for process run %s.\n", runID)
+		if p.After == 0 {
+			fmt.Fprintf(stdout, "No evidence recorded for process run %s.\n", runID)
+		} else {
+			fmt.Fprintf(stdout, "No evidence after sequence %d for process run %s.\n", p.After, runID)
+		}
 		return nil
 	}
 	tw := newTable(stdout)
