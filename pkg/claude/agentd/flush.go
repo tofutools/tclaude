@@ -302,6 +302,9 @@ func sendNudgeBracket(toConv string, msgID int64, nudge string) bool {
 	if sess == nil || isAwaitingHumanInput(sess.Status) {
 		return false
 	}
+	// Keep this name-keyed until TCL-675 defines the coherent managed-server
+	// delivery capability. ServerAuthoritative alone does not promise an
+	// OpenCode-compatible prompt sender for future harnesses.
 	if sess.Harness == harness.OpenCodeName {
 		if err := sendOpenCodeNudge(toConv, nudge); err != nil {
 			slog.Warn("OpenCode nudge prompt failed",

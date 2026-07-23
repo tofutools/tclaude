@@ -159,6 +159,7 @@ func TestClaudeAndCodexInlineMessagesKeepTmuxDelivery(t *testing.T) {
 				f.HaveAliveCodexSession(recipient, label, tmux, cwd)
 			} else {
 				f.HaveAliveSession(recipient, label, tmux, cwd)
+				setSessionHarness(t, recipient, harness.DefaultName)
 			}
 
 			rec := postMessage(t, f, sender, map[string]any{

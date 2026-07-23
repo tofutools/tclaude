@@ -59,6 +59,11 @@ var openCodeProcesses = struct {
 	bySession map[string]*openCodeProcess
 }{bySession: map[string]*openCodeProcess{}}
 
+// Delivery and the reaper may discover the same unhealthy managed server at
+// once. Serialize stop -> endpoint release -> restart per session so those
+// recovery attempts cannot tear down or contend for the same replacement.
+var openCodeReconcileLocks sync.Map // map[sessionID]*sync.Mutex
+
 var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
 
@@ -353,6 +358,10 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 // back to send-keys. Returning an error lets the shared nudge queue release its
 // durable claim and retry later without losing the inbox row. A runtime that
 // stopped is reconciled once before the prompt is attempted.
+//
+// Delivery is at-least-once: if prompt_async accepts the turn but its response
+// or the queue completion stamp is lost, retry may submit it again. The framed
+// message ID is the recipient's deduplication cue.
 func sendOpenCodeNudge(convID, nudge string) error {
 	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
 	if err != nil {
@@ -392,6 +401,11 @@ func sendOpenCodeNudge(convID, nudge string) error {
 // reconnect; return false when recovery failed and the reaper should fail the
 // pane visibly.
 func reconcileOpenCodeRuntime(sessionID string) bool {
+	value, _ := openCodeReconcileLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	reconcileMu := value.(*sync.Mutex)
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
+
 	runtime, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil || runtime == nil {
 		return false
