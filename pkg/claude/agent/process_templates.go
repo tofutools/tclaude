@@ -76,25 +76,38 @@ type processTemplateSourceRequest struct {
 	SourceHash string `json:"sourceHash,omitempty"`
 }
 
+type processTemplatesLsParams struct {
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
+}
+
 func processTemplatesLsCmd() *cobra.Command {
-	return boa.CmdT[struct{}]{
+	return boa.CmdT[processTemplatesLsParams]{
 		Use:         "ls",
 		Short:       "List stored process templates",
 		ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(_ *struct{}, _ *cobra.Command, _ []string) {
-			os.Exit(runProcessTemplatesLs(os.Stdout, os.Stderr))
+		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesLsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
+		RunFunc: func(p *processTemplatesLsParams, _ *cobra.Command, _ []string) {
+			os.Exit(runProcessTemplatesLs(p, os.Stdout, os.Stderr))
 		},
 	}.ToCobra()
 }
 
-func runProcessTemplatesLs(stdout, stderr io.Writer) int {
+func runProcessTemplatesLs(p *processTemplatesLsParams, stdout, stderr io.Writer) int {
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var response struct {
 		Templates []processTemplateListJSON `json:"templates"`
 	}
-	if err := DaemonRequest(http.MethodGet, "/v1/process/templates", nil, &response, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, "/v1/process/templates", nil, &response, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -120,7 +133,8 @@ func runProcessTemplatesLs(stdout, stderr io.Writer) int {
 }
 
 type processTemplatesShowParams struct {
-	ID string `pos:"true" help:"Process-template id to show."`
+	ID       string `pos:"true" help:"Process-template id to show."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processTemplatesShowCmd() *cobra.Command {
@@ -129,6 +143,10 @@ func processTemplatesShowCmd() *cobra.Command {
 		Short:       "Emit canonical YAML with CAS metadata",
 		Long:        "Writes valid process-template YAML. The leading YAML comments carry currentRef, sourceHash, and semanticHash for the validate then CAS-save workflow.",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesShowParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *processTemplatesShowParams, _ *cobra.Command, _ []string) {
 			os.Exit(runProcessTemplatesShow(p, os.Stdout, os.Stderr))
 		},
@@ -141,11 +159,16 @@ func runProcessTemplatesShow(p *processTemplatesShowParams, stdout, stderr io.Wr
 		fmt.Fprintln(stderr, "Error: a process-template id is required")
 		return rcInvalidArg
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var response processTemplateShowJSON
-	if err := DaemonRequest(http.MethodGet, "/v1/process/templates/"+url.PathEscape(id), nil, &response, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodGet, "/v1/process/templates/"+url.PathEscape(id), nil, &response, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}
@@ -162,7 +185,8 @@ func runProcessTemplatesShow(p *processTemplatesShowParams, stdout, stderr io.Wr
 }
 
 type processTemplatesValidateParams struct {
-	File string `long:"file" short:"f" help:"Path to process-template YAML ('-' reads stdin)."`
+	File     string `long:"file" short:"f" help:"Path to process-template YAML ('-' reads stdin)."`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processTemplatesValidateCmd() *cobra.Command {
@@ -170,6 +194,10 @@ func processTemplatesValidateCmd() *cobra.Command {
 		Use:         "validate --file <path>",
 		Short:       "Validate process-template YAML through agentd",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesValidateParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *processTemplatesValidateParams, _ *cobra.Command, _ []string) {
 			os.Exit(runProcessTemplatesValidate(p, os.Stdin, os.Stdout, os.Stderr))
 		},
@@ -181,11 +209,16 @@ func runProcessTemplatesValidate(p *processTemplatesValidateParams, stdin io.Rea
 	if rc != rcOK {
 		return rc
 	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
 		return rc
 	}
 	var response processTemplateValidateJSON
-	if err := DaemonRequest(http.MethodPost, "/v1/process/validate", processTemplateSourceRequest{Source: source}, &response, DaemonOpts{}); err != nil {
+	if err := DaemonRequest(http.MethodPost, "/v1/process/validate", processTemplateSourceRequest{Source: source}, &response, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -34,7 +35,7 @@ func TestRunProcessTemplatesLsUsesSharedRESTSurface(t *testing.T) {
 	stubDaemon(t, &calls, ok(`{"templates":[{"id":"demo","name":"Demo","description":"d","versionCount":2,"latestVersion":{"ref":"demo@sha256:abc","actor":"agent:agt_writer"}}]}`))
 	var stdout, stderr bytes.Buffer
 
-	rc := runProcessTemplatesLs(&stdout, &stderr)
+	rc := runProcessTemplatesLs(&processTemplatesLsParams{}, &stdout, &stderr)
 
 	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
 	require.Len(t, calls, 1)
@@ -43,6 +44,109 @@ func TestRunProcessTemplatesLsUsesSharedRESTSurface(t *testing.T) {
 	assert.Contains(t, stdout.String(), "demo")
 	assert.Contains(t, stdout.String(), "versions=2")
 	assert.Contains(t, stdout.String(), "actor=agent:agt_writer")
+}
+
+func TestProcessTemplateReadCommandsExposeAskHumanFlagAndCompletion(t *testing.T) {
+	for name, command := range map[string]*cobra.Command{
+		"ls":       processTemplatesLsCmd(),
+		"show":     processTemplatesShowCmd(),
+		"validate": processTemplatesValidateCmd(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			flag := command.Flags().Lookup("ask-human")
+			require.NotNil(t, flag)
+			assert.Empty(t, flag.DefValue)
+			assert.Contains(t, flag.Usage, "permission denial")
+
+			complete, ok := command.GetFlagCompletionFunc("ask-human")
+			require.True(t, ok)
+			suggestions, _ := complete(command, nil, "3")
+			assert.Contains(t, suggestions, "30s")
+		})
+	}
+}
+
+func TestProcessTemplateReadCommandsPassAskHuman(t *testing.T) {
+	tests := map[string]struct {
+		response string
+		run      func(stdout, stderr *bytes.Buffer) int
+		wantPath string
+	}{
+		"ls": {
+			response: `{"templates":[]}`,
+			run: func(stdout, stderr *bytes.Buffer) int {
+				return runProcessTemplatesLs(&processTemplatesLsParams{AskHuman: "45s"}, stdout, stderr)
+			},
+			wantPath: "/v1/process/templates",
+		},
+		"show": {
+			response: `{"source":"","sourceHash":"src","semanticHash":"sem","currentRef":"demo@sha256:sem"}`,
+			run: func(stdout, stderr *bytes.Buffer) int {
+				return runProcessTemplatesShow(&processTemplatesShowParams{ID: "demo", AskHuman: "45s"}, stdout, stderr)
+			},
+			wantPath: "/v1/process/templates/demo",
+		},
+		"validate": {
+			response: `{"sourceHash":"src","semanticHash":"sem","diagnostics":[]}`,
+			run: func(stdout, stderr *bytes.Buffer) int {
+				return runProcessTemplatesValidate(
+					&processTemplatesValidateParams{File: "-", AskHuman: "45s"},
+					strings.NewReader(processTemplateYAML), stdout, stderr,
+				)
+			},
+			wantPath: "/v1/process/validate",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls []capturedReq
+			stubDaemon(t, &calls, ok(test.response))
+			var stdout, stderr bytes.Buffer
+
+			rc := test.run(&stdout, &stderr)
+
+			require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+			require.Len(t, calls, 1)
+			assert.Equal(t, test.wantPath, calls[0].path)
+			assert.Equal(t, 45*time.Second, calls[0].opts.AskHuman)
+		})
+	}
+}
+
+func TestProcessTemplateReadCommandsRejectInvalidAskHumanBeforeRequest(t *testing.T) {
+	tests := map[string]func(stdout, stderr *bytes.Buffer) int{
+		"ls": func(stdout, stderr *bytes.Buffer) int {
+			return runProcessTemplatesLs(&processTemplatesLsParams{AskHuman: "later"}, stdout, stderr)
+		},
+		"show": func(stdout, stderr *bytes.Buffer) int {
+			return runProcessTemplatesShow(&processTemplatesShowParams{ID: "demo", AskHuman: "later"}, stdout, stderr)
+		},
+		"validate": func(stdout, stderr *bytes.Buffer) int {
+			return runProcessTemplatesValidate(
+				&processTemplatesValidateParams{File: "-", AskHuman: "later"},
+				strings.NewReader(processTemplateYAML), stdout, stderr,
+			)
+		},
+	}
+	for name, run := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls []capturedReq
+			stubDaemon(t, &calls, ok(`{}`))
+			var availabilityProbes int
+			DaemonAvailableImpl = func() bool {
+				availabilityProbes++
+				return true
+			}
+			var stdout, stderr bytes.Buffer
+
+			rc := run(&stdout, &stderr)
+
+			assert.Equal(t, rcInvalidArg, rc)
+			assert.Contains(t, stderr.String(), "invalid --ask-human value")
+			assert.Zero(t, availabilityProbes, "invalid timeout must fail before probing agentd")
+			assert.Empty(t, calls)
+		})
+	}
 }
 
 func TestRunProcessTemplatesShowEmitsEditableYAMLAndCASMetadata(t *testing.T) {

@@ -124,8 +124,9 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 }
 
 type processRunsLsParams struct {
-	After string `long:"after" optional:"true" help:"Exclusive run-id cursor"`
-	Limit int    `long:"limit" optional:"true" help:"Maximum rows (1..32)"`
+	After    string `long:"after" optional:"true" help:"Exclusive run-id cursor"`
+	Limit    int    `long:"limit" optional:"true" help:"Maximum rows (1..32)"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processRunsLsCmd() *cobra.Command {
@@ -133,6 +134,10 @@ func processRunsLsCmd() *cobra.Command {
 		Use:         "ls",
 		Short:       "List daemon-owned process runs",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processRunsLsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *processRunsLsParams, _ *cobra.Command, _ []string) {
 			exitProcessRuntime(runProcessRunsLs(p, os.Stdout, os.Stderr), os.Stderr)
 		},
@@ -140,6 +145,10 @@ func processRunsLsCmd() *cobra.Command {
 }
 
 func runProcessRunsLs(p *processRunsLsParams, stdout, stderr io.Writer) error {
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
@@ -161,7 +170,8 @@ func runProcessRunsLs(p *processRunsLsParams, stdout, stderr io.Writer) error {
 		Runs []processRunSummaryJSON `json:"runs"`
 		Next string                  `json:"next"`
 	}
-	if err := agent.DaemonRequest(http.MethodGet, path, nil, &response, agent.DaemonOpts{RetryOutput: stderr}); err != nil {
+	if err := agent.DaemonRequest(http.MethodGet, path, nil, &response,
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
 	if len(response.Runs) == 0 {
@@ -183,20 +193,26 @@ func runProcessRunsLs(p *processRunsLsParams, stdout, stderr io.Writer) error {
 }
 
 type processRunIDParams struct {
-	RunID string `pos:"true" help:"Process run id"`
+	RunID    string `pos:"true" help:"Process run id"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 type processShowParams struct {
-	RunID string `pos:"true" help:"Process run id"`
-	JSON  bool   `long:"json" help:"Output the complete run snapshot as JSON"`
+	RunID    string `pos:"true" help:"Process run id"`
+	JSON     bool   `long:"json" help:"Output the complete run snapshot as JSON"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processShowCmd() *cobra.Command {
 	return boa.CmdT[processShowParams]{
 		Use: "show", Short: "Show one daemon-owned process run",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processShowParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *processShowParams, _ *cobra.Command, _ []string) {
-			exitProcessRuntime(runProcessShow(p.RunID, false, p.JSON, os.Stdout, os.Stderr), os.Stderr)
+			exitProcessRuntime(runProcessShow(p.RunID, p.AskHuman, false, p.JSON, os.Stdout, os.Stderr), os.Stderr)
 		},
 	}.ToCobra()
 }
@@ -208,6 +224,7 @@ type processEventsParams struct {
 	JSON         bool   `long:"json" help:"Output the complete event page as JSON"`
 	JSONLines    bool   `long:"json-lines" help:"Output one event object per line"`
 	PayloadBytes int    `long:"payload-bytes" default:"120" help:"Table payload preview bytes (0 hides the column; maximum 512)"`
+	AskHuman     string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
 func processEventsCmd() *cobra.Command {
@@ -215,6 +232,10 @@ func processEventsCmd() *cobra.Command {
 		Use:         "events",
 		Short:       "Show ordered human-facing evidence for one process run",
 		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processEventsParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *processEventsParams, _ *cobra.Command, _ []string) {
 			exitProcessRuntime(runProcessEvents(p, os.Stdout, os.Stderr), os.Stderr)
 		},
@@ -241,6 +262,10 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 	if p.PayloadBytes < 0 || p.PayloadBytes > maxProcessEventPayloadDisplayBytes {
 		return fmt.Errorf("--payload-bytes must be 0..%d", maxProcessEventPayloadDisplayBytes)
 	}
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
@@ -258,7 +283,7 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 		Next   int64                 `json:"next"`
 	}
 	if err := agent.DaemonRequest(http.MethodGet, path, nil, &response,
-		agent.DaemonOpts{RetryOutput: stderr}); err != nil {
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
 	if p.JSON {
@@ -339,17 +364,25 @@ func processReconcileCmd() *cobra.Command {
 func processRunReadCmd(use, short string, reconcileOnly bool) *cobra.Command {
 	return boa.CmdT[processRunIDParams]{
 		Use: use, Short: short, ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *processRunIDParams, _ *cobra.Command) error {
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			return nil
+		},
 		RunFunc: func(p *processRunIDParams, _ *cobra.Command, _ []string) {
-			exitProcessRuntime(runProcessShow(p.RunID, reconcileOnly, false, os.Stdout, os.Stderr), os.Stderr)
+			exitProcessRuntime(runProcessShow(p.RunID, p.AskHuman, reconcileOnly, false, os.Stdout, os.Stderr), os.Stderr)
 		},
 	}.ToCobra()
 }
 
-func runProcessShow(runID string, reconcileOnly, jsonOutput bool, stdout, stderr io.Writer) error {
+func runProcessShow(runID, askHuman string, reconcileOnly, jsonOutput bool, stdout, stderr io.Writer) error {
+	ask, err := agent.ParseAskHuman(askHuman)
+	if err != nil {
+		return err
+	}
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
-	run, err := fetchProcessRun(runID, stderr)
+	run, err := fetchProcessRun(runID, ask, stderr)
 	if err != nil {
 		return err
 	}
@@ -460,17 +493,31 @@ func runProcessRecordOutcome(p *processRecordOutcomeParams, stdout, stderr io.Wr
 	return nil
 }
 
-func fetchProcessRun(runID string, stderr io.Writer) (*processRunJSON, error) {
+func fetchProcessRun(runID string, askHuman time.Duration, stderr io.Writer) (*processRunJSON, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
 		return nil, fmt.Errorf("run id is required")
 	}
 	var run processRunJSON
 	if err := agent.DaemonRequest(http.MethodGet, "/v1/process/runs/"+url.PathEscape(runID), nil, &run,
-		agent.DaemonOpts{RetryOutput: stderr}); err != nil {
+		agent.DaemonOpts{AskHuman: askHuman, RetryOutput: stderr}); err != nil {
 		return nil, err
 	}
 	return &run, nil
+}
+
+// completeAskHumanDurations mirrors the agent command completion hints. The
+// flag accepts any valid duration, so these are suggestions rather than a
+// strict allow-list.
+func completeAskHumanDurations(_ *cobra.Command, _ []string, toComplete string) []string {
+	suggestions := []string{"15s", "30s", "60s", "2m", "5m"}
+	var matches []string
+	for _, suggestion := range suggestions {
+		if strings.HasPrefix(suggestion, toComplete) {
+			matches = append(matches, suggestion)
+		}
+	}
+	return matches
 }
 
 func parseProcessParams(values []string) (map[string]string, error) {
