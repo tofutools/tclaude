@@ -78,6 +78,27 @@ func GetOpenCodeRuntimeByConvID(convID string) (*OpenCodeRuntime, error) {
 	return runtime, err
 }
 
+// FindOpenCodeRuntimeByPID returns the most recently refreshed runtime row
+// whose agentd-owned `opencode serve` process has pid, or nil when no live
+// runtime record matches. A reconciled server restart upserts the new PID and
+// updated_at, so callers always prefer the freshest row if a stale duplicate
+// remains from an older session.
+func FindOpenCodeRuntimeByPID(pid int) (*OpenCodeRuntime, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := d.QueryRow(`
+		SELECT session_id, conv_id, server_url, password, pid, cwd, created_at, updated_at
+		FROM opencode_runtimes WHERE pid = ? ORDER BY updated_at DESC LIMIT 1
+	`, pid)
+	runtime, err := scanOpenCodeRuntime(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return runtime, err
+}
+
 func ListOpenCodeRuntimes() ([]OpenCodeRuntime, error) {
 	d, err := Open()
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -707,6 +708,8 @@ var (
 //     case where the pane shell exec'd into the harness, so pane_pid IS the
 //     harness pid, plus any hook-corrected row keyed by FindClaudePID().
 //  3. agentd's sessions table keyed by the ancestor's PARENT host pid.
+//  4. For an OpenCode ancestor only, agentd's opencode_runtimes table keyed
+//     by the ancestor's own pid, then its parent's pid.
 //
 // Step 3 is the load-bearing one for Codex (JOH-206). The spawn row is keyed
 // by the tmux pane_pid (ParsePIDFromTmux at `tclaude session new`), and a
@@ -716,6 +719,14 @@ var (
 // harness one hop *below* the recorded pid; its parent is the pane shell the
 // row is keyed by. (Verified live: a codex process was the direct child of
 // the `sh` pane whose pid the session row carried, pid 205165 under 205164.)
+//
+// Step 4 is the OpenCode server-authoritative counterpart. The pane is an
+// `opencode attach` client, while agentd launches the per-session `opencode
+// serve` process and records its exact pid in opencode_runtimes. OpenCode runs
+// shell tools from that server runtime, so the peer's ancestry is expected to
+// reach the recorded serve pid. Probing both the matched OpenCode ancestor and
+// its parent also covers an intermediate OpenCode process; the unchanged
+// sessions probes above retain the attach-pane ancestry fallback.
 //
 // Resolution is intentionally bound to host pids the daemon itself recorded
 // at spawn — facts a sandboxed caller cannot choose. It must NOT read the
@@ -743,6 +754,19 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 			if id := sessionConvByPID(parent); id != "" {
 				return id, true
 			}
+			// OpenCode is server-authoritative: agentd owns `opencode serve`
+			// outside the attach pane and records that process in
+			// opencode_runtimes, not sessions.pid. Gate these extra probes on
+			// the OpenCode binary name so Claude/Codex resolution above stays
+			// byte-for-byte unchanged.
+			if name == harness.OpenCodeName {
+				if id := openCodeRuntimeConvByPID(cur); id != "" {
+					return id, true
+				}
+				if id := openCodeRuntimeConvByPID(parent); id != "" {
+					return id, true
+				}
+			}
 		}
 		cur = parent
 	}
@@ -757,6 +781,17 @@ func convIDForPID(pid int) (convID string, hasAncestor bool) {
 func sessionConvByPID(hostPID int) string {
 	if row, err := db.FindSessionByPID(hostPID); err == nil && row != nil {
 		return row.ConvID
+	}
+	return ""
+}
+
+// openCodeRuntimeConvByPID returns the conv-id of the freshest managed
+// OpenCode runtime whose recorded `opencode serve` pid is hostPID. It is
+// called only for an OpenCode-named ancestor, keeping the Claude/Codex
+// sessions.pid resolution contract unchanged.
+func openCodeRuntimeConvByPID(hostPID int) string {
+	if runtime, err := db.FindOpenCodeRuntimeByPID(hostPID); err == nil && runtime != nil {
+		return runtime.ConvID
 	}
 	return ""
 }
