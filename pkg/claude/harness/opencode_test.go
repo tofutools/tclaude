@@ -16,7 +16,7 @@ func TestOpenCodeDescriptor(t *testing.T) {
 		!h.SupportsLaunchEnrollment() {
 		t.Fatalf("unexpected OpenCode descriptor: %+v", h)
 	}
-	if !slicesContains(SpawnBinaries(), "opencode") {
+	if !slices.Contains(SpawnBinaries(), "opencode") {
 		t.Fatalf("SpawnBinaries() = %v, want opencode", SpawnBinaries())
 	}
 	if h.Sandbox == nil || h.Approval == nil || h.ToolGovernance == nil || h.Ask == nil || h.Convs == nil ||
@@ -28,6 +28,71 @@ func TestOpenCodeDescriptor(t *testing.T) {
 	}
 	if !h.CanRename() {
 		t.Fatal("OpenCode ConvStore must expose the rename affordance")
+	}
+}
+
+// TestOpenCodeLifecycleContract pins the four lifecycle tokens and the
+// capability flags they fold into (TCL-670). OpenCode's conversation lives in
+// a daemon-owned server, so compact/exit are dispatched through the managed
+// TUI command API, not tmux send-keys — but the descriptor still names the
+// tokens, and agentd keys its managed-command translation off these exact
+// strings. Renames go out-of-band through ConvStore.SetTitle (the Codex
+// pattern) and OpenCode has no built-in remote access, so both of those tokens
+// are empty. All four are compile-time constants because their string values
+// flow toward an injection sink.
+func TestOpenCodeLifecycleContract(t *testing.T) {
+	h, ok := Get(OpenCodeName)
+	if !ok {
+		t.Fatal("opencode harness is not registered")
+	}
+
+	if got := h.Life.RenameCommand(); got != "" {
+		t.Fatalf("RenameCommand() = %q, want \"\" (rename is out-of-band via ConvStore.SetTitle)", got)
+	}
+	if got := h.Life.CompactCommand(); got != "/compact" {
+		t.Fatalf("CompactCommand() = %q, want %q", got, "/compact")
+	}
+	if got := h.Life.SoftExitCommand(); got != "/exit" {
+		t.Fatalf("SoftExitCommand() = %q, want %q", got, "/exit")
+	}
+	if got := h.Life.RemoteControlCommand(); got != "" {
+		t.Fatalf("RemoteControlCommand() = %q, want \"\" (OpenCode has no built-in remote access)", got)
+	}
+
+	if h.SupportsRename() {
+		t.Fatal("SupportsRename() must be false: OpenCode has no in-pane rename command")
+	}
+	if !h.SupportsCompact() || !h.CanCompact() {
+		t.Fatal("SupportsCompact()/CanCompact() must be true for OpenCode")
+	}
+	if !h.SupportsSoftExit() {
+		t.Fatal("SupportsSoftExit() must be true for OpenCode")
+	}
+	if h.SupportsRemoteControl() || h.CanRemoteControl() {
+		t.Fatal("SupportsRemoteControl()/CanRemoteControl() must be false for OpenCode")
+	}
+	if _, err := ResolveRemoteControl(h, true); err == nil {
+		t.Fatal("ResolveRemoteControl(opencode, true) must error: no built-in remote access")
+	}
+}
+
+// TestOpenCodeConvIDMaterialisation pins the conv-id materialisation posture
+// (TCL-670): OpenCode's id is knowable before the pane starts because agentd
+// pre-mints it through the managed server API, so it enrolls at launch rather
+// than seeding a first turn (Codex's mechanism). The two are mutually exclusive.
+func TestOpenCodeConvIDMaterialisation(t *testing.T) {
+	h, ok := Get(OpenCodeName)
+	if !ok {
+		t.Fatal("opencode harness is not registered")
+	}
+	if !h.SupportsLaunchEnrollment() {
+		t.Fatal("OpenCode must enroll at launch: agentd pre-mints the conv-id via POST /session")
+	}
+	if h.NeedsSpawnSeed() {
+		t.Fatal("OpenCode must not seed a first turn: its conv-id is pre-minted, not discovered post-turn")
+	}
+	if !h.UsesAuthoritativeServer() {
+		t.Fatal("OpenCode is server-authoritative: the conversation lives in the managed serve process")
 	}
 }
 
@@ -128,13 +193,4 @@ openai/gpt-b
 	if !reflect.DeepEqual(efforts, []string{"none", "high", "low", "max"}) {
 		t.Fatalf("efforts = %v", efforts)
 	}
-}
-
-func slicesContains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

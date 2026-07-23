@@ -79,9 +79,10 @@ failing after the pane has already launched.
 ### `Lifecycle` — in-pane control commands
 
 ```go
-RenameCommand() string    // e.g. "/rename"; "" = no in-pane rename
-CompactCommand() string   // e.g. "/compact"; "" = no in-pane compaction
-SoftExitCommand() string  // e.g. "/exit" / "/quit"; "" = hard-kill the pane instead
+RenameCommand() string         // e.g. "/rename"; "" = no in-pane rename
+CompactCommand() string        // e.g. "/compact"; "" = no in-pane compaction
+SoftExitCommand() string       // e.g. "/exit" / "/quit"; "" = hard-kill the pane instead
+RemoteControlCommand() string  // e.g. "/remote-control"; "" = no built-in remote access
 ```
 
 Return `""` for anything your harness lacks. These tokens **must be compile-time
@@ -90,6 +91,24 @@ sink; never interpolate user input into them. tclaude gates every slash
 injection on the matching `Supports*` flag, and where an in-pane command is
 missing it degrades (e.g. a missing rename command falls back to
 `ConvStore.SetTitle`; a missing soft-exit becomes a hard kill).
+
+`RemoteControlCommand` names the harness's built-in remote-access **toggle**
+(Claude Code's `/remote-control`, which exposes the session to claude.ai/code +
+the mobile app). It is one command that turns the feature on when off and off
+when on — the harness exposes no readback, so callers track the intended
+direction themselves. There is no out-of-band fallback: `""` both hides the
+affordance and makes the daemon's toggle endpoint refuse (Codex and OpenCode
+return `""`; OpenCode's `serve --hostname` / `opencode web` is a local HTTP
+surface, not a hosted relay, and must not be conflated with this).
+
+A **server-authoritative** harness (one whose conversation lives in a
+daemon-owned side server, `ServerAuthoritative: true`) still names its lifecycle
+tokens here, but tclaude does not send them as pane keystrokes. OpenCode returns
+`/compact` and `/exit`; the daemon uses those as the capability selector and
+dispatches the equivalent managed command (`session.compact` / `app.exit`)
+through the authenticated server API instead of `send-keys`. The token strings
+therefore double as the switch key for that translation, so they must stay
+constant and in sync with the dispatch mapping.
 
 ### `ConvStore` — conversation metadata
 
