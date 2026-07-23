@@ -212,6 +212,85 @@ func TestOpenCodeEventProjectorDeduplicatesAndDefersIdleUntilToolsFinish(t *test
 	assert.Empty(t, got, "session.status(idle) plus session.idle produces one Stop")
 }
 
+func TestOpenCodeEventProjectorBoundsIdleDeferralWithoutToolTerminal(t *testing.T) {
+	const convID = "ses_target"
+
+	for _, tt := range []struct {
+		name         string
+		nextType     string
+		nextPayload  string
+		wantEvents   []string
+		wantLastType string
+	}{
+		{
+			name:         "second idle retires stale tool",
+			nextType:     "session.idle",
+			wantEvents:   []string{"Stop"},
+			wantLastType: "idle",
+		},
+		{
+			name:         "fresh busy closes old turn and starts new one",
+			nextType:     "session.status",
+			nextPayload:  `"status":{"type":"busy"}`,
+			wantEvents:   []string{"Stop", "UserPromptSubmit"},
+			wantLastType: "busy",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			projector := newOpenCodeEventProjector(convID, "/tmp/project")
+			running := openCodeTestEvent("evt_running", "message.part.updated", convID,
+				`"part":{"id":"prt_1","type":"tool","tool":"bash","callID":"call_1",`+
+					`"state":{"status":"running","input":{"command":"sleep 30"}}}`)
+			_, err := projector.project(json.RawMessage(running))
+			require.NoError(t, err)
+
+			got, err := projector.project(json.RawMessage(openCodeTestEvent(
+				"evt_first_idle", "session.status", convID, `"status":{"type":"idle"}`)))
+			require.NoError(t, err)
+			assert.Empty(t, got)
+			assert.True(t, projector.deferredIdle)
+
+			got, err = projector.project(json.RawMessage(openCodeTestEvent(
+				"evt_boundary", tt.nextType, convID, tt.nextPayload)))
+			require.NoError(t, err)
+			var names []string
+			for _, input := range got {
+				names = append(names, input.HookEventName)
+			}
+			assert.Equal(t, tt.wantEvents, names)
+			assert.Empty(t, projector.activeToolStates)
+			assert.False(t, projector.deferredIdle)
+			assert.Equal(t, tt.wantLastType, projector.lastSessionStatus)
+		})
+	}
+}
+
+func TestOpenCodeEventProjectorKeepsAttentionUntilReply(t *testing.T) {
+	const convID = "ses_target"
+	projector := newOpenCodeEventProjector(convID, "/tmp/project")
+
+	got, err := projector.project(json.RawMessage(openCodeTestEvent(
+		"evt_question", "question.asked", convID,
+		`"id":"que_1","questions":[{"question":"Choose?"}]`)))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "Notification", got[0].HookEventName)
+	assert.True(t, projector.pendingAttention)
+
+	got, err = projector.project(json.RawMessage(openCodeTestEvent(
+		"evt_busy", "session.status", convID, `"status":{"type":"busy"}`)))
+	require.NoError(t, err)
+	assert.Empty(t, got, "generic busy must not clobber a richer attention state")
+	assert.True(t, projector.pendingAttention)
+
+	got, err = projector.project(json.RawMessage(openCodeTestEvent(
+		"evt_reply", "question.replied", convID, `"requestID":"que_1"`)))
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "UserPromptSubmit", got[0].HookEventName)
+	assert.False(t, projector.pendingAttention)
+}
+
 func TestOpenCodeEventProjectorSessionFilteringIsStateIsolated(t *testing.T) {
 	const convID = "ses_target"
 	projector := newOpenCodeEventProjector(convID, "/tmp/project")
@@ -374,6 +453,8 @@ func TestConsumeOpenCodeSSEReconnectsReconcilesAttentionAndStopsWithContext(t *t
 				return
 			}
 			_, _ = w.Write([]byte("data: {\"id\":\"evt_connected\",\"type\":\"server.connected\",\"properties\":{}}\n\n"))
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", openCodeTestEvent(
+				"evt_buffered_busy", "session.status", convID, `"status":{"type":"busy"}`))
 			w.(http.Flusher).Flush()
 			<-r.Context().Done()
 		case "/session/status":
@@ -432,13 +513,16 @@ func TestConsumeOpenCodeSSEReconnectsReconcilesAttentionAndStopsWithContext(t *t
 
 func TestReconcileOpenCodeSSEClearsAnsweredAttentionWhileDisconnected(t *testing.T) {
 	for _, tt := range []struct {
-		status string
-		want   string
+		name       string
+		status     string
+		omitStatus bool
+		want       string
 	}{
-		{status: "busy", want: session.StatusWorking},
-		{status: "idle", want: session.StatusIdle},
+		{name: "busy", status: "busy", want: session.StatusWorking},
+		{name: "idle", status: "idle", want: session.StatusIdle},
+		{name: "idle session omitted", omitStatus: true, want: session.StatusIdle},
 	} {
-		t.Run(tt.status, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("USERPROFILE", home)
@@ -452,7 +536,11 @@ func TestReconcileOpenCodeSSEClearsAnsweredAttentionWhileDisconnected(t *testing
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/session/status":
-					_, _ = fmt.Fprintf(w, `{"%s":{"type":%q}}`, convID, tt.status)
+					if tt.omitStatus {
+						_, _ = w.Write([]byte("{}"))
+					} else {
+						_, _ = fmt.Fprintf(w, `{"%s":{"type":%q}}`, convID, tt.status)
+					}
 				case "/question", "/permission":
 					_, _ = w.Write([]byte("[]"))
 				default:
@@ -470,7 +558,8 @@ func TestReconcileOpenCodeSSEClearsAnsweredAttentionWhileDisconnected(t *testing
 				StatusDetail: "external_directory",
 			}))
 			projector := newOpenCodeEventProjector(convID, runtime.Cwd)
-			projector.lastSessionStatus = tt.status
+			projector.lastSessionStatus = "busy"
+			projector.pendingAttention = true
 
 			require.NoError(t, reconcileOpenCodeSSE(context.Background(), runtime, projector))
 			state, err := session.LoadSessionState(sessionID)
@@ -480,6 +569,7 @@ func TestReconcileOpenCodeSSEClearsAnsweredAttentionWhileDisconnected(t *testing
 			if tt.want == session.StatusIdle {
 				assert.Empty(t, state.StatusDetail)
 			}
+			assert.False(t, projector.pendingAttention)
 		})
 	}
 }

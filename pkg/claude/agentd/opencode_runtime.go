@@ -590,12 +590,22 @@ func reconcileOpenCodeSSE(
 			return nil
 		}
 	}
+	projector.pendingAttention = false
 	if status, ok := statuses[runtime.ConvID]; ok {
 		// Force the authoritative snapshot through even when its OpenCode
 		// status equals the pre-disconnect value. The tclaude state may still
 		// be awaiting a permission/question that was answered while offline.
-		applyOpenCodeHooks(ctx, runtime, projector.projectStatus(status, true))
+		if projected := projector.projectStatus(status, true); len(projected) > 0 {
+			applyOpenCodeHooks(ctx, runtime, projected)
+			return nil
+		}
 	}
+	// OpenCode 1.18.4 may omit an idle session from /session/status. Empty
+	// attention snapshots plus no usable status therefore mean "not blocked
+	// and not known busy": settle to idle. The SSE stream is already open, so
+	// genuine concurrent work is buffered and immediately reasserts busy.
+	applyOpenCodeHooks(ctx, runtime,
+		projector.projectStatus(openCodeSessionStatus{Type: "idle"}, true))
 	return nil
 }
 

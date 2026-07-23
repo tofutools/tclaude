@@ -18,6 +18,7 @@ type openCodeEventProjector struct {
 	lastSessionStatus string
 	activeToolStates  map[string]string
 	deferredIdle      bool
+	pendingAttention  bool
 	seenEventIDs      map[string]struct{}
 	seenEventOrder    []string
 }
@@ -133,6 +134,7 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 		// The human interaction is resolved and OpenCode resumes (or rejects)
 		// the suspended tool call. Force the generic working transition even
 		// though the last server status is normally still "busy".
+		p.pendingAttention = false
 		return p.projectStatus(openCodeSessionStatus{Type: "busy"}, true), nil
 	case "permission.asked", "permission.v2.asked":
 		return p.projectPermission(openCodePermissionRequest{
@@ -161,6 +163,25 @@ func (p *openCodeEventProjector) project(event json.RawMessage) ([]session.HookC
 func (p *openCodeEventProjector) projectStatus(status openCodeSessionStatus, force bool) []session.HookCallbackInput {
 	switch status.Type {
 	case "busy", "retry":
+		if p.pendingAttention && !force {
+			// OpenCode reports a session blocked on a permission/question as
+			// busy. The richer attention event/snapshot remains authoritative
+			// until a reply or a real turn boundary clears it.
+			return nil
+		}
+		if p.deferredIdle {
+			// A new turn started without a terminal event for a tool from the
+			// prior turn (observed on abort-capable event streams). Bound the
+			// deferral: close the prior turn, retire its stale calls, then
+			// announce this fresh turn.
+			clear(p.activeToolStates)
+			p.deferredIdle = false
+			p.lastSessionStatus = status.Type
+			return []session.HookCallbackInput{
+				p.hook("Stop"),
+				p.hook("UserPromptSubmit"),
+			}
+		}
 		if !force && p.lastSessionStatus == status.Type {
 			return nil
 		}
@@ -171,12 +192,21 @@ func (p *openCodeEventProjector) projectStatus(status openCodeSessionStatus, for
 		// the projector suppresses repeats while tool events provide detail.
 		return []session.HookCallbackInput{p.hook("UserPromptSubmit")}
 	case "idle":
+		p.pendingAttention = false
 		if len(p.activeToolStates) > 0 {
 			// The stream is ordered in OpenCode 1.18.4, but do not trust an
 			// early/missed idle across reconnect to declare the turn complete
-			// while a tool call we saw remains open. The terminal tool event
-			// drains this deferred Stop.
+			// while a tool call we saw remains open. A terminal tool event
+			// normally drains this deferred Stop. A second idle assertion is
+			// the bounded fallback for aborts that omit a terminal tool event.
+			if p.deferredIdle {
+				clear(p.activeToolStates)
+				p.deferredIdle = false
+				p.lastSessionStatus = "idle"
+				return []session.HookCallbackInput{p.hook("Stop")}
+			}
 			p.deferredIdle = true
+			p.lastSessionStatus = "idle"
 			return nil
 		}
 		if !force && p.lastSessionStatus == "idle" {
@@ -252,6 +282,7 @@ func (p *openCodeEventProjector) projectPermission(request openCodePermissionReq
 	}
 	input := p.hook("PermissionRequest")
 	input.ToolName = boundedOpenCodeDetail(detail)
+	p.pendingAttention = true
 	return []session.HookCallbackInput{input}
 }
 
@@ -266,6 +297,7 @@ func (p *openCodeEventProjector) projectQuestion(request openCodeQuestionRequest
 	input := p.hook("Notification")
 	input.NotificationType = "elicitation_dialog"
 	input.Message = boundedOpenCodeDetail(detail)
+	p.pendingAttention = true
 	return []session.HookCallbackInput{input}
 }
 
