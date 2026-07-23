@@ -23,6 +23,7 @@ func Cmd() *cobra.Command {
 			runsCmd(),
 			processRunCmd(),
 			processShowCmd(),
+			processEventsCmd(),
 			processResumeCmd(),
 			processReconcileCmd(),
 			processReissueCmd(),

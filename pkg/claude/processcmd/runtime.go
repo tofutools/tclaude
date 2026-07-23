@@ -1,6 +1,8 @@
 package processcmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,13 +12,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
 	"github.com/tofutools/tclaude/pkg/common"
 )
+
+const maxProcessEventPayloadDisplayBytes = 512
 
 var errProcessDaemonAlreadyReported = errors.New("daemon requirement already reported")
 
@@ -41,6 +47,15 @@ type processRunSummaryJSON struct {
 	StateVersion int64            `json:"stateVersion"`
 	CreatedAt    time.Time        `json:"createdAt"`
 	UpdatedAt    time.Time        `json:"updatedAt"`
+}
+
+type processRunEventJSON struct {
+	Sequence   int64           `json:"sequence"`
+	OccurredAt time.Time       `json:"occurredAt"`
+	NodeID     string          `json:"nodeId"`
+	Kind       string          `json:"kind"`
+	Payload    json.RawMessage `json:"payload"`
+	Actor      string          `json:"actor"`
 }
 
 type processRunParams struct {
@@ -101,6 +116,7 @@ func runProcessRun(p *processRunParams, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "Created process run %s\n", run.ID)
 	printProcessRun(stdout, &run)
+	fmt.Fprintf(stdout, "Next: tclaude process show %s; tclaude process events %s\n", run.ID, run.ID)
 	return nil
 }
 
@@ -169,6 +185,97 @@ type processRunIDParams struct {
 
 func processShowCmd() *cobra.Command {
 	return processRunReadCmd("show", "Show one daemon-owned process run", false)
+}
+
+type processEventsParams struct {
+	RunID string `pos:"true" help:"Process run id"`
+	After int64  `long:"after" optional:"true" help:"Exclusive event-sequence cursor"`
+	Limit int    `long:"limit" optional:"true" default:"32" help:"Maximum rows (1..256)"`
+}
+
+func processEventsCmd() *cobra.Command {
+	return boa.CmdT[processEventsParams]{
+		Use:         "events",
+		Short:       "Show ordered human-facing evidence for one process run",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *processEventsParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessEvents(p, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
+func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
+	}
+	runID := strings.TrimSpace(p.RunID)
+	if runID == "" {
+		return fmt.Errorf("run id is required")
+	}
+	if p.After < 0 {
+		return fmt.Errorf("--after must be a non-negative sequence")
+	}
+	if p.Limit < 1 || p.Limit > db.MaxProcessRunEventReadPage {
+		return fmt.Errorf("--limit must be 1..%d", db.MaxProcessRunEventReadPage)
+	}
+	query := url.Values{}
+	if p.After != 0 {
+		query.Set("after", strconv.FormatInt(p.After, 10))
+	}
+	query.Set("limit", strconv.Itoa(p.Limit))
+	path := "/v1/process/runs/" + url.PathEscape(runID) + "/events"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response struct {
+		Events []processRunEventJSON `json:"events"`
+		Next   int64                 `json:"next"`
+	}
+	if err := agent.DaemonRequest(http.MethodGet, path, nil, &response,
+		agent.DaemonOpts{RetryOutput: stderr}); err != nil {
+		return err
+	}
+	if len(response.Events) == 0 {
+		fmt.Fprintf(stdout, "No evidence recorded for process run %s.\n", runID)
+		return nil
+	}
+	tw := newTable(stdout)
+	fmt.Fprintln(tw, "SEQ\tTIME\tNODE\tKIND\tACTOR\tPAYLOAD")
+	for _, event := range response.Events {
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
+			event.Sequence, formatTime(event.OccurredAt), displayProcessEventField(event.NodeID),
+			event.Kind, displayProcessEventField(event.Actor), formatProcessEventPayload(event.Payload))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if response.Next != 0 {
+		fmt.Fprintf(stdout, "next=%d\n", response.Next)
+	}
+	return nil
+}
+
+func displayProcessEventField(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func formatProcessEventPayload(payload json.RawMessage) string {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, payload); err != nil {
+		return "<invalid JSON>"
+	}
+	value := compact.String()
+	if len(value) <= maxProcessEventPayloadDisplayBytes {
+		return value
+	}
+	cut := maxProcessEventPayloadDisplayBytes - len("...")
+	for cut > 0 && !utf8.ValidString(value[:cut]) {
+		cut--
+	}
+	return value[:cut] + "..."
 }
 
 func processReconcileCmd() *cobra.Command {

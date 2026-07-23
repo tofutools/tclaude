@@ -26,6 +26,7 @@ import (
 const (
 	processRunFallbackInterval = time.Minute
 	processRunListDefault      = 20
+	processRunEventListDefault = 32
 	processRunMaxClaims        = db.MaxProcessRunReadPage
 	maxProcessRunRequestBytes  = db.MaxProcessRunParamsBytes + db.MaxProcessRunAuthorizationsBytes + 16<<10
 )
@@ -91,6 +92,15 @@ type processRunSummaryView struct {
 	StateVersion int64            `json:"stateVersion"`
 	CreatedAt    time.Time        `json:"createdAt"`
 	UpdatedAt    time.Time        `json:"updatedAt"`
+}
+
+type processRunEventView struct {
+	Sequence   int64           `json:"sequence"`
+	OccurredAt time.Time       `json:"occurredAt"`
+	NodeID     string          `json:"nodeId,omitempty"`
+	Kind       string          `json:"kind"`
+	Payload    json.RawMessage `json:"payload"`
+	Actor      string          `json:"actor,omitempty"`
 }
 
 type processRunCreateRequest struct {
@@ -436,6 +446,59 @@ func handleProcessRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusOK, view)
+}
+
+func handleProcessRunEvents(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requirePermission(w, r, PermProcessRunsRead); !ok {
+		return
+	}
+	after := int64(0)
+	if raw := strings.TrimSpace(r.URL.Query().Get("after")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "process_run_after", "after must be a non-negative sequence")
+			return
+		}
+		after = parsed
+	}
+	limit := processRunEventListDefault
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > db.MaxProcessRunEventReadPage {
+			writeError(w, http.StatusBadRequest, "process_run_limit",
+				fmt.Sprintf("limit must be 1..%d", db.MaxProcessRunEventReadPage))
+			return
+		}
+		limit = parsed
+	}
+	runID := r.PathValue("id")
+	events, err := db.ListProcessRunEvents(runID, after, limit)
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	if len(events) == 0 {
+		// The evidence reader intentionally returns an empty page for both an
+		// existing run and an unknown run. Preserve that store contract while
+		// giving the HTTP surface the same stable 404 as the nearby run read.
+		if _, err := db.GetProcessRun(runID); err != nil {
+			writeProcessRuntimeError(w, err)
+			return
+		}
+	}
+	views := make([]processRunEventView, 0, len(events))
+	for i := range events {
+		views = append(views, processRunEventView{
+			Sequence: events[i].Sequence, OccurredAt: events[i].OccurredAt,
+			NodeID: events[i].NodeID, Kind: events[i].Kind,
+			Payload: events[i].PayloadJSON, Actor: events[i].Actor,
+		})
+	}
+	var next int64
+	if len(events) == limit {
+		next = events[len(events)-1].Sequence
+	}
+	writeProcessJSON(w, http.StatusOK, map[string]any{"events": views, "next": next})
 }
 
 func handleProcessRunResume(w http.ResponseWriter, r *http.Request) {
