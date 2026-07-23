@@ -14,6 +14,10 @@ import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
 const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
+// A pointer click on a group pill waits this long before collapsing so a
+// double-click (rename) can cancel it. Roughly the platform double-click
+// threshold; keyboard clicks bypass it entirely.
+export const GROUP_COLLAPSE_CLICK_DELAY_MS = 200;
 
 export function terminalTabReorderOffset(event) {
   if (event?.type !== 'keydown' || event.target?.closest?.('button')) return null;
@@ -313,7 +317,7 @@ function PaneTab({
       <span
         class="mux-tab-label"
         draggable="true"
-        title="Drag to reorder · drag off the strip to detach into its own window · Alt+Shift+Left/Right to move with the keyboard"
+        title="Drag to reorder · drop onto another tab to group them · drag off the strip to detach into its own window · Alt+Shift+Left/Right to move with the keyboard"
         onDragStart=${(event) => onDragStart(event, pane.key)}
         onDragEnd=${onDragEnd}
       >${pane.label}</span>
@@ -337,10 +341,47 @@ function PaneTab({
 // announces "N tabs, <name>" around the members instead of a flat run. The pill
 // itself is a button, not a tab: it selects nothing, it only opens and closes.
 function GroupStack({
-  group, panes, activeKey, actions, renaming, onRenameCommit, onRenameCancel,
+  group, panes, activeKey, actions, renaming, onRenameStart, onRenameCommit, onRenameCancel,
   openMenu, menuOpen, dropActive, onPillDragOver, onPillDragLeave, onPillDrop, renderTab,
 }) {
   const inputRef = useRef(null);
+  // A single click collapses, a double click renames — the two share the pill.
+  // Collapsing is NOT a pure toggle: collapsing a group that owns the active
+  // terminal deliberately moves activation outside the group, and expanding
+  // does not move it back. So the collapse cannot fire on the first click of a
+  // double-click and be "undone" — that would silently switch the active
+  // terminal. Instead a pointer click ARMS the collapse on a short timer that a
+  // second click (the double-click) cancels, so renaming never collapses at
+  // all. A keyboard-synthesised click (Enter/Space, detail 0) has no
+  // double-click to wait for, so it collapses immediately. F2 renames.
+  const collapseTimer = useRef(null);
+  const clearCollapseTimer = () => {
+    if (collapseTimer.current) {
+      clearTimeout(collapseTimer.current);
+      collapseTimer.current = null;
+    }
+  };
+  useEffect(() => clearCollapseTimer, []);
+  const onPillClick = (event) => {
+    if (event.detail === 0) {
+      actions.toggleGroupCollapsed(group.id);
+      return;
+    }
+    clearCollapseTimer();
+    collapseTimer.current = setTimeout(() => {
+      collapseTimer.current = null;
+      actions.toggleGroupCollapsed(group.id);
+    }, GROUP_COLLAPSE_CLICK_DELAY_MS);
+  };
+  const startRename = () => {
+    clearCollapseTimer();
+    onRenameStart(group.id);
+  };
+  const renameOnDblClick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    startRename();
+  };
   // onBlur commits, so a cancel must first mark itself: browsers do not fire
   // blur when a focused node is removed today, but any future close that moves
   // focus before unmount would otherwise turn Escape into a commit. The ref is
@@ -384,6 +425,15 @@ function GroupStack({
     });
     return true;
   };
+  const onPillKeyDown = (event) => {
+    if (event.key === 'F2') {
+      event.preventDefault();
+      event.stopPropagation();
+      startRename();
+      return;
+    }
+    openMenuAt(event);
+  };
   return html`
     <div
       class=${`mux-tab-group mux-group-${group.color}${group.collapsed ? ' collapsed' : ''}${dropActive ? ' drop-into' : ''}`}
@@ -414,10 +464,12 @@ function GroupStack({
           class="mux-group-pill"
           aria-expanded=${group.collapsed ? 'false' : 'true'}
           aria-haspopup="menu"
-          title=${`${group.collapsed ? 'Expand' : 'Collapse'} the ${group.name} terminal group · right-click or Shift+F10 for group actions`}
-          onClick=${() => actions.toggleGroupCollapsed(group.id)}
+          aria-describedby="terminal-group-pill-help"
+          title=${`Click to ${group.collapsed ? 'expand' : 'collapse'} the ${group.name} terminal group · double-click or F2 to rename · right-click or Shift+F10 for group actions`}
+          onClick=${onPillClick}
+          onDblClick=${renameOnDblClick}
           onContextMenu=${openMenuAt}
-          onKeyDown=${openMenuAt}
+          onKeyDown=${onPillKeyDown}
           aria-label=${`${group.name}, ${panes.length} terminal${panes.length === 1 ? '' : 's'}`}
           data-menu-open=${menuOpen ? 'true' : 'false'}
         >
@@ -593,6 +645,26 @@ function TerminalTabs({
       : leftGroup ? `, out of group ${leftGroup.name}` : '';
     setReorderAnnouncement(`Moved ${pane.label} to position ${index + 1} of ${count}${where}.`);
   };
+  const groupIdOfKey = (key) => {
+    const segment = current.segments.find((candidate) => candidate.panes.some((pane) => pane.key === key));
+    return segment?.type === 'group' ? segment.group.id : null;
+  };
+  const labelOfKey = (key) => current.panes.find((pane) => pane.key === key)?.label || 'terminal';
+  // A tab has three drop zones: the outer quarter on each side reorders the
+  // dragged tab before/after it, and the centre half combines the two into a
+  // group. Dropping a tab on another tab that is not yet in a group is the
+  // discoverable way to CREATE a group — the same gesture Chrome uses — so it
+  // no longer requires finding the context menu first. When the two tabs are
+  // already in the same group the centre would do nothing, so it degrades to a
+  // plain before/after reorder instead of highlighting a no-op.
+  const tabDropSide = (event, element, sourceKey, targetKey) => {
+    const bounds = element.getBoundingClientRect();
+    const fraction = bounds.width ? (event.clientX - bounds.left) / bounds.width : 0.5;
+    const half = fraction < 0.5 ? 'before' : 'after';
+    if (fraction < 0.25 || fraction > 0.75) return half;
+    const targetGroup = groupIdOfKey(targetKey);
+    return targetGroup && targetGroup === groupIdOfKey(sourceKey) ? half : 'group';
+  };
   const focusPaneTab = (key) => {
     for (const tab of shellRef.current?.querySelectorAll('.mux-tab[data-pane-key]') || []) {
       if (tab.getAttribute('data-pane-key') === key) { tab.focus(); return; }
@@ -645,8 +717,7 @@ function TerminalTabs({
     event.preventDefault();
     event.stopPropagation();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+    const side = tabDropSide(event, event.currentTarget, sourceKey, targetKey);
     if (dropTarget?.key !== targetKey || dropTarget.side !== side) {
       setDropTarget({ key: targetKey, side });
     }
@@ -660,9 +731,32 @@ function TerminalTabs({
     event.stopPropagation();
     droppedRef.current = true;
     const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const side = event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
-    const moved = key && actions.reorderPane(key, targetKey, { after: side === 'after' });
+    // A tab dropped on itself is a no-op. tabDragOver already declines to accept
+    // a self-hover, so a real browser never fires this drop; the guard keeps a
+    // future unconditional-accept change from building a singleton group from
+    // keys:[X, X].
+    if (!key || key === targetKey) { clearDrag(); return; }
+    const side = tabDropSide(event, event.currentTarget, key, targetKey);
+    if (side === 'group') {
+      // Centre drop: combine the two tabs. If the target already has a group,
+      // the dragged tab joins it; otherwise a new group is born around both.
+      const existing = groupIdOfKey(targetKey);
+      if (existing) {
+        const joined = actions.assignPaneToGroup(key, existing);
+        const group = joined && current.groups.find((candidate) => candidate.id === existing);
+        if (group) setReorderAnnouncement(`Grouped ${labelOfKey(key)} into ${group.name}.`);
+      } else {
+        const group = actions.createGroup({ keys: [targetKey, key] });
+        if (group) {
+          setReorderAnnouncement(
+            `Grouped ${labelOfKey(key)} with ${labelOfKey(targetKey)} as ${group.name}.`,
+          );
+        }
+      }
+      clearDrag();
+      return;
+    }
+    const moved = actions.reorderPane(key, targetKey, { after: side === 'after' });
     clearDrag();
     if (moved) announceReorder(moved);
   };
@@ -858,9 +952,14 @@ function TerminalTabs({
         <span id="terminal-tab-reorder-help" class="mux-tab-a11y">
           Drag tabs to reorder them, or press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow on a focused tab.
           Drag a tab off the strip to detach it into its own window, or use the tab's context menu to detach it into a browser tab.
-          Tabs can be collected into named groups: use a tab's context menu to start a group or join one, drop a tab on a group to join it,
-          and press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow at the edge of a group to move the tab out of it.
-          A group's pill collapses and expands the group, and carries its own context menu for renaming, ungrouping, and closing its tabs.
+          Tabs can be collected into named groups: drop one tab onto the middle of another to group them, use a tab's context menu to start
+          or join a group, drop a tab on a group to join it, and press Alt+Shift+Left Arrow or Alt+Shift+Right Arrow at the edge of a group
+          to move the tab out of it.
+          A group's pill collapses and expands the group; double-click it or press F2 to rename, and it carries its own context menu for
+          renaming, ungrouping, and closing its tabs.
+        </span>
+        <span id="terminal-group-pill-help" class="mux-tab-a11y">
+          Enter or Space collapses or expands this group. Press F2 to rename it, or Shift+F10 for its actions menu.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
@@ -918,6 +1017,7 @@ function TerminalTabs({
                 activeKey=${current.activeKey}
                 actions=${actions}
                 renaming=${renamingGroup === gid}
+                onRenameStart=${setRenamingGroup}
                 onRenameCommit=${commitGroupRename}
                 onRenameCancel=${() => setRenamingGroup(null)}
                 openMenu=${setTabMenu}
