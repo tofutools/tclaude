@@ -42,7 +42,8 @@ func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 	defer server.Close()
 
 	runtime := db.OpenCodeRuntime{
-		ServerURL: server.URL, Password: password, Cwd: "/tmp/project",
+		PID: os.Getpid(), ServerURL: server.URL,
+		Password: password, Cwd: "/tmp/project",
 	}
 	assert.True(t, openCodeHealthy(runtime))
 	convID, err := createOpenCodeSession(runtime, "worker")
@@ -77,6 +78,13 @@ func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {
 	foreignRuntime := runtime
 	foreignRuntime.PID = foreignPID
 	assert.False(t, openCodeHealthyAfterRetries(foreignRuntime, 1, 0))
+	_, err := createOpenCodeSession(foreignRuntime, "must-not-send")
+	require.Error(t, err)
+	err = sendOpenCodePrompt(&openCodeLaunch{
+		ConvID: "ses_test", ServerURL: foreignRuntime.ServerURL,
+		Password: foreignRuntime.Password, PID: foreignPID,
+	}, "/tmp/project", "must-not-send", "", "")
+	require.Error(t, err)
 	assert.Zero(t, healthCalls, "credentials must not be sent to a listener owned by another PID")
 	assert.True(t, openCodeHealthyAfterRetries(runtime, 3, time.Millisecond))
 	assert.Equal(t, 3, healthCalls)
@@ -86,7 +94,7 @@ func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {
 	}))
 	defer bareOK.Close()
 	assert.False(t, openCodeHealthy(db.OpenCodeRuntime{
-		ServerURL: bareOK.URL, Password: password,
+		PID: os.Getpid(), ServerURL: bareOK.URL, Password: password,
 	}))
 }
 
@@ -106,7 +114,8 @@ func TestOpenCodeLaunchPromptCarriesModelAndVariant(t *testing.T) {
 	defer server.Close()
 
 	err := sendOpenCodePrompt(&openCodeLaunch{
-		ConvID: "ses_test", ServerURL: server.URL, Password: password,
+		ConvID: "ses_test", ServerURL: server.URL,
+		Password: password, PID: os.Getpid(),
 	}, "/tmp/project", "startup brief", "openai/gpt-5.6-terra", "high")
 	require.NoError(t, err)
 	assert.Equal(t, "high", body["variant"])

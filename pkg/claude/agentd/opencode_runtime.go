@@ -39,6 +39,7 @@ type openCodeLaunch struct {
 	ConvID    string
 	ServerURL string
 	Password  string
+	PID       int
 }
 
 type openCodeProcess struct {
@@ -74,6 +75,7 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID string) (*openCodeLaun
 			return &openCodeLaunch{
 				SessionID: sessionID, ConvID: existing.ConvID,
 				ServerURL: existing.ServerURL, Password: existing.Password,
+				PID: existing.PID,
 			}, nil
 		}
 		_ = stopOpenCodeRuntime(sessionID)
@@ -135,6 +137,7 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID string) (*openCodeLaun
 		return &openCodeLaunch{
 			SessionID: sessionID, ConvID: runtime.ConvID,
 			ServerURL: runtime.ServerURL, Password: runtime.Password,
+			PID: runtime.PID,
 		}, nil
 	}
 	return nil, fmt.Errorf("start OpenCode server after 3 port attempts: %w", lastErr)
@@ -194,8 +197,7 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 		// OpenCode does not accept a pre-bound listener. Never disclose the
 		// password to that endpoint until the launched PID (or a child) is
 		// positively observed owning its listening socket.
-		if openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL) &&
-			openCodeHealthy(runtime) {
+		if openCodeHealthy(runtime) {
 			return process, nil
 		}
 		select {
@@ -232,7 +234,14 @@ func randomOpenCodePassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func openCodeRequest(method, endpoint, password string, body any) (*http.Request, error) {
+func openCodeRequest(method, endpoint string, runtime db.OpenCodeRuntime, body any) (*http.Request, error) {
+	// This check belongs at the last common point before Basic auth is added,
+	// not only in health/reconciliation callers. In particular, an SSE
+	// reconnect can outlive the server process that originally authenticated
+	// the endpoint.
+	if !openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL) {
+		return nil, fmt.Errorf("managed OpenCode process does not own %s", runtime.ServerURL)
+	}
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -245,7 +254,7 @@ func openCodeRequest(method, endpoint, password string, body any) (*http.Request
 	if err != nil {
 		return nil, err
 	}
-	request.SetBasicAuth(openCodeServerUsername, password)
+	request.SetBasicAuth(openCodeServerUsername, runtime.Password)
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -254,7 +263,7 @@ func openCodeRequest(method, endpoint, password string, body any) (*http.Request
 
 func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
 	request, err := openCodeRequest(http.MethodGet,
-		runtime.ServerURL+"/global/health", runtime.Password, nil)
+		runtime.ServerURL+"/global/health", runtime, nil)
 	if err != nil {
 		return false
 	}
@@ -273,14 +282,9 @@ func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
 		health.Healthy
 }
 
-func openCodeRuntimeHealthy(runtime db.OpenCodeRuntime) bool {
-	return openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL) &&
-		openCodeHealthy(runtime)
-}
-
 func openCodeHealthyAfterRetries(runtime db.OpenCodeRuntime, attempts int, delay time.Duration) bool {
 	for attempt := 0; attempt < attempts; attempt++ {
-		if openCodeRuntimeHealthy(runtime) {
+		if openCodeHealthy(runtime) {
 			return true
 		}
 		if attempt+1 < attempts {
@@ -296,7 +300,7 @@ func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, er
 		body["title"] = title
 	}
 	endpoint := runtime.ServerURL + "/session?directory=" + url.QueryEscape(runtime.Cwd)
-	request, err := openCodeRequest(http.MethodPost, endpoint, runtime.Password, body)
+	request, err := openCodeRequest(http.MethodPost, endpoint, runtime, body)
 	if err != nil {
 		return "", err
 	}
@@ -335,7 +339,9 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 	}
 	endpoint := launch.ServerURL + "/session/" + url.PathEscape(launch.ConvID) +
 		"/prompt_async?directory=" + url.QueryEscape(cwd)
-	request, err := openCodeRequest(http.MethodPost, endpoint, launch.Password, body)
+	request, err := openCodeRequest(http.MethodPost, endpoint, db.OpenCodeRuntime{
+		PID: launch.PID, ServerURL: launch.ServerURL, Password: launch.Password,
+	}, body)
 	if err != nil {
 		return err
 	}
@@ -477,7 +483,7 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {
 	endpoint := runtime.ServerURL + "/event?directory=" + url.QueryEscape(runtime.Cwd)
 	for ctx.Err() == nil {
-		request, err := openCodeRequest(http.MethodGet, endpoint, runtime.Password, nil)
+		request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
 		if err == nil {
 			request = request.WithContext(ctx)
 			var response *http.Response
