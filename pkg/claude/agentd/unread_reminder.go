@@ -8,6 +8,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -179,7 +180,14 @@ func runUnreadReminderTickWith(now time.Time, st *unreadReminderState) {
 		if isTmuxInputBlocked(sess.Status) {
 			continue // permission/elicitation dialog up — noop, retry next tick
 		}
-		if err := injectTextAndSubmit(sess.TmuxSession+":0.0", unreadReminderText(byConv[conv])); err != nil {
+		reminder := unreadReminderText(byConv[conv])
+		var err error
+		if sess.Harness == harness.OpenCodeName {
+			err = sendOpenCodeNudge(conv, reminder)
+		} else {
+			err = injectTextAndSubmit(sess.TmuxSession+":0.0", reminder)
+		}
+		if err != nil {
 			slog.Warn("unread-reminder: inject failed",
 				"error", err, "tmux", sess.TmuxSession, "conv", conv)
 			continue // leave the clock unadvanced so we retry next tick

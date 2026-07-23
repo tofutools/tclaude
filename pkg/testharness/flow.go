@@ -1031,6 +1031,15 @@ func (f *Flow) Compact(convID string) CompactResp {
 	return CompactResp{Code: rec.Code, Raw: rec.Body.Bytes()}
 }
 
+// CompactWithFollowUp drives compact with its optional next-turn prompt.
+func (f *Flow) CompactWithFollowUp(convID, followUp string) CompactResp {
+	f.T.Helper()
+	rec := f.do(http.MethodPost, "/v1/agent/"+convID+"/compact", map[string]any{
+		"follow_up": followUp,
+	})
+	return CompactResp{Code: rec.Code, Raw: rec.Body.Bytes()}
+}
+
 // RemoteControlResp parses POST /v1/agent/{conv}/remote-control. Code/Raw
 // carry the daemon's response so a test can assert the harness-unsupported
 // 409 (a harness with no RemoteControlCommand, e.g. Codex) as readily as the

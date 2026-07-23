@@ -48,11 +48,20 @@ type openCodeLaunch struct {
 	PID       int
 }
 
+type openCodeTUICommand string
+
+const (
+	openCodeTUICompact openCodeTUICommand = "session.compact"
+	openCodeTUIExit    openCodeTUICommand = "app.exit"
+)
+
 type openCodeProcess struct {
 	cmd    *exec.Cmd
 	done   chan error
 	cancel context.CancelFunc
 }
+
+var beforeOpenCodeTUICommandStatusCheckForTest func()
 
 var openCodeProcesses = struct {
 	sync.Mutex
@@ -363,28 +372,9 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 // or the queue completion stamp is lost, retry may submit it again. The framed
 // message ID is the recipient's deduplication cue.
 func sendOpenCodeNudge(convID, nudge string) error {
-	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
+	runtime, err := readyOpenCodeRuntime(convID)
 	if err != nil {
-		return fmt.Errorf("look up OpenCode runtime for nudge: %w", err)
-	}
-	if runtime == nil {
-		return fmt.Errorf("no managed OpenCode runtime for conversation %s", convID)
-	}
-	if !openCodeHealthyAfterRetries(*runtime,
-		openCodeHealthAttempts, openCodeHealthRetryDelay) {
-		if !reconcileOpenCodeRuntime(runtime.SessionID) {
-			return fmt.Errorf("managed OpenCode runtime for conversation %s is unavailable", convID)
-		}
-		// Reconciliation can restart the server and persist a new PID. Reload
-		// before constructing the authenticated request so ownership validation
-		// uses the recovered process rather than stale runtime state.
-		runtime, err = db.GetOpenCodeRuntimeByConvID(convID)
-		if err != nil {
-			return fmt.Errorf("reload reconciled OpenCode runtime for nudge: %w", err)
-		}
-		if runtime == nil {
-			return fmt.Errorf("reconciled OpenCode runtime for conversation %s disappeared", convID)
-		}
+		return err
 	}
 	return sendOpenCodePrompt(&openCodeLaunch{
 		SessionID: runtime.SessionID,
@@ -393,6 +383,92 @@ func sendOpenCodeNudge(convID, nudge string) error {
 		Password:  runtime.Password,
 		PID:       runtime.PID,
 	}, runtime.Cwd, nudge, "", "")
+}
+
+// sendOpenCodeTUICommand publishes a command through the managed server's TUI
+// event API. Unlike tmux send-keys, command dispatch is independent of prompt
+// mode and user keybinding customizations. expectedSessionID binds lifecycle
+// sends to the selected process generation; empty is allowed for non-lifecycle
+// callers that already selected by conversation.
+func sendOpenCodeTUICommand(
+	convID, expectedSessionID string,
+	command openCodeTUICommand,
+) error {
+	runtime, err := readyOpenCodeRuntime(convID)
+	if err != nil {
+		return err
+	}
+	if expectedSessionID != "" && runtime.SessionID != expectedSessionID {
+		return fmt.Errorf(
+			"managed OpenCode runtime session changed for conversation %s", convID,
+		)
+	}
+	// Health reconciliation can take long enough for an idle session to start
+	// working or present a permission/question dialog after its caller's first
+	// status check. Re-read immediately before the POST so a stale selection
+	// cannot dispatch compact/exit into a newly non-idle TUI.
+	if beforeOpenCodeTUICommandStatusCheckForTest != nil {
+		beforeOpenCodeTUICommandStatusCheckForTest()
+	}
+	sess := aliveSessionForConv(convID)
+	if sess == nil || sess.ID != runtime.SessionID {
+		return fmt.Errorf("managed OpenCode session changed for conversation %s", convID)
+	}
+	if openCodeControlInputBlocked(sess.Status) {
+		return fmt.Errorf("managed OpenCode TUI is %s; retry when idle", sess.Status)
+	}
+	body := map[string]any{
+		"type": "tui.command.execute",
+		"properties": map[string]string{
+			"command": string(command),
+		},
+	}
+	endpoint := runtime.ServerURL + "/tui/publish?directory=" +
+		url.QueryEscape(runtime.Cwd)
+	request, err := openCodeRequest(http.MethodPost, endpoint, *runtime, body)
+	if err != nil {
+		return fmt.Errorf("build OpenCode TUI command request: %w", err)
+	}
+	response, err := openCodeHTTPClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("publish OpenCode TUI command: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("publish OpenCode TUI command: HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+// readyOpenCodeRuntime returns the healthy managed server for convID,
+// reconciling it once when necessary. All server-side delivery channels share
+// this fail-closed recovery path and never fall back to typing content or
+// commands into the attach pane.
+func readyOpenCodeRuntime(convID string) (*db.OpenCodeRuntime, error) {
+	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
+	if err != nil {
+		return nil, fmt.Errorf("look up OpenCode runtime for delivery: %w", err)
+	}
+	if runtime == nil {
+		return nil, fmt.Errorf("no managed OpenCode runtime for conversation %s", convID)
+	}
+	if !openCodeHealthyAfterRetries(*runtime,
+		openCodeHealthAttempts, openCodeHealthRetryDelay) {
+		if !reconcileOpenCodeRuntime(runtime.SessionID) {
+			return nil, fmt.Errorf("managed OpenCode runtime for conversation %s is unavailable", convID)
+		}
+		// Reconciliation can restart the server and persist a new PID. Reload
+		// before constructing the authenticated request so ownership validation
+		// uses the recovered process rather than stale runtime state.
+		runtime, err = db.GetOpenCodeRuntimeByConvID(convID)
+		if err != nil {
+			return nil, fmt.Errorf("reload reconciled OpenCode runtime for delivery: %w", err)
+		}
+		if runtime == nil {
+			return nil, fmt.Errorf("reconciled OpenCode runtime for conversation %s disappeared", convID)
+		}
+	}
+	return runtime, nil
 }
 
 // reconcileOpenCodeRuntime is the server-side half of OpenCode liveness.

@@ -354,6 +354,16 @@ func SetSoftExitRetryDelayForTest(d time.Duration) func() {
 	return func() { softExitRetryDelay = prev }
 }
 
+func SetBeforeOpenCodeTUICommandStatusCheckForTest(fn func()) func() {
+	previous := beforeOpenCodeTUICommandStatusCheckForTest
+	beforeOpenCodeTUICommandStatusCheckForTest = fn
+	return func() { beforeOpenCodeTUICommandStatusCheckForTest = previous }
+}
+
+func InjectSoftExitForTest(convID, exitCmd, reason string) bool {
+	return injectSoftExit(convID, exitCmd, reason, nil)
+}
+
 // SetUnknownIntentCleanupDelayForTest shrinks the observer window retained
 // after a delivered soft-exit whose outcome cannot yet be observed. Production
 // leaves enough time for the reaper; flow tests use a short, explicit window.

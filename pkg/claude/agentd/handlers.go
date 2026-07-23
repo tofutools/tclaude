@@ -1442,6 +1442,9 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 	if sess == nil {
 		return false
 	}
+	if sess.Harness == harness.OpenCodeName {
+		return injectOpenCodeSlashCommand(sess, line, followUp, reason)
+	}
 	target := sess.TmuxSession + ":0.0"
 	if err := injectTextAndSubmit(target, line); err != nil {
 		slog.Warn("slash-command inject failed", "error", err, "tmux", sess.TmuxSession, "line", line, "reason", reason)
@@ -1461,6 +1464,66 @@ func injectSlashCommand(convID, line, followUp, reason string) bool {
 		}
 	}
 	return true
+}
+
+// injectOpenCodeSlashCommand routes the attached TUI's lifecycle commands
+// through the managed server event API. OpenCode 1.18.4 exposes
+// tui.command.execute, and its attach client dispatches those events through
+// the same command registry as a slash command without depending on prompt
+// mode or keybindings.
+func injectOpenCodeSlashCommand(sess *db.SessionRow, line, followUp, reason string) bool {
+	if sess == nil || openCodeControlInputBlocked(sess.Status) {
+		if sess != nil {
+			slog.Warn("OpenCode slash-command dispatch deferred until TUI is idle",
+				"conv_id", sess.ConvID, "line", line, "reason", reason, "status", sess.Status)
+		}
+		return false
+	}
+	if followUp != "" {
+		// OpenCode command publication does not acknowledge completion, so an
+		// immediate prompt_async cannot preserve compact-then-follow-up order.
+		// The HTTP surface rejects this pair with a specific error before
+		// reaching here; retain a fail-closed guard for future internal callers.
+		slog.Warn("OpenCode slash-command follow-up has no ordered API mapping",
+			"conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
+	var command openCodeTUICommand
+	switch line {
+	case "/compact":
+		command = openCodeTUICompact
+	case "/exit":
+		command = openCodeTUIExit
+	default:
+		// OpenCode's current lifecycle descriptor only exposes compact and
+		// exit. Fail closed if a future caller reaches this sink without an
+		// explicit managed-API mapping; never fall back to keystrokes.
+		slog.Warn("OpenCode slash-command has no managed TUI API mapping",
+			"conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
+	if err := sendOpenCodeTUICommand(sess.ConvID, sess.ID, command); err != nil {
+		slog.Warn("OpenCode slash-command API dispatch failed",
+			"error", err, "conv_id", sess.ConvID, "line", line,
+			"reason", reason, "tmux_session", sess.TmuxSession)
+		return false
+	}
+	slog.Info("OpenCode slash-command dispatched via managed TUI API",
+		"conv_id", sess.ConvID, "line", line, "reason", reason,
+		"tmux_session", sess.TmuxSession, "has_follow_up", false)
+	return true
+}
+
+// openCodeControlInputBlocked uses the session status already projected from
+// OpenCode's managed SSE stream and reconciliation snapshots. A TUI control
+// must wait for idle/error: while working, compaction is not ready; while
+// awaiting_* the active permission/question layer overrides commands such as
+// app.exit. Returning false surfaces a retryable failure to compact/stop
+// callers and never reports the command as delivered.
+func openCodeControlInputBlocked(status string) bool {
+	return status == session.StatusWorking ||
+		status == session.StatusRunning ||
+		isAwaitingHumanInput(status)
 }
 
 // paneInjectMu guards paneInjectLocks. paneInjectLocks holds one mutex
@@ -1923,7 +1986,23 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 			"harness "+h.Name+" does not support "+label)
 		return
 	}
+	if h.Name == harness.OpenCodeName && body.FollowUp != "" {
+		// tui.command.execute only acknowledges event publication. OpenCode
+		// 1.18.4 starts session.compact asynchronously in the attach client,
+		// so prompt_async here could win the race and start a new turn before
+		// compaction. Reject the pair before dispatch; callers can compact
+		// without a follow-up, wait for idle, then send the next turn.
+		writeError(w, http.StatusConflict, "follow_up_unordered",
+			"OpenCode cannot safely order a compact follow-up; compact without a follow-up, wait for idle, then send the next turn")
+		return
+	}
 	if !injectSlashCommand(target, slash, body.FollowUp, slashReason(label, caller, target)) {
+		if h.Name == harness.OpenCodeName {
+			writeError(w, http.StatusServiceUnavailable, "control_unavailable",
+				"target conv "+short8(target)+" could not dispatch "+slash+
+					" through its managed OpenCode TUI; retry when the session is idle")
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "no_tmux",
 			"target conv "+short8(target)+" has no live tmux session to inject "+slash+" into")
 		return
@@ -1933,6 +2012,9 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 		"action":  label,
 		"note":    slash + " submitted via tmux send-keys; CC will process it on its next turn",
 	}
+	if h.Name == harness.OpenCodeName {
+		resp["note"] = slash + " dispatched via the managed OpenCode TUI API"
+	}
 	if caller != "" && caller != target {
 		resp["caller_conv"] = caller
 		stampCallerAgentID(resp, caller)
@@ -1940,6 +2022,9 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	if body.FollowUp != "" {
 		resp["follow_up"] = body.FollowUp
 		resp["note"] = slash + " + follow-up submitted via tmux send-keys; the follow-up bytes queue in the pty until CC resumes reading after " + slash + " settles"
+		if h.Name == harness.OpenCodeName {
+			resp["note"] = slash + " dispatched via the managed OpenCode TUI API; follow-up delivered via prompt_async"
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
