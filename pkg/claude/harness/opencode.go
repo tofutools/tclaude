@@ -9,6 +9,7 @@ func init() {
 		DisplayName:         "OpenCode",
 		Spawn:               openCodeSpawner{},
 		Models:              openCodeModels{},
+		Convs:               openCodeConvStore{},
 		Life:                openCodeLifecycle{},
 		TmuxScrollback:      true,
 		LaunchEnrollment:    true,
@@ -16,11 +17,13 @@ func init() {
 	})
 }
 
-// OpenCode's pane is an attach client. These commands are interpreted by that
-// TUI while the conversation itself remains in the managed server.
+// OpenCode's pane is an attach client. Compact and exit remain TUI commands,
+// while rename is deliberately out-of-band through ConvStore.SetTitle: the
+// managed server's authenticated PATCH endpoint is safer than typing a
+// user-controlled title into the pane.
 type openCodeLifecycle struct{}
 
-func (openCodeLifecycle) RenameCommand() string        { return "/rename" }
+func (openCodeLifecycle) RenameCommand() string        { return "" }
 func (openCodeLifecycle) CompactCommand() string       { return "/compact" }
 func (openCodeLifecycle) SoftExitCommand() string      { return "/exit" }
 func (openCodeLifecycle) RemoteControlCommand() string { return "" }

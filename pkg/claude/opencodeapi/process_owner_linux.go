@@ -1,6 +1,6 @@
 //go:build linux
 
-package agentd
+package opencodeapi
 
 import (
 	"net"
@@ -11,20 +11,18 @@ import (
 	"strings"
 )
 
-// openCodeProcessOwnsEndpoint verifies the listener through the kernel's
-// socket inode tables. Merely observing a healthy HTTP response is not enough:
-// another local process could have won the bind-close-exec race and use the
-// authenticated health request to capture the server password.
-func openCodeProcessOwnsEndpoint(rootPID int, endpoint string) bool {
-	port, ok := openCodeEndpointPort(endpoint)
+// ProcessOwnsEndpoint verifies the listener through the kernel's socket inode
+// tables.
+func ProcessOwnsEndpoint(rootPID int, endpoint string) bool {
+	port, ok := endpointPort(endpoint)
 	if !ok {
 		return false
 	}
-	inodes := openCodeListeningSocketInodes(port)
+	inodes := listeningSocketInodes(port)
 	if len(inodes) == 0 {
 		return false
 	}
-	for _, pid := range openCodeProcessTreePIDs(rootPID) {
+	for _, pid := range processTreePIDs(rootPID) {
 		entries, err := os.ReadDir(filepath.Join("/proc", strconv.Itoa(pid), "fd"))
 		if err != nil {
 			continue
@@ -44,7 +42,7 @@ func openCodeProcessOwnsEndpoint(rootPID int, endpoint string) bool {
 	return false
 }
 
-func openCodeEndpointPort(endpoint string) (string, bool) {
+func endpointPort(endpoint string) (string, bool) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return "", false
@@ -60,7 +58,7 @@ func openCodeEndpointPort(endpoint string) (string, bool) {
 	return strings.ToUpper(strconv.FormatUint(port, 16)), true
 }
 
-func openCodeListeningSocketInodes(port string) map[string]struct{} {
+func listeningSocketInodes(port string) map[string]struct{} {
 	result := map[string]struct{}{}
 	data, err := os.ReadFile("/proc/net/tcp")
 	if err != nil {
@@ -80,7 +78,7 @@ func openCodeListeningSocketInodes(port string) map[string]struct{} {
 	return result
 }
 
-func openCodeProcessTreePIDs(rootPID int) []int {
+func processTreePIDs(rootPID int) []int {
 	if rootPID <= 1 {
 		return nil
 	}

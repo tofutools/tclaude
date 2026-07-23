@@ -1,6 +1,6 @@
 //go:build darwin
 
-package agentd
+package opencodeapi
 
 import (
 	"net"
@@ -10,10 +10,9 @@ import (
 	"strings"
 )
 
-// macOS has no /proc socket-inode view. lsof and ps are part of the base OS and
-// let us fail closed unless the managed process (or a child wrapper launched)
-// owns the listener.
-func openCodeProcessOwnsEndpoint(rootPID int, endpoint string) bool {
+// ProcessOwnsEndpoint fails closed unless lsof proves that the managed process
+// (or a descendant wrapper) owns the listener.
+func ProcessOwnsEndpoint(rootPID int, endpoint string) bool {
 	if rootPID <= 1 {
 		return false
 	}

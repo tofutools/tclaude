@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -22,11 +21,12 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/opencodeapi"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const (
-	openCodeServerUsername    = "opencode"
+	openCodeServerUsername    = opencodeapi.ServerUsername
 	openCodeStartupTimeout    = 12 * time.Second
 	openCodeHealthAttempts    = 3
 	openCodeHealthRetryDelay  = 250 * time.Millisecond
@@ -235,30 +235,11 @@ func randomOpenCodePassword() (string, error) {
 }
 
 func openCodeRequest(method, endpoint string, runtime db.OpenCodeRuntime, body any) (*http.Request, error) {
-	// This check belongs at the last common point before Basic auth is added,
-	// not only in health/reconciliation callers. In particular, an SSE
-	// reconnect can outlive the server process that originally authenticated
-	// the endpoint.
-	if !openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL) {
-		return nil, fmt.Errorf("managed OpenCode process does not own %s", runtime.ServerURL)
-	}
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	request, err := http.NewRequest(method, endpoint, reader)
-	if err != nil {
-		return nil, err
-	}
-	request.SetBasicAuth(openCodeServerUsername, runtime.Password)
-	if body != nil {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	return request, nil
+	return opencodeapi.NewRequest(method, endpoint, runtime, body)
+}
+
+func openCodeProcessOwnsEndpoint(rootPID int, endpoint string) bool {
+	return opencodeapi.ProcessOwnsEndpoint(rootPID, endpoint)
 }
 
 func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
