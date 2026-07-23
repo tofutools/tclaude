@@ -38,7 +38,7 @@ type OpenCodeRuntimeFixture struct {
 func SetOpenCodeRuntimeForTest(start func(sessionID, cwd, title, resumeID string) (OpenCodeRuntimeFixture, error)) func() {
 	previousStart := startOpenCodeRuntimeForSpawn
 	previousSend := sendOpenCodePromptForSpawn
-	startOpenCodeRuntimeForSpawn = func(sessionID, cwd, title, resumeID string) (*openCodeLaunch, error) {
+	startOpenCodeRuntimeForSpawn = func(sessionID, cwd, title, resumeID, _ string) (*openCodeLaunch, error) {
 		fixture, err := start(sessionID, cwd, title, resumeID)
 		if err != nil {
 			return nil, err

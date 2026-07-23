@@ -4,11 +4,11 @@ tclaude started life as a wrapper around [Claude Code](https://claude.ai/code).
 It is now **harness-agnostic**: the session, conversation, agent-coordination,
 and dashboard machinery can drive more than one coding *harness* (the underlying
 agentic CLI). **Claude Code, OpenAI Codex CLI, and OpenCode are registered
-harnesses.** OpenCode support currently covers the managed serve-and-attach
-launch path and its conversation store; permission, ask, and full status
-adapters remain intentionally capability-gated. Claude remains the default so
-existing commands and databases keep their historical behavior when no harness
-is recorded.
+harnesses.** OpenCode support covers the managed serve-and-attach launch path,
+its conversation store, ad-hoc ask, and per-session tool permissions; full
+status mapping remains intentionally capability-gated. Claude remains the
+default so existing commands and databases keep their historical behavior when
+no harness is recorded.
 
 A *harness* is whichever CLI actually runs the model in the tmux pane —
 `claude`, `codex`, or an `opencode attach` client. tclaude owns everything
@@ -70,12 +70,17 @@ codex` there when resuming a Codex conversation, or use `conv resume`, which
 detects the harness for you.
 
 OpenCode's supported launch surface is currently the agentd-owned
-`agent spawn`/agent resume path. Its sandbox selector has one explicit `off`
-mode: OpenCode has no OS sandbox, so this runs without tclaude filesystem or
-network containment (OpenCode's own tool permission rules still apply).
-A bare direct `session new --harness opencode` is refused because it has no
-authenticated managed-server handoff; the pane is never allowed to start an
-independent OpenCode server.
+`agent spawn`/agent resume path. Its default `access-control` mode applies
+tclaude-generated, per-session OpenCode tool rules: reads and representable
+edits follow relative path patterns, while bash and tools that cannot express
+that path boundary are disabled. This is deliberately described as lexical
+soft access control, not an OS sandbox: OpenCode does not resolve symlinks
+before permission evaluation, so a pre-existing symlink inside an allowed path
+can point outside the authored scope. The explicit `off` mode removes path
+scoping but keeps the selected approval policy; bash is never auto-approved. A bare direct
+`session new --harness opencode` is refused because it has no authenticated
+managed-server handoff; the pane is never allowed to start an independent
+OpenCode server.
 
 ## Per-harness setup
 
@@ -114,8 +119,8 @@ instead of slash-command injection).
 |---|---|---|---|
 | **Spawn** | ✅ `claude` | ✅ `codex` | ✅ managed `serve` + pane `attach` |
 | **Resume** | ✅ `claude --resume <id>` | ✅ `codex resume <id>` | ✅ managed server + `attach --session <id>` |
-| **Ad-hoc ask** ([guide](ask.md)) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn | ❌ adapter pending |
-| **Live-streamed ask output** (print mode → a TTY) | ✅ `--output-format stream-json`, answer rendered token-by-token | ➖ buffered (`codex exec` prints the final message at the end) | ❌ adapter pending |
+| **Ad-hoc ask** ([guide](ask.md)) | ✅ `claude [-p]`, conv-id pre-minted (`--session-id`) | ✅ `codex exec` (capture, read-only) / TUI (interactive), conv-id discovered post-turn | ✅ `opencode run --agent plan` (capture, best-effort read-only) / full TUI (interactive), server-minted conv-id discovered post-turn |
+| **Live-streamed ask output** (print mode → a TTY) | ✅ `--output-format stream-json`, answer rendered token-by-token | ➖ buffered (`codex exec` prints the final message at the end) | ➖ buffered |
 | **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB | ✅ cold `session list --format json` + tclaude cache |
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) | ✅ authenticated server API; local title cache when cold |
 | **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` | ✅ in-pane `/compact` |
@@ -123,8 +128,8 @@ instead of slash-command injection).
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
-| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ❌ no native OS sandbox |
-| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ❌ adapter pending |
+| **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ⚠️ no native OS sandbox; `access-control` (default) applies lexical path rules but cannot prevent symlink traversal, `off` removes scoping |
+| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; bash is never auto-approved |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
 | **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) | ❌ no reviewer equivalent |
 | **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system | ➖ no auto-memory system |
@@ -291,6 +296,33 @@ session's liveness contract. Resume reconstructs the same topology around the
 recorded `ses_…` conversation. Model and reasoning-variant choices are loaded
 from `opencode models openai --verbose` rather than a hard-coded catalog.
 
+For managed launches, agentd compiles the resolved sandbox profile and approval
+choice into an ordered OpenCode permission suffix and stores that suffix with
+the runtime. New sessions receive it at creation. A healthy reused server or a
+resumed/restarted runtime reads the session through the authenticated public
+API, appends the suffix only when it is absent, and verifies the server retained
+it before considering reconciliation successful. This keeps the session policy
+authoritative even when user or agent configuration contributes earlier rules.
+
+The secure defaults are `access-control` + `deny`: the working directory and
+explicit read roots are readable, but edits, bash, web tools, and unaudited
+tools are denied. `ask` lets a present human approve representable edits and
+profile-enabled web tools, but can block a detached agent. `allow-tools`
+automatically accepts scoped edits and explicitly enabled web tools. In
+`access-control`, bash, glob, grep, LSP, task, and skill remain disabled because
+OpenCode 1.18.4 cannot bind those tools to the same directory policy. Therefore
+a scoped OpenCode agent cannot build, test, or use git through bash. In `off`,
+bash may ask under `ask` or `allow-tools`, but is never automatic.
+
+Sandbox-profile network access controls OpenCode's `webfetch` and `websearch`
+tools only; it is not process-level network isolation. Protected tclaude,
+harness, and tmux paths named directly are denied after ordinary directory
+grants. OpenCode evaluates lexical paths rather than resolved filesystem
+targets, so these tool rules do not prevent traversal through a symlink that
+already exists inside an allowed root; use a Claude/Codex OS sandbox when that
+is a required security boundary. An explicit break-glass grant is emitted last
+so the acknowledged narrower exception wins.
+
 OpenCode conversations are enumerated through the supported
 `opencode session list --format json` surface, including when no managed server
 is live. Its per-session `directory` is the cwd/resume identity; tclaude mirrors
@@ -299,10 +331,9 @@ the authenticated managed-server API when available and a tclaude-local title
 overlay when the conversation is cold. Direct reads or writes of OpenCode's
 private `opencode.db` schema are deliberately avoided.
 
-Permissions and sandbox integration, ad-hoc ask, and full SSE-to-status mapping
-remain unimplemented. Those controls stay hidden or rejected through the
-harness capability checks; see [the OpenCode
-exploration](opencode-exploration.md) for the researched follow-up contracts.
+Full SSE-to-status mapping remains incomplete; see [the OpenCode
+exploration](opencode-exploration.md) for the researched contracts and
+remaining gaps.
 
 The dashboard spawn dialog and spawn-profile editor show Codex's **Approval
 reviewer** as a separate control: leave it unset/use the human reviewer, or

@@ -105,9 +105,16 @@ func ValidateSandboxReopenUnderDeny(harnessName, sandboxMode string, grants []sa
 		}
 		return nil
 	case OpenCodeName:
+		if strings.TrimSpace(sandboxMode) == OpenCodeSandboxAccessControl {
+			// OpenCode session permissions are last-match-wins. The adapter
+			// emits broad roots before narrower roots, so a specific grant can
+			// faithfully reopen beneath an ordinary deny. This remains soft
+			// tool access control, not OS containment.
+			return nil
+		}
 		return &SandboxCapabilityError{Harness: OpenCodeName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
-			"OpenCode sandbox %q provides no tclaude OS containment and cannot reopen a path beneath a deny (%s)",
-			sandboxMode, detail)}
+			"OpenCode has no tclaude OS containment; it can reopen a path beneath a deny (%s) only in soft access-control mode %q, while sandbox %q does not render directory rules",
+			detail, OpenCodeSandboxAccessControl, sandboxMode)}
 	default:
 		return &SandboxCapabilityError{Harness: harnessName, Kind: SandboxCapabilityReopenUnderDeny, Message: fmt.Sprintf(
 			"harness %q cannot reopen a path beneath a deny (%s)", harnessName, detail)}

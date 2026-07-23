@@ -58,6 +58,13 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 		{"codex untrusted cannot mint codex never", harness.CodexName, harness.ApprovalUntrusted, false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
 		{"codex untrusted can mint codex untrusted", harness.CodexName, harness.ApprovalUntrusted, false, harness.CodexName, harness.ApprovalUntrusted, false, http.StatusOK},
 		{"codex guardian can mint codex guardian", harness.CodexName, harness.ApprovalOnRequest, true, harness.CodexName, harness.ApprovalUntrusted, true, http.StatusOK},
+
+		// OpenCode `deny`/`ask` are baseline postures. `allow-tools` adds
+		// automatic built-in edits, but still never auto-accepts bash.
+		{"opencode deny can mint opencode ask", harness.OpenCodeName, harness.OpenCodeApprovalDeny, false, harness.OpenCodeName, harness.OpenCodeApprovalAsk, false, http.StatusOK},
+		{"opencode deny cannot mint opencode allow tools", harness.OpenCodeName, harness.OpenCodeApprovalDeny, false, harness.OpenCodeName, harness.OpenCodeApprovalAllowTools, false, http.StatusForbidden},
+		{"opencode allow tools can mint same", harness.OpenCodeName, harness.OpenCodeApprovalAllowTools, false, harness.OpenCodeName, harness.OpenCodeApprovalAllowTools, false, http.StatusOK},
+		{"opencode allow tools cannot mint claude auto", harness.OpenCodeName, harness.OpenCodeApprovalAllowTools, false, harness.DefaultName, "auto", false, http.StatusForbidden},
 	}
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,6 +76,12 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 			childSandbox := harness.ClaudeSandboxOff
 			if tt.childHarness == harness.CodexName {
 				childSandbox = harness.SandboxDangerFull
+			} else if tt.childHarness == harness.OpenCodeName {
+				childSandbox = harness.OpenCodeSandboxAccessControl
+			} else if tt.parentHarness == harness.OpenCodeName {
+				// Keep the sandbox axis within the OpenCode access-controlled
+				// parent's delegation bound so approval is the guard under test.
+				childSandbox = harness.ClaudeSandboxOn
 			}
 			resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
 				"name":        "worker",
@@ -81,6 +94,26 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 			if tt.wantStatus == http.StatusForbidden {
 				assert.Contains(t, string(resp.Raw), "approval_restricted")
 			}
+		})
+	}
+}
+
+func TestSpawnApprovalLineage_LegacyOpenCodeParentFailsClosed(t *testing.T) {
+	for _, policy := range []string{"", "unknown"} {
+		t.Run(fmt.Sprintf("policy_%q", policy), func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			const parent = "approval-opencode-legacy-aaaa-bbbb-cccccccc"
+			haveSpawnCapableApprovalParent(t, f, "alpha", parent,
+				harness.OpenCodeName, policy, false)
+
+			resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
+				"name": "worker", "harness": harness.OpenCodeName,
+				"sandbox":  harness.OpenCodeSandboxAccessControl,
+				"approval": harness.OpenCodeApprovalDeny,
+			})
+			require.Equalf(t, http.StatusForbidden, resp.Code, "spawn body=%s", resp.Raw)
+			assert.Contains(t, string(resp.Raw), "approval_restricted")
 		})
 	}
 }
@@ -447,6 +480,8 @@ func haveSpawnCapableApprovalParent(t *testing.T, f *testharness.Flow, group, co
 	sandbox := harness.ClaudeSandboxOff
 	if h == harness.CodexName {
 		sandbox = harness.SandboxDangerFull
+	} else if h == harness.OpenCodeName {
+		sandbox = harness.OpenCodeSandboxAccessControl
 	}
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "sess-" + convID, TmuxSession: "tmux-" + convID,

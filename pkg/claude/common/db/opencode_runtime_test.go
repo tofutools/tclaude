@@ -13,6 +13,7 @@ func TestOpenCodeRuntimeLookupByConversation(t *testing.T) {
 		SessionID: "spwn-test", ConvID: "ses_test",
 		ServerURL: "http://127.0.0.1:43210", Password: "private",
 		Cwd: "/tmp/project", PID: 42,
+		PermissionJSON: `[{"permission":"*","pattern":"*","action":"deny"}]`,
 	}))
 
 	runtime, err := GetOpenCodeRuntimeByConvID("ses_test")
@@ -20,6 +21,7 @@ func TestOpenCodeRuntimeLookupByConversation(t *testing.T) {
 	require.NotNil(t, runtime)
 	assert.Equal(t, "spwn-test", runtime.SessionID)
 	assert.Equal(t, "private", runtime.Password)
+	assert.Equal(t, `[{"permission":"*","pattern":"*","action":"deny"}]`, runtime.PermissionJSON)
 
 	missing, err := GetOpenCodeRuntimeByConvID("ses_missing")
 	require.NoError(t, err)

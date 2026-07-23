@@ -59,9 +59,11 @@ type ApprovalCatalog interface {
 // approval prompt:
 //
 //   - Harness with no approval catalog: an explicit policy is an error; an empty
-//     request resolves to "" (omit). OpenCode currently takes this branch.
+//     request resolves to "" (omit).
 //   - Codex: an empty request resolves to the secure DefaultPolicy (never); any
 //     explicit policy is validated.
+//   - OpenCode: an empty request resolves to deny; ask and allow-tools remain
+//     explicit choices whose effects are bounded by the sandbox profile.
 //   - Claude Code: an empty request resolves to its DefaultPolicy (auto), so an
 //     un-chosen Claude spawn launches with `--permission-mode auto` — a known,
 //     in-sandbox-bounded posture the detached pane cannot deadlock on. An

@@ -66,10 +66,13 @@ func ValidateSandboxBreakGlass(harnessName, sandboxMode string, grants []sandbox
 		}
 		return nil
 	case OpenCodeName:
+		if strings.TrimSpace(sandboxMode) == OpenCodeSandboxAccessControl {
+			return nil
+		}
 		return &SandboxCapabilityError{
 			Harness: OpenCodeName,
 			Kind:    SandboxCapabilityBreakGlass,
-			Message: fmt.Sprintf("OpenCode sandbox %q provides no tclaude OS containment and cannot represent break-glass protected access", sandboxMode),
+			Message: fmt.Sprintf("OpenCode has no tclaude OS containment; break-glass access requires soft access-control mode %q, while sandbox %q does not render directory rules", OpenCodeSandboxAccessControl, sandboxMode),
 		}
 	default:
 		return &SandboxCapabilityError{

@@ -125,8 +125,10 @@ func TestChildSandboxGrantsDirWrite(t *testing.T) {
 	assert.True(t, childSandboxGrantsDirWrite(harness.CodexName, harness.SandboxManagedProfile))
 	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxInherit))
 	assert.True(t, childSandboxGrantsDirWrite(harness.DefaultName, harness.ClaudeSandboxOn))
+	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxAccessControl))
 	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, harness.OpenCodeSandboxOff))
-	assert.False(t, childSandboxGrantsDirWrite(harness.OpenCodeName, "unknown"))
+	assert.True(t, childSandboxGrantsDirWrite(harness.OpenCodeName, "unknown"),
+		"an unclassified OpenCode mode must not bypass directory proof before the later fail-closed mode guard")
 	assert.True(t, childSandboxGrantsDirWrite("", ""))
 }
 

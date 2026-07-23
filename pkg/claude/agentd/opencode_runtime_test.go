@@ -14,7 +14,10 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
 
 func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 	const password = "private-password"
@@ -31,10 +34,17 @@ func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 		case "/session":
 			sawCreate = true
 			assert.Equal(t, "/tmp/project", r.URL.Query().Get("directory"))
-			var body map[string]string
+			var body struct {
+				Title      string                           `json:"title"`
+				Permission []harness.OpenCodePermissionRule `json:"permission"`
+			}
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal(t, "worker", body["title"])
-			_, _ = w.Write([]byte(`{"id":"ses_test123"}`))
+			assert.Equal(t, "worker", body.Title)
+			assert.Equal(t, []harness.OpenCodePermissionRule{
+				{Permission: "*", Pattern: "*", Action: "deny"},
+				{Permission: "read", Pattern: "*", Action: "allow"},
+			}, body.Permission)
+			_, _ = w.Write([]byte(`{"id":"ses_test123","permission":[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -43,13 +53,32 @@ func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 
 	runtime := db.OpenCodeRuntime{
 		PID: os.Getpid(), ServerURL: server.URL,
-		Password: password, Cwd: "/tmp/project",
+		Password: password, Cwd: "/tmp/project", PermissionJSON: openCodeTestPermissionJSON,
 	}
 	assert.True(t, openCodeHealthy(runtime))
 	convID, err := createOpenCodeSession(runtime, "worker")
 	require.NoError(t, err)
 	assert.Equal(t, "ses_test123", convID)
 	assert.True(t, sawCreate)
+}
+
+func TestOpenCodeSessionCreationFailsIfPolicyIsNotRetained(t *testing.T) {
+	const password = "private-password"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"ses_unprotected","permission":[]}`))
+	}))
+	defer server.Close()
+
+	_, err := createOpenCodeSession(db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: server.URL, Password: password,
+		Cwd: "/tmp/project", PermissionJSON: openCodeTestPermissionJSON,
+	}, "worker")
+	require.ErrorContains(t, err, "did not retain")
+}
+
+func TestEnsureOpenCodeSessionPermissionRejectsLegacyEmptyPolicy(t *testing.T) {
+	err := ensureOpenCodeSessionPermission(db.OpenCodeRuntime{})
+	require.ErrorContains(t, err, "no persisted permission policy")
 }
 
 func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {
@@ -71,6 +100,7 @@ func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {
 
 	runtime := db.OpenCodeRuntime{
 		PID: os.Getpid(), ServerURL: server.URL, Password: password,
+		PermissionJSON: openCodeTestPermissionJSON,
 	}
 	assert.True(t, openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL))
 	const foreignPID = 99_999_999
@@ -96,6 +126,92 @@ func TestOpenCodeHealthRequiresManagedListenerAndHealthyBody(t *testing.T) {
 	assert.False(t, openCodeHealthy(db.OpenCodeRuntime{
 		PID: os.Getpid(), ServerURL: bareOK.URL, Password: password,
 	}))
+}
+
+func TestEnsureOpenCodeSessionPermissionAppendsOnlyWhenSuffixMissing(t *testing.T) {
+	const password = "private-password"
+	current := []harness.OpenCodePermissionRule{{
+		Permission: "bash", Pattern: "*", Action: "allow",
+	}}
+	patches := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pass, ok := r.BasicAuth()
+		require.True(t, ok)
+		assert.Equal(t, password, pass)
+		assert.Equal(t, "/session/ses_test", r.URL.Path)
+		switch r.Method {
+		case http.MethodGet:
+		case http.MethodPatch:
+			patches++
+			var body struct {
+				Permission []harness.OpenCodePermissionRule `json:"permission"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			current = append(current, body.Permission...)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"id": "ses_test", "permission": current,
+		}))
+	}))
+	defer server.Close()
+
+	runtime := db.OpenCodeRuntime{
+		ConvID: "ses_test", PID: os.Getpid(), ServerURL: server.URL,
+		Password: password, Cwd: "/tmp/project", PermissionJSON: openCodeTestPermissionJSON,
+	}
+	require.NoError(t, ensureOpenCodeSessionPermission(runtime))
+	require.NoError(t, ensureOpenCodeSessionPermission(runtime))
+	assert.Equal(t, 1, patches, "the exact suffix must not be appended repeatedly")
+	expected, err := decodeOpenCodePermissionRules(openCodeTestPermissionJSON)
+	require.NoError(t, err)
+	assert.True(t, openCodePermissionHasSuffix(current, expected))
+}
+
+func TestReconcileOpenCodeRuntimeVerifiesPermissionOnHealthyServer(t *testing.T) {
+	setupTestDB(t)
+	const password = "private-password"
+	patches := 0
+	var current []harness.OpenCodePermissionRule
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/global/health":
+			_, _ = w.Write([]byte(`{"healthy":true}`))
+		case "/session/ses_reconcile":
+			if r.Method == http.MethodPatch {
+				patches++
+				var body struct {
+					Permission []harness.OpenCodePermissionRule `json:"permission"`
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				current = append(current, body.Permission...)
+			}
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"id": "ses_reconcile", "permission": current,
+			}))
+		case "/event":
+			http.Error(w, "closed", http.StatusServiceUnavailable)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "spwn-reconcile", ConvID: "ses_reconcile",
+		ServerURL: server.URL, Password: password, PID: os.Getpid(),
+		Cwd: "/tmp/project", PermissionJSON: openCodeTestPermissionJSON,
+	}))
+	assert.True(t, reconcileOpenCodeRuntime("spwn-reconcile"))
+	assert.Equal(t, 1, patches)
+
+	openCodeProcesses.Lock()
+	if process := openCodeProcesses.bySession["spwn-reconcile"]; process != nil && process.cancel != nil {
+		process.cancel()
+	}
+	delete(openCodeProcesses.bySession, "spwn-reconcile")
+	openCodeProcesses.Unlock()
 }
 
 func TestOpenCodeLaunchPromptCarriesModelAndVariant(t *testing.T) {

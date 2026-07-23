@@ -328,11 +328,22 @@ func dirWriteProofCallerExempt(callerConvID string) (bool, error) {
 // profile, Claude on/inherit) or is fully open (gated by the lineage guard
 // to fully-open parents, which are proof-exempt anyway).
 func childSandboxGrantsDirWrite(harnessName, mode string) bool {
-	if harnessOrDefault(harnessName) == harness.OpenCodeName {
-		return strings.TrimSpace(mode) == harness.OpenCodeSandboxOff
+	switch harnessOrDefault(harnessName) {
+	case harness.OpenCodeName:
+		switch strings.TrimSpace(mode) {
+		case harness.OpenCodeSandboxAccessControl, harness.OpenCodeSandboxOff:
+			return true
+		default:
+			// Unknown OpenCode modes are rejected by the sandbox-lineage
+			// guard. Be conservative here too: a missing classification must
+			// never skip the write proof while the rejection path evolves.
+			return true
+		}
+	case harness.CodexName:
+		return strings.TrimSpace(mode) != harness.SandboxReadOnly
+	default:
+		return true
 	}
-	return harnessOrDefault(harnessName) != harness.CodexName ||
-		strings.TrimSpace(mode) != harness.SandboxReadOnly
 }
 
 // requireDirWriteProof gates a dir-granting request behind the write-proof.

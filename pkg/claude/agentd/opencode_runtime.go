@@ -83,14 +83,40 @@ var (
 	sendOpenCodePromptForSpawn   = sendOpenCodePrompt
 )
 
-func startOpenCodeRuntime(sessionID, cwd, title, resumeID string) (*openCodeLaunch, error) {
+func startOpenCodeRuntime(sessionID, cwd, title, resumeID, permissionJSON string) (*openCodeLaunch, error) {
+	permissionJSON = strings.TrimSpace(permissionJSON)
+	if permissionJSON == "" {
+		return nil, fmt.Errorf("OpenCode permission policy is required")
+	}
+	if _, err := decodeOpenCodePermissionRules(permissionJSON); err != nil {
+		return nil, err
+	}
+	var err error
+	cwd, err = resolveOpenCodeLaunchCwd(cwd)
+	if err != nil {
+		return nil, err
+	}
 	existing, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("look up OpenCode runtime: %w", err)
 	}
 	if existing != nil {
-		if openCodeHealthyAfterRetries(*existing,
+		// OpenCode's permission paths and API instance are both rooted in cwd.
+		// Never reuse a healthy endpoint for a different directory identity:
+		// patching a policy compiled for cwd B through cwd A would be ambiguous
+		// and could silently target the wrong session instance.
+		sameCwd := strings.TrimSpace(existing.Cwd) != "" && existing.Cwd == cwd
+		if sameCwd && openCodeHealthyAfterRetries(*existing,
 			openCodeHealthAttempts, openCodeHealthRetryDelay) {
+			if existing.PermissionJSON != permissionJSON {
+				existing.PermissionJSON = permissionJSON
+				if err := db.UpsertOpenCodeRuntime(*existing); err != nil {
+					return nil, fmt.Errorf("persist refreshed OpenCode permission policy: %w", err)
+				}
+			}
+			if err := ensureOpenCodeSessionPermission(*existing); err != nil {
+				return nil, fmt.Errorf("verify OpenCode session permission: %w", err)
+			}
 			ensureOpenCodeSSE(*existing)
 			return &openCodeLaunch{
 				SessionID: sessionID, ConvID: existing.ConvID,
@@ -126,11 +152,12 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID string) (*openCodeLaun
 			return nil, err
 		}
 		runtime := db.OpenCodeRuntime{
-			SessionID: sessionID,
-			ConvID:    resumeID,
-			ServerURL: serverURL,
-			Password:  password,
-			Cwd:       cwd,
+			SessionID:      sessionID,
+			ConvID:         resumeID,
+			ServerURL:      serverURL,
+			Password:       password,
+			Cwd:            cwd,
+			PermissionJSON: permissionJSON,
 		}
 		process, err := startOpenCodeProcess(runtime)
 		if err != nil {
@@ -152,6 +179,9 @@ func startOpenCodeRuntime(sessionID, cwd, title, resumeID string) (*openCodeLaun
 				_ = stopOpenCodeRuntime(sessionID)
 				return nil, fmt.Errorf("persist OpenCode conversation id: %w", err)
 			}
+		} else if err := ensureOpenCodeSessionPermission(runtime); err != nil {
+			_ = stopOpenCodeRuntime(sessionID)
+			return nil, fmt.Errorf("reapply OpenCode session permission: %w", err)
 		}
 		ensureOpenCodeSSE(runtime)
 		return &openCodeLaunch{
@@ -296,7 +326,11 @@ func openCodeHealthyAfterRetries(runtime db.OpenCodeRuntime, attempts int, delay
 }
 
 func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, error) {
-	body := map[string]string{}
+	rules, err := decodeOpenCodePermissionRules(runtime.PermissionJSON)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]any{"permission": rules}
 	if strings.TrimSpace(title) != "" {
 		body["title"] = title
 	}
@@ -314,7 +348,8 @@ func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, er
 		return "", fmt.Errorf("create OpenCode session: HTTP %d", response.StatusCode)
 	}
 	var created struct {
-		ID string `json:"id"`
+		ID         string                           `json:"id"`
+		Permission []harness.OpenCodePermissionRule `json:"permission"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&created); err != nil {
 		return "", fmt.Errorf("decode OpenCode session: %w", err)
@@ -322,7 +357,117 @@ func createOpenCodeSession(runtime db.OpenCodeRuntime, title string) (string, er
 	if !strings.HasPrefix(created.ID, "ses_") {
 		return "", fmt.Errorf("create OpenCode session returned invalid id %q", created.ID)
 	}
+	if !openCodePermissionHasSuffix(created.Permission, rules) {
+		return "", fmt.Errorf("OpenCode session did not retain the permission policy at creation")
+	}
 	return created.ID, nil
+}
+
+func decodeOpenCodePermissionRules(raw string) ([]harness.OpenCodePermissionRule, error) {
+	var rules []harness.OpenCodePermissionRule
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+		return nil, fmt.Errorf("decode OpenCode permission policy: %w", err)
+	}
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("OpenCode permission policy is empty")
+	}
+	for i, rule := range rules {
+		if strings.TrimSpace(rule.Permission) == "" || strings.TrimSpace(rule.Pattern) == "" {
+			return nil, fmt.Errorf("OpenCode permission rule %d has an empty permission or pattern", i)
+		}
+		switch rule.Action {
+		case "allow", "ask", "deny":
+		default:
+			return nil, fmt.Errorf("OpenCode permission rule %d has invalid action %q", i, rule.Action)
+		}
+	}
+	return rules, nil
+}
+
+func ensureOpenCodeSessionPermission(runtime db.OpenCodeRuntime) error {
+	if strings.TrimSpace(runtime.PermissionJSON) == "" {
+		// A v149 runtime row cannot prove what authority its live session has.
+		// Reconciliation must fail closed rather than blessing the historical
+		// unscoped posture; the reaper will stop it and a current relaunch will
+		// compile and persist an explicit policy.
+		return fmt.Errorf("OpenCode runtime has no persisted permission policy; relaunch it under current access control")
+	}
+	expected, err := decodeOpenCodePermissionRules(runtime.PermissionJSON)
+	if err != nil {
+		return err
+	}
+	current, err := getOpenCodeSessionPermission(runtime)
+	if err != nil {
+		return err
+	}
+	if openCodePermissionHasSuffix(current, expected) {
+		return nil
+	}
+	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
+		"?directory=" + url.QueryEscape(runtime.Cwd)
+	request, err := openCodeRequest(http.MethodPatch, endpoint, runtime,
+		map[string]any{"permission": expected})
+	if err != nil {
+		return err
+	}
+	response, err := openCodeHTTPClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("reapply OpenCode session permission: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("reapply OpenCode session permission: HTTP %d", response.StatusCode)
+	}
+	var updated struct {
+		Permission []harness.OpenCodePermissionRule `json:"permission"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&updated); err != nil {
+		return fmt.Errorf("decode reapplied OpenCode session permission: %w", err)
+	}
+	if !openCodePermissionHasSuffix(updated.Permission, expected) {
+		return fmt.Errorf("OpenCode session did not retain the reapplied permission policy")
+	}
+	return nil
+}
+
+func getOpenCodeSessionPermission(runtime db.OpenCodeRuntime) ([]harness.OpenCodePermissionRule, error) {
+	if strings.TrimSpace(runtime.ConvID) == "" {
+		return nil, fmt.Errorf("OpenCode conversation id is empty")
+	}
+	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
+		"?directory=" + url.QueryEscape(runtime.Cwd)
+	request, err := openCodeRequest(http.MethodGet, endpoint, runtime, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := openCodeHTTPClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("read OpenCode session permission: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("read OpenCode session permission: HTTP %d", response.StatusCode)
+	}
+	var session struct {
+		Permission []harness.OpenCodePermissionRule `json:"permission"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&session); err != nil {
+		return nil, fmt.Errorf("decode OpenCode session permission: %w", err)
+	}
+	return session.Permission, nil
+}
+
+func openCodePermissionHasSuffix(current, expected []harness.OpenCodePermissionRule) bool {
+	if len(expected) == 0 || len(current) < len(expected) {
+		return false
+	}
+	offset := len(current) - len(expected)
+	for i := range expected {
+		if current[offset+i] != expected[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort string) error {
@@ -488,6 +633,11 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 	}
 	if openCodeHealthyAfterRetries(*runtime,
 		openCodeHealthAttempts, openCodeHealthRetryDelay) {
+		if err := ensureOpenCodeSessionPermission(*runtime); err != nil {
+			slog.Error("OpenCode session permission verification failed",
+				"session", sessionID, "error", err)
+			return false
+		}
 		ensureOpenCodeSSE(*runtime)
 		return true
 	}
@@ -505,6 +655,12 @@ func reconcileOpenCodeRuntime(sessionID string) bool {
 	runtime.PID = process.cmd.Process.Pid
 	if err := db.UpsertOpenCodeRuntime(*runtime); err != nil {
 		slog.Error("OpenCode server restart state could not be persisted",
+			"session", sessionID, "error", err)
+		stopOpenCodeProcess(*runtime, process)
+		return false
+	}
+	if err := ensureOpenCodeSessionPermission(*runtime); err != nil {
+		slog.Error("OpenCode session permission reapply failed",
 			"session", sessionID, "error", err)
 		stopOpenCodeProcess(*runtime, process)
 		return false

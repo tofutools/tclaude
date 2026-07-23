@@ -120,6 +120,42 @@ func TestSpawnSandboxLineage_Matrix(t *testing.T) {
 			},
 			wantStatus: http.StatusForbidden,
 		},
+		{
+			name:          "opencode access control can spawn same",
+			parentHarness: harness.OpenCodeName,
+			parentSandbox: harness.OpenCodeSandboxAccessControl,
+			body: map[string]any{
+				"name":     "worker",
+				"harness":  harness.OpenCodeName,
+				"sandbox":  harness.OpenCodeSandboxAccessControl,
+				"approval": harness.OpenCodeApprovalDeny,
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:          "opencode access control cannot spawn opencode off",
+			parentHarness: harness.OpenCodeName,
+			parentSandbox: harness.OpenCodeSandboxAccessControl,
+			body: map[string]any{
+				"name":     "worker",
+				"harness":  harness.OpenCodeName,
+				"sandbox":  harness.OpenCodeSandboxOff,
+				"approval": harness.OpenCodeApprovalDeny,
+			},
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:          "unknown opencode parent mode fails closed",
+			parentHarness: harness.OpenCodeName,
+			parentSandbox: "unknown",
+			body: map[string]any{
+				"name":     "worker",
+				"harness":  harness.OpenCodeName,
+				"sandbox":  harness.OpenCodeSandboxAccessControl,
+				"approval": harness.OpenCodeApprovalDeny,
+			},
+			wantStatus: http.StatusForbidden,
+		},
 	}
 
 	for i, tt := range tests {
@@ -277,6 +313,8 @@ func haveSpawnCapableSandboxParent(t *testing.T, f *testharness.Flow, group, con
 	approval := "bypassPermissions"
 	if h == harness.CodexName {
 		approval = harness.ApprovalNever
+	} else if h == harness.OpenCodeName {
+		approval = harness.OpenCodeApprovalDeny
 	}
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID:             "sess-" + convID,

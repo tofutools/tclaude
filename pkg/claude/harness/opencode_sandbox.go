@@ -5,34 +5,48 @@ import (
 	"strings"
 )
 
-// OpenCodeSandboxOff is OpenCode's only honest launch-containment posture.
-// OpenCode permissions gate tools, but OpenCode does not provide an OS sandbox
-// that can enforce tclaude filesystem or network policy.
-const OpenCodeSandboxOff = "off"
+const (
+	// OpenCodeSandboxAccessControl applies a tclaude-generated OpenCode
+	// permission ruleset. It limits the built-in read/edit tools with validated
+	// lexical path patterns, but it is not an OS sandbox: symlink traversal is
+	// not contained, and shell is therefore disabled in this mode.
+	OpenCodeSandboxAccessControl = "access-control"
 
-// openCodeSandbox surfaces the absence of OS containment as an explicit,
-// catalog-driven launch choice. Keeping the single mode in a real catalog
-// makes the posture visible in spawn/profile UIs and persistable in launch
-// profiles instead of silently presenting OpenCode as sandbox-capable.
+	// OpenCodeSandboxOff disables directory scoping. Approval policy still
+	// applies, so selecting off does not erase the fail-closed tool posture.
+	OpenCodeSandboxOff = "off"
+)
+
+// openCodeSandbox surfaces both tclaude's soft access-control policy and the
+// explicit no-scoping posture. Keeping them in a real catalog makes the
+// distinction visible in spawn/profile UIs and persistable in launch profiles
+// without misrepresenting either one as an OS sandbox.
 type openCodeSandbox struct{}
 
-func (openCodeSandbox) DefaultMode() string { return OpenCodeSandboxOff }
+func (openCodeSandbox) DefaultMode() string { return OpenCodeSandboxAccessControl }
 
-func (openCodeSandbox) Modes() []string { return []string{OpenCodeSandboxOff} }
+func (openCodeSandbox) Modes() []string {
+	return []string{OpenCodeSandboxAccessControl, OpenCodeSandboxOff}
+}
 
 func (openCodeSandbox) ModeHelp(mode string) string {
-	if strings.TrimSpace(mode) != OpenCodeSandboxOff {
+	switch strings.TrimSpace(mode) {
+	case OpenCodeSandboxAccessControl:
+		return "Lexical soft access control: built-in reads/edits follow relative path rules and shell is disabled. This is not an OS sandbox and does not resolve or contain symlink targets; the agent cannot build, test, or use git through bash."
+	case OpenCodeSandboxOff:
+		return "⚠ No directory scoping or OS containment. The selected tool approval policy still applies; bash is never auto-approved."
+	default:
 		return ""
 	}
-	return "⚠ No tclaude OS containment — OpenCode runs without tclaude filesystem or network sandboxing. OpenCode's own tool permission rules still apply."
 }
 
 func (openCodeSandbox) ValidateMode(mode string) (string, error) {
 	mode = strings.TrimSpace(mode)
 	switch mode {
-	case "", OpenCodeSandboxOff:
+	case "", OpenCodeSandboxAccessControl, OpenCodeSandboxOff:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("invalid opencode sandbox mode %q (want %s)", mode, OpenCodeSandboxOff)
+		return "", fmt.Errorf("invalid opencode sandbox mode %q (want %s|%s)",
+			mode, OpenCodeSandboxAccessControl, OpenCodeSandboxOff)
 	}
 }

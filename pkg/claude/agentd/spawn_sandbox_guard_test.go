@@ -73,27 +73,48 @@ func TestSandboxProfilesDisabledForExplicitNoContainmentModes(t *testing.T) {
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxManagedProfile))
 	require.False(t, sandboxProfilesDisabled(harness.CodexName, harness.SandboxReadOnly))
 	require.False(t, sandboxProfilesDisabled(harness.DefaultName, harness.ClaudeSandboxOff))
+	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, harness.OpenCodeSandboxAccessControl))
 	require.False(t, sandboxProfilesDisabled(harness.OpenCodeName, ""))
 }
 
-func TestOpenCodePolicyRepresentabilityFailsClosedIfBypassIsMissed(t *testing.T) {
+func TestOpenCodePolicyRepresentabilityUsesAccessControlAndFailsClosedOtherwise(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
 		Filesystem: []sandboxpolicy.FilesystemGrant{{Path: root, Access: sandboxpolicy.AccessRead}},
 	}}
-	failure := sandboxProfileCapabilityFailure(harness.OpenCodeName, harness.OpenCodeSandboxOff, snapshot)
-	require.NotNil(t, failure)
-	require.Equal(t, "unsupported_sandbox_profile_filesystem", failure.Kind)
-	require.Contains(t, failure.Msg, "no tclaude OS containment")
+	require.Nil(t, sandboxProfileCapabilityFailure(
+		harness.OpenCodeName, harness.OpenCodeSandboxAccessControl, snapshot))
+	for _, mode := range []string{harness.OpenCodeSandboxOff, "", "unknown"} {
+		failure := sandboxProfileCapabilityFailure(harness.OpenCodeName, mode, snapshot)
+		require.NotNil(t, failure)
+		require.Equal(t, "unsupported_sandbox_profile_filesystem", failure.Kind)
+		require.Contains(t, failure.Msg, harness.OpenCodeSandboxAccessControl)
+	}
 }
 
-func TestOpenCodeOffIsClassifiedAsUnsandboxedForLineage(t *testing.T) {
+func TestOpenCodeSandboxLineageClassifiesAccessControlOffAndUnknown(t *testing.T) {
 	openCodeOff := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxOff}
 	require.True(t, spawnSandboxLineageAllowed(openCodeOff, openCodeOff))
 	require.False(t, spawnSandboxLineageAllowed(
 		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn},
 		openCodeOff,
+	))
+
+	access := spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: harness.OpenCodeSandboxAccessControl}
+	require.True(t, spawnSandboxLineageAllowed(access, access))
+	require.True(t, spawnSandboxLineageAllowed(access,
+		spawnLineageSandbox{Harness: harness.DefaultName, Mode: harness.ClaudeSandboxOn}))
+	require.True(t, spawnSandboxLineageAllowed(access,
+		spawnLineageSandbox{Harness: harness.CodexName, Mode: harness.SandboxManagedProfile}))
+	require.False(t, spawnSandboxLineageAllowed(access, openCodeOff))
+	require.False(t, spawnSandboxLineageAllowed(
+		spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: ""},
+		access,
+	))
+	require.False(t, spawnSandboxLineageAllowed(
+		access,
+		spawnLineageSandbox{Harness: harness.OpenCodeName, Mode: "unknown"},
 	))
 }
 
@@ -103,6 +124,7 @@ func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *
 	}}
 
 	require.Nil(t, sandboxProfileCapabilityFailure(harness.CodexName, harness.SandboxManagedProfile, snapshot))
+	require.Nil(t, sandboxProfileCapabilityFailure(harness.OpenCodeName, harness.OpenCodeSandboxAccessControl, snapshot))
 	for _, tc := range []struct {
 		harness string
 		mode    string
@@ -110,6 +132,7 @@ func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *
 		{harness.DefaultName, harness.ClaudeSandboxOn},
 		{harness.CodexName, harness.SandboxReadOnly},
 		{harness.CodexName, harness.SandboxDangerFull},
+		{harness.OpenCodeName, harness.OpenCodeSandboxOff},
 	} {
 		failure := sandboxProfileCapabilityFailure(tc.harness, tc.mode, snapshot)
 		require.NotNil(t, failure)
