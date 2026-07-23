@@ -30,17 +30,18 @@ import (
 )
 
 type serveParams struct {
-	Socket               string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude-agentd.sock)"`
-	NoTray               bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
-	AutoLaunchDashboard  bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
-	Slop                 bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
-	Wizard               bool   `long:"wizard" help:"Open the auto-launched dashboard in 🧙 wizard theme — a purely cosmetic re-skin, same data. Mutually exclusive with --slop (slop wins)."`
-	Terminal             string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
-	AgentCloneCooldown   string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
-	DashboardPort        int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
-	DashboardBind        string `long:"dashboard-bind" optional:"true" help:"Host/interface the dashboard + approval listener binds to (host only; set the port via --dashboard-port). Default 127.0.0.1 = loopback only. Set e.g. 0.0.0.0 or :: to expose the local dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
-	PersistOperatorToken bool   `long:"persist-operator-token" help:"Persist the operator token across restarts (OS keychain when available, else a 0600 ~/.tclaude/operator_token file) instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
-	NoPrintHumanToken    bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
+	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude-agentd.sock)"`
+	NoTray                       bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
+	AutoLaunchDashboard          bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
+	Slop                         bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
+	Wizard                       bool   `long:"wizard" help:"Open the auto-launched dashboard in 🧙 wizard theme — a purely cosmetic re-skin, same data. Mutually exclusive with --slop (slop wins)."`
+	Terminal                     string `long:"terminal" optional:"true" help:"Terminal emulator for agent shell windows (ghostty, kitty, wezterm, alacritty, foot, iterm2, konsole, gnome-terminal, …). Default: auto-detect. Also settable via the 'terminal' field in config.json."`
+	AgentCloneCooldown           string `long:"agent-clone-cooldown" optional:"true" help:"Minimum cooldown between two clones of the same agent (Go duration, e.g. 1m, 30s; 0 disables). Overrides agent.clone_cooldown in config.json. Default 1m."`
+	DashboardPort                int    `long:"dashboard-port" optional:"true" help:"Fixed loopback port for the dashboard + approval popup. 0 (default) picks a random free port each start. Overrides agent.dashboard_port in config.json. A configured port already in use (or out of range) fails startup rather than falling back to random."`
+	DashboardBind                string `long:"dashboard-bind" optional:"true" help:"Host/interface the dashboard + approval listener binds to (host only; set the port via --dashboard-port). Default 127.0.0.1 = loopback only. Set e.g. 0.0.0.0 or :: to expose the local dashboard on the network — ONLY behind your own auth (reverse proxy / VPN / mesh), since its own gate is just a cookie + operator token. Overrides agent.dashboard_bind in config.json."`
+	PersistOperatorToken         bool   `long:"persist-operator-token" help:"Persist the operator token across restarts in a 0600 ~/.tclaude/data/operator_token file instead of minting a fresh in-memory one each start. ORs with agent.persist_operator_token in config.json. Default: off (fresh token every boot)."`
+	PersistOperatorTokenKeychain bool   `long:"persist-operator-token-keychain" help:"Explicitly persist the operator token in the OS keychain instead of the private file. Implies persistence and ORs with agent.persist_operator_token_keychain in config.json. Existing tokens are not migrated between stores."`
+	NoPrintHumanToken            bool   `long:"no-print-human-token" help:"Skip printing the operator token (TCLAUDE_HUMAN_TOKEN) banner on startup. The token is still minted and honored — this only suppresses the banner. Useful with -p / non-interactive launches where the startup output is scraped or logged."`
 }
 
 func serveCmd() *cobra.Command {
@@ -298,10 +299,13 @@ func runServe(p *serveParams) error {
 	// CLI / Unix-socket path so the daemon can fail closed instead of
 	// assuming "no Claude Code ancestor => human". By default minted fresh
 	// each daemon lifetime and held only in memory; with persistence opted
-	// in (flag ORs config) it is generated once and stored (OS keychain or
-	// a 0600 file) so it survives restarts. Never written through slog
+	// in (flag ORs config) it is generated once and stored in a 0600 private
+	// file by default; the OS keychain requires a separate explicit opt-in.
+	// Never written through slog
 	// (slog → output.log); the banner below prints it only to a TTY.
-	operatorTok, tokenSrc := resolveOperatorToken(shouldPersistOperatorToken(p.PersistOperatorToken, cfg))
+	persist, useKeychain := resolveOperatorTokenPersistence(
+		p.PersistOperatorToken, p.PersistOperatorTokenKeychain, cfg)
+	operatorTok, tokenSrc := resolveOperatorToken(persist, useKeychain)
 	slog.Info("operator token", "source", tokenSrc.kind, "persisted", tokenSrc.kind != tokenSourceEphemeral)
 
 	// Auto-launch the dashboard in the browser when the human opted in

@@ -77,7 +77,7 @@ only once.
   killing the daemon. On startup the daemon prints an **operator
   token**; the human exports it as `TCLAUDE_HUMAN_TOKEN` to run
   human-only commands. When persistent-token mode uses the private
-  file fallback, the CLI reads that file automatically instead
+  file, the CLI reads that file automatically instead
   (see [Identity](#identity)).
 
 The daemon binds one canonical socket plus two temporary compatibility sockets:
@@ -189,24 +189,31 @@ human re-copies it. Agents never need a token.
 tiresome, pass `--persist-operator-token` to `agentd serve` (or set
 `agent.persist_operator_token: true` in `~/.tclaude/data/config.json`, also a
 checkbox on the dashboard's Config tab — the two OR together). The daemon
-then generates the token once and stores it, reusing it across restarts,
-so you export it a single time. It is stored in the **OS keychain** when
-one is reachable (macOS Keychain, Linux Secret Service, Windows Credential
-Manager); on a host with no keychain backend (headless Linux, WSL without
-D-Bus) it falls back to a `0600 ~/.tclaude/data/operator_token` file. The
-secret is deliberately **not** written into `config.json` (which is
-plaintext and shows up in the Config-tab diff and backups); the file
-fallback keeps the same boundary as the in-memory token, since the agent
-sandbox already denies reads to `~/.tclaude`. You can also pin your own
-token by writing that file directly. Default (off) is the
-fresh-token-each-boot behaviour described above.
+then generates the token once and stores it, reusing it across restarts.
+By default it is stored in a
+`0600 ~/.tclaude/data/operator_token` file. The secret is deliberately **not**
+written into `config.json` (which is plaintext and shows up in the Config-tab
+diff and backups); the agent sandbox denies reads to the private
+`~/.tclaude/data` tree. You can also pin your own token by writing that file
+directly. Default (off) is the fresh-token-each-boot behaviour described above.
+
+**Keychain storage is a separate explicit opt-in.** Pass
+`--persist-operator-token-keychain` or set
+`agent.persist_operator_token_keychain: true` to use the OS keychain instead
+(macOS Keychain, Linux Secret Service, or Windows Credential Manager). This
+option implies persistence. Keychain access is platform-dependent, may show an
+unlock prompt, and is not treated as a portable agent-sandbox boundary. If the
+selected keychain cannot be read or written, agentd logs the failure and uses
+an ephemeral token for that run; it does not silently write the file. Existing
+file and keychain tokens are left in place and are never copied between stores.
 
 When `TCLAUDE_HUMAN_TOKEN` is unset, the CLI silently tries that private
 `operator_token` file before sending a request. This removes the export step
-on hosts using the file fallback while leaving ephemeral and OS-keychain
-tokens unchanged. An explicitly exported token always wins. Sandboxed agents
-cannot read the private file and continue to authenticate through their
-Unix-socket peer identity.
+for the default file-backed persistent mode. The CLI does not retrieve
+keychain-backed tokens automatically; export those from the startup banner.
+An explicitly exported token always wins. Sandboxed agents cannot read the
+private file and continue to authenticate through their Unix-socket peer
+identity.
 
 Agentd-managed harness sessions also inherit `TCLAUDE_AGENT_HINT=1`, including
 their harness-native subagents. The CLI uses this advisory hint to skip the
@@ -1844,8 +1851,10 @@ embeds.
   held in memory only — never persisted to disk — and a daemon restart
   mints a fresh one. Opting in (`--persist-operator-token` /
   `agent.persist_operator_token`) makes it stable across restarts,
-  stored in the OS keychain or a `0600 ~/.tclaude/data/operator_token` file;
-  see [The operator token](#the-operator-token).
+  stored in a `0600 ~/.tclaude/data/operator_token` file. OS-keychain storage
+  requires the separate explicit `--persist-operator-token-keychain` /
+  `agent.persist_operator_token_keychain` opt-in; see
+  [The operator token](#the-operator-token).
 - `agent_messages` rows accumulate forever for now (no auto-prune);
   bodies are short, so this is fine for a long while.
 - Access requests and the dashboard share the daemon's loopback port;

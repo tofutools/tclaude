@@ -31,6 +31,8 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 		"state: configState",
 		`id="cfg-save"`,
 		`id="cfg-sudo-json"`,
+		`id="cfg-agent-persisttoken-keychain"`,
+		"a.persist_operator_token_keychain",
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("Config Preact wiring missing %q", needle)
@@ -59,5 +61,14 @@ func TestDashboardConfigPreactBoundary(t *testing.T) {
 	}
 	if !strings.Contains(markup, `id="cfg-save"`) || !strings.Contains(markup, `id="cfg-sudo-json"`) {
 		t.Error("Config form controls are not owned by the Preact markup component")
+	}
+	for _, needle := range []string{
+		"checked = !!a.persist_operator_token_keychain",
+		"a.persist_operator_token_keychain = true",
+		"delete a.persist_operator_token_keychain",
+	} {
+		if !strings.Contains(adapter, needle) {
+			t.Errorf("Config adapter missing keychain persistence round-trip %q", needle)
+		}
 	}
 }

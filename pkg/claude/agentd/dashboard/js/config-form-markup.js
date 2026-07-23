@@ -458,8 +458,9 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Persist operator token</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-persisttoken" /> keep the same operator token across restarts (same as <code>--persist-operator-token</code>)</label>
-        <span class="cfg-hint">Default off: a fresh token is minted every <code>agentd serve</code>, so you re-export <code>TCLAUDE_HUMAN_TOKEN</code> after each restart. On: the token is generated once and stored in the OS keychain (or a <code>0600 ~/.tclaude/operator_token</code> file when no keychain is available), so you export it just once. The secret is never written to <code>config.json</code>. Takes effect on the next <code>agentd serve</code>.</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-persisttoken" /> keep the same operator token across restarts in the private file (same as <code>--persist-operator-token</code>)</label>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-persisttoken-keychain" /> explicitly use the OS keychain instead (same as <code>--persist-operator-token-keychain</code>; implies persistence)</label>
+        <span class="cfg-hint">Default off: a fresh token is minted every <code>agentd serve</code>. File persistence stores it at <code>0600 ~/.tclaude/data/operator_token</code>, which the human CLI reads automatically and agent sandboxes deny. Keychain storage is an explicit opt-in because keychain access is platform-dependent and may prompt; the CLI does not retrieve it automatically. Existing tokens are not copied between stores. The secret is never written to <code>config.json</code>. Takes effect on the next <code>agentd serve</code>.</span>
       </div>
     </div>
 

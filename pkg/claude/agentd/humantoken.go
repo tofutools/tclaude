@@ -92,19 +92,20 @@ func generateOperatorToken() string {
 // fresh one each daemon lifetime, lost on exit, so the human re-exports
 // TCLAUDE_HUMAN_TOKEN after every restart. The human can opt into a STABLE
 // token (config agent.persist_operator_token / `--persist-operator-token`)
-// that survives restarts. The daemon stores it in the OS keychain when one
-// is reachable, otherwise a 0600 file under ~/.tclaude.
+// that survives restarts. The daemon stores it in a 0600 file under
+// ~/.tclaude/data by default. The OS keychain is a separate explicit opt-in
+// (agent.persist_operator_token_keychain /
+// `--persist-operator-token-keychain`) because keychain access is not a
+// portable agent-sandbox boundary.
 //
-// STORAGE THREAT MODEL — the file fallback keeps the same boundary as the
-// in-memory token: the agent sandbox denies reads to ~/.tclaude (only the
-// agentd socket is carved out), so a sandboxed agent cannot read the file;
+// STORAGE THREAT MODEL — the private file keeps the same boundary as the
+// in-memory token: the agent sandbox denies reads to ~/.tclaude/data, so a
+// sandboxed agent cannot read the file;
 // a non-sandboxed same-uid process could, but it can already read the
 // human's /proc/<pid>/environ and mutate ~/.tclaude state, so the token was
-// never a boundary against it (see the package-level note above). The
-// keychain path narrows agent access further where the platform blocks it.
-// Encrypting the file with a key that also lives on the same machine would
-// add no boundary (the key sits in the same trust zone) — real at-rest
-// encryption needs the OS keychain, which is exactly the keychain branch.
+// never a boundary against it (see the package-level note above). A keychain
+// may add at-rest protection, but tclaude does not claim that its platform
+// IPC/access policy excludes agents.
 
 const (
 	// keychainService / keychainUser identify the operator-token secret in
@@ -149,56 +150,74 @@ func shouldPersistOperatorToken(flagSet bool, cfg *config.Config) bool {
 	return cfg != nil && cfg.Agent != nil && cfg.Agent.PersistOperatorToken
 }
 
+// shouldPersistOperatorTokenKeychain reports whether the human explicitly
+// selected keychain-backed persistence. This option implies persistence at
+// the serve call site; it never silently follows keychain availability.
+func shouldPersistOperatorTokenKeychain(flagSet bool, cfg *config.Config) bool {
+	if flagSet {
+		return true
+	}
+	return cfg != nil && cfg.Agent != nil && cfg.Agent.PersistOperatorTokenKeychain
+}
+
+// resolveOperatorTokenPersistence applies the two independent flag/config OR
+// rules and the one implication: selecting the keychain also enables
+// persistence. When both stores are selected, the explicit keychain choice
+// wins.
+func resolveOperatorTokenPersistence(persistFlag, keychainFlag bool, cfg *config.Config) (persist, useKeychain bool) {
+	useKeychain = shouldPersistOperatorTokenKeychain(keychainFlag, cfg)
+	persist = shouldPersistOperatorToken(persistFlag, cfg) || useKeychain
+	return persist, useKeychain
+}
+
 // resolveOperatorToken sources the operator token for this daemon lifetime
 // and installs it as the live token. persist=false keeps the historical
 // behaviour (a fresh in-memory token); persist=true loads or creates a
-// stable one (keychain, else file). Returns the token and where it came
-// from.
-func resolveOperatorToken(persist bool) (string, tokenSource) {
+// stable one in the selected backend. Returns the token and where it came
+// from. The stores are independent: selecting one never reads or writes the
+// other.
+func resolveOperatorToken(persist, useKeychain bool) (string, tokenSource) {
 	if !persist {
 		return generateOperatorToken(), tokenSource{kind: tokenSourceEphemeral}
 	}
-	tok, src := loadOrCreateOperatorToken()
+	var tok string
+	var src tokenSource
+	if useKeychain {
+		tok, src = loadOrCreateOperatorTokenKeychain()
+	} else {
+		tok, src = loadOrCreateOperatorTokenFileBacked()
+	}
 	setOperatorToken(tok)
 	return tok, src
 }
 
-// loadOrCreateOperatorToken returns a stable operator token, preferring the
-// OS keychain and falling back to a 0600 ~/.tclaude/operator_token file when
-// no keychain backend is reachable (headless Linux / WSL without D-Bus, …).
-// If persistence fails outright it degrades to an ephemeral token rather
-// than leaving the daemon without one.
-func loadOrCreateOperatorToken() (string, tokenSource) {
+// loadOrCreateOperatorTokenKeychain reads or creates the explicitly selected
+// keychain token. Failure degrades to an ephemeral token rather than silently
+// writing the private file or leaving the daemon without a credential.
+func loadOrCreateOperatorTokenKeychain() (string, tokenSource) {
 	switch tok, found, err := keychainLookup(); {
 	case err != nil:
-		// Backend unreachable — fall through to the file fallback.
-		slog.Info("operator token: OS keychain unavailable, using file fallback", "err", err)
+		slog.Error("operator token: explicitly selected OS keychain is unavailable; using an ephemeral token", "err", err)
+		return mintOperatorToken(), tokenSource{kind: tokenSourceEphemeral}
 	case found:
 		return tok, tokenSource{kind: tokenSourceKeychain}
 	default:
-		// Backend reachable but holds no token yet. Prefer ADOPTING an
-		// existing file token (left by an earlier keychain-less boot) over
-		// minting a fresh one, so the keychain and the file converge on a
-		// single value instead of diverging — that keeps the exported
-		// TCLAUDE_HUMAN_TOKEN stable as a host gains a keychain backend.
-		// (Residual: a keychain that flaps available→unavailable→available
-		// across boots can still flip the token, since the unavailable boot
-		// mints into the file independently. Rare; both values are valid
-		// while live.)
-		seed := existingFileToken()
-		if seed == "" {
-			seed = mintOperatorToken()
-		}
+		seed := mintOperatorToken()
 		if serr := keychainSet(keychainService, keychainUser, seed); serr != nil {
-			slog.Warn("operator token: keychain store failed, using file fallback", "err", serr)
-			break
+			slog.Error("operator token: explicitly selected OS keychain store failed; using an ephemeral token", "err", serr)
+			return seed, tokenSource{kind: tokenSourceEphemeral}
 		}
 		return seed, tokenSource{kind: tokenSourceKeychain}
 	}
+}
 
+// loadOrCreateOperatorTokenFileBacked reads or creates the default persistent
+// token file. Failure degrades to an ephemeral token rather than leaving the
+// daemon without a credential.
+func loadOrCreateOperatorTokenFileBacked() (string, tokenSource) {
 	tok, src, err := loadOrCreateOperatorTokenFile(operatorTokenFilePath())
 	if err != nil {
-		slog.Error("operator token: persistence failed, falling back to an ephemeral token", "err", err)
+		slog.Error("operator token: file persistence failed, using an ephemeral token", "err", err)
 		return mintOperatorToken(), tokenSource{kind: tokenSourceEphemeral}
 	}
 	return tok, src
@@ -223,7 +242,7 @@ func keychainLookup() (tok string, found bool, err error) {
 	return v, true, nil
 }
 
-// operatorTokenFilePath is the 0600 file backing the keychain fallback.
+// operatorTokenFilePath is the default 0600 persistent-token file.
 // Empty when the home directory cannot be resolved (the caller then
 // degrades to an ephemeral token). A var so tests can redirect it at a temp
 // dir without touching the real ~/.tclaude.
@@ -233,22 +252,6 @@ var operatorTokenFilePath = func() string {
 		return ""
 	}
 	return filepath.Join(dataDir, "operator_token")
-}
-
-// existingFileToken returns the token currently stored in the fallback file
-// (trimmed), or "" if there is none / it is unreadable. Best-effort: it
-// never errors, so the keychain-adopt path can treat "" as "nothing to
-// adopt" and mint instead.
-func existingFileToken() string {
-	path := operatorTokenFilePath()
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
 }
 
 // loadOrCreateOperatorTokenFile reads the operator token from path, or mints
