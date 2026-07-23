@@ -22,7 +22,7 @@ func TestOpenCodeCatalogDefaultsAreFailClosed(t *testing.T) {
 	assert.Equal(t, OpenCodeApprovalDeny, h.Approval.DefaultPolicy())
 	assert.False(t, h.ApprovalsReviewer)
 	assert.Contains(t, h.Sandbox.ModeHelp(OpenCodeSandboxAccessControl), "not an OS sandbox")
-	assert.Contains(t, h.Sandbox.ModeHelp(OpenCodeSandboxAccessControl), "cannot build, test, or use git")
+	assert.Contains(t, h.Sandbox.ModeHelp(OpenCodeSandboxAccessControl), "tools remain enabled")
 }
 
 func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
@@ -76,8 +76,10 @@ func TestBuildOpenCodePermissionRulesAccessControl(t *testing.T) {
 	}
 	assertRuleBefore(t, rules, protectedDeny, breakGlassAllow)
 
-	assert.Contains(t, rules, OpenCodePermissionRule{Permission: "bash", Pattern: "*", Action: "deny"})
-	assert.Contains(t, rules, OpenCodePermissionRule{Permission: "glob", Pattern: "*", Action: "deny"})
+	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+		assert.Contains(t, rules,
+			OpenCodePermissionRule{Permission: permission, Pattern: "*", Action: "allow"})
+	}
 	assert.Contains(t, rules, OpenCodePermissionRule{Permission: "webfetch", Pattern: "*", Action: "allow"})
 	assert.Contains(t, rules, OpenCodePermissionRule{Permission: "websearch", Pattern: "*", Action: "allow"})
 }
@@ -110,7 +112,50 @@ func TestBuildOpenCodePermissionRulesApprovalAndNetworkMatrix(t *testing.T) {
 			assert.Contains(t, rules, OpenCodePermissionRule{Permission: "edit", Pattern: "*", Action: tt.wantEdit})
 			assert.Contains(t, rules, OpenCodePermissionRule{Permission: "webfetch", Pattern: "*", Action: tt.wantWeb})
 			assert.Equal(t, tt.wantEnv, lastExactOpenCodeAction(rules, "read", "*.env"))
-			assert.Equal(t, "deny", lastExactOpenCodeAction(rules, "bash", "*"))
+			assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "bash", "*"))
+		})
+	}
+}
+
+func TestBuildOpenCodePermissionRulesAccessControlAllowsToolsWithoutReopeningProtectedDisk(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", "")
+	canonicalHome, err := filepath.EvalSymlinks(home)
+	require.NoError(t, err)
+
+	protected, err := sandboxpolicy.ProtectedPaths()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{
+		filepath.Join(canonicalHome, ".claude", "sessions"),
+		filepath.Join(canonicalHome, ".tclaude", "data"),
+	}, protected)
+
+	for _, approval := range []string{
+		OpenCodeApprovalDeny,
+		OpenCodeApprovalAsk,
+		OpenCodeApprovalAllowTools,
+	} {
+		t.Run(approval, func(t *testing.T) {
+			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+				Cwd:            "/repo",
+				Worktree:       "/repo",
+				SandboxMode:    OpenCodeSandboxAccessControl,
+				ApprovalPolicy: approval,
+			})
+			require.NoError(t, err)
+
+			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+				assert.Equal(t, "allow", lastExactOpenCodeAction(rules, permission, "*"))
+			}
+			for _, root := range protected {
+				protectedFile := filepath.Join(root, "private.json")
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(
+					rules, "read", relativeOpenCodeTestPattern(t, "/repo", protectedFile)))
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(
+					rules, "external_directory", protectedFile))
+			}
 		})
 	}
 }

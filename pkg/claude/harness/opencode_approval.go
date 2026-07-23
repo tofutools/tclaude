@@ -6,19 +6,19 @@ import (
 )
 
 const (
-	// OpenCodeApprovalDeny is the unattended default: reads inside the
-	// selected reach are allowed, while edits, shell, web, and unlisted tools
-	// are denied rather than left waiting for a human.
+	// OpenCodeApprovalDeny is the unattended default: reads inside the selected
+	// reach and the access-control tool baseline are allowed, while edits, web,
+	// and unlisted tools are denied rather than left waiting for a human.
 	OpenCodeApprovalDeny = "deny"
 
 	// OpenCodeApprovalAsk lets a human approve representable edits and web
-	// tools. Shell remains denied under access-control because a command cannot
-	// be honestly confined to the generated directory policy.
+	// tools. The access-control tool baseline remains enabled; with sandbox off,
+	// shell requires approval.
 	OpenCodeApprovalAsk = "ask"
 
-	// OpenCodeApprovalAllowTools automatically permits the audited built-ins
-	// the sandbox/network policy can represent. It deliberately does not
-	// auto-approve shell commands.
+	// OpenCodeApprovalAllowTools automatically permits representable edits and
+	// audited web tools. The access-control tool baseline remains enabled; with
+	// sandbox off, shell still requires approval.
 	OpenCodeApprovalAllowTools = "allow-tools"
 )
 
@@ -33,11 +33,11 @@ func (openCodeApproval) Modes() []string {
 func (openCodeApproval) ModeHelp(policy string) string {
 	switch strings.TrimSpace(policy) {
 	case OpenCodeApprovalDeny:
-		return "Read-only, fail-closed default: edits, shell, web, and unlisted tools are denied without prompting."
+		return "Fail-closed approval default: path-scoped reads and the access-control tool baseline run, while edits, web, and unlisted tools are denied without prompting."
 	case OpenCodeApprovalAsk:
-		return "Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting; shell is available only with sandbox off."
+		return "Access-control tools remain enabled. Ask a human before representable edits and permitted web tools. ⚠ Detached agents can block waiting; with sandbox off, bash also requires approval."
 	case OpenCodeApprovalAllowTools:
-		return "Automatically allow scoped edits and explicitly enabled web tools. Shell still requires a human with sandbox off and is disabled under access-control."
+		return "Automatically allow scoped edits and explicitly enabled web tools. Access-control tools remain enabled; bash with sandbox off still requires human approval."
 	default:
 		return ""
 	}
