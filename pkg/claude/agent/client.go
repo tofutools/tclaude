@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	tcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // SocketPath is the well-known location for the tclaude agentd Unix socket.
@@ -295,14 +297,35 @@ const (
 	RequestDigestHeader  = "X-Tclaude-Request-Digest"
 )
 
-// attachHumanToken adds the operator-token header to a daemon request
-// when TCLAUDE_HUMAN_TOKEN is set in the environment. The human operator
-// exports it from the agentd startup banner; agents never have it set,
-// and agentd ignores it for agent-family callers anyway. No-op when unset.
+// attachHumanToken adds the operator-token header to a daemon request. An
+// explicit TCLAUDE_HUMAN_TOKEN wins; otherwise it best-effort reads the
+// persistent file fallback from tclaude's private data directory.
+//
+// Sandboxed agents cannot read that directory, so the fallback is a silent
+// no-op for them. An unsandboxed agent may be able to read it, but such a
+// process can already read all same-uid tclaude state; more importantly,
+// agentd classifies a harness ancestor as an agent before considering this
+// token, so attaching it can never promote an agent to the human operator.
 func attachHumanToken(req *http.Request) {
-	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
+	if tok := humanToken(); tok != "" {
 		req.Header.Set(HumanTokenHeader, tok)
 	}
+}
+
+func humanToken() string {
+	if tok := strings.TrimSpace(os.Getenv(HumanTokenEnvVar)); tok != "" {
+		return tok
+	}
+	dataDir := tcommon.TclaudeDataDir()
+	if dataDir == "" {
+		return ""
+	}
+	path := filepath.Join(dataDir, "operator_token")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // DaemonRequestImpl is the indirection point for DaemonRequest so CLI
