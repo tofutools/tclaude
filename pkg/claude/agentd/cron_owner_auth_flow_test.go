@@ -262,7 +262,7 @@ func TestCronPatchOwner_EmptyAndRelativeSelectorsPreserveCanonicalBehavior(t *te
 			f := newFlow(t)
 			const caller = "croa-relative-caller-aaaa-bbbb-cccc-000000000001"
 			const priorOwner = "croa-relative-prior-aaaa-bbbb-cccc-000000000002"
-			const ambient = "croa-relative-ambient-aaaa-bbbb-cccc-00000000003"
+			const ambient = "croa-relative-ambient-aaaa-bbbb-cccc-000000000003"
 			f.HaveConvWithTitle(caller, "relative-owner-caller")
 			f.HaveEnrolledAgent(caller)
 			f.HaveConvWithTitle(priorOwner, "relative-prior-owner")
@@ -483,7 +483,7 @@ func TestCronCreate_RelativeTargetResolvesToPeerNotAmbient(t *testing.T) {
 		t.Run("relative target "+selector+" resolves to peer", func(t *testing.T) {
 			f := newFlow(t)
 			const caller = "croa-ctgt-caller-aaaa-bbbb-cccc-000000000001"
-			const ambient = "croa-ctgt-ambient-aaaa-bbbb-cccc-00000000002"
+			const ambient = "croa-ctgt-ambient-aaaa-bbbb-cccc-000000000002"
 			f.HaveConvWithTitle(caller, "ctgt-caller")
 			f.HaveEnrolledAgent(caller)
 			f.HaveConvWithTitle(ambient, "ctgt-ambient")
