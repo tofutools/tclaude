@@ -72,15 +72,15 @@ detects the harness for you.
 OpenCode's supported launch surface is currently the agentd-owned
 `agent spawn`/agent resume path. Its default `access-control` mode applies
 tclaude-generated, per-session OpenCode tool rules: reads and representable
-edits follow relative path patterns, while bash and tools that cannot express
-that path boundary are disabled. This is deliberately described as lexical
-soft access control, not an OS sandbox: OpenCode does not resolve symlinks
-before permission evaluation, so a pre-existing symlink inside an allowed path
-can point outside the authored scope. The explicit `off` mode removes path
-scoping but keeps the selected approval policy; bash is never auto-approved. A bare direct
-`session new --harness opencode` is refused because it has no authenticated
-managed-server handoff; the pane is never allowed to start an independent
-OpenCode server.
+edits follow relative path patterns, while bash, glob, grep, LSP, task, and
+skill remain available. This is deliberately described as lexical soft access
+control, not an OS sandbox: OpenCode does not resolve symlinks before permission
+evaluation, and tool permissions such as bash/glob/grep cannot be scoped to the
+same lexical disk boundary, so they can reach outside the authored paths. The
+explicit `off` mode removes path scoping but keeps the selected approval policy;
+bash is never auto-approved there. A bare direct `session new --harness
+opencode` is refused because it has no authenticated managed-server handoff;
+the pane is never allowed to start an independent OpenCode server.
 
 ## Per-harness setup
 
@@ -129,7 +129,7 @@ instead of slash-command injection).
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ⚠️ no native OS sandbox; `access-control` (default) applies lexical path rules but cannot prevent symlink traversal, `off` removes scoping |
-| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; bash is never auto-approved |
+| **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
 | **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) | ❌ no reviewer equivalent |
 | **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system | ➖ no auto-memory system |
@@ -305,17 +305,20 @@ it before considering reconciliation successful. This keeps the session policy
 authoritative even when user or agent configuration contributes earlier rules.
 
 The secure defaults are `access-control` + `deny`: the working directory and
-explicit read roots are readable, but edits, bash, web tools, and unaudited
-tools are denied. `ask` lets a present human approve representable edits and
-profile-enabled web tools, but can block a detached agent. `allow-tools`
-automatically accepts scoped edits and explicitly enabled web tools. In
-`access-control`, bash, glob, grep, LSP, task, and skill remain disabled because
-OpenCode 1.18.4 cannot bind those tools to the same directory policy. Therefore
-a scoped OpenCode agent cannot build, test, or use git through bash. In `off`,
-bash may ask under `ask` or `allow-tools`, but is never automatic. An `off`
-launch rejects an assigned filesystem or network sandbox profile rather than
-silently discarding it; select `access-control` or remove the incompatible
-profile.
+explicit read roots are readable, but edits, web tools, and unaudited
+permissions are denied. `ask` lets a present human approve representable edits
+and profile-enabled web tools, but can block a detached agent. `allow-tools`
+automatically accepts scoped edits and explicitly enabled web tools. In every
+`access-control` approval mode, bash, glob, grep, LSP, task, and skill are
+explicitly allowed so the agent retains its shell, search, language, delegation,
+and skill tools. Those permission keys are separate from
+`read`/`edit`/`external_directory` and cannot express the same lexical disk
+boundary, so tool-driven disk access can reach outside the authored paths. This
+is an accepted limitation of the soft sandbox, not an expansion of its
+path-scoped file permissions. In `off`, bash may ask under `ask` or
+`allow-tools`, but is never automatic. An `off` launch rejects an assigned
+filesystem or network sandbox profile rather than silently discarding it;
+select `access-control` or remove the incompatible profile.
 
 Sandbox-profile network access controls OpenCode's `webfetch` and `websearch`
 tools only; it is not process-level network isolation. Protected tclaude,

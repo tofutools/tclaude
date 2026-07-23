@@ -176,12 +176,13 @@ func BuildOpenCodePermissionRules(spec OpenCodePermissionSpec) ([]OpenCodePermis
 		return nil, err
 	}
 
-	// These tools cannot express a path boundary that matches the authored
-	// filesystem policy. The catch-all already denies them; explicit terminal
-	// rules make the no-shell contract reviewable and resilient to refactors.
+	// These tool permissions are separate from read/edit/external_directory
+	// and cannot express the authored lexical filesystem boundary. Keep the
+	// tools available despite that soft-sandbox limitation; explicit allows
+	// are required to reopen them after the leading catch-all deny.
 	for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
 		rules = append(rules, OpenCodePermissionRule{
-			Permission: permission, Pattern: "*", Action: openCodeActionDeny,
+			Permission: permission, Pattern: "*", Action: openCodeActionAllow,
 		})
 	}
 	rules = appendOpenCodeWebRules(rules, approval, network)

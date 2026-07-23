@@ -8,8 +8,9 @@ import (
 const (
 	// OpenCodeSandboxAccessControl applies a tclaude-generated OpenCode
 	// permission ruleset. It limits the built-in read/edit tools with validated
-	// lexical path patterns, but it is not an OS sandbox: symlink traversal is
-	// not contained, and shell is therefore disabled in this mode.
+	// lexical path patterns, but it is not an OS sandbox: symlink traversal and
+	// disk access through tools without path-scoped permission keys are not
+	// contained.
 	OpenCodeSandboxAccessControl = "access-control"
 
 	// OpenCodeSandboxOff disables directory scoping. Approval policy still
@@ -32,7 +33,7 @@ func (openCodeSandbox) Modes() []string {
 func (openCodeSandbox) ModeHelp(mode string) string {
 	switch strings.TrimSpace(mode) {
 	case OpenCodeSandboxAccessControl:
-		return "Lexical soft access control: built-in reads/edits follow relative path rules and shell is disabled. This is not an OS sandbox and does not resolve or contain symlink targets; the agent cannot build, test, or use git through bash."
+		return "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules."
 	case OpenCodeSandboxOff:
 		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. The selected tool approval policy still applies; bash is never auto-approved."
 	default:
