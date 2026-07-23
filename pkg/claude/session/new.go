@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -349,11 +350,17 @@ func runNew(params *NewParams) error {
 		if params.Resume != "" {
 			return fmt.Errorf("--session-id cannot be combined with --resume")
 		}
-		if h.Name != harness.DefaultName {
-			return fmt.Errorf("--session-id is only supported for the %q harness", harness.DefaultName)
-		}
-		if !clcommon.IsValidUUID(params.SessionID) {
-			return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
+		switch h.Name {
+		case harness.DefaultName:
+			if !clcommon.IsValidUUID(params.SessionID) {
+				return fmt.Errorf("--session-id must be a valid UUID, got %q", params.SessionID)
+			}
+		case harness.OpenCodeName:
+			if !params.ManagedLaunch || !strings.HasPrefix(params.SessionID, "ses_") {
+				return fmt.Errorf("--session-id for OpenCode is an internal agentd-minted ses_ id")
+			}
+		default:
+			return fmt.Errorf("--session-id is not supported for the %q harness", h.Name)
 		}
 	}
 	params.CwdWriteProof = strings.TrimSpace(params.CwdWriteProof)
@@ -568,7 +575,13 @@ func runNew(params *NewParams) error {
 	// Pass-through mode: --help, --version etc. — run the harness binary
 	// directly, no tmux.
 	if clcommon.ShouldRunClaudeDirect(extraArgs) {
-		cmd := exec.Command(h.Spawn.Binary(), extraArgs...)
+		binary := h.Spawn.Binary()
+		if h.Name == harness.OpenCodeName {
+			if binary, err = harness.OpenCodeExecutable(); err != nil {
+				return err
+			}
+		}
+		cmd := exec.Command(binary, extraArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -620,8 +633,12 @@ func runNew(params *NewParams) error {
 		}
 	}()
 
-	// Extract just the ID from autocomplete format (e.g., "0459cd73_[title]_prompt..." -> "0459cd73")
-	shortID := clcommon.ExtractIDFromCompletion(params.Resume)
+	// Extract just the ID from autocomplete format (e.g.,
+	// "0459cd73_[title]_prompt..." -> "0459cd73"). OpenCode's native
+	// server-issued IDs contain an underscore themselves (`ses_…`), so a
+	// managed resume carrying the full ID must not go through the historical
+	// underscore-delimited completion decoder.
+	shortID := resumeIDFromParam(h, params.Resume)
 
 	// Resolve to full UUID and get project path, via the harness's
 	// conversation source (CC's cwd-indexed resolver, or another harness's
@@ -737,6 +754,17 @@ func runNew(params *NewParams) error {
 	// harnesses without an auto-memory system. See ApplyAutoMemoryEnv.
 	ApplyAutoMemoryEnv(h, autoMemory, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
+	openCodeServerURL := ""
+	if h.UsesAuthoritativeServer() {
+		openCodeServerURL = strings.TrimSpace(os.Getenv("TCLAUDE_OPENCODE_SERVER_URL"))
+		if openCodeServerURL == "" || os.Getenv("OPENCODE_SERVER_PASSWORD") == "" {
+			return fmt.Errorf("OpenCode requires an authenticated agentd-managed server; launch it through `tclaude agent spawn`")
+		}
+		parsed, parseErr := url.Parse(openCodeServerURL)
+		if parseErr != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.Port() == "" {
+			return fmt.Errorf("invalid internal OpenCode server URL")
+		}
+	}
 
 	// Sandbox cwd-safety guard: a writable sandbox (Codex workspace-write)
 	// confines writes to the cwd subtree, so a cwd at/above $HOME would make
@@ -866,6 +894,11 @@ func runNew(params *NewParams) error {
 	executablePath := ""
 	if launchCodexSplitCapability != nil {
 		executablePath = launchCodexSplitCapability.ExecutablePath
+	} else if h.Name == harness.OpenCodeName {
+		executablePath, err = harness.OpenCodeExecutable()
+		if err != nil {
+			return fmt.Errorf("find OpenCode executable: %w", err)
+		}
 	}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, h.Name, sandboxMode, cwd)
 	if sandboxDenyCoversPath(launchSandbox, cwd) {
@@ -886,6 +919,8 @@ func runNew(params *NewParams) error {
 	}
 	harnessCmd := h.Spawn.BuildCommand(harness.SpawnSpec{
 		ExecutablePath:             executablePath,
+		Cwd:                        cwd,
+		ServerURL:                  openCodeServerURL,
 		EnvExports:                 envExports,
 		ShellEnvironment:           sandboxSnapshotEnvironment(effectiveSandbox),
 		ResumeID:                   fullConvID,
@@ -1847,6 +1882,12 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 		}
 		return convInfo.SessionID, convInfo.ProjectPath, nil
 	}
+	// OpenCode conversation discovery/listing is TCL-669. Managed relaunches
+	// already carry the full server-issued id and the durable cwd, so they can
+	// resume without pretending a partial-id ConvStore exists.
+	if h.Name == harness.OpenCodeName && strings.HasPrefix(shortID, "ses_") {
+		return shortID, cwd, nil
+	}
 	if !h.SupportsConvs() {
 		return "", "", fmt.Errorf("harness %q cannot resolve a conversation to resume", h.Name)
 	}
@@ -1858,6 +1899,14 @@ func resolveResumeConv(h *harness.Harness, shortID string, global bool, cwd stri
 		return "", "", resumeNotFoundErr(shortID, global)
 	}
 	return ref.ConvID, ref.ProjectPath, nil
+}
+
+func resumeIDFromParam(h *harness.Harness, value string) string {
+	value = strings.TrimSpace(value)
+	if h.Name == harness.OpenCodeName && strings.HasPrefix(value, "ses_") {
+		return value
+	}
+	return clcommon.ExtractIDFromCompletion(value)
 }
 
 func resumeNotFoundErr(shortID string, global bool) error {

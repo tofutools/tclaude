@@ -3,16 +3,20 @@
 tclaude started life as a wrapper around [Claude Code](https://claude.ai/code).
 It is now **harness-agnostic**: the session, conversation, agent-coordination,
 and dashboard machinery can drive more than one coding *harness* (the underlying
-agentic CLI). **Claude Code and OpenAI Codex CLI are both supported first-class
-harnesses.** Claude remains the default so existing commands and databases keep
-their historical behavior when no harness is recorded.
+agentic CLI). **Claude Code, OpenAI Codex CLI, and OpenCode are registered
+harnesses.** OpenCode support currently covers the managed serve-and-attach
+launch path described below; its broader conversation and permission adapters
+remain intentionally capability-gated. Claude remains the default so existing
+commands and databases keep their historical behavior when no harness is
+recorded.
 
-A *harness* is whichever CLI actually runs the model in the tmux pane — `claude`
-or `codex`. tclaude owns everything around it: the tmux session, the status
-tracking, the conversation index, the agent group/messaging layer, and the
-dashboard. Each harness plugs into the same seam and contributes only the parts
-that are genuinely harness-specific (how to launch it, where it stores
-conversations, which in-pane commands it understands).
+A *harness* is whichever CLI actually runs the model in the tmux pane —
+`claude`, `codex`, or an `opencode attach` client. tclaude owns everything
+around it: the tmux session, the status tracking, the conversation index, the
+agent group/messaging layer, and the dashboard. Each harness plugs into the
+same seam and contributes only the parts that are genuinely harness-specific
+(how to launch it, where it stores conversations, which in-pane commands it
+understands).
 
 The common contracts are production paths, not an experimental alternative:
 sessions, conversations, `ask`, mixed-harness agent groups, lifecycle, hooks,
@@ -49,6 +53,10 @@ tclaude session new --harness codex
 
 # Spawn a Codex agent into a group (via the daemon)
 tclaude agent spawn --group mygroup --name worker --harness codex
+
+# Spawn an OpenCode agent. agentd starts the authenticated server and the pane
+# attaches to the server-minted conversation.
+tclaude agent spawn --group mygroup --name worker --harness opencode
 ```
 
 The harness is **persisted per conversation** (a `harness` column on the
@@ -60,6 +68,11 @@ The lower-level `session new --resume` command is the exception: it selects a
 harness before searching that harness's conversation store. Add `--harness
 codex` there when resuming a Codex conversation, or use `conv resume`, which
 detects the harness for you.
+
+OpenCode's supported launch surface is currently the agentd-owned
+`agent spawn`/agent resume path. A bare direct `session new --harness opencode`
+is refused because it has no authenticated managed-server handoff; the pane is
+never allowed to start an independent OpenCode server.
 
 ## Per-harness setup
 
@@ -258,6 +271,29 @@ axis: `never` (daemon default/recommended), `untrusted`, deprecated
 source used by CLI and profile validation, so UI options cannot drift from the
 accepted policy set.
 
+### OpenCode managed server
+
+Each daemon-spawned OpenCode session has one agentd-owned
+`opencode serve --hostname 127.0.0.1 --port <port>` process. agentd generates a
+unique password, stores it only in private daemon state, and supplies it to the
+server and attach client through their environments. The pane command is always
+`opencode attach http://127.0.0.1:<port> --dir <cwd> --session <ses_…>`; it
+never starts a second server and the password never appears in the command or
+process arguments.
+
+agentd waits for authenticated health, asks the server to mint the conversation
+ID, delivers the startup prompt through `prompt_async`, consumes the
+authenticated SSE stream, and treats both the server and attach pane as the
+session's liveness contract. Resume reconstructs the same topology around the
+recorded `ses_…` conversation. Model and reasoning-variant choices are loaded
+from `opencode models openai --verbose` rather than a hard-coded catalog.
+
+This first slice deliberately leaves OpenCode's conversation store, permissions
+and sandbox integration, ad-hoc ask, and full SSE-to-status mapping unimplemented.
+Those controls stay hidden or rejected through the harness capability checks;
+see [the OpenCode exploration](opencode-exploration.md) for the researched
+follow-up contracts.
+
 The dashboard spawn dialog and spawn-profile editor show Codex's **Approval
 reviewer** as a separate control: leave it unset/use the human reviewer, or
 route eligible requests to **Codex auto-review**. This changes who decides an
@@ -276,13 +312,15 @@ a human. See [Agent coordination](agent.md#spawn) for the capability matrix.
 
 ## What stays the same across harnesses
 
-Everything tclaude owns is harness-agnostic and works identically for both:
+The common tclaude surfaces remain harness-agnostic. OpenCode currently omits
+the conversation-store-specific operations called out below:
 
 - **Sessions** — tmux detach/reattach, `session ls`, attach, kill.
-- **Conversations** — `conv ls`/`search` enumerate both harnesses' conversations
-  side by side; resume works for either.
+- **Conversations** — `conv ls`/`search` enumerate Claude and Codex conversations
+  side by side; OpenCode listing/search is a follow-up, while durable managed
+  agent resume already works with its recorded `ses_…` ID.
 - **Agent coordination** — groups, cross-session messaging, the inbox,
-  permissions, cron nudges. A group can mix Claude and Codex agents.
+  permissions, cron nudges. A group can mix all three harnesses.
 - **Dashboard** — one console for all agents, with a per-agent harness badge.
 - **Identity & permissions** — agentd authorizes coordination RPCs by socket
   peer credentials regardless of harness.

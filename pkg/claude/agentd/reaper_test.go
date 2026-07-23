@@ -19,8 +19,40 @@ import (
 func TestReaperFallbackExitReason(t *testing.T) {
 	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason("claude"))
 	assert.Equal(t, unexpectedExitReason, reaperFallbackExitReason(""), "unknown harness is treated like Claude")
+	assert.Equal(t, "", reaperFallbackExitReason("opencode"),
+		"a deliberate attach-client exit is normal; the server-loss branch stamps crashes explicitly")
 	assert.Equal(t, "", reaperFallbackExitReason("codex"))
 	assert.Equal(t, "", reaperFallbackExitReason(session.ShellHarnessName), "clean shell exit is normal, not unexpected")
+}
+
+func TestSessionReaper_OpenCodeServerLossOverridesLivePane(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	db.ResetForTest()
+
+	const sessionID = "spwn-opencode-loss"
+	require.NoError(t, session.SaveSessionState(&session.SessionState{
+		ID: sessionID, ConvID: "ses_server_lost", Status: session.StatusWorking,
+		Harness: "opencode", Cwd: dir, PID: os.Getpid(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID,
+		"11111111111111111111111111111111"))
+
+	r := &sessionReaper{
+		aliveLastTick: map[string]bool{sessionID: true},
+		seeded:        true,
+		grace:         0,
+		notify:        func(*session.SessionState, string) {},
+	}
+	require.Equal(t, 1, r.tick(time.Now()),
+		"a live attach PID must not hide a missing authoritative server")
+	state, err := session.LoadSessionState(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, session.StatusExited, state.Status)
+	reason, err := db.GetSessionExitReason(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, unexpectedExitReason, reason)
 }
 
 // Codex sessions have no SessionEnd hook, so their alive→dead transition

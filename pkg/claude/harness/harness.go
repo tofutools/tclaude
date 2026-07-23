@@ -105,16 +105,15 @@ type Harness struct {
 	// See JOH-213.
 	TmuxScrollback bool
 
-	// LaunchEnrollment marks a harness whose conv-id can be PRESET at launch
-	// (SpawnSpec.SessionID → `claude --session-id <uuid>`) AND whose display
-	// name + first-turn prompt can ride in as launch args (SpawnSpec.Name →
-	// `--name`, SpawnSpec.InitialPrompt → the positional [prompt]). When true,
-	// the daemon spawn path can enroll the agent (group membership + inbox
-	// briefing) and bake the rename + welcome into the launch command, instead
-	// of polling for the conv-id and injecting `/rename` + the welcome over
-	// tmux with delays afterwards. Claude Code sets it true; Codex leaves it
-	// false (it generates its own conv-id at first turn and renames out of
-	// band), so a Codex spawn keeps the inject-after-connect flow.
+	// LaunchEnrollment marks a harness whose conv-id can be known before its
+	// pane starts. Claude Code accepts a caller-preset UUID
+	// (SpawnSpec.SessionID → `claude --session-id`); a server-authoritative
+	// harness can instead mint the id through its managed API and pass that id
+	// to the attach client. The daemon may therefore enroll group membership
+	// and the inbox briefing before the fork. Claude carries rename + welcome
+	// as launch args; OpenCode applies the title at POST /session and submits
+	// the welcome through prompt_async. Codex leaves this false because its id
+	// only appears after the first turn.
 	LaunchEnrollment bool
 
 	// SeedsFirstTurn marks a harness that needs a positional first-turn prompt
@@ -131,6 +130,16 @@ type Harness struct {
 	// "id only appears after a seeded first turn" (Codex) — the two are mutually
 	// exclusive in practice.
 	SeedsFirstTurn bool
+
+	// ServerAuthoritative marks a harness whose conversation lives in a
+	// daemon-owned side server rather than in the pane process. The pane is
+	// only an attach client. agentd must start/authenticate that server,
+	// pre-mint the conversation through its API, supervise it independently,
+	// and reap it when the pane dies. OpenCode is the first such harness.
+	//
+	// This is deliberately additive: existing pane-authoritative harnesses
+	// leave it false and retain their exact liveness behavior.
+	ServerAuthoritative bool
 
 	// ApprovalsReviewer marks a harness exposing the experimental `--auto-review`
 	// opt-in — a routable guardian that auto-decides approval *prompts* in the
@@ -301,22 +310,26 @@ func (h *Harness) NeedsSpawnSeed() bool {
 	return h != nil && h.SeedsFirstTurn && h.Spawn != nil
 }
 
+// UsesAuthoritativeServer reports whether agentd must own a side server for
+// this harness. Nil-safe so unknown/legacy harness rows retain pane liveness.
+func (h *Harness) UsesAuthoritativeServer() bool {
+	return h != nil && h.ServerAuthoritative && h.Spawn != nil
+}
+
 // SupportsSandbox reports whether the harness has a launch-time sandbox
-// catalog. Callers gate sandbox handling on this. Both harnesses set it now:
-// Codex via its native --sandbox modes, Claude Code via the inherit/on/off
-// modes its spawner delivers as a `--settings` override. A harness that left
-// Sandbox nil would keep its sandbox out of band and reject an explicit mode.
+// catalog. Callers gate sandbox handling on this. Codex supplies native
+// --sandbox modes and Claude Code supplies inherit/on/off through a `--settings`
+// override. OpenCode currently leaves the capability absent.
 func (h *Harness) SupportsSandbox() bool {
 	return h != nil && h.Sandbox != nil
 }
 
 // SupportsApproval reports whether the harness has a launch-time approval /
-// permission catalog. Callers gate approval handling on this. Both harnesses
-// set it now: Codex via --ask-for-approval, Claude Code via its
-// --permission-mode enum (carried through the same Approval field). A harness
-// that left Approval nil would keep its approval out of band and reject an
-// explicit policy. NOTE: this does NOT imply a guardian reviewer — that is the
-// separate SupportsAutoReview axis. See JOH-200.
+// permission catalog. Callers gate approval handling on this. Codex supplies
+// --ask-for-approval and Claude Code supplies its --permission-mode enum
+// (carried through the same Approval field). OpenCode currently leaves the
+// capability absent. NOTE: this does NOT imply a guardian reviewer — that is
+// the separate SupportsAutoReview axis. See JOH-200.
 func (h *Harness) SupportsApproval() bool {
 	return h != nil && h.Approval != nil
 }

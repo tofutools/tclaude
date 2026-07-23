@@ -59,8 +59,7 @@ type ApprovalCatalog interface {
 // approval prompt:
 //
 //   - Harness with no approval catalog: an explicit policy is an error; an empty
-//     request resolves to "" (omit). Both shipped harnesses HAVE a catalog now —
-//     this branch only guards a future harness that leaves Approval nil.
+//     request resolves to "" (omit). OpenCode currently takes this branch.
 //   - Codex: an empty request resolves to the secure DefaultPolicy (never); any
 //     explicit policy is validated.
 //   - Claude Code: an empty request resolves to its DefaultPolicy (auto), so an

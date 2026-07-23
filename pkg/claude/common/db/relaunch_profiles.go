@@ -282,7 +282,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	// Capability-incompatible legacy flags are process telemetry, not durable
 	// intent. Normalize them while projecting so a stale/hand-edited Codex row
 	// cannot arm Claude-only features if the stable agent later relaunches.
-	if !strings.EqualFold(harnessName, DefaultHarness) {
+	// Do this only for Codex: another non-Claude harness may legitimately
+	// represent "no launch-time approval policy" with the empty string.
+	if strings.EqualFold(harnessName, "codex") {
 		remoteControl = 0
 		autoMemory = 0
 		askTimeout = ""

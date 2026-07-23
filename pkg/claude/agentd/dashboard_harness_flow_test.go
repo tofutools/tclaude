@@ -21,7 +21,7 @@ func findDashHarness(snap dashSnapshot, name string) *dashHarness {
 
 // Scenario: the spawn dialog drives its harness selector + per-harness
 // model/effort/sandbox menus off /api/snapshot's `harnesses` catalog
-// (JOH-162). The catalog must list both spawnable harnesses with the right
+// (JOH-162). The catalog must list all spawnable harnesses with the right
 // menu values and capability flags — in particular the subtle pair the
 // per-row controls gate on: Codex CAN rename (via its ConvStore, even with
 // no in-pane /rename) but CANNOT compact. Both harnesses expose a sandbox
@@ -101,6 +101,16 @@ func TestDashboardSnapshot_HarnessCatalog(t *testing.T) {
 	for _, mode := range codex.ApprovalModes {
 		assert.NotEmpty(t, codex.ApprovalModeHelp[mode], "help for %s", mode)
 	}
+
+	opencode := findDashHarness(snap, "opencode")
+	require.NotNil(t, opencode, "catalog missing opencode; have %+v", snap.Harnesses)
+	assert.Equal(t, "OpenCode", opencode.DisplayName)
+	assert.True(t, opencode.CanRename, "OpenCode attached TUI supports /rename")
+	assert.True(t, opencode.CanCompact, "OpenCode attached TUI supports /compact")
+	assert.False(t, opencode.CanSandbox, "OpenCode OS sandbox mapping is TCL-671")
+	assert.False(t, opencode.CanApproval, "OpenCode approval mapping is TCL-671")
+	assert.False(t, opencode.CanAutoReview)
+	assert.False(t, opencode.CanRemoteControl)
 }
 
 // Scenario: a per-agent harness + sandbox badge needs the snapshot to

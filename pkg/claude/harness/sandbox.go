@@ -48,8 +48,7 @@ type SandboxCatalog interface {
 // agentd-spawned agent is the untrusted party that must be sandboxed:
 //
 //   - Harness with no sandbox catalog: an explicit mode is an error; an empty
-//     request resolves to "" (omit). Both shipped harnesses HAVE a catalog now
-//     — this branch only guards a future harness that leaves Sandbox nil.
+//     request resolves to "" (omit). OpenCode currently takes this branch.
 //   - Codex: an empty request resolves to the secure DefaultMode (the managed
 //     profile); any explicit mode is validated.
 //   - Claude Code: an empty request resolves to its DefaultMode (inherit), which

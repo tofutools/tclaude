@@ -12,6 +12,15 @@ type SpawnSpec struct {
 	// Codex strict-Home launches set this to the binary whose split-policy
 	// behavior and identity were probed, preventing a later PATH substitution.
 	ExecutablePath string
+	// Cwd is the resolved absolute launch directory. Most harnesses inherit it
+	// from tmux's `new-session -c`; a server-attached client may also need to
+	// forward it explicitly to the remote server (OpenCode's `attach --dir`).
+	Cwd string
+	// ServerURL is the authenticated, agentd-owned server endpoint for a
+	// server-authoritative harness. It is intentionally endpoint-only: the
+	// credential stays in the process environment and must never enter the
+	// shell command or argv.
+	ServerURL string
 	// EnvExports is a pre-built `export K=V; …` prefix prepended verbatim
 	// to the command. The caller assembles it (tclaude identity env +
 	// any pass-through), so the Spawner stays agnostic about which vars
@@ -28,17 +37,13 @@ type SpawnSpec struct {
 	// fresh session. The flag/sub-command form is harness-specific
 	// (`claude --resume <id>` vs `codex resume <id>`).
 	ResumeID string
-	// SessionID is a caller-chosen conversation id for a FRESH launch,
-	// realised as `claude --session-id <uuid>` — it makes the conv-id known
-	// to tclaude *before* the harness starts, so the daemon can enroll the
-	// agent (group membership + inbox briefing) and bake the rename + welcome
-	// into the launch command rather than injecting them over tmux afterwards
-	// (see Harness.SupportsLaunchEnrollment). "" mints the harness's own id at
-	// launch (the historical behavior). Mutually exclusive with ResumeID: a
-	// resume continues an existing conversation whose id is already known, so
-	// the Spawner emits --session-id only on a fresh launch. Harnesses that
-	// cannot accept a preset conv-id (Codex generates its own at first turn)
-	// ignore it. Must be a valid UUID when set.
+	// SessionID is the conversation id known before a FRESH pane launch.
+	// Claude Code receives a caller-chosen UUID through `--session-id`;
+	// OpenCode receives the `ses_…` id its agentd-owned server already minted
+	// through POST /session and attaches that session. It lets the daemon
+	// enroll the agent before the pane starts. Mutually exclusive with
+	// ResumeID. Harnesses that cannot know an id before launch (Codex) ignore
+	// it. The harness owns the id's shape.
 	SessionID string
 	// Name is a display name applied at launch, realised as `claude --name
 	// <name>` — Claude Code writes it into the conversation's `.jsonl` as a

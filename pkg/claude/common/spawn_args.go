@@ -115,6 +115,14 @@ type SpawnArgs struct {
 	// exactly as before harness support (JOH-160).
 	Harness string
 
+	// OpenCodeServerURL / OpenCodeServerPassword are the private handoff from
+	// agentd's per-session server owner to the short-lived `session new`
+	// wrapper. Production carries them in the child environment, never CLI
+	// argv; the wrapper then inherits the password into `opencode attach`.
+	// Empty for every pane-authoritative harness.
+	OpenCodeServerURL      string
+	OpenCodeServerPassword string
+
 	// Sandbox is the launch-time OS-sandbox mode for harnesses that take one
 	// (Codex's --sandbox, or the managed-profile pseudo-mode); "" omits it. The
 	// daemon resolves it to the harness's secure default before spawning so a

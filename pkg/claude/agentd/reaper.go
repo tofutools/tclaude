@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -193,9 +194,16 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		slog.Warn("reaper: list sessions failed", "error", err)
 		return 0
 	}
+	reapOrphanedOpenCodeRuntimes(states)
 	aliveNow := make(map[string]bool, len(states))
 	for _, st := range states {
 		if st.Status == session.StatusExited {
+			if st.Harness == harness.OpenCodeName {
+				if err := stopOpenCodeRuntime(st.ID); err != nil {
+					slog.Warn("reaper: OpenCode runtime cleanup failed",
+						"session", st.ID, "error", err)
+				}
+			}
 			// SessionEnd may win the status race before pane-died records its richer
 			// structural evidence. Enrich the launch-scoped audit event before
 			// removing the retained pane, preserving evidence for bounded retries
@@ -258,6 +266,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		prevStatus := st.Status
 		prevUpdated := st.Updated
 		var paneEvidence *session.PaneExitEvidence
+		serverLost := false
 		if st.TmuxSession != "" {
 			if observed, inspectErr := session.InspectDeadTmuxSessionPane(st.TmuxSession); inspectErr == nil {
 				if observed.Generation != "" && observed.Generation != launchIdentity.Generation {
@@ -278,6 +287,20 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			}
 		} else {
 			session.RefreshSessionStatus(st)
+		}
+		if st.Status != session.StatusExited && st.Harness == harness.OpenCodeName &&
+			!reconcileOpenCodeRuntime(st.ID) {
+			serverLost = true
+			// The pane is only an attach client. A dead authoritative server is
+			// a dead session even while that client process still exists.
+			if st.TmuxSession != "" {
+				if err := clcommon.TmuxCommand("kill-session", "-t",
+					clcommon.ExactTarget(st.TmuxSession)).Run(); err != nil {
+					slog.Warn("reaper: failed to stop OpenCode attach pane after server loss",
+						"session", st.ID, "tmux_session", st.TmuxSession, "error", err)
+				}
+			}
+			session.MarkStateExited(st)
 		}
 		if st.Status != session.StatusExited {
 			delete(r.deadPaneRecordFailure, st.ID)
@@ -303,8 +326,14 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		// Looks dead. A row created within the grace window may just be
 		// mid-spawn (tmux session not up yet) — leave it for a later
 		// tick rather than reap a starting agent.
-		if paneEvidence == nil && !st.Created.IsZero() && now.Sub(st.Created) < r.grace {
+		if !serverLost && paneEvidence == nil && !st.Created.IsZero() && now.Sub(st.Created) < r.grace {
 			continue
+		}
+		if st.Harness == harness.OpenCodeName {
+			if err := stopOpenCodeRuntime(st.ID); err != nil {
+				slog.Warn("reaper: OpenCode runtime cleanup failed",
+					"session", st.ID, "error", err)
+			}
 		}
 		cause := db.AgentExitCauseDisappeared
 		var exitCode *int
@@ -328,8 +357,12 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		if witnessedLive {
 			observer = db.AgentExitObserverReaper
 		}
+		exitReason := reaperFallbackExitReason(st.Harness)
+		if st.Harness == harness.OpenCodeName && serverLost {
+			exitReason = unexpectedExitReason
+		}
 		ok, _, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
-			st.ID, prevStatus, prevUpdated, reaperFallbackExitReason(st.Harness),
+			st.ID, prevStatus, prevUpdated, exitReason,
 			db.AgentExitObservation{
 				At: now, SessionID: st.ID, TmuxSession: st.TmuxSession, PaneID: paneID,
 				Observer: observer, CauseKind: cause, ExitCode: exitCode, Signal: signal,
@@ -382,7 +415,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 // gets the same reasonless treatment; stamping "unexpected" would turn
 // every deliberate shell exit into a spurious "Exited" banner.
 func reaperFallbackExitReason(h string) string {
-	if h == harness.CodexName || h == session.ShellHarnessName {
+	if h == harness.CodexName || h == harness.OpenCodeName || h == session.ShellHarnessName {
 		return ""
 	}
 	return unexpectedExitReason

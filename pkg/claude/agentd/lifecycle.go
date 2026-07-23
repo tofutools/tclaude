@@ -3876,6 +3876,23 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		AutoMemory:                 p.AutoMemory,
 	}
 
+	// Resolve once before the enrollment branch. A server-authoritative
+	// harness needs its daemon-owned endpoint and server-issued conversation
+	// id before enrollment or the pane fork.
+	spawnHarness, _ := harness.Resolve(p.Harness)
+	var openCodeLaunch *openCodeLaunch
+	if spawnHarness.UsesAuthoritativeServer() {
+		var err error
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(label, p.Cwd, p.Name, "")
+		if err != nil {
+			return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
+				"failed to start managed OpenCode server: " + err.Error()}
+		}
+		spawnArgs.OpenCodeServerURL = openCodeLaunch.ServerURL
+		spawnArgs.OpenCodeServerPassword = openCodeLaunch.Password
+		spawnArgs.SessionID = openCodeLaunch.ConvID
+	}
+
 	// Launch-enrollment path (Claude Code, unless reverted via config): the
 	// conv-id can be PRESET, so enroll the agent and bake its rename + welcome
 	// into the launch command — no post-connect tmux injection, no conv-id
@@ -3890,7 +3907,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// launch-enrollment path as the HTTP spawn endpoint. Resolve also tolerates
 	// an unknown name (returns nil), and SupportsLaunchEnrollment is nil-safe,
 	// so a bad harness degrades to the legacy path rather than panicking.
-	spawnHarness, _ := harness.Resolve(p.Harness)
 	launchEnroll := spawnHarness.SupportsLaunchEnrollment() && !spawnUsesLegacyInjection()
 	var preConvID string
 	var preMsgID int64
@@ -3901,7 +3917,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// read — the agent has the text, so it must never enter the nudge queue.
 	var briefingInlined bool
 	if launchEnroll {
-		preConvID = convops.GenerateUUID()
+		if openCodeLaunch != nil {
+			preConvID = openCodeLaunch.ConvID
+		} else {
+			preConvID = convops.GenerateUUID()
+		}
 		// Decide the briefing's launch state before inserting its inbox copy.
 		// An inlined copy must be born delivered + read in the same INSERT;
 		// inserting it unread and fixing it up after launch leaves a window where
@@ -3916,6 +3936,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			// preset and its pane will never start, so anything left behind is
 			// a ghost the operator would have to clear by hand.
 			rollbackSpawnEnrollment(g, preConvID, mid, actorCreated)
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
 			return nil, fail
 		}
 		preMsgID = mid
@@ -3977,6 +4000,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		if launchEnroll {
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 		}
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
 		return nil, fail
 	}
 
@@ -3988,10 +4014,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	reservedPending := p.Async && !launchEnroll
 	if reservedPending {
 		if g == nil {
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
 		}
 		p.AgentID = db.NewAgentID()
 		if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
+			if openCodeLaunch != nil {
+				_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			}
 			return nil, &spawnFailure{http.StatusInternalServerError, "io",
 				"failed to reserve pending spawn " + label + ": " + err.Error()}
 		}
@@ -4025,6 +4057,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			// launch doesn't strand a group member + orphan briefing.
 			rollbackSpawnEnrollment(g, preConvID, preMsgID, preActorCreated)
 		}
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn",
 			"failed to launch tclaude session new: " + err.Error()}
 	}
@@ -4035,6 +4070,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		return launchFailed(err)
 	}
 	agentDirectoriesLaunched = true
+	if openCodeLaunch != nil {
+		if err := sendOpenCodePromptForSpawn(openCodeLaunch, p.Cwd,
+			spawnArgs.InitialPrompt, p.Model, p.Effort); err != nil {
+			return launchFailed(err)
+		}
+	}
 
 	// Auto-focus closure: when the caller asked for it, open a terminal
 	// window attached to the freshly-spawned agent — via `tclaude session
@@ -5750,6 +5791,12 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
 	cmd.Env = spawnEnvWithoutOperatorToken()
+	if a.OpenCodeServerURL != "" {
+		cmd.Env = append(cmd.Env, "TCLAUDE_OPENCODE_SERVER_URL="+a.OpenCodeServerURL)
+	}
+	if a.OpenCodeServerPassword != "" {
+		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
+	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
 		cleanup()
@@ -5805,10 +5852,23 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 // or rejects the detached launch, so callers learn whether this resume won the
 // launch reservation and can roll back refreshed actor state on failure.
 func liveSpawnResume(a clcommon.SpawnArgs) error {
+	var openCodeLaunch *openCodeLaunch
+	if a.Harness == harness.OpenCodeName {
+		var err error
+		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(a.ConvID, a.Cwd, "", a.ConvID)
+		if err != nil {
+			return err
+		}
+		a.OpenCodeServerURL = openCodeLaunch.ServerURL
+		a.OpenCodeServerPassword = openCodeLaunch.Password
+	}
 	var cleanup func()
 	var err error
 	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
 	if err != nil {
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
 		return err
 	}
 	convID := a.ConvID
@@ -5820,14 +5880,26 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
 	cmd.Env = spawnEnvWithoutOperatorToken()
+	if a.OpenCodeServerURL != "" {
+		cmd.Env = append(cmd.Env, "TCLAUDE_OPENCODE_SERVER_URL="+a.OpenCodeServerURL)
+	}
+	if a.OpenCodeServerPassword != "" {
+		cmd.Env = append(cmd.Env, "OPENCODE_SERVER_PASSWORD="+a.OpenCodeServerPassword)
+	}
 	detachSpawn(cmd)
 	if err := cmd.Start(); err != nil {
 		cleanup()
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
 		return err
 	}
 	pid := cmd.Process.Pid
 	defer cleanup()
 	if err := cmd.Wait(); err != nil {
+		if openCodeLaunch != nil {
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		}
 		slog.Error("resume subprocess exited with error",
 			"conv", convID, "pid", pid, "err", err,
 			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
