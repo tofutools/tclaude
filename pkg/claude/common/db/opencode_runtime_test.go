@@ -53,4 +53,13 @@ func TestOpenCodeRuntimeLookupByPID(t *testing.T) {
 	missing, err := FindOpenCodeRuntimeByPID(9999)
 	require.NoError(t, err)
 	assert.Nil(t, missing)
+
+	require.NoError(t, UpsertOpenCodeRuntime(OpenCodeRuntime{
+		SessionID: "spwn-premint", ConvID: "",
+		ServerURL: "http://127.0.0.1:43212", Password: "premint",
+		Cwd: "/tmp/premint", PID: 0,
+	}))
+	zero, err := FindOpenCodeRuntimeByPID(0)
+	require.NoError(t, err)
+	assert.Nil(t, zero, "pid 0 is a column default, never a process identity")
 }

@@ -84,6 +84,9 @@ func GetOpenCodeRuntimeByConvID(convID string) (*OpenCodeRuntime, error) {
 // updated_at, so callers always prefer the freshest row if a stale duplicate
 // remains from an older session.
 func FindOpenCodeRuntimeByPID(pid int) (*OpenCodeRuntime, error) {
+	if pid <= 0 {
+		return nil, nil
+	}
 	d, err := Open()
 	if err != nil {
 		return nil, err

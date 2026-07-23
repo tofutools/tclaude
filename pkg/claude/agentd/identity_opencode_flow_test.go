@@ -201,3 +201,62 @@ func TestConvIDForPID_OpenCodeAttachResolvesViaPaneSessionPID(t *testing.T) {
 	assert.Equal(t, convID, gotConv,
 		"the existing sessions.pid(parent) probe must resolve an OpenCode attach ancestry")
 }
+
+func TestConvIDForPID_OpenCodeRuntimeDBErrorFailsClosed(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID  = 6300
+		servePID = 6200
+	)
+	fakeProcTree{
+		name:   map[int]string{peerPID: "tclaude", servePID: "opencode"},
+		parent: map[int]int{peerPID: servePID},
+	}.install(t)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	require.NoError(t, d.Close())
+
+	assertOpenCodeAgentUnknown(t, peerPID)
+}
+
+func TestConvIDForPID_OpenCodePremintRuntimeFailsClosed(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID  = 5300
+		servePID = 5200
+	)
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "spwn-premint",
+		ConvID:    "",
+		ServerURL: "http://127.0.0.1:43212",
+		Password:  "private",
+		PID:       servePID,
+		Cwd:       "/tmp/project",
+	}))
+	fakeProcTree{
+		name:   map[int]string{peerPID: "tclaude", servePID: "opencode"},
+		parent: map[int]int{peerPID: servePID},
+	}.install(t)
+
+	assertOpenCodeAgentUnknown(t, peerPID)
+}
+
+func assertOpenCodeAgentUnknown(t *testing.T, peerPID int) {
+	t.Helper()
+
+	gotConv, hasAncestor := convIDForPID(peerPID)
+	require.True(t, hasAncestor)
+	require.Empty(t, gotConv)
+	p := &peer{PID: peerPID, ConvID: gotConv, HasClaudeAncestor: hasAncestor}
+	require.Equal(t, classAgentUnknown, classify(p))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/whoami", nil)
+	req = req.WithContext(context.WithValue(req.Context(), peerKey{}, p))
+	rec := httptest.NewRecorder()
+	_, _, ok := authedCaller(rec, req)
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
