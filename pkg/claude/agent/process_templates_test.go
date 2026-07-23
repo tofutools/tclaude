@@ -132,12 +132,18 @@ func TestProcessTemplateReadCommandsRejectInvalidAskHumanBeforeRequest(t *testin
 		t.Run(name, func(t *testing.T) {
 			var calls []capturedReq
 			stubDaemon(t, &calls, ok(`{}`))
+			var availabilityProbes int
+			DaemonAvailableImpl = func() bool {
+				availabilityProbes++
+				return true
+			}
 			var stdout, stderr bytes.Buffer
 
 			rc := run(&stdout, &stderr)
 
 			assert.Equal(t, rcInvalidArg, rc)
 			assert.Contains(t, stderr.String(), "invalid --ask-human value")
+			assert.Zero(t, availabilityProbes, "invalid timeout must fail before probing agentd")
 			assert.Empty(t, calls)
 		})
 	}

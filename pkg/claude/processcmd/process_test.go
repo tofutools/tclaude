@@ -143,11 +143,17 @@ func TestRuntimeReadCommandsRejectInvalidAskHumanBeforeRequest(t *testing.T) {
 				calls++
 				return nil
 			})
+			var availabilityProbes int
+			agent.DaemonAvailableImpl = func() bool {
+				availabilityProbes++
+				return true
+			}
 
 			err := run(&bytes.Buffer{}, &bytes.Buffer{})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid --ask-human value")
+			assert.Zero(t, availabilityProbes, "invalid timeout must fail before probing agentd")
 			assert.Zero(t, calls)
 		})
 	}
