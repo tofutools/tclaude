@@ -229,6 +229,9 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 	if p.JSON && p.JSONLines {
 		return fmt.Errorf("--json and --json-lines are mutually exclusive")
 	}
+	if (p.JSON || p.JSONLines) && p.PayloadBytes != defaultProcessEventPayloadDisplayBytes {
+		return fmt.Errorf("--payload-bytes is only valid for table output")
+	}
 	if p.After < 0 {
 		return fmt.Errorf("--after must be a non-negative sequence")
 	}

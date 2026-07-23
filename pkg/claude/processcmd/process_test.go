@@ -306,6 +306,22 @@ func TestRuntimeEventsEmptyAndInvalidInputs(t *testing.T) {
 	assert.Equal(t, "No evidence after sequence 9 for process run run_empty.\n", stdout.String())
 	assert.Equal(t, 2, calls)
 
+	for name, params := range map[string]*processEventsParams{
+		"json with hidden payload": {
+			RunID: "run_invalid", Limit: 16, JSON: true, PayloadBytes: 0,
+		},
+		"json lines with custom payload": {
+			RunID: "run_invalid", Limit: 16, JSONLines: true, PayloadBytes: 24,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := runProcessEvents(params, &bytes.Buffer{}, &bytes.Buffer{})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--payload-bytes is only valid for table output")
+			assert.Equal(t, 2, calls, "invalid output mode must not reach the daemon")
+		})
+	}
+
 	for _, params := range []*processEventsParams{
 		{RunID: "", Limit: 16},
 		{RunID: "run_invalid", After: -1, Limit: 16},
