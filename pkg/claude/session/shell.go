@@ -208,6 +208,8 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 		return fmt.Errorf(notApplicable, "--permission-profile", ShellHarnessName, "it has no permission profiles")
 	case params.Approval != "":
 		return fmt.Errorf(notApplicable, "--ask-for-approval", ShellHarnessName, "it has no approval policy")
+	case params.ToolGovernance != "":
+		return fmt.Errorf(notApplicable, "--tools", ShellHarnessName, "it has no tool-governance policy")
 	case params.AutoReview:
 		return fmt.Errorf(notApplicable, "--auto-review", ShellHarnessName, "it has no approvals reviewer")
 	case params.TrustDir:

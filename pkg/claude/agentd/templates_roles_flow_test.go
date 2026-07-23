@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -174,6 +175,29 @@ func TestRole_RejectsReservedName(t *testing.T) {
 	rec := createRole(t, f, map[string]any{"name": "all"})
 	assert.Equalf(t, http.StatusBadRequest, rec.Code,
 		"reserved role name should 400; body=%s", rec.Body.String())
+}
+
+func TestRole_OpenCodeToolGovernanceRoundTripsAndValidates(t *testing.T) {
+	f := newFlow(t)
+	rec := createRole(t, f, map[string]any{
+		"name": "opencode-auditor", "harness": "opencode", "tools": "deny",
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create body=%s", rec.Body.String())
+
+	rec = humanReq(t, f, http.MethodGet, "/v1/roles/opencode-auditor", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got struct {
+		Tools string `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "deny", got.Tools)
+
+	for _, harnessName := range []string{"claude", "codex"} {
+		rec = createRole(t, f, map[string]any{
+			"name": "bad-tools-" + harnessName, "harness": harnessName, "tools": "ask",
+		})
+		assert.Equalf(t, http.StatusBadRequest, rec.Code, "%s must reject OpenCode tools; body=%s", harnessName, rec.Body.String())
+	}
 }
 
 // Scenario: the canonical seed roles are present via the read API right after a

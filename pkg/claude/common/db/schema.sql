@@ -445,7 +445,7 @@ CREATE TABLE spawn_profiles (
 			include_group_default_context INTEGER,
 			created_at                    TEXT NOT NULL,
 			updated_at                    TEXT NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER);
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '');
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles
@@ -610,7 +610,7 @@ CREATE TABLE roles (
 			permissions   TEXT NOT NULL DEFAULT '[]',
 			created_at    TEXT NOT NULL,
 			updated_at    TEXT NOT NULL
-		, spawn_profile_id INTEGER);
+		, spawn_profile_id INTEGER, tools TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX idx_roles_spawn_profile_id ON roles(spawn_profile_id);
 

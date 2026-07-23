@@ -17,9 +17,11 @@ func TestOpenCodeCatalogDefaultsAreFailClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, h.Sandbox)
 	require.NotNil(t, h.Approval)
+	require.NotNil(t, h.ToolGovernance)
 
 	assert.Equal(t, OpenCodeSandboxAccessControl, h.Sandbox.DefaultMode())
 	assert.Equal(t, OpenCodeApprovalDeny, h.Approval.DefaultPolicy())
+	assert.Equal(t, OpenCodeToolsAllow, h.ToolGovernance.DefaultPolicy())
 	assert.False(t, h.ApprovalsReviewer)
 	assert.Contains(t, h.Sandbox.ModeHelp(OpenCodeSandboxAccessControl), "not an OS sandbox")
 	assert.Contains(t, h.Sandbox.ModeHelp(OpenCodeSandboxAccessControl), "tools remain enabled")
@@ -117,7 +119,35 @@ func TestBuildOpenCodePermissionRulesApprovalAndNetworkMatrix(t *testing.T) {
 	}
 }
 
-func TestBuildOpenCodePermissionRulesAccessControlAllowsToolsWithoutReopeningProtectedDisk(t *testing.T) {
+func TestBuildOpenCodePermissionRulesToolGovernanceMatrix(t *testing.T) {
+	for _, action := range []string{OpenCodeToolsAllow, OpenCodeToolsAsk, OpenCodeToolsDeny} {
+		t.Run(action, func(t *testing.T) {
+			rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+				Cwd:            "/repo",
+				Worktree:       "/repo",
+				SandboxMode:    OpenCodeSandboxAccessControl,
+				ApprovalPolicy: OpenCodeApprovalDeny,
+				ToolGovernance: action,
+			})
+			require.NoError(t, err)
+			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+				assert.Equal(t, action, lastExactOpenCodeAction(rules, permission, "*"), permission)
+			}
+			assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", "private.env"),
+				"tool governance must not change disk/environment rules")
+		})
+	}
+
+	rules, err := BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+		Cwd: "/repo", Worktree: "/repo",
+		SandboxMode: OpenCodeSandboxAccessControl, ApprovalPolicy: OpenCodeApprovalDeny,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, OpenCodeToolsAllow, lastExactOpenCodeAction(rules, "bash", "*"),
+		"blank remains backward-compatible")
+}
+
+func TestBuildOpenCodePermissionRulesToolDenyDoesNotChangeProtectedDisk(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -143,11 +173,12 @@ func TestBuildOpenCodePermissionRulesAccessControlAllowsToolsWithoutReopeningPro
 				Worktree:       "/repo",
 				SandboxMode:    OpenCodeSandboxAccessControl,
 				ApprovalPolicy: approval,
+				ToolGovernance: OpenCodeToolsDeny,
 			})
 			require.NoError(t, err)
 
 			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
-				assert.Equal(t, "allow", lastExactOpenCodeAction(rules, permission, "*"))
+				assert.Equal(t, "deny", lastExactOpenCodeAction(rules, permission, "*"))
 			}
 			for _, root := range protected {
 				protectedFile := filepath.Join(root, "private.json")
@@ -186,6 +217,7 @@ func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
 				Worktree:       worktree,
 				SandboxMode:    OpenCodeSandboxAccessControl,
 				ApprovalPolicy: approval,
+				ToolGovernance: OpenCodeToolsAsk,
 			})
 			require.NoError(t, err)
 
@@ -227,6 +259,7 @@ func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {
 		Worktree:       "/repo",
 		SandboxMode:    OpenCodeSandboxOff,
 		ApprovalPolicy: OpenCodeApprovalAllowTools,
+		ToolGovernance: OpenCodeToolsDeny,
 		NetworkAccess:  sandboxpolicy.NetworkAccessInternet,
 	})
 	require.NoError(t, err)
@@ -235,7 +268,9 @@ func TestBuildOpenCodePermissionRulesOffStillAppliesApproval(t *testing.T) {
 	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "edit", "*"))
 	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "external_directory", "*"))
 	assert.Equal(t, "ask", lastExactOpenCodeAction(rules, "bash", "*"),
-		"even off+allow-tools must not mint automatic arbitrary commands")
+		"sandbox off keeps its existing approval behavior and ignores tool governance")
+	assert.Equal(t, "allow", lastExactOpenCodeAction(rules, "glob", "*"),
+		"sandbox off remains a no-containment posture")
 }
 
 func TestBuildOpenCodePermissionRulesUsesRootForNonGitWorktree(t *testing.T) {
@@ -277,6 +312,15 @@ func TestBuildOpenCodePermissionRulesRejectsUnrepresentableInputs(t *testing.T) 
 		ApprovalPolicy: "",
 	})
 	require.ErrorContains(t, err, "approval policy is required")
+
+	_, err = BuildOpenCodePermissionRules(OpenCodePermissionSpec{
+		Cwd:            "/repo",
+		Worktree:       "/repo",
+		SandboxMode:    OpenCodeSandboxAccessControl,
+		ApprovalPolicy: OpenCodeApprovalDeny,
+		ToolGovernance: "sometimes",
+	})
+	require.ErrorContains(t, err, "tool-governance")
 }
 
 func TestBuildOpenCodePermissionRulesRejectsWildcardMetacharactersInRoots(t *testing.T) {

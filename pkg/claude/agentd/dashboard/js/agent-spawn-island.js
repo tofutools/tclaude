@@ -45,7 +45,7 @@ const html = htm.bind(h);
 const PASTE_REPEAT_MS = 1000;
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
-  'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout',
+  'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner', 'permissionOverrides',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -321,7 +321,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -657,6 +657,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const sandboxHelp = view.sandbox.help[draft.sandbox] || '';
   const approvalHelp = view.approval.help[draft.approval] || '';
   const reviewerHelp = approvalReviewerHelp(draft.approvalReviewer, draft.approval);
+  const toolsHelp = view.tools.help[draft.tools] || '';
   const askTimeoutHelp = view.askTimeout.help[draft.askTimeout] || '';
   const worktreeUsable = worktrees.phase === 'ready' && worktrees.isRepo;
   let worktreeEmptyLabel = '(no worktree — use CWD above)';
@@ -875,6 +876,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       onChange=${(event) => update('approvalReviewer', event.currentTarget.value)}
       help=${reviewerHelp} open=${helpOpen === 'agent-spawn-approval-reviewer'} setOpen=${setHelpOpen}
       disabled=${!view.showApprovalReviewer} busy=${busy} />
+    <${HelpField} id="agent-spawn-tools" label="Tool governance"
+      title="Uniform action for OpenCode's bash, glob, grep, lsp, task, and skill tools."
+      value=${draft.tools} options=${SettingOptions({ setting: view.tools })}
+      onChange=${(event) => update('tools', event.currentTarget.value)}
+      help=${toolsHelp} open=${helpOpen === 'agent-spawn-tools'} setOpen=${setHelpOpen}
+      disabled=${!view.tools.visible} busy=${busy} />
     <${HelpField} id="agent-spawn-ask-timeout" label="Question timeout"
       title="AskUserQuestion idle-timeout for the new agent."
       value=${draft.askTimeout} options=${SettingOptions({ setting: view.askTimeout })}

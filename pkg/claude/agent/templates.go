@@ -279,6 +279,7 @@ func inlineProfileTag(raw json.RawMessage) string {
 		Effort              string            `json:"effort"`
 		Sandbox             string            `json:"sandbox"`
 		Approval            string            `json:"approval"`
+		Tools               string            `json:"tools"`
 		AskTimeout          string            `json:"ask_user_question_timeout"`
 		TrustDir            *bool             `json:"trust_dir"`
 		AutoReview          *bool             `json:"auto_review"`
@@ -306,6 +307,7 @@ func inlineProfileTag(raw json.RawMessage) string {
 	add("effort", p.Effort)
 	add("sandbox", p.Sandbox)
 	add("approval", p.Approval)
+	add("tools", p.Tools)
 	add("ask-timeout", p.AskTimeout)
 	addBool("trust-dir", p.TrustDir)
 	addBool("auto-review", p.AutoReview)

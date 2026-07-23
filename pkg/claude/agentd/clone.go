@@ -171,6 +171,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.GitWorktreeWriteDirs = gitWriteDirs
 		proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
 		proofArgs.Approval = approval
+		proofArgs.ToolGovernance = relaunch.ToolGovernance
 		proofArgs.AutoReview = autoReview
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
@@ -248,6 +249,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.GitWorktreeWriteDirs = gitWriteDirs
 	proofArgs.GitWorktreeWriteDirsPinned = exactGrantPinned
 	proofArgs.Approval = approval
+	proofArgs.ToolGovernance = relaunch.ToolGovernance
 	proofArgs.AutoReview = autoReview
 	proofArgs.AskUserQuestionTimeout = askTimeout
 	proofArgs.RemoteControl = remoteControl

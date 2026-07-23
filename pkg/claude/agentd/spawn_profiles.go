@@ -54,11 +54,12 @@ type spawnProfileJSON struct {
 	DisabledReason string `json:"disabled_reason,omitempty"`
 
 	// Launch fields — overlap clcommon.SpawnArgs.
-	Harness  string `json:"harness,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Effort   string `json:"effort,omitempty"`
-	Sandbox  string `json:"sandbox,omitempty"`
-	Approval string `json:"approval,omitempty"`
+	Harness        string `json:"harness,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	Sandbox        string `json:"sandbox,omitempty"`
+	Approval       string `json:"approval,omitempty"`
+	ToolGovernance string `json:"tools,omitempty"`
 	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
 	// idle-timeout default (inherit|never|60s|5m|10m; "" = unset), delivered
 	// per-spawn via `--settings`. Claude-Code-only — a value on a Codex profile
@@ -106,6 +107,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Effort:                     p.Effort,
 		Sandbox:                    p.Sandbox,
 		Approval:                   p.Approval,
+		ToolGovernance:             p.ToolGovernance,
 		AskUserQuestionTimeout:     p.AskUserQuestionTimeout,
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
@@ -232,6 +234,10 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_approval", err.Error()}
 	}
+	toolGovernance, err := harness.ValidateToolGovernance(h, body.ToolGovernance)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_tools", err.Error()}
+	}
 	// Validate (+ harness-gate) the AskUserQuestion timeout: a value on a
 	// non-Claude profile is a 400, and a bad enum is rejected; inherit/blank
 	// stays "" so the launch boundary adds no override at spawn time.
@@ -306,6 +312,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Effort:                     effort,
 		Sandbox:                    sandbox,
 		Approval:                   approval,
+		ToolGovernance:             toolGovernance,
 		AskUserQuestionTimeout:     askTimeout,
 		AutoReview:                 body.AutoReview,
 		TrustDir:                   body.TrustDir,

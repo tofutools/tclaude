@@ -136,7 +136,13 @@ test('template manager and editor retain native markup, wizard variants, nested 
   );
   state.profiles.value = [{ name: 'fast', model: 'sonnet' }];
   state.roles.value = [
-    { name: 'reviewer', brief: 'Review carefully', permissions: ['read'] },
+    {
+      name: 'reviewer',
+      harness: 'opencode',
+      tools: 'ask',
+      brief: 'Review carefully',
+      permissions: ['read'],
+    },
   ];
   state.openTemplateManager();
   let saved = null;
@@ -202,6 +208,7 @@ test('template manager and editor retain native markup, wizard variants, nested 
     host.querySelector('.ta-role-inspect').textContent,
     /Review carefully/,
   );
+  assert.match(host.querySelector('.ta-role-inspect').textContent, /tools ask/);
   assert.equal(
     host.querySelector('#template-editor-wave-max-wait').type,
     'number',

@@ -43,6 +43,9 @@ type SpawnProfile struct {
 	Effort   string
 	Sandbox  string
 	Approval string
+	// ToolGovernance is OpenCode's allow/ask/deny policy for its homogeneous
+	// built-in tool block. "" = unset; the launch boundary defaults it to allow.
+	ToolGovernance string
 	// AskUserQuestionTimeout is the profile's Claude Code AskUserQuestion
 	// idle-timeout default (never|60s|5m|10m), delivered per-spawn via
 	// `--settings`; "" = unset (the agent uses the operator's settings.json). A
@@ -136,14 +139,14 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
-		   (name, disabled, disabled_reason, harness, model, effort, sandbox, approval, ask_user_question_timeout,
+		   (name, disabled, disabled_reason, harness, model, effort, sandbox, approval, tools, ask_user_question_timeout,
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
 		    is_owner, permission_overrides,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.AskUserQuestionTimeout,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.AutoFocus),
@@ -192,7 +195,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 	}
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
-		   name = ?, disabled = ?, disabled_reason = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?,
+		   name = ?, disabled = ?, disabled_reason = ?, harness = ?, model = ?, effort = ?, sandbox = ?, approval = ?, tools = ?,
 		   ask_user_question_timeout = ?,
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
@@ -201,7 +204,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   is_owner = ?, permission_overrides = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
-		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval,
+		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.ToolGovernance,
 		p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
@@ -448,7 +451,7 @@ func isSpawnProfileHandleViolation(err error) bool {
 }
 
 const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, harness, model, effort, sandbox, approval,
-	ask_user_question_timeout,
+	tools, ask_user_question_timeout,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
 	is_owner, permission_overrides, created_at, updated_at
@@ -460,7 +463,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, isOwner sql.NullInt64
 	var permOverrides, createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
-		&p.AskUserQuestionTimeout,
+		&p.ToolGovernance, &p.AskUserQuestionTimeout,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory,
 		&isOwner, &permOverrides, &createdAt, &updatedAt); err != nil {

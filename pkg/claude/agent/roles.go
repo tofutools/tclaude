@@ -18,7 +18,7 @@ import (
 //
 // A role is a named, reusable bundle of defaults a template roster agent can
 // reference: a canonical role-brief (folded into the agent's startup context),
-// a default launch shape (harness/model/effort/sandbox/approval or a spawn
+// a default launch shape (harness/model/effort/sandbox/approval/tools or a spawn
 // profile), and a default permission set. The CLI twin of the dashboard's
 // Roles editor — a thin client over the daemon's /v1/roles endpoints.
 //
@@ -28,18 +28,19 @@ import (
 // roleJSON mirrors the daemon's wire shape (see agentd/roles.go). create /
 // edit accept this JSON via --file; show --json emits it.
 type roleJSON struct {
-	Name         string   `json:"name"`
-	Descr        string   `json:"descr,omitempty"`
-	Brief        string   `json:"brief,omitempty"`
-	SpawnProfile string   `json:"spawn_profile,omitempty"`
-	Harness      string   `json:"harness,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Effort       string   `json:"effort,omitempty"`
-	Sandbox      string   `json:"sandbox,omitempty"`
-	Approval     string   `json:"approval,omitempty"`
-	Permissions  []string `json:"permissions"`
-	CreatedAt    string   `json:"created_at,omitempty"`
-	UpdatedAt    string   `json:"updated_at,omitempty"`
+	Name           string   `json:"name"`
+	Descr          string   `json:"descr,omitempty"`
+	Brief          string   `json:"brief,omitempty"`
+	SpawnProfile   string   `json:"spawn_profile,omitempty"`
+	Harness        string   `json:"harness,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	Effort         string   `json:"effort,omitempty"`
+	Sandbox        string   `json:"sandbox,omitempty"`
+	Approval       string   `json:"approval,omitempty"`
+	ToolGovernance string   `json:"tools,omitempty"`
+	Permissions    []string `json:"permissions"`
+	CreatedAt      string   `json:"created_at,omitempty"`
+	UpdatedAt      string   `json:"updated_at,omitempty"`
 }
 
 func rolesCmd() *cobra.Command {
@@ -48,7 +49,7 @@ func rolesCmd() *cobra.Command {
 		Short: "Manage the role library (named, reusable agent-role defaults)",
 		Long: "List, inspect, create, edit and delete roles. A role is a named bundle of defaults a template roster " +
 			"agent can reference: a canonical role-brief (prepended to that agent's startup context), a default " +
-			"launch shape (harness/model/effort/sandbox/approval or a spawn profile), and a default permission set. " +
+			"launch shape (harness/model/effort/sandbox/approval/tools or a spawn profile), and a default permission set. " +
 			"A referencing agent's own fields override the role's; the role fills what the agent leaves blank. The " +
 			"CLI twin of the dashboard's Roles editor.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -182,7 +183,7 @@ func printRoleHuman(w io.Writer, rl roleJSON) {
 	// Render launch fields in a stable order.
 	for _, kv := range []struct{ k, v string }{
 		{"harness", rl.Harness}, {"model", rl.Model}, {"effort", rl.Effort},
-		{"sandbox", rl.Sandbox}, {"approval", rl.Approval},
+		{"sandbox", rl.Sandbox}, {"approval", rl.Approval}, {"tools", rl.ToolGovernance},
 	} {
 		if kv.v != "" {
 			launch = append(launch, kv.k+"="+kv.v)

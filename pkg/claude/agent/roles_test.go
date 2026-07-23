@@ -39,16 +39,17 @@ func TestRoleLaunchSummary(t *testing.T) {
 func TestPrintRoleHuman_FullRole(t *testing.T) {
 	var buf bytes.Buffer
 	printRoleHuman(&buf, roleJSON{
-		Name:         "reviewer",
-		Descr:        "cold reviewer",
-		SpawnProfile: "sandboxed",
-		Harness:      "codex",
-		Model:        "opus",
-		Effort:       "high",
-		Sandbox:      "read-only",
-		Approval:     "on-request",
-		Permissions:  []string{"human.notify", "agent.rename"},
-		Brief:        "You review with fresh eyes.\nBe skeptical.",
+		Name:           "reviewer",
+		Descr:          "cold reviewer",
+		SpawnProfile:   "sandboxed",
+		Harness:        "codex",
+		Model:          "opus",
+		Effort:         "high",
+		Sandbox:        "read-only",
+		Approval:       "on-request",
+		ToolGovernance: "deny",
+		Permissions:    []string{"human.notify", "agent.rename"},
+		Brief:          "You review with fresh eyes.\nBe skeptical.",
 	})
 	out := buf.String()
 
@@ -56,7 +57,7 @@ func TestPrintRoleHuman_FullRole(t *testing.T) {
 		"Role: reviewer",
 		"descr:   cold reviewer",
 		// Launch fields render profile-first then the stable inline order.
-		"launch:  profile=sandboxed · harness=codex · model=opus · effort=high · sandbox=read-only · approval=on-request",
+		"launch:  profile=sandboxed · harness=codex · model=opus · effort=high · sandbox=read-only · approval=on-request · tools=deny",
 		"perms:   human.notify, agent.rename",
 		"  brief:",
 		"    You review with fresh eyes.",

@@ -273,7 +273,8 @@ armed.
 ### Spawn Profiles
 
 Reusable launch presets for agents. A spawn profile can carry the harness,
-model, effort, sandbox / permission-mode defaults, agent name, role, description,
+model, effort, sandbox / permission-mode defaults, OpenCode tool governance,
+agent name, role, description,
 initial message, dialog toggles, owner default, and per-slug permission
 overrides. It deliberately does **not** carry a working directory or worktree:
 those stay per-spawn.
@@ -614,7 +615,7 @@ in wizard mode). A **role** is a named, reusable bundle of defaults a template
 roster agent can point at: a canonical **role-brief** (folded into that agent's
 startup context under a `## Role` block), a default **launch shape**
 (spawn-profile reference, or inline harness / model / effort / sandbox /
-approval), and a default **permission set**. A template agent references a role
+approval / OpenCode tool governance), and a default **permission set**. A template agent references a role
 by name in its `role_ref` field; the role fills whatever the agent leaves blank
 and the agent's own fields always override it. This is distinct from the
 freeform `role` **label** on an agent (e.g. `tech-lead`), which is just
@@ -625,7 +626,7 @@ every field above, from this dialog (**+ new role** / per-card **edit** /
 **delete**). Every role picker (today: the templates editor's per-agent **Role
 library** dropdown) shows an inline **inspect panel** beneath the selection —
 the role's description, its launch shape (spawn-profile / harness / model /
-effort / sandbox / approval), its granted permission **slugs**, and its brief
+effort / sandbox / approval / tool governance), its granted permission **slugs**, and its brief
 (expandable) — so picking a role is never blind. The same view is available from
 the CLI with `tclaude agent roles show <name>`.
 
@@ -1239,6 +1240,13 @@ opens a terminal window attached to the freshly-spawned session — via
 `tclaude session attach`, so the reattached session keeps its status bar and
 focus/notify wiring — so you can watch and talk to the new agent immediately. A
 detached spawn otherwise has no window of its own.
+
+For OpenCode, the modal also shows **Tool governance** with `allow`, `ask`, and
+`deny`. It applies one action to bash, glob, grep, LSP, task, and skill while
+the launch uses `access-control`; `allow` is the backward-compatible default.
+The selector is hidden for Claude Code and Codex, which do not expose this
+independent axis. OpenCode's explicit sandbox `off` posture remains off, so this
+selector does not claim to govern those tools in that mode.
 
 ## Cleanup
 

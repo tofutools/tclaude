@@ -92,6 +92,7 @@ function roleSummary(rl) {
   if (rl.effort) parts.push(`effort ${rl.effort}`);
   if (rl.sandbox) parts.push(`sandbox ${rl.sandbox}`);
   if (rl.approval) parts.push(`approval ${rl.approval}`);
+  if (rl.tools) parts.push(`tools ${rl.tools}`);
   const nPerms = (rl.permissions || []).length;
   if (nPerms) parts.push(`${nPerms} perm${nPerms === 1 ? '' : 's'}`);
   return parts.join(' · ');

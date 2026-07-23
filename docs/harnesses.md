@@ -57,6 +57,9 @@ tclaude agent spawn --group mygroup --name worker --harness codex
 # Spawn an OpenCode agent. agentd starts the authenticated server and the pane
 # attaches to the server-minted conversation.
 tclaude agent spawn --group mygroup --name worker --harness opencode
+
+# Keep OpenCode's path policy, but require approval for its built-in tool block
+tclaude agent spawn --group mygroup --name worker --harness opencode --tools ask
 ```
 
 The harness is **persisted per conversation** (a `harness` column on the
@@ -73,7 +76,8 @@ OpenCode's supported launch surface is currently the agentd-owned
 `agent spawn`/agent resume path. Its default `access-control` mode applies
 tclaude-generated, per-session OpenCode tool rules: reads and representable
 edits follow relative path patterns, while bash, glob, grep, LSP, task, and
-skill remain available. This is deliberately described as lexical soft access
+skill default to `allow`. Set the independent `--tools allow|ask|deny` axis to
+change that whole tool block uniformly. This is deliberately described as lexical soft access
 control, not an OS sandbox: OpenCode does not resolve symlinks before permission
 evaluation, and tool permissions such as bash/glob/grep cannot be scoped to the
 same lexical disk boundary, so they can reach outside the authored paths. The
@@ -130,6 +134,7 @@ instead of slash-command injection).
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
 | **OS sandbox at spawn** | ✅ per-session `inherit`/`on`/`off` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` config | ✅ managed profile (default) or raw `--sandbox` flag | ⚠️ no native OS sandbox; `access-control` (default) applies lexical path rules but cannot prevent symlink traversal, `off` removes scoping |
 | **Approval posture at spawn** | ✅ per-session `--permission-mode` (inherit + Claude's modes); `auto` (default) runs the supervisor classifier, non-blocking for detached agents; `inherit` keeps `settings.json` + the agentd approval popup | ✅ `--ask-for-approval` flag, non-blocking default for agents | ✅ per-session `deny` (default), `ask`, or `allow-tools`; access-control keeps the tool baseline enabled, while `off` never auto-approves bash |
+| **Built-in tool governance at spawn** | ➖ not a separate axis | ➖ not a separate axis | ✅ `--tools allow|ask|deny` applies uniformly to bash, glob, grep, LSP, task, and skill in `access-control`; `allow` is the backward-compatible default |
 | **AskUserQuestion timeout at spawn** | ✅ per-session `inherit`/`never`/`60s`/`5m`/`10m` (delivered as a `--settings` override); `inherit` (default) keeps your `settings.json` value — set an interval per-agent / by profile so an unattended agent auto-continues instead of stalling on a question | ➖ no AskUserQuestion dialog | ❌ adapter pending |
 | **Auto-approve review** | ⚙️ `auto` permission mode — a separate supervisor model approves/blocks each action | ⚙️ opt-in `--auto-review` (guardian subagent, experimental) | ❌ no reviewer equivalent |
 | **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system | ➖ no auto-memory system |
@@ -296,27 +301,38 @@ session's liveness contract. Resume reconstructs the same topology around the
 recorded `ses_…` conversation. Model and reasoning-variant choices are loaded
 from `opencode models openai --verbose` rather than a hard-coded catalog.
 
-For managed launches, agentd compiles the resolved sandbox profile and approval
-choice into an ordered OpenCode permission suffix and stores that suffix with
+For managed launches, agentd compiles the resolved sandbox profile, approval
+choice, and built-in tool governance into an ordered OpenCode permission suffix and stores that suffix with
 the runtime. New sessions receive it at creation. A healthy reused server or a
 resumed/restarted runtime reads the session through the authenticated public
 API, appends the suffix only when it is absent, and verifies the server retained
 it before considering reconciliation successful. This keeps the session policy
 authoritative even when user or agent configuration contributes earlier rules.
 
-The secure defaults are `access-control` + `deny`: the working directory and
+The defaults are `access-control` + approval `deny` + tools `allow`: the working directory and
 explicit read roots are readable, but edits, web tools, and unaudited
 permissions are denied. `ask` lets a present human approve representable edits
 and profile-enabled web tools, but can block a detached agent. `allow-tools`
-automatically accepts scoped edits and explicitly enabled web tools. In every
-`access-control` approval mode, bash, glob, grep, LSP, task, and skill are
-explicitly allowed so the agent retains its shell, search, language, delegation,
-and skill tools. Those permission keys are separate from
+automatically accepts scoped edits and explicitly enabled web tools.
+
+The separate **Tool governance** selector applies one OpenCode permission
+action to bash, glob, grep, LSP, task, and skill: `allow` runs them without a
+prompt and preserves tclaude's earlier OpenCode behavior; `ask` prompts before
+use and can stall a detached agent; `deny` blocks them. OpenCode v1.18.4
+defines these three actions as run, prompt, and block respectively, and
+evaluates the last matching rule as authoritative (see the [OpenCode permission
+reference](https://opencode.ai/docs/permissions/)). The value is available in
+the spawn dialog, spawn profiles, roles, and `agent spawn --tools`; clone,
+resume, and reincarnate preserve the resolved launch value. It is intentionally
+independent of the edit/web approval selector.
+
+Those tool permission keys are separate from
 `read`/`edit`/`external_directory` and cannot express the same lexical disk
 boundary, so tool-driven disk access can reach outside the authored paths. This
 is an accepted limitation of the soft sandbox, not an expansion of its
 path-scoped file permissions. In `off`, bash may ask under `ask` or
-`allow-tools`, but is never automatic. An `off` launch rejects an assigned
+`allow-tools`, but is never automatic; tool governance is not applied, because
+`off` remains the explicit no-containment posture. An `off` launch rejects an assigned
 filesystem or network sandbox profile rather than silently discarding it;
 select `access-control` or remove the incompatible profile.
 

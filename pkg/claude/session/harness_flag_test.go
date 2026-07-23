@@ -34,3 +34,17 @@ func TestRunNew_CodexRejectsClaudeModelBeforeSpawn(t *testing.T) {
 		t.Fatalf("error should explain it's a Claude Code model, got: %v", err)
 	}
 }
+
+func TestRunNew_ToolGovernanceIsOpenCodeOnly(t *testing.T) {
+	for _, harnessName := range []string{"claude", "codex"} {
+		err := RunNew(&NewParams{Harness: harnessName, ToolGovernance: "ask"})
+		if err == nil || !strings.Contains(err.Error(), "tool-governance") {
+			t.Fatalf("RunNew(%s, --tools ask) error = %v, want tool-governance rejection", harnessName, err)
+		}
+	}
+
+	err := RunNew(&NewParams{Harness: "opencode", ToolGovernance: "sometimes"})
+	if err == nil || !strings.Contains(err.Error(), "tool-governance") {
+		t.Fatalf("RunNew(opencode, --tools sometimes) error = %v, want validation rejection", err)
+	}
+}

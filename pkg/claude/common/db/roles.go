@@ -14,7 +14,7 @@ var ErrRoleNameTaken = errors.New("a role with that name already exists")
 // Role is a row in roles — a named, reusable bundle of defaults a template
 // roster agent can reference instead of re-typing them (JOH-240). A role
 // carries a canonical role-brief (guidance prepended to that agent's startup
-// briefing), a default launch shape (the same six fields template agents got
+// briefing), a default launch shape (the same fields template agents got
 // in v89), and a default permission set.
 //
 // A template agent references a role by name (group_template_agents.role_ref);
@@ -33,9 +33,9 @@ type Role struct {
 	// role. "" = no brief (the block is omitted).
 	Brief string
 
-	// Default launch shape — the same six fields template agents carry
+	// Default launch shape — the same launch fields template agents carry
 	// (JOH-239). SpawnProfile exposes the current name of a stable profile ref;
-	// the five inline fields are inline defaults. "" = unset (inherit).
+	// the inline fields are defaults. "" = unset (inherit).
 	SpawnProfile   string
 	SpawnProfileID int64 `json:"-"`
 	Harness        string
@@ -43,6 +43,7 @@ type Role struct {
 	Effort         string
 	Sandbox        string
 	Approval       string
+	ToolGovernance string
 
 	// Permissions is the role's default permission-slug set, merged beneath a
 	// referencing agent's own permission grants at instantiate (union, agent
@@ -70,11 +71,11 @@ func CreateRole(rl *Role) (int64, error) {
 	now := time.Now().Format(time.RFC3339Nano)
 	res, err := d.Exec(
 		`INSERT INTO roles
-		   (name, descr, brief, spawn_profile, spawn_profile_id, harness, model, effort, sandbox, approval,
+		   (name, descr, brief, spawn_profile, spawn_profile_id, harness, model, effort, sandbox, approval, tools,
 		    permissions, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
-		rl.Sandbox, rl.Approval, permsToJSON(rl.Permissions), now, now)
+		rl.Sandbox, rl.Approval, rl.ToolGovernance, permsToJSON(rl.Permissions), now, now)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrRoleNameTaken
@@ -107,10 +108,10 @@ func UpdateRole(rl *Role) error {
 	res, err := tx.Exec(
 		`UPDATE roles SET
 		   name = ?, descr = ?, brief = ?, spawn_profile = ?, spawn_profile_id = ?, harness = ?, model = ?,
-		   effort = ?, sandbox = ?, approval = ?, permissions = ?, updated_at = ?
+		   effort = ?, sandbox = ?, approval = ?, tools = ?, permissions = ?, updated_at = ?
 		 WHERE id = ?`,
 		rl.Name, rl.Descr, rl.Brief, rl.SpawnProfile, profileID, rl.Harness, rl.Model, rl.Effort,
-		rl.Sandbox, rl.Approval, permsToJSON(rl.Permissions),
+		rl.Sandbox, rl.Approval, rl.ToolGovernance, permsToJSON(rl.Permissions),
 		time.Now().Format(time.RFC3339Nano), rl.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -235,14 +236,14 @@ const roleSelect = `SELECT id, name, descr, brief,
 	CASE WHEN spawn_profile_id IS NULL THEN spawn_profile
 	     ELSE COALESCE((SELECT name FROM spawn_profiles WHERE id = spawn_profile_id), '') END,
 	COALESCE(spawn_profile_id, 0), harness, model, effort,
-	sandbox, approval, permissions, created_at, updated_at
+	sandbox, approval, tools, permissions, created_at, updated_at
 	FROM roles`
 
 func scanRole(s rowScanner) (*Role, error) {
 	var rl Role
 	var perms, createdAt, updatedAt string
 	if err := s.Scan(&rl.ID, &rl.Name, &rl.Descr, &rl.Brief, &rl.SpawnProfile, &rl.SpawnProfileID, &rl.Harness,
-		&rl.Model, &rl.Effort, &rl.Sandbox, &rl.Approval, &perms, &createdAt, &updatedAt); err != nil {
+		&rl.Model, &rl.Effort, &rl.Sandbox, &rl.Approval, &rl.ToolGovernance, &perms, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	rl.Permissions = permsFromJSON(perms)

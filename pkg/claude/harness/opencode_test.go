@@ -19,7 +19,7 @@ func TestOpenCodeDescriptor(t *testing.T) {
 	if !slicesContains(SpawnBinaries(), "opencode") {
 		t.Fatalf("SpawnBinaries() = %v, want opencode", SpawnBinaries())
 	}
-	if h.Sandbox == nil || h.Approval == nil || h.Ask == nil || h.Convs == nil ||
+	if h.Sandbox == nil || h.Approval == nil || h.ToolGovernance == nil || h.Ask == nil || h.Convs == nil ||
 		h.ApprovalsReviewer {
 		t.Fatalf("unexpected OpenCode capability contracts: %+v", h)
 	}

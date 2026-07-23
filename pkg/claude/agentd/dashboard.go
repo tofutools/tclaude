@@ -1083,6 +1083,11 @@ type dashboardHarness struct {
 	// whether it is safe for a detached agent). {} (not null) when the harness
 	// surfaces no approval modes, so the JS lookup is always safe.
 	ApprovalModeHelp map[string]string `json:"approval_mode_help"`
+	// ToolsModes is the OpenCode-only uniform action for the built-in tool
+	// baseline. Empty on harnesses without a ToolGovernance catalog.
+	ToolsModes    []string          `json:"tools_modes"`
+	DefaultTools  string            `json:"default_tools"`
+	ToolsModeHelp map[string]string `json:"tools_mode_help"`
 	// AskTimeoutModes lists the Claude Code AskUserQuestion idle-timeout values
 	// this harness surfaces as a dropdown (inherit / never / 60s / 5m / 10m).
 	// Empty for a harness with no AskUserQuestion dialog (Codex), so the dialog
@@ -1109,6 +1114,7 @@ type dashboardHarness struct {
 	// ApprovalModes, mirroring how the sandbox row gates on can_sandbox &&
 	// sandbox_modes.length.
 	CanApproval bool `json:"can_approval"`
+	CanTools    bool `json:"can_tools"`
 	// CanAutoReview reports whether approval requests can be routed to a
 	// harness-owned reviewer instead of a human. This is intentionally distinct
 	// from CanApproval: Codex exposes both axes, while Claude Code's permission
@@ -1151,6 +1157,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanCompact:       h.CanCompact(),
 			CanSandbox:       h.SupportsSandbox(),
 			CanApproval:      h.SupportsApproval(),
+			CanTools:         h.SupportsToolGovernance(),
 			CanAutoReview:    h.SupportsAutoReview(),
 			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
@@ -1180,6 +1187,15 @@ func buildHarnessCatalog() []dashboardHarness {
 				for _, m := range modes {
 					dh.ApprovalModeHelp[m] = h.Approval.ModeHelp(m)
 				}
+			}
+		}
+		dh.ToolsModeHelp = map[string]string{}
+		dh.ToolsModes = []string{}
+		if h.SupportsToolGovernance() {
+			dh.ToolsModes = h.ToolGovernance.Modes()
+			dh.DefaultTools = h.ToolGovernance.DefaultPolicy()
+			for _, m := range dh.ToolsModes {
+				dh.ToolsModeHelp[m] = h.ToolGovernance.ModeHelp(m)
 			}
 		}
 		// AskUserQuestion idle-timeout modes mirror the sandbox block: a

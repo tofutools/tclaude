@@ -2028,6 +2028,7 @@ function RoleInspect({ roleName, roles }) {
     ['effort', role.effort],
     ['sandbox', role.sandbox],
     ['approval', role.approval],
+    ['tools', role.tools],
   ].filter(([, value]) => value);
   const brief = (role.brief || '').trim();
   return html`<div class="role-inspect">

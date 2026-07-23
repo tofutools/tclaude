@@ -231,6 +231,26 @@ func TestSessionNewArgs_Approval(t *testing.T) {
 	}
 }
 
+func TestSessionArgs_ToolGovernance(t *testing.T) {
+	flagValueAt := func(args []string, flag string) (string, bool) {
+		for i, arg := range args {
+			if arg == flag && i+1 < len(args) {
+				return args[i+1], true
+			}
+		}
+		return "", false
+	}
+	if _, ok := flagValueAt(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", Harness: harness.OpenCodeName}), "--tools"); ok {
+		t.Fatal("unset tool governance must omit --tools")
+	}
+	if got, ok := flagValueAt(sessionNewArgs(clcommon.SpawnArgs{Label: "lbl", Cwd: "/tmp/x", Harness: harness.OpenCodeName, ToolGovernance: harness.OpenCodeToolsAsk}), "--tools"); !ok || got != harness.OpenCodeToolsAsk {
+		t.Fatalf("fresh spawn --tools = (%q, %v), want ask", got, ok)
+	}
+	if got, ok := flagValueAt(sessionResumeArgs(clcommon.SpawnArgs{ConvID: "conv-1", Cwd: "/tmp/x", Harness: harness.OpenCodeName, ToolGovernance: harness.OpenCodeToolsDeny}), "--tools"); !ok || got != harness.OpenCodeToolsDeny {
+		t.Fatalf("resume --tools = (%q, %v), want deny", got, ok)
+	}
+}
+
 // TestSessionNewArgs_AutoReview covers the --auto-review flag: a bare boolean
 // flag appended only when the spawn opted in (true), omitted otherwise. The
 // opt-in is gated at the spawn boundary (harness.ResolveAutoReview) before it
