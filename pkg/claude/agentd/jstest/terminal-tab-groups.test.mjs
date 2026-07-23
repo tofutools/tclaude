@@ -302,13 +302,15 @@ test('the strip renders group stacks with a collapsing pill, a join drop target,
   assert.deepEqual([...stack.querySelectorAll('.mux-tab-label')].map((label) => label.textContent), ['a', 'b']);
 
   // Collapsing hands the active terminal to the tab outside the stack, so the
-  // collapsed stack renders as the pill alone.
-  await harness.act(() => harness.fireEvent(pill, 'click'));
+  // collapsed stack renders as the pill alone. detail:0 is a keyboard-activated
+  // click, which collapses instantly (a pointer click waits for a possible
+  // double-click; that timing path has its own test).
+  await harness.act(() => harness.fireEvent(pill, 'click', { detail: 0 }));
   assert.equal(state.activeKey.value, 'c');
   assert.equal(container.querySelector('.mux-tab-group').classList.contains('collapsed'), true);
   assert.deepEqual([...container.querySelectorAll('.mux-tab-group .mux-tab-label')], []);
   await harness.act(() => harness.fireEvent(
-    getByRole(container, 'button', { name: 'infra, 2 terminals' }), 'click',
+    getByRole(container, 'button', { name: 'infra, 2 terminals' }), 'click', { detail: 0 },
   ));
   assert.equal(container.querySelectorAll('.mux-tab-group .mux-tab-label').length, 2);
 
@@ -607,19 +609,22 @@ test('dropping a tab on the centre of a grouped tab joins that group', async (t)
   assert.match(container.querySelector('[role="status"]').textContent, /Grouped b into infra/);
 });
 
-test('double-click and F2 rename a group; double-click leaves its collapse state unchanged', async (t) => {
+test('double-click renames a group without collapsing it or moving the active terminal', async (t) => {
   const harness = await createPreactHarness(t);
-  const { state, container } = await mountStrip(harness, ['a', 'b']);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  // The group owns the active terminal AND there is a tab outside it — the
+  // exact shape in which a spurious collapse would displace activation onto the
+  // outside tab. Renaming must not collapse, so activation must not move.
   state.createGroup({ name: 'infra', keys: ['a', 'b'] });
+  state.activatePane('b');
   await harness.act(() => {});
 
-  // A real double-click is a click (which toggles collapse) followed by a
-  // dblclick; the dblclick undoes that toggle before renaming, so the group
-  // ends where it began — expanded.
   const pill = getByRole(container, 'button', { name: 'infra, 2 terminals' });
   assert.equal(pill.getAttribute('aria-expanded'), 'true');
+  // A real double-click is a pointer click (which only ARMS the deferred
+  // collapse) immediately followed by a dblclick that cancels it.
   await harness.act(() => harness.fireEvent(pill, 'click'));
-  assert.equal(state.groups.value[0].collapsed, true, 'the first click of the pair collapses');
+  assert.equal(state.groups.value[0].collapsed, false, 'the click alone has not collapsed anything yet');
   await harness.act(() => harness.fireEvent(pill, 'dblclick'));
   const input = container.querySelector('.mux-group-rename');
   assert.ok(input, 'the double-click opens the inline rename field');
@@ -627,8 +632,8 @@ test('double-click and F2 rename a group; double-click leaves its collapse state
   input.value = 'platform';
   await harness.act(() => harness.fireEvent(input, 'keydown', { key: 'Enter' }));
   assert.equal(state.groups.value[0].name, 'platform', 'the typed name is committed');
-  assert.equal(state.groups.value[0].collapsed, false,
-    'renaming by double-click restores the collapse state the first click flipped');
+  assert.equal(state.groups.value[0].collapsed, false, 'renaming never collapsed the group');
+  assert.equal(state.activeKey.value, 'b', 'and never displaced the active terminal onto the outside tab');
 
   // F2 on the focused pill is the keyboard equivalent.
   const renamedPill = getByRole(container, 'button', { name: 'platform, 2 terminals' });
@@ -639,4 +644,26 @@ test('double-click and F2 rename a group; double-click leaves its collapse state
   keyboardInput.value = 'infra-2';
   await harness.act(() => harness.fireEvent(keyboardInput, 'keydown', { key: 'Enter' }));
   assert.equal(state.groups.value[0].name, 'infra-2');
+});
+
+test('a single pointer click on a group pill collapses it only after the double-click grace period', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  const { GROUP_COLLAPSE_CLICK_DELAY_MS } =
+    await harness.importDashboardModule('js/terminal-shell-island.js');
+  state.createGroup({ name: 'infra', keys: ['a', 'b'] });
+  await harness.act(() => {});
+  const pill = () => getByRole(container, 'button', { name: /^infra, 2 terminals$/ });
+
+  // The pointer click arms the deferred collapse but does not collapse yet, so
+  // a double-click still has time to cancel it.
+  await harness.act(() => harness.fireEvent(pill(), 'click'));
+  assert.equal(state.groups.value[0].collapsed, false, 'not collapsed within the grace period');
+  await new Promise((resolve) => { setTimeout(resolve, GROUP_COLLAPSE_CLICK_DELAY_MS + 60); });
+  assert.equal(state.groups.value[0].collapsed, true, 'collapses once the grace period elapses with no second click');
+
+  // A keyboard-activated click (detail 0) has no double-click to wait for and
+  // toggles immediately.
+  await harness.act(() => harness.fireEvent(pill(), 'click', { detail: 0 }));
+  assert.equal(state.groups.value[0].collapsed, false, 'a keyboard click toggles without waiting');
 });

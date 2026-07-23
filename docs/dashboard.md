@@ -952,8 +952,10 @@ or a keystroke will do never disagree.
   selection. Activating a member of a collapsed group re-expands it.
 * **Rename** — double-click the group's pill, or focus it and press **F2**, to
   edit the name inline; **Enter** commits, **Escape** discards. The pill's
-  context menu also offers *Rename group*. Double-clicking to rename leaves the
-  group's collapse state unchanged.
+  context menu also offers *Rename group*. So a double-click never collapses the
+  group first, a pointer click on the pill waits a moment (the double-click
+  grace period) before collapsing; a keyboard **Enter**/**Space** collapses
+  immediately, since there is no double-click to wait for.
 * **Ungroup, close** — the pill's own context menu dissolves the group
   (*Ungroup tabs*, which keeps every terminal and its position) or closes the
   terminals in it.

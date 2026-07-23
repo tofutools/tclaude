@@ -14,6 +14,10 @@ import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 const html = htm.bind(h);
 const INTERACTION_HINT = 'Select: Option-drag (macOS) / Shift-drag (Linux/Windows) · Copy: Ctrl/Cmd+Shift+C';
 const TERMINAL_TAB_DRAG_MIME = 'application/x-tclaude-terminal-tab';
+// A pointer click on a group pill waits this long before collapsing so a
+// double-click (rename) can cancel it. Roughly the platform double-click
+// threshold; keyboard clicks bypass it entirely.
+export const GROUP_COLLAPSE_CLICK_DELAY_MS = 200;
 
 export function terminalTabReorderOffset(event) {
   if (event?.type !== 'keydown' || event.target?.closest?.('button')) return null;
@@ -342,22 +346,40 @@ function GroupStack({
 }) {
   const inputRef = useRef(null);
   // A single click collapses, a double click renames — the two share the pill.
-  // Rather than delay the collapse (which makes every collapse feel laggy), the
-  // collapse fires instantly on the first click and the double-click handler
-  // undoes that one toggle before opening the rename, so renaming never leaves
-  // the group in the opposite collapse state. The second click of the pair is
-  // ignored via its click-count so it does not toggle a third time. F2 is the
-  // keyboard equivalent.
-  const collapseOnClick = (event) => {
-    if (event.detail > 1) return;
-    actions.toggleGroupCollapsed(group.id);
+  // Collapsing is NOT a pure toggle: collapsing a group that owns the active
+  // terminal deliberately moves activation outside the group, and expanding
+  // does not move it back. So the collapse cannot fire on the first click of a
+  // double-click and be "undone" — that would silently switch the active
+  // terminal. Instead a pointer click ARMS the collapse on a short timer that a
+  // second click (the double-click) cancels, so renaming never collapses at
+  // all. A keyboard-synthesised click (Enter/Space, detail 0) has no
+  // double-click to wait for, so it collapses immediately. F2 renames.
+  const collapseTimer = useRef(null);
+  const clearCollapseTimer = () => {
+    if (collapseTimer.current) {
+      clearTimeout(collapseTimer.current);
+      collapseTimer.current = null;
+    }
   };
-  const startRename = () => onRenameStart(group.id);
+  useEffect(() => clearCollapseTimer, []);
+  const onPillClick = (event) => {
+    if (event.detail === 0) {
+      actions.toggleGroupCollapsed(group.id);
+      return;
+    }
+    clearCollapseTimer();
+    collapseTimer.current = setTimeout(() => {
+      collapseTimer.current = null;
+      actions.toggleGroupCollapsed(group.id);
+    }, GROUP_COLLAPSE_CLICK_DELAY_MS);
+  };
+  const startRename = () => {
+    clearCollapseTimer();
+    onRenameStart(group.id);
+  };
   const renameOnDblClick = (event) => {
     event.preventDefault();
     event.stopPropagation();
-    // Reverse the toggle the first click of this pair already applied.
-    actions.toggleGroupCollapsed(group.id);
     startRename();
   };
   // onBlur commits, so a cancel must first mark itself: browsers do not fire
@@ -442,8 +464,9 @@ function GroupStack({
           class="mux-group-pill"
           aria-expanded=${group.collapsed ? 'false' : 'true'}
           aria-haspopup="menu"
+          aria-describedby="terminal-group-pill-help"
           title=${`Click to ${group.collapsed ? 'expand' : 'collapse'} the ${group.name} terminal group · double-click or F2 to rename · right-click or Shift+F10 for group actions`}
-          onClick=${collapseOnClick}
+          onClick=${onPillClick}
           onDblClick=${renameOnDblClick}
           onContextMenu=${openMenuAt}
           onKeyDown=${onPillKeyDown}
@@ -708,7 +731,11 @@ function TerminalTabs({
     event.stopPropagation();
     droppedRef.current = true;
     const key = event.dataTransfer?.getData(TERMINAL_TAB_DRAG_MIME) || dragKeyRef.current;
-    if (!key) { clearDrag(); return; }
+    // A tab dropped on itself is a no-op. tabDragOver already declines to accept
+    // a self-hover, so a real browser never fires this drop; the guard keeps a
+    // future unconditional-accept change from building a singleton group from
+    // keys:[X, X].
+    if (!key || key === targetKey) { clearDrag(); return; }
     const side = tabDropSide(event, event.currentTarget, key, targetKey);
     if (side === 'group') {
       // Centre drop: combine the two tabs. If the target already has a group,
@@ -930,6 +957,9 @@ function TerminalTabs({
           to move the tab out of it.
           A group's pill collapses and expands the group; double-click it or press F2 to rename, and it carries its own context menu for
           renaming, ungrouping, and closing its tabs.
+        </span>
+        <span id="terminal-group-pill-help" class="mux-tab-a11y">
+          Enter or Space collapses or expands this group. Press F2 to rename it, or Shift+F10 for its actions menu.
         </span>
         <span class="mux-tab-a11y" role="status" aria-live="polite" aria-atomic="true">${reorderAnnouncement}</span>
         <div ref=${tabsRef} class=${`mux-tabs${detachArmed ? ' drag-out-armed' : ''}`} role="tablist" aria-label="Open terminals">
