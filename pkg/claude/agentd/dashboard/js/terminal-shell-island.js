@@ -485,13 +485,20 @@ function GroupStack({
 
 // StripGap is a thin drop target at a group boundary — the one place a plain
 // tab drop cannot land, because the only tab to drop onto there belongs to the
-// stack and dropping on it would join. It is inert until a drag is in flight,
-// so it never widens the strip or intercepts an ordinary click.
+// stack and dropping on it would join.
+//
+// It is ALWAYS rendered, even at rest, and only reveals itself (via the
+// `active` class → width) while a drag is in flight. Rendering it conditionally
+// would insert a node next to the group the moment a drag begins; that
+// insertion makes Preact reconcile — and recreate — the neighbouring group
+// subtree, and recreating the DOM node the browser just picked up as a drag
+// source silently aborts the native drag. Grabbing a grouped tab then "did
+// nothing" most of the time. Keeping the node present and toggling a class
+// never disturbs the drag source.
 function StripGap({ active, armed, onDragOver, onDragLeave, onDrop }) {
-  if (!active) return null;
   return html`
     <div
-      class=${`mux-strip-gap${armed ? ' armed' : ''}`}
+      class=${`mux-strip-gap${active ? ' active' : ''}${armed ? ' armed' : ''}`}
       aria-hidden="true"
       onDragOver=${onDragOver}
       onDragLeave=${onDragLeave}
@@ -994,6 +1001,7 @@ function TerminalTabs({
             // omitted to keep the strip quiet.
             const leadingGap = html`
               <${StripGap}
+                key=${`${gid}:gap-before`}
                 active=${dragging}
                 armed=${stripGap === `${gid}:before`}
                 onDragOver=${(event) => gapDragOver(event, `${gid}:before`)}
@@ -1002,6 +1010,7 @@ function TerminalTabs({
               />`;
             const trailingGap = segmentIndex === current.segments.length - 1 ? html`
               <${StripGap}
+                key=${`${gid}:gap-after`}
                 active=${dragging}
                 armed=${stripGap === `${gid}:after`}
                 onDragOver=${(event) => gapDragOver(event, `${gid}:after`)}

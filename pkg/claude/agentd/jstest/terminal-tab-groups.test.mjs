@@ -467,7 +467,10 @@ test('a drop gap parks a tab at a group boundary a tab drop cannot reach', async
   state.createGroup({ name: 'left', keys: ['a', 'b'] });
   state.createGroup({ name: 'right', keys: ['c', 'd'] });
   await harness.act(() => {});
-  assert.equal(container.querySelectorAll('.mux-strip-gap').length, 0, 'gaps do not exist at rest');
+  // The gap nodes are always present (so beginning a drag never inserts DOM
+  // next to a group and aborts the native drag), but none is ACTIVE at rest.
+  assert.equal(container.querySelectorAll('.mux-strip-gap.active').length, 0,
+    'no gap is active at rest');
 
   const transfer = {
     data: {}, effectAllowed: '', dropEffect: '',
@@ -478,8 +481,8 @@ test('a drop gap parks a tab at a group boundary a tab drop cannot reach', async
     .find((tab) => tab.querySelector('.mux-tab-label').textContent === 'c')
     .querySelector('.mux-tab-label');
   await harness.act(() => harness.fireEvent(cLabel, 'dragstart', { dataTransfer: transfer }));
-  const gaps = container.querySelectorAll('.mux-strip-gap');
-  assert.ok(gaps.length >= 2, 'gaps appear at the group boundaries while a drag is in flight');
+  const gaps = container.querySelectorAll('.mux-strip-gap.active');
+  assert.ok(gaps.length >= 2, 'gaps activate at the group boundaries while a drag is in flight');
 
   // The first gap is the position before the leading stack — the spot no tab
   // drop can express, because the only tab there belongs to the stack.
@@ -490,8 +493,35 @@ test('a drop gap parks a tab at a group boundary a tab drop cannot reach', async
 
   assert.equal(state.groupFor('c'), null, 'the parked tab is ungrouped');
   assert.equal(state.panes.value[0].key, 'c', 'and sits before the formerly-leading stack');
-  assert.equal(container.querySelectorAll('.mux-strip-gap').length, 0, 'the gaps vanish once the drag ends');
+  assert.equal(container.querySelectorAll('.mux-strip-gap.active').length, 0,
+    'the gaps deactivate once the drag ends');
   assert.match(container.querySelector('[role="status"]').textContent, /out of group right/);
+});
+
+test('starting a drag on a grouped tab preserves its DOM node so the native drag survives', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { state, container } = await mountStrip(harness, ['a', 'b', 'c']);
+  state.createGroup({ name: 'infra', keys: ['a', 'b'] });
+  await harness.act(() => {});
+  const tabFor = (name) => [...container.querySelectorAll('[role="tab"]')]
+    .find((tab) => tab.querySelector('.mux-tab-label').textContent === name);
+
+  const bTab = tabFor('b');
+  const bLabel = bTab.querySelector('.mux-tab-label');
+  const transfer = {
+    data: {}, effectAllowed: '', dropEffect: '',
+    setData(type, value) { this.data[type] = value; },
+    getData(type) { return this.data[type] || ''; },
+  };
+  await harness.act(() => harness.fireEvent(bLabel, 'dragstart', { dataTransfer: transfer }));
+
+  // The dragstart re-render (which activates the boundary gaps) must NOT
+  // recreate the grouped tab or its drag-source label: a browser aborts a
+  // native drag the instant its source node is replaced, which is what made
+  // grabbing a grouped tab "do nothing" most of the time.
+  assert.equal(tabFor('b'), bTab, 'the grouped tab element is reused, not recreated');
+  assert.equal(tabFor('b').querySelector('.mux-tab-label'), bLabel, 'the drag-source label is preserved');
+  assert.equal(bTab.classList.contains('dragging'), true, 'and the drag actually started');
 });
 
 test('a rename committed by blur still respects a preceding Escape', async (t) => {
