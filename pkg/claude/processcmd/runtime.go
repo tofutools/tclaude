@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	processEventPageMax                = 16
-	maxProcessEventPayloadDisplayBytes = 512
+	defaultProcessEventPayloadDisplayBytes = 120
+	processEventPageMax                    = 16
+	maxProcessEventPayloadDisplayBytes     = 512
 )
 
 var errProcessDaemonAlreadyReported = errors.New("daemon requirement already reported")
@@ -185,14 +186,28 @@ type processRunIDParams struct {
 	RunID string `pos:"true" help:"Process run id"`
 }
 
+type processShowParams struct {
+	RunID string `pos:"true" help:"Process run id"`
+	JSON  bool   `long:"json" help:"Output the complete run snapshot as JSON"`
+}
+
 func processShowCmd() *cobra.Command {
-	return processRunReadCmd("show", "Show one daemon-owned process run", false)
+	return boa.CmdT[processShowParams]{
+		Use: "show", Short: "Show one daemon-owned process run",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *processShowParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessShow(p.RunID, false, p.JSON, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
 }
 
 type processEventsParams struct {
-	RunID string `pos:"true" help:"Process run id"`
-	After int64  `long:"after" optional:"true" help:"Exclusive event-sequence cursor"`
-	Limit int    `long:"limit" optional:"true" default:"16" help:"Maximum rows (1..16)"`
+	RunID        string `pos:"true" help:"Process run id"`
+	After        int64  `long:"after" optional:"true" help:"Exclusive event-sequence cursor"`
+	Limit        int    `long:"limit" optional:"true" default:"16" help:"Maximum rows (1..16)"`
+	JSON         bool   `long:"json" help:"Output the complete event page as JSON"`
+	JSONLines    bool   `long:"json-lines" help:"Output one event object per line"`
+	PayloadBytes int    `long:"payload-bytes" default:"120" help:"Table payload preview bytes (0 hides the column; maximum 512)"`
 }
 
 func processEventsCmd() *cobra.Command {
@@ -207,18 +222,24 @@ func processEventsCmd() *cobra.Command {
 }
 
 func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
-	if err := requireProcessRuntime(stderr); err != nil {
-		return err
-	}
 	runID := strings.TrimSpace(p.RunID)
 	if runID == "" {
 		return fmt.Errorf("run id is required")
+	}
+	if p.JSON && p.JSONLines {
+		return fmt.Errorf("--json and --json-lines are mutually exclusive")
 	}
 	if p.After < 0 {
 		return fmt.Errorf("--after must be a non-negative sequence")
 	}
 	if p.Limit < 1 || p.Limit > processEventPageMax {
 		return fmt.Errorf("--limit must be 1..%d", processEventPageMax)
+	}
+	if p.PayloadBytes < 0 || p.PayloadBytes > maxProcessEventPayloadDisplayBytes {
+		return fmt.Errorf("--payload-bytes must be 0..%d", maxProcessEventPayloadDisplayBytes)
+	}
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
 	}
 	query := url.Values{}
 	if p.After != 0 {
@@ -237,6 +258,18 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 		agent.DaemonOpts{RetryOutput: stderr}); err != nil {
 		return err
 	}
+	if p.JSON {
+		return json.NewEncoder(stdout).Encode(response)
+	}
+	if p.JSONLines {
+		encoder := json.NewEncoder(stdout)
+		for i := range response.Events {
+			if err := encoder.Encode(response.Events[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if len(response.Events) == 0 {
 		if p.After == 0 {
 			fmt.Fprintf(stdout, "No evidence recorded for process run %s.\n", runID)
@@ -246,11 +279,19 @@ func runProcessEvents(p *processEventsParams, stdout, stderr io.Writer) error {
 		return nil
 	}
 	tw := newTable(stdout)
-	fmt.Fprintln(tw, "SEQ\tTIME\tNODE\tKIND\tACTOR\tPAYLOAD")
+	if p.PayloadBytes == 0 {
+		fmt.Fprintln(tw, "SEQ\tTIME\tNODE\tKIND\tACTOR")
+	} else {
+		fmt.Fprintln(tw, "SEQ\tTIME\tNODE\tKIND\tACTOR\tPAYLOAD")
+	}
 	for _, event := range response.Events {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s",
 			event.Sequence, formatTime(event.OccurredAt), displayProcessEventField(event.NodeID),
-			event.Kind, displayProcessEventField(event.Actor), formatProcessEventPayload(event.Payload))
+			event.Kind, displayProcessEventField(event.Actor))
+		if p.PayloadBytes > 0 {
+			fmt.Fprintf(tw, "\t%s", formatProcessEventPayload(event.Payload, p.PayloadBytes))
+		}
+		fmt.Fprintln(tw)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -268,20 +309,24 @@ func displayProcessEventField(value string) string {
 	return value
 }
 
-func formatProcessEventPayload(payload json.RawMessage) string {
+func formatProcessEventPayload(payload json.RawMessage, maxBytes int) string {
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, payload); err != nil {
 		return "<invalid JSON>"
 	}
 	value := compact.String()
-	if len(value) <= maxProcessEventPayloadDisplayBytes {
+	if len(value) <= maxBytes {
 		return value
 	}
-	cut := maxProcessEventPayloadDisplayBytes - len("...")
+	ellipsis := "..."
+	if maxBytes < len(ellipsis) {
+		ellipsis = ellipsis[:maxBytes]
+	}
+	cut := maxBytes - len(ellipsis)
 	for cut > 0 && !utf8.ValidString(value[:cut]) {
 		cut--
 	}
-	return value[:cut] + "..."
+	return value[:cut] + ellipsis
 }
 
 func processReconcileCmd() *cobra.Command {
@@ -292,18 +337,21 @@ func processRunReadCmd(use, short string, reconcileOnly bool) *cobra.Command {
 	return boa.CmdT[processRunIDParams]{
 		Use: use, Short: short, ParamEnrich: common.DefaultParamEnricher(),
 		RunFunc: func(p *processRunIDParams, _ *cobra.Command, _ []string) {
-			exitProcessRuntime(runProcessShow(p, reconcileOnly, os.Stdout, os.Stderr), os.Stderr)
+			exitProcessRuntime(runProcessShow(p.RunID, reconcileOnly, false, os.Stdout, os.Stderr), os.Stderr)
 		},
 	}.ToCobra()
 }
 
-func runProcessShow(p *processRunIDParams, reconcileOnly bool, stdout, stderr io.Writer) error {
+func runProcessShow(runID string, reconcileOnly, jsonOutput bool, stdout, stderr io.Writer) error {
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
-	run, err := fetchProcessRun(p.RunID, stderr)
+	run, err := fetchProcessRun(runID, stderr)
 	if err != nil {
 		return err
+	}
+	if jsonOutput {
+		return json.NewEncoder(stdout).Encode(run)
 	}
 	if reconcileOnly && !run.NeedsReconcile {
 		fmt.Fprintf(stdout, "Process run %s does not need reconciliation (action=%s).\n", run.ID, run.Action)
