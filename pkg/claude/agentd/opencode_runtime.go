@@ -59,6 +59,11 @@ var openCodeProcesses = struct {
 	bySession map[string]*openCodeProcess
 }{bySession: map[string]*openCodeProcess{}}
 
+// Delivery and the reaper may discover the same unhealthy managed server at
+// once. Serialize stop -> endpoint release -> restart per session so those
+// recovery attempts cannot tear down or contend for the same replacement.
+var openCodeReconcileLocks sync.Map // map[sessionID]*sync.Mutex
+
 var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
 
@@ -343,12 +348,64 @@ func sendOpenCodePrompt(launch *openCodeLaunch, cwd, prompt, model, effort strin
 	return nil
 }
 
+// sendOpenCodeNudge delivers a queued inbox nudge to the conversation owned by
+// the managed OpenCode server. OpenCode's tmux pane is only an attach client;
+// typing untrusted message content into that pane can miss the TUI entirely and
+// reach its foreground shell. The server prompt endpoint is the authoritative
+// input channel and preserves the nudge as one user turn.
+//
+// A missing or unhealthy runtime is a delivery failure, not permission to fall
+// back to send-keys. Returning an error lets the shared nudge queue release its
+// durable claim and retry later without losing the inbox row. A runtime that
+// stopped is reconciled once before the prompt is attempted.
+//
+// Delivery is at-least-once: if prompt_async accepts the turn but its response
+// or the queue completion stamp is lost, retry may submit it again. The framed
+// message ID is the recipient's deduplication cue.
+func sendOpenCodeNudge(convID, nudge string) error {
+	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
+	if err != nil {
+		return fmt.Errorf("look up OpenCode runtime for nudge: %w", err)
+	}
+	if runtime == nil {
+		return fmt.Errorf("no managed OpenCode runtime for conversation %s", convID)
+	}
+	if !openCodeHealthyAfterRetries(*runtime,
+		openCodeHealthAttempts, openCodeHealthRetryDelay) {
+		if !reconcileOpenCodeRuntime(runtime.SessionID) {
+			return fmt.Errorf("managed OpenCode runtime for conversation %s is unavailable", convID)
+		}
+		// Reconciliation can restart the server and persist a new PID. Reload
+		// before constructing the authenticated request so ownership validation
+		// uses the recovered process rather than stale runtime state.
+		runtime, err = db.GetOpenCodeRuntimeByConvID(convID)
+		if err != nil {
+			return fmt.Errorf("reload reconciled OpenCode runtime for nudge: %w", err)
+		}
+		if runtime == nil {
+			return fmt.Errorf("reconciled OpenCode runtime for conversation %s disappeared", convID)
+		}
+	}
+	return sendOpenCodePrompt(&openCodeLaunch{
+		SessionID: runtime.SessionID,
+		ConvID:    runtime.ConvID,
+		ServerURL: runtime.ServerURL,
+		Password:  runtime.Password,
+		PID:       runtime.PID,
+	}, runtime.Cwd, nudge, "", "")
+}
+
 // reconcileOpenCodeRuntime is the server-side half of OpenCode liveness.
 // A healthy pane is insufficient: the conversation lives in `serve`. Restart
 // the same authenticated endpoint when possible so the attached client can
 // reconnect; return false when recovery failed and the reaper should fail the
 // pane visibly.
 func reconcileOpenCodeRuntime(sessionID string) bool {
+	value, _ := openCodeReconcileLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	reconcileMu := value.(*sync.Mutex)
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
+
 	runtime, err := db.GetOpenCodeRuntime(sessionID)
 	if err != nil || runtime == nil {
 		return false
