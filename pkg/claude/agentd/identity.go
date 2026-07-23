@@ -793,8 +793,21 @@ func sessionConvByPID(hostPID int) string {
 // OpenCode runtime whose recorded `opencode serve` pid is hostPID. It is
 // called only for an OpenCode-named ancestor, keeping the Claude/Codex
 // sessions.pid resolution contract unchanged.
+//
+// The match is confirmed by endpoint ownership before it becomes an identity:
+// if an `opencode serve` crashes, its runtime row lingers with a stale pid
+// until reconcile/reap clears it, and a same-uid `opencode`-named process that
+// inherits that pid in the meantime would otherwise resolve as the victim conv
+// (→ classAgent). Requiring that the recorded pid still owns the recorded
+// endpoint closes that reuse window: the crashed server freed its port, so the
+// impostor cannot own it, while a live managed server always holds its own port
+// — the same proof every authenticated request to this runtime already
+// requires. (The parallel sessions.pid path in sessionConvByPID has the same
+// pre-existing property but no endpoint to prove against; it is intentionally
+// left unchanged here — see TCL-678.)
 func openCodeRuntimeConvByPID(hostPID int) string {
-	if runtime, err := db.FindOpenCodeRuntimeByPID(hostPID); err == nil && runtime != nil {
+	if runtime, err := db.FindOpenCodeRuntimeByPID(hostPID); err == nil && runtime != nil &&
+		openCodeRuntimeVerified(*runtime) {
 		return runtime.ConvID
 	}
 	return ""

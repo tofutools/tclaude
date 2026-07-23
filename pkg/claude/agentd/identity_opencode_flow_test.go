@@ -53,6 +53,7 @@ func TestOpenCodePeerIdentity_WhoamiAndInbox(t *testing.T) {
 			shellPID: servePID,
 		},
 	}.install(t)
+	withOpenCodeRuntimeVerified(t, true)
 
 	gotConv, hasAncestor := convIDForPID(peerPID)
 	require.True(t, hasAncestor, "the opencode server must be recognised as a harness ancestor")
@@ -155,6 +156,7 @@ func TestConvIDForPID_OpenCodeRuntimeResolvesViaMatchedAncestorParent(t *testing
 			openCodeChild: recordedRuntime,
 		},
 	}.install(t)
+	withOpenCodeRuntimeVerified(t, true)
 
 	gotConv, hasAncestor := convIDForPID(peerPID)
 	assert.True(t, hasAncestor)
@@ -240,8 +242,56 @@ func TestConvIDForPID_OpenCodePremintRuntimeFailsClosed(t *testing.T) {
 		name:   map[int]string{peerPID: "tclaude", servePID: "opencode"},
 		parent: map[int]int{peerPID: servePID},
 	}.install(t)
+	// A verified but not-yet-minted runtime still yields no conv-id: this proves
+	// the empty-conv path fails closed independently of the ownership gate.
+	withOpenCodeRuntimeVerified(t, true)
 
 	assertOpenCodeAgentUnknown(t, peerPID)
+}
+
+// TestConvIDForPID_OpenCodeStalePIDReuseFailsClosed is the TCL-678 identity
+// hardening regression. When an `opencode serve` crashes its runtime row
+// lingers with a stale pid until reconcile/reap clears it. If a same-uid,
+// `opencode`-named process inherits that pid in the meantime, the walk would
+// reach an OpenCode-named ancestor at the recorded pid and — before this
+// hardening — resolve the victim conversation, misclassifying the impostor as
+// classAgent. The recovered-pid ownership gate rejects the match (the crashed
+// server freed its port, so the impostor cannot own the recorded endpoint), so
+// the lingering row must resolve to no conv-id / classAgentUnknown.
+func TestConvIDForPID_OpenCodeStalePIDReuseFailsClosed(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		peerPID  = 4300
+		servePID = 4200
+	)
+	const convID = "ses_opencode_victim"
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "spwn-victim",
+		ConvID:    convID,
+		ServerURL: "http://127.0.0.1:43213",
+		Password:  "private",
+		PID:       servePID,
+		Cwd:       "/tmp/project",
+	}))
+	fakeProcTree{
+		name:   map[int]string{peerPID: "tclaude", servePID: "opencode"},
+		parent: map[int]int{peerPID: servePID},
+	}.install(t)
+	// The recorded pid no longer owns the recorded endpoint (crashed + reused).
+	withOpenCodeRuntimeVerified(t, false)
+
+	assertOpenCodeAgentUnknown(t, peerPID)
+}
+
+// withOpenCodeRuntimeVerified overrides the recovered-pid ownership gate so a
+// synthetic proc tree (which binds no real listening socket) can drive identity
+// resolution deterministically. It restores the production verifier on cleanup.
+func withOpenCodeRuntimeVerified(t *testing.T, verified bool) {
+	t.Helper()
+	prev := openCodeRuntimeVerified
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool { return verified }
+	t.Cleanup(func() { openCodeRuntimeVerified = prev })
 }
 
 func assertOpenCodeAgentUnknown(t *testing.T, peerPID int) {

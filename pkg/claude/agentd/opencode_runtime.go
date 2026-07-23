@@ -59,6 +59,12 @@ type openCodeProcess struct {
 	cmd    *exec.Cmd
 	done   chan error
 	cancel context.CancelFunc
+	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
+	// consumer that had not yet registered its cancel at death time is never
+	// started against an already-dead server. Only processes with a cmd.Wait
+	// watcher set it; synthetic reuse entries (ensureOpenCodeSSE's placeholder)
+	// leave it false and rely on the reaper, exactly as before.
+	exited bool
 }
 
 var beforeOpenCodeTUICommandStatusCheckForTest func()
@@ -75,6 +81,20 @@ var openCodeReconcileLocks sync.Map // map[sessionID]*sync.Mutex
 
 var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
+
+// openCodeSSEHTTPClient is the bounded client for the long-lived /event stream.
+// It must NOT carry a whole-request Timeout — that would sever a healthy stream
+// after the deadline — so it bounds only the setup phase: connection dial and
+// the wait for response headers. Once headers arrive the body is read until the
+// server closes it or the request context is cancelled (server death, reconcile,
+// or shutdown), which already interrupts the in-flight read.
+var openCodeSSEHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 10 * time.Second,
+	},
+}
 
 // These seams keep flow tests independent of a locally-installed OpenCode
 // binary while still exercising executeSpawn's production orchestration.
@@ -226,11 +246,7 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 		err := cmd.Wait()
 		process.done <- err
 		close(process.done)
-		if err != nil {
-			slog.Warn("OpenCode server exited", "session", runtime.SessionID,
-				"pid", cmd.Process.Pid, "error", err, "stderr", stderr.String(),
-				"stderr_truncated", stderr.Truncated())
-		}
+		finishOpenCodeProcessExit(process, runtime.SessionID, cmd.Process.Pid, err, stderr)
 	}()
 	runtime.PID = cmd.Process.Pid
 	deadline := time.Now().Add(openCodeStartupTimeout)
@@ -264,6 +280,31 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 		runtime.ServerURL, openCodeStartupTimeout)
 }
 
+// finishOpenCodeProcessExit records a managed server's exit. It flags the
+// process and cancels its SSE consumer the moment the server dies — otherwise
+// the reconnect loop keeps spinning at its 1s cadence (a /proc scan + log line
+// each time) until the reaper's ≤30s reconcile calls stopOpenCodeProcess. The
+// cancel is read under the lock because ensureOpenCodeSSE may install it after
+// this watcher starts; setting exited under the same lock closes that race so a
+// later ensureOpenCodeSSE cannot launch a doomed loop against a dead server.
+func finishOpenCodeProcessExit(process *openCodeProcess, sessionID string, pid int, waitErr error, stderr *spawnStderrCapture) {
+	openCodeProcesses.Lock()
+	process.exited = true
+	cancel := process.cancel
+	openCodeProcesses.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if waitErr != nil {
+		attrs := []any{"session", sessionID, "pid", pid, "error", waitErr}
+		if stderr != nil {
+			attrs = append(attrs, "stderr", stderr.String(),
+				"stderr_truncated", stderr.Truncated())
+		}
+		slog.Warn("OpenCode server exited", attrs...)
+	}
+}
+
 func allocateOpenCodeServerURL() (string, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -290,6 +331,29 @@ func openCodeRequest(method, endpoint string, runtime db.OpenCodeRuntime, body a
 
 func openCodeProcessOwnsEndpoint(rootPID int, endpoint string) bool {
 	return opencodeapi.ProcessOwnsEndpoint(rootPID, endpoint)
+}
+
+// openCodeRuntimeVerified confirms a recorded runtime's pid is still the managed
+// server before that pid is trusted as an identity or a kill target. It is a
+// package var so identity/kill tests can stand up a synthetic proc tree without
+// also binding a real listening socket (the same seam pattern as procName /
+// procParent in identity.go). Production points it at endpoint ownership.
+var openCodeRuntimeVerified = openCodeRuntimeOwnsRecordedPID
+
+// openCodeRuntimeOwnsRecordedPID reports whether the pid recorded for runtime is
+// still the managed `opencode serve` process — i.e. that pid (or a descendant)
+// still owns runtime.ServerURL's listening socket. This is the recovered-PID
+// identity gate: a server that died frees its port, so a same-user process that
+// later inherits the stale pid cannot pass (it does not own our recorded
+// endpoint), while a live managed server always holds its own port. Endpoint
+// ownership is a stronger identity signal than start-time/argv because it binds
+// the pid to the exact host:port we minted, and it reuses the same proof the
+// per-request auth gate already trusts. agentd itself can never match: it does
+// not listen on a managed server's port, so a corrupted pid equal to our own
+// still fails closed here.
+func openCodeRuntimeOwnsRecordedPID(runtime db.OpenCodeRuntime) bool {
+	return runtime.PID > 1 &&
+		openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL)
 }
 
 func openCodeHealthy(runtime db.OpenCodeRuntime) bool {
@@ -708,10 +772,14 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			}
 		}
 	}
-	if runtime.PID > 1 && runtime.PID != os.Getpid() {
+	// No in-memory handle: this is a recovered PID (e.g. after an agentd
+	// restart). Only kill it once it is positively identified as our managed
+	// server via endpoint ownership. This closes the PID-reuse window the old
+	// `>1 && != getpid()` guards left open — a freed pid reassigned to an
+	// unrelated same-user process no longer owns runtime.ServerURL, so it is
+	// left untouched.
+	if openCodeRuntimeVerified(runtime) {
 		if recovered, err := os.FindProcess(runtime.PID); err == nil {
-			// TODO(TCL-668): verify process start-time/argv before killing a
-			// recovered PID to close the unlikely PID-reuse window.
 			_ = recovered.Kill()
 		}
 	}
@@ -747,6 +815,13 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		openCodeProcesses.Unlock()
 		return
 	}
+	if process.exited {
+		// The server died before its consumer was ever registered. Starting one
+		// now would just spin the reconnect loop until the reaper cleans up; the
+		// watcher already cancelled, so honour that and start nothing.
+		openCodeProcesses.Unlock()
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	process.cancel = cancel
 	openCodeProcesses.Unlock()
@@ -765,7 +840,7 @@ func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime
 		if err == nil {
 			request = request.WithContext(ctx)
 			var response *http.Response
-			response, err = http.DefaultClient.Do(request)
+			response, err = openCodeSSEHTTPClient.Do(request)
 			if err == nil && response.StatusCode == http.StatusOK {
 				// The stream is live before snapshots are read, so events that
 				// race reconciliation remain buffered on this response and are
