@@ -677,6 +677,17 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 	if sess == nil {
 		return false
 	}
+	if sess.Harness == harness.OpenCodeName {
+		target, err := captureLifecycleTarget(sess)
+		if err != nil {
+			logLifecycleStopFailure("capture OpenCode soft exit", sess.TmuxSession, sess.ID, err)
+			return false
+		}
+		// OpenCode's first send and every bounded retry must use the managed
+		// TUI API. Falling through to scheduleSoftExitRetry would reintroduce
+		// tmux keystrokes when a reincarnating attach pane lingers.
+		return injectOpenCodeSoftExitTarget(target, reason, intentRef)
+	}
 	// Capture before injection: a responsive pane can exit synchronously after
 	// Enter, but that successful exit still owns the lifecycle intent and must
 	// remain correlatable by callback/reaper.

@@ -76,6 +76,53 @@ func TestOpenCodeCompactWhileBusyReturnsRetryableFailureBeforeAPIOrKeys(t *testi
 	assert.Empty(t, f.World.Tmux.Sent())
 }
 
+func TestOpenCodeCompactRechecksStatusImmediatelyBeforeAPI(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const (
+		conv = "ses_opencode_compact_status_race"
+		tmux = "tmux-opencode-status-race"
+	)
+	commands, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, "spwn-oc-status-race", tmux, server.URL)
+	f.HaveMember("crew", conv)
+	t.Cleanup(agentd.SetBeforeOpenCodeTUICommandStatusCheckForTest(func() {
+		f.SetSessionStatus(conv, session.StatusWorking)
+	}))
+
+	res := f.AsHuman().Compact(conv)
+	require.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Raw)
+	select {
+	case command := <-commands:
+		t.Fatalf("OpenCode control raced a fresh busy status: %q", command)
+	case <-time.After(50 * time.Millisecond):
+	}
+	assert.Empty(t, f.World.Tmux.Sent())
+}
+
+func TestOpenCodeCompactFollowUpRejectedBeforeAPIOrKeys(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	const (
+		conv = "ses_opencode_compact_follow_up"
+		tmux = "tmux-opencode-compact-follow-up"
+	)
+	commands, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, "spwn-oc-compact-follow-up", tmux, server.URL)
+	f.HaveMember("crew", conv)
+
+	res := f.AsHuman().CompactWithFollowUp(conv, "continue after compact")
+	require.Equal(t, http.StatusConflict, res.Code, "body=%s", res.Raw)
+	select {
+	case command := <-commands:
+		t.Fatalf("unordered OpenCode compact pair dispatched command: %q", command)
+	case <-time.After(50 * time.Millisecond):
+	}
+	assert.Empty(t, f.World.Tmux.Sent())
+}
+
 func TestOpenCodeCompactAPIFailureReturnsRetryableFailureWithoutKeyFallback(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -97,6 +144,35 @@ func TestOpenCodeCompactAPIFailureReturnsRetryableFailureWithoutKeyFallback(t *t
 	res := f.AsHuman().Compact(conv)
 	require.Equal(t, http.StatusServiceUnavailable, res.Code, "body=%s", res.Raw)
 	assert.Empty(t, f.World.Tmux.Sent(), "managed API failure must never fall back to keystrokes")
+}
+
+func TestOpenCodeReincarnateSoftExitRetriesViaManagedAPIWithoutKeys(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv = "ses_opencode_reincarnate_exit"
+		tmux = "tmux-opencode-reincarnate-exit"
+	)
+	commands, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, "spwn-oc-reincarnate-exit", tmux, server.URL)
+	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(time.Millisecond))
+	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(time.Millisecond))
+
+	require.True(t, agentd.InjectSoftExitForTest(conv, "/exit", "reincarnate-exit"))
+	agentd.WaitForBackgroundForTest()
+
+	var got []string
+	for {
+		select {
+		case command := <-commands:
+			got = append(got, command)
+		default:
+			require.Equal(t, []string{"app.exit", "app.exit", "app.exit"}, got)
+			assert.Empty(t, f.World.Tmux.Sent(),
+				"OpenCode reincarnate exit retries must never use tmux send-keys")
+			return
+		}
+	}
 }
 
 func TestOpenCodeUnreadReminderUsesPromptAPIWithoutKeys(t *testing.T) {

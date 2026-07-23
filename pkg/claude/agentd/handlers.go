@@ -1479,6 +1479,15 @@ func injectOpenCodeSlashCommand(sess *db.SessionRow, line, followUp, reason stri
 		}
 		return false
 	}
+	if followUp != "" {
+		// OpenCode command publication does not acknowledge completion, so an
+		// immediate prompt_async cannot preserve compact-then-follow-up order.
+		// The HTTP surface rejects this pair with a specific error before
+		// reaching here; retain a fail-closed guard for future internal callers.
+		slog.Warn("OpenCode slash-command follow-up has no ordered API mapping",
+			"conv_id", sess.ConvID, "line", line, "reason", reason)
+		return false
+	}
 	var command openCodeTUICommand
 	switch line {
 	case "/compact":
@@ -1501,14 +1510,7 @@ func injectOpenCodeSlashCommand(sess *db.SessionRow, line, followUp, reason stri
 	}
 	slog.Info("OpenCode slash-command dispatched via managed TUI API",
 		"conv_id", sess.ConvID, "line", line, "reason", reason,
-		"tmux_session", sess.TmuxSession, "has_follow_up", followUp != "")
-	if followUp != "" {
-		if err := sendOpenCodeNudge(sess.ConvID, followUp); err != nil {
-			slog.Warn("OpenCode slash-command follow-up API delivery failed",
-				"error", err, "conv_id", sess.ConvID, "tmux_session", sess.TmuxSession)
-			return false
-		}
-	}
+		"tmux_session", sess.TmuxSession, "has_follow_up", false)
 	return true
 }
 
@@ -1982,6 +1984,16 @@ func runSlashOrchestration(w http.ResponseWriter, r *http.Request, target, calle
 	if slash == "" {
 		writeError(w, http.StatusBadRequest, "unsupported",
 			"harness "+h.Name+" does not support "+label)
+		return
+	}
+	if h.Name == harness.OpenCodeName && body.FollowUp != "" {
+		// tui.command.execute only acknowledges event publication. OpenCode
+		// 1.18.4 starts session.compact asynchronously in the attach client,
+		// so prompt_async here could win the race and start a new turn before
+		// compaction. Reject the pair before dispatch; callers can compact
+		// without a follow-up, wait for idle, then send the next turn.
+		writeError(w, http.StatusConflict, "follow_up_unordered",
+			"OpenCode cannot safely order a compact follow-up; compact without a follow-up, wait for idle, then send the next turn")
 		return
 	}
 	if !injectSlashCommand(target, slash, body.FollowUp, slashReason(label, caller, target)) {

@@ -61,6 +61,8 @@ type openCodeProcess struct {
 	cancel context.CancelFunc
 }
 
+var beforeOpenCodeTUICommandStatusCheckForTest func()
+
 var openCodeProcesses = struct {
 	sync.Mutex
 	bySession map[string]*openCodeProcess
@@ -400,6 +402,20 @@ func sendOpenCodeTUICommand(
 		return fmt.Errorf(
 			"managed OpenCode runtime session changed for conversation %s", convID,
 		)
+	}
+	// Health reconciliation can take long enough for an idle session to start
+	// working or present a permission/question dialog after its caller's first
+	// status check. Re-read immediately before the POST so a stale selection
+	// cannot dispatch compact/exit into a newly non-idle TUI.
+	if beforeOpenCodeTUICommandStatusCheckForTest != nil {
+		beforeOpenCodeTUICommandStatusCheckForTest()
+	}
+	sess := aliveSessionForConv(convID)
+	if sess == nil || sess.ID != runtime.SessionID {
+		return fmt.Errorf("managed OpenCode session changed for conversation %s", convID)
+	}
+	if openCodeControlInputBlocked(sess.Status) {
+		return fmt.Errorf("managed OpenCode TUI is %s; retry when idle", sess.Status)
 	}
 	body := map[string]any{
 		"type": "tui.command.execute",
