@@ -27,6 +27,16 @@ export function terminalTabReorderOffset(event) {
   return null;
 }
 
+// The whole tab is the drag handle, so a drag whose gesture started on the
+// close button has to be declined — otherwise pressing × and moving would drag
+// the tab (a browser drags the nearest draggable ancestor even from a
+// draggable=false child). This predicate is the guard; it is exported so it can
+// be unit-tested against real rendered nodes, because the test DOM cannot
+// deliver a bubbled/target-spoofed dragstart to the tab's own listener.
+export function tabDragStartedOnClose(target) {
+  return Boolean(target?.closest?.('.mux-tab-close'));
+}
+
 function composeTarget(pane, actions) {
   const { initialRetry: _initialRetry, ...seed } = pane.seed;
   return Object.freeze({
@@ -298,7 +308,7 @@ function PaneTab({
   // the full tab. A drag that starts on the close button is cancelled, so the ×
   // stays a click target and never begins a tab drag.
   const startDrag = (event) => {
-    if (event.target?.closest?.('.mux-tab-close')) {
+    if (tabDragStartedOnClose(event.target)) {
       event.preventDefault();
       return;
     }

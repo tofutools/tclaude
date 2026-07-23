@@ -533,12 +533,22 @@ test('the whole tab is the drag handle, not just its title', async (t) => {
   const transfer = dragTransfer();
 
   // The drag source is the tab element itself (not the small title span), so a
-  // dragstart on the tab — from anywhere on it — begins the drag. (PaneTab's
-  // startDrag additionally cancels a drag that originates on the close button,
-  // and the close button stays draggable=false; that exclusion relies on the
-  // browser's native bubbling, which the test DOM does not reproduce.)
+  // dragstart on the tab — from anywhere on it — begins the drag.
   await harness.act(() => harness.fireEvent(aTab, 'dragstart', { dataTransfer: transfer }));
   assert.equal(aTab.classList.contains('dragging'), true, 'grabbing the tab starts the drag');
+
+  // The close-button exclusion is guarded by tabDragStartedOnClose. It cannot
+  // be exercised through a dispatched event here: the test DOM neither bubbles a
+  // dragstart from the × up to the tab's listener nor lets dispatch keep a
+  // spoofed event.target (both verified), so the predicate is unit-tested
+  // directly against the real rendered nodes instead.
+  const { tabDragStartedOnClose } = await harness.importDashboardModule('js/terminal-shell-island.js');
+  assert.equal(tabDragStartedOnClose(aTab.querySelector('.mux-tab-close')), true,
+    'a gesture starting on the × is declined');
+  assert.equal(tabDragStartedOnClose(aTab.querySelector('.mux-tab-label')), false,
+    'a gesture on the title is allowed');
+  assert.equal(tabDragStartedOnClose(aTab), false, 'a gesture on the tab body is allowed');
+  assert.equal(tabDragStartedOnClose(null), false, 'a missing target is allowed (no crash)');
 });
 
 test('a rename committed by blur still respects a preceding Escape', async (t) => {
