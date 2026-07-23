@@ -101,12 +101,29 @@ func bgLaunchHook(conv, cwd, command, taskID string) session.HookCallbackInput {
 	}
 }
 
+// stubLiveBgShellCommands keeps lifecycle-focused flow tests independent of
+// the process tree that happens to run `go test`. ApplyHook corrects a fixture
+// row's fake pane PID to FindClaudePID when the test has a real harness
+// ancestor; without this seam, a local Claude Code run scans that ancestor's
+// subtree and retires the fixture's fake commands, while CI commonly retains
+// the fake PID and takes the process-table-unknown path instead.
+//
+// The reconcile-focused tests below deliberately do not use this helper: they
+// launch real child processes and keep exercising production enumeration.
+func stubLiveBgShellCommands(t *testing.T, commands ...string) {
+	t.Helper()
+	t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+		return append([]string(nil), commands...), true
+	}))
+}
+
 func TestDashboardSnapshot_BgShellCountSurvivesMainAgentStop(t *testing.T) {
 	const conv = "bgsh-1111-2222-3333-4444"
 	const label = "spwn-bgsh"
 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	stubLiveBgShellCommands(t, "npm run dev --port 4321", "pytest -x tests/integration")
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
@@ -392,6 +409,7 @@ func TestDashboardSnapshot_BgShellSurvivesUserInterrupt(t *testing.T) {
 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	stubLiveBgShellCommands(t, "npm run dev")
 
 	f := newFlow(t)
 	f.HaveGroup("squad")
@@ -443,6 +461,7 @@ func TestDashboardSnapshot_BgShellCountZeroForOfflineAgent(t *testing.T) {
 
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	stubLiveBgShellCommands(t, "npm run dev")
 
 	f := newFlow(t)
 	f.HaveGroup("squad")

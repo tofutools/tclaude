@@ -414,6 +414,15 @@ func ResetBgShellReconcileCacheForTest() {
 	bgShellReconcileMu.last = nil
 }
 
+// SetBgShellDescendantCommandLinesForTest replaces process-table enumeration
+// so flow tests that exercise hook and lifecycle behavior do not depend on the
+// process tree of the harness running `go test`.
+func SetBgShellDescendantCommandLinesForTest(fn func(int) ([]string, bool)) func() {
+	previous := bgShellDescendantCommandLines
+	bgShellDescendantCommandLines = fn
+	return func() { bgShellDescendantCommandLines = previous }
+}
+
 // SetAccessRequestNotifyForTest captures the production access-request
 // notification arguments without invoking a host desktop notifier.
 func SetAccessRequestNotifyForTest(notify func(string, string, string, string, string)) func() {
