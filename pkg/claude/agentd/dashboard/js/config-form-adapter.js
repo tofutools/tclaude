@@ -497,6 +497,11 @@ function populateConfigForm(cfg) {
   const n = cfg.notifications || {};
   $('#cfg-notif-enabled').checked = !!n.enabled;
   $('#cfg-notif-cooldown').value = n.cooldown_seconds != null ? n.cooldown_seconds : '';
+  // delivery: absent means "os" (the historical desktop-only behaviour).
+  // An unrecognised value — a config hand-written for a newer tclaude —
+  // is shown as "os" rather than blanking the select; the server's
+  // Validate is what tells the human it is wrong.
+  setSelectValue($('#cfg-notif-delivery'), ['os', 'browser', 'both'].includes(n.delivery) ? n.delivery : 'os');
   renderCfgTransitionList(n.transitions || []);
   syncCfgNotifyTypes();
   // human_messages defaults ON within an enabled block — only an explicit
@@ -803,6 +808,10 @@ function assembleConfig() {
   else n.human_messages = false;
   const cmd = readCfgStringList('cfg-notif-command');
   if (cmd.length) n.notification_command = cmd; else delete n.notification_command;
+  // delivery: "os" is the default, so persist only a non-default choice
+  // and keep the saved config minimal.
+  const delivery = controlValue($('#cfg-notif-delivery'));
+  if (delivery && delivery !== 'os') n.delivery = delivery; else delete n.delivery;
   cfg.notifications = n;
 
   if ($('#cfg-ratelimit-enabled').checked) {

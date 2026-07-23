@@ -72,6 +72,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/config", handleDashboardConfigAPI)
 	mux.HandleFunc("/api/cost-factor", handleDashboardCostFactorAPI)
 	mux.HandleFunc("/api/notifications", handleDashboardNotificationsAPI)
+	mux.HandleFunc("/api/browser-notifications", handleDashboardBrowserNotifications)
 	mux.HandleFunc("/api/claude-settings/default-model", handleDashboardClaudeDefaultModel)
 	mux.HandleFunc("/api/spawn/effective-sandbox", handleDashboardSpawnEffectiveSandbox)
 	mux.HandleFunc("/api/slop/volumes", handleDashboardSlopVolumesAPI)
@@ -1516,11 +1517,16 @@ func notificationsStateJSON(cfg *config.Config) map[string]any {
 	for _, ty := range config.NotifyTypes {
 		types[ty] = n.NotifyTypeEnabled(ty)
 	}
+	delivery := config.NotifyDeliveryOS
+	if n != nil && n.Delivery != "" {
+		delivery = n.Delivery
+	}
 	return map[string]any{
 		"enabled":         n != nil && n.Enabled,
 		"types":           types,
 		"human_messages":  n.HumanMessagesIntent(),
 		"access_requests": cfg.AccessRequestSystemNotification(),
+		"delivery":        delivery,
 	}
 }
 
@@ -1528,8 +1534,8 @@ func notificationsStateJSON(cfg *config.Config) map[string]any {
 // the lightweight twin of the Config tab's full-config editor for the
 // notifications block in ~/.tclaude/config.json).
 //
-//	GET  → {enabled, types{state:bool…}, human_messages, access_requests}
-//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?, access_requests?};
+//	GET  → {enabled, types{state:bool…}, human_messages, access_requests, delivery}
+//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?, access_requests?, delivery?};
 //	       only the provided fields change, response echoes the new state.
 //
 // The master `enabled` sits ABOVE the per-group/per-agent filters — off
@@ -1557,13 +1563,20 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			Types          map[string]bool `json:"types"`
 			HumanMessages  *bool           `json:"human_messages"`
 			AccessRequests *bool           `json:"access_requests"`
+			Delivery       *string         `json:"delivery"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "expected body {enabled?, types?, human_messages?, access_requests?}", http.StatusBadRequest)
+			http.Error(w, "expected body {enabled?, types?, human_messages?, access_requests?, delivery?}", http.StatusBadRequest)
 			return
 		}
-		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil && body.AccessRequests == nil {
-			http.Error(w, "no recognised field; expected one of enabled, types, human_messages, access_requests", http.StatusBadRequest)
+		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil && body.AccessRequests == nil && body.Delivery == nil {
+			http.Error(w, "no recognised field; expected one of enabled, types, human_messages, access_requests, delivery", http.StatusBadRequest)
+			return
+		}
+		// Reject an unknown channel up front — a clean 400 rather than a
+		// stored value the notify path would silently degrade to OS.
+		if body.Delivery != nil && !config.IsNotifyDelivery(*body.Delivery) {
+			http.Error(w, "unknown notification delivery: "+*body.Delivery, http.StatusBadRequest)
 			return
 		}
 		// Validate every type key up front so a typo is a clean 400 rather
@@ -1613,6 +1626,16 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 					}
 				} else {
 					cfg.Agent.AccessRequestSystemNotification = *body.AccessRequests
+				}
+			}
+			if body.Delivery != nil {
+				// "os" is the default: store only a non-default choice so a
+				// legacy config file does not grow a key meaning what its
+				// absence already meant. (Validated above.)
+				if *body.Delivery == "" || *body.Delivery == config.NotifyDeliveryOS {
+					n.Delivery = ""
+				} else {
+					n.Delivery = *body.Delivery
 				}
 			}
 			return nil

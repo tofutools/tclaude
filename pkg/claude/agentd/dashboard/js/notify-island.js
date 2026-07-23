@@ -1,7 +1,8 @@
 import { h, render } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import htm from 'htm';
-import { NOTIFY_TYPES } from './notify-state.js';
+import { NOTIFY_TYPES, NOTIFY_DELIVERIES } from './notify-state.js';
+import { browserNotifyPermission } from './browser-notify.js';
 
 const html = htm.bind(h);
 
@@ -12,6 +13,30 @@ const TYPE_LABELS = Object.freeze({
   error: 'Errors',
   exited: 'Exits',
 });
+
+const DELIVERY_LABELS = Object.freeze({
+  os: 'Desktop (this machine)',
+  browser: 'Browser (this dashboard)',
+  both: 'Both',
+});
+
+// browserPermissionNote returns the one-line caveat shown under the
+// delivery selector when a browser channel is chosen but the browser is
+// not (yet) able to raise notifications — otherwise the human picks
+// "Browser" and silently sees nothing. Empty string = nothing to warn about.
+function browserPermissionNote(delivery, permission) {
+  if (delivery !== 'browser' && delivery !== 'both') return '';
+  switch (permission) {
+    case 'granted':
+      return '';
+    case 'denied':
+      return 'Browser notifications are blocked — allow them in your browser’s site settings.';
+    case 'unsupported':
+      return 'This browser can’t raise notifications here (needs https or localhost).';
+    default:
+      return 'Your browser hasn’t granted permission yet — pick this to be asked.';
+  }
+}
 
 export function NotifyApp({ state, actions, documentRef = document }) {
   const rootRef = useRef(null);
@@ -38,8 +63,11 @@ export function NotifyApp({ state, actions, documentRef = document }) {
   }, [actions, documentRef, state]);
 
   const bellTitle = current.bellEnabled
-    ? 'OS notifications ON — click to choose which notifications you want'
-    : 'OS notifications OFF — nothing notifies, regardless of group/agent bells. Click to configure.';
+    ? 'Notifications ON — click to choose which notifications you want'
+    : 'Notifications OFF — nothing notifies, regardless of group/agent bells. Click to configure.';
+  // Re-read live each render (not cached): the human may grant/revoke
+  // permission in another tab or the browser UI while the popover is open.
+  const deliveryNote = browserPermissionNote(settings.delivery, browserNotifyPermission(globalThis));
   const popClass = [current.open && 'open', !settings.enabled && 'master-off'].filter(Boolean).join(' ');
 
   return html`<span class="notify-bell-wrap" ref=${rootRef}>
@@ -69,6 +97,16 @@ export function NotifyApp({ state, actions, documentRef = document }) {
         <input type="checkbox" id="notify-pop-access" checked=${settings.accessRequests}
           onChange=${(event) => { void actions.setAccessRequests(event.currentTarget.checked); }} /> Requests access
       </label>
+      <div class="notify-pop-sep"></div>
+      <label class="notify-pop-row notify-pop-delivery" title="Where a notification is raised. Desktop uses this machine's notifier; Browser raises it from any open dashboard tab (reaches you when you're remote); Both does each.">
+        <span>Deliver via</span>
+        <select id="notify-pop-delivery" value=${settings.delivery}
+          onChange=${(event) => { void actions.setDelivery(event.currentTarget.value); }}>
+          ${NOTIFY_DELIVERIES.map((value) => html`<option key=${value} value=${value}
+            selected=${settings.delivery === value}>${DELIVERY_LABELS[value]}</option>`)}
+        </select>
+      </label>
+      ${deliveryNote && html`<div class="notify-pop-hint" id="notify-pop-delivery-note">${deliveryNote}</div>`}
       <div class="notify-pop-sep"></div>
       <button class="notify-pop-config" id="notify-pop-config" type="button"
         title="Open the Config tab for the full notifications settings (cooldown, custom command, advanced rules)."

@@ -9,6 +9,8 @@ export const NOTIFY_TYPES = Object.freeze([
   'exited',
 ]);
 
+export const NOTIFY_DELIVERIES = Object.freeze(['os', 'browser', 'both']);
+
 export function normalizeNotifySettings(value) {
   const source = value && typeof value === 'object' ? value : {};
   const types = source.types && typeof source.types === 'object' ? source.types : {};
@@ -19,6 +21,9 @@ export function normalizeNotifySettings(value) {
     // desktop banners for messages sent through human.notify.
     humanMessages: source.human_messages !== false,
     accessRequests: !!source.access_requests,
+    // Where a decided notification is raised. Absent / unrecognised → 'os',
+    // the historical desktop-only behaviour.
+    delivery: NOTIFY_DELIVERIES.includes(source.delivery) ? source.delivery : 'os',
   });
 }
 

@@ -12,6 +12,12 @@ different window.
 
 **Disabled by default** - run `tclaude setup` to enable.
 
+Banners are raised by the daemon host's desktop notifier by default. Set
+`notifications.delivery` to `browser` (or `both`) to have the agentd
+dashboard raise them in your browser instead — which is what reaches you
+when you are working remotely. See
+[Browser notifications](#browser-notifications-delivery).
+
 ## Quick Setup
 
 The easiest way to enable notifications:
@@ -67,6 +73,7 @@ Alternatively, create `~/.tclaude/data/config.json` manually:
 | `cooldown_seconds`     | Minimum seconds between notifications per session       | `5`       |
 | `notification_command` | Custom command to run instead of platform notifications | (none)    |
 | `human_messages`       | Also notify on a `tclaude agent notify-human` message   | `true`*   |
+| `delivery`             | Where banners are raised: `os`, `browser`, or `both`    | `os`      |
 
 \* Only takes effect when `enabled` is `true`. On by default within an
 enabled block; set `false` to suppress just the human-message banners.
@@ -112,6 +119,78 @@ messaged you` when there's no subject); the body carries the message and
 the sender's group. Unlike state-transition notifications, human messages
 are **not** subject to `cooldown_seconds` — each one is an explicit,
 deliberate nudge from an agent, not a state the system may flap into.
+
+### Browser notifications (`delivery`)
+
+By default a notification is raised on the machine `agentd` runs on, by
+that machine's desktop notifier. That only reaches you if you are sitting
+at it — and only if the process that noticed the transition can talk to
+its desktop, which a sandboxed agent often cannot.
+
+`delivery` picks the channel instead:
+
+| Value     | Where the banner appears                                        |
+|-----------|-----------------------------------------------------------------|
+| `os`      | The platform notifier (or `notification_command`). The default. |
+| `browser` | Any open agentd dashboard tab, via the Web Notification API.     |
+| `both`    | Both of the above.                                               |
+
+```json
+{
+  "notifications": {
+    "enabled": true,
+    "delivery": "browser"
+  }
+}
+```
+
+Two places in the dashboard set this:
+
+- the header notification **bell** popover has a **Deliver via** quick
+  selector — picking a browser channel there also asks the browser for
+  permission on the spot;
+- the **Config tab** has the same setting (**Notifications → Deliver via**),
+  next to the one-time **Grant browser permission** button.
+
+`delivery` chooses *where* an already-decided notification goes — never
+*whether*. The `enabled` master switch, the transition rules, the
+per-agent and per-group bells, and `cooldown_seconds` all still apply
+exactly as before.
+
+**What browser delivery unlocks**
+
+- **Working remotely.** The dashboard is reachable from your phone or
+  another machine; the daemon host's desktop is not.
+- **Sandboxed agents.** A notifying process fenced off from the session
+  D-Bus can still write to the queue; the browser does the raising.
+
+**Requirements**
+
+- A dashboard tab must be open (any tab; each keeps its own cursor, so
+  every open tab shows the banner).
+- The browser must have been granted notification permission — click
+  **Grant browser permission** in the Config tab once per browser.
+  Browsers only accept that request from a real click, so tclaude never
+  asks on page load.
+- A **secure context**: `https://` or `localhost`. A dashboard reached
+  over plain `http://` at a LAN IP cannot raise notifications at all; the
+  Config tab says so in place of the button.
+
+**Behaviour**
+
+- Opening the dashboard never replays a backlog — a fresh tab starts from
+  "now".
+- Queued banners expire after 10 minutes, so a dashboard reopened the next
+  morning does not flood you with overnight state changes.
+- Clicking a browser banner focuses the dashboard. It does *not* raise the
+  agent's tmux window the way an OS notification does — when you are
+  remote, there is no window of yours to raise.
+- While `delivery` is left at `os`, a browser that has already been granted
+  permission falls back to a 30-second heartbeat rather than the 3-second
+  poll, so nothing is spent watching a channel that is switched off.
+- The Config tab reads the browser permission when it mounts. If you revoke
+  it in site settings (or grant it in another tab), that tab keeps showing
+  the previous state until you reload.
 
 ### Custom Notification Command
 

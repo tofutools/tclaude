@@ -308,6 +308,21 @@ func TestNotificationFilters_PerType(t *testing.T) {
 	accessOn := postState(map[string]any{"access_requests": true})
 	assert.Equal(t, true, accessOn["access_requests"], "access-request notifications on echoed")
 	assert.Equal(t, true, getState()["access_requests"], "and persisted")
+
+	// The delivery channel round-trips through the same endpoint — this is
+	// what the header bell's quick selector writes.
+	assert.Equal(t, "os", getState()["delivery"], "delivery defaults to os")
+	both := postState(map[string]any{"delivery": "both"})
+	assert.Equal(t, "both", both["delivery"], "delivery both echoed")
+	assert.Equal(t, "both", getState()["delivery"], "and persisted")
+	// Back to os clears the stored key (default), still reported as os.
+	assert.Equal(t, "os", postState(map[string]any{"delivery": "os"})["delivery"])
+
+	// An unknown channel is a client error, not a silently-stored value the
+	// notify path would degrade to os.
+	badDelivery := testharness.JSONRequest(t, http.MethodPost, "/api/notifications",
+		map[string]any{"delivery": "carrier-pigeon"})
+	require.Equal(t, http.StatusBadRequest, testharness.Serve(mux, badDelivery).Code, "unknown delivery rejected")
 }
 
 // A corrupt config.json must NOT be silently overwritten with defaults by
