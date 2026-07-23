@@ -157,6 +157,15 @@ func TestBuildOpenCodePermissionRulesAllowsSkillRootsReadOnly(t *testing.T) {
 					rules, "external_directory", filepath.Join(root, "agent-coord", "SKILL.md")))
 			}
 
+			for _, path := range []string{
+				filepath.Join(home, ".claude"),
+				filepath.Join(home, ".claude", "settings.json"),
+			} {
+				assert.Equal(t, "deny", lastMatchingOpenCodeAction(
+					rules, "external_directory", path),
+					"skill-root carve-out must not allow non-skill Claude paths")
+			}
+
 			for _, root := range protected {
 				protectedFile := relativeOpenCodeTestPattern(t, worktree, filepath.Join(root, "whatever"))
 				assert.Equal(t, "deny", lastMatchingOpenCodeAction(rules, "read", protectedFile))

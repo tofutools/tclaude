@@ -334,6 +334,8 @@ func appendOpenCodeRootRules(
 				OpenCodePermissionRule{Permission: "edit", Pattern: pattern, Action: editAction},
 			)
 		}
+		// OpenCode separately gates every out-of-worktree operation through
+		// external_directory; relative read/edit matches are not sufficient.
 		for _, pattern := range openCodeAbsolutePatterns(root) {
 			rules = append(rules, OpenCodePermissionRule{
 				Permission: "external_directory",
