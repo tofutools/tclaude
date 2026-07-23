@@ -122,6 +122,8 @@ thread), use the `Reply-To` value from the headers as the target of
 
 ```bash
 tclaude agent message <peer> "your message text"
+tclaude agent send --to <peer> "your message text"       # explicit recipient flag
+tclaude agent send --recipient <peer> --body "your message text"
 tclaude agent message <peer> --body "your message text"  # equivalent flag form
 tclaude agent message <peer> --file plan.md     # body from a file
 tclaude agent message <peer> --subject "ack" --stdin <<EOF
@@ -129,6 +131,11 @@ multi-line
 body
 EOF
 ```
+
+`message`, `msg`, and `send` are command aliases. The recipient can be the
+first positional argument or supplied with the interchangeable `--to` /
+`--recipient` flags. Give exactly one recipient source. With a recipient flag,
+an optional positional argument is the message body.
 
 `<peer>` is the peer's **stable `agent_id`** (full or a unique `agt_…`
 prefix — the preferred, rotation-immune handle), its display name, or a

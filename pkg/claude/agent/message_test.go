@@ -136,6 +136,94 @@ func TestMessageCmdSupportsBodyFlag(t *testing.T) {
 	assert.Contains(t, cmd.UseLine(), "[text]")
 }
 
+func TestMessageCmdSupportsRecipientFlags(t *testing.T) {
+	cmd := messageCmd()
+	for _, name := range []string{"to", "recipient"} {
+		flag := cmd.Flags().Lookup(name)
+		require.NotNil(t, flag, "--%s", name)
+		assert.Equal(t, "string", flag.Value.Type())
+	}
+	assert.Equal(t, "role", cmd.Flags().ShorthandLookup("r").Name,
+		"adding --recipient must not take the existing -r shorthand from --role")
+	assert.Contains(t, cmd.UseLine(), "[target]", "positional target remains supported but is optional")
+}
+
+func TestMessageCmdRejectsExplicitlyEmptyRecipientFlag(t *testing.T) {
+	cmd := messageCmd()
+	require.NoError(t, cmd.Flags().Set("to", ""))
+
+	params := messageParams{Target: "worker", Text: "hello"}
+	recordMessageTargetFlags(&params, cmd)
+	err := normalizeMessageTarget(&params)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--to requires a non-empty recipient")
+}
+
+func TestMessageCmdDoesNotCompleteBodyAsRecipient(t *testing.T) {
+	cmd := messageCmd()
+	require.NoError(t, cmd.Flags().Set("recipient", "reviewer"))
+	assert.Empty(t, completePositionalMessageTarget(cmd, nil, ""),
+		"the first positional argument is the body when a recipient flag is set")
+}
+
+func TestNormalizeMessageTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		params     messageParams
+		wantTarget string
+		wantText   string
+		wantErr    string
+	}{
+		{
+			name:       "positional recipient and body remain unchanged",
+			params:     messageParams{Target: "worker", Text: "hello"},
+			wantTarget: "worker",
+			wantText:   "hello",
+		},
+		{
+			name:       "to flag shifts first positional into body",
+			params:     messageParams{Target: "hello", To: "worker"},
+			wantTarget: "worker",
+			wantText:   "hello",
+		},
+		{
+			name:       "recipient flag with body flag",
+			params:     messageParams{Recipient: "worker", Body: "hello"},
+			wantTarget: "worker",
+		},
+		{
+			name:    "missing recipient",
+			params:  messageParams{Body: "hello"},
+			wantErr: "provide a recipient",
+		},
+		{
+			name:    "recipient aliases are mutually exclusive",
+			params:  messageParams{To: "worker", Recipient: "reviewer", Body: "hello"},
+			wantErr: "only one of --to or --recipient",
+		},
+		{
+			name:    "recipient flag permits only one positional body",
+			params:  messageParams{Target: "unexpected-target", Text: "hello", To: "worker"},
+			wantErr: "--to accepts at most one positional argument",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.params
+			err := normalizeMessageTarget(&got)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTarget, got.Target)
+			assert.Equal(t, tt.wantText, got.Text)
+		})
+	}
+}
+
 // TestFormatRecipientList covers the audience renderer in inbox read:
 // title-decorated entries get "title <prefix>", titleless entries fall
 // back to the short prefix, and empty input yields "".

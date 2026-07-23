@@ -26,15 +26,23 @@ func queuedState(pending int) string {
 }
 
 type messageParams struct {
-	Target  string   `pos:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group"`
-	Text    string   `pos:"true" optional:"true" help:"Message body (or use --body / --stdin / --file)"`
-	Body    string   `long:"body" optional:"true" help:"Message body as a flag instead of positional text"`
-	Subject string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
-	Stdin   bool     `long:"stdin" help:"Read body from stdin"`
-	File    string   `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
-	Cc      []string `long:"cc" optional:"true" help:"CC recipient (title / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
-	Role    string   `long:"role" optional:"true" help:"With a 'group:' target, broadcast only to members holding this role (case-insensitive). Error on a 1:1 target."`
-	Gen     string   `long:"gen" optional:"true" help:"Deliver to a SPECIFIC previous generation of the target agent: a conv-id that must belong to the agent the target resolves to. Normally a message follows the agent to its current generation; --gen pins it to that exact past conv. Direct (non-group, non-cc) sends only."`
+	Target    string   `pos:"true" optional:"true" help:"Target conv (UUID/prefix/title), 'group:<name|id>' to broadcast, or bare 'group:' for your own group (or use --to / --recipient)"`
+	Text      string   `pos:"true" optional:"true" help:"Message body (or use --body / --stdin / --file)"`
+	Body      string   `long:"body" optional:"true" help:"Message body as a flag instead of positional text"`
+	Subject   string   `long:"subject" short:"s" optional:"true" help:"Optional subject line"`
+	Stdin     bool     `long:"stdin" help:"Read body from stdin"`
+	File      string   `long:"file" short:"f" optional:"true" help:"Read body from a file ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing bodies (the shell eats backticks from an inline body)."`
+	Cc        []string `long:"cc" optional:"true" help:"CC recipient (title / conv-id / 8+-char prefix). Repeatable. Each gets its own row + nudge; the To and CC audience appears on every recipient's view."`
+	Role      string   `long:"role" optional:"true" help:"With a 'group:' target, broadcast only to members holding this role (case-insensitive). Error on a 1:1 target."`
+	Gen       string   `long:"gen" optional:"true" help:"Deliver to a SPECIFIC previous generation of the target agent: a conv-id that must belong to the agent the target resolves to. Normally a message follows the agent to its current generation; --gen pins it to that exact past conv. Direct (non-group, non-cc) sends only."`
+	To        string   `long:"to" optional:"true" help:"Target recipient as a flag instead of the first positional argument"`
+	Recipient string   `long:"recipient" optional:"true" help:"Target recipient as a flag instead of the first positional argument (alias of --to)"`
+
+	// Cobra's Changed state distinguishes an omitted recipient flag from an
+	// explicitly empty one. Boa binds values into the public fields above;
+	// messageCmd records presence here before runMessage validates them.
+	toSet        bool
+	recipientSet bool
 }
 
 func messageCmd() *cobra.Command {
@@ -48,18 +56,40 @@ func messageCmd() *cobra.Command {
 			"The sender must be a member or owner of the group to broadcast. Add --role to broadcast only to members holding a given role.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *messageParams, _ *cobra.Command) error {
-			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completeMessageTargets)
+			boa.GetParamT(ctx, &p.Target).SetAlternativesFunc(completePositionalMessageTarget)
+			boa.GetParamT(ctx, &p.To).SetAlternativesFunc(completeMessageTargets)
+			boa.GetParamT(ctx, &p.Recipient).SetAlternativesFunc(completeMessageTargets)
 			boa.GetParamT(ctx, &p.Cc).SetAlternativesFunc(completeConvSelectors)
 			boa.GetParamT(ctx, &p.Role).SetAlternativesFunc(completeRoles)
 			return nil
 		},
-		RunFunc: func(p *messageParams, _ *cobra.Command, _ []string) {
+		RunFunc: func(p *messageParams, cmd *cobra.Command, _ []string) {
+			recordMessageTargetFlags(p, cmd)
 			os.Exit(runMessage(p, os.Stdout, os.Stderr, os.Stdin))
 		},
 	}.ToCobra()
 }
 
+func recordMessageTargetFlags(p *messageParams, cmd *cobra.Command) {
+	p.toSet = cmd.Flags().Changed("to")
+	p.recipientSet = cmd.Flags().Changed("recipient")
+}
+
+// completePositionalMessageTarget offers recipient selectors only while the
+// first positional argument is actually the recipient. Once a recipient flag
+// is present, that position is the free-form body and should not suggest peers.
+func completePositionalMessageTarget(cmd *cobra.Command, args []string, toComplete string) []string {
+	if cmd.Flags().Changed("to") || cmd.Flags().Changed("recipient") {
+		return nil
+	}
+	return completeMessageTargets(cmd, args, toComplete)
+}
+
 func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int {
+	if err := normalizeMessageTarget(p); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
 	// --role only narrows a group: multicast. On a 1:1 target there is
 	// no member set to filter — fail fast with a clear message before
 	// the daemon round-trip (the daemon enforces the same rule).
@@ -87,6 +117,50 @@ func runMessage(p *messageParams, stdout, stderr io.Writer, stdin io.Reader) int
 		return rc
 	}
 	return runMessageDaemon(p, body, stdout, stderr)
+}
+
+// normalizeMessageTarget resolves the recipient from either the traditional
+// first positional argument or one of the explicit flag forms. Boa binds
+// positional arguments before command execution, so with --to / --recipient
+// the first positional value lands in Target even though it is semantically the
+// message body. Shift it into Text before the normal body-source validation.
+func normalizeMessageTarget(p *messageParams) error {
+	flagTarget := ""
+	flagName := ""
+	toSet := p.toSet || p.To != ""
+	recipientSet := p.recipientSet || p.Recipient != ""
+	if toSet && recipientSet {
+		return fmt.Errorf("pass only one of --to or --recipient")
+	}
+	if toSet {
+		if strings.TrimSpace(p.To) == "" {
+			return fmt.Errorf("--to requires a non-empty recipient")
+		}
+		flagTarget = p.To
+		flagName = "--to"
+	}
+	if recipientSet {
+		if strings.TrimSpace(p.Recipient) == "" {
+			return fmt.Errorf("--recipient requires a non-empty recipient")
+		}
+		flagTarget = p.Recipient
+		flagName = "--recipient"
+	}
+
+	if flagTarget == "" {
+		if strings.TrimSpace(p.Target) == "" {
+			return fmt.Errorf("provide a recipient as the first positional argument, --to, or --recipient")
+		}
+		return nil
+	}
+	if p.Text != "" {
+		return fmt.Errorf("%s accepts at most one positional argument (the message body)", flagName)
+	}
+	if p.Target != "" {
+		p.Text = p.Target
+	}
+	p.Target = flagTarget
+	return nil
 }
 
 func runMessageDaemon(p *messageParams, body string, stdout, stderr io.Writer) int {
