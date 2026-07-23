@@ -34,21 +34,56 @@ type Harness struct {
     Name        string          // persisted in the DB `harness` column; accepted by --harness
     DisplayName string          // human-facing label
 
-    Spawn    Spawner            // build the in-tmux launch + resume command
-    Models   ModelCatalog       // validate/normalize model + effort
-    Life     Lifecycle          // name the in-pane slash commands (or report unsupported)
-    Convs    ConvStore          // assemble conversation metadata from the harness's storage
-    Hooks    HookInstaller      // install/check/repair the tclaude callback (+ trust)
-    Sandbox  SandboxCatalog     // launch-time OS-sandbox modes (optional)
-    Approval ApprovalCatalog    // launch-time approval policy (optional)
+    Spawn          Spawner            // build the in-tmux launch + resume command      (REQUIRED)
+    Models         ModelCatalog       // validate/normalize model + effort               (REQUIRED)
+    Ask            Asker              // build the argv for a one-shot `tclaude ask` turn
+    Life           Lifecycle          // name the in-pane slash commands (or report unsupported)
+    Convs          ConvStore          // assemble conversation metadata from the harness's storage
+    Hooks          HookInstaller      // install/check/repair the tclaude callback (+ trust)
+    Sandbox        SandboxCatalog     // launch-time OS-sandbox modes
+    Approval       ApprovalCatalog    // launch-time approval policy / permission mode
+    AskTimeout     AskTimeoutCatalog  // launch-time AskUserQuestion idle-timeout override
+    ToolGovernance ToolGovernanceCatalog // uniform allow/ask/deny over a built-in tool group
+
+    // ...plus a set of plain boolean capability flags (TmuxScrollback,
+    // LaunchEnrollment, SeedsFirstTurn, ServerAuthoritative, ApprovalsReviewer,
+    // BackgroundShells, …). Those tune spawn/liveness behavior rather than adding
+    // a contract to implement; each is documented on the field in harness.go.
 }
 ```
+
+## The minimum bar
+
+Only two fields are actually required. `ResolveSpawnable` — the resolver every
+spawn surface goes through (`agent spawn`, group/wave deploys, `--join-group`,
+the dashboard's `buildHarnessCatalog`) — rejects a harness that lacks **either**
+a `Spawn` (`Spawner`) **or** a `Models` (`ModelCatalog`); such a harness is
+silently absent from the spawn dialog. Everything else is nil-able: the
+`Supports*` helpers fold a nil sub-contract to `false` and callers degrade.
+
+So the smallest useful harness is `{Name, DisplayName, Spawn, Models}` — it can
+be launched and resumed, but nothing else. Here is what each nil field costs:
+
+| Nil field        | What stops working / degrades |
+|------------------|-------------------------------|
+| `Spawn`          | **Not spawnable.** `ResolveSpawnable` errors; the harness never appears in a spawn UI. |
+| `Models`         | **Not spawnable.** Same — no model/effort validation, so the resolver refuses it. |
+| `Ask`            | `tclaude ask` refuses this harness with a clear message (`SupportsAsk` is false). |
+| `Life`           | No in-pane control commands: rename falls back to `ConvStore.SetTitle`, soft-exit becomes a hard tmux kill, and compaction / remote-control are simply unavailable (`Supports{Compact,RemoteControl}` false). |
+| `Convs`          | No conversation listing / resolve / title from this harness (it drops out of `conv ls`, search, the dashboard), **and** no out-of-band rename fallback — so a harness with neither `Life.RenameCommand` nor `Convs` cannot be renamed at all. |
+| `Hooks`          | `tclaude setup` skips hook install with a message; live status and notifications don't light up. |
+| `Sandbox`        | No launch-time `--sandbox`; an explicit `--sandbox` is rejected (the harness is assumed to configure sandboxing out of band). |
+| `Approval`       | No launch-time approval/permission flag; an explicit one is rejected. |
+| `AskTimeout`     | No AskUserQuestion idle-timeout override; an explicit value is rejected and the dashboard hides the selector. |
+| `ToolGovernance` | No uniform built-in-tool allow/ask/deny axis (`SupportsToolGovernance` false). |
 
 ## The contracts
 
 Implement as many as your harness needs; leave the rest `nil`. Claude Code
-(`claude.go`) and Codex (`codex.go`, `codex_*.go`) are the worked examples —
-read them alongside this list.
+(`claude.go`), Codex (`codex.go`, `codex_*.go`) and OpenCode (`opencode.go`,
+`opencode_*.go`) are the worked examples — read them alongside this list. Between
+them they cover every contract below at least once, so for each one there is a
+concrete implementation to copy.
 
 ### `Spawner` — launch & resume *(required to spawn)*
 
@@ -76,6 +111,58 @@ Reject another harness's slugs with a clear message (e.g. Codex rejects
 `claude-*` model names) so a mistyped `--harness` surfaces immediately instead of
 failing after the pane has already launched.
 
+### `Asker` — the `tclaude ask` surface *(optional)*
+
+```go
+BuildAskArgv(spec AskSpec) []string   // argv (binary + args) to exec for one ask turn
+PreMintsConvID() bool                 // can a FRESH ask pin its conv-id up front?
+NoisyCaptureStderr() bool             // does print mode write a verbose transcript to stderr?
+```
+
+`tclaude ask` puts a single foreground, terminal-attached question to the
+harness against a per-`(terminal, cwd)` thread. Unlike `Spawner.BuildCommand`
+(which returns a `sh -c` **string** for a tmux pane), an ask is exec'd directly
+with **no shell**, so this returns an **argv** (`[]string`): `argv[0]` is the
+binary and the question rides as one already-separated element, never
+shell-quoted into a command line. `AskSpec` carries `ResumeID` **xor**
+`SessionID` (continue vs. mint a fresh conv with a caller-chosen id), validated
+`Model`/`Effort`, and the `Print`/`Stream` mode bits.
+
+`PreMintsConvID` reports whether a fresh ask can pin its conv-id before the turn
+runs (Claude Code's `--session-id`) so the `(terminal,cwd)→conv` mapping is
+recorded up front; a harness that only exposes the id after the first turn
+(Codex) returns false and the ask flow discovers the id from `ConvStore`
+afterwards. `NoisyCaptureStderr` reports whether print mode writes a verbose
+human transcript to stderr (which `tclaude ask` then hides unless `--verbose` or
+the run fails). Leave `Harness.Ask` nil and callers gate on `SupportsAsk` and
+fail with a clear message. `opencode_asker.go` and `codex_asker.go` are the
+plain buffered implementations to copy; `claude.go` additionally implements the
+streaming refinements below.
+
+#### Optional streaming refinements
+
+A buffered `Asker` is enough. Three optional interfaces let a human watching a
+TTY see the answer build up live instead of appearing all at once (Claude Code
+in `claude.go` is the only one that implements them today):
+
+- **`StreamAsker`** (`Asker` + `StreamFilter(w, smooth, status) io.Writer`) — for
+  a harness whose print mode can emit a machine-readable **event stream**. Its
+  two halves are deliberately coupled: `BuildAskArgv` (given `AskSpec.Stream`)
+  emits the flags that turn the stream on, and `StreamFilter` knows how to read
+  exactly that wire format back, forwarding only the assistant's clean,
+  incremental visible text (no JSON, reasoning, or tool chatter) to `w`.
+  `tclaude ask` gates on `SupportsAskStream` and falls back to the plain
+  buffered path otherwise.
+- **`StreamStatus`** (`BeforeOutput()`) — an optional sink for the transient
+  "working…" spinner. The filter announces each visible write; the renderer
+  decides from that timing when to show/hide itself. Must be safe for concurrent
+  use (the filter calls it from its parse and pacing goroutines). `nil` disables
+  the indicator.
+- **`AskStreamFlusher`** (`Flush() error`) — the optional flush half of the
+  writer `StreamFilter` returns. `tclaude ask` type-asserts for it and calls
+  `Flush` exactly once after the process exits, so the filter can surface any
+  buffered final answer/error and end the line cleanly.
+
 ### `Lifecycle` — in-pane control commands
 
 ```go
@@ -85,12 +172,15 @@ SoftExitCommand() string       // e.g. "/exit" / "/quit"; "" = hard-kill the pan
 RemoteControlCommand() string  // e.g. "/remote-control"; "" = no built-in remote access
 ```
 
-Return `""` for anything your harness lacks. These tokens **must be compile-time
+The interface has **four** methods. Return `""` for anything your harness
+lacks. These tokens **must be compile-time
 constants** — they are typed into a tmux pane, which is a keystroke-injection
 sink; never interpolate user input into them. tclaude gates every slash
 injection on the matching `Supports*` flag, and where an in-pane command is
 missing it degrades (e.g. a missing rename command falls back to
-`ConvStore.SetTitle`; a missing soft-exit becomes a hard kill).
+`ConvStore.SetTitle`; a missing soft-exit becomes a hard kill; a missing
+compaction or remote-control toggle simply has its affordance hidden — those
+have no out-of-band fallback).
 
 `RemoteControlCommand` names the harness's built-in remote-access **toggle**
 (Claude Code's `/remote-control`, which exposes the session to claude.ai/code +
@@ -117,6 +207,7 @@ ListConvs(cwd string) ([]convops.SessionEntry, error)        // "" cwd = all dir
 Resolve(idPrefix, cwd string, global bool) (*ConvRef, error) // short-id → conv
 Title(convID string) (string, error)                         // read the title
 SetTitle(convID, title string) error                         // write the title (out-of-band rename)
+Exists(convID, cwd string) (bool, error)                     // is the conv still present?
 ```
 
 This is where the **"the single conversation file is the whole truth"
@@ -124,7 +215,18 @@ assumption** is dropped. Claude Code assembles a `SessionEntry` from one
 `.jsonl`; Codex assembles it from a date-indexed rollout file **plus** a SQLite
 state DB. Implement `ListConvs`/`Resolve` against *your* harness's full storage
 model. `SetTitle` is the out-of-band rename path: a harness with no in-pane
-`/rename` (like Codex) renames by writing its title store here instead.
+`/rename` (like Codex or OpenCode) renames by writing its title store here
+instead.
+
+`Exists` reports whether a conv-id is still present in the store. `tclaude ask`
+uses it to self-heal a stale `(terminal,cwd)→conv` mapping — a recorded thread
+whose conversation has vanished (a turn that died before the harness persisted
+it, or one the user deleted) starts fresh instead of resuming a ghost. Its three
+outcomes mirror `Resolve`: `(true, nil)` present, `(false, nil)` confirmed
+absent, `(false, err)` the store couldn't be read (the caller keeps the thread
+rather than nuking it on a transient error). `cwd` locates a cwd-scoped store
+(Claude Code's per-project `.jsonl`); a globally-indexed store (Codex) ignores
+it.
 
 ### `HookInstaller` — status hooks
 
@@ -143,24 +245,79 @@ parses Claude Code's and Codex's snake_case stdin field-for-field, so if your
 harness's payload follows the same shape, live status and notifications work with
 no extra code.
 
-### `SandboxCatalog` / `ApprovalCatalog` — launch-time safety *(optional)*
+#### `TrustedHookInstaller` — auto-trust *(optional refinement)*
 
 ```go
-// SandboxCatalog
-DefaultMode() string                   // secure default for daemon-spawned agents
-ValidateMode(mode string) (string, error)
-Modes() []string
-
-// ApprovalCatalog
-DefaultPolicy() string                 // non-escalating default for unattended panes
-ValidatePolicy(policy string) (string, error)
+TrustedHookInstaller interface {
+    HookInstaller
+    AutoTrustSupported() (bool, string)  // does this build know the harness's trust-key contract?
+    InstallTrusted() error               // persist trust FIRST, then install declarations
+    TrustInstalled() error               // trust the already-installed declarations
+    Trusted() bool                       // do installed declarations match current trust?
+}
 ```
 
-Leave both `nil` if your harness configures sandboxing/approvals out of band
-(like Claude Code via `settings.json`); the spawn path then passes no flag and
-rejects an explicit one. Codex implements both as launch flags — see the matrix
-on [Harnesses](harnesses.md) (the research lives in the
+Some harnesses gate command hooks behind a **separate executable-trust store**,
+so installing the declaration is not enough — it must also be trusted before it
+will run. A harness like that implements this optional extension (Codex's
+`codex_hook_trust.go` is the worked example). Setup invokes the trusted path only
+when the operator **explicitly selects that harness**: merely finding another
+harness on `PATH` is enough to install its declarations, but never to grant it
+execution trust. `InstallTrusted` deliberately persists trust *before* installing
+the matching declarations — a stale trust record without a declaration is inert,
+whereas the reverse order can leave a startup review gate. Leave it unimplemented
+and hooks still install; they just won't carry auto-trust.
+
+### `SandboxCatalog` / `ApprovalCatalog` / `AskTimeoutCatalog` — launch-time safety *(optional)*
+
+The three catalogs share the same shape (name a default, list/validate/describe
+the selectable values) so the dashboard, CLI, and profile editor drive their
+`<select>` off any of them uniformly. Each lists **four** methods:
+
+```go
+// SandboxCatalog — Codex's --sandbox; OpenCode's soft access-control modes.
+DefaultMode() string                   // secure default for daemon-spawned agents
+ValidateMode(mode string) (string, error)
+Modes() []string                       // selectable modes, least→most permissive
+ModeHelp(mode string) string           // one-line description per mode (e.g. socket reachability); "" if unknown
+
+// ApprovalCatalog — Codex's --ask-for-approval; Claude Code's --permission-mode.
+DefaultPolicy() string                 // non-escalating default for unattended panes
+ValidatePolicy(policy string) (string, error)
+Modes() []string                       // selectable policies (drives the spawn dialog's approval <select>)
+ModeHelp(policy string) string         // one-line description per policy (e.g. "safe unattended?"); "" if unknown
+
+// AskTimeoutCatalog — Claude Code's askUserQuestionTimeout, via --settings.
+DefaultMode() string                   // "" (inherit) — an un-chosen spawn keeps the operator's setting
+ValidateMode(mode string) (string, error)
+Modes() []string                       // selectable values (inherit first)
+ModeHelp(mode string) string           // one-line description per value; "" if unknown
+```
+
+`Modes` and `ModeHelp` matter because the same set must drive **both**
+validation and every authoring UI, so the CLI, profiles, and dashboard can't
+drift; `buildHarnessCatalog` calls `Modes()` then `ModeHelp(m)` for each to build
+the spawn dialog. Keep the help copy beside the values it describes.
+
+Leave any of the three `nil` if your harness configures that axis out of band
+(Claude Code's sandbox lives in `settings.json`; Codex has no AskUserQuestion
+dialog, so it leaves `AskTimeout` nil); the spawn path then passes no flag and
+rejects an explicit value. Codex implements sandbox + approval as launch flags —
+see the matrix on [Harnesses](harnesses.md) (the research lives in the
 `tclaude-harness-independence` Linear project).
+
+> **Adding a `SandboxCatalog` or `ApprovalCatalog` is not self-contained.**
+> Approval postures are also compared across a spawn lineage (can this parent
+> mint a child with *this* posture?), and that comparison lives in a
+> **name-keyed switch outside the seam**: `classifyParentApprovalLineage` /
+> `classifyChildApprovalLineage` in `approval_lineage.go` switch on the harness
+> name and fall through to an **invalid** posture for an unclassified harness —
+> so a new harness with an `Approval` catalog that isn't added there **fails
+> closed**, and its agents can neither spawn children nor be spawned as one.
+> `ApprovalLineageDenialHint` and `SpawnSandboxWarnings` (`sandbox.go`) are two
+> more name-keyed switches you must extend so the harness gets correct denial
+> hints and the right "your sandbox is weaker than it looks" warning. Grep for
+> `normalizeLineageHarness` to find them all.
 
 ## Wiring it up
 
@@ -195,6 +352,27 @@ on [Harnesses](harnesses.md) (the research lives in the
    the daemon and all production read paths exercised unchanged. Every new
    capability gets a `pkg/claude/agentd/*_flow_test.go` scenario.
 
+## What has no seam yet
+
+The recipe above covers everything that is a contract today. A few features are
+still wired to Claude Code / Codex by hand and do **not** yet have a descriptor
+seam — a new harness inherits nothing for them, and adding support means editing
+those call sites directly (and ideally lifting them into a contract):
+
+- **Usage / cost.** There is no `Cost`/`Usage` field on `Harness`. Codex's
+  figures come from harness-specific readers (`codex_usage.go`, `codex_cost.go`)
+  that the daemon's `usage.go` / `costs.go` call directly; a new harness's usage
+  won't appear until similar code exists and is invoked.
+- **Statusline install.** `harness.go` names a *future* `StatuslineInstaller`
+  seam that isn't factored out yet. Claude Code installs a command-backed
+  renderer; Codex curates its native footer items (`statusbar/codex_install.go`).
+  A new harness needs its own install path added there.
+- **MCP registration.** Registering tclaude's MCP/plugin surface lives in
+  `agentd/plugins.go`, not behind a harness contract.
+
+If your harness needs one of these, prefer promoting it to a real contract in a
+focused PR over bolting on another name-keyed branch.
+
 ## A note on naming
 
 The codebase predates the seam, so a number of internal identifiers still carry
@@ -212,4 +390,5 @@ not smuggled into a feature change.
 - **[Harnesses](harnesses.md)** — the user-facing overview + capability matrix.
 - The `tclaude-harness-independence` Linear project — the design intent and
   research pool (coupling inventory, Codex CLI facts, sandbox/approval analysis).
-- `pkg/claude/harness/` — the contracts and the `claude` / `codex` implementations.
+- `pkg/claude/harness/` — the contracts and the `claude` / `codex` / `opencode`
+  implementations.
