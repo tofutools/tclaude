@@ -8,10 +8,17 @@ import (
 )
 
 // Initialize creates the exact pre-execution v2 state from one prepared
-// definition. It performs no implicit advancement: start is the sole ready
-// node and every authored edge begins unresolved. As a creation boundary it
-// runs the full structural ValidateCheckpoint once on the constructed state;
+// definition. It performs no implicit advancement: the entry node is the sole
+// ready node and every authored edge begins unresolved. As a creation boundary
+// it runs the full structural ValidateCheckpoint once on the constructed state;
 // the per-transition runtime cycle then trusts that boundary and does not.
+//
+// The entry node is whichever node the template's start names — an explicit
+// start node is optional. Its own kind decides what "ready" means, exactly as
+// it does for any node the reducer later activates: a task becomes plannable, a
+// parallel fork or end node becomes engine-owned, and a decision is parked on a
+// human, so it takes its durable obligation here rather than only when a
+// settlement pass activates it.
 func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 	if definition == nil || len(definition.nodes) == 0 {
 		return Checkpoint{}, fmt.Errorf("%w: definition was not prepared", ErrInvalidDefinition)
@@ -20,7 +27,8 @@ func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 	for _, node := range definition.nodes {
 		nodes[node.id] = NodePending
 	}
-	nodes[definition.nodes[0].id] = NodeReady
+	entry := definition.nodes[0]
+	nodes[entry.id] = NodeReady
 	edges := make(map[string]map[string]EdgeDisposition)
 	for _, edge := range definition.edges {
 		if edges[edge.from] == nil {
@@ -34,6 +42,9 @@ func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 		Status:  RunRunning,
 		Nodes:   nodes,
 		Edges:   edges,
+	}
+	if entry.kind == definitionDecision {
+		addObligation(&checkpoint, entry.id)
 	}
 	if err := validateCheckpoint(checkpoint, definition); err != nil {
 		return Checkpoint{}, err

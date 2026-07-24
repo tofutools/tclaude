@@ -46,6 +46,9 @@ Reads require `process.runs.read` and mutations require `process.runs.manage`.
 
 ## What executes today
 
+- Any executable node kind as the template's entry. Top-level `start` names the
+  graph's single entry node; a separate `start`-typed node is optional, so a
+  template may begin directly at a task, a decision, or a parallel fork.
 - Sequential task chains, and exclusive decisions whose verdict selects exactly
   one authored outcome edge and closes the alternatives.
 - Structured fan-out (`type: parallel`) reduced by `join: all`. Branches of one

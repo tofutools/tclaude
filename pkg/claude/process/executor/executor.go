@@ -27,7 +27,14 @@ const (
 	ActionTerminal       ActionKind = "terminal"
 )
 
-const executorActor = "engine:program-executor"
+// EngineActor attributes durable evidence the engine produced by itself — an
+// advance, a prepared command, an observed program, or a decision obligation
+// that became the run's own to hold. A human or agent caller is attributed by
+// its authenticated identity instead; the distinction is what lets a reader of
+// the evidence tell what somebody asked for from what the reducer then did.
+// The daemon's creation boundary reuses it for an entry decision's obligation,
+// which no advance was ever going to produce.
+const EngineActor = "engine:program-executor"
 
 var (
 	ErrInvalidRun           = errors.New("invalid executable process run")
@@ -617,16 +624,16 @@ func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command
 		}) {
 			continue
 		}
-		events = append(events, eventForNode("decision_awaited", obligation.NodeID, executorActor, struct {
+		events = append(events, eventForNode("decision_awaited", obligation.NodeID, EngineActor, struct {
 			NodeID string `json:"nodeId"`
 		}{NodeID: obligation.NodeID}))
 	}
 	if command != nil {
-		events = append(events, event("program_prepared", command, executorActor,
+		events = append(events, event("program_prepared", command, EngineActor,
 			preparedEvidence{Command: cloneCommand(*command)}))
 	}
 	if len(events) == 0 {
-		events = append(events, event("engine_advanced", nil, executorActor, struct {
+		events = append(events, event("engine_advanced", nil, EngineActor, struct {
 			Status engine.RunStatus `json:"status"`
 		}{Status: advanced.Status}))
 	}
