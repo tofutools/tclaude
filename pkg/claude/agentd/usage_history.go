@@ -61,9 +61,19 @@ type usageHistorySeries struct {
 }
 
 type usageHistoryResponse struct {
-	From        string               `json:"from"`
-	GeneratedAt string               `json:"generated_at"`
-	Series      []usageHistorySeries `json:"series"`
+	From             string                 `json:"from"`
+	GeneratedAt      string                 `json:"generated_at"`
+	Series           []usageHistorySeries   `json:"series"`
+	CoverageWarnings []usageCoverageWarning `json:"coverage_warnings"`
+}
+
+type usageCoverageWarning struct {
+	Provider     string   `json:"provider"`
+	NativeSource string   `json:"native_source,omitempty"`
+	Models       []string `json:"models"`
+	From         string   `json:"from"`
+	ActivityFrom string   `json:"activity_from"`
+	ActivityTo   string   `json:"activity_to"`
 }
 
 type usageSeriesKey struct{ provider, window string }
@@ -98,7 +108,7 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 	})
 	out := usageHistoryResponse{
 		From: since.UTC().Format(time.RFC3339Nano), GeneratedAt: now.UTC().Format(time.RFC3339Nano),
-		Series: make([]usageHistorySeries, 0, len(keys)),
+		Series: make([]usageHistorySeries, 0, len(keys)), CoverageWarnings: []usageCoverageWarning{},
 	}
 	for _, key := range keys {
 		rows := bySeries[key]
@@ -145,7 +155,159 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 		}
 		out.Series = append(out.Series, series)
 	}
+	coverageFrom := make(map[string]time.Time)
+	for key := range bySeries {
+		effective := since
+		if override, ok := seriesSince[key]; ok {
+			effective = override
+		}
+		if prior, ok := coverageFrom[key.provider]; !ok || effective.Before(prior) {
+			// A provider-level warning qualifies every visible card for that
+			// provider, so its range is the union of those cards' spans.
+			coverageFrom[key.provider] = effective
+		}
+	}
+	out.CoverageWarnings, err = collectOpenCodeUsageCoverageWarnings(since, coverageFrom, now, rows)
+	if err != nil {
+		return usageHistoryResponse{}, err
+	}
 	return out, nil
+}
+
+func openCodeNativeUsageSource(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case db.SubscriptionProviderOpenAI:
+		return db.SubscriptionProviderOpenAI
+	case db.SubscriptionProviderAnthropic:
+		return db.SubscriptionProviderAnthropic
+	default:
+		return ""
+	}
+}
+
+func collectOpenCodeUsageCoverageWarnings(
+	defaultFrom time.Time,
+	providerFrom map[string]time.Time,
+	to time.Time,
+	nativeRows []db.SubscriptionUsageHistoryRow,
+) ([]usageCoverageWarning, error) {
+	queryFrom := defaultFrom
+	for _, from := range providerFrom {
+		if from.Before(queryFrom) {
+			queryFrom = from
+		}
+	}
+	activity, err := db.OpenCodeUsageActivityBetween(queryFrom, to)
+	if err != nil {
+		return nil, err
+	}
+	type activityGroup struct {
+		models map[string]struct{}
+		times  []time.Time
+		first  time.Time
+		last   time.Time
+	}
+	byProvider := map[string]*activityGroup{}
+	for _, row := range activity {
+		provider := strings.TrimSpace(row.ProviderID)
+		if provider == "" {
+			continue
+		}
+		from := defaultFrom
+		if nativeSource := openCodeNativeUsageSource(provider); nativeSource != "" {
+			if selected, ok := providerFrom[nativeSource]; ok {
+				from = selected
+			}
+		}
+		if row.ObservedAt.Before(from) {
+			continue
+		}
+		group := byProvider[provider]
+		if group == nil {
+			group = &activityGroup{models: map[string]struct{}{}, first: row.ObservedAt, last: row.ObservedAt}
+			byProvider[provider] = group
+		}
+		group.models[row.ModelID] = struct{}{}
+		group.times = append(group.times, row.ObservedAt)
+		if row.ObservedAt.Before(group.first) {
+			group.first = row.ObservedAt
+		}
+		if row.ObservedAt.After(group.last) {
+			group.last = row.ObservedAt
+		}
+	}
+	nativeTimes := map[string][]time.Time{}
+	for _, row := range nativeRows {
+		if row.Excluded {
+			continue
+		}
+		from := defaultFrom
+		if selected, ok := providerFrom[row.Provider]; ok {
+			from = selected
+		}
+		if row.ObservedAt.Before(from) || row.ObservedAt.After(to) {
+			continue
+		}
+		nativeTimes[row.Provider] = append(nativeTimes[row.Provider], row.ObservedAt)
+	}
+	providers := make([]string, 0, len(byProvider))
+	for provider := range byProvider {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	out := make([]usageCoverageWarning, 0)
+	for _, provider := range providers {
+		nativeSource := openCodeNativeUsageSource(provider)
+		group := byProvider[provider]
+		covered := nativeSource != "" && openCodeActivityCoveredByNativeSamples(
+			group.times,
+			nativeTimes[nativeSource],
+		)
+		if covered {
+			continue
+		}
+		models := make([]string, 0, len(group.models))
+		for model := range group.models {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		from := defaultFrom
+		if nativeSource != "" {
+			if selected, ok := providerFrom[nativeSource]; ok {
+				from = selected
+			}
+		}
+		out = append(out, usageCoverageWarning{
+			Provider: provider, NativeSource: nativeSource, Models: models,
+			From:         from.UTC().Format(time.RFC3339Nano),
+			ActivityFrom: group.first.UTC().Format(time.RFC3339Nano),
+			ActivityTo:   group.last.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return out, nil
+}
+
+func openCodeActivityCoveredByNativeSamples(activity, native []time.Time) bool {
+	if len(activity) == 0 || len(native) == 0 {
+		return false
+	}
+	for _, observedAt := range activity {
+		matched := false
+		for _, sampleAt := range native {
+			delta := sampleAt.Sub(observedAt)
+			// A sample taken before the OpenCode turn cannot include that
+			// activity. Coverage requires the next native observation, within
+			// one expected sampling interval.
+			if delta >= 0 && delta <= db.SubscriptionUsageSampleInterval {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 func downsampleUsageResets(resets []usageHistoryReset, max int) []usageHistoryReset {

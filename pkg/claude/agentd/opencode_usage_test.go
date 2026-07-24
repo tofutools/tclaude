@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,404 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
+func float64ptr(value float64) *float64 { return &value }
+
+func resetOpenCodeVirtualCostStateForTest() {
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.bySession = nil
+	openCodeVirtualCostState.usageSession = nil
+	openCodeVirtualCostState.hydratedSession = nil
+	openCodeVirtualCostState.Unlock()
+}
+
+func TestOpenCodeVirtualCostForUsageUsesNativeTiersAndCachePricing(t *testing.T) {
+	tier := openCodePriceTier{
+		Input: 4, Output: 20, Cache: openCodeCachePrice{Read: 0.4, Write: 8},
+	}
+	tier.Tier.Type, tier.Tier.Size = "context", 200_000
+	base := openCodeModelPrice{
+		Input: 2, Output: 10, Cache: openCodeCachePrice{Read: 0.2, Write: 0.5},
+		Tiers: []openCodePriceTier{tier},
+		ExperimentalOver200K: &struct {
+			Input  float64            `json:"input"`
+			Output float64            `json:"output"`
+			Cache  openCodeCachePrice `json:"cache"`
+		}{Input: 3, Output: 12, Cache: openCodeCachePrice{Read: 0.3, Write: 0.6}},
+	}
+	usage := openCodeContextUsage{
+		Input: 100_000, Output: 10_000, Reasoning: 5_000, CacheRead: 120_000, CacheWrite: 1_000,
+	}
+	got, ok := openCodeVirtualCostForUsage(usage, base)
+	require.True(t, ok)
+	assert.InDelta(t, 0.756, got, 1e-12,
+		"explicit >200k context tier wins and prices reasoning as output plus both cache buckets")
+
+	base.Tiers = nil
+	got, ok = openCodeVirtualCostForUsage(usage, base)
+	require.True(t, ok)
+	assert.InDelta(t, 0.5166, got, 1e-12, "legacy experimentalOver200K is the fallback")
+
+	base.ExperimentalOver200K = nil
+	got, ok = openCodeVirtualCostForUsage(usage, base)
+	require.True(t, ok)
+	assert.InDelta(t, 0.3745, got, 1e-12, "base pricing applies without a matching tier")
+
+	got, ok = openCodeVirtualCostForUsage(usage, openCodeModelPrice{})
+	require.True(t, ok, "an explicitly cataloged free model is valid")
+	assert.Zero(t, got)
+	missing := projectOpenCodeMessageCost(openCodeContextUsage{
+		MessageID: "missing", ProviderID: "openai", ModelID: "not-cataloged",
+		ReportedCost: float64ptr(0), Input: 1,
+	}, map[string]openCodeModelPrice{})
+	assert.False(t, missing.eligible, "an absent catalog entry still degrades without inventing a price")
+}
+
+func TestOpenCodeVirtualCostPricesEachStepBeforeApplyingContextTier(t *testing.T) {
+	tier := openCodePriceTier{Input: 2}
+	tier.Tier.Type, tier.Tier.Size = "context", 200_000
+	zero := float64(0)
+	state := openCodeMessageCostUsage{
+		message: openCodeContextUsage{
+			MessageID: "msg-tiered", ProviderID: "openai", ModelID: "gpt-tiered",
+			ReportedCost: &zero,
+		},
+		hadSteps: true,
+		steps: map[string]openCodeContextUsage{
+			"part-1": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 120_000},
+			"part-2": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 120_000},
+		},
+	}
+	projected := projectOpenCodeMessageCostUsage(state, map[string]openCodeModelPrice{
+		"openai/gpt-tiered": {Input: 1, Tiers: []openCodePriceTier{tier}},
+	})
+	require.True(t, projected.eligible)
+	assert.InDelta(t, 0.24, projected.usd, 1e-12,
+		"two sub-threshold model calls remain base-priced instead of becoming one tiered 240k call")
+}
+
+func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/config/providers", r.URL.Path)
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{` +
+			`"gpt-a":{"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}},` +
+			`"gpt-b":{"cost":{"input":2,"output":4,"cache":{"read":0.2,"write":0.4}},"limit":{"context":200000}},` +
+			`"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	const sessionID, convID = "oc-virtual", "ses-virtual"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL, Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	_, directPrices, fetchErr := fetchOpenCodeModelCatalog(context.Background(), runtime)
+	require.NoError(t, fetchErr)
+	require.Contains(t, directPrices, "openai/gpt-a")
+	prices, loaded := openCodeModelPrices(context.Background(), runtime)
+	require.True(t, loaded)
+	require.Contains(t, prices, "openai/gpt-a")
+	subscription := float64ptr(0)
+	first := openCodeContextUsage{
+		MessageID: "msg-1", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: subscription, Input: 1_000_000, CreatedAt: time.Now().Add(-time.Minute),
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12, "replayed update replaces, never increments")
+
+	second := openCodeContextUsage{
+		MessageID: "msg-2", ProviderID: "openai", ModelID: "gpt-b",
+		ReportedCost: subscription, Input: 500_000, CreatedAt: time.Now(),
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, second)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 2, snap.VirtualCostUSD, 1e-12, "messages on different models use their own prices")
+
+	first.Input = 2_000_000
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12, "a corrected repeated message replaces its prior contribution")
+
+	first.Input = 250_000
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, snap.VirtualCostUSD, 1e-12,
+		"an authoritative lower replay clears the earlier overestimate")
+
+	first.ModelID = "missing-price"
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, snap.VirtualCostUSD, 1e-12,
+		"missing pricing retains the last complete estimate instead of publishing a partial total")
+
+	first.ModelID = "gpt-a"
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-free", ProviderID: "openai", ModelID: "free",
+		ReportedCost: subscription, Input: 1_000_000, CreatedAt: time.Now(),
+	})
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, snap.VirtualCostUSD, 1e-12,
+		"a valid free-model message contributes zero without erasing earlier priced usage")
+
+	rows, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Len(t, rows, 3, "replays are also idempotent in provider activity history")
+}
+
+func TestOpenCodeVirtualCostRetainsHistoryAcrossTransientCatalogFailure(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID = "oc-transient", "ses-transient"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 2), "seed retained projection")
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(failing.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: failing.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	yesterdayAt := time.Now().AddDate(0, 0, -1)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-recovered", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000, CreatedAt: yesterdayAt,
+	})
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 2, snap.VirtualCostUSD, 1e-12,
+		"a failed catalog fetch is not treated as authoritative missing pricing")
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(healthy.Close)
+	runtime.ServerURL = healthy.URL
+	projectAndPersistOpenCodeCostState(context.Background(), runtime)
+
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12)
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	yesterday := yesterdayAt.In(time.Local).Format("2006-01-02")
+	var yesterdayCost, todayCost float64
+	for _, row := range rows {
+		if row.SessionID != sessionID {
+			continue
+		}
+		switch row.Day {
+		case yesterday:
+			yesterdayCost = row.VirtualCostUSD
+		case time.Now().Format("2006-01-02"):
+			todayCost = row.VirtualCostUSD
+		}
+	}
+	assert.InDelta(t, 1, yesterdayCost, 1e-12,
+		"successful recovery rebuilds the original day from the message timestamp")
+	assert.Zero(t, todayCost, "recovery does not move prior spend into today")
+}
+
+func TestOpenCodeVirtualCostWaitsForResumeSessionRow(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	const sessionID, convID = "oc-resume-race", "ses-resume-race"
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.hydratedSession = map[string]bool{sessionID: true}
+	openCodeVirtualCostState.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+	done := make(chan struct{})
+	go func() {
+		applyOpenCodeVirtualCostUsage(ctx, runtime, openCodeContextUsage{
+			MessageID: "msg-recovered", ProviderID: "openai", ModelID: "gpt-a",
+			ReportedCost: float64ptr(0), Input: 1_000_000, CreatedAt: time.Now(),
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("cost projection returned before the resume session row was inserted")
+	case <-time.After(2 * openCodeHookRowRetryDelay):
+	}
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("cost projection did not retry after the resume session row was inserted")
+	}
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"the authoritative resume backfill persists without waiting for a later message")
+}
+
+func openCodeStepUpdatedEventJSON(convID, messageID, partID string, input int64) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"id":"evt-%s","type":"message.part.updated","properties":{`+
+		`"sessionID":%q,"part":{"id":%q,"messageID":%q,"sessionID":%q,"type":"step-finish",`+
+		`"cost":0,"tokens":{"input":%d,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}`,
+		partID, convID, partID, messageID, convID, input))
+}
+
+func openCodeRemovedEventJSON(eventType, convID, messageID, partID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(
+		`{"id":"evt-rm","type":%q,"properties":{"sessionID":%q,"messageID":%q,"partID":%q}}`,
+		eventType, convID, messageID, partID,
+	))
+}
+
+func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "oc-steps", ConvID: "ses-steps", ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	seedOpenCodeUsageSession(t, runtime.SessionID, runtime.ConvID)
+
+	first, ok := parseOpenCodeStepCostUsage(
+		openCodeStepUpdatedEventJSON(runtime.ConvID, "msg-tools", "part-1", 1_000_000),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, first)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-tools", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000,
+	})
+
+	second, ok := parseOpenCodeStepCostUsage(
+		openCodeStepUpdatedEventJSON(runtime.ConvID, "msg-tools", "part-2", 2_000_000),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, second)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, second)
+	// OpenCode overwrites top-level message tokens with the latest step. The
+	// stable parts must remain authoritative when that message update arrives.
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-tools", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 2_000_000,
+	})
+
+	snap, err := db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12,
+		"both model calls are priced once; the latest-step message field does not undercount")
+
+	removal, ok := parseOpenCodeCostRemoval(
+		openCodeRemovedEventJSON("message.part.removed", runtime.ConvID, "msg-tools", "part-2"),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"removing a live step rebuilds the message from its retained parts")
+
+	removal, ok = parseOpenCodeCostRemoval(
+		openCodeRemovedEventJSON("message.removed", runtime.ConvID, "msg-tools", ""),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "removing the message clears its projected history")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "removed messages also leave the Usage coverage index")
+}
+
+func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "oc-real", ConvID: "ses-real", ServerURL: server.URL, Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	seedOpenCodeUsageSession(t, runtime.SessionID, runtime.ConvID)
+	usage := openCodeContextUsage{
+		MessageID: "msg-real", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0.5), Input: 1_000_000,
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+	snap, err := db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "native real cost makes the session ineligible for WHAT-IF")
+	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12,
+		"positive live message cost is persisted without waiting for session.updated")
+
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, openCodeStepCostUsage{
+		PartID: "part-later",
+		Usage: openCodeContextUsage{
+			MessageID: "msg-real", ReportedCost: float64ptr(0.7), Input: 1_000_000,
+		},
+	})
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.7, snap.CostUSD, 1e-12,
+		"a persisted later step wins over a stale lower top-level cumulative cost")
+
+	usage.MessageID, usage.ReportedCost = "msg-ambiguous", nil
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "missing reported-cost metadata is not guessed to mean subscription")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "real and ambiguous traffic do not create subscription coverage")
+}
+
 // seedOpenCodeUsageSession inserts a minimal OpenCode session row so the usage
 // writers have a target to UPDATE.
 func seedOpenCodeUsageSession(t *testing.T, sessionID, convID string) {
@@ -25,6 +424,12 @@ func seedOpenCodeUsageSession(t *testing.T, sessionID, convID string) {
 		ID: sessionID, ConvID: convID, TmuxSession: "oc-usage",
 		Status: "idle", Harness: harness.OpenCodeName, CreatedAt: time.Now(),
 	}))
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.hydratedSession == nil {
+		openCodeVirtualCostState.hydratedSession = map[string]bool{}
+	}
+	openCodeVirtualCostState.hydratedSession[sessionID] = true
+	openCodeVirtualCostState.Unlock()
 }
 
 func openCodeSessionUpdatedEventJSON(envelopeSessionID, infoID string, cost float64) string {
@@ -123,16 +528,27 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 		switch r.URL.Path {
 		case "/config/providers":
 			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{` +
-				`"gpt-5.6-terra":{"limit":{"context":272000,"output":128000}}}}]}`))
+				`"gpt-5.6-terra":{"cost":{"input":2,"output":10,"cache":{"read":0.2,"write":0.5}},` +
+				`"limit":{"context":272000,"output":128000}}}}]}`))
 		case "/session/" + convID + "/message":
 			_, _ = w.Write([]byte(`[` +
 				`{"info":{"id":"msg_u","role":"user"}},` +
+				// Persisted step preceding its interrupted top-level update.
+				`{"info":{"id":"msg_step_only","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
+				`"time":{"created":50},"cost":0,"tokens":{"input":0,"output":0}},` +
+				`"parts":[{"id":"part-only","messageID":"msg_step_only","type":"step-finish","cost":0,` +
+				`"tokens":{"input":1000000,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}]},` +
 				// Older assistant turn (smaller context) — must NOT win.
 				`{"info":{"id":"msg_a1","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
-				`"time":{"created":100},"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
+				`"time":{"created":100},"cost":0,"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
 				// Newer assistant turn — this one wins.
 				`{"info":{"id":"msg_a2","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
-				`"time":{"created":200},"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}}}` +
+				`"time":{"created":200},"cost":0,"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}},` +
+				`"parts":[` +
+				`{"id":"part-a","messageID":"msg_a2","type":"step-finish","cost":0,` +
+				`"tokens":{"input":10000,"output":100,"reasoning":0,"cache":{"read":0,"write":0}}},` +
+				`{"id":"part-b","messageID":"msg_a2","type":"step-finish","cost":0,` +
+				`"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}}]}` +
 				`]`))
 		default:
 			http.NotFound(w, r)
@@ -154,4 +570,151 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
 	assert.InDelta(t, float64(105000)/272000*100, snap.ContextPct, 1e-6)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
+	assert.InDelta(t, 2.257, snap.VirtualCostUSD, 1e-12,
+		"recovery prices every persisted step, including one whose top-level update was interrupted")
+}
+
+func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID = "oc-real-backfill", "ses_real_backfill"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+		case "/session/" + convID + "/message":
+			_, _ = w.Write([]byte(`[` +
+				`{"info":{"id":"msg-1","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+				`"time":{"created":100},"cost":0.1,"tokens":{"input":1000,"output":100}},` +
+				`"parts":[` +
+				`{"id":"p1","messageID":"msg-1","type":"step-finish","cost":0.1,"tokens":{"input":500,"output":50}},` +
+				`{"id":"p2","messageID":"msg-1","type":"step-finish","cost":0.2,"tokens":{"input":1000,"output":100}}]},` +
+				`{"info":{"id":"msg-2","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+				`"time":{"created":200},"cost":0.3,"tokens":{"input":2000,"output":200}}},` +
+				`{"info":{"id":"msg-ambiguous","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+				`"time":{"created":300},"tokens":{"input":1000,"output":100}}}` +
+				`]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	backfillOpenCodeContextUsage(context.Background(), db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	})
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.6, snap.CostUSD, 1e-12,
+		"recovery uses persisted step totals when the top-level cumulative cost is stale")
+	assert.Zero(t, snap.VirtualCostUSD, "real history remains authoritative over WHAT-IF cost")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Unix(0, 0), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "real and ambiguous backfill traffic do not create subscription coverage")
+}
+
+func TestBackfillOpenCodeRealCostClearsWhatIfDuringCatalogOutage(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID = "oc-real-outage", "ses_real_outage"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 2))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			http.Error(w, "catalog unavailable", http.StatusServiceUnavailable)
+		case "/session/" + convID + "/message":
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg-paid","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0.5,"tokens":{"input":1000,"output":100}}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}))
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12)
+	assert.Zero(t, snap.VirtualCostUSD,
+		"positive native cost clears WHAT-IF state without requiring model pricing")
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	for _, row := range rows {
+		if row.ConvID == convID {
+			assert.Zero(t, row.VirtualCostUSD,
+				"historical WHAT-IF prefixes are cleared when real spend becomes authoritative")
+		}
+	}
+}
+
+func TestOpenCodeLiveCostWaitsForAuthoritativeHydration(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID = "oc-hydration", "ses_hydration"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 2))
+	openCodeVirtualCostState.Lock()
+	delete(openCodeVirtualCostState.hydratedSession, sessionID)
+	openCodeVirtualCostState.Unlock()
+
+	var historyReady atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+		case "/session/" + convID + "/message":
+			if !historyReady.Load() {
+				http.Error(w, "not ready", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg-old","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0,"tokens":{"input":2000000,"output":0}}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	require.False(t, backfillOpenCodeContextUsage(context.Background(), runtime))
+	live := openCodeContextUsage{
+		MessageID: "msg-live", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000, CreatedAt: time.Now(),
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, live)
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 2, snap.VirtualCostUSD, 1e-12,
+		"a failed restart hydration cannot replace retained history with one live message")
+
+	historyReady.Store(true)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, live)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12,
+		"the next live event retries hydration before adding its own contribution")
 }

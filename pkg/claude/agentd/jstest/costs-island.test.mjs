@@ -6,10 +6,11 @@ const storage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
 function payload(title = 'Alpha') {
   return {
     from: '2026-07-01', to: '2026-07-10', first_day: '2026-07-01', total_usd: 5,
-    days: [{ day: '2026-07-10', cost_usd: 5 }],
+    real_total_usd: 3, what_if_total_usd: 2, cost_kind: 'mixed',
+    days: [{ day: '2026-07-10', cost_usd: 5, real_cost_usd: 3, what_if_cost_usd: 2, cost_kind: 'mixed' }],
     agents: [
-      { agent_id: 'agt_alpha', conv_id: 'conv-a', day: '2026-07-10', title, harness: 'claude', model: 'opus', cost_usd: 3 },
-      { agent_id: 'agt_beta', conv_id: 'conv-b', day: '2026-07-10', title: 'Beta', harness: 'codex', model: 'gpt', cost_usd: 2 },
+      { agent_id: 'agt_alpha', conv_id: 'conv-a', day: '2026-07-10', title, harness: 'claude', model: 'opus', cost_usd: 3, real_cost_usd: 3, cost_kind: 'real' },
+      { agent_id: 'agt_beta', conv_id: 'conv-b', day: '2026-07-10', title: 'Beta', harness: 'codex', model: 'gpt', cost_usd: 2, what_if_cost_usd: 2, cost_kind: 'what_if' },
     ],
   };
 }
@@ -72,11 +73,14 @@ test('Costs island exposes loading/error/what-if visibility and production clean
   const state = createCostsState({ snapshot, activeTab, prefs: storage });
   state.initialize();
   state.beginRequest(1);
+  state.commitRequest(1, payload());
   const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {} };
   const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
-  assert.match(mounted.container.textContent, /Loading costs/);
   assert.match(mounted.container.textContent, /WHAT-IF/);
-  await harness.act(() => state.failRequest(1, new Error('offline')));
+  assert.match(mounted.container.textContent, /mixes real billed spend/);
+  assert.match(mounted.container.textContent, /≈\$2\.00/);
+  await harness.act(() => state.beginRequest(2));
+  await harness.act(() => state.failRequest(2, new Error('offline')));
   assert.match(getByRole(mounted.container, 'alert').textContent, /offline/);
   await mounted.unmount();
 

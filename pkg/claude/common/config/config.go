@@ -763,10 +763,10 @@ func (c *Config) ScribeProfileName() string {
 // ShowOnSubscription opts a SUBSCRIPTION account into the dashboard's Costs
 // tab. On pay-per-token the tab always shows (there's real spend); on a
 // subscription there's no real charge, so by default the tab auto-hides. Set
-// this true to reveal it in WHAT-IF mode — the estimated pay-per-token-
-// equivalent cost (Claude Code's client-side total_cost_usd, captured into
-// virtual_cost_usd), clearly flagged as hypothetical. Default false = hide on
-// subscription. Editable from the dashboard's Config tab.
+// this true to reveal harness-provided pay-per-token-equivalent estimates from
+// virtual_cost_usd, clearly flagged as hypothetical and kept distinct from
+// real spend. Default false = hide subscription estimates. Editable from the
+// dashboard's Config tab.
 type CostConfig struct {
 	EstimateFactor     *float64 `json:"estimate_factor,omitempty"`
 	ShowOnSubscription bool     `json:"show_on_subscription,omitempty"`

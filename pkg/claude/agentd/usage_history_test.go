@@ -9,6 +9,131 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, row := range []db.OpenCodeUsageActivity{
+		{SessionID: "oc-openai", MessageID: "m1", ConvID: "c1", ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-time.Hour)},
+		{SessionID: "oc-anthropic", MessageID: "m2", ConvID: "c2", ProviderID: "anthropic", ModelID: "claude-sonnet", ObservedAt: now.Add(-time.Hour)},
+		{SessionID: "oc-unknown", MessageID: "m3", ConvID: "c3", ProviderID: "openrouter", ModelID: "some-model", ObservedAt: now.Add(-time.Hour)},
+	} {
+		require.NoError(t, db.UpsertOpenCodeUsageActivity(row))
+	}
+	native := []db.SubscriptionUsageHistoryRow{
+		{Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour", ObservedAt: now.Add(-70 * time.Minute)},
+		{Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour", ObservedAt: now.Add(-50 * time.Minute)},
+	}
+	warnings, err := collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), nil, now, native)
+	require.NoError(t, err)
+	require.Len(t, warnings, 2, "Anthropic native coverage suppresses only the matching warning")
+	assert.Equal(t, "openai", warnings[0].Provider)
+	assert.Equal(t, "openai", warnings[0].NativeSource)
+	assert.Equal(t, []string{"gpt-5"}, warnings[0].Models)
+	assert.Equal(t, "openrouter", warnings[1].Provider)
+	assert.Empty(t, warnings[1].NativeSource, "unknown providers have no fabricated native source")
+
+	native = append(native,
+		db.SubscriptionUsageHistoryRow{
+			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
+			ObservedAt: now.Add(-70 * time.Minute),
+		},
+		db.SubscriptionUsageHistoryRow{
+			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
+			ObservedAt: now.Add(-50 * time.Minute),
+		},
+	)
+	warnings, err = collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), nil, now, native)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Equal(t, "openrouter", warnings[0].Provider,
+		"matching Codex/OpenAI history removes the OpenAI warning while unknown remains")
+}
+
+func TestOpenCodeUsageCoverageWarningRequiresNativeHistoryToBracketActivity(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, db.UpsertOpenCodeUsageActivity(db.OpenCodeUsageActivity{
+		SessionID: "oc-openai", MessageID: "m1", ConvID: "c1",
+		ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-time.Hour),
+	}))
+	warnings, err := collectOpenCodeUsageCoverageWarnings(
+		now.Add(-24*time.Hour), nil, now,
+		[]db.SubscriptionUsageHistoryRow{{
+			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
+			ObservedAt: now.Add(-30 * time.Minute),
+		}},
+	)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1,
+		"a lone native sample after OpenCode activity cannot qualify the missing interval")
+	assert.Equal(t, db.SubscriptionProviderOpenAI, warnings[0].Provider)
+}
+
+func TestOpenCodeUsageCoverageWarningDetectsGapBetweenNativeEndpoints(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	assert.False(t, openCodeActivityCoveredByNativeSamples(
+		[]time.Time{base.Add(time.Hour)},
+		[]time.Time{base.Add(50 * time.Minute)},
+	), "a pre-activity sample cannot include usage that had not happened yet")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(
+		[]time.Time{base.Add(14 * 24 * time.Hour)},
+		[]time.Time{base, base.Add(29 * 24 * time.Hour)},
+	), "distant first/last samples do not fabricate coverage across the gap")
+	assert.True(t, openCodeActivityCoveredByNativeSamples(
+		[]time.Time{base.Add(14 * 24 * time.Hour)},
+		[]time.Time{base.Add(14*24*time.Hour + 10*time.Minute)},
+	), "a native sample within one retained sampling interval covers the activity")
+}
+
+func TestOpenCodeUsageCoverageWarningsUseProviderSelectedSpan(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, db.UpsertOpenCodeUsageActivity(db.OpenCodeUsageActivity{
+		SessionID: "oc-openai", MessageID: "m1", ConvID: "c1",
+		ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-48 * time.Hour),
+	}))
+
+	warnings, err := collectOpenCodeUsageCoverageWarnings(
+		now.Add(-7*24*time.Hour),
+		map[string]time.Time{
+			db.SubscriptionProviderOpenAI:    now.Add(-24 * time.Hour),
+			db.SubscriptionProviderAnthropic: now.Add(-7 * 24 * time.Hour),
+		},
+		now,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, warnings,
+		"Anthropic's longer selected span must not pull old activity into OpenAI's 24-hour warning")
+}
+
+func TestCollectUsageHistoryHonorsShorterProviderSpanForCoverage(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderOpenAI, ObservedAt: now.Add(-48 * time.Hour), Source: "codex",
+		Windows: []db.SubscriptionUsageWindow{{Name: "five_hour", UsedPercent: 10}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertOpenCodeUsageActivity(db.OpenCodeUsageActivity{
+		SessionID: "oc-openai", MessageID: "m1", ConvID: "c1",
+		ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-12 * time.Hour),
+	}))
+
+	out, err := collectUsageHistory(
+		now.Add(-7*24*time.Hour),
+		map[usageSeriesKey]time.Time{
+			{provider: db.SubscriptionProviderOpenAI, window: "five_hour"}: now.Add(-24 * time.Hour),
+		},
+		now,
+	)
+	require.NoError(t, err)
+	require.Len(t, out.CoverageWarnings, 1,
+		"native history outside the selected 24-hour card span does not qualify current OpenCode activity")
+	assert.Equal(t, db.SubscriptionProviderOpenAI, out.CoverageWarnings[0].Provider)
+	assert.Equal(t, now.Add(-24*time.Hour).Format(time.RFC3339Nano), out.CoverageWarnings[0].From)
+}
+
 func usageHistoryRows(base time.Time, values ...float64) []db.SubscriptionUsageHistoryRow {
 	rows := make([]db.SubscriptionUsageHistoryRow, len(values))
 	for i, value := range values {

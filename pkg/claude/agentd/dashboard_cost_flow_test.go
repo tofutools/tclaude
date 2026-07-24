@@ -165,5 +165,5 @@ func TestDashboardSnapshot_CostTabVisibilityRule(t *testing.T) {
 	require.NoError(t, db.UpdateSessionCost(label, 1.00), "UpdateSessionCost")
 	snap = fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
 	assert.True(t, snap.CostTabVisible, "real spend shows the Costs tab")
-	assert.False(t, snap.CostTabWhatIf, "real spend is real mode, not WHAT-IF")
+	assert.True(t, snap.CostTabWhatIf, "the opt-in remains enabled so mixed real/WHAT-IF badges can coexist")
 }

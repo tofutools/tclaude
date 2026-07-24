@@ -56,15 +56,17 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd    *exec.Cmd
-	done   chan error
-	cancel context.CancelFunc
+	cmd     *exec.Cmd
+	done    chan error
+	cancel  context.CancelFunc
+	sseDone chan struct{}
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
 	// watcher set it; synthetic reuse entries (ensureOpenCodeSSE's placeholder)
 	// leave it false and rely on the reaper, exactly as before.
-	exited bool
+	exited   bool
+	stopping bool
 }
 
 var beforeOpenCodeTUICommandStatusCheckForTest func()
@@ -747,6 +749,7 @@ func stopOpenCodeRuntime(sessionID string) error {
 		return nil
 	}
 	stopOpenCodeProcess(*runtime, nil)
+	clearOpenCodeVirtualCostState(sessionID)
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
@@ -756,11 +759,34 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	if process == nil {
 		process = openCodeProcesses.bySession[runtime.SessionID]
 	}
-	delete(openCodeProcesses.bySession, runtime.SessionID)
+	if process == nil {
+		process = &openCodeProcess{}
+		openCodeProcesses.bySession[runtime.SessionID] = process
+	}
+	// Keep this tombstone registered until cancellation and projector join
+	// complete. A concurrent health/reconcile path must not interpret a
+	// temporarily missing entry as permission to launch a replacement SSE
+	// consumer during teardown.
+	process.stopping = true
 	openCodeProcesses.Unlock()
+	defer func() {
+		openCodeProcesses.Lock()
+		if openCodeProcesses.bySession[runtime.SessionID] == process {
+			delete(openCodeProcesses.bySession, runtime.SessionID)
+		}
+		openCodeProcesses.Unlock()
+	}()
 	if process != nil {
 		if process.cancel != nil {
 			process.cancel()
+		}
+		if process.sseDone != nil {
+			// Cancellation interrupts the in-flight HTTP request/scanner and
+			// every retry wait. Join the projector before clearing its
+			// in-memory state or allowing a resume with the same conv_id;
+			// otherwise the stale runtime can repopulate authoritative cost
+			// and activity after teardown.
+			<-process.sseDone
 		}
 		if process.cmd != nil && process.cmd.Process != nil {
 			_ = process.cmd.Process.Signal(os.Interrupt)
@@ -834,17 +860,22 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		openCodeProcesses.Unlock()
 		return
 	}
-	if process.exited {
-		// The server died before its consumer was ever registered. Starting one
-		// now would just spin the reconnect loop until the reaper cleans up; the
-		// watcher already cancelled, so honour that and start nothing.
+	if process.exited || process.stopping {
+		// A dead server would spin the reconnect loop until reaping; a stopping
+		// server must retain its registry tombstone until the old projector is
+		// joined. In either state, starting a consumer is forbidden.
 		openCodeProcesses.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	sseDone := make(chan struct{})
 	process.cancel = cancel
+	process.sseDone = sseDone
 	openCodeProcesses.Unlock()
-	go consumeOpenCodeSSE(ctx, runtime)
+	go func() {
+		defer close(sseDone)
+		consumeOpenCodeSSE(ctx, runtime)
+	}()
 }
 
 func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {
@@ -989,6 +1020,16 @@ func consumeOpenCodeEvent(
 	} else {
 		applyOpenCodeHooks(ctx, runtime, projected)
 	}
+	// A tool-using assistant message can contain several model calls. OpenCode
+	// publishes each call's authoritative token block as a step-finish part;
+	// retain it before the following message.updated event supplies model
+	// metadata and triggers the aggregate WHAT-IF projection.
+	if step, ok := parseOpenCodeStepCostUsage(event, runtime.ConvID); ok {
+		applyOpenCodeVirtualCostStep(ctx, runtime, step)
+	}
+	if removal, ok := parseOpenCodeCostRemoval(event, runtime.ConvID); ok {
+		applyOpenCodeVirtualCostRemoval(ctx, runtime, removal)
+	}
 	// Context-window usage rides on the same directory-wide SSE stream as the
 	// lifecycle hooks but is a session-row side effect, not a hook event, so it
 	// is projected independently of the lifecycle projector, and after it so the
@@ -1001,6 +1042,9 @@ func consumeOpenCodeEvent(
 		// TCL-673: record the provider/model slug from the same message so the
 		// dashboard model column and cost-history denormalisation are populated.
 		persistOpenCodeModelSlug(runtime, usage)
+		// TCL-708: the same authoritative per-message usage drives the native
+		// catalog what-if projection and provider-aware Usage coverage index.
+		applyOpenCodeVirtualCostUsage(ctx, runtime, usage)
 	}
 	// TCL-673: OpenCode's own cumulative session cost rides session.updated.
 	// $0/N-A on a subscription; real spend on a pay-per-token key.

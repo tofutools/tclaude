@@ -968,3 +968,19 @@ CREATE TABLE opencode_runtimes (
 			updated_at TEXT NOT NULL
 		, permission_json TEXT NOT NULL DEFAULT '');
 
+CREATE TABLE opencode_usage_activity (
+			session_id  TEXT NOT NULL,
+			message_id  TEXT NOT NULL,
+			conv_id     TEXT NOT NULL DEFAULT '',
+			provider_id TEXT NOT NULL,
+			model_id    TEXT NOT NULL,
+			observed_at TEXT NOT NULL,
+			PRIMARY KEY (session_id, message_id)
+		);
+
+CREATE INDEX idx_opencode_usage_activity_observed
+			ON opencode_usage_activity(observed_at, provider_id);
+
+CREATE INDEX idx_opencode_usage_activity_conv_message
+			ON opencode_usage_activity(conv_id, message_id);
+

@@ -208,6 +208,138 @@ func TestUpdateSessionVirtualCost_DenormalisesHarness(t *testing.T) {
 	assert.Equal(t, "codex", row.Harness, "harness denormalised onto virtual cost history")
 }
 
+func TestReplaceSessionVirtualCostHistoryRedistributesAndClearsProjection(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-replace", TmuxSession: "tmux-vc-replace", ConvID: "conv-vc-replace",
+		Cwd: "/tmp/vc-replace", Status: "idle", Harness: "opencode",
+	}))
+	yesterday := time.Now().AddDate(0, 0, -1).Format(costDayFormat)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO session_cost_daily
+		(session_id, day, conv_id, virtual_cost_usd, updated_at, harness)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		"vc-replace", yesterday, "conv-vc-replace", 4,
+		time.Now().AddDate(0, 0, -1).Format(time.RFC3339Nano), "opencode")
+	require.NoError(t, err)
+
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 1, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 0.5, UpdatedAt: time.Now().AddDate(0, 0, -1), Model: "openai/gpt-old"},
+		{Day: today, CostUSD: 1, UpdatedAt: time.Now(), Model: "openai/gpt-new"},
+	}))
+	snap, err := GetContextSnapshot("vc-replace")
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12)
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	yesterdayRow := dailyRowFor(t, rows, "vc-replace", yesterday)
+	todayRow := dailyRowFor(t, rows, "vc-replace", today)
+	assert.InDelta(t, 0.5, yesterdayRow.VirtualCostUSD, 1e-12)
+	assert.Equal(t, "openai/gpt-old", yesterdayRow.Model,
+		"rebuilding history retains the model active on the historical day")
+	assert.InDelta(t, 1, todayRow.VirtualCostUSD, 1e-12,
+		"the replayed timestamped history redistributes the correction exactly")
+	assert.Equal(t, "openai/gpt-new", todayRow.Model)
+
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 0, nil))
+	snap, err = GetContextSnapshot("vc-replace")
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD)
+	rows, err = AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Zero(t, dailyRowFor(t, rows, "vc-replace", yesterday).VirtualCostUSD,
+		"real-cost discovery clears historical virtual prefixes too")
+	assert.Zero(t, dailyRowFor(t, rows, "vc-replace", today).VirtualCostUSD,
+		"missing pricing or real-cost discovery clears today's stale estimate")
+}
+
+func TestReplaceSessionVirtualCostHistoryPreservesRowsAfterSessionDeletion(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-retired", TmuxSession: "tmux-vc-retired", ConvID: "conv-vc-retired",
+		Cwd: "/tmp/vc-retired", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, UpdateSessionVirtualCost("vc-retired", 4))
+	require.NoError(t, DeleteSession("vc-retired"))
+
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-retired", 1, []VirtualCostDailySnapshot{{
+		Day: today, CostUSD: 1, UpdatedAt: time.Now(), Model: "openai/gpt-new",
+	}}))
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.InDelta(t, 4, dailyRowFor(t, rows, "vc-retired", today).VirtualCostUSD, 1e-12,
+		"a teardown race cannot erase denormalised retired-session history")
+}
+
+func TestReplaceSessionVirtualCostHistoryFollowsConversationAcrossResume(t *testing.T) {
+	setupTestDB(t)
+	yesterdayAt := time.Now().AddDate(0, 0, -1)
+	yesterday := yesterdayAt.Format(costDayFormat)
+	todayAt := time.Now()
+	today := todayAt.Format(costDayFormat)
+	const convID = "conv-vc-resume"
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-spawn", TmuxSession: "tmux-vc-spawn", ConvID: convID,
+		Cwd: "/tmp/vc-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-spawn", 3, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt, Model: "openai/gpt-a"},
+		{Day: today, CostUSD: 3, UpdatedAt: todayAt, Model: "openai/gpt-a"},
+	}))
+	require.NoError(t, DeleteSession("vc-spawn"))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-resume", TmuxSession: "tmux-vc-resume", ConvID: convID,
+		Cwd: "/tmp/vc-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-resume", 2, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt, Model: "openai/gpt-a"},
+		{Day: today, CostUSD: 2, UpdatedAt: todayAt, Model: "openai/gpt-a"},
+	}))
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Zero(t, dailyRowFor(t, rows, "vc-spawn", yesterday).VirtualCostUSD,
+		"authoritative resume correction clears the prior local session row")
+	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-resume", yesterday).VirtualCostUSD, 1e-12)
+	assert.Zero(t, dailyRowFor(t, rows, "vc-spawn", today).VirtualCostUSD)
+	assert.InDelta(t, 2, dailyRowFor(t, rows, "vc-resume", today).VirtualCostUSD, 1e-12)
+	deltas := MixedCostDeltas(rows)
+	var total float64
+	for _, delta := range deltas {
+		if delta.ConvID == convID {
+			total += delta.USD
+		}
+	}
+	assert.InDelta(t, 2, total, 1e-12,
+		"zeroed multi-day spawn rows do not reset or duplicate the resumed prefix")
+}
+
+func TestUpdateSessionCostClearsConversationVirtualHistory(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+	const convID = "conv-real-resume"
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "real-spawn", TmuxSession: "tmux-real-spawn", ConvID: convID,
+		Cwd: "/tmp/real-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, UpdateSessionVirtualCost("real-spawn", 4))
+	require.NoError(t, DeleteSession("real-spawn"))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "real-resume", TmuxSession: "tmux-real-resume", ConvID: convID,
+		Cwd: "/tmp/real-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, UpdateSessionCost("real-resume", 5))
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Zero(t, dailyRowFor(t, rows, "real-spawn", today).VirtualCostUSD)
+	assert.InDelta(t, 5, dailyRowFor(t, rows, "real-resume", today).CostUSD, 1e-12,
+		"real spend replaces prior conversation WHAT-IF history")
+}
+
 // TestUpdateSessionCost_PrefersPersistedAgentID pins JOH-288: the daily
 // snapshot's agent_id is taken from the session's PERSISTED agent_id column
 // first, falling back to the live agent_conversations lookup only when that
@@ -471,6 +603,37 @@ func TestCostDeltas_WhatIf(t *testing.T) {
 	}
 	assert.InDelta(t, 7.50, whatif, 1e-9, "virtual counters reset the same way (6.00 + 1.50)")
 	assert.Empty(t, CostDeltas(rows, false), "real walk sees nothing — these are subscription rows")
+}
+
+func TestMixedCostDeltasPrefersRealPerRowAndIncludesVirtualPeers(t *testing.T) {
+	rows := []CostDailyRow{
+		{SessionID: "real", Day: "2026-07-24", ConvID: "conv-real", CostUSD: 2, VirtualCostUSD: 99, Harness: "claude"},
+		{SessionID: "virtual", Day: "2026-07-24", ConvID: "conv-virtual", VirtualCostUSD: 3, Harness: "opencode"},
+	}
+	deltas := MixedCostDeltas(rows)
+	require.Len(t, deltas, 2)
+	got := map[string]CostDelta{}
+	for _, delta := range deltas {
+		got[delta.SessionID] = delta
+	}
+	assert.InDelta(t, 2, got["real"].USD, 1e-12, "real wins instead of double-counting the virtual column")
+	assert.Equal(t, "real", got["real"].Kind)
+	assert.InDelta(t, 3, got["virtual"].USD, 1e-12)
+	assert.Equal(t, "what_if", got["virtual"].Kind)
+}
+
+func TestMixedCostDeltasPreservesBaselineWhenKindChangesWithinSession(t *testing.T) {
+	rows := []CostDailyRow{
+		{SessionID: "flip", Day: "2026-07-23", ConvID: "conv-flip", VirtualCostUSD: 5},
+		{SessionID: "flip", Day: "2026-07-24", ConvID: "conv-flip", CostUSD: 6, VirtualCostUSD: 5},
+	}
+	deltas := MixedCostDeltas(rows)
+	require.Len(t, deltas, 2)
+	assert.InDelta(t, 5, deltas[0].USD, 1e-12)
+	assert.Equal(t, "what_if", deltas[0].Kind)
+	assert.InDelta(t, 1, deltas[1].USD, 1e-12,
+		"a real cumulative total continues from the same session baseline")
+	assert.Equal(t, "real", deltas[1].Kind)
 }
 
 // TestSumCostSinceDay_EmptyDB pins the zero state: no rows at all must

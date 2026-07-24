@@ -1153,7 +1153,24 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE sessions SET cost_usd = ? WHERE id = ?`, costUSD, sessionID); err != nil {
+	var convID string
+	if err := tx.QueryRow(`SELECT conv_id FROM sessions WHERE id = ?`, sessionID).Scan(&convID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if convID != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0 WHERE conv_id = ?`, convID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE conv_id = ?`, convID); err != nil {
+			return err
+		}
+	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET cost_usd = ?, virtual_cost_usd = 0 WHERE id = ?`, costUSD, sessionID); err != nil {
 		return err
 	}
 	// Sibling write: snapshot the cumulative figure onto today's
@@ -1221,10 +1238,8 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 // session normally populates virtual_cost_usd or cost_usd, not both (billing
 // mode is stable per account); the rare exception is an account whose
 // rate-limit state flips mid-session, which could leave both columns
-// non-zero — harmless, since the two delta walks read one column each and
-// HasAnyRealCost lets real spend win for tab visibility. The Costs tab's
-// WHAT-IF view runs the same per-day delta walk over the virtual column
-// that the real view runs over cost_usd. The recorded figure is hypothetical
+// non-zero. The Costs tab prefers real spend for that slice and otherwise
+// falls back to the virtual column. The recorded figure is hypothetical
 // ("what this would have cost on pay-per-token"), never a real charge — the
 // dashboard only surfaces it behind the cost.show_on_subscription opt-in.
 //
@@ -1274,6 +1289,109 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 	return tx.Commit()
 }
 
+// VirtualCostDailySnapshot is an authoritative cumulative WHAT-IF prefix for
+// one local calendar day.
+type VirtualCostDailySnapshot struct {
+	Day       string
+	CostUSD   float64
+	UpdatedAt time.Time
+	Model     string
+}
+
+// ReplaceSessionVirtualCostHistory atomically rebuilds one OpenCode
+// conversation's virtual daily prefixes onto its current local session row.
+// Resumes can change the tclaude session ID while retaining conv_id, so old
+// denormalised rows are cleared across that conversation before the
+// authoritative prefixes are inserted. Existing real-cost columns and row
+// attribution remain untouched.
+func ReplaceSessionVirtualCostHistory(
+	sessionID string,
+	totalUSD float64,
+	snapshots []VirtualCostDailySnapshot,
+) error {
+	if totalUSD < 0 {
+		return nil
+	}
+	for _, snapshot := range snapshots {
+		if snapshot.CostUSD < 0 {
+			return nil
+		}
+		if _, err := time.ParseInLocation(costDayFormat, snapshot.Day, time.Local); err != nil {
+			return fmt.Errorf("replace session virtual cost history: bad day %q: %w", snapshot.Day, err)
+		}
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var convID string
+	if err := tx.QueryRow(`SELECT conv_id FROM sessions WHERE id = ?`, sessionID).Scan(&convID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The SSE projector can race teardown. Preserve denormalised
+			// retired history when no live row remains to own the rebuild.
+			return nil
+		}
+		return err
+	}
+	result, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, totalUSD, sessionID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nil
+	}
+	if convID != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0
+			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+			WHERE conv_id = ?`, convID); err != nil {
+			return err
+		}
+	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+		WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	for _, snapshot := range snapshots {
+		updatedAt := snapshot.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = time.Now()
+		}
+		if _, err := tx.Exec(`INSERT INTO session_cost_daily
+			(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
+			SELECT id, ?, conv_id, ?, ?, ?,
+			       COALESCE(NULLIF(sessions.agent_id, ''),
+			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
+			       COALESCE(NULLIF(harness, ''), 'claude')
+			FROM sessions WHERE id = ?
+			ON CONFLICT(session_id, day) DO UPDATE SET
+				virtual_cost_usd = excluded.virtual_cost_usd,
+				updated_at = excluded.updated_at,
+				conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
+				                ELSE session_cost_daily.conv_id END,
+				model    = CASE WHEN excluded.model <> '' THEN excluded.model
+				                ELSE session_cost_daily.model END,
+				agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
+				                ELSE session_cost_daily.agent_id END,
+				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
+				                ELSE session_cost_daily.harness END`,
+			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // costDayFormat is the session_cost_daily.day key — a local-time
 // calendar date. Local because the human reads the Costs chart in
 // their own day boundaries, matching the migration backfill's
@@ -1292,8 +1410,8 @@ type CostDailyRow struct {
 	// VirtualCostUSD is the WHAT-IF sibling of CostUSD: the cumulative
 	// pay-per-token-equivalent cost captured on a subscription session
 	// (see UpdateSessionVirtualCost). Normally exclusive with CostUSD per
-	// session — one is populated, the other 0 — so the Costs tab's WHAT-IF
-	// view runs the same delta walk over this column. (See
+	// session — one is populated, the other 0. If both are present, the Costs
+	// tab's mixed delta walk prefers real spend for that slice. (See
 	// UpdateSessionVirtualCost for the rare mid-session-billing-flip case.)
 	VirtualCostUSD float64
 	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
@@ -1320,6 +1438,9 @@ type CostDelta struct {
 	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 	Model     string // model display name denormalised onto the row; "" if unknown
 	Harness   string // harness denormalised onto the row; "" if unknown/pre-v103
+	// Kind is "real" or "what_if" for MixedCostDeltas. The legacy single-column
+	// CostDeltas leaves it empty for backward compatibility.
+	Kind string
 }
 
 // CostDeltas turns cumulative (conv, day) snapshots into per-day spend
@@ -1408,6 +1529,51 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 	return out
 }
 
+// MixedCostDeltas recovers the display cost for each session independently:
+// real cost wins whenever present; otherwise the subscription what-if value is
+// eligible. This lets one Costs view contain API-key spend and subscription
+// estimates without selecting one database column globally or double-counting
+// a row that happens to carry both.
+func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
+	var out []CostDelta
+	prevKey := ""
+	prevSession := ""
+	baseline := 0.0
+	for _, r := range rows {
+		val, kind := r.CostUSD, "real"
+		if val <= 0 {
+			val, kind = r.VirtualCostUSD, "what_if"
+		}
+		if val <= 0 {
+			// Superseded conversation rows are retained for any real-cost
+			// attribution but their virtual prefix is zeroed. They carry no
+			// counter state and must not reset the baseline merely because
+			// their old local session ID differs from the resumed one.
+			continue
+		}
+		key := r.ConvID
+		if key == "" {
+			key = r.SessionID
+		}
+		switch {
+		case key != prevKey:
+			baseline = 0
+		case r.SessionID != prevSession && val < baseline:
+			// A changed session whose counter drops starts fresh.
+			baseline = 0
+		}
+		prevKey, prevSession = key, r.SessionID
+		if d := val - baseline; d > 0 {
+			out = append(out, CostDelta{
+				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,
+				UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness, Kind: kind,
+			})
+			baseline = val
+		}
+	}
+	return out
+}
+
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
 // (a "2006-01-02" key) — the top bar's month-to-date figure.
 //
@@ -1482,8 +1648,8 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 // cost_usd (via UpdateSessionCost), subscription sessions populate only
 // virtual_cost_usd, so a true result means the Costs tab has real money to
 // show. Drives the Costs-tab auto-hide (a subscription-only account has no real
-// cost and hides the tab unless cost.show_on_subscription opts into the WHAT-IF
-// view). Cheap EXISTS probe — safe on the 2s snapshot tick.
+// cost and hides the tab unless cost.show_on_subscription opts into displaying
+// estimates). Cheap EXISTS probe — safe on the 2s snapshot tick.
 func HasAnyRealCost() (bool, error) {
 	db, err := Open()
 	if err != nil {

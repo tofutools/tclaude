@@ -52,6 +52,10 @@ test('usage spans are stored per series with legacy globals as the default', asy
   assert.equal(state.setSeriesHours('', 24), false, 'empty series key rejected');
   assert.equal(state.setSeriesHours('a:b:c', 24), false, 'key breaking the server spans grammar rejected');
   assert.equal(state.setSeriesHours('a,b:c', 24), false, 'key with comma rejected');
+  assert.equal(state.setDefaultHours(2160), true, 'activity-only history can widen the default request');
+  assert.equal(state.view.value.defaultHours, 2160);
+  assert.equal(prefs.values.get('tclaude.dash.usage.historyHours'), '2160');
+  assert.equal(state.setDefaultHours(12), false, 'unknown activity-only history span rejected');
 });
 
 test('usage span store drops entries that would break the request grammar', async (t) => {

@@ -37,6 +37,19 @@ type costDelta struct {
 	updatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 	model     string // model display name denormalised onto the row; "" if unknown
 	harness   string // harness denormalised onto the row; "" if unknown
+	kind      string // real | what_if
+}
+
+func mixedCostDeltasFromRows(rows []db.CostDailyRow) []costDelta {
+	deltas := db.MixedCostDeltas(rows)
+	out := make([]costDelta, 0, len(deltas))
+	for _, d := range deltas {
+		out = append(out, costDelta{
+			day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD,
+			updatedAt: d.UpdatedAt, model: d.Model, harness: d.Harness, kind: d.Kind,
+		})
+	}
+	return out
 }
 
 // costDeltasFromRows recovers per-day spend deltas from cumulative
@@ -91,8 +104,11 @@ func firstCostDay(deltas []costDelta) string {
 // costDayPoint is one bar of the Costs tab chart: total spend across
 // all agents on one local day.
 type costDayPoint struct {
-	Day     string  `json:"day"`
-	CostUSD float64 `json:"cost_usd"`
+	Day           string  `json:"day"`
+	CostUSD       float64 `json:"cost_usd"`
+	RealCostUSD   float64 `json:"real_cost_usd,omitempty"`
+	WhatIfCostUSD float64 `json:"what_if_cost_usd,omitempty"`
+	CostKind      string  `json:"cost_kind,omitempty"`
 }
 
 // costAgentRow is one row of the Costs tab's per-agent breakdown: spend
@@ -123,16 +139,19 @@ type costAgentRow struct {
 	// series (a generation's cost resets per /clear), and this is only an
 	// added attribution field, never a rekey. "" when the conv is not a
 	// known agent (e.g. a plain conversation's spend).
-	AgentID      string  `json:"agent_id,omitempty"`
-	ConvID       string  `json:"conv_id"`
-	Title        string  `json:"title"`
-	Day          string  `json:"day"`
-	CostUSD      float64 `json:"cost_usd"`
-	Continued    bool    `json:"continued,omitempty"`
-	LastDay      string  `json:"last_day"`
-	LastActivity string  `json:"last_activity,omitempty"`
-	Model        string  `json:"model"`
-	Harness      string  `json:"harness"`
+	AgentID       string  `json:"agent_id,omitempty"`
+	ConvID        string  `json:"conv_id"`
+	Title         string  `json:"title"`
+	Day           string  `json:"day"`
+	CostUSD       float64 `json:"cost_usd"`
+	RealCostUSD   float64 `json:"real_cost_usd,omitempty"`
+	WhatIfCostUSD float64 `json:"what_if_cost_usd,omitempty"`
+	CostKind      string  `json:"cost_kind"`
+	Continued     bool    `json:"continued,omitempty"`
+	LastDay       string  `json:"last_day"`
+	LastActivity  string  `json:"last_activity,omitempty"`
+	Model         string  `json:"model"`
+	Harness       string  `json:"harness"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -142,12 +161,15 @@ type costAgentRow struct {
 // just this span); the Costs tab's month projection uses it to decide
 // where the per-weekday average starts (see firstCostDay).
 type costsResponse struct {
-	From     string         `json:"from"`
-	To       string         `json:"to"`
-	FirstDay string         `json:"first_day,omitempty"`
-	Days     []costDayPoint `json:"days"`
-	Agents   []costAgentRow `json:"agents"`
-	TotalUSD float64        `json:"total_usd"`
+	From           string         `json:"from"`
+	To             string         `json:"to"`
+	FirstDay       string         `json:"first_day,omitempty"`
+	Days           []costDayPoint `json:"days"`
+	Agents         []costAgentRow `json:"agents"`
+	TotalUSD       float64        `json:"total_usd"`
+	RealTotalUSD   float64        `json:"real_total_usd,omitempty"`
+	WhatIfTotalUSD float64        `json:"what_if_total_usd,omitempty"`
+	CostKind       string         `json:"cost_kind,omitempty"`
 }
 
 // maxCostSpanDays caps the requested span. The daily table is small,
@@ -171,10 +193,12 @@ const maxCostSpanDays = 366
 // underlying session_cost_daily rows stay raw. factor 1 (the default)
 // is a no-op.
 //
-// whatif selects the column: false → real pay-per-token spend (cost_usd),
-// true → the subscription WHAT-IF estimate (virtual_cost_usd). The response
-// shape is identical either way; only the source column differs.
-func collectCosts(from, to time.Time, factor float64, whatif bool) (costsResponse, error) {
+// Each daily session slice contributes real pay-per-token spend when present.
+// When includeWhatIf is true, a slice without real spend contributes its
+// subscription WHAT-IF estimate instead. The response carries both subtotals
+// and per-row kind metadata so the client can identify mixed spans without
+// maintaining a second aggregation path.
+func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costsResponse, error) {
 	if min := to.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
 		from = min
 	}
@@ -185,7 +209,10 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 	if err != nil {
 		return costsResponse{}, err
 	}
-	deltas := costDeltasFromRows(rows, whatif)
+	deltas := costDeltasFromRows(rows, false)
+	if includeWhatIf {
+		deltas = mixedCostDeltasFromRows(rows)
+	}
 	models, err := db.SessionModels()
 	if err != nil {
 		return costsResponse{}, err
@@ -195,9 +222,12 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 		return costsResponse{}, err
 	}
 
-	byDay := map[string]float64{}
+	type kindTotals struct{ real, whatif float64 }
+	byDay := map[string]kindTotals{}
 	type sliceAgg struct {
-		usd float64
+		usd    float64
+		real   float64
+		whatif float64
 		// lastActivity is the RFC3339Nano time of the slice's last spend —
 		// the finest-grained "last activity" the breakdown can show; a
 		// later same-day stamp raises it. "" when no contributing row
@@ -220,12 +250,18 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 	// Latest in-span day each conv spent on — drives the Continued flag:
 	// every slice below a conv's latest day is an earlier continuation.
 	convMaxDay := map[string]string{}
-	total := 0.0
+	total, realTotal, whatIfTotal := 0.0, 0.0, 0.0
 	for _, d := range deltas {
 		if d.day < fromKey || d.day > toKey {
 			continue
 		}
-		byDay[d.day] += d.usd
+		dayTotals := byDay[d.day]
+		if d.kind == "what_if" {
+			dayTotals.whatif += d.usd
+		} else {
+			dayTotals.real += d.usd
+		}
+		byDay[d.day] = dayTotals
 		k := sliceKey{d.convID, d.day}
 		a := bySlice[k]
 		if a == nil {
@@ -233,6 +269,13 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 			bySlice[k] = a
 		}
 		a.usd += d.usd
+		if d.kind == "what_if" {
+			a.whatif += d.usd
+			whatIfTotal += d.usd
+		} else {
+			a.real += d.usd
+			realTotal += d.usd
+		}
 		if d.updatedAt > a.lastActivity {
 			a.lastActivity = d.updatedAt
 		}
@@ -261,26 +304,35 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 	}
 
 	out := costsResponse{From: fromKey, To: toKey, FirstDay: firstCostDay(deltas), TotalUSD: total,
+		RealTotalUSD: realTotal, WhatIfTotalUSD: whatIfTotal, CostKind: costKind(realTotal, whatIfTotal),
 		Days: []costDayPoint{}, Agents: []costAgentRow{}}
 	for day := from; ; day = day.AddDate(0, 0, 1) {
 		key := day.Format(costDayKey)
 		if key > toKey {
 			break
 		}
-		out.Days = append(out.Days, costDayPoint{Day: key, CostUSD: byDay[key]})
+		totals := byDay[key]
+		out.Days = append(out.Days, costDayPoint{
+			Day: key, CostUSD: totals.real + totals.whatif,
+			RealCostUSD: totals.real, WhatIfCostUSD: totals.whatif,
+			CostKind: costKind(totals.real, totals.whatif),
+		})
 	}
 	for k, a := range bySlice {
 		out.Agents = append(out.Agents, costAgentRow{
-			AgentID:      peerAgentID(k.conv),
-			ConvID:       k.conv,
-			Title:        agent.CachedTitle(k.conv),
-			Day:          k.day,
-			CostUSD:      a.usd,
-			Continued:    k.day < convMaxDay[k.conv],
-			LastDay:      k.day,
-			LastActivity: a.lastActivity,
-			Model:        a.model,
-			Harness:      a.harness,
+			AgentID:       peerAgentID(k.conv),
+			ConvID:        k.conv,
+			Title:         agent.CachedTitle(k.conv),
+			Day:           k.day,
+			CostUSD:       a.usd,
+			RealCostUSD:   a.real,
+			WhatIfCostUSD: a.whatif,
+			CostKind:      costKind(a.real, a.whatif),
+			Continued:     k.day < convMaxDay[k.conv],
+			LastDay:       k.day,
+			LastActivity:  a.lastActivity,
+			Model:         a.model,
+			Harness:       a.harness,
 		})
 	}
 	sortCostAgentRows(out.Agents)
@@ -290,14 +342,33 @@ func collectCosts(from, to time.Time, factor float64, whatif bool) (costsRespons
 	// common path and a no-op.
 	if factor != 1 {
 		out.TotalUSD *= factor
+		out.RealTotalUSD *= factor
+		out.WhatIfTotalUSD *= factor
 		for i := range out.Days {
 			out.Days[i].CostUSD *= factor
+			out.Days[i].RealCostUSD *= factor
+			out.Days[i].WhatIfCostUSD *= factor
 		}
 		for i := range out.Agents {
 			out.Agents[i].CostUSD *= factor
+			out.Agents[i].RealCostUSD *= factor
+			out.Agents[i].WhatIfCostUSD *= factor
 		}
 	}
 	return out, nil
+}
+
+func costKind(real, whatif float64) string {
+	switch {
+	case real > 0 && whatif > 0:
+		return "mixed"
+	case whatif > 0:
+		return "what_if"
+	case real > 0:
+		return "real"
+	default:
+		return ""
+	}
 }
 
 // sortCostAgentRows orders the breakdown most-recent-first: latest
@@ -334,16 +405,16 @@ func costRowRecencyKey(a costAgentRow) string {
 	return ""
 }
 
-// handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&to=YYYY-MM-DD][&whatif=1] —
+// handleDashboardCosts serves GET /api/costs?from=YYYY-MM-DD[&to=YYYY-MM-DD] —
 // the Costs tab's data source. from defaults to the first of the current
 // month (the tab's default span); to defaults to today. The "browse an
 // earlier month" spans pass an explicit to (a completed month's last day)
 // so a bounded past window can be shown; the trailing/current-month spans
-// omit it and get today. whatif=1 sources the WHAT-IF (subscription
-// pay-per-token-equivalent) figures from virtual_cost_usd instead of the
-// real cost_usd; the response shape is identical. Fetched on tab
-// activation and span change, not on the 2s snapshot tick — history
-// doesn't move that fast.
+// omit it and get today. Each row prefers real spend and, when
+// cost.show_on_subscription is enabled, falls back to the WHAT-IF subscription
+// estimate; the payload identifies the contributing kind at row, day, and
+// total levels. Fetched on tab activation and span change, not on the 2s
+// snapshot tick — history doesn't move that fast.
 func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -371,9 +442,9 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 		}
 		to = t
 	}
-	whatif := r.URL.Query().Get("whatif") == "1"
 	cfg, _ := config.Load()
-	out, err := collectCosts(from, to, cfg.ResolvedCostFactor(), whatif)
+	includeWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
+	out, err := collectCosts(from, to, cfg.ResolvedCostFactor(), includeWhatIf)
 	if err != nil {
 		http.Error(w, "collect costs: "+err.Error(), http.StatusInternalServerError)
 		return
