@@ -336,6 +336,19 @@ func TestCheckpointValidatorRejectsBrokenDecisionAndEdgeInvariants(t *testing.T)
 			c.Nodes["merge"] = NodeReady
 		}},
 		{"skipped node with live incoming", func(c *Checkpoint) { c.Nodes["slow"] = NodeSkipped }},
+		{"arrival parked on a pending merge", func(c *Checkpoint) {
+			c.Nodes["choose"] = NodeDone
+			c.AwaitingDecision = nil
+			c.Edges["choose"]["approve"] = EdgeArrived
+			c.Edges["choose"]["reject"] = EdgeNotTaken
+			c.Nodes["fast"] = NodeDone
+			c.Nodes["slow"] = NodeSkipped
+			c.Edges["fast"]["next"] = EdgeArrived
+			c.Edges["slow"]["next"] = EdgeNotTaken
+			// The merge's candidate set is settled with one arrival, yet the
+			// state parks it pending instead of activating it.
+			c.Nodes["merge"] = NodePending
+		}},
 		{"pending node with settled candidates", func(c *Checkpoint) {
 			c.Nodes["choose"] = NodePending
 			c.AwaitingDecision = nil

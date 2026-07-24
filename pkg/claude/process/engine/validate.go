@@ -333,8 +333,10 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if in.unresolved == 0 {
 				return invalid("pending node %q has a settled candidate set and must be ready or skipped", node.id)
 			}
-			if in.arrived > 1 {
-				return invalid("node %q has more than one arrived incoming edge", node.id)
+			// Settlement always resolves a target's whole candidate set in the
+			// same reducer pass, so an arrival never rests on a pending node.
+			if in.arrived != 0 {
+				return invalid("pending node %q cannot hold an arrived incoming edge", node.id)
 			}
 			if out.unresolved != len(node.outgoing) {
 				return invalid("pending node %q cannot have settled outgoing edges", node.id)

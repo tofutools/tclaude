@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -235,6 +236,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 	case processRunDecide:
 		err = executor.RecordDecision(run, start.actor, start.decision)
 		if err == nil {
+			// The decision itself committed atomically above. A failure in this
+			// follow-on prepare surfaces as an error even though the verdict is
+			// durable; the bounded sweep resumes the run, and a client retry is
+			// correctly refused as stale.
 			dispatch, err = prepareProcessRun(run)
 		}
 	default:
@@ -641,7 +646,10 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runID := r.PathValue("id")
-	setAuditDetail(r, "run: "+runID+", decision node: "+request.NodeID+", verdict: "+request.Verdict)
+	// The detail records the attempt (including refused input), so the raw
+	// request fields are neutralized before they reach the audit row.
+	setAuditDetail(r, "run: "+runID+", decision node: "+stripControl(request.NodeID)+
+		", verdict: "+stripControl(request.Verdict))
 	started, err := processRuns.begin(runID, processRunStart{
 		mode: processRunDecide, actor: string(actor),
 		decision: executor.DecisionInput{NodeID: request.NodeID, Verdict: request.Verdict, Evidence: request.Evidence},
@@ -656,6 +664,17 @@ func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
+}
+
+// stripControl drops control characters from untrusted request text before it
+// is embedded in a human-facing audit detail line.
+func stripControl(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, value)
 }
 
 func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, error) {
