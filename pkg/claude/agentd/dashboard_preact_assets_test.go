@@ -81,7 +81,21 @@ func TestDashboardPreactImportMap(t *testing.T) {
 	if mapAt < 0 || entryAt < 0 || mapAt > entryAt {
 		t.Fatal("dashboard import map must appear before its module entry point")
 	}
-	if strings.Contains(html[mapAt:entryAt], "https://") || strings.Contains(html[mapAt:entryAt], "http://") {
+	// The map must also precede the modulepreload block it governs (bare
+	// specifiers in the preloaded boot graph resolve through it) — declaring it
+	// after the preloads errors on strict engines.
+	if preloadAt := strings.Index(html, `<link rel="modulepreload"`); preloadAt >= 0 && mapAt > preloadAt {
+		t.Error("dashboard import map must appear before the modulepreload block that depends on it")
+	}
+	// Scope the same-origin check to the import-map element itself (the map and
+	// entry are no longer adjacent, so the span between them now covers body
+	// content that legitimately contains external links).
+	mapEnd := strings.Index(html[mapAt:], "</script>")
+	if mapEnd < 0 {
+		t.Fatal("dashboard import map element is not closed")
+	}
+	mapBlock := html[mapAt : mapAt+mapEnd]
+	if strings.Contains(mapBlock, "https://") || strings.Contains(mapBlock, "http://") {
 		t.Error("dashboard import map must only resolve to embedded same-origin modules")
 	}
 }

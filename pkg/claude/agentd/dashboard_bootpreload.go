@@ -29,14 +29,18 @@ import (
 
 // bootStaticImportRe matches a static relative import/export specifier:
 //
-//	import x from './m.js'   import { a } from './m.js'   import './m.js'
+//	import x from './m.js'   import { a } from '../m.js'   import './m.js'
 //	export { a } from './m.js'   export * from './m.js'
+//
+// Both ./ and ../ are followed (today every module is flat under js/, but a
+// future ../ import must not silently drop out of the graph and waterfall).
+// path.Join + the FS existence check below resolve and validate the target.
 //
 // It deliberately does NOT match dynamic import('./m.js'): after `import` a
 // dynamic form has `(`, which the `\s*['"]` here cannot consume. `\bfrom` /
 // `\bimport` word boundaries keep it off `Array.from(` and identifiers like
 // `dateFrom`.
-var bootStaticImportRe = regexp.MustCompile(`(?:\bfrom|\bimport)\s*['"](\.\/[^'"]+)['"]`)
+var bootStaticImportRe = regexp.MustCompile(`(?:\bfrom|\bimport)\s*['"](\.\.?\/[^'"]+)['"]`)
 
 // bootVendorPreload lists the import-map vendor targets (bare specifiers like
 // "preact" / "@preact/signals" resolve to these). They sit outside the relative
