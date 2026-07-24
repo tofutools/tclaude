@@ -251,6 +251,7 @@ const terminalsDescriptor = createIslandDescriptor({
         widgetFactory: dependencies.widgetFactory,
         onComposeMessage: dependencies.onComposeMessage,
         composeMessageDialogKind: dependencies.composeMessageDialogKind,
+        onConnectionRestored: dependencies.onConnectionRestored,
       }),
     };
   },

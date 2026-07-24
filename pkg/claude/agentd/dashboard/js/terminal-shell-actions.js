@@ -248,6 +248,33 @@ export function createTerminalShellActions({
     void promptModalReconnect(id);
   }
 
+  // reconnectAfterOutage repairs the terminals an agentd restart killed. The
+  // caller decides WHEN — the dashboard fires it on the connection watchdog's
+  // disconnected → connected edge, so it runs once per outage and never on a
+  // terminal that merely closed on its own.
+  //
+  // Only widgets sitting at a settled 'disconnected' are dialed. Anything
+  // mid-flight ('connecting…', 'retrying…', an authentication prompt) is left
+  // alone: a second dial would race a connection the user or the widget's own
+  // initial-retry window is already making, and the terminal on the other end
+  // may have been reopened deliberately elsewhere in the meantime. A modal
+  // whose own disconnect confirmation is open is likewise skipped — that
+  // dialog owns the decision, and answering it still reconnects.
+  //
+  // Returns the number of widgets dialed, for tests and callers that report.
+  function reconnectAfterOutage() {
+    if (disposed) return 0;
+    const modalID = state.modal.value?.id ?? null;
+    let dialed = 0;
+    for (const [id, widget] of widgets) {
+      if (widget.isDisposed?.() || widget.status() !== 'disconnected') continue;
+      if (confirmOpen && id === modalID) continue;
+      dialed += 1;
+      void widget.connect();
+    }
+    return dialed;
+  }
+
   async function confirmModalClose(id) {
     const descriptor = state.modal.value;
     if (disposed || confirmOpen || !descriptor || descriptor.id !== id) return;
@@ -333,6 +360,7 @@ export function createTerminalShellActions({
     closeModal,
     promptModalReconnect,
     onModalDisconnect,
+    reconnectAfterOutage,
     confirmModalClose,
     detachModal,
     moveModalToPane,

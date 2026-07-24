@@ -26,6 +26,28 @@ const FAIL_THRESHOLD = 2;
 
 let consecutiveFails = 0;
 
+// Listeners for the disconnected → connected edge. This is deliberately the
+// edge, not the state: a consumer that wants to repair something an agentd
+// outage broke (the terminal shell reconnects its dead sockets) must act once
+// per outage, not once per poll. Nothing fires unless the banner was actually
+// raised first, so a single slow poll never reaches these.
+const restoredListeners = new Set();
+
+// onConnectionRestored registers a listener for that edge and returns its
+// unsubscribe. A listener that throws is contained here — one bad consumer
+// must not stop the others, nor the poll that called us.
+export function onConnectionRestored(listener) {
+  if (typeof listener !== 'function') return () => {};
+  restoredListeners.add(listener);
+  return () => { restoredListeners.delete(listener); };
+}
+
+function notifyRestored() {
+  for (const listener of [...restoredListeners]) {
+    try { listener(); } catch (error) { console.warn('connection restored listener failed:', error); }
+  }
+}
+
 // noteConnected: agentd answered this poll (any HTTP status). Clears the
 // failure streak and, if the disconnected state was active, lets the music
 // resume. The shell reacts to the same state change.
@@ -33,7 +55,10 @@ export function noteConnected() {
   const wasDisconnected = isDisconnected();
   consecutiveFails = 0;
   dashboardState.setConnection('connected');
-  if (wasDisconnected) setConnectionLost(false);
+  if (wasDisconnected) {
+    setConnectionLost(false);
+    notifyRestored();
+  }
 }
 
 // noteDisconnected: the /api/snapshot fetch REJECTED this poll — agentd is

@@ -68,6 +68,7 @@ import {
 import { configureDashboardActions, dashboardActions } from './dashboard-actions.js';
 import { triggerExportDownload } from './export-progress.js';
 import { startSnapshotPoll, waitForInitialSnapshot } from './snapshot-poll.js';
+import { onConnectionRestored } from './connection.js';
 import { startBrowserNotifyPoll } from './browser-notify.js';
 
 // Last successful snapshot, kept so the filter inputs can re-render
@@ -138,6 +139,9 @@ async function settleInitialLayout() {
       confirm: confirmModal,
       onComposeMessage: (seed) => openOperatorMessageDialog(seed),
       composeMessageDialogKind: activeMessageAccessDialogKind,
+      // Web terminals die with an agentd restart; the poll notices the same
+      // outage and tells the shell to redial once when agentd answers again.
+      onConnectionRestored,
     }),
     () => mountMessageAccessDialogsFeature({
       refresh: dashboardActions.refresh,

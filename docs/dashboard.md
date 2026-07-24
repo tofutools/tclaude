@@ -878,6 +878,16 @@ or a replaced browser client finishes tearing down. Once the connection has
 been stable for a second, later disconnects keep the explicit **Reconnect**
 control; they never enter a permanent automatic retry loop.
 
+Restarting `agentd` is the one exception. It drops every web terminal at once,
+and the dashboard's own "Disconnected from agentd" banner records exactly when
+the daemon went away and came back. On that recovery — and only there — the
+dashboard's terminal panes each make a single reconnect attempt. Panes that are
+still connected, still dialling, or waiting on their disconnect prompt are left
+alone, so an attempt never races a terminal that was reopened elsewhere. If the
+one attempt fails, the pane falls back to the **Reconnect** control as usual.
+Standalone pop-out tabs do not poll the daemon, so they keep that control
+instead of reconnecting on their own.
+
 Terminal tabs can be dragged within the tab strip to reorder them. The insertion
 line shows whether the drop will land before or after the tab under the pointer.
 For a keyboard path, focus a terminal tab and press **Alt-Shift-Left Arrow** or

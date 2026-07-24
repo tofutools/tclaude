@@ -65,6 +65,18 @@ func TestDashboardHTML_DisconnectBanner(t *testing.T) {
 		t.Error("connection watchdog must publish Signal state, not imperatively rewrite Preact-owned disconnect DOM")
 	}
 
+	// An agentd restart also kills every web terminal's WebSocket. The recovery
+	// edge is published once per outage and the terminal shell redials the dead
+	// panes from it; behaviour is covered by jstest/terminal-outage-reconnect,
+	// so this only pins that the wiring still exists end to end.
+	must("export function onConnectionRestored", "connection.js publishes the recovery edge")
+	must("import { onConnectionRestored } from './connection.js'",
+		"the dashboard entry subscribes the terminal shell to the recovery edge")
+	must("onConnectionRestored: dependencies.onConnectionRestored",
+		"the terminals island descriptor forwards the recovery edge")
+	must("onConnectionRestored(() => actions.reconnectAfterOutage())",
+		"the terminal shell redials its dead panes on the recovery edge")
+
 	// CSS: hidden by default (display:none) and revealed via .show. It remains a
 	// distinct non-dialog overlay because it is connection status, not modal UI.
 	must(".disconnect-overlay {", "the overlay CSS ships")
