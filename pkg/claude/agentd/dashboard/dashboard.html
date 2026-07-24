@@ -15,8 +15,104 @@
 <!-- Shared terminal-multiplexer widget styles, used by the in-SPA "Terminals"
      tab (#tab-terminals) and the standalone /terminals pop-out page. -->
 <link rel="stylesheet" href="/static/mux.css">
+<!-- Browser-native package resolution for the no-build Preact/HTM islands.
+     Every target is embedded and served from the authenticated agentd origin.
+     Declared here, BEFORE the modulepreload block below, so the map is parsed
+     before any preloaded module's bare specifiers (preact / @preact/signals /
+     htm) need resolving — declaring it after the preloads it governs errors on
+     strict engines and is noisy on lenient ones. -->
+<script type="importmap">
+{
+  "imports": {
+    "preact": "/static/vendor/preact/preact.module.js",
+    "preact/hooks": "/static/vendor/preact/hooks.module.js",
+    "@preact/signals-core": "/static/vendor/preact/signals-core.module.js",
+    "@preact/signals": "/static/vendor/preact/signals.module.js",
+    "htm": "/static/vendor/preact/htm.module.js"
+  }
+}
+</script>
+<!-- Boot modulepreload block. agentd (injectBootPreload) replaces this marker
+     with a <script> setting window.__BOOT_MODULE_TOTAL__ and a
+     <link rel="modulepreload"> for every module in dashboard.js's static import
+     graph, so the browser fetches the whole graph in parallel instead of
+     discovering it one importer at a time. The marker must stay verbatim — a
+     server-side invariant asserts on it. -->
+<!--BOOT_PRELOAD-->
+<!-- Boot progress counter. Runs before the module graph is fetched and reflects
+     modulepreload completion into #boot-progress against the injected total, so
+     the boot curtain shows honest "N / M modules" progress instead of an
+     indefinite label. Classic (non-module) inline script on purpose: it must run
+     immediately and never depends on the graph it is measuring. -->
+<script>
+(function () {
+  // The exact set to count is derived from the modulepreload <link>s injected
+  // just above (absolute .href, matching PerformanceResourceTiming.name), so the
+  // numerator can only ever be a boot module — the per-tab dynamic import()s
+  // that also live under /static/js/ during boot are excluded, and the count
+  // stays in lockstep with the injected total with no separate list to drift.
+  var wanted = Object.create(null);
+  var total = 0;
+  try {
+    var links = document.querySelectorAll('link[rel="modulepreload"]');
+    for (var i = 0; i < links.length; i++) {
+      if (!wanted[links[i].href]) { wanted[links[i].href] = 1; total++; }
+    }
+  } catch (e) {}
+  if (!total) total = window.__BOOT_MODULE_TOTAL__ || 0;
+  var loaded = 0;
+  var seen = Object.create(null);
+  function stop() {
+    if (window.__bootProgressPO) {
+      try { window.__bootProgressPO.disconnect(); } catch (e) {}
+      window.__bootProgressPO = null;
+    }
+  }
+  function render() {
+    var pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+    var fill = document.getElementById('boot-progress-fill');
+    var count = document.getElementById('boot-progress-count');
+    if (fill) fill.style.width = pct + '%';
+    if (count) {
+      count.textContent = total
+        ? (loaded >= total ? 'Starting…' : loaded + ' / ' + total + ' modules')
+        : '';
+    }
+    if (total && loaded >= total) stop();
+  }
+  function absorb(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      var name = entries[i].name;
+      if (wanted[name] && !seen[name]) { seen[name] = 1; loaded++; }
+    }
+    render();
+  }
+  try {
+    var po = new PerformanceObserver(function (list) { absorb(list.getEntries()); });
+    po.observe({ type: 'resource', buffered: true });
+    window.__bootProgressPO = po;
+  } catch (e) {}
+  try { absorb(performance.getEntriesByType('resource')); } catch (e) {}
+  document.addEventListener('DOMContentLoaded', render);
+  // Ceiling so the observer can never outlive boot even if a preload never
+  // reports a matching entry (network fault) — matches the 8s CSS reveal
+  // failsafe, after which the curtain is gone and #boot-progress is display:none.
+  setTimeout(stop, 8000);
+})();
+</script>
 </head>
 <body class="hide-processes dashboard-booting">
+<!-- Boot progress overlay. A direct child of <body> so it participates in the
+     paint curtain (body.dashboard-booting > *), then dashboard.css re-exempts
+     just this element so it stays visible while the rest of the shell is hidden.
+     The static title renders even with no JS; the inline head counter fills the
+     bar. dashboard.js removes .dashboard-booting once the first snapshot has
+     painted, which hides this via CSS. -->
+<div id="boot-progress" role="status" aria-live="polite">
+  <div class="boot-progress-title">Loading dashboard…</div>
+  <div class="boot-progress-bar"><div id="boot-progress-fill" class="boot-progress-fill"></div></div>
+  <div id="boot-progress-count" class="boot-progress-count"></div>
+</div>
 <header>
   <!-- .bar-inner pins the header's content to the viewport width so its
        right-aligned controls don't fly off when the bar is widened to the
@@ -568,19 +664,10 @@
 <script src="/static/js/auth-session.js"></script>
 <script src="/static/vendor/xterm/addon-fit.min.js"></script>
 <script src="/static/vendor/xterm/addon-web-links.min.js"></script>
-<!-- Browser-native package resolution for the no-build Preact/HTM islands.
-     Every target is embedded and served from the authenticated agentd origin. -->
-<script type="importmap">
-{
-  "imports": {
-    "preact": "/static/vendor/preact/preact.module.js",
-    "preact/hooks": "/static/vendor/preact/hooks.module.js",
-    "@preact/signals-core": "/static/vendor/preact/signals-core.module.js",
-    "@preact/signals": "/static/vendor/preact/signals.module.js",
-    "htm": "/static/vendor/preact/htm.module.js"
-  }
-}
-</script>
+<!-- The import map lives in <head>, ahead of the modulepreload block, because a
+     map must be parsed before any module load it governs is triggered — the
+     preloaded boot graph resolves bare specifiers (preact / @preact/signals /
+     htm) through it. -->
 <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>

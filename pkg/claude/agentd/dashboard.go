@@ -48,8 +48,11 @@ var dashboardFS embed.FS
 var dashboardAssetsFS = mustSubFS(dashboardFS, "dashboard")
 
 // dashboardIndexHTML is dashboard.html, read once at init — the page
-// handleDashboardRoot serves at "/".
-var dashboardIndexHTML = mustReadFS(dashboardAssetsFS, "dashboard.html")
+// handleDashboardRoot serves at "/". injectBootPreload splices in the
+// modulepreload block + module-total for the boot progress bar, so the entry
+// import graph is fetched in parallel rather than as a discover-one-at-a-time
+// waterfall.
+var dashboardIndexHTML = injectBootPreload(mustReadFS(dashboardAssetsFS, "dashboard.html"), dashboardAssetsFS)
 
 func mustSubFS(f embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(f, dir)
