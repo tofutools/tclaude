@@ -774,6 +774,9 @@ func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime
 					slog.Debug("OpenCode SSE reconciliation failed",
 						"session", runtime.SessionID, "error", reconcileErr)
 				}
+				// TCL-673: seed context from message history so a resumed session
+				// or a daemon restart is authoritative before its next live turn.
+				backfillOpenCodeContextUsage(ctx, runtime)
 				scanner := bufio.NewScanner(response.Body)
 				scanner.Buffer(make([]byte, 64<<10), openCodeMaxSSEEventBytes)
 				for scanner.Scan() {
@@ -901,7 +904,13 @@ func consumeOpenCodeEvent(
 	// managed server resolves the limit in milliseconds. See TCL-701.
 	if usage, ok := parseOpenCodeContextUsage(event, runtime.ConvID); ok {
 		persistOpenCodeContextUsage(ctx, runtime, usage)
+		// TCL-673: record the provider/model slug from the same message so the
+		// dashboard model column and cost-history denormalisation are populated.
+		persistOpenCodeModelSlug(runtime, usage)
 	}
+	// TCL-673: OpenCode's own cumulative session cost rides session.updated.
+	// $0/N-A on a subscription; real spend on a pay-per-token key.
+	applyOpenCodeCost(runtime, event)
 }
 
 func applyOpenCodeHooks(
