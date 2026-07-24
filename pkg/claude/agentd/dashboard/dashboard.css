@@ -1687,6 +1687,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-card-controls button.tool.active {
   border-color: #58a6ff; color: #d4d4d4; background: #2a3340;
 }
+.usage-empty-range {
+  justify-content: center; margin-top: 12px; font-style: normal;
+}
 .usage-series-card {
   min-width: 0; padding: 14px; background: #0d1117;
   border: 1px solid #2a3340; border-radius: 7px;

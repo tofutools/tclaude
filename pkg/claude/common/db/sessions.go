@@ -1278,6 +1278,7 @@ type VirtualCostDailySnapshot struct {
 	Day       string
 	CostUSD   float64
 	UpdatedAt time.Time
+	Model     string
 }
 
 // ReplaceSessionVirtualCostHistory atomically rebuilds one session's virtual
@@ -1323,7 +1324,7 @@ func ReplaceSessionVirtualCostHistory(
 		}
 		if _, err := tx.Exec(`INSERT INTO session_cost_daily
 			(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
-			SELECT id, ?, conv_id, ?, ?, model,
+			SELECT id, ?, conv_id, ?, ?, ?,
 			       COALESCE(NULLIF(sessions.agent_id, ''),
 			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
 			       COALESCE(NULLIF(harness, ''), 'claude')
@@ -1339,7 +1340,7 @@ func ReplaceSessionVirtualCostHistory(
 				                ELSE session_cost_daily.agent_id END,
 				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
 				                ELSE session_cost_daily.harness END`,
-			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), sessionID); err != nil {
+			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), snapshot.Model, sessionID); err != nil {
 			return err
 		}
 	}

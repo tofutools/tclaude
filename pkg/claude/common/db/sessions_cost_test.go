@@ -226,17 +226,22 @@ func TestReplaceSessionVirtualCostHistoryRedistributesAndClearsProjection(t *tes
 	require.NoError(t, err)
 
 	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 1, []VirtualCostDailySnapshot{
-		{Day: yesterday, CostUSD: 0.5, UpdatedAt: time.Now().AddDate(0, 0, -1)},
-		{Day: today, CostUSD: 1, UpdatedAt: time.Now()},
+		{Day: yesterday, CostUSD: 0.5, UpdatedAt: time.Now().AddDate(0, 0, -1), Model: "openai/gpt-old"},
+		{Day: today, CostUSD: 1, UpdatedAt: time.Now(), Model: "openai/gpt-new"},
 	}))
 	snap, err := GetContextSnapshot("vc-replace")
 	require.NoError(t, err)
 	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12)
 	rows, err := AllCostDailyRows()
 	require.NoError(t, err)
-	assert.InDelta(t, 0.5, dailyRowFor(t, rows, "vc-replace", yesterday).VirtualCostUSD, 1e-12)
-	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-replace", today).VirtualCostUSD, 1e-12,
+	yesterdayRow := dailyRowFor(t, rows, "vc-replace", yesterday)
+	todayRow := dailyRowFor(t, rows, "vc-replace", today)
+	assert.InDelta(t, 0.5, yesterdayRow.VirtualCostUSD, 1e-12)
+	assert.Equal(t, "openai/gpt-old", yesterdayRow.Model,
+		"rebuilding history retains the model active on the historical day")
+	assert.InDelta(t, 1, todayRow.VirtualCostUSD, 1e-12,
 		"the replayed timestamped history redistributes the correction exactly")
+	assert.Equal(t, "openai/gpt-new", todayRow.Model)
 
 	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 0, nil))
 	snap, err = GetContextSnapshot("vc-replace")

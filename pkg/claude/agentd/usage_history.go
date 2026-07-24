@@ -295,10 +295,10 @@ func openCodeActivityCoveredByNativeSamples(activity, native []time.Time) bool {
 		matched := false
 		for _, sampleAt := range native {
 			delta := sampleAt.Sub(observedAt)
-			if delta < 0 {
-				delta = -delta
-			}
-			if delta <= db.SubscriptionUsageSampleInterval {
+			// A sample taken before the OpenCode turn cannot include that
+			// activity. Coverage requires the next native observation, within
+			// one expected sampling interval.
+			if delta >= 0 && delta <= db.SubscriptionUsageSampleInterval {
 				matched = true
 				break
 			}

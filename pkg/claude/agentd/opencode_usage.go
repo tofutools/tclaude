@@ -415,6 +415,7 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	type dailyContribution struct {
 		usd       float64
 		updatedAt time.Time
+		model     string
 	}
 	byDay := make(map[string]dailyContribution)
 	total := 0.0
@@ -441,8 +442,11 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		day := observedAt.In(time.Local).Format("2006-01-02")
 		contribution := byDay[day]
 		contribution.usd += projected.usd
-		if observedAt.After(contribution.updatedAt) {
+		model := usage.ProviderID + "/" + usage.ModelID
+		if observedAt.After(contribution.updatedAt) ||
+			(observedAt.Equal(contribution.updatedAt) && model > contribution.model) {
 			contribution.updatedAt = observedAt
+			contribution.model = model
 		}
 		byDay[day] = contribution
 		total += projected.usd
@@ -464,7 +468,7 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		contribution := byDay[day]
 		cumulative += contribution.usd
 		snapshots = append(snapshots, db.VirtualCostDailySnapshot{
-			Day: day, CostUSD: cumulative, UpdatedAt: contribution.updatedAt,
+			Day: day, CostUSD: cumulative, UpdatedAt: contribution.updatedAt, Model: contribution.model,
 		})
 	}
 	if err := db.ReplaceSessionVirtualCostHistory(runtime.SessionID, total, snapshots); err != nil {
@@ -582,9 +586,10 @@ func replaceOpenCodeVirtualCostUsage(
 // next live turn — the OpenCode analog of Codex's read-through refresh. The
 // most-recent assistant turn is selected by `time.created` (not slice position,
 // which the endpoint does not guarantee) and funnelled through the same
-// persistOpenCodeContextUsage path the live stream uses. Cost is intentionally
-// not backfilled: it rides session.updated and already persists in cost_usd
-// across restarts. Best-effort — it never blocks or fails the stream.
+// persistOpenCodeContextUsage path the live stream uses. Historical assistant
+// costs are summed as well: this recovers real spend when a session.updated
+// event was missed during a disconnect. Best-effort — it never fails the
+// stream.
 func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime) {
 	if runtime.ConvID == "" {
 		return
@@ -621,10 +626,14 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		latestAt   int64
 		haveAny    bool
 		costUsages []openCodeMessageCostUsage
+		realCost   float64
 	)
 	for _, m := range messages {
 		if m.Info.Role != "assistant" {
 			continue
+		}
+		if m.Info.Cost != nil && *m.Info.Cost > 0 {
+			realCost += *m.Info.Cost
 		}
 		usage := openCodeContextUsage{
 			MessageID:    m.Info.ID,
@@ -676,6 +685,12 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		}
 	}
 	replaceOpenCodeVirtualCostUsage(ctx, runtime, costUsages)
+	if realCost > 0 && waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
+		if err := db.UpdateSessionCost(runtime.SessionID, realCost); err != nil {
+			slog.Warn("OpenCode real cost backfill could not be persisted",
+				"session", runtime.SessionID, "error", err, "module", "agentd")
+		}
+	}
 	if !haveAny {
 		return
 	}

@@ -518,3 +518,41 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.InDelta(t, 0.257, snap.VirtualCostUSD, 1e-12,
 		"recovery prices every step-finish part without double-counting")
 }
+
+func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID = "oc-real-backfill", "ses_real_backfill"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+		case "/session/" + convID + "/message":
+			_, _ = w.Write([]byte(`[` +
+				`{"info":{"id":"msg-1","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+				`"time":{"created":100},"cost":0.2,"tokens":{"input":1000,"output":100}}},` +
+				`{"info":{"id":"msg-2","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+				`"time":{"created":200},"cost":0.3,"tokens":{"input":2000,"output":200}}}` +
+				`]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	backfillOpenCodeContextUsage(context.Background(), db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	})
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12,
+		"assistant history recovers real spend when cumulative SSE cost was missed")
+	assert.Zero(t, snap.VirtualCostUSD, "real history remains authoritative over WHAT-IF cost")
+}

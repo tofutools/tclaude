@@ -107,6 +107,13 @@ export function createUsageHistoryState({
     persistSpan(key, { lookaheadHours: parsed });
     return true;
   }
+  function setDefaultHours(value) {
+    const parsed = Number(value);
+    if (!HISTORY_HOURS.includes(parsed)) return false;
+    defaultSpan.value = { ...defaultSpan.value, hours: parsed };
+    prefs.setItem(LEGACY_HISTORY_HOURS_KEY, String(parsed));
+    return true;
+  }
   function beginRequest(requestId) { request.value = { ...request.value, phase: 'loading', requestId, error: null }; }
   function commitRequest(requestId, data) {
     if (request.value.requestId !== requestId) return false;
@@ -129,7 +136,8 @@ export function createUsageHistoryState({
   }
   return Object.freeze({
     seriesSpans, defaultSpan, payload, request, view,
-    initialize, setSeriesHours, setSeriesLookaheadHours, beginRequest, commitRequest, failRequest, failMutation,
+    initialize, setDefaultHours, setSeriesHours, setSeriesLookaheadHours,
+    beginRequest, commitRequest, failRequest, failMutation,
   });
 }
 

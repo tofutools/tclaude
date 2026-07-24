@@ -51,6 +51,19 @@ function UsageSpanControls({ scope, span, onSetHours, onSetLookahead, wizard }) 
   </div>`;
 }
 
+function UsageEmptyRangeControls({ hours, onSetHours, wizard }) {
+  return html`<div class="usage-card-controls usage-empty-range">
+    <div class="usage-control-group" role="group"
+      aria-label=${wizard ? 'OpenCode activity chronicle range' : 'OpenCode activity history range'}>
+      <span class="usage-control-label" aria-hidden="true">${wizard ? 'Search chronicle' : 'Search history'}</span>
+      ${USAGE_HISTORY_SPANS.map((option) => html`<button type="button"
+        class=${`tool${hours === option.hours ? ' active' : ''}`}
+        aria-pressed=${hours === option.hours}
+        onClick=${() => onSetHours(option.hours)}>${option.label}</button>`)}
+    </div>
+  </div>`;
+}
+
 // The legend sits under each chart rather than once at the top of the tab: with
 // graphs side by side there is no longer a single line of sight from a shared
 // legend to the chart you are reading.
@@ -154,6 +167,7 @@ export function UsageHistoryApp({ state, actions }) {
     return () => clearInterval(timer);
   }, [current.active]);
   const setSpan = (key, hours) => { if (state.setSeriesHours(key, hours)) void actions.load(); };
+  const setDefaultSpan = (hours) => { if (state.setDefaultHours(hours)) void actions.load(); };
   const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);
   const togglePoint = (series, point) => actions.setPointExcluded(series, point, !point.excluded);
   // Nothing but load state sits above the graphs: the legend now rides with
@@ -180,7 +194,9 @@ export function UsageHistoryApp({ state, actions }) {
                   onTogglePoint=${(point) => togglePoint(series, point)} wizard=${wizard} />`;
               })}
             </div>`)}</div>`
-        : html`<div class="empty">${w('No subscription usage samples in this range yet.', 'No mana readings have been taken in this span yet.')}</div>`}
+        : html`<div class="empty">${w('No subscription usage samples in this range yet.', 'No mana readings have been taken in this span yet.')}
+            <${UsageEmptyRangeControls} hours=${current.defaultHours} onSetHours=${setDefaultSpan} wizard=${wizard} />
+          </div>`}
     </${Fragment}>`}
     <p class="usage-history-note">${w(
       'Account-wide provider limits, sampled every 15 minutes; click a point to exclude or restore it. Excluded points stay visible but do not affect lines, resets, current values, or predictions. History and look-ahead spans persist per graph. Forecasts are per provider × quota window. Providers do not expose reliable per-model quota attribution. A dashed line is the current post-reset pace; downward steps of at least 2 points are treated as out-of-cycle resets.',

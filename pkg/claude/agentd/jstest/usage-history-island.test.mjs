@@ -30,7 +30,8 @@ test('Usage island keeps graphs available and renders provider-aware OpenCode co
       forecast: { status: 'insufficient', sample_count: 0 },
     }],
   });
-  const actions = { load: async () => {}, setPointExcluded: async () => {} };
+  let loadCount = 0;
+  const actions = { load: async () => { loadCount += 1; }, setPointExcluded: async () => {} };
   const mounted = await harness.mount(harness.html`<${UsageHistoryApp} state=${state} actions=${actions} />`);
   assert.match(mounted.container.textContent, /OpenCode does not export provider-account usage-limit history/);
   assert.match(mounted.container.textContent, /may be incomplete or stale/);
@@ -46,5 +47,12 @@ test('Usage island keeps graphs available and renders provider-aware OpenCode co
   });
   assert.doesNotMatch(mounted.container.textContent, /incomplete or stale/,
     'warning disappears when the server reports qualifying native coverage');
+  const ninetyDays = [...mounted.container.querySelectorAll('.usage-empty-range button')]
+    .find((button) => button.textContent === '90d');
+  assert.ok(ninetyDays, 'an activity-only tab can widen the otherwise empty history range');
+  const loadsBeforeClick = loadCount;
+  await harness.act(() => ninetyDays.click());
+  assert.equal(state.view.value.defaultHours, 2160);
+  assert.ok(loadCount > loadsBeforeClick, 'changing the activity-only range reloads coverage');
   await mounted.unmount();
 });

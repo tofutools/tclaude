@@ -72,6 +72,10 @@ func TestOpenCodeUsageCoverageWarningRequiresNativeHistoryToBracketActivity(t *t
 func TestOpenCodeUsageCoverageWarningDetectsGapBetweenNativeEndpoints(t *testing.T) {
 	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	assert.False(t, openCodeActivityCoveredByNativeSamples(
+		[]time.Time{base.Add(time.Hour)},
+		[]time.Time{base.Add(50 * time.Minute)},
+	), "a pre-activity sample cannot include usage that had not happened yet")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(
 		[]time.Time{base.Add(14 * 24 * time.Hour)},
 		[]time.Time{base, base.Add(29 * 24 * time.Hour)},
 	), "distant first/last samples do not fabricate coverage across the gap")
