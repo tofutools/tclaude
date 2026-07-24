@@ -744,14 +744,16 @@ are absolute readings of the account quota rather than deltas, so a sample
 taken after an OpenCode turn already includes that turn's spend; only OpenCode
 activity newer than the newest native sample is missing from the graphs. The
 tab warns when OpenCode activity for OpenAI or Anthropic in the selected
-history span outruns the newest matching native Codex or Claude sample by more
-than one and a half sampling intervals — enough slack that a sample still in
-flight behind a live OpenCode session is not reported as a gap. The warning
-names the affected provider and models, reports how stale the newest native
-sample is, and does not hide any available graphs. It disappears once native
-sampling catches up. Unknown OpenCode providers have no native source at all,
-so their activity always warns, and they remain unattributed rather than being
-guessed.
+history span outruns the newest matching native Codex or Claude sample, unless
+that sample is itself less than one and a half sampling intervals old — enough
+slack that a sample still in flight behind a live OpenCode session is not
+reported as a gap, while a sampler that has stopped stops being forgiven.
+A span holding no native sample at all for that provider, or holding only
+operator-excluded ones, always warns. The warning names the affected provider
+and models, reports how far the activity outran the newest native sample, and
+does not hide any available graphs. It disappears once native sampling catches
+up. Unknown OpenCode providers have no native source at all, so their activity
+always warns, and they remain unattributed rather than being guessed.
 
 The dashed line estimates the current post-reset consumption rate and compares
 the projected 100% time with the provider's reported reset time. Hovering the

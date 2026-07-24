@@ -23,6 +23,10 @@ test('Usage island keeps graphs available and renders provider-aware OpenCode co
     coverage_warnings: [{
       provider: 'openai', native_source: 'openai', models: ['gpt-5.6-terra'],
       activity_from: '2026-07-23T12:00:00Z', activity_to: '2026-07-23T12:30:00Z',
+    }, {
+      provider: 'anthropic', native_source: 'anthropic', models: ['claude-sonnet-5'],
+      activity_from: '2026-07-23T20:00:00Z', activity_to: '2026-07-23T22:00:00Z',
+      native_latest: '2026-07-23T21:15:00Z',
     }],
     series: [{
       provider: 'openai', window_name: 'five_hour', from: '2026-07-23T00:00:00Z',
@@ -35,6 +39,12 @@ test('Usage island keeps graphs available and renders provider-aware OpenCode co
   const mounted = await harness.mount(harness.html`<${UsageHistoryApp} state=${state} actions=${actions} />`);
   assert.match(mounted.container.textContent, /OpenCode does not export provider-account usage-limit history/);
   assert.match(mounted.container.textContent, /may be incomplete or stale/);
+  assert.match(mounted.container.textContent,
+    /No Codex native usage-history coverage was recorded for the selected span/,
+    'a span with no native sample at all still says so');
+  assert.match(mounted.container.textContent,
+    /The most recent OpenCode activity \(2h ago\) came 45m after the newest Claude sample/,
+    'a stale-tail warning names the lag as a duration, relative to generated_at');
   assert.ok(mounted.container.querySelector('.usage-series-card'),
     'available native graph card remains visible beside the warning');
 

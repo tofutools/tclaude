@@ -26,11 +26,11 @@ const (
 	maxUsageSpanOverrides    = 100
 )
 
-// openCodeCoverageGrace is how far the newest native sample may lag the newest
-// OpenCode turn before the graphs count as stale for that provider. One and a
-// half sampling intervals keeps the warning quiet while a sample is merely in
-// flight behind an active OpenCode session, so the warning reads as "sampling
-// has fallen behind the work" rather than "a sample is due".
+// openCodeCoverageGrace is how long a sample may be overdue before the next
+// one stops counting as in flight. One and a half sampling intervals keeps the
+// warning quiet while sampling is merely trailing an active OpenCode session,
+// so the warning reads as "sampling has fallen behind the work" rather than "a
+// sample is due".
 const openCodeCoverageGrace = 3 * db.SubscriptionUsageSampleInterval / 2
 
 type usageHistoryPoint struct {
@@ -273,7 +273,7 @@ func collectOpenCodeUsageCoverageWarnings(
 		var native time.Time
 		if nativeSource != "" {
 			native = latestNative[nativeSource]
-			if openCodeActivityCoveredByNativeSamples(group.last, native) {
+			if openCodeActivityCoveredByNativeSamples(group.last, native, to) {
 				continue
 			}
 		}
@@ -310,14 +310,21 @@ func collectOpenCodeUsageCoverageWarnings(
 // spend and every plotted point stays true regardless of how the sampler
 // behaved earlier in the span. A gap in the middle only blurs where between
 // two correct readings the consumption landed. What genuinely leaves the
-// graphs incomplete is activity that outruns the newest sample, which is what
-// this compares — with openCodeCoverageGrace of slack so a sample still in
-// flight behind a live OpenCode session is not reported as missing coverage.
-func openCodeActivityCoveredByNativeSamples(latestActivity, latestNative time.Time) bool {
+// graphs incomplete is activity that outruns the newest sample.
+//
+// The grace is anchored on now rather than on the activity: forgiving an
+// uncovered turn because a sample was due shortly after it would forgive it
+// forever, including the case this warning exists for — the OpenAI series only
+// advances when Codex itself runs, so once sampling stops, the sample that
+// would have covered that turn is never coming.
+func openCodeActivityCoveredByNativeSamples(latestActivity, latestNative, now time.Time) bool {
 	if latestActivity.IsZero() || latestNative.IsZero() {
 		return false
 	}
-	return !latestActivity.After(latestNative.Add(openCodeCoverageGrace))
+	if !latestActivity.After(latestNative) {
+		return true
+	}
+	return !now.After(latestNative.Add(openCodeCoverageGrace))
 }
 
 func downsampleUsageResets(resets []usageHistoryReset, max int) []usageHistoryReset {

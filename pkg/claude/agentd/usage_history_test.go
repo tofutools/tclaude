@@ -83,20 +83,31 @@ func TestOpenCodeUsageCoverageWarningClearsOnceNativeSamplingCatchesUp(t *testin
 
 func TestOpenCodeUsageCoverageWarningIgnoresSamplingGapsBehindTheNewestSample(t *testing.T) {
 	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
-	assert.False(t, openCodeActivityCoveredByNativeSamples(
-		base.Add(time.Hour), base.Add(30*time.Minute),
-	), "a sample half an hour stale cannot include usage that came after it")
+	activity := base.Add(time.Hour)
+	assert.True(t, openCodeActivityCoveredByNativeSamples(activity, activity, activity.Add(time.Hour)),
+		"a sample taken at the turn covers it however overdue the next sample is")
+	assert.True(t, openCodeActivityCoveredByNativeSamples(activity, base.Add(2*time.Hour), base.Add(9*time.Hour)),
+		"any later sample covers the activity outright")
 	assert.True(t, openCodeActivityCoveredByNativeSamples(
-		base.Add(time.Hour), base.Add(50*time.Minute),
-	), "a sample due but not yet taken is in flight, not missing coverage")
-	assert.True(t, openCodeActivityCoveredByNativeSamples(
-		base.Add(time.Hour), base.Add(2*time.Hour),
-	), "any later sample covers the activity outright")
-	assert.True(t, openCodeActivityCoveredByNativeSamples(
-		base.Add(14*24*time.Hour), base.Add(14*24*time.Hour+time.Minute),
+		base.Add(14*24*time.Hour), base.Add(14*24*time.Hour+time.Minute), base.Add(14*24*time.Hour+2*time.Minute),
 	), "a mid-span sampling gap does not invalidate a fresh newest sample")
-	assert.False(t, openCodeActivityCoveredByNativeSamples(base.Add(time.Hour), time.Time{}),
+
+	// The grace forgives an uncovered turn only while the sampler is still
+	// within one grace window of now, and it expires exactly there.
+	native := base.Add(50 * time.Minute)
+	assert.True(t, openCodeActivityCoveredByNativeSamples(activity, native, native.Add(openCodeCoverageGrace)),
+		"a sample due but not yet taken is in flight, not missing coverage")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(activity, native, native.Add(openCodeCoverageGrace+time.Second)),
+		"once the sampler is overdue past the grace the uncovered turn is missing for good")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(activity, native, base.Add(72*time.Hour)),
+		"a stale sample does not keep forgiving the turn days later")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(activity, base.Add(30*time.Minute), activity),
+		"a sample half an hour stale cannot include usage that came after it")
+
+	assert.False(t, openCodeActivityCoveredByNativeSamples(activity, time.Time{}, activity),
 		"no native sample at all is never coverage")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(time.Time{}, native, activity),
+		"no activity is not something a sample can cover")
 }
 
 func TestOpenCodeUsageCoverageWarningsUseProviderSelectedSpan(t *testing.T) {

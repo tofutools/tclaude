@@ -5,8 +5,9 @@ import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
 import {
-  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageResetCountdown, formatUsageTime,
-  usageForecastView, usageProviderLabel, usageScopeLabel, usageSeriesKeyOf, usageWindowScopeLabel,
+  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageDuration, formatUsageResetCountdown,
+  formatUsageTime, usageForecastView, usageProviderLabel, usageScopeLabel, usageSeriesKeyOf,
+  usageWindowScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -146,10 +147,14 @@ function UsageCoverageWarnings({ warnings, generatedAt }) {
       const provider = usageProviderLabel(warning.provider);
       const models = (warning.models || []).length ? ` (${warning.models.join(', ')})` : '';
       const native = usageProviderLabel(warning.native_source);
+      // The lag is stated as a duration rather than two relative times: both
+      // sides routinely round into the same bucket ("1h ago" … "1h ago"),
+      // which reads as a contradiction rather than a gap.
+      const lag = new Date(warning.activity_to).getTime() - new Date(warning.native_latest).getTime();
       const source = !warning.native_source
         ? 'This provider has no corresponding native usage source in tclaude.'
         : warning.native_latest
-          ? `The newest ${native} sample (${formatUsageTime(warning.native_latest, now)}) predates the most recent OpenCode activity (${formatUsageTime(warning.activity_to, now)}).`
+          ? `The most recent OpenCode activity (${formatUsageTime(warning.activity_to, now)}) came ${formatUsageDuration(lag)} after the newest ${native} sample.`
           : `No ${native} native usage-history coverage was recorded for the selected span.`;
       return html`<div class="usage-coverage-warning" key=${warning.provider}>
         <strong>⚠ ${provider}${models}</strong> — OpenCode was active in this span, but OpenCode does not export provider-account usage-limit history.
