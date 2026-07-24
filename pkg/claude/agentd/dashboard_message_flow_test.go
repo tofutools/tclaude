@@ -21,7 +21,9 @@ import (
 //
 // The human picks a From sender; the message is attributed to and
 // replied to that conv. The endpoint reuses handleMulticast unchanged,
-// so the group fan-out logic is not duplicated.
+// so the group fan-out logic is not duplicated. Leaving From blank on a
+// group send multicasts AS THE OPERATOR instead: no sender agent, every
+// row tagged operator-authored (a solo send still needs a From).
 
 // dashMessageMux sets a popup base URL — so the dashboard auth's
 // Origin pin is satisfiable — and returns the dashboard mux. The
@@ -112,9 +114,47 @@ func TestDashboardMessage_SoloTarget_ReachesOnlyOne(t *testing.T) {
 	assert.Empty(t, carolRows, "a solo send does not fan out to other members")
 }
 
-// Scenario: an empty From is a 400 before any row is written — the
-// dashboard form requires the human to pick a sender.
-func TestDashboardMessage_MissingFrom_BadRequest(t *testing.T) {
+// Scenario: a blank From multicasts to the group AS THE OPERATOR. No
+// sender agent is resolved, so no member/owner gate applies (the
+// dashboard cookie/Origin is the human-consent layer); every recipient
+// row is delivered with an empty FromConv and tagged operator-authored,
+// so the recipient sees "the human operator" rather than a sender-less
+// system message.
+func TestDashboardMessage_BlankFrom_GroupMulticastsAsOperator(t *testing.T) {
+	f := newFlow(t)
+
+	f.HaveGroup("team")
+	const memberA = "dmsg-op-a-bbbb-cccc-000000000001"
+	const memberB = "dmsg-op-b-bbbb-cccc-000000000002"
+	f.HaveMember("team", memberA)
+	f.HaveMember("team", memberB)
+
+	mux := dashMessageMux(t)
+	rec := postDashMessage(t, mux, map[string]any{
+		"to": "group:team", "body": "operator broadcast",
+	})
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+	resp := decodeMcast(t, rec)
+	assert.Equal(t, "team", resp.ViaGroup)
+	assert.ElementsMatch(t, []string{memberA, memberB}, recipientConvIDs(resp),
+		"a blank-From group send reaches every member as the operator")
+
+	for _, m := range []string{memberA, memberB} {
+		rows, err := db.ListAgentMessagesForConv(m, 100)
+		require.NoError(t, err)
+		require.Len(t, rows, 1, "member %s got a row", m)
+		assert.Equal(t, "operator broadcast", rows[0].Body)
+		assert.Empty(t, rows[0].FromConv, "operator mail carries no sender conv")
+		assert.True(t, db.IsOperatorAgentMessage(rows[0].ID),
+			"the row is tagged operator-authored so it renders as the human operator")
+	}
+}
+
+// Scenario: a blank From on a SOLO target is still a 400 — attribution
+// is required to reply to a 1:1 message, and operator 1:1 mail has its
+// own door (POST /api/operator-message). No row is written.
+func TestDashboardMessage_BlankFrom_SoloBadRequest(t *testing.T) {
 	f := newFlow(t)
 
 	f.HaveGroup("team")
@@ -123,10 +163,10 @@ func TestDashboardMessage_MissingFrom_BadRequest(t *testing.T) {
 
 	mux := dashMessageMux(t)
 	rec := postDashMessage(t, mux, map[string]any{
-		"to": "group:team", "body": "no sender",
+		"to": member, "body": "no sender",
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "from is required")
+	assert.Contains(t, rec.Body.String(), "from is required for a solo message")
 
 	rows, err := db.ListAgentMessagesForConv(member, 100)
 	require.NoError(t, err)

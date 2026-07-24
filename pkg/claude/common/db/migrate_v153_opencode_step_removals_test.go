@@ -56,7 +56,3 @@ func TestMigrateV152toV153_UpgradesRealV152Database(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT version FROM schema_version`).Scan(&ver))
 	assert.Equal(t, 153, ver, "repeated migration keeps the version at 153")
 }
-
-func TestMigrateV153IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 153, currentVersion, "tripwire: bump this with the next migration")
-}

@@ -62,6 +62,7 @@ type jobJSON struct {
 	Enabled          bool   `json:"enabled"`
 	RunImmediately   bool   `json:"run_immediately"`
 	QueueWhenOffline bool   `json:"queue_when_offline"`
+	OperatorAuthored bool   `json:"operator_authored,omitempty"`
 	// DisabledReason marks WHY a disabled job is disabled (schema v94): "" for
 	// a normal human enable/disable, or "group-retired" when a retire that
 	// emptied the target group auto-paused it. Surfaced so a reader can tell a
@@ -92,6 +93,7 @@ func toJobJSON(j *db.AgentCronJob) jobJSON {
 		Enabled:          j.Enabled,
 		RunImmediately:   j.RunImmediately,
 		QueueWhenOffline: j.QueueWhenOffline,
+		OperatorAuthored: j.OperatorAuthored,
 		DisabledReason:   j.DisabledReason,
 		LastRunStatus:    j.LastRunStatus,
 	}
@@ -547,6 +549,11 @@ func handleCronCreate(w http.ResponseWriter, r *http.Request) {
 			}
 			job.OwnerConv = ownerConv
 		}
+		// A human caller who attributed the job to no sender agent (empty
+		// owner) fans out AS THE OPERATOR: mark it explicitly so fireCronGroupJob
+		// tags every delivered row operator-authored. An agent caller always has
+		// a non-empty owner here, so this can only ever mark a human-owned job.
+		job.OperatorAuthored = job.OwnerConv == ""
 	} else {
 		targetConv := ct.Conv
 		caller, ok := authCronWrite(w, r, targetConv)
@@ -894,6 +901,15 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 					return
 				}
 				patch.OwnerConv = &resolvedOwner.Conv
+				// Keep operator attribution in lockstep with the owner: an
+				// empty replacement owner fires as the operator, a real sender
+				// agent does not. In practice only a group job reaches this with
+				// an empty owner — a conv job's owner can never resolve to ""
+				// (agent.ResolveSelector rejects an empty selector), so a conv
+				// job stays operator_authored=false and its fire path (which does
+				// pass the flag through) simply never delivers as the operator.
+				operatorAuthored := strings.TrimSpace(resolvedOwner.Conv) == ""
+				patch.OperatorAuthored = &operatorAuthored
 			}
 		}
 	}

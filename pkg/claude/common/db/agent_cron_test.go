@@ -138,6 +138,46 @@ func TestAgentCronJob_InsertGetList(t *testing.T) {
 	require.Len(t, all, 1, "expected 1 job")
 }
 
+// A group-target job created by the human operator (no owner) round-trips its
+// operator_authored flag, and re-owning it to a sender agent via a patch clears
+// the flag — attribution stays in lockstep with the owner.
+func TestAgentCronJob_OperatorAuthored_RoundTripAndReSync(t *testing.T) {
+	setupTestDB(t)
+
+	id, err := InsertAgentCronJob(&AgentCronJob{
+		Name:             "operator-standup",
+		TargetKind:       CronTargetGroup,
+		GroupID:          7,
+		IntervalSeconds:  600,
+		Body:             "status please",
+		Enabled:          true,
+		OperatorAuthored: true,
+	})
+	require.NoError(t, err, "InsertAgentCronJob")
+
+	got, err := GetAgentCronJob(id)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, got.OperatorAuthored, "operator attribution round-trips on insert")
+	assert.Empty(t, got.OwnerConv, "an operator job has no owner")
+
+	// Re-own it to a real sender agent and clear the operator flag.
+	off := false
+	owner := "reassigned-owner-conv"
+	n, err := UpdateAgentCronJobFields(id, UpdateCronPatch{
+		OwnerConv:        &owner,
+		OperatorAuthored: &off,
+	})
+	require.NoError(t, err, "UpdateAgentCronJobFields")
+	require.Equal(t, 1, n, "one row updated")
+
+	reowned, err := GetAgentCronJob(id)
+	require.NoError(t, err)
+	require.NotNil(t, reowned)
+	assert.Equal(t, owner, reowned.OwnerConv, "owner replaced")
+	assert.False(t, reowned.OperatorAuthored, "re-owned job no longer fires as the operator")
+}
+
 func TestInsertAgentCronJobWithRoutingAuthority_IsAtomicWithGroupAuthority(t *testing.T) {
 	setupTestDB(t)
 	const caller = "cron-routing-caller"

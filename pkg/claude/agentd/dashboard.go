@@ -1255,6 +1255,7 @@ type dashboardCronJob struct {
 	Enabled          bool   `json:"enabled"`
 	RunImmediately   bool   `json:"run_immediately"`
 	QueueWhenOffline bool   `json:"queue_when_offline"`
+	OperatorAuthored bool   `json:"operator_authored,omitempty"`
 	CreatedAt        string `json:"created_at,omitempty"`
 	LastRunAt        string `json:"last_run_at,omitempty"`
 	LastRunStatus    string `json:"last_run_status,omitempty"`
@@ -2827,6 +2828,7 @@ func cronJobToView(j *db.AgentCronJob, groupNames map[int64]string) dashboardCro
 		Enabled:          j.Enabled,
 		RunImmediately:   j.RunImmediately,
 		QueueWhenOffline: j.QueueWhenOffline,
+		OperatorAuthored: j.OperatorAuthored,
 		LastRunStatus:    j.LastRunStatus,
 	}
 	if j.TargetConv != "" {

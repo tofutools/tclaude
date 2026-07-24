@@ -256,9 +256,10 @@ export function CronDialog({ descriptor, snapshot, actions, confirmDiscard }) {
         <input ref=${nameRef} id="cron-create-name" type="text" value=${draft.name}
           placeholder="kebab-or-snake-case label" autocomplete="off" spellcheck=${false}
           onInput=${(event) => update({ name: event.currentTarget.value })} /></label>
-      <label class="cron-create-row"><span class="cron-create-label">Owner</span><div class="cron-create-target"><div class="cron-target-input-row">
+      <label class="cron-create-row"><span class="cron-create-label"
+        title="Blank = fires as you, the human operator (recipients see 'the human operator'); or attribute it to a sender agent">Owner</span><div class="cron-create-target"><div class="cron-target-input-row">
         <input id="cron-create-owner" type="text" value=${draft.owner}
-          placeholder="(default: dashboard human) title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
+          placeholder="blank = you (the operator) · or a sender: title / conv-id / 8+-char prefix" autocomplete="off" spellcheck=${false}
           onInput=${(event) => update({ owner: event.currentTarget.value })} />
         <button type="button" id="cron-create-owner-pick" title="Pick from the agent / familiar list"
           onClick=${() => setPicker({ field: 'owner', title: 'Pick owner' })}>🔍</button>
