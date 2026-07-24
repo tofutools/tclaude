@@ -87,8 +87,8 @@ var openCodeReconcileLocks sync.Map // map[sessionID]*sync.Mutex
 // side effect before a replacement projector applies newer state. Generation
 // checks then discard the old continuation, while the replacement runs last.
 var (
-	openCodeProjectorApplyLocks   sync.Map // map[conversation key]*openCodeProjectorApplyLock
-	openCodeProjectorApplyLocksMu sync.Mutex
+	openCodeProjectorApplyLocks   = map[string]*openCodeProjectorApplyLock{}
+	openCodeProjectorApplyLocksMu sync.Mutex // guards the map, not the per-key tokens
 )
 
 type openCodeProjectorApplyLock struct {
@@ -977,12 +977,11 @@ func withOpenCodeProjectorApplyLock(
 ) bool {
 	key := openCodeProjectorApplyKey(runtime)
 	openCodeProjectorApplyLocksMu.Lock()
-	value, ok := openCodeProjectorApplyLocks.Load(key)
-	if !ok {
-		value = newOpenCodeProjectorApplyLock()
-		openCodeProjectorApplyLocks.Store(key, value)
+	lock := openCodeProjectorApplyLocks[key]
+	if lock == nil {
+		lock = newOpenCodeProjectorApplyLock()
+		openCodeProjectorApplyLocks[key] = lock
 	}
-	lock := value.(*openCodeProjectorApplyLock)
 	lock.users++
 	openCodeProjectorApplyLocksMu.Unlock()
 	defer func() {
@@ -1011,9 +1010,8 @@ func withOpenCodeProjectorApplyLock(
 func deleteOpenCodeProjectorApplyLockIfIdle(runtime db.OpenCodeRuntime) {
 	key := openCodeProjectorApplyKey(runtime)
 	openCodeProjectorApplyLocksMu.Lock()
-	if value, ok := openCodeProjectorApplyLocks.Load(key); ok &&
-		value.(*openCodeProjectorApplyLock).users == 0 {
-		openCodeProjectorApplyLocks.Delete(key)
+	if lock := openCodeProjectorApplyLocks[key]; lock != nil && lock.users == 0 {
+		delete(openCodeProjectorApplyLocks, key)
 	}
 	openCodeProjectorApplyLocksMu.Unlock()
 }

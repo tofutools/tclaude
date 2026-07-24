@@ -390,6 +390,12 @@ func TestStopOpenCodeProcessJoinsSSEProjector(t *testing.T) {
 	assert.False(t, registeredAfterStop, "the stopping tombstone is removed after projector join")
 }
 
+func openCodeProjectorApplyLockExists(runtime db.OpenCodeRuntime) bool {
+	openCodeProjectorApplyLocksMu.Lock()
+	defer openCodeProjectorApplyLocksMu.Unlock()
+	return openCodeProjectorApplyLocks[openCodeProjectorApplyKey(runtime)] != nil
+}
+
 func TestStoppedOpenCodeProjectorReleasesConversationCaches(t *testing.T) {
 	resetOpenCodeVirtualCostStateForTest()
 	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
@@ -400,14 +406,15 @@ func TestStoppedOpenCodeProjectorReleasesConversationCaches(t *testing.T) {
 	rememberOpenCodeSnapshotStepLocked(convID, "msg-cleanup", "part-cleanup")
 	openCodeVirtualCostState.Unlock()
 	require.True(t, withOpenCodeProjectorApplyLock(context.Background(), runtime, func() {}))
-	_, lockExists := openCodeProjectorApplyLocks.Load(openCodeProjectorApplyKey(runtime))
-	require.True(t, lockExists)
+	require.True(t, openCodeProjectorApplyLockExists(runtime))
 
 	originalDelay := openCodeConversationStateCleanupDelay
 	openCodeConversationStateCleanupDelay = 10 * time.Millisecond
 	t.Cleanup(func() {
 		openCodeConversationStateCleanupDelay = originalDelay
-		openCodeProjectorApplyLocks.Delete(openCodeProjectorApplyKey(runtime))
+		openCodeProjectorApplyLocksMu.Lock()
+		delete(openCodeProjectorApplyLocks, openCodeProjectorApplyKey(runtime))
+		openCodeProjectorApplyLocksMu.Unlock()
 	})
 	projectorStopped := make(chan struct{})
 	close(projectorStopped)
@@ -423,8 +430,7 @@ func TestStoppedOpenCodeProjectorReleasesConversationCaches(t *testing.T) {
 		known := len(openCodeVirtualCostState.knownSteps[convID])
 		snapshot := len(openCodeVirtualCostState.snapshotSteps[convID])
 		openCodeVirtualCostState.Unlock()
-		_, retainedLock := openCodeProjectorApplyLocks.Load(openCodeProjectorApplyKey(runtime))
-		return known == 0 && snapshot == 0 && !retainedLock
+		return known == 0 && snapshot == 0 && !openCodeProjectorApplyLockExists(runtime)
 	}, time.Second, 5*time.Millisecond,
 		"a joined, inactive conversation releases its step caches and projector lock")
 }
