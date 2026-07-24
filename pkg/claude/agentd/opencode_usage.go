@@ -291,10 +291,6 @@ func rememberOpenCodePendingRemoval(
 	openCodeVirtualCostState.Unlock()
 }
 
-func forgetOpenCodePendingRemoval(convID, messageID string) {
-	_ = takeOpenCodePendingRemoval(convID, messageID)
-}
-
 func takeOpenCodePendingRemoval(convID, messageID string) bool {
 	openCodeVirtualCostState.Lock()
 	found := false
@@ -845,9 +841,6 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 		slog.Debug("OpenCode non-subscription activity could not be cleared",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}
-	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
-		return
-	}
 	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
 
@@ -980,7 +973,7 @@ func applyOpenCodeVirtualCostRemoval(
 			scheduleOpenCodeRemovalRetry(ctx, runtime)
 			return
 		}
-		forgetOpenCodePendingRemoval(runtime.ConvID, removal.MessageID)
+		takeOpenCodePendingRemoval(runtime.ConvID, removal.MessageID)
 		if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 			return
 		}
@@ -1007,10 +1000,7 @@ func applyOpenCodeVirtualCostRemoval(
 			slog.Debug("OpenCode removed-message pricing marker could not be deleted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}
-		forgetOpenCodePendingRemoval(runtime.ConvID, removal.MessageID)
-	}
-	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
-		return
+		takeOpenCodePendingRemoval(runtime.ConvID, removal.MessageID)
 	}
 	projectAndPersistOpenCodeCostState(ctx, runtime)
 }

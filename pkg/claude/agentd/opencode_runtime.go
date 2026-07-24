@@ -1221,9 +1221,6 @@ func consumeOpenCodeEventLocked(
 	if step, ok := parseOpenCodeStepCostUsage(event, runtime.ConvID); ok {
 		applyOpenCodeVirtualCostStep(ctx, runtime, step)
 	}
-	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
-		return
-	}
 	if removal, ok := parseOpenCodeCostRemoval(event, runtime.ConvID); ok {
 		applyOpenCodeVirtualCostRemoval(ctx, runtime, removal)
 	}
