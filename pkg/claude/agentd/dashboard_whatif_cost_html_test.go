@@ -6,10 +6,10 @@ import (
 )
 
 // TestDashboardHTML_WhatIfCostWired guards the WHAT-IF cost feature, whose
-// pieces span dashboard.html, dashboard.css and four JS modules. The repo has
-// no JS test runner, so a rename in any one file would silently break the
-// feature in the browser; this asserts on the embedded concatenation at
-// `go test ./...`.
+// pieces span dashboard.html, dashboard.css and four JS modules. A rename in
+// any one file would silently break the feature in the browser, and the
+// behavioural suites in jstest/ mount islands one at a time and so cannot see
+// across that seam; this asserts on the embedded concatenation instead.
 //
 // The feature: on a subscription the Costs tab + per-agent cost badge auto-hide
 // (no real spend to show); enabling cost.show_on_subscription reveals them in
@@ -40,6 +40,10 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 
 	// dashboard.html: the banner, the Config-tab opt-in checkbox, the toggle.
 	must(`id="costs-whatif-banner"`, "the WHAT-IF banner element exists in the Costs tab")
+	// That the caveat renders *above* the controls it qualifies, and that its
+	// two sentences keep their space, are DOM facts rather than source-order
+	// ones — asserted on the mounted island in
+	// jstest/costs-island.test.mjs ("keeps its cross-line word gaps").
 	must(`id="cfg-cost-show-on-subscription"`, "the Config tab carries the show-on-subscription checkbox")
 	must(`id="groups-cost-toggle"`, "the Groups filter bar carries the 💲 cost toggle")
 

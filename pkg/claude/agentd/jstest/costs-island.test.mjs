@@ -93,3 +93,41 @@ test('Costs island exposes loading/error/what-if visibility and production clean
   cleanup();
   assert.equal(host.childElementCount, 0);
 });
+
+// htm strips the whitespace around a newline in a static chunk, so every
+// text/expression boundary that spans lines needs an explicit ${' '} or the
+// words run together. These are the three places in the island where the gap
+// is load-bearing; all three regressed at some point.
+test('Costs island keeps its cross-line word gaps and leads with the WHAT-IF caveat', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+    harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
+  ]);
+  const chained = payload();
+  chained.agents.push({
+    agent_id: 'agt_alpha2', conv_id: 'conv-a', day: '2026-07-09', title: 'Alpha', harness: 'claude',
+    model: 'opus', cost_usd: 1, real_cost_usd: 1, cost_kind: 'real', continued: true,
+  });
+  const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: true });
+  const activeTab = harness.signals.signal('costs');
+  const state = createCostsState({ snapshot, activeTab, prefs: storage, now: () => new Date(2026, 6, 10, 12) });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, chained);
+  const actions = { load: async () => {}, loadFactor: async () => {}, saveFactor: async () => {} };
+  const mounted = await harness.mount(harness.html`<${CostsApp} state=${state} actions=${actions} />`);
+
+  const banner = mounted.container.querySelector('#costs-whatif-banner');
+  const controls = mounted.container.querySelector('#costs-spans');
+  assert.ok(banner && controls, 'banner and controls both render');
+  assert.ok(banner.compareDocumentPosition(controls) & 4 /* DOCUMENT_POSITION_FOLLOWING */,
+    'the WHAT-IF caveat renders above the controls it qualifies');
+  assert.match(banner.textContent, /subscription estimates\. WHAT-IF values estimate/,
+    'the banner keeps a space between its two sentences');
+
+  assert.match(mounted.container.querySelector('.cost-proj').textContent, /: ~\$8/,
+    'the projection keeps a space after its label');
+  assert.match(mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"] td').textContent, /↳ Alpha/,
+    'the chain marker keeps a space before the agent name');
+  await mounted.unmount();
+});

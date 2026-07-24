@@ -32,7 +32,7 @@ function Summary({ current }) {
     <span class="cost-sep">·</span><span class="muted">${current.narrowed.from} → ${to}</span>
     ${projection && html`<${Fragment}><span class="cost-sep">·</span>
       <span class="cost-proj" title=${tip}>
-        ${monthProjectionLabel(projection, current.hasReal)}:
+        ${monthProjectionLabel(projection, current.hasReal)}:${' '}
         <strong>~${fmtUSD(projection.total)}</strong> <span class="muted">(${fmtUSD(projection.perDay)}/${unit})</span>
       </span>
     </${Fragment}>`}
@@ -161,7 +161,7 @@ function CostsTable({ state, current }) {
             return html`<tr key=${`${agent.conv_id}:${agent.day}`} data-key=${`cost-${agent.conv_id}-${agent.day}`}
               data-conv=${chain ? agent.conv_id : undefined} class=${classes || undefined}>
               <td title=${agent.title || '(unknown)'}>${marker && html`<span class=${agent.continued ? 'cost-cont' : 'cost-head'}
-                title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`} 
+                title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`}${marker ? ' ' : ''}
                 <span class="rowname">${agent.title || '(unknown)'}</span> <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span></td>
               <td><span class=${`cost-amt${agent.cost_kind !== 'real' ? ' cost-amt-whatif' : ''}`}
                 title=${agent.cost_kind === 'real' ? `$${(agent.cost_usd || 0).toFixed(4)} real spend` : `${amount} — WHAT-IF values are hypothetical, not real charges`}>
@@ -202,13 +202,17 @@ export function CostsApp({ state, actions }) {
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
   }, []);
+  // The WHAT-IF caveat leads the tab: it qualifies every figure below it,
+  // including the totals in the header, so it has to be read before them.
+  // (htm drops the whitespace around a newline, hence the explicit ${' '}
+  // between the interpolated first sentence and the second one.)
   return html`<div class="costs-island">
-    <${Controls} state=${state} actions=${actions} current=${current} />
-    <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
     <div id="costs-whatif-banner" class="cost-whatif-banner" hidden=${!current.hasWhatIf}>
-      <strong>⚠ WHAT-IF</strong> — ${current.hasReal ? 'this view mixes real billed spend with hypothetical subscription estimates.' : 'these figures are hypothetical subscription estimates.'}
+      <strong>⚠ WHAT-IF</strong> — ${current.hasReal ? 'this view mixes real billed spend with hypothetical subscription estimates.' : 'these figures are hypothetical subscription estimates.'}${' '}
       WHAT-IF values estimate equivalent pay-per-token pricing and are <strong>not real charges</strong>.
     </div>
+    <${Controls} state=${state} actions=${actions} current=${current} />
+    <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
     ${current.request.hasLoaded && html`<${Fragment}><${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} /><${CostsTable} state=${state} current=${current} /></${Fragment}>`}
   </div>`;
 }
