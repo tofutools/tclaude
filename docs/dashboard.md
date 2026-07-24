@@ -785,12 +785,21 @@ settings apply on next use; a few resolved at `agentd` startup (spawn
 rate-limit, clone cooldown) take effect only after an agentd restart.
 
 The **Usage, costs & rate limits** section controls the top-bar Claude
-subscription bars.
+subscription bars and OpenCode WHAT-IF pricing.
 By default agentd does **not** periodically call Anthropic's usage API; it uses
 Claude Code's statusline callback when sessions run and otherwise shows the
 last cached reading for `usage.idle_timeout` (default `72h`). Enable
 `usage.poll_anthropic_api` there only if you want background API refreshes while
 no statusline callback is active.
+
+For OpenCode provider catalogs that expose the legacy
+`experimentalOver200K` price shape, tclaude applies that price only when one
+model call's input-plus-cache context exceeds
+`opencode.legacy_long_context_pricing_cutoff` (default `272000`). Exactly at
+the cutoff remains base-priced. Explicit context tiers in the provider catalog
+always take precedence, and separate model calls in one message are evaluated
+independently. A missing, zero, negative, or malformed value falls back to
+`272000`; the Config editor rejects a non-positive value before saving.
 
 The **Default terminal** toggle (`dashboard.default_terminal`) chooses where
 dashboard focus/open actions appear. Its default, `native`, opens or raises OS

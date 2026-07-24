@@ -79,6 +79,11 @@ The implemented handling is:
   included. Stable message and `step-finish` part identities make multi-call
   tool turns, repeated SSE updates, reconnect history, and recovery backfills
   replacement-safe instead of undercounting or double-counting.
+  Explicit context tiers take precedence over the legacy
+  `experimentalOver200K` shape. When only that legacy shape is available, its
+  per-call boundary comes from
+  `opencode.legacy_long_context_pricing_cutoff` in tclaude's config (default
+  `272000` context tokens).
 
 The Costs tab selects real spend per session/day slice when present and
 otherwise selects its WHAT-IF estimate. Mixed Claude, Codex, and OpenCode

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -252,8 +253,13 @@ func validOpenCodePrice(price openCodeModelPrice) bool {
 // openCodeVirtualCostForUsage mirrors OpenCode's native cost calculation:
 // rates are USD per million tokens; reasoning is charged as output; the
 // highest matching context tier wins, with experimentalOver200K as the legacy
-// fallback only when no explicit tier matches.
-func openCodeVirtualCostForUsage(usage openCodeContextUsage, base openCodeModelPrice) (float64, bool) {
+// fallback only when no explicit tier matches and the per-call context exceeds
+// legacyLongContextCutoff.
+func openCodeVirtualCostForUsage(
+	usage openCodeContextUsage,
+	base openCodeModelPrice,
+	legacyLongContextCutoff int64,
+) (float64, bool) {
 	price := base
 	contextTokens := usage.Input + usage.CacheRead + usage.CacheWrite
 	var (
@@ -268,7 +274,7 @@ func openCodeVirtualCostForUsage(usage openCodeContextUsage, base openCodeModelP
 		price.Input, price.Output, price.Cache = tier.Input, tier.Output, tier.Cache
 		matched, matchedSize = true, tier.Tier.Size
 	}
-	if !matched && contextTokens > 200_000 && base.ExperimentalOver200K != nil {
+	if !matched && contextTokens > legacyLongContextCutoff && base.ExperimentalOver200K != nil {
 		price.Input = base.ExperimentalOver200K.Input
 		price.Output = base.ExperimentalOver200K.Output
 		price.Cache = base.ExperimentalOver200K.Cache
@@ -292,7 +298,11 @@ func openCodeVirtualCostForUsage(usage openCodeContextUsage, base openCodeModelP
 	return usd, true
 }
 
-func projectOpenCodeMessageCost(usage openCodeContextUsage, prices map[string]openCodeModelPrice) openCodeProjectedMessageCost {
+func projectOpenCodeMessageCost(
+	usage openCodeContextUsage,
+	prices map[string]openCodeModelPrice,
+	legacyLongContextCutoff int64,
+) openCodeProjectedMessageCost {
 	if usage.ReportedCost == nil || usage.MessageID == "" {
 		return openCodeProjectedMessageCost{}
 	}
@@ -306,7 +316,7 @@ func projectOpenCodeMessageCost(usage openCodeContextUsage, prices map[string]op
 	if !ok {
 		return openCodeProjectedMessageCost{}
 	}
-	usd, ok := openCodeVirtualCostForUsage(usage, price)
+	usd, ok := openCodeVirtualCostForUsage(usage, price, legacyLongContextCutoff)
 	return openCodeProjectedMessageCost{usd: usd, eligible: ok}
 }
 
@@ -353,25 +363,31 @@ func openCodeMessageUsageRealCost(state openCodeMessageCostUsage) float64 {
 func projectOpenCodeMessageCostUsage(
 	state openCodeMessageCostUsage,
 	prices map[string]openCodeModelPrice,
+	legacyLongContextCutoff int64,
 ) openCodeProjectedMessageCost {
 	usage := aggregateOpenCodeMessageCostUsage(state)
 	if !state.hadSteps {
-		return projectOpenCodeMessageCost(usage, prices)
+		return projectOpenCodeMessageCost(usage, prices, legacyLongContextCutoff)
 	}
 	if usage.ReportedCost == nil || *usage.ReportedCost != 0 || usage.MessageID == "" {
-		return projectOpenCodeMessageCost(usage, prices)
+		return projectOpenCodeMessageCost(usage, prices, legacyLongContextCutoff)
 	}
 	total := 0.0
 	for _, step := range state.steps {
 		step.ProviderID = usage.ProviderID
 		step.ModelID = usage.ModelID
-		projected := projectOpenCodeMessageCost(step, prices)
+		projected := projectOpenCodeMessageCost(step, prices, legacyLongContextCutoff)
 		if !projected.eligible {
 			return projected
 		}
 		total += projected.usd
 	}
 	return openCodeProjectedMessageCost{usd: total, eligible: true}
+}
+
+func openCodeLegacyLongContextPricingCutoff() int64 {
+	cfg, _ := config.Load()
+	return cfg.ResolvedOpenCodeLegacyLongContextPricingCutoff()
 }
 
 func openCodeMessageUsageIsSubscription(state openCodeMessageCostUsage) bool {
@@ -474,6 +490,7 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		// messages without moving old spend into today.
 		return
 	}
+	legacyLongContextCutoff := openCodeLegacyLongContextPricingCutoff()
 
 	projections := make(map[string]openCodeProjectedMessageCost, len(states))
 	type dailyContribution struct {
@@ -486,7 +503,7 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	haveIneligible := false
 	for _, state := range states {
 		usage := aggregateOpenCodeMessageCostUsage(state)
-		projected := projectOpenCodeMessageCostUsage(state, prices)
+		projected := projectOpenCodeMessageCostUsage(state, prices, legacyLongContextCutoff)
 		projections[usage.MessageID] = projected
 		if !projected.eligible {
 			// A successfully loaded catalog can still omit one model. Do not
