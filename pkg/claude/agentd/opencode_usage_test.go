@@ -386,8 +386,19 @@ func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
 	t.Cleanup(resetOpenCodeLimitCacheForTest)
 	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
-			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+		case "/session/ses-steps/message":
+			// OpenCode can retain the final step's stale top-level tokens while
+			// correctly returning no surviving step-finish parts.
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg-tools","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0,"tokens":{"input":1000000,"output":0}},"parts":[]}]`))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(server.Close)
 	runtime := db.OpenCodeRuntime{
@@ -438,17 +449,48 @@ func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
 		"removing a live step rebuilds the message from its retained parts")
 
 	removal, ok = parseOpenCodeCostRemoval(
-		openCodeRemovedEventJSON("message.removed", runtime.ConvID, "msg-tools", ""),
+		openCodeRemovedEventJSON("message.part.removed", runtime.ConvID, "msg-tools", "part-text"),
 		runtime.ConvID,
 	)
 	require.True(t, ok)
 	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
 	snap, err = db.GetContextSnapshot(runtime.SessionID)
 	require.NoError(t, err)
-	assert.Zero(t, snap.VirtualCostUSD, "removing the message clears its projected history")
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"removing an unrelated non-step part leaves projected cost unchanged")
 	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	require.NoError(t, err)
-	assert.Empty(t, activity, "removed messages also leave the Usage coverage index")
+	require.Len(t, activity, 1, "unrelated part removal leaves Usage coverage unchanged")
+
+	removal, ok = parseOpenCodeCostRemoval(
+		openCodeRemovedEventJSON("message.part.removed", runtime.ConvID, "msg-tools", "part-1"),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "removing the final pricing step clears projected history")
+	activity, err = db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "final-step removal also clears the Usage coverage index")
+
+	// Simulate an agentd restart plus local-session resume. The history endpoint
+	// still exposes stale top-level tokens, but the conversation-scoped removal
+	// marker must keep both projection and activity cleared.
+	resetOpenCodeVirtualCostStateForTest()
+	const resumedSessionID = "oc-steps-resumed"
+	seedOpenCodeUsageSession(t, resumedSessionID, runtime.ConvID)
+	resumed := runtime
+	resumed.SessionID = resumedSessionID
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), resumed))
+	snap, err = db.GetContextSnapshot(resumedSessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD,
+		"reconnect and resume do not resurrect stale top-level usage after final-step removal")
+	activity, err = db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "reconnect and resume keep Usage coverage cleared")
 }
 
 func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {

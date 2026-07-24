@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,21 @@ import (
 )
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
+
+type openCodeBlockingReadCloser struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *openCodeBlockingReadCloser) Read([]byte) (int, error) {
+	<-b.closed
+	return 0, context.Canceled
+}
+
+func (b *openCodeBlockingReadCloser) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
 
 func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 	const password = "private-password"
@@ -372,6 +388,59 @@ func TestStopOpenCodeProcessJoinsSSEProjector(t *testing.T) {
 	_, registeredAfterStop := openCodeProcesses.bySession[sessionID]
 	openCodeProcesses.Unlock()
 	assert.False(t, registeredAfterStop, "the stopping tombstone is removed after projector join")
+}
+
+func TestOpenCodeSSEBodyIsActivelyClosedOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &openCodeBlockingReadCloser{closed: make(chan struct{})}
+	stopWatching := closeOpenCodeSSEBodyOnCancel(ctx, body)
+	cancel()
+	select {
+	case <-body.closed:
+	case <-time.After(time.Second):
+		t.Fatal("SSE response body was not actively closed after cancellation")
+	}
+	stopWatching()
+}
+
+func TestStopOpenCodeProcessBoundsStuckSSEProjectorJoin(t *testing.T) {
+	const sessionID = "spwn-stop-bounds-stuck-sse"
+	ctx, cancel := context.WithCancel(context.Background())
+	process := &openCodeProcess{cancel: cancel, sseDone: make(chan struct{})}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+
+	started := time.Now()
+	stopReturned := make(chan struct{})
+	go func() {
+		stopOpenCodeProcess(db.OpenCodeRuntime{SessionID: sessionID}, nil)
+		close(stopReturned)
+	}()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the stuck SSE projector")
+	}
+	openCodeProcesses.Lock()
+	registered := openCodeProcesses.bySession[sessionID]
+	openCodeProcesses.Unlock()
+	require.Same(t, process, registered,
+		"stopping tombstone remains registered during the bounded join")
+	assert.True(t, registered.stopping)
+
+	select {
+	case <-stopReturned:
+	case <-time.After(openCodeProcessStopWait + time.Second):
+		t.Fatal("stop remained blocked after the bounded SSE-projector join")
+	}
+	assert.GreaterOrEqual(t, time.Since(started), openCodeProcessStopWait,
+		"stop must still give the projector its bounded grace period")
+	openCodeProcesses.Lock()
+	_, registeredAfterTimeout := openCodeProcesses.bySession[sessionID]
+	openCodeProcesses.Unlock()
+	assert.False(t, registeredAfterTimeout,
+		"stopping tombstone is safely removed after the bounded join expires")
 }
 
 func TestStopOpenCodeProcessVerifiesRecoveredPIDBeforeKill(t *testing.T) {

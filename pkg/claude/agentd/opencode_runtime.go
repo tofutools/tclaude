@@ -768,6 +768,8 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	// temporarily missing entry as permission to launch a replacement SSE
 	// consumer during teardown.
 	process.stopping = true
+	cancel := process.cancel
+	sseDone := process.sseDone
 	openCodeProcesses.Unlock()
 	defer func() {
 		openCodeProcesses.Lock()
@@ -777,16 +779,21 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 		openCodeProcesses.Unlock()
 	}()
 	if process != nil {
-		if process.cancel != nil {
-			process.cancel()
+		if cancel != nil {
+			cancel()
 		}
-		if process.sseDone != nil {
+		if sseDone != nil {
 			// Cancellation interrupts the in-flight HTTP request/scanner and
 			// every retry wait. Join the projector before clearing its
 			// in-memory state or allowing a resume with the same conv_id;
 			// otherwise the stale runtime can repopulate authoritative cost
 			// and activity after teardown.
-			<-process.sseDone
+			select {
+			case <-sseDone:
+			case <-time.After(openCodeProcessStopWait):
+				slog.Warn("OpenCode SSE projector did not stop before timeout",
+					"session", runtime.SessionID, "timeout", openCodeProcessStopWait)
+			}
 		}
 		if process.cmd != nil && process.cmd.Process != nil {
 			_ = process.cmd.Process.Signal(os.Interrupt)
@@ -878,6 +885,24 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 	}()
 }
 
+// closeOpenCodeSSEBodyOnCancel actively interrupts Scanner.Scan when request
+// context cancellation alone does not wake a custom or wedged transport. The
+// Close runs in this watcher goroutine, so a pathological Close implementation
+// cannot itself block process teardown.
+func closeOpenCodeSSEBodyOnCancel(ctx context.Context, body io.ReadCloser) func() {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			if err := body.Close(); err != nil {
+				slog.Debug("OpenCode SSE response close failed", "error", err)
+			}
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
+}
+
 func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {
 	consumeOpenCodeSSEWithRetry(ctx, runtime, openCodeSSERetryDelay)
 }
@@ -892,6 +917,7 @@ func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime
 			var response *http.Response
 			response, err = openCodeSSEHTTPClient.Do(request)
 			if err == nil && response.StatusCode == http.StatusOK {
+				stopBodyCancellation := closeOpenCodeSSEBodyOnCancel(ctx, response.Body)
 				// The stream is live before snapshots are read, so events that
 				// race reconciliation remain buffered on this response and are
 				// applied afterward in server order.
@@ -911,6 +937,7 @@ func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime
 							json.RawMessage(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
 					}
 				}
+				stopBodyCancellation()
 				_ = response.Body.Close()
 				err = scanner.Err()
 			} else if response != nil {

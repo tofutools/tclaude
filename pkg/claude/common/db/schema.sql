@@ -984,3 +984,13 @@ CREATE INDEX idx_opencode_usage_activity_observed
 CREATE INDEX idx_opencode_usage_activity_conv_message
 			ON opencode_usage_activity(conv_id, message_id);
 
+CREATE TABLE opencode_usage_step_removals (
+			conv_id    TEXT NOT NULL,
+			message_id TEXT NOT NULL,
+			removed_at TEXT NOT NULL,
+			PRIMARY KEY (conv_id, message_id)
+		);
+
+CREATE INDEX idx_opencode_usage_step_removals_removed
+			ON opencode_usage_step_removals(removed_at);
+

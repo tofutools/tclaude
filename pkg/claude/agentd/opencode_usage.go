@@ -392,7 +392,7 @@ func openCodeLegacyLongContextPricingCutoff() int64 {
 
 func openCodeMessageUsageIsSubscription(state openCodeMessageCostUsage) bool {
 	usage := aggregateOpenCodeMessageCostUsage(state)
-	return usage.ReportedCost != nil && *usage.ReportedCost == 0
+	return usage.total() > 0 && usage.ReportedCost != nil && *usage.ReportedCost == 0
 }
 
 func openCodeActivityForUsage(runtime db.OpenCodeRuntime, usage openCodeContextUsage) db.OpenCodeUsageActivity {
@@ -600,6 +600,10 @@ func applyOpenCodeVirtualCostStep(ctx context.Context, runtime db.OpenCodeRuntim
 		!backfillOpenCodeContextUsage(ctx, runtime) {
 		return
 	}
+	if err := db.ClearOpenCodePricingStepsRemoved(runtime.ConvID, step.Usage.MessageID); err != nil {
+		slog.Debug("OpenCode pricing-step removal marker could not be cleared",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+	}
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	state := usages[step.Usage.MessageID]
@@ -629,14 +633,23 @@ func applyOpenCodeVirtualCostRemoval(
 		return
 	}
 	messageRemoved := removal.PartID == ""
+	finalStepRemoved := false
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	if messageRemoved {
 		delete(usages, removal.MessageID)
 	} else if state, ok := usages[removal.MessageID]; ok {
+		if _, knownStep := state.steps[removal.PartID]; !knownStep {
+			openCodeVirtualCostState.Unlock()
+			return
+		}
 		delete(state.steps, removal.PartID)
 		state.hadSteps = true
 		usages[removal.MessageID] = state
+		finalStepRemoved = len(state.steps) == 0
+	} else {
+		openCodeVirtualCostState.Unlock()
+		return
 	}
 	openCodeVirtualCostState.Unlock()
 	if messageRemoved {
@@ -644,6 +657,17 @@ func applyOpenCodeVirtualCostRemoval(
 			runtime.ConvID, runtime.SessionID, removal.MessageID,
 		); err != nil {
 			slog.Debug("OpenCode removed-message activity could not be deleted",
+				"session", runtime.SessionID, "error", err, "module", "agentd")
+		}
+		if err := db.ClearOpenCodePricingStepsRemoved(runtime.ConvID, removal.MessageID); err != nil {
+			slog.Debug("OpenCode removed-message pricing marker could not be deleted",
+				"session", runtime.SessionID, "error", err, "module", "agentd")
+		}
+	} else if finalStepRemoved {
+		if err := db.MarkOpenCodePricingStepsRemoved(
+			runtime.ConvID, runtime.SessionID, removal.MessageID, time.Now(),
+		); err != nil {
+			slog.Debug("OpenCode final-step removal could not be persisted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}
 	}
@@ -725,6 +749,15 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 		return false
 	}
+	removedPricingSteps, err := db.OpenCodePricingStepsRemoved(runtime.ConvID, time.Now())
+	if err != nil {
+		// Missing durable removal state is not safe to interpret as "no
+		// removals": stale top-level tokens could otherwise resurrect a cleared
+		// projection. Keep the prior authoritative state and retry later.
+		slog.Debug("OpenCode pricing-step removals could not be loaded",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+		return false
+	}
 
 	var (
 		latest     openCodeContextUsage
@@ -776,9 +809,24 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 				costUsage.hadSteps = true
 			}
 		}
+		if len(costUsage.steps) == 0 && removedPricingSteps[usage.MessageID] {
+			// OpenCode can retain stale top-level message tokens after the last
+			// step-finish part is removed. Keep aggregate mode active with an
+			// empty step set so those tokens remain ineligible after reconnect.
+			costUsage.hadSteps = true
+		} else if len(costUsage.steps) > 0 && removedPricingSteps[usage.MessageID] {
+			// History is authoritative that a later eligible step exists.
+			if err := db.ClearOpenCodePricingStepsRemoved(runtime.ConvID, usage.MessageID); err != nil {
+				slog.Debug("OpenCode recovered pricing-step marker could not be cleared",
+					"session", runtime.SessionID, "error", err, "module", "agentd")
+			}
+		}
 		realCost += openCodeMessageUsageRealCost(costUsage)
 		effectiveUsage := aggregateOpenCodeMessageCostUsage(costUsage)
 		if effectiveUsage.total() <= 0 {
+			if costUsage.hadSteps {
+				costUsages = append(costUsages, costUsage)
+			}
 			continue
 		}
 		costUsages = append(costUsages, costUsage)

@@ -5,7 +5,7 @@ import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
 import {
   COST_COLUMNS, COST_SPANS, fmtLastActivity, fmtUSD, harnessLabel,
-  harnessSegmentClass,
+  harnessSegmentClass, monthProjectionLabel,
 } from './costs-model.js';
 import { idTooltip, shortAgentId } from './helpers.js';
 
@@ -32,7 +32,7 @@ function Summary({ current }) {
     <span class="cost-sep">·</span><span class="muted">${current.narrowed.from} → ${to}</span>
     ${projection && html`<${Fragment}><span class="cost-sep">·</span>
       <span class="cost-proj" title=${tip}>
-        ${projection.includesWhatIf ? 'WHAT-IF ' : ''}${projection.fillEmpty ? 'Projected avg month total' : 'Projected month total'}:
+        ${monthProjectionLabel(projection, current.hasReal)}:
         <strong>~${fmtUSD(projection.total)}</strong> <span class="muted">(${fmtUSD(projection.perDay)}/${unit})</span>
       </span>
     </${Fragment}>`}
