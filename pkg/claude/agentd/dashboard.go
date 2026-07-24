@@ -1729,12 +1729,11 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// and no later hook re-settled it. The badges already read 0 then,
 		// so a busy detail next to them would be self-contradicting.
 		//
-		// Holding UP: a background shell can outlive not just the turn but
+		// Holding UP: background activity can outlive not just the turn but
 		// the hook that would have recorded it — Claude Code's idle_prompt
-		// Notification, for one, sets a bare idle without consulting any
-		// ledger. Rendering that agent as plain idle is exactly the bug
-		// this feature exists to fix: it is not finished, it is waiting on
-		// a command.
+		// Notification, for one, sets a bare idle without consulting either
+		// ledger. Rendering that agent as plain idle is self-contradicting
+		// when the adjacent badge says a sub-agent or shell is still working.
 		//
 		// PARTIAL change: two shells reconciled down to one moves neither
 		// boundary, so without the last case the pill would keep reading
@@ -1751,7 +1750,7 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 				out.Status = session.StatusIdle
 				out.StatusDetail = ""
 			}
-		case out.BgShellCount > 0 && out.Status == session.StatusIdle:
+		case (out.SubagentCount > 0 || out.BgShellCount > 0) && out.Status == session.StatusIdle:
 			out.Status = session.StatusMainAgentIdle
 			out.StatusDetail = session.BackgroundActivityDetail(out.SubagentCount, out.BgShellCount)
 		case out.Status == session.StatusMainAgentIdle:

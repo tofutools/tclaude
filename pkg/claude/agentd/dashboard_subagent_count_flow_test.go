@@ -83,6 +83,48 @@ func TestDashboardSnapshot_SubagentCountSurvivesMainAgentStop(t *testing.T) {
 	assert.Equal(t, session.StatusIdle, member.State.Status, "status settles to idle once no sub-agents remain")
 }
 
+// Scenario: Claude Code's delayed idle_prompt notification can arrive while a
+// background sub-agent is still alive. The hook deliberately records idle so
+// it can recover interrupted main turns, but the dashboard's reconciled view
+// must not show a plain idle pill beside a live 🤖 badge.
+func TestDashboardSnapshot_LiveSubagentHoldsIdleStatusAtMainAgentIdle(t *testing.T) {
+	const conv = "subidle-1111-2222-3333-4444"
+	const label = "spwn-subidle"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveGroup("squad")
+	f.HaveAliveSession(conv, label, "tmux-subidle", f.TestCwd("subidle"))
+	f.HaveMember("squad", conv)
+
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName: "SubagentStart",
+		ConvID:        conv,
+		Cwd:           f.TestCwd("subidle"),
+		AgentType:     "Explore",
+		AgentID:       "ag-live",
+	}, label), "ApplyHook(SubagentStart)")
+	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+		HookEventName:    "Notification",
+		NotificationType: "idle_prompt",
+		ConvID:           conv,
+		Cwd:              f.TestCwd("subidle"),
+	}, label), "ApplyHook(idle_prompt)")
+
+	row, err := db.LoadSession(label)
+	require.NoError(t, err)
+	assert.Equal(t, session.StatusIdle, row.Status,
+		"fixture must exercise read-side reconciliation from a stored idle status")
+
+	member := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
+	require.NotNil(t, member, "agent %s missing from group squad members", conv)
+	assert.Equal(t, 1, member.State.SubagentCount, "live sub-agent remains badged")
+	assert.Equal(t, session.StatusMainAgentIdle, member.State.Status,
+		"live sub-agent turns the dashboard's idle state into idle + work")
+	assert.Equal(t, "1 subagents running", member.State.StatusDetail)
+}
+
 // Scenario: the SubagentStop is LOST — the documented interrupt case
 // (Claude Code fires no hooks at all on Esc, anthropics/claude-code#11189)
 // or any dropped hook callback. The badge must not show a phantom "+1"
