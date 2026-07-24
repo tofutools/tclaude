@@ -79,6 +79,21 @@ func TestApplyOpenCodeCost_IgnoresForeignConversation(t *testing.T) {
 	assert.Zero(t, snap.CostUSD, "foreign conversation must not write cost")
 }
 
+// A non-session.updated event must be rejected by the fast-path guard and never
+// write cost, even if it happens to carry a cost-shaped payload.
+func TestApplyOpenCodeCost_IgnoresOtherEventTypes(t *testing.T) {
+	setupTestDB(t)
+	const sessionID, convID = "oc-cost-other", "ses_cost_other"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
+
+	event := openCodeMessageUpdatedEventJSON("evt_m", convID, "openai", "gpt-5.4", 1000, 200, 0, 0, 0)
+	applyOpenCodeCost(runtime, json.RawMessage(event))
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.CostUSD, "a message.updated event must not write cost")
+}
+
 func TestPersistOpenCodeModelSlug(t *testing.T) {
 	setupTestDB(t)
 	const sessionID, convID = "oc-model-session", "ses_model"
@@ -154,4 +169,46 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
 	assert.InDelta(t, float64(105000)/272000*100, snap.ContextPct, 1e-6)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
+}
+
+// A conversation whose history has no assistant turn with usage (user-only, or
+// zero-token) must leave the row untouched rather than writing a zero snapshot.
+func TestBackfillOpenCodeContextUsage_NoAssistantTurn(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+
+	const (
+		sessionID = "oc-backfill-empty"
+		convID    = "ses_backfill_empty"
+		password  = "pw-empty"
+	)
+	seedOpenCodeUsageSession(t, sessionID, convID)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/"+convID+"/message" {
+			_, _ = w.Write([]byte(`[` +
+				`{"info":{"id":"msg_u","role":"user"}},` +
+				// Assistant turn with no usage yet (all-zero tokens) — skipped.
+				`{"info":{"id":"msg_a","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
+				`"time":{"created":100},"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}` +
+				`]`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID,
+		ServerURL: server.URL, Password: password, PID: os.Getpid(),
+		Cwd: t.TempDir(),
+	}
+	backfillOpenCodeContextUsage(context.Background(), runtime)
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.TokensInput, "no assistant usage must not write a snapshot")
+	assert.Zero(t, snap.ContextWindowSize)
+	assert.Empty(t, snap.Model)
 }

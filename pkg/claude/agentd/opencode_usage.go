@@ -124,7 +124,11 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 		return
 	}
-	response, err := openCodeConfigHTTPClient.Do(request.WithContext(ctx))
+	// Use the general 5 s API client, not the 3 s /config/providers-tuned one:
+	// a message history can be far larger than a provider catalog, and the
+	// timeout covers the whole body read. A backfill that times out degrades
+	// gracefully — the next live turn re-populates the snapshot.
+	response, err := openCodeHTTPClient.Do(request.WithContext(ctx))
 	if err != nil {
 		slog.Debug("OpenCode context backfill fetch failed",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
