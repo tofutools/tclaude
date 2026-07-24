@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -33,6 +32,7 @@ var (
 	ErrInvalidRun           = errors.New("invalid executable process run")
 	ErrNeedsReconcile       = errors.New("process command needs explicit reconciliation")
 	ErrNoReconciliation     = errors.New("process run has no command to reconcile")
+	ErrAmbiguousReconcile   = errors.New("process run has more than one command to reconcile; name one")
 	ErrStaleDispatch        = errors.New("stale or already-used process dispatch")
 	ErrInvalidActor         = errors.New("reconciliation actor is invalid")
 	ErrInvalidDecisionInput = errors.New("invalid process decision input")
@@ -48,13 +48,23 @@ const (
 
 // Run is one cold-reconstructed run. The immutable Definition is prepared
 // exactly once here and reused by every transition until this value is dropped.
+//
+// A Run has exactly ONE owner: whichever goroutine drives it. Every field here,
+// including the live dispatch table, is read and written only by that owner.
+// Program workers never receive the Run — they are handed an immutable Dispatch
+// and hand back a Result.
 type Run struct {
 	id           string
 	stateVersion int64
 	checkpoint   engine.Checkpoint
 	definition   *engine.Definition
 	authorized   map[string]struct{}
-	dispatch     *Dispatch
+	// dispatches holds the live in-memory permission for each durable outbox
+	// entry this process is still accounting for, keyed by node id (the outbox
+	// key). An outbox entry with no live permission is exactly the ambiguous,
+	// explicitly reconcilable case: a cold load, a worker that never reported,
+	// or an observation that failed to commit.
+	dispatches map[string]*Dispatch
 }
 
 type Action struct {
@@ -64,14 +74,27 @@ type Action struct {
 	Decision *engine.DecisionObligation
 }
 
+// CommandState is one durable outbox entry plus whether this process still
+// holds a live permission accounting for it.
+type CommandState struct {
+	Command engine.Command
+	// Executing is true while the owner still holds a live permission for this
+	// entry — it has been handed to a worker, or is about to be. False means
+	// the entry is ambiguous and needs explicit reconciliation.
+	Executing bool
+}
+
 // Dispatch is an in-memory permission to execute a command whose complete
 // request has already committed. It cannot be constructed outside this package.
+//
+// It is mutated only by the run's owner, and only before Claim hands it to a
+// worker. After Claim the value is immutable, so a worker goroutine can read
+// its command without synchronization and without touching the Run.
 type Dispatch struct {
-	owner        *Run
-	stateVersion int64
-	command      engine.Command
-	mu           sync.Mutex
-	used         bool
+	owner   *Run
+	runID   string
+	command engine.Command
+	claimed bool
 }
 
 // Authorization is the concrete decision supplied by the daemon-owned caller.
@@ -125,27 +148,31 @@ func (r *Run) AuthorizationFor(profile string) (Authorization, bool) {
 	return Authorization{RunID: r.id, Profile: profile}, true
 }
 
-// Action reports what a driver should do with this run next.
+// Action reports the single coarse thing a driver should do with this run next.
 //
-// This slice consumes work sequentially: the engine commits at most one command
-// per plan, so a run carries at most one command at a time and that entry is
-// unambiguous here. Decisions are different — fan-out can park several branches
-// on humans at once — so an awaited decision is only reported once the engine
-// has no work left to push. Reporting it earlier would stop the driver while a
-// sibling branch still had a task to run.
+// Under bounded concurrency a run can hold several commands and several awaited
+// decisions at once, so this is a SUMMARY, never an inventory. Commands() and
+// AwaitingDecisions() are the plural truth; a caller that acts on a specific
+// branch must go through those, or it would silently pick one.
+//
+// The order is the order of operator relevance: an ambiguous command needs a
+// human before anything else, live work outranks plannable work, and an awaited
+// decision is only the headline once nothing is executing or plannable.
 func (r *Run) Action() Action {
 	if r == nil {
 		return Action{}
 	}
 	action := Action{Status: r.checkpoint.Status}
+	for _, state := range r.Commands() {
+		if !state.Executing {
+			command := state.Command
+			action.Kind, action.Command = ActionNeedsReconcile, &command
+			return action
+		}
+	}
 	if len(r.checkpoint.Commands) > 0 {
 		command := cloneCommand(r.checkpoint.Commands[0])
-		action.Command = &command
-		if r.dispatch != nil && !r.dispatch.wasUsed() {
-			action.Kind = ActionDispatch
-		} else {
-			action.Kind = ActionNeedsReconcile
-		}
+		action.Kind, action.Command = ActionDispatch, &command
 		return action
 	}
 	if engine.Runnable(r.checkpoint, r.definition) {
@@ -166,17 +193,37 @@ func (r *Run) Action() Action {
 	return action
 }
 
-// DecisionVerdicts exposes the prepared verdict vocabulary of the run's
-// awaited decision, or nil when no decision is awaited.
-func (r *Run) DecisionVerdicts() []string {
+// Commands reports every durable outbox entry with whether this process still
+// accounts for it. It is the plural read every presentation and reconciliation
+// surface uses.
+func (r *Run) Commands() []CommandState {
+	if r == nil || len(r.checkpoint.Commands) == 0 {
+		return nil
+	}
+	states := make([]CommandState, 0, len(r.checkpoint.Commands))
+	for i := range r.checkpoint.Commands {
+		command := cloneCommand(r.checkpoint.Commands[i])
+		_, live := r.dispatches[command.NodeID]
+		states = append(states, CommandState{Command: command, Executing: live})
+	}
+	return states
+}
+
+// AwaitingDecisions reports every branch currently parked on a human.
+func (r *Run) AwaitingDecisions() []engine.DecisionObligation {
+	if r == nil || len(r.checkpoint.AwaitingDecisions) == 0 {
+		return nil
+	}
+	return append([]engine.DecisionObligation(nil), r.checkpoint.AwaitingDecisions...)
+}
+
+// VerdictsFor exposes the prepared verdict vocabulary of one awaited decision,
+// or nil when that node is not a prepared decision.
+func (r *Run) VerdictsFor(nodeID string) []string {
 	if r == nil || r.definition == nil {
 		return nil
 	}
-	obligation := r.checkpoint.FirstAwaitingDecision()
-	if obligation == nil {
-		return nil
-	}
-	verdicts, _ := r.definition.DecisionVerdicts(obligation.NodeID)
+	verdicts, _ := r.definition.DecisionVerdicts(nodeID)
 	return verdicts
 }
 
@@ -232,14 +279,19 @@ func LoadPreparedRun(record *db.ProcessRun, definition *engine.Definition) (*Run
 }
 
 // Prepare advances only reducer-owned state and atomically persists the fully
-// bound command before returning a dispatch permission. It commits one command
-// per call, which is what this sequential driver consumes; the remaining ready
-// branches are planned by the following calls as each command completes.
+// bound command before returning a dispatch permission. It commits AT MOST ONE
+// command per call: a bounded concurrent driver calls it repeatedly until it
+// has filled its capacity or the call returns nil, and the ready branches it
+// did not reach stay ready until a slot frees up.
+//
+// It refuses outright while any outbox entry is unaccounted for. Such an entry
+// may name a program that really ran, so planning more work past it would build
+// on a state nobody has confirmed.
 func Prepare(run *Run) (*Dispatch, error) {
 	if run == nil || run.definition == nil {
 		return nil, ErrInvalidRun
 	}
-	if len(run.checkpoint.Commands) > 0 {
+	if _, ok := run.firstUnaccountedCommand(); ok {
 		return nil, ErrNeedsReconcile
 	}
 	if run.checkpoint.Status != engine.RunRunning {
@@ -260,21 +312,19 @@ func Prepare(run *Run) (*Dispatch, error) {
 	if command == nil {
 		return nil, nil
 	}
-	dispatch := &Dispatch{
-		owner: run, stateVersion: run.stateVersion,
-		command: cloneCommand(*command),
-	}
-	run.dispatch = dispatch
-	return dispatch, nil
+	return run.grant(*command), nil
 }
 
 // Reissue durably records the operator's explicit retry decision before it
 // returns a fresh dispatch permission. It does not execute the program.
-func Reissue(run *Run, actor string) (*Dispatch, error) {
+//
+// selector names which outbox entry the operator meant, by node id. It may be
+// empty only while exactly one entry needs reconciliation.
+func Reissue(run *Run, actor, selector string) (*Dispatch, error) {
 	if err := validateReconciliationActor(actor); err != nil {
 		return nil, err
 	}
-	command, err := reconcileCommand(run)
+	command, err := reconcileCommand(run, selector)
 	if err != nil {
 		return nil, err
 	}
@@ -285,18 +335,17 @@ func Reissue(run *Run, actor string) (*Dispatch, error) {
 	if err := persist(run, run.checkpoint, event("program_reissued", &command, actor, payload)); err != nil {
 		return nil, err
 	}
-	dispatch := &Dispatch{owner: run, stateVersion: run.stateVersion, command: command}
-	run.dispatch = dispatch
-	return dispatch, nil
+	return run.grant(command), nil
 }
 
-// RecordOutcome durably applies an operator-supplied outcome to an ambiguous
-// command. It is the only reconciliation path other than explicit reissue.
-func RecordOutcome(run *Run, actor string, outcome RecordedOutcome) error {
+// RecordOutcome durably applies an operator-supplied outcome to one ambiguous
+// command, named by selector exactly as in Reissue. It is the only
+// reconciliation path other than explicit reissue.
+func RecordOutcome(run *Run, actor, selector string, outcome RecordedOutcome) error {
 	if err := validateReconciliationActor(actor); err != nil {
 		return err
 	}
-	command, err := reconcileCommand(run)
+	command, err := reconcileCommand(run, selector)
 	if err != nil {
 		return err
 	}
@@ -375,18 +424,108 @@ func validateDecisionInput(input DecisionInput) error {
 	return nil
 }
 
-// reconcileCommand returns the one ambiguous command an operator can reissue or
-// record an outcome for. It requires exactly one outbox entry: this slice never
-// produces more, and an operator action that did not name which command it
-// meant must fail closed rather than silently reconcile a branch at random.
-func reconcileCommand(run *Run) (engine.Command, error) {
+// reconcileCommand returns the one ambiguous command an operator action names.
+//
+// Only unaccounted entries are reconcilable: a command whose program this
+// process is still running is not ambiguous, and letting an operator record an
+// outcome for it would race the real observation.
+//
+// An empty selector is the single-command convenience. With more than one
+// candidate it fails closed rather than reconciling a branch at random — the
+// operator has to say which one they mean.
+func reconcileCommand(run *Run, selector string) (engine.Command, error) {
 	if run == nil || run.definition == nil {
 		return engine.Command{}, ErrInvalidRun
 	}
-	if len(run.checkpoint.Commands) != 1 || run.dispatch != nil {
+	var candidates []engine.Command
+	for _, state := range run.Commands() {
+		if !state.Executing {
+			candidates = append(candidates, state.Command)
+		}
+	}
+	if len(candidates) == 0 {
 		return engine.Command{}, ErrNoReconciliation
 	}
-	return cloneCommand(run.checkpoint.Commands[0]), nil
+	if selector == "" {
+		if len(candidates) > 1 {
+			return engine.Command{}, ErrAmbiguousReconcile
+		}
+		return candidates[0], nil
+	}
+	for _, command := range candidates {
+		if command.NodeID == selector {
+			return command, nil
+		}
+	}
+	return engine.Command{}, fmt.Errorf("%w: no command awaiting reconciliation for node %q",
+		ErrNoReconciliation, selector)
+}
+
+// firstUnaccountedCommand names the deterministically first outbox entry this
+// process no longer holds a live permission for.
+func (r *Run) firstUnaccountedCommand() (engine.Command, bool) {
+	for i := range r.checkpoint.Commands {
+		if _, live := r.dispatches[r.checkpoint.Commands[i].NodeID]; !live {
+			return cloneCommand(r.checkpoint.Commands[i]), true
+		}
+	}
+	return engine.Command{}, false
+}
+
+// grant records a live permission for one durable command. The caller must
+// already have committed that command.
+func (r *Run) grant(command engine.Command) *Dispatch {
+	dispatch := &Dispatch{owner: r, runID: r.id, command: cloneCommand(command)}
+	if r.dispatches == nil {
+		r.dispatches = make(map[string]*Dispatch, 1)
+	}
+	r.dispatches[command.NodeID] = dispatch
+	return dispatch
+}
+
+// Abandon drops one live permission without touching durable state, leaving its
+// command explicitly reconcilable exactly as a cold load would. The owner uses
+// it when a branch's program can no longer be accounted for in memory — the
+// worker reported no result, or its observation would not commit.
+func Abandon(run *Run, dispatch *Dispatch) {
+	if run == nil || dispatch == nil || dispatch.owner != run {
+		return
+	}
+	if run.dispatches[dispatch.command.NodeID] == dispatch {
+		delete(run.dispatches, dispatch.command.NodeID)
+	}
+}
+
+// Claim binds a permission to the authorization its owner resolved and marks it
+// spent, so no second worker can ever be started for the same command. It must
+// be called by the run's single state owner; afterwards the Dispatch is
+// immutable and Perform can read it from a worker goroutine.
+func Claim(run *Run, dispatch *Dispatch, authorization Authorization) error {
+	if run == nil || dispatch == nil || dispatch.owner != run || dispatch.claimed {
+		return ErrStaleDispatch
+	}
+	if run.dispatches[dispatch.command.NodeID] != dispatch {
+		return ErrStaleDispatch
+	}
+	// The permission must still name a live durable outbox entry. Exact
+	// identity, the same rule the reducer binds observations with.
+	if _, ok := findCommand(run.checkpoint, dispatch.command.ID, dispatch.command.NodeID); !ok {
+		return ErrStaleDispatch
+	}
+	if authorization.RunID != run.id || authorization.Profile != dispatch.command.Program.Profile {
+		return ErrUnauthorized
+	}
+	dispatch.claimed = true
+	return nil
+}
+
+func findCommand(checkpoint engine.Checkpoint, commandID, nodeID string) (engine.Command, bool) {
+	for _, command := range checkpoint.Commands {
+		if command.ID == commandID && command.NodeID == nodeID {
+			return command, true
+		}
+	}
+	return engine.Command{}, false
 }
 
 func validateReconciliationActor(actor string) error {
@@ -421,7 +560,14 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 	}
 	run.stateVersion = version
 	run.checkpoint = checkpoint
-	run.dispatch = nil
+	// Live permissions survive a commit by another branch — that is the whole
+	// point of the plural outbox — but a permission whose command has left the
+	// outbox is spent and must not linger as an accounted-for entry.
+	for nodeID, dispatch := range run.dispatches {
+		if _, ok := findCommand(checkpoint, dispatch.command.ID, nodeID); !ok {
+			delete(run.dispatches, nodeID)
+		}
+	}
 	return nil
 }
 
@@ -495,11 +641,11 @@ func (d *Dispatch) Command() engine.Command {
 	return cloneCommand(d.command)
 }
 
-func (d *Dispatch) wasUsed() bool {
+// RunID is the run this permission belongs to. Perform reads it to bind the
+// program's environment without reaching into the owner's Run.
+func (d *Dispatch) RunID() string {
 	if d == nil {
-		return true
+		return ""
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.used
+	return d.runID
 }

@@ -280,13 +280,13 @@ func TestRuntimeMutationVerbsReachDaemon(t *testing.T) {
 	}{
 		"resume": {
 			run: func(stdout, stderr *bytes.Buffer) error {
-				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/resume", stdout, stderr)
+				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/resume", nil, stdout, stderr)
 			},
 			wantPath: "/v1/process/runs/run_1/resume",
 		},
 		"reissue": {
 			run: func(stdout, stderr *bytes.Buffer) error {
-				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/reissue", stdout, stderr)
+				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/reissue", map[string]any{"nodeId": "task-01"}, stdout, stderr)
 			},
 			wantPath: "/v1/process/runs/run_1/reissue",
 		},
@@ -445,7 +445,8 @@ func TestRuntimeShowJSONEmitsCompleteRunSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &fields))
 	assert.ElementsMatch(t, []string{
 		"id", "templateRef", "params", "programAuthorizations", "status", "stateVersion",
-		"checkpoint", "action", "needsReconcile", "createdAt", "updatedAt",
+		"checkpoint", "action", "needsReconcile", "awaitingDecisions", "commands",
+		"createdAt", "updatedAt",
 	}, mapKeys(fields))
 }
 
@@ -666,7 +667,8 @@ func TestRuntimeDecideValidatesInputAndPrintsAwaitedFollowUpDecision(t *testing.
 		})
 		response.Run = processRunJSON{
 			ID: "run_1", Action: "awaiting_decision",
-			AwaitingDecision: &processRunDecisionJSON{NodeID: "confirm", Verdicts: []string{"no", "yes"}},
+			AwaitingDecision:  &processRunDecisionJSON{NodeID: "confirm", Verdicts: []string{"no", "yes"}},
+			AwaitingDecisions: []processRunDecisionJSON{{NodeID: "confirm", Verdicts: []string{"no", "yes"}}},
 		}
 		return nil
 	})
@@ -683,8 +685,9 @@ func TestRuntimeDecideValidatesInputAndPrintsAwaitedFollowUpDecision(t *testing.
 	}, &stdout, &stderr))
 	assert.True(t, requested)
 	assert.Contains(t, stdout.String(), `Recorded decision "approve" for process run run_1.`)
-	assert.Contains(t, stdout.String(), "awaitingDecision=confirm")
-	assert.Contains(t, stdout.String(), "verdicts=no, yes")
+	assert.Contains(t, stdout.String(), "awaitingDecisions:")
+	assert.Contains(t, stdout.String(), "confirm")
+	assert.Contains(t, stdout.String(), "no, yes")
 	assert.Contains(t, stdout.String(), "tclaude process decide run_1 --node confirm")
 }
 

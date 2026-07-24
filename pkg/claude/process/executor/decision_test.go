@@ -66,7 +66,7 @@ func prepareToDecision(t *testing.T, runID string) *Run {
 	require.Equal(t, ActionAwaitDecision, action.Kind)
 	require.NotNil(t, action.Decision)
 	require.Equal(t, "decide", action.Decision.NodeID)
-	require.Equal(t, []string{"go", "stop"}, run.DecisionVerdicts())
+	require.Equal(t, []string{"go", "stop"}, run.VerdictsFor(action.Decision.NodeID))
 	return run
 }
 
@@ -81,7 +81,7 @@ func TestRecordDecisionCommitsVerdictEdgeAndEvidenceAtomically(t *testing.T) {
 	}))
 	assert.Equal(t, versionBefore+1, run.StateVersion())
 	assert.Equal(t, ActionContinue, run.Action().Kind)
-	assert.Nil(t, run.DecisionVerdicts())
+	assert.Empty(t, run.AwaitingDecisions(), "the resolved obligation is consumed")
 
 	record, err := db.GetProcessRun(run.ID())
 	require.NoError(t, err)

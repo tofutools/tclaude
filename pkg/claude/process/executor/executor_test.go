@@ -103,13 +103,13 @@ func TestExecutionRequiresRunAuthorizationAndKeepsShellSyntaxInert(t *testing.T)
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
 
-	_, _, err = Execute(t.Context(), run, dispatch, Authorization{RunID: "run_other", Profile: program.Profile})
+	_, _, err = executeForTest(t.Context(), run, dispatch, Authorization{RunID: "run_other", Profile: program.Profile})
 	assert.ErrorIs(t, err, ErrUnauthorized)
-	_, _, err = Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: "profile-b"})
+	_, _, err = executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: "profile-b"})
 	assert.ErrorIs(t, err, ErrUnauthorized)
 	assert.Equal(t, ActionDispatch, run.Action().Kind, "authorization rejection must happen before dispatch consumption")
 
-	result, next, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
+	result, next, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
 	require.NoError(t, err)
 	assert.True(t, result.Dispatched)
 	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
@@ -128,7 +128,7 @@ func TestExecutionUsesBoundedSecretFreeEnvironment(t *testing.T) {
 	run := mustLoadRun(t, "run_env")
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
-	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.Equal(t, "unset|run_env|"+dispatch.command.ID, result.Stdout)
 	assert.NotContains(t, result.Stdout, "must-not-leak")
@@ -169,7 +169,7 @@ func TestEnvironmentAndTimeoutBoundsFailWithoutDispatchAndBecomeDurableObservati
 			if test.changeRuntime != nil {
 				test.changeRuntime(t)
 			}
-			result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+			result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 			require.NoError(t, err)
 			assert.False(t, result.Dispatched)
 			assert.Contains(t, result.Observation.Error, test.want)
@@ -185,7 +185,7 @@ func TestOutputIsTailBoundedAndPersistedWithObservation(t *testing.T) {
 	run := mustLoadRun(t, "run_output")
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
-	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.Equal(t, engine.ProgramFailed, result.Observation.Outcome)
 	assert.Equal(t, 7, result.Observation.ExitCode)
@@ -211,7 +211,7 @@ func TestBinaryOutputIsBoundedAndStoredAsValidText(t *testing.T) {
 	run := mustLoadRun(t, "run_binary_output")
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
-	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.True(t, result.StdoutTruncated)
 	assert.True(t, result.StderrTruncated)
@@ -239,14 +239,14 @@ func TestObservationCommitFailureLeavesOutstandingCommandForReconciliation(t *te
 		BEGIN SELECT RAISE(ABORT, 'injected observation failure'); END`)
 	require.NoError(t, err)
 
-	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "observation is not durable; reconciliation required")
 	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
 	assert.Equal(t, ActionNeedsReconcile, run.Action().Kind)
-	_, err = runProgram(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	_, err = performForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	assert.ErrorIs(t, err, ErrStaleDispatch, "the spent dispatch must never become reusable")
-	require.NoError(t, RecordOutcome(run, "operator:test", RecordedOutcome{
+	require.NoError(t, RecordOutcome(run, "operator:test", "", RecordedOutcome{
 		Outcome: result.Observation.Outcome, ExitCode: result.Observation.ExitCode,
 		Error: result.Observation.Error, Note: "recorded after observation commit failure",
 	}))
@@ -272,11 +272,11 @@ func TestCrashBoundariesNeverSilentlyRerunOutstandingCommand(t *testing.T) {
 		run := mustLoadRun(t, "run_crash_after")
 		dispatch, err := Prepare(run)
 		require.NoError(t, err)
-		result, err := runProgram(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+		result, err := performForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 		require.NoError(t, err)
 		require.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
 		assert.Equal(t, ActionNeedsReconcile, mustLoadRun(t, run.ID()).Action().Kind)
-		_, err = runProgram(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+		_, err = performForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 		assert.ErrorIs(t, err, ErrStaleDispatch)
 	})
 
@@ -297,7 +297,7 @@ func TestCrashBoundariesNeverSilentlyRerunOutstandingCommand(t *testing.T) {
 		}
 		done := make(chan programResponse, 1)
 		go func() {
-			result, err := runProgram(ctx, run, dispatch, Authorization{RunID: run.ID()})
+			result, err := performForTest(ctx, run, dispatch, Authorization{RunID: run.ID()})
 			done <- programResponse{result: result, err: err}
 		}()
 		descendantPID := waitForHelper(t, readyPath, pidPath)
@@ -315,7 +315,7 @@ func TestCrashBoundariesNeverSilentlyRerunOutstandingCommand(t *testing.T) {
 		run := mustLoadRun(t, "run_crash_durable")
 		dispatch, err := Prepare(run)
 		require.NoError(t, err)
-		_, next, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+		_, next, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 		require.NoError(t, err)
 		assert.Nil(t, next)
 		cold := mustLoadRun(t, run.ID())
@@ -332,9 +332,9 @@ func TestExplicitReconciliationDecisionsAreDurableAndStaleOutcomesLoseCAS(t *tes
 	require.NoError(t, err)
 
 	cold := mustLoadRun(t, run.ID())
-	_, err = Reissue(cold, "")
+	_, err = Reissue(cold, "", "")
 	assert.ErrorIs(t, err, ErrInvalidActor)
-	dispatch, err := Reissue(cold, "operator:johan")
+	dispatch, err := Reissue(cold, "operator:johan", "")
 	require.NoError(t, err)
 	require.NotNil(t, dispatch)
 	assert.Equal(t, ActionDispatch, cold.Action().Kind)
@@ -344,11 +344,11 @@ func TestExplicitReconciliationDecisionsAreDurableAndStaleOutcomesLoseCAS(t *tes
 	winner := mustLoadRun(t, run.ID())
 	stale := mustLoadRun(t, run.ID())
 	assert.Equal(t, ActionNeedsReconcile, winner.Action().Kind)
-	require.NoError(t, RecordOutcome(winner, "operator:johan", RecordedOutcome{
+	require.NoError(t, RecordOutcome(winner, "operator:johan", "", RecordedOutcome{
 		Outcome: engine.ProgramSucceeded, ExitCode: 0, Note: "verified outside tclaude",
 	}))
 	assert.Equal(t, ActionContinue, winner.Action().Kind)
-	err = RecordOutcome(stale, "operator:johan", RecordedOutcome{
+	err = RecordOutcome(stale, "operator:johan", "", RecordedOutcome{
 		Outcome: engine.ProgramFailed, ExitCode: 9, Error: "late duplicate",
 	})
 	assert.ErrorIs(t, err, db.ErrProcessRunVersionConflict)
@@ -356,7 +356,7 @@ func TestExplicitReconciliationDecisionsAreDurableAndStaleOutcomesLoseCAS(t *tes
 
 	fresh := mustLoadRun(t, run.ID())
 	assert.Equal(t, ActionContinue, fresh.Action().Kind)
-	err = RecordOutcome(fresh, "operator:johan", RecordedOutcome{Outcome: engine.ProgramSucceeded})
+	err = RecordOutcome(fresh, "operator:johan", "", RecordedOutcome{Outcome: engine.ProgramSucceeded})
 	assert.ErrorIs(t, err, ErrNoReconciliation)
 }
 
@@ -379,7 +379,7 @@ func TestGracefulCancellationWaitsKillsAndRecordsFailure(t *testing.T) {
 	}
 	done := make(chan response, 1)
 	go func() {
-		result, _, err := Execute(ctx, run, dispatch, Authorization{RunID: run.ID()})
+		result, _, err := executeForTest(ctx, run, dispatch, Authorization{RunID: run.ID()})
 		done <- response{result: result, err: err}
 	}()
 	descendantPID := waitForHelper(t, readyPath, pidPath)
@@ -412,7 +412,7 @@ func TestProcessGroupCleanupFailureIsAuditableAndCannotRecordSuccess(t *testing.
 	dispatch, err := Prepare(run)
 	require.NoError(t, err)
 
-	result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+	result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 	require.NoError(t, err)
 	assert.Equal(t, engine.ProgramFailed, result.Observation.Outcome)
 	assert.Contains(t, result.Observation.Error, "process-group cleanup")
@@ -444,7 +444,7 @@ func TestProgramTimeoutKillsDescendantAndRecordsTimeout(t *testing.T) {
 	}
 	done := make(chan response, 1)
 	go func() {
-		result, _, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
+		result, _, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID()})
 		done <- response{result: result, err: err}
 	}()
 	descendantPID := waitForHelper(t, readyPath, pidPath)
@@ -501,6 +501,32 @@ func setupExecutorTest(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
+}
+
+// performForTest is the owner-then-worker pair a driver performs for one
+// branch: the owner claims the permission against a concrete authorization,
+// and the worker runs the program. Nothing durable happens here.
+func performForTest(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, error) {
+	if err := Claim(run, dispatch, authorization); err != nil {
+		return Result{}, err
+	}
+	return Perform(ctx, dispatch)
+}
+
+// executeForTest drives one branch end to end through the same three
+// production steps the daemon owner uses — Claim, Perform, Observe — so tests
+// that only care about the resulting state stay readable. Real concurrency is
+// exercised by the daemon flow tests, which run several of these at once.
+func executeForTest(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, *Dispatch, error) {
+	result, err := performForTest(ctx, run, dispatch, authorization)
+	if err != nil {
+		return Result{}, nil, err
+	}
+	next, err := Observe(run, dispatch, result)
+	if err != nil {
+		return result, nil, err
+	}
+	return result, next, nil
 }
 
 func helperProgram(t *testing.T, mode string, args ...string) engine.ProgramCommand {

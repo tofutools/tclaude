@@ -48,12 +48,11 @@ func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 //
 // With fan-out, several tasks can be ready at once, so a singular plan can no
 // longer name "the" task. This deliberately stays a *next*-plan operation
-// rather than a batch one: it commits one command per call, which is exactly
-// what the current sequential executor consumes. PR2 refills up to its own
-// concurrency capacity by calling AdvanceAndPlan repeatedly on the returned
-// checkpoint — the previously planned task is Running by then, so each call
-// picks the next ready one — and needs no change to the durable shape, because
-// Commands is already a plural outbox.
+// rather than a batch one: it commits one command per call. A bounded
+// concurrent driver refills up to its own capacity by calling AdvanceAndPlan
+// repeatedly on the returned checkpoint — the previously planned task is
+// Running by then, so each call picks the next ready one — and needs no change
+// to the durable shape, because Commands is already a plural outbox.
 //
 // advanced reports whether anything at all was committed, so a caller can skip
 // a no-op persist on a resume. A non-nil command always implies advanced.
@@ -105,7 +104,7 @@ func Runnable(checkpoint Checkpoint, definition *Definition) bool {
 // ready task never already carries a command — planning moves it to Running —
 // so no outbox scan is needed here.
 func nextPlannableTask(checkpoint Checkpoint, definition *Definition) (definitionNode, bool) {
-	if checkpoint.Status != RunRunning {
+	if checkpoint.Status != RunRunning || hasFailedNode(checkpoint) {
 		return definitionNode{}, false
 	}
 	for _, node := range definition.nodes {
@@ -225,24 +224,24 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			if err := completeAndSettle(&next, definition, index, arrivesAt(soleOutcome(definition, node))); err != nil {
 				return Checkpoint{}, err
 			}
+			// A branch that succeeded after a sibling already failed still
+			// settles its own node — that observation is real and is honest
+			// evidence — but it cannot revive the run: planning is already shut
+			// off, settling must not park the run on a new human decision, and
+			// this is the transition that may empty the last outbox entry and
+			// let the failed run finalize.
+			abandonAfterFailure(&next)
 		case ProgramFailed:
+			// Per-entry removal only, exactly like a success: a failing branch
+			// must never erase a sibling command whose program is still
+			// running. The run therefore stays RunRunning until its durable
+			// outbox drains, so those siblings remain individually observable
+			// or reconcilable and a crash mid-drain cold-loads them honestly.
+			// Planning stops immediately regardless — hasFailedNode shuts off
+			// both nextPlannableTask and nextEngineTransition.
 			removeCommand(&next, outstanding.NodeID)
 			next.Nodes[node.id] = NodeFailed
-			next.Status = RunFailed
-			// A failed task fails the whole run, exactly as it did sequentially.
-			// This is terminal cleanup: the run is over, so sibling entries must
-			// not survive into terminal state, where they would read as still
-			// actionable and would be rejected by the load boundary. It is not
-			// the per-transition cross-branch clearing the plural outboxes exist
-			// to prevent — see abandonOutboxes.
-			//
-			// Under this slice's sequential consumption the observed command is
-			// the only one in flight, so this only ever drops sibling decision
-			// obligations. Once PR2 dispatches several commands at once, a
-			// sibling command dropped here may name a program that is still
-			// executing; deciding whether that branch is cancelled, awaited, or
-			// reconciled is the cancellation protocol that ticket owns.
-			abandonOutboxes(&next)
+			abandonAfterFailure(&next)
 		default:
 			return invalid("unknown program outcome %q", observation.Outcome)
 		}
@@ -467,19 +466,47 @@ func removeObligation(checkpoint *Checkpoint, nodeID string) {
 	}
 }
 
-// abandonOutboxes is TERMINAL CLEANUP, not ordinary cross-branch clearing.
+// hasFailedNode reports whether any program task has already failed.
+//
+// A failed task fails the whole run, but with several commands in flight the
+// run cannot become terminal at that instant — the siblings still owe
+// observations. This predicate is what stops the engine from planning or
+// advancing anything more in the meantime, so the failed run drains rather than
+// grows. It is a bounded scan of the node-status map (one entry per prepared
+// node), not a graph walk, and it reads no edges.
+func hasFailedNode(checkpoint Checkpoint) bool {
+	for _, status := range checkpoint.Nodes {
+		if status == NodeFailed {
+			return true
+		}
+	}
+	return false
+}
+
+// abandonAfterFailure is TERMINAL CLEANUP, not ordinary cross-branch clearing.
 //
 // The distinction matters and is deliberate. Ordinary reducer mutations are
 // strictly per-entry — planning, observing, and deciding each touch exactly one
 // branch's entry — because a live run must never let one branch invalidate
-// another's outstanding work. This function runs only on the transition that
-// ends the run, where no branch will ever be dispatched or decided again, and
-// where leaving entries behind would produce a checkpoint the load boundary
-// rejects (obligations require a running run). It must never be called from a
-// transition that leaves the run running.
-func abandonOutboxes(checkpoint *Checkpoint) {
-	checkpoint.Commands = nil
+// another's outstanding work. Nothing here removes a COMMAND: a command names a
+// program that may still be running, and its outcome has to be accounted for
+// before the run can be called over.
+//
+// Awaited decisions are the opposite case and are abandoned at once. The run is
+// already destined to fail, so accepting further human work for it would be
+// dishonest; dropping the obligations is also what makes a later verdict fail
+// closed as stale, and what keeps a crash mid-drain from cold-loading a
+// decision nobody should answer.
+//
+// The run itself becomes terminal only when the last command has drained.
+func abandonAfterFailure(checkpoint *Checkpoint) {
+	if !hasFailedNode(*checkpoint) {
+		return
+	}
 	checkpoint.AwaitingDecisions = nil
+	if len(checkpoint.Commands) == 0 {
+		checkpoint.Status = RunFailed
+	}
 }
 
 // AdvanceUntilQuiescent commits only engine-owned transitions — start, parallel
@@ -537,7 +564,7 @@ func advanceUntilQuiescent(checkpoint Checkpoint, definition *Definition, budget
 // node in prepared topological order. The scan is over nodes only and reads no
 // edges; it is a lookup for the next unit of work, not a validity proof.
 func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transition, bool) {
-	if checkpoint.Status != RunRunning {
+	if checkpoint.Status != RunRunning || hasFailedNode(checkpoint) {
 		return Transition{}, false
 	}
 	for _, node := range definition.nodes {

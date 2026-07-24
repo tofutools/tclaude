@@ -52,10 +52,10 @@ func TestProcessRuntimeDecisionLifecycleWithStaleDuplicateAndInvalidInput(t *tes
 	putProcessRuntimeTemplate(t, root, processDecisionTemplate("decision-diamond"))
 
 	completed := make(chan struct{}, 4)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
-		result, next, err := executor.Execute(ctx, run, dispatch, authorization)
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		result, err := executor.Perform(ctx, dispatch)
 		completed <- struct{}{}
-		return result, next, err
+		return result, err
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -170,11 +170,11 @@ func TestProcessRuntimeAwaitingDecisionSurvivesRestartAndIsExcludedFromSweep(t *
 
 	var dispatches atomic.Int32
 	completed := make(chan struct{}, 4)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		dispatches.Add(1)
-		result, next, err := executor.Execute(ctx, run, dispatch, authorization)
+		result, err := executor.Perform(ctx, dispatch)
 		completed <- struct{}{}
-		return result, next, err
+		return result, err
 	}))
 
 	// The bounded recovery sweep classifies the run in SQLite and never loads
@@ -271,9 +271,9 @@ func TestProcessRuntimeSweepResumesReadyBranchBesideAwaitedDecision(t *testing.T
 	createProcessRunFixtureWithCheckpoint(t, "run_branch_recovery", record.Ref, tmpl, checkpoint)
 
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		dispatches.Add(1)
-		return executor.Execute(ctx, run, dispatch, authorization)
+		return executor.Perform(ctx, dispatch)
 	}))
 
 	agentd.RunProcessRunSweepForTest()
