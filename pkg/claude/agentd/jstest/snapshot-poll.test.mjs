@@ -218,15 +218,20 @@ test('boot options narrow every attempt until the boot window closes', async (t)
   stop();
 });
 
-// bootOptions without a bound would silently degrade to "narrow forever": the
-// Groups lists would never be fetched again for the life of the page.
-test('boot options require a bound', async (t) => {
+// Half a pair is always a bug: options without a bound narrow FOREVER (the
+// Groups lists never fetched again for the life of the page), a bound without
+// options means no boot narrowing at all. Both must be loud.
+test('boot options and their bound are required together', async (t) => {
   const harness = await createPreactHarness(t);
   const { startSnapshotPoll } =
     await harness.importDashboardModule('js/snapshot-poll.js');
   const h = pollHarness();
   assert.throws(
     () => startSnapshotPoll(() => {}, { ...h.options, bootOptions: { includeLists: false } }),
+    TypeError,
+  );
+  assert.throws(
+    () => startSnapshotPoll(() => {}, { ...h.options, bootUntil: Promise.resolve() }),
     TypeError,
   );
 });
@@ -243,21 +248,23 @@ test('bootstrap waits for published snapshot even when first attempt finishes wi
   // The bootstrap attempt itself belongs to startSnapshotPoll; this helper only
   // gates URL restoration. A completed attempt — superseded, or a handled fetch
   // failure — publishes nothing and must not release the wait.
-  const waiting = waitForInitialSnapshot(snapshotReady, neverTimeout)
+  void waitForInitialSnapshot(snapshotReady, neverTimeout)
     .then(() => { settled = true; });
 
   await flush();
   assert.equal(settled, false);
 
   publishSnapshot();
-  await waiting;
+  await flush();
   assert.equal(settled, true);
 });
 
-// Assert on an ordering flag rather than merely awaiting the helper: node:test
-// applies no per-test timeout and jstest/dashboard_node_test.go passes none, so
-// a regression that stopped racing the bail would HANG the suite until Go's
-// package timeout instead of reporting a failure here.
+// Both assertions read an ordering flag, and NEITHER awaits the helper itself:
+// node:test applies no per-test timeout and jstest/dashboard_node_test.go passes
+// none, so awaiting a helper that regressed to `await snapshotReady` would HANG
+// the suite until Go's package timeout instead of reporting a failure here.
+// Draining the microtask queue is enough — the race, the helper's resume and the
+// .then are all microtasks.
 test('bootstrap wait is released by the bounded timeout', async (t) => {
   const harness = await createPreactHarness(t);
   const { waitForInitialSnapshot } =
@@ -267,7 +274,7 @@ test('bootstrap wait is released by the bounded timeout', async (t) => {
   const neverPublishes = new Promise(() => {});
   let released = false;
 
-  const waiting = waitForInitialSnapshot(neverPublishes, bailed)
+  void waitForInitialSnapshot(neverPublishes, bailed)
     .then(() => { released = true; });
 
   // Control: with neither input settled the helper must still be waiting, so a
@@ -276,6 +283,6 @@ test('bootstrap wait is released by the bounded timeout', async (t) => {
   assert.equal(released, false, 'the wait must not be released before the bail');
 
   bail();
-  await waiting;
+  await flush();
   assert.equal(released, true, 'the bounded bail must release the wait');
 });

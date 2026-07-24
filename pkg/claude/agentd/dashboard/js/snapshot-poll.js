@@ -48,9 +48,13 @@ export function startSnapshotPoll(refresh, {
   // Promise-like whose settlement ends the boot window. Boot narrowing must
   // outlive the first attempt: a first attempt that FAILS (agentd restarting,
   // say) leaves the paint curtain up, and the t=2s/4s/6s retries behind it are
-  // as much "boot" as the first one was. Pass the same bound the curtain itself
-  // waits on, so the lists resume exactly when the curtain lifts — whether that
-  // is the first published snapshot or the bounded bail.
+  // as much "boot" as the first one was. Pass the bound the curtain WAITS ON —
+  // the first published snapshot or the bounded bail — so the lists resume as
+  // soon as nothing is blocking on them. (The curtain is pulled a little later
+  // still, after layout settles; a tick landing in that short window fetches the
+  // lists behind a curtain that is no longer waiting for anything. Harmless, and
+  // the alternative — narrowing until the reveal — would keep the first painted
+  // frame's lists empty for no gain.)
   bootUntil = undefined,
   stallMs = SNAPSHOT_STALL_MS,
 } = {}) {
@@ -58,8 +62,15 @@ export function startSnapshotPoll(refresh, {
   if (typeof setTimeoutImpl !== 'function') throw new TypeError('snapshot poll requires setTimeout');
   if (typeof clearTimeoutImpl !== 'function') throw new TypeError('snapshot poll requires clearTimeout');
   if (typeof nowImpl !== 'function') throw new TypeError('snapshot poll requires now');
+  // Both directions: bootOptions without a bound would narrow FOREVER (the
+  // Groups lists never fetched again for the life of the page), and a bound
+  // without options would silently mean no boot narrowing at all — the exact
+  // failure this option pair was added to close.
   if (bootOptions !== undefined && typeof bootUntil?.then !== 'function') {
     throw new TypeError('snapshot poll requires bootUntil alongside bootOptions');
+  }
+  if (bootUntil !== undefined && bootOptions === undefined) {
+    throw new TypeError('snapshot poll requires bootOptions alongside bootUntil');
   }
 
   let timer = null;

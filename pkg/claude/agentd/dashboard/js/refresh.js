@@ -48,10 +48,12 @@ function groupsTabActive() {
 
 // Upper bound on one refresh CYCLE, not merely on its fetches: the timer is
 // armed before the requests and cleared in the finally, so it spans the response
-// bodies and the render pass too. A cycle that overruns it therefore aborts
-// whatever is still cancellable (typically a body read) and surfaces "snapshot
-// failed: timed out after 20s" — deliberate, since a cycle that slow has already
-// lost the poll anyway. Deliberately generous: this is a stuck-connection
+// bodies and the render pass too. The render pass itself is synchronous, so an
+// overrun can only land on a still-outstanding read: the snapshot's, which
+// surfaces "snapshot failed: timed out after 20s" (deliberate — a cycle that
+// slow has already lost the poll anyway), or a list sub-fetch's, which
+// stitchListPage degrades to "keep the previous rows" like any other sub-fetch
+// failure. Deliberately generous: this is a stuck-connection
 // backstop, not a latency budget — a slow but progressing snapshot must still be
 // allowed to land. Its job is to guarantee that refresh() always settles, so a
 // wedged request cannot hold the poll's in-flight guard (snapshot-poll.js) open.
