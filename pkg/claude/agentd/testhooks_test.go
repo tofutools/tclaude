@@ -766,6 +766,17 @@ func SetCodexAsyncSpawnResponseGraceForTest(d time.Duration) func() {
 	return func() { codexAsyncSpawnResponseGrace = prev }
 }
 
+// SetOpenCodeAsyncSpawnResponseGraceForTest adjusts how long the deferred
+// server-authoritative (OpenCode) spawn waits for its background continuation
+// before answering with a Pending row. Tests shrink it (with a blocked
+// runtime seam) to drive the pending path deterministically, or enlarge it to
+// pin the inline fast path regardless of scheduler jitter.
+func SetOpenCodeAsyncSpawnResponseGraceForTest(d time.Duration) func() {
+	prev := openCodeAsyncSpawnResponseGrace
+	openCodeAsyncSpawnResponseGrace = d
+	return func() { openCodeAsyncSpawnResponseGrace = prev }
+}
+
 // SetBeforeExecuteSpawnForTest installs a one-shot mutation seam after the
 // HTTP handler snapshots/resolves profiles but before executeSpawn re-reads
 // them. It exists solely for the TCL-308 launched-value echo regression.
