@@ -1077,6 +1077,14 @@ function TerminalTabs({
   // activation attempt runs while this tab is still display:none, and a real
   // browser drops focus on an unrendered xterm. Refit and refocus the active
   // widget here, once the reveal above has actually made the pane visible.
+  //
+  // Only revealRequest may trigger this. It is a monotonic counter bumped by
+  // requestReveal(), so a plain (foreground) open advances it while a
+  // Ctrl/Cmd-click background open deliberately does not. hasPanes must stay
+  // out of the dependency list: it flips false->true whenever any pane appears,
+  // including a background open, and the `=== 0` guard cannot catch that once
+  // an earlier reveal has left the counter >= 1. Keying on revealRequest alone
+  // means a background open never clicks the Terminals tab.
   useLayoutEffect(() => {
     if (solo || !hasPanes || current.revealRequest === 0) return;
     const terminalSection = document.getElementById('tab-terminals');
@@ -1091,7 +1099,7 @@ function TerminalTabs({
     if (!widget) return;
     widget.fit();
     widget.focus();
-  }, [current.revealRequest, hasPanes, solo]);
+  }, [current.revealRequest, solo]);
 
   useEffect(() => {
     if (!hasPanes) return undefined;

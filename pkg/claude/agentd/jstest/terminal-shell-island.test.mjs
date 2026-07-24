@@ -342,6 +342,59 @@ test('background pane open and focus leave the current dashboard tab visible', a
   cleanup();
 });
 
+test('a background open still keeps the current tab after an earlier reveal', async (t) => {
+  // Regression: revealRequest is a monotonic counter, so once any reveal has
+  // happened it stays >= 1. A Ctrl/Cmd-click background open adds a pane
+  // (hasPanes flips false->true) without bumping the counter; the reveal effect
+  // must not treat that incidental transition as a fresh reveal and jump to
+  // Terminals. Reproduces "click focus, go back, then Ctrl/Cmd-click focus" —
+  // the modifier was ignored on the second click until a force refresh reset
+  // the counter to 0.
+  const harness = await createPreactHarness(t);
+  const { host, terminals } = installHosts(harness);
+  const fake = fakeWidgetFactory(harness);
+  const { mountTerminalsFeature } = await harness.importDashboardModule('js/preact-loader.js');
+  const controller = await harness.importDashboardModule('js/terminals-tab.js');
+  const cleanup = await mountTerminalsFeature({
+    widgetFactory: fake.factory,
+    confirm: async () => true,
+    fetchImpl: async () => ({ ok: true }),
+  });
+
+  // A plain focus reveals Terminals and lifts the reveal counter above zero.
+  await harness.act(async () => {
+    controller.openTerminalPane({ ws: '/one', key: 'one', label: 'one', agent: 'agt_one' });
+    await Promise.resolve();
+  });
+  assert.equal(terminals.classList.contains('active'), true, 'the first focus reveals Terminals');
+
+  // Closing the last pane returns hasPanes to false and bounces back to Groups,
+  // exactly as leaving a single web-terminal window does — but the counter stays >= 1.
+  await harness.act(async () => {
+    harness.fireEvent(getByRole(host, 'button', { name: 'Close one' }), 'click');
+    await Promise.resolve();
+  });
+  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true,
+    'closing the last pane returns to Groups');
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), true);
+
+  // Ctrl/Cmd-click focus opens a fresh pane in the background: hasPanes flips
+  // false->true while the counter is unchanged. The tab must stay on Groups.
+  await harness.act(async () => {
+    controller.openTerminalPane(
+      { ws: '/two', key: 'two', label: 'two', agent: 'agt_two' }, { reveal: false });
+    await Promise.resolve();
+  });
+  assert.equal(terminals.classList.contains('active'), false,
+    'a background open after an earlier reveal keeps the current tab');
+  assert.equal(harness.document.querySelector('#tab-groups').classList.contains('active'), true);
+  assert.equal(harness.document.body.classList.contains('hide-terminals'), false,
+    'the Terminals tab is available but not selected');
+  assert.equal(host.querySelectorAll('[role="tab"]').length, 1, 'the background pane still exists');
+
+  cleanup();
+});
+
 test('terminal tab context menu supports pointer and keyboard detach and close actions', async (t) => {
   const harness = await createPreactHarness(t);
   const { host } = installHosts(harness);
