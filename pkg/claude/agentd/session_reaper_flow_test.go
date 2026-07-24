@@ -41,6 +41,91 @@ func TestSessionReaper_MarksDeadSessionExited(t *testing.T) {
 		"reaper must persist status=exited for the dead session")
 }
 
+func TestSessionReaper_BackgroundActivityGatesStableIdleNotification(t *testing.T) {
+	f := newFlow(t)
+
+	const (
+		conv      = "idlework-1111-2222-3333-444444444444"
+		sessionID = "spwn-idlework"
+	)
+	f.HaveConvWithTitle(conv, "background-worker")
+	f.HaveAliveSession(conv, sessionID, "tmux-idlework", f.TestCwd("idlework"))
+
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	row.Status = session.StatusIdle
+	row.StatusDetail = ""
+	row.SubagentCount = 1
+	row.SubagentsJSON = db.SubagentSet{
+		"agent-live": {Type: "Explore", Seen: time.Now()},
+	}.Encode()
+	require.NoError(t, db.SaveSession(row))
+	row, err = db.LoadSession(sessionID)
+	require.NoError(t, err)
+
+	var idleNotifications []string
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.SetIdleNotify(func(convID, _ string) {
+		idleNotifications = append(idleNotifications, convID)
+	})
+
+	reaper.TickAt(row.UpdatedAt.Add(time.Second))
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID),
+		"a live sub-agent must hold a raw idle row at idle + work")
+	assert.Empty(t, idleNotifications, "background work must suppress the Idle notification")
+
+	// Model a lost SubagentStop whose ledger entry has now crossed its TTL.
+	// The first zero-activity sweep settles the row but intentionally does not
+	// notify; only a later sweep may confirm that the idle state stayed stable.
+	row, err = db.LoadSession(sessionID)
+	require.NoError(t, err)
+	row.SubagentsJSON = db.SubagentSet{
+		"agent-lost-stop": {
+			Type: "Explore",
+			Seen: time.Now().Add(-db.SubagentTTL - time.Minute),
+		},
+	}.Encode()
+	require.NoError(t, db.SaveSession(row))
+	row, err = db.LoadSession(sessionID)
+	require.NoError(t, err)
+
+	settledAt := row.UpdatedAt.Add(time.Second)
+	reaper.TickAt(settledAt)
+	assert.Equal(t, session.StatusIdle, statusOf(t, sessionID))
+	assert.Empty(t, idleNotifications,
+		"the reconcile tick that first sees zero activity must not announce idle")
+
+	reaper.TickAt(settledAt.Add(6 * time.Second))
+	assert.Equal(t, []string{conv}, idleNotifications,
+		"a later sweep may announce the unchanged, activity-free idle state")
+}
+
+func TestSessionReaper_StartupDoesNotNotifyHistoricalIdleRows(t *testing.T) {
+	f := newFlow(t)
+
+	const (
+		conv      = "oldidle-1111-2222-3333-444444444444"
+		sessionID = "spwn-oldidle"
+	)
+	f.HaveAliveSession(conv, sessionID, "tmux-oldidle", f.TestCwd("oldidle"))
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	row.Status = session.StatusIdle
+	require.NoError(t, db.SaveSession(row))
+	row, err = db.LoadSession(sessionID)
+	require.NoError(t, err)
+
+	var idleNotifications []string
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.SetIdleNotify(func(convID, _ string) {
+		idleNotifications = append(idleNotifications, convID)
+	})
+	reaper.TickAt(row.UpdatedAt.Add(time.Hour))
+
+	assert.Empty(t, idleNotifications,
+		"a fresh daemon must not announce the backlog of already-idle sessions")
+}
+
 // Scenario: a live session's pane dies with no SessionEnd hook — an
 // unclean death. The reaper must not only mark it exited but stamp
 // exit_reason='unexpected', the signal the dashboard renders as

@@ -18,6 +18,12 @@ import (
 // tighter loop would just burn `tmux has-session` calls.
 const sessionReaperInterval = 30 * time.Second
 
+// idleNotificationStablePeriod is the minimum age of a daemon-reconciled idle
+// state before it may be announced. The reaper ticks every 30 seconds, so the
+// practical delay is one full tick; this lower bound documents the stability
+// contract and keeps manually-driven/test ticks from notifying immediately.
+const idleNotificationStablePeriod = 5 * time.Second
+
 // sessionReaperGracePeriod exempts a freshly-created session row from
 // being reaped. A spawn writes the SessionRow around the same moment
 // its tmux session comes up; without this window a sweep that lands
@@ -31,6 +37,13 @@ const sessionReaperGracePeriod = 90 * time.Second
 // routes it through notify.OnStateTransition; tests swap in a recorder.
 // Mirrors the flushSender injection pattern in flush.go.
 type reaperNotify func(st *session.SessionState, prevStatus string)
+
+type reaperIdleNotify func(st *session.SessionState, prevStatus string)
+
+type pendingIdleNotification struct {
+	updatedAt  time.Time
+	prevStatus string
+}
 
 const unexpectedExitReason = "unexpected"
 
@@ -87,6 +100,8 @@ type sessionReaper struct {
 	seeded                bool
 	grace                 time.Duration
 	notify                reaperNotify
+	idleNotify            reaperIdleNotify
+	pendingIdle           map[string]pendingIdleNotification
 }
 
 func newSessionReaper() *sessionReaper {
@@ -95,6 +110,8 @@ func newSessionReaper() *sessionReaper {
 		deadPaneRecordFailure: map[string]retainedPaneRecordFailure{},
 		grace:                 sessionReaperGracePeriod,
 		notify:                defaultReaperNotify,
+		idleNotify:            defaultReaperIdleNotify,
+		pendingIdle:           map[string]pendingIdleNotification{},
 	}
 }
 
@@ -107,6 +124,111 @@ func newSessionReaper() *sessionReaper {
 // suppressed by OnStateTransition's self-transition guard.
 func defaultReaperNotify(st *session.SessionState, prevStatus string) {
 	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusExited, st.Cwd, agent.FreshTitle(st.ConvID), st.Harness)
+}
+
+func defaultReaperIdleNotify(st *session.SessionState, prevStatus string) {
+	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusIdle, st.Cwd, agent.FreshTitle(st.ConvID), st.Harness)
+}
+
+// reconcileBackgroundIdle projects the live activity ledgers onto the stored
+// idle status. Hooks provide the fast path, but their stream is deliberately
+// conservative and lossy: SubagentStop may be absent, and background shells
+// have no exit hook at all. The daemon can use TTL-filtered sub-agent evidence
+// and the descendant-process shell reconcile to close both gaps.
+//
+// A reconciled main_agent_idle → idle edge is not announced in the same tick.
+// Its updated_at is moved to now, and a later tick must observe the same idle
+// row for idleNotificationStablePeriod. That makes the eventual "Idle" banner
+// a stable observation rather than a momentary gap between hooks.
+func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now time.Time) {
+	if st == nil || (st.Status != session.StatusIdle && st.Status != session.StatusMainAgentIdle) {
+		if st != nil {
+			delete(r.pendingIdle, st.ID)
+		}
+		return
+	}
+	if r.pendingIdle == nil {
+		r.pendingIdle = map[string]pendingIdleNotification{}
+	}
+	row, err := db.LoadSession(st.ID)
+	if err != nil || row == nil {
+		if err != nil {
+			slog.Warn("reaper: load idle session for activity reconcile failed",
+				"session", st.ID, "error", err)
+		}
+		return
+	}
+
+	subagents := db.ParseSubagentSet(row.SubagentsJSON).LiveCount(now)
+	shells := bgShellCountOnRead(row, true)
+	active := subagents > 0 || shells > 0
+
+	if active {
+		delete(r.pendingIdle, st.ID)
+		if st.Status != session.StatusIdle {
+			return
+		}
+		_, err := db.SetSessionStatusIfUnchanged(
+			st.ID, st.Status, st.Updated,
+			session.StatusMainAgentIdle,
+			session.BackgroundActivityDetail(subagents, shells),
+			now,
+		)
+		if err != nil {
+			slog.Warn("reaper: hold idle session at background work failed",
+				"session", st.ID, "error", err)
+		}
+		return
+	}
+
+	if st.Status == session.StatusMainAgentIdle {
+		settled, err := db.SetSessionStatusIfUnchanged(
+			st.ID, st.Status, st.Updated,
+			session.StatusIdle, "", now,
+		)
+		if err != nil {
+			slog.Warn("reaper: settle completed background work to idle failed",
+				"session", st.ID, "error", err)
+		}
+		if settled {
+			r.pendingIdle[st.ID] = pendingIdleNotification{
+				updatedAt:  now,
+				prevStatus: session.StatusMainAgentIdle,
+			}
+		}
+		return
+	}
+
+	pending, ok := r.pendingIdle[st.ID]
+	if !ok {
+		// Ordinary hook-driven idle notifications stay on the hook path.
+		// Only transitions this daemon itself reconciled are delayed here;
+		// otherwise its startup sweep would announce every historical idle
+		// row whose notification state was absent or pruned.
+		return
+	}
+	if !st.Updated.Equal(pending.updatedAt) {
+		delete(r.pendingIdle, st.ID)
+		return
+	}
+	if now.Sub(pending.updatedAt) < idleNotificationStablePeriod || r.idleNotify == nil {
+		return
+	}
+
+	// Close the most likely race with a new hook: only announce the exact idle
+	// row and ledger snapshot this sweep observed. A hook that starts a turn
+	// or child bumps updated_at and makes this check fail.
+	latest, err := db.LoadSession(st.ID)
+	if err != nil || latest == nil ||
+		latest.Status != session.StatusIdle ||
+		!latest.UpdatedAt.Equal(st.Updated) ||
+		db.ParseSubagentSet(latest.SubagentsJSON).LiveCount(now) > 0 ||
+		bgShellCountOnRead(latest, true) > 0 {
+		delete(r.pendingIdle, st.ID)
+		return
+	}
+	delete(r.pendingIdle, st.ID)
+	r.idleNotify(st, pending.prevStatus)
 }
 
 // RunReaperTickForTest runs a single session-reaper sweep synchronously and
@@ -305,6 +427,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		if st.Status != session.StatusExited {
 			delete(r.deadPaneRecordFailure, st.ID)
 			aliveNow[st.ID] = true
+			r.reconcileBackgroundIdle(st, now)
 			// A live session is a running agent — enroll it so every
 			// terminal-launched conversation surfaces on the dashboard
 			// like a web-UI spawn does. See enrollOnlineSession.

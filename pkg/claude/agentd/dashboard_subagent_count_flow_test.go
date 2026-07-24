@@ -83,10 +83,10 @@ func TestDashboardSnapshot_SubagentCountSurvivesMainAgentStop(t *testing.T) {
 	assert.Equal(t, session.StatusIdle, member.State.Status, "status settles to idle once no sub-agents remain")
 }
 
-// Scenario: Claude Code's delayed idle_prompt notification can arrive while a
-// background sub-agent is still alive. The hook deliberately records idle so
-// it can recover interrupted main turns, but the dashboard's reconciled view
-// must not show a plain idle pill beside a live 🤖 badge.
+// Scenario: a row written by an older hook binary (or observed across the
+// narrow hook/reconcile race) says idle while its sub-agent ledger is live.
+// The dashboard's reconciled view must not show a plain idle pill beside a
+// live 🤖 badge.
 func TestDashboardSnapshot_LiveSubagentHoldsIdleStatusAtMainAgentIdle(t *testing.T) {
 	const conv = "subidle-1111-2222-3333-4444"
 	const label = "spwn-subidle"
@@ -105,17 +105,12 @@ func TestDashboardSnapshot_LiveSubagentHoldsIdleStatusAtMainAgentIdle(t *testing
 		AgentType:     "Explore",
 		AgentID:       "ag-live",
 	}, label), "ApplyHook(SubagentStart)")
-	require.NoError(t, session.ApplyHook(session.HookCallbackInput{
-		HookEventName:    "Notification",
-		NotificationType: "idle_prompt",
-		ConvID:           conv,
-		Cwd:              f.TestCwd("subidle"),
-	}, label), "ApplyHook(idle_prompt)")
 
 	row, err := db.LoadSession(label)
 	require.NoError(t, err)
-	assert.Equal(t, session.StatusIdle, row.Status,
-		"fixture must exercise read-side reconciliation from a stored idle status")
+	row.Status = session.StatusIdle
+	row.StatusDetail = ""
+	require.NoError(t, db.SaveSession(row))
 
 	member := findDashMember(fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest()), "squad", conv)
 	require.NotNil(t, member, "agent %s missing from group squad members", conv)
