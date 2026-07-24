@@ -739,13 +739,19 @@ tab even when it cannot supply a quota reading. It plots the retained
 refetching its history. The selected history and lookahead ranges are dashboard
 preferences and persist across daemon restarts.
 
-OpenCode does not export provider-account usage-limit history. When OpenCode
-activity for OpenAI or Anthropic is present in the selected history span but
-there is no matching native Codex or Claude quota history, the tab warns that
-the visible graph may be incomplete or stale. The warning names the affected
-provider and models and does not hide any available graphs. It disappears once
-matching native history covers that span. Unknown OpenCode providers remain
-unattributed rather than being guessed.
+OpenCode does not export provider-account usage-limit history. Native samples
+are absolute readings of the account quota rather than deltas, so a sample
+taken after an OpenCode turn already includes that turn's spend; only OpenCode
+activity newer than the newest native sample is missing from the graphs. The
+tab warns when OpenCode activity for OpenAI or Anthropic in the selected
+history span outruns the newest matching native Codex or Claude sample by more
+than one and a half sampling intervals — enough slack that a sample still in
+flight behind a live OpenCode session is not reported as a gap. The warning
+names the affected provider and models, reports how stale the newest native
+sample is, and does not hide any available graphs. It disappears once native
+sampling catches up. Unknown OpenCode providers have no native source at all,
+so their activity always warns, and they remain unattributed rather than being
+guessed.
 
 The dashed line estimates the current post-reset consumption rate and compares
 the projected 100% time with the provider's reported reset time. Hovering the

@@ -49,7 +49,7 @@ func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
 		"matching Codex/OpenAI history removes the OpenAI warning while unknown remains")
 }
 
-func TestOpenCodeUsageCoverageWarningRequiresNativeHistoryToBracketActivity(t *testing.T) {
+func TestOpenCodeUsageCoverageWarningClearsOnceNativeSamplingCatchesUp(t *testing.T) {
 	setupTestDB(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	require.NoError(t, db.UpsertOpenCodeUsageActivity(db.OpenCodeUsageActivity{
@@ -64,25 +64,39 @@ func TestOpenCodeUsageCoverageWarningRequiresNativeHistoryToBracketActivity(t *t
 		}},
 	)
 	require.NoError(t, err)
-	require.Len(t, warnings, 1,
-		"a lone native sample after OpenCode activity cannot qualify the missing interval")
+	assert.Empty(t, warnings,
+		"a native sample taken after the OpenCode turn already contains that turn's spend")
+
+	warnings, err = collectOpenCodeUsageCoverageWarnings(
+		now.Add(-24*time.Hour), nil, now,
+		[]db.SubscriptionUsageHistoryRow{{
+			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
+			ObservedAt: now.Add(-2 * time.Hour),
+		}},
+	)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1, "activity newer than the last native sample is missing from the graphs")
 	assert.Equal(t, db.SubscriptionProviderOpenAI, warnings[0].Provider)
+	assert.Equal(t, now.Add(-2*time.Hour).Format(time.RFC3339Nano), warnings[0].NativeLatest)
+	assert.Equal(t, now.Add(-time.Hour).Format(time.RFC3339Nano), warnings[0].ActivityTo)
 }
 
-func TestOpenCodeUsageCoverageWarningDetectsGapBetweenNativeEndpoints(t *testing.T) {
+func TestOpenCodeUsageCoverageWarningIgnoresSamplingGapsBehindTheNewestSample(t *testing.T) {
 	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	assert.False(t, openCodeActivityCoveredByNativeSamples(
-		[]time.Time{base.Add(time.Hour)},
-		[]time.Time{base.Add(50 * time.Minute)},
-	), "a pre-activity sample cannot include usage that had not happened yet")
-	assert.False(t, openCodeActivityCoveredByNativeSamples(
-		[]time.Time{base.Add(14 * 24 * time.Hour)},
-		[]time.Time{base, base.Add(29 * 24 * time.Hour)},
-	), "distant first/last samples do not fabricate coverage across the gap")
+		base.Add(time.Hour), base.Add(30*time.Minute),
+	), "a sample half an hour stale cannot include usage that came after it")
 	assert.True(t, openCodeActivityCoveredByNativeSamples(
-		[]time.Time{base.Add(14 * 24 * time.Hour)},
-		[]time.Time{base.Add(14*24*time.Hour + 10*time.Minute)},
-	), "a native sample within one retained sampling interval covers the activity")
+		base.Add(time.Hour), base.Add(50*time.Minute),
+	), "a sample due but not yet taken is in flight, not missing coverage")
+	assert.True(t, openCodeActivityCoveredByNativeSamples(
+		base.Add(time.Hour), base.Add(2*time.Hour),
+	), "any later sample covers the activity outright")
+	assert.True(t, openCodeActivityCoveredByNativeSamples(
+		base.Add(14*24*time.Hour), base.Add(14*24*time.Hour+time.Minute),
+	), "a mid-span sampling gap does not invalidate a fresh newest sample")
+	assert.False(t, openCodeActivityCoveredByNativeSamples(base.Add(time.Hour), time.Time{}),
+		"no native sample at all is never coverage")
 }
 
 func TestOpenCodeUsageCoverageWarningsUseProviderSelectedSpan(t *testing.T) {
