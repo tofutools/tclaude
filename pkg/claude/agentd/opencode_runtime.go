@@ -990,6 +990,13 @@ func consumeOpenCodeEvent(
 	} else {
 		applyOpenCodeHooks(ctx, runtime, projected)
 	}
+	// A tool-using assistant message can contain several model calls. OpenCode
+	// publishes each call's authoritative token block as a step-finish part;
+	// retain it before the following message.updated event supplies model
+	// metadata and triggers the aggregate WHAT-IF projection.
+	if step, ok := parseOpenCodeStepCostUsage(event, runtime.ConvID); ok {
+		applyOpenCodeVirtualCostStep(ctx, runtime, step)
+	}
 	// Context-window usage rides on the same directory-wide SSE stream as the
 	// lifecycle hooks but is a session-row side effect, not a hook event, so it
 	// is projected independently of the lifecycle projector, and after it so the

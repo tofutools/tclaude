@@ -22,6 +22,7 @@ func float64ptr(value float64) *float64 { return &value }
 func resetOpenCodeVirtualCostStateForTest() {
 	openCodeVirtualCostState.Lock()
 	openCodeVirtualCostState.bySession = nil
+	openCodeVirtualCostState.usageSession = nil
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -111,9 +112,78 @@ func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *test
 	require.NoError(t, err)
 	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12, "a corrected repeated message replaces its prior contribution")
 
+	first.Input = 250_000
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, snap.VirtualCostUSD, 1e-12,
+		"an authoritative lower replay clears the earlier overestimate")
+
+	first.ModelID = "missing-price"
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD,
+		"an unpriceable authoritative replay clears rather than retaining stale cost")
+
 	rows, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "replays are also idempotent in provider activity history")
+}
+
+func openCodeStepUpdatedEventJSON(convID, messageID, partID string, input int64) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"id":"evt-%s","type":"message.part.updated","properties":{`+
+		`"sessionID":%q,"part":{"id":%q,"messageID":%q,"sessionID":%q,"type":"step-finish",`+
+		`"cost":0,"tokens":{"input":%d,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}`,
+		partID, convID, partID, messageID, convID, input))
+}
+
+func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "oc-steps", ConvID: "ses-steps", ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	seedOpenCodeUsageSession(t, runtime.SessionID, runtime.ConvID)
+
+	first, ok := parseOpenCodeStepCostUsage(
+		openCodeStepUpdatedEventJSON(runtime.ConvID, "msg-tools", "part-1", 1_000_000),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, first)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-tools", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000,
+	})
+
+	second, ok := parseOpenCodeStepCostUsage(
+		openCodeStepUpdatedEventJSON(runtime.ConvID, "msg-tools", "part-2", 2_000_000),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, second)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, second)
+	// OpenCode overwrites top-level message tokens with the latest step. The
+	// stable parts must remain authoritative when that message update arrives.
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-tools", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 2_000_000,
+	})
+
+	snap, err := db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12,
+		"both model calls are priced once; the latest-step message field does not undercount")
 }
 
 func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {
@@ -263,7 +333,12 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 				`"time":{"created":100},"cost":0,"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
 				// Newer assistant turn — this one wins.
 				`{"info":{"id":"msg_a2","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
-				`"time":{"created":200},"cost":0,"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}}}` +
+				`"time":{"created":200},"cost":0,"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}},` +
+				`"parts":[` +
+				`{"id":"part-a","messageID":"msg_a2","type":"step-finish","cost":0,` +
+				`"tokens":{"input":10000,"output":100,"reasoning":0,"cache":{"read":0,"write":0}}},` +
+				`{"id":"part-b","messageID":"msg_a2","type":"step-finish","cost":0,` +
+				`"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}}]}` +
 				`]`))
 		default:
 			http.NotFound(w, r)
@@ -285,6 +360,6 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
 	assert.InDelta(t, float64(105000)/272000*100, snap.ContextPct, 1e-6)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
-	assert.InDelta(t, 0.236, snap.VirtualCostUSD, 1e-12,
-		"recovery recomputes every assistant message without double-counting")
+	assert.InDelta(t, 0.257, snap.VirtualCostUSD, 1e-12,
+		"recovery prices every step-finish part without double-counting")
 }

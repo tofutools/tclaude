@@ -234,15 +234,30 @@ func collectOpenCodeUsageCoverageWarnings(
 			group.last = row.ObservedAt
 		}
 	}
-	nativeCovered := map[string]bool{}
+	type nativeRange struct {
+		first time.Time
+		last  time.Time
+	}
+	nativeRanges := map[string]nativeRange{}
 	for _, row := range nativeRows {
+		if row.Excluded {
+			continue
+		}
 		from := defaultFrom
 		if selected, ok := providerFrom[row.Provider]; ok {
 			from = selected
 		}
-		if !row.ObservedAt.Before(from) && !row.ObservedAt.After(to) {
-			nativeCovered[row.Provider] = true
+		if row.ObservedAt.Before(from) || row.ObservedAt.After(to) {
+			continue
 		}
+		span, ok := nativeRanges[row.Provider]
+		if !ok || row.ObservedAt.Before(span.first) {
+			span.first = row.ObservedAt
+		}
+		if !ok || row.ObservedAt.After(span.last) {
+			span.last = row.ObservedAt
+		}
+		nativeRanges[row.Provider] = span
 	}
 	providers := make([]string, 0, len(byProvider))
 	for provider := range byProvider {
@@ -252,10 +267,12 @@ func collectOpenCodeUsageCoverageWarnings(
 	out := make([]usageCoverageWarning, 0)
 	for _, provider := range providers {
 		nativeSource := openCodeNativeUsageSource(provider)
-		if nativeSource != "" && nativeCovered[nativeSource] {
+		group := byProvider[provider]
+		nativeSpan, haveNativeSpan := nativeRanges[nativeSource]
+		if nativeSource != "" && haveNativeSpan &&
+			!nativeSpan.first.After(group.first) && !nativeSpan.last.Before(group.last) {
 			continue
 		}
-		group := byProvider[provider]
 		models := make([]string, 0, len(group.models))
 		for model := range group.models {
 			models = append(models, model)

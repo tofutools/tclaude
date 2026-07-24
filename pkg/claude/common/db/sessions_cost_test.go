@@ -208,6 +208,47 @@ func TestUpdateSessionVirtualCost_DenormalisesHarness(t *testing.T) {
 	assert.Equal(t, "codex", row.Harness, "harness denormalised onto virtual cost history")
 }
 
+func TestReplaceSessionVirtualCostLowersAndClearsAuthoritativeProjection(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-replace", TmuxSession: "tmux-vc-replace", ConvID: "conv-vc-replace",
+		Cwd: "/tmp/vc-replace", Status: "idle", Harness: "opencode",
+	}))
+	yesterday := time.Now().AddDate(0, 0, -1).Format(costDayFormat)
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO session_cost_daily
+		(session_id, day, conv_id, virtual_cost_usd, updated_at, harness)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		"vc-replace", yesterday, "conv-vc-replace", 4,
+		time.Now().AddDate(0, 0, -1).Format(time.RFC3339Nano), "opencode")
+	require.NoError(t, err)
+	require.NoError(t, ReplaceSessionVirtualCost("vc-replace", 3))
+	require.NoError(t, ReplaceSessionVirtualCost("vc-replace", 1))
+
+	snap, err := GetContextSnapshot("vc-replace")
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12)
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-replace", yesterday).VirtualCostUSD, 1e-12,
+		"a prior-day cumulative prefix cannot exceed the corrected total")
+	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-replace", today).VirtualCostUSD, 1e-12,
+		"authoritative lower replay replaces today's earlier estimate")
+
+	require.NoError(t, ReplaceSessionVirtualCost("vc-replace", 0))
+	snap, err = GetContextSnapshot("vc-replace")
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD)
+	rows, err = AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Zero(t, dailyRowFor(t, rows, "vc-replace", yesterday).VirtualCostUSD,
+		"real-cost discovery clears historical virtual prefixes too")
+	assert.Zero(t, dailyRowFor(t, rows, "vc-replace", today).VirtualCostUSD,
+		"missing pricing or real-cost discovery clears today's stale estimate")
+}
+
 // TestUpdateSessionCost_PrefersPersistedAgentID pins JOH-288: the daily
 // snapshot's agent_id is taken from the session's PERSISTED agent_id column
 // first, falling back to the live agent_conversations lookup only when that

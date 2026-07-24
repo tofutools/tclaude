@@ -76,8 +76,9 @@ The implemented handling is:
   in `sessions.virtual_cost_usd`
   (Codex's never-billed estimate lives in that column too), keeping `cost_usd`
   at 0. Input, output, reasoning, cache read/write, and model pricing tiers are
-  included. Message identity makes repeated SSE updates, reconnect history,
-  and recovery backfills replacement-safe instead of double-counting.
+  included. Stable message and `step-finish` part identities make multi-call
+  tool turns, repeated SSE updates, reconnect history, and recovery backfills
+  replacement-safe instead of undercounting or double-counting.
 
 The Costs tab selects real spend per session/day slice when present and
 otherwise selects its WHAT-IF estimate. Mixed Claude, Codex, and OpenCode
