@@ -581,10 +581,13 @@ type SpawnParams struct {
 	// leaves the pointer nil so a profile default can still speak, matching
 	// --auto-memory's opt-in-only CLI shape; an explicit "none" is how the CLI
 	// says "trim nothing, ignore the profile".
-	ContextFeatures string `long:"context-features" optional:"true" help:"Trim the new agent's Claude Code startup context: comma-separated <feature>[=on|off] (a bare feature means off), or 'none' to override a profile and trim nothing. E.g. bundled-skills,artifact,workflows. Unset = filled by the profile chain. See --help-context-features for the catalog. Not applicable to codex"`
-
-	// HelpContextFeatures prints the trim catalog and exits.
-	HelpContextFeatures bool `long:"help-context-features" help:"List the startup-context features --context-features can trim, then exit"`
+	// No --help-context-features twin here: Group is a REQUIRED positional, and
+	// cobra validates args before RunFunc, so a bare `agent spawn
+	// --help-context-features` could only ever fail with "accepts 1 arg". The
+	// catalog listing lives on `tclaude session new`, which has no required
+	// positional; the help below points there rather than shipping a flag that
+	// cannot work.
+	ContextFeatures string `long:"context-features" optional:"true" help:"Trim the new agent's Claude Code startup context: comma-separated <feature>[=on|off] (a bare feature means off), or 'none' to override a profile and trim nothing. E.g. bundled-skills,artifact,workflows. Unset = filled by the profile chain. Run 'tclaude session new --help-context-features' for the catalog. Not applicable to codex"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -686,11 +689,10 @@ type resolvedSpawnFields struct {
 
 	IsOwner             bool
 	PermissionOverrides map[string]string
-
-	// ContextFeatures is tri-state on the wire: nil = unspecified (the daemon's
-	// profile tier stack fills it), non-nil = authoritative, including an empty
-	// map for "trim nothing" (what `--context-features none` sends).
-	ContextFeatures map[string]string
+	// Deliberately NO ContextFeatures here. The CLI does not fold a --profile's
+	// trims into the request: it sends its own map or nothing, and lets the
+	// daemon's tier stack resolve the named profile (the same reason
+	// remote_control is not folded in). A field here would imply otherwise.
 
 	// IncludeGroupContext is tri-state on the wire: nil = default (the daemon
 	// includes the group context), &false = exclude. --no-group-context forces
@@ -859,12 +861,6 @@ func validateSpawnModel(h *harness.Harness, model string) (string, error) {
 // printed; the CLI wrapper just propagates the exit code. stdin backs
 // `--file -` (read the brief from a pipe).
 func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*SpawnResponse, int) {
-	// The trim catalog is a listing, not a spawn — answer it before every other
-	// requirement (including --group) so it works as a bare lookup.
-	if p.HelpContextFeatures {
-		harness.PrintContextFeatureCatalog(stdout)
-		return nil, rcOK
-	}
 	if p.Group == "" {
 		fmt.Fprintln(stderr, "Error: group is required")
 		return nil, rcInvalidArg

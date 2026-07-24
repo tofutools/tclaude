@@ -26,6 +26,12 @@ const harnesses = [{
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
   can_remote_control: true, can_auto_memory: true,
+  can_context_features: true,
+  context_features: [
+    { slug: 'bundled-skills', label: 'Bundled skills', descr: 'shipped skills', heavy: true },
+    { slug: 'artifact', label: 'Artifacts', descr: 'artifact tool', heavy: true },
+    { slug: 'claude-mds', label: 'CLAUDE.md', descr: 'memory files', caution: 'drops project instructions' },
+  ],
 }, {
   name: 'codex', display_name: 'Codex CLI',
   models: [], effort_levels: ['medium', 'high', 'max'],
@@ -42,6 +48,7 @@ const harnesses = [{
   can_auto_review: true,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
   can_remote_control: false, can_auto_memory: false,
+  can_context_features: false, context_features: [],
 }, {
   name: 'opencode', display_name: 'OpenCode',
   models: [], effort_levels: [],
@@ -251,6 +258,11 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     sandbox_profile: 'strict', approval: 'plan', ask_user_question_timeout: 'never',
     remote_control: false, auto_memory: false, is_owner: true,
     permission_overrides: { 'groups.spawn': 'grant' },
+    // Always present for a trim-capable harness, empty when nothing is trimmed:
+    // the form is the authoritative statement of what the agent loads, so an
+    // omitted field would let the daemon's profile tier stack re-apply a
+    // profile's trims the operator had cleared (TCL-597).
+    context_features: {},
     cwd: '/mono', worktree_path: '/tmp/wt', worktree_branch: 'worker',
   });
 
@@ -1276,4 +1288,105 @@ test('Preact agent-spawn stays blocked when the post-422 policy reload is pendin
   } finally {
     mounted.cleanup();
   }
+});
+
+// TCL-597 — startup-context trimming. The subtlest rule in the feature lives
+// here rather than server-side: the dialog must send `context_features` even when
+// EMPTY, because the form is the authoritative statement of what the agent loads.
+// If it omitted the field, the daemon's profile tier stack would silently
+// re-apply a profile's trims the operator had just cleared.
+test('spawn dialog sends startup-context trims, including an explicit empty set', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+
+  const draft = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+  assert.deepEqual(draft.contextFeatures, {}, 'a fresh draft trims nothing');
+  const view = model.spawnCapabilityView(draft, context);
+  assert.equal(view.showContextFeatures, true, 'Claude Code exposes the trim control');
+  assert.equal(view.contextFeatureCatalog.length, 3, 'the harness catalog reaches the dialog');
+
+  // A selection reaches the wire.
+  const trimmed = model.buildSpawnRequest(
+    { ...draft, name: 'w', contextFeatures: { 'bundled-skills': 'off', artifact: 'on' } },
+    context, null, [],
+  );
+  assert.deepEqual(trimmed.body.context_features, { 'bundled-skills': 'off', artifact: 'on' });
+
+  // THE load-bearing case: an empty selection is still sent, so it can override
+  // a profile tier the daemon would otherwise apply.
+  const cleared = model.buildSpawnRequest({ ...draft, name: 'w' }, context, null, []);
+  assert.deepEqual(cleared.body.context_features, {},
+    'an empty selection must be SENT, not omitted, or the profile tier wins');
+
+  // Codex hides the control and omits the field entirely rather than sending
+  // something the server would reject.
+  const codex = model.selectSpawnHarness(draft, 'codex', context);
+  assert.equal(model.spawnCapabilityView(codex, context).showContextFeatures, false);
+  assert.deepEqual(codex.contextFeatures, {}, 'switching to a trim-less harness clears the selection');
+  const codexReq = model.buildSpawnRequest({ ...codex, name: 'w' }, context, null, []);
+  assert.equal(codexReq.body.context_features, undefined);
+});
+
+// A profile's trims REPLACE the form's rather than merging, matching the
+// daemon's whole-tier resolution: one profile always tells the whole story of
+// what its agents load.
+test('spawn dialog replaces startup-context trims when applying a profile', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const draft = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+
+  // Start from a hand-picked selection, then apply a profile with a DIFFERENT one.
+  const handPicked = { ...draft, contextFeatures: { artifact: 'off' } };
+  const applied = model.applySpawnProfile(
+    handPicked,
+    { name: 'lean', harness: 'claude', context_features: { 'bundled-skills': 'off' } },
+    context,
+  );
+  assert.deepEqual(applied.contextFeatures, { 'bundled-skills': 'off' },
+    'the profile replaces the selection outright — no union of the two');
+
+  // A profile that says nothing CLEARS the selection rather than leaving stale
+  // trims from a previously-selected profile.
+  const silent = model.applySpawnProfile(handPicked, { name: 'quiet', harness: 'claude' }, context);
+  assert.deepEqual(silent.contextFeatures, {},
+    'a profile with no trims must clear, not inherit, the previous selection');
+});
+
+// The dirty check must survive JS object insertion order, or reopening the
+// dialog and re-picking the same rows in a different order would falsely warn
+// about discarding changes.
+test('spawn draft dirty check ignores startup-context key order', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const baseline = {
+    ...model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' }),
+    contextFeatures: { 'bundled-skills': 'off', artifact: 'on' },
+  };
+  const reordered = { ...baseline, contextFeatures: { artifact: 'on', 'bundled-skills': 'off' } };
+  assert.equal(model.spawnDraftIsDirty(reordered, baseline), false,
+    'the same trims in a different key order are not a change');
+
+  const changed = { ...baseline, contextFeatures: { 'bundled-skills': 'off' } };
+  assert.equal(model.spawnDraftIsDirty(changed, baseline), true,
+    'dropping a trim IS a change');
+});
+
+// "Save as profile" seeds only real intent, so a profile never persists a row the
+// operator set and then reverted.
+test('spawn profile seed carries only steered startup-context trims', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/agent-spawn-model.js');
+  const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
+  const draft = model.createSpawnDraft({ groups, harnesses, groupName: 'alpha' });
+
+  const bare = model.spawnProfileSeed(draft, context);
+  assert.equal(bare.context_features, undefined,
+    'an untouched dialog seeds no context_features at all');
+
+  const seeded = model.spawnProfileSeed(
+    { ...draft, contextFeatures: { 'bundled-skills': 'off' } }, context,
+  );
+  assert.deepEqual(seeded.context_features, { 'bundled-skills': 'off' });
 });

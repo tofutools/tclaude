@@ -269,3 +269,55 @@ func TestProfileContextFeaturesRoundTrip(t *testing.T) {
 	}, profile.ContextFeatures,
 		"the stored map must hold exactly the steered features, normalized")
 }
+
+// TestClaudeSpawn_ContextFeaturesFromGroupDefaultProfile: the tier the DASHBOARD
+// actually exercises. The named-profile tests above cover the explicit
+// `"profile": X` path, but a dashboard spawn usually names no profile and lets
+// the group's default speak — so a regression here would be invisible to them.
+func TestClaudeSpawn_ContextFeaturesFromGroupDefaultProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("cc-crew")
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "group-lean", "harness": "claude",
+		"context_features": map[string]any{"bundled-skills": "off", "cron": "off"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "cc-crew", "group-lean").Code,
+		"set the group's default profile")
+
+	// No "profile" key: the group default is the only tier that can speak.
+	resp := f.AsHuman().SpawnWith("cc-crew", map[string]any{"name": "inherits-group-lean"})
+	require.Equal(t, 200, resp.Code, "spawn body=%s", resp.Raw)
+
+	got, ok := f.World.SpawnContextFeatures(resp.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, map[string]string{"bundled-skills": "off", "cron": "off"}, got,
+		"the group default profile's trims must reach the launch")
+}
+
+// TestClaudeSpawn_ExplicitContextFeaturesBeatGroupDefaultProfile: the same
+// whole-tier replacement, proven against the group tier rather than a named one —
+// this is what makes "clear the rows in the dialog and get an untrimmed agent"
+// true for a group that has a lean default.
+func TestClaudeSpawn_ExplicitContextFeaturesBeatGroupDefaultProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("cc-crew")
+
+	rec := createProfile(t, f, map[string]any{
+		"name": "group-lean-2", "harness": "claude",
+		"context_features": map[string]any{"bundled-skills": "off"},
+	})
+	require.Equalf(t, http.StatusCreated, rec.Code, "create profile body=%s", rec.Body.String())
+	require.Equalf(t, http.StatusOK, setGroupProfile(t, f, "cc-crew", "group-lean-2").Code,
+		"set the group's default profile")
+
+	resp := f.AsHuman().SpawnWith("cc-crew", map[string]any{
+		"name": "clears-group-lean", "context_features": map[string]any{},
+	})
+	require.Equal(t, 200, resp.Code, "spawn body=%s", resp.Raw)
+
+	got, ok := f.World.SpawnContextFeatures(resp.ConvID)
+	require.True(t, ok)
+	assert.Empty(t, got, "an explicit empty selection must beat the GROUP default's trims too")
+}

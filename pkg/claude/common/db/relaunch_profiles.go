@@ -254,16 +254,15 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	// Selecting it unconditionally would break that migration, so the column is
 	// probed and substituted with a literal '' when absent — the same
 	// probe-before-read discipline the agents-spine checks below use.
-	contextFeaturesColumn := "''"
-	var haveContextFeatures int
-	if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions')
-		WHERE name = 'context_features'`).Scan(&haveContextFeatures); err != nil {
+	haveContextFeatures, err := sessionsHaveContextFeatures(q)
+	if err != nil {
 		return err
 	}
-	if haveContextFeatures > 0 {
+	contextFeaturesColumn := "''"
+	if haveContextFeatures {
 		contextFeaturesColumn = "context_features"
 	}
-	err := q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode,
+	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
 		auto_memory, `+contextFeaturesColumn+`, resume_provenance, created_at
@@ -347,8 +346,8 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	// Only claim to KNOW the trim intent when the column was actually there to
 	// read. Pre-v155 the absent column would otherwise project as "known: trims
 	// nothing", which is authority this projection never observed.
-	if opts.ContextFeatures && haveContextFeatures > 0 {
-		features := unmarshalPermissionOverrides(contextFeaturesRaw)
+	if opts.ContextFeatures && haveContextFeatures {
+		features := unmarshalStringMapColumn(contextFeaturesRaw, "sessions.context_features")
 		if features == nil {
 			features = map[string]string{}
 		}
@@ -461,6 +460,28 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	}
 	_, err = q.Exec(`UPDATE agents SET relaunch_profile = ? WHERE agent_id = ?`, agentRaw, agentID)
 	return err
+}
+
+// sessionsHaveContextFeatures probes for the v155 sessions.context_features
+// column. This projection runs inside EVERY SaveSession — i.e. on every hook tick
+// — and ALSO inside the v145 migration, where the column does not exist yet, so
+// the probe cannot simply be deleted.
+//
+// It is deliberately NOT memoized in a package-level latch. Column existence is
+// monotonic within one DATABASE, but not within a process: a single process
+// legitimately opens several (legacy-import fixtures, old-schema migration
+// fixtures, and every test DB), so a process-global "the column exists" latch set
+// by one database makes the projection emit `SELECT context_features` against
+// another that predates v155 — turning every write into an error. The pragma is
+// answered from SQLite's already-loaded schema, so the per-call cost is small;
+// any future caching must be keyed by database identity, not by process.
+func sessionsHaveContextFeatures(q dbExecQuerier) (bool, error) {
+	var n int
+	if err := q.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions')
+		WHERE name = 'context_features'`).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func sessionProjectionIsOlder(existing *ConversationResumeProfile, createdAt string, rowID int64) bool {

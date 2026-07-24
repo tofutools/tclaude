@@ -737,7 +737,13 @@ type templateAgentLaunch struct {
 	// launches with, resolved from the profile tiers (whole, not merged — see
 	// resolveContextFeaturesLaunchField). Empty means the agent keeps Claude
 	// Code's own startup context.
-	ContextFeatures        map[string]string
+	ContextFeatures map[string]string
+	// ContextFeaturesSet distinguishes "traced this member and it trims nothing"
+	// from "could not trace it at all" (a pruned session row). The map alone
+	// cannot: ResolveContextFeatures returns nil for an all-default map, so both
+	// cases arrive as len()==0. The re-snapshot merge needs the difference — see
+	// mergeSnapshotInlineProfile — mirroring AutoReviewSet.
+	ContextFeaturesSet     bool
 	AskUserQuestionTimeout string
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
@@ -1261,6 +1267,10 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 	if features, err := db.ContextFeaturesForConv(convID); err == nil {
 		if resolved, err := harness.ResolveContextFeatures(h, features); err == nil {
 			out.ContextFeatures = resolved
+			// Observed — even when the answer is "trims nothing". That is what lets
+			// a re-snapshot record an un-trimmed member as un-trimmed instead of
+			// falling back to the template's previous trims forever.
+			out.ContextFeaturesSet = true
 		}
 	}
 	return out
@@ -3668,10 +3678,14 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	out.TrustDir = prev.TrustDir
 	out.RemoteControl = prev.RemoteControl
 	out.AutoMemory = prev.AutoMemory
-	// ContextFeatures IS observable, so the traced value wins like harness/model.
-	// prev carries forward only when the re-trace saw nothing at all (a pruned
-	// session row), which would otherwise silently un-trim the template.
-	if len(out.ContextFeatures) == 0 {
+	// ContextFeatures IS observable, so the traced value wins like harness/model —
+	// INCLUDING an observed "trims nothing", which must be able to CLEAR the
+	// template's previous trims. That is why the signal here is nil-vs-empty
+	// rather than len()==0: the snapshot pass writes a non-nil empty map for a
+	// member it traced that trims nothing, and leaves nil when it could not
+	// observe the member at all (a pruned session row). Keying on len()==0 would
+	// conflate the two and make the trims permanently unclearable.
+	if out.ContextFeatures == nil {
 		out.ContextFeatures = prev.ContextFeatures
 	}
 	for slug, effect := range prev.PermissionOverrides {
@@ -3754,6 +3768,14 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				Approval:            launch.Approval,
 				PermissionOverrides: po,
 				ContextFeatures:     launch.ContextFeatures,
+			}
+			if launch.ContextFeaturesSet && inline.ContextFeatures == nil {
+				// Traced, and the answer was "trims nothing". Recorded as a non-nil
+				// empty map so an update-mode re-snapshot can tell this apart from an
+				// unobservable member and actually clear the template's old trims.
+				// It persists as absent either way (omitempty), so the stored shape is
+				// unchanged.
+				inline.ContextFeatures = map[string]string{}
 			}
 			if launch.AutoReviewSet {
 				autoReview := launch.AutoReview

@@ -160,7 +160,7 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
-		marshalPermissionOverrides(p.ContextFeatures),
+		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		now, now)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
@@ -220,7 +220,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
-		marshalPermissionOverrides(p.ContextFeatures),
+		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		time.Now().Format(time.RFC3339Nano), p.ID)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
@@ -488,7 +488,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.AutoMemory = nullToBoolPtr(autoMemory)
 	p.IsOwner = nullToBoolPtr(isOwner)
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
-	p.ContextFeatures = unmarshalPermissionOverrides(contextFeatures)
+	p.ContextFeatures = unmarshalStringMapColumn(contextFeatures, "spawn_profiles.context_features")
 	p.CreatedAt = parseTimeOrZero(createdAt)
 	p.UpdatedAt = parseTimeOrZero(updatedAt)
 	return &p, nil

@@ -3646,6 +3646,12 @@ body.wizard .group-pending-title-wizard { display: inline; }
    .perm-row / .perm-tristate / .perm-edit-* skeleton, so the two buffered
    selectors read as one control. These are the only additions it needs. */
 .context-features-caution { color: #e3b341; }
+/* Id-scoped so it survives the wizard re-skin: that theme sets
+   `body.wizard #context-features-modal .perm-row-desc` (specificity 1,2,0),
+   which would otherwise out-specify the plain class above and repaint the amber
+   ⚠ line violet — losing the one visual cue that a trim needs a real decision. */
+#context-features-modal .perm-row-desc.context-features-caution { color: #e3b341; }
+body.wizard #context-features-modal .perm-row-desc.context-features-caution { color: #f0c674; }
 /* Trim/Keep/Default is a wider label set than Grant/Deny, and the effect column
    carries "— harness default", so both need more room than the permission
    editor's defaults give them. */

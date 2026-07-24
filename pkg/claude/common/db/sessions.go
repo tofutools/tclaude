@@ -554,7 +554,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	row.AutoRegistered = autoReg != 0
 	row.RemoteControl = remoteCtl != 0
 	row.AutoMemory = autoMemory != 0
-	row.ContextFeatures = unmarshalPermissionOverrides(contextFeatures)
+	row.ContextFeatures = unmarshalStringMapColumn(contextFeatures, "sessions.context_features")
 	row.ApprovalAutoReview = approvalAutoReview != 0
 	var err error
 	row.EffectiveSandbox, err = unmarshalEffectiveSandboxSnapshot(effectiveSandbox)
@@ -984,7 +984,7 @@ func RemoteControlForConv(convID string) (bool, error) {
 func SetSessionContextFeatures(sessionID string, features map[string]string) error {
 	return execSessionUpdateAndProject(sessionID, relaunchProjectionOptions{ContextFeatures: true},
 		`UPDATE sessions SET context_features = ? WHERE id = ?`,
-		marshalPermissionOverrides(features), sessionID)
+		marshalStringMapColumn(features, "sessions.context_features"), sessionID)
 }
 
 // ContextFeaturesForConv reports durable agent intent, or the unmanaged

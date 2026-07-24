@@ -2416,6 +2416,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxDenyDirs:  denyDirs,
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
+		// The trims must reach the spec, not just the env: the settings-only
+		// entries (those with no CLAUDE_CODE_DISABLE_* twin) ride the `--settings`
+		// payload the spec builds, and ApplyContextFeaturesEnv above delivers only
+		// the env-backed majority. Without this a resumed pane silently regained
+		// e.g. the claude.ai connector tools while the session row, the durable
+		// relaunch profile and a template re-snapshot all still reported them
+		// trimmed — the misreporting being worse than the lost trim.
+		ContextFeatures: contextFeatures,
 
 		SandboxBreakGlassReadDirs:  breakGlassReadDirs,
 		SandboxBreakGlassWriteDirs: breakGlassWriteDirs,
