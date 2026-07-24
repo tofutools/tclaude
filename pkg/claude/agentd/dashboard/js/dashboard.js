@@ -123,8 +123,11 @@ async function settleInitialLayout() {
   // completed milestone so the bar keeps moving through the whole boot. The
   // total derives from featureMounts.length, so adding a mount can't drift the
   // denominator.
+  // A step marks the milestone just completed; the label (optional) names the
+  // phase now in flight, so the counter text stays truthful during the await
+  // that follows.
   const bootApp = (detail) => document.dispatchEvent(new CustomEvent('tclaude:boot-app', { detail }));
-  const bootStep = (label) => bootApp({ step: 1, label });
+  const bootStep = (label) => bootApp(label ? { step: 1, label } : { step: 1 });
 
   // The bounded feature islands, as lazily-invoked mount thunks. Shell and
   // Jobs are NOT here: they must mount first / before the legacy modal
@@ -257,10 +260,10 @@ async function settleInitialLayout() {
     }),
   ];
   // +3: prefs, shell, jobs — the sequential milestones below.
-  bootApp({ total: featureMounts.length + 3 });
+  bootApp({ total: featureMounts.length + 3, label: 'Loading preferences…' });
 
   await initDashPrefs();
-  bootStep('Loading preferences…');
+  bootStep('Starting shell…');
   // Start cross-window terminal-palette synchronization only after the local
   // preference cache is authoritative. Popped-out terminals do the same in
   // terminals.js, so toggling either surface repaints the other immediately.
@@ -277,7 +280,7 @@ async function settleInitialLayout() {
   // feedback services retain the existing function APIs, while Preact owns
   // their stable DOM hosts and document-level lifecycle.
   pageCleanups.push(await mountShellFeature({ notify: toast }));
-  bootStep('Starting shell…');
+  bootStep('Loading features…');
 
   // The Jobs pilot owns its filter, table, sort, paging, and badge subtrees.
   // Await the mount before legacy modal binders look up the create button.
@@ -289,14 +292,14 @@ async function settleInitialLayout() {
     download: triggerExportDownload,
     confirmDiscard,
   }));
-  bootStep('Loading features…');
+  bootStep();
   // The remaining bounded islands are independent. Start them concurrently so
   // navigation setup is delayed by only the slowest optional feature import,
   // not by the sum of the dynamic-import chains. Await the whole group before
   // initNavHistory below so initial deep links still find every lazy loader.
   // Each completed mount advances the boot bar's app band.
   const featureCleanups = await Promise.all(featureMounts.map((mount) =>
-    mount().then((cleanup) => { bootStep('Loading features…'); return cleanup; })));
+    mount().then((cleanup) => { bootStep(); return cleanup; })));
   pageCleanups.push(...featureCleanups);
 
   pageCleanups.push(bindTabs(), bindTabHotkeys());

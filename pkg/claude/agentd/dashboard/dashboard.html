@@ -129,9 +129,10 @@
   } catch (e) {}
   try { absorb(performance.getEntriesByType('resource')); } catch (e) {}
   // App-bootstrap milestones. dashboard.js announces {total} before its first
-  // await and dispatches {step: 1, label} as each milestone (prefs, each island
-  // mount) completes; a label-only event just retitles the counter (e.g.
-  // "Fetching data…" while the first snapshot request is in flight).
+  // await and dispatches {step: 1} as each milestone (prefs, each island
+  // mount) completes. A label, alone or alongside a step, names the phase now
+  // IN FLIGHT (e.g. "Fetching data…" while the first snapshot request is
+  // pending), so the counter text describes what the wait is for.
   document.addEventListener('tclaude:boot-app', function (ev) {
     if (ready) return;
     var d = (ev && ev.detail) || {};
