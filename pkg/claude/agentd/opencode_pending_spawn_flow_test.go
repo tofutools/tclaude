@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
@@ -127,6 +128,53 @@ func TestOpenCodeAgent_SlowBootReturnsPendingThenEnrollsInBackground(t *testing.
 	assert.Equal(t, resp.AgentID, boundAgentID, "background enrollment binds the reserved identity")
 }
 
+// Scenario (cold-review regression, PR #1496 finding 1): the operator's
+// legacy-injection revert (SpawnLegacyInjection) turns launch enrollment off,
+// which used to let the deferred continuation fall into the reservedPending
+// branch and mint a SECOND agent id over the reservation the response already
+// returned — dangling the identity the dashboard was showing. The continuation
+// must reuse its reservation: same agent id from response to enrollment.
+func TestOpenCodeAgent_DeferredSpawnKeepsIdentityUnderLegacyInjection(t *testing.T) {
+	f := newFlow(t)
+	legacy := true
+	require.NoError(t, config.Save(&config.Config{
+		Agent: &config.AgentConfig{SpawnLegacyInjection: &legacy},
+	}))
+	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(20 * time.Millisecond))
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	blockedOpenCodeRuntime(t, release, nil)
+
+	f.HaveGroup("oc-crew")
+	resp := f.AsHuman().SpawnWith("oc-crew", map[string]any{
+		"name":    "oc-worker",
+		"harness": "opencode",
+	})
+	require.Equal(t, 200, resp.Code, "raw=%s", resp.Raw)
+	require.Empty(t, resp.ConvID)
+	require.True(t, strings.HasPrefix(resp.AgentID, db.AgentIDPrefix))
+
+	ps, err := db.GetPendingSpawn(resp.Label)
+	require.NoError(t, err)
+	require.NotNil(t, ps)
+	require.Equal(t, resp.AgentID, ps.AgentID, "reservation carries the returned identity")
+
+	releaseOnce.Do(func() { close(release) })
+
+	convID := "ses_" + resp.Label
+	f.AssertGroupMember("oc-crew", convID, "oc-worker", 10*time.Second)
+	require.Eventually(t, func() bool {
+		gone, err := db.GetPendingSpawn(resp.Label)
+		return err == nil && gone == nil
+	}, 10*time.Second, 20*time.Millisecond, "enrollment clears the reservation")
+	boundAgentID, err := db.AgentIDForConv(convID)
+	require.NoError(t, err)
+	assert.Equal(t, resp.AgentID, boundAgentID,
+		"the legacy-injection continuation must bind the RESERVED identity, never re-mint one")
+}
+
 // Scenario: the OpenCode server never becomes healthy. The spawn already
 // answered Pending, so the failure must not strand a forever-Pending ghost:
 // the background continuation deletes the reservation and surfaces the
@@ -168,4 +216,36 @@ func TestOpenCodeAgent_BackgroundBootFailureClearsPendingAndNotifies(t *testing.
 		}
 	}
 	assert.True(t, found, "the operator gets a Messages-tab notice for the failed spawn; have %+v", msgs)
+}
+
+// Scenario (cold-review follow-up, PR #1496 finding 2): a reservation whose
+// launch never produced a session row — e.g. a daemon restart killed a
+// deferred OpenCode boot in flight — is dropped by the sweeper. The operator
+// watched that row in the Pending list, so the drop must leave a
+// daemon-originated Messages-tab notice rather than vanishing silently.
+func TestPendingSpawnSweeper_OrphanDropNotifiesOperator(t *testing.T) {
+	f := newFlow(t)
+	g := f.HaveGroup("oc-crew")
+
+	require.NoError(t, db.InsertPendingSpawn(&db.PendingSpawn{
+		Label: "spwn-orphan", AgentID: db.NewAgentID(), GroupID: g.ID,
+		Name: "lost-worker", Role: "worker",
+	}))
+
+	agentd.RunPendingSpawnSweepForTest()
+
+	gone, err := db.GetPendingSpawn("spwn-orphan")
+	require.NoError(t, err)
+	assert.Nil(t, gone, "the orphaned reservation is dropped")
+
+	msgs, err := db.ListHumanMessages()
+	require.NoError(t, err)
+	found := false
+	for _, m := range msgs {
+		if strings.Contains(m.Subject, "lost-worker") && strings.Contains(m.Body, "spwn-orphan") {
+			found = true
+			assert.Empty(t, m.FromConv, "the notice is daemon-originated")
+		}
+	}
+	assert.True(t, found, "dropping an orphaned pending spawn must notify the operator; have %+v", msgs)
 }

@@ -3,6 +3,7 @@ package agentd
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -21,7 +22,12 @@ const pendingSpawnSweepInterval = 5 * time.Second
 // pendingSpawnLaunchGrace bounds protection for a reservation whose session
 // wrapper never created a row. Normal launches clear Launching as soon as the
 // row appears; a crashed daemon/launcher cannot leave the reservation forever.
-const pendingSpawnLaunchGrace = 30 * time.Second
+// Sized to clear the deferred OpenCode pre-fork chain with headroom — the
+// managed-server boot (openCodeStartupTimeout, 12s) plus the fork and the
+// wrapper's session-row write on a loaded host — because dropping a
+// reservation whose launch is merely slow would make the operator's Pending
+// row vanish mid-launch.
+const pendingSpawnLaunchGrace = 60 * time.Second
 
 // startPendingSpawnSweeper runs the pending-spawn back-fill sweeper in its
 // own goroutine until stop closes (the daemon-wide quit channel). JOH-205
@@ -89,11 +95,16 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 			}
 		}
 		// The session row is gone (deleted, or never created because the
-		// launch wrapper died before writing it) — the spawn can never
-		// enroll. Drop the orphaned pending row so the table doesn't leak.
+		// launch wrapper — or, for a deferred OpenCode spawn, the daemon
+		// itself mid-server-boot — died before writing it) — the spawn can
+		// never enroll. Drop the orphaned pending row so the table doesn't
+		// leak, and tell the operator: they watched this row appear in the
+		// Pending list, so a silent disappearance would be indistinguishable
+		// from a spawn that never happened.
 		slog.Info("pending-spawn sweeper: session row gone; dropping pending spawn",
 			"label", ps.Label)
 		deletePendingSpawnRow(ps.Label)
+		surfacePendingSpawnDrop(ps)
 		return
 	}
 	if ps.Launching {
@@ -301,6 +312,30 @@ func ensurePendingTaskRefBound(convID string, ps *db.PendingSpawn) bool {
 		return false
 	}
 	return true
+}
+
+// surfacePendingSpawnDrop lands a daemon-originated Messages-tab notice when
+// the sweeper drops a reservation whose launch never produced a session row —
+// a launcher that died before writing it, or a daemon restart that killed a
+// deferred OpenCode boot in flight. The Pending row the operator watched is
+// gone; without this notice the spawn would just silently vanish. Failure
+// paths that are still in memory (executeServerSpawnDeferred's background
+// wrapper) surface richer messages themselves and delete the row before the
+// sweeper can see it, so this is the restart/orphan backstop only.
+func surfacePendingSpawnDrop(ps *db.PendingSpawn) {
+	name := ps.Name
+	if name == "" {
+		name = ps.Role
+	}
+	if name == "" {
+		name = ps.Label
+	}
+	body := fmt.Sprintf("Pending spawn %q (label %s) never started — its launch died before creating a session (for example a daemon restart during startup) — and was removed from the Pending list. Re-run the spawn if it is still wanted.",
+		name, ps.Label)
+	if _, err := recordHumanMessage("", "Agent spawn never started: "+name, body); err != nil {
+		slog.Warn("pending-spawn sweeper: failed to record spawn-drop notice",
+			"label", ps.Label, "error", err)
+	}
 }
 
 // deletePendingSpawnRow removes a pending row, logging (not bubbling) a

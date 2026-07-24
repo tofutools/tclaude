@@ -3918,8 +3918,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// the deferred server-authoritative branch below can hand marker
 	// ownership to its background continuation — which re-enters
 	// executeSpawn with the same CleanupDirWriteProof intent and registers
-	// its own cleanup — instead of removing the markers while the
-	// continuation still needs them for reassertDirWriteProof.
+	// its own cleanup. The markers were consumed at the HTTP boundary
+	// (reassertDirWriteProof only re-checks canonical paths); the hand-off
+	// exists to keep the launch-scoped lifetime — removal when the launch
+	// actually ends, owned exactly once — rather than tying it to a response
+	// that now returns mid-launch.
 	cleanupProofOnReturn := p.CleanupDirWriteProof
 	defer func() {
 		if cleanupProofOnReturn {
@@ -4228,7 +4231,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// process starts, so an immediate hook/reaper enrollment can only bind this
 	// exact id. The row is atomically replaced by the actor binding once the conv
 	// appears; a genuinely pending response simply leaves it for back-fill.
-	reservedPending := p.Async && !launchEnroll
+	//
+	// The deferred server-authoritative continuation already holds its
+	// reservation (pendingSpawnLabel) — it must NEVER re-reserve here, even
+	// when the legacy-injection revert turns launchEnroll off: re-minting
+	// would replace the row (INSERT OR REPLACE) with a second identity while
+	// the first was already returned to the caller. pendingHeld is the "some
+	// reservation exists for this label" predicate the shared claim/requeue/
+	// launch-marker sites key on.
+	reservedPending := p.Async && !launchEnroll && p.pendingSpawnLabel == ""
+	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
 			if openCodeLaunch != nil {
@@ -4263,7 +4275,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
-		if reservedPending {
+		if pendingHeld {
 			if deleteErr := db.DeletePendingSpawn(label); deleteErr != nil {
 				slog.Warn("spawn: failed to remove reservation after launch failure",
 					"label", label, "error", deleteErr)
@@ -4383,7 +4395,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
-			if (reservedPending || p.pendingSpawnLabel != "") && !pendingLaunchMarked {
+			if pendingHeld && !pendingLaunchMarked {
 				if err := db.MarkPendingSpawnLaunched(label); err != nil {
 					slog.Warn("spawn: failed to clear pending launch marker", "label", label, "error", err)
 				} else {
@@ -4482,7 +4494,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
 	// with the legacy-injection revert flag) and inject the rename + welcome.
 	if convID != "" {
-		if reservedPending {
+		if pendingHeld {
 			claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
 			if err != nil {
 				return nil, &spawnFailure{http.StatusInternalServerError, "identity",
@@ -4506,7 +4518,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			}
 		}
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
-			if reservedPending {
+			if pendingHeld {
 				// The agent process is already running and its identity bound;
 				// a hard failure here would tell the caller the spawn failed —
 				// the CLI would even remove a just-created worktree under the
@@ -4580,9 +4592,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 //
 // syncProofCleanup is executeSpawn's proof-marker ownership flag: it is
 // cleared the moment the continuation is scheduled, because the continuation
-// re-registers the same cleanup and must find the markers intact for its
-// pre-fork reassertDirWriteProof. Pre-flight failures return before that
-// hand-off, leaving the synchronous cleanup in place.
+// re-registers the same cleanup — marker removal stays launch-scoped (it
+// happens when the launch actually ends) and owned exactly once, instead of
+// racing a response that returns mid-launch. Pre-flight failures return
+// before that hand-off, leaving the synchronous cleanup in place.
 func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanup *bool) (*spawnOutcome, *spawnFailure) {
 	if g == nil {
 		return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
