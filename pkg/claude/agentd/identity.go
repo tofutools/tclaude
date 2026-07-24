@@ -806,6 +806,15 @@ func sessionConvByPID(hostPID int) string {
 // pre-existing property but no endpoint to prove against; it is intentionally
 // left unchanged here — see TCL-678.)
 func openCodeRuntimeConvByPID(hostPID int) string {
+	if hostPID == os.Getpid() {
+		// The managed serve is a direct child of agentd, so convIDForPID's
+		// parent probe can pass agentd's own pid here. agentd is never a managed
+		// serve, so any runtime row matching our pid is stale/reused — and
+		// subtree endpoint ownership would still match (managed serves are our
+		// children), so the ownership gate alone would not reject it. Fail closed
+		// rather than resolve a victim conv-id from a reused self-pid row.
+		return ""
+	}
 	if runtime, err := db.FindOpenCodeRuntimeByPID(hostPID); err == nil && runtime != nil &&
 		openCodeRuntimeVerified(*runtime) {
 		return runtime.ConvID

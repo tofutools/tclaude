@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -280,6 +281,48 @@ func TestConvIDForPID_OpenCodeStalePIDReuseFailsClosed(t *testing.T) {
 	}.install(t)
 	// The recorded pid no longer owns the recorded endpoint (crashed + reused).
 	withOpenCodeRuntimeVerified(t, false)
+
+	assertOpenCodeAgentUnknown(t, peerPID)
+}
+
+// TestConvIDForPID_OpenCodeSelfPIDParentProbeFailsClosed guards the TCL-678
+// review follow-up: a managed serve is agentd's direct child, so convIDForPID's
+// parent probe can pass agentd's own pid to openCodeRuntimeConvByPID. Subtree
+// endpoint ownership would still match agentd (managed serves are its children),
+// so the ownership gate alone would not reject a stale runtime row whose reused
+// pid equals ours. Identity resolution must fail closed on the self pid instead
+// of resolving the victim conversation.
+func TestConvIDForPID_OpenCodeSelfPIDParentProbeFailsClosed(t *testing.T) {
+	setupTestDB(t)
+
+	// Derive the fake pids from our own so they can never collide with it (the
+	// walk stubs procName/procParent, so the concrete values are arbitrary).
+	agentdPID := os.Getpid()
+	peerPID := agentdPID + 1_000_000
+	openCodeChild := agentdPID + 2_000_000
+	const convID = "ses_self_pid_victim"
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: "spwn-self-pid-victim",
+		ConvID:    convID,
+		ServerURL: "http://127.0.0.1:43299",
+		Password:  "private",
+		PID:       agentdPID, // a stale row whose reused pid equals agentd's own
+		Cwd:       "/tmp/project",
+	}))
+	fakeProcTree{
+		name: map[int]string{
+			peerPID:       "tclaude",
+			openCodeChild: "opencode",
+			agentdPID:     "agentd",
+		},
+		parent: map[int]int{
+			peerPID:       openCodeChild,
+			openCodeChild: agentdPID, // the serve's parent IS agentd
+		},
+	}.install(t)
+	// Force the ownership gate to accept, isolating the self-pid guard as the
+	// sole reason resolution fails closed.
+	withOpenCodeRuntimeVerified(t, true)
 
 	assertOpenCodeAgentUnknown(t, peerPID)
 }

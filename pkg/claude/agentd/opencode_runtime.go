@@ -352,9 +352,10 @@ var openCodeRuntimeVerified = openCodeRuntimeOwnsRecordedPID
 //
 // NOTE: ownership matches the pid's whole subtree (ProcessOwnsEndpoint walks
 // /proc children), and every managed serve is a child of agentd, so passing
-// agentd's own pid here would match. Callers that turn a match into a kill must
-// therefore still exclude os.Getpid() themselves (see stopOpenCodeProcess); the
-// identity path is unaffected because a serve ancestor is never agentd's pid.
+// agentd's own pid here would match. Both callers therefore exclude os.Getpid()
+// before consulting this gate — the kill path in stopOpenCodeProcess, and the
+// identity path in openCodeRuntimeConvByPID (whose parent probe can pass
+// agentd's own pid because a managed serve is agentd's direct child).
 func openCodeRuntimeOwnsRecordedPID(runtime db.OpenCodeRuntime) bool {
 	return runtime.PID > 1 &&
 		openCodeProcessOwnsEndpoint(runtime.PID, runtime.ServerURL)
@@ -784,9 +785,21 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	// `!= os.Getpid()` guard is retained on top of ownership: subtree ownership
 	// would match agentd's own pid (managed serves are its children), so if a
 	// stale row's pid coincided with our own after reuse we must never self-kill.
-	if runtime.PID != os.Getpid() && openCodeRuntimeVerified(runtime) {
-		if recovered, err := os.FindProcess(runtime.PID); err == nil {
-			_ = recovered.Kill()
+	if runtime.PID > 1 && runtime.PID != os.Getpid() {
+		switch {
+		case openCodeRuntimeVerified(runtime):
+			if recovered, err := os.FindProcess(runtime.PID); err == nil {
+				_ = recovered.Kill()
+			}
+		case session.IsProcessAlive(runtime.PID):
+			// The pid is still alive but we cannot prove it is our managed server
+			// (a wedged serve whose listener died, or the ownership probe being
+			// unavailable on this platform). We refuse to kill an unproven pid,
+			// but its runtime row is about to be deleted, so surface the possible
+			// orphan rather than leaking it silently.
+			slog.Warn("OpenCode recovered pid left running: endpoint ownership unproven",
+				"session", runtime.SessionID, "pid", runtime.PID,
+				"endpoint", runtime.ServerURL)
 		}
 	}
 }
