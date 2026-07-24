@@ -15,8 +15,70 @@
 <!-- Shared terminal-multiplexer widget styles, used by the in-SPA "Terminals"
      tab (#tab-terminals) and the standalone /terminals pop-out page. -->
 <link rel="stylesheet" href="/static/mux.css">
+<!-- Boot modulepreload block. agentd (injectBootPreload) replaces this marker
+     with a <script> setting window.__BOOT_MODULE_TOTAL__ and a
+     <link rel="modulepreload"> for every module in dashboard.js's static import
+     graph, so the browser fetches the whole graph in parallel instead of
+     discovering it one importer at a time. The marker must stay verbatim — a
+     server-side invariant asserts on it. -->
+<!--BOOT_PRELOAD-->
+<!-- Boot progress counter. Runs before the module graph is fetched and reflects
+     modulepreload completion into #boot-progress against the injected total, so
+     the boot curtain shows honest "N / M modules" progress instead of an
+     indefinite label. Classic (non-module) inline script on purpose: it must run
+     immediately and never depends on the graph it is measuring. -->
+<script>
+(function () {
+  var total = window.__BOOT_MODULE_TOTAL__ || 0;
+  var loaded = 0;
+  var seen = Object.create(null);
+  function isBootModule(name) {
+    return name.indexOf('/static/js/') > -1 || name.indexOf('/static/vendor/preact/') > -1;
+  }
+  function render() {
+    var pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+    var fill = document.getElementById('boot-progress-fill');
+    var count = document.getElementById('boot-progress-count');
+    if (fill) fill.style.width = pct + '%';
+    if (count) {
+      count.textContent = total
+        ? (loaded >= total ? 'Starting…' : Math.min(loaded, total) + ' / ' + total + ' modules')
+        : '';
+    }
+    if (total && loaded >= total && window.__bootProgressPO) {
+      try { window.__bootProgressPO.disconnect(); } catch (e) {}
+      window.__bootProgressPO = null;
+    }
+  }
+  function absorb(entries) {
+    for (var i = 0; i < entries.length; i++) {
+      var name = entries[i].name;
+      if (isBootModule(name) && !seen[name]) { seen[name] = 1; loaded++; }
+    }
+    render();
+  }
+  try {
+    var po = new PerformanceObserver(function (list) { absorb(list.getEntries()); });
+    po.observe({ type: 'resource', buffered: true });
+    window.__bootProgressPO = po;
+  } catch (e) {}
+  try { absorb(performance.getEntriesByType('resource')); } catch (e) {}
+  document.addEventListener('DOMContentLoaded', render);
+})();
+</script>
 </head>
 <body class="hide-processes dashboard-booting">
+<!-- Boot progress overlay. A direct child of <body> so it participates in the
+     paint curtain (body.dashboard-booting > *), then dashboard.css re-exempts
+     just this element so it stays visible while the rest of the shell is hidden.
+     The static title renders even with no JS; the inline head counter fills the
+     bar. dashboard.js removes .dashboard-booting once the first snapshot has
+     painted, which hides this via CSS. -->
+<div id="boot-progress" role="status" aria-live="polite">
+  <div class="boot-progress-title">Loading dashboard…</div>
+  <div class="boot-progress-bar"><div id="boot-progress-fill" class="boot-progress-fill"></div></div>
+  <div id="boot-progress-count" class="boot-progress-count"></div>
+</div>
 <header>
   <!-- .bar-inner pins the header's content to the viewport width so its
        right-aligned controls don't fly off when the bar is widened to the

@@ -53,17 +53,42 @@ body.dashboard-booting > * {
   visibility: hidden;
   animation: dashboard-boot-failsafe 0s 8s forwards;
 }
-body.dashboard-booting::before {
-  content: "Loading dashboard…";
+/* #boot-progress is the one curtained child kept visible: a centred label + a
+   modulepreload progress bar (filled by the inline counter in dashboard.html).
+   Hidden entirely once boot ends; the same 8s label failsafe as before hides it
+   if boot JS wedges, so it can't linger over the revealed app. */
+#boot-progress { display: none; }
+body.dashboard-booting > #boot-progress {
+  display: block;
+  visibility: visible;
   position: fixed;
   inset: 50% auto auto 50%;
   transform: translate(-50%, -50%);
   z-index: 1000;
+  width: 260px;
+  max-width: 70vw;
+  text-align: center;
   color: #7d8590;
   font-size: 13px;
-  visibility: visible;
   pointer-events: none;
   animation: dashboard-boot-label-failsafe 0s 8s forwards;
+}
+.boot-progress-title { margin-bottom: 10px; }
+.boot-progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #21262d;
+}
+.boot-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #2f81f7;
+  transition: width 120ms ease-out;
+}
+.boot-progress-count {
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
 }
 /* header / nav are full-bleed bars: the background + border live on the
    outer element (so they fill the bar's whole width — JS widens it to the
