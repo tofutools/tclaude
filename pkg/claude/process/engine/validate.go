@@ -13,7 +13,8 @@ import (
 // Definition is the immutable executable projection of one pinned template
 // and its immutable run parameters. Its fields stay private so preparation is
 // the only way to construct executable state and callers cannot mutate it.
-// Nodes are held in a deterministic topological order with start first.
+// Nodes are held in a deterministic topological order with the template's
+// entry node first; an explicit start-typed node is optional.
 type Definition struct {
 	nodes []definitionNode
 	index map[string]int
@@ -53,8 +54,8 @@ type definitionEdge struct {
 }
 
 // Prepare performs all immutable work once: complete authoring validation,
-// exclusive-decision eligibility, deterministic topological ordering, edge
-// identity derivation, decision verdict binding, parameter binding, and final
+// engine eligibility, deterministic topological ordering, edge identity
+// derivation, decision verdict binding, parameter binding, and final
 // bound-program validation. Plan, Apply, and Advance reuse the result.
 func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error) {
 	if err := RequireEligible(tmpl); err != nil {
@@ -116,10 +117,12 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	return definition, nil
 }
 
-// topologicalOrder returns every node exactly once, start first, in a
+// topologicalOrder returns every node exactly once, the entry node first, in a
 // deterministic order that always places edge sources before their targets.
 // Eligibility guarantees acyclicity, so a leftover node fails closed as an
-// invalid definition rather than looping.
+// invalid definition rather than looping. It is also where the sole-structural-
+// entry requirement fails closed: the template's start must be the graph's only
+// source node, whatever kind it is.
 func topologicalOrder(tmpl *model.Template) ([]string, error) {
 	remaining := make(map[string]int, len(tmpl.Nodes))
 	for nodeID := range tmpl.Nodes {
@@ -440,10 +443,14 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		in := countDispositions(checkpoint, definition, node.incoming)
 		out := countDispositions(checkpoint, definition, node.outgoing)
 		status := checkpoint.Nodes[node.id]
+		// The prepared order puts the entry node first, and it is the one node
+		// no arrival ever activates: Initialize makes it ready, so every
+		// candidate-set rule below is stated about non-entry nodes.
+		entry := index == 0
 		switch status {
 		case NodePending:
-			if index == 0 {
-				return invalid("start node cannot be pending")
+			if entry {
+				return invalid("entry node cannot be pending")
 			}
 			if in.unresolved == 0 {
 				return invalid("pending node %q has a settled candidate set and must be ready or skipped", node.id)
@@ -461,7 +468,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				return invalid("nodes %q and %q are both active", definition.nodes[activeIndex].id, node.id)
 			}
 			activeIndex = index
-			if index != 0 && (in.unresolved > 0 || in.arrived != 1) {
+			if !entry && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("active node %q requires a settled candidate set with exactly one arrival", node.id)
 			}
 			if out.unresolved != len(node.outgoing) {
@@ -476,7 +483,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				}
 			}
 		case NodeDone:
-			if index != 0 && (in.unresolved > 0 || in.arrived != 1) {
+			if !entry && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("done node %q requires a settled candidate set with exactly one arrival", node.id)
 			}
 			switch node.kind {
@@ -509,7 +516,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			if node.kind != definitionTask {
 				return invalid("only a program task may fail; got %q", node.id)
 			}
-			if in.unresolved > 0 || in.arrived != 1 {
+			if !entry && (in.unresolved > 0 || in.arrived != 1) {
 				return invalid("failed node %q requires a settled candidate set with exactly one arrival", node.id)
 			}
 			if out.unresolved != len(node.outgoing) {

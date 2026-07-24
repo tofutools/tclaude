@@ -181,7 +181,7 @@ type Transition struct {
 }
 
 var (
-	ErrTemplateIneligible        = errors.New("process template is not executable by the exclusive-decision engine")
+	ErrTemplateIneligible        = errors.New("process template is not executable by this engine")
 	ErrInvalidProgramBinding     = errors.New("invalid bound program command")
 	ErrInvalidDefinition         = errors.New("invalid prepared process definition")
 	ErrInvalidCheckpoint         = errors.New("invalid process checkpoint")
