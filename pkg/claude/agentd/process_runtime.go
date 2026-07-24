@@ -549,8 +549,12 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 	}
 	next, err := executor.Observe(claim.run, result.dispatch, result.result)
 	if err != nil {
+		// The worker is gone either way, so this branch can no longer be
+		// accounted for in memory. Dropping the permission is what stops the
+		// owner from planning past an outcome nobody committed.
 		slog.Warn("process runtime: observation not durable", "run", runID,
 			"node", result.dispatch.Command().NodeID, "error", err)
+		executor.Abandon(claim.run, result.dispatch)
 		return nil
 	}
 	return next
