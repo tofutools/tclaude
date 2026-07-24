@@ -206,3 +206,108 @@ func TestProcessRuntimeAwaitingDecisionSurvivesRestartAndIsExcludedFromSweep(t *
 	assert.Equal(t, engine.NodeDone, final.Nodes["slow"])
 	assert.Equal(t, engine.NodeSkipped, final.Nodes["fast"])
 }
+
+// parallelDecisionBranchTemplate forks into a branch parked on a human decision
+// and a branch holding a program task, both reducing at a join: all end:
+//
+//	start -> fork -{a}-> decide-a -{yes,no}-> task-a -> join(all)
+//	              -{b}-> decide-b -{yes,no}------------>
+func parallelDecisionBranchTemplate(id string) *model.Template {
+	decision := func(ask string) model.Node {
+		return model.Node{
+			Type:      model.NodeTypeDecision,
+			Performer: &model.Performer{Kind: model.PerformerHuman, Ask: ask},
+			Next:      model.Next{"yes": "task-a", "no": "task-a"},
+		}
+	}
+	decideB := decision("B?")
+	decideB.Next = model.Next{"yes": "join", "no": "join"}
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: id, Start: "start",
+		Nodes: map[string]model.Node{
+			"start":    {Type: model.NodeTypeStart, Next: model.Next{"next": "fork"}},
+			"fork":     {Type: model.NodeTypeParallel, Next: model.Next{"a": "decide-a", "b": "decide-b"}},
+			"decide-a": decision("A?"),
+			"decide-b": decideB,
+			"task-a": {
+				Type: model.NodeTypeTask, Next: model.Next{"next": "join"},
+				Performer: &model.Performer{Kind: model.PerformerProgram, Profile: "safe", Run: "true"},
+			},
+			"join": {Type: model.NodeTypeEnd, Join: model.JoinAll, Result: "success"},
+		},
+	}
+}
+
+// TestProcessRuntimeSweepResumesReadyBranchBesideAwaitedDecision is the
+// stranding regression for fan-out recovery. A decision commits in its own
+// transaction and the follow-on prepare is a separate one, so a crash between
+// them can leave a run whose branch task is ready while a sibling branch still
+// awaits its decision. The bounded sweep must reach that run: excluding every
+// run with an awaited decision — correct while a run held a single token —
+// would leave the ready branch with no driver until an unrelated event happened
+// to resume it.
+func TestProcessRuntimeSweepResumesReadyBranchBesideAwaitedDecision(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	tmpl := parallelDecisionBranchTemplate("parallel-branch-recovery")
+	record := putProcessRuntimeTemplate(t, root, tmpl)
+
+	// Rebuild the exact durable state that window leaves behind: decide-a's
+	// verdict is committed, so task-a is ready, while decide-b is still awaited.
+	definition, err := engine.Prepare(tmpl, map[string]string{})
+	require.NoError(t, err)
+	checkpoint, err := engine.Initialize("run_branch_recovery", definition)
+	require.NoError(t, err)
+	checkpoint, err = engine.AdvanceUntilQuiescent(checkpoint, definition)
+	require.NoError(t, err)
+	require.Len(t, checkpoint.AwaitingDecisions, 2)
+	checkpoint, err = engine.Apply(checkpoint, definition, engine.Transition{
+		Kind:     engine.TransitionDecisionRecorded,
+		Decision: &engine.DecisionRecord{NodeID: "decide-a", Verdict: "yes"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, engine.NodeReady, checkpoint.Nodes["task-a"], "the sibling branch task must be ready")
+	require.Len(t, checkpoint.AwaitingDecisions, 1, "the other branch must still be awaited")
+	require.Empty(t, checkpoint.Commands, "no command is outstanding, so this is not a reconcile case")
+	createProcessRunFixtureWithCheckpoint(t, "run_branch_recovery", record.Ref, tmpl, checkpoint)
+
+	var dispatches atomic.Int32
+	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+		dispatches.Add(1)
+		return executor.Execute(ctx, run, dispatch, authorization)
+	}))
+
+	agentd.RunProcessRunSweepForTest()
+	agentd.WaitForProcessRunRuntimeForTest()
+	assert.Equal(t, int32(1), dispatches.Load(), "the sweep must plan and dispatch the ready branch task")
+
+	reloaded, err := db.GetProcessRun("run_branch_recovery")
+	require.NoError(t, err)
+	var resumed engine.Checkpoint
+	require.NoError(t, reloaded.DecodeCheckpoint(&resumed))
+	assert.Equal(t, engine.NodeDone, resumed.Nodes["task-a"], "the stranded branch must have run")
+	assert.Equal(t, string(engine.RunRunning), reloaded.Status)
+	require.Len(t, resumed.AwaitingDecisions, 1, "the other branch keeps its own obligation")
+	assert.Equal(t, "decide-b", resumed.AwaitingDecisions[0].NodeID)
+
+	// The run is genuinely quiescent now, so the sweep must leave it alone
+	// rather than reloading it on every tick.
+	show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_branch_recovery", nil)
+	require.Equal(t, http.StatusOK, show.Code, show.Body.String())
+	var view processRuntimeRunView
+	testharness.DecodeJSON(t, show, &view)
+	assert.Equal(t, "awaiting_decision", view.Action)
+
+	agentd.RunProcessRunSweepForTest()
+	agentd.WaitForProcessRunRuntimeForTest()
+	assert.Equal(t, int32(1), dispatches.Load(), "a decision-only run must not be reloaded by the sweep")
+
+	// Resolving the remaining branch completes the run through the join.
+	decide := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_branch_recovery/decide",
+		map[string]any{"nodeId": "decide-b", "verdict": "no"})
+	require.Equal(t, http.StatusAccepted, decide.Code, decide.Body.String())
+	agentd.WaitForProcessRunRuntimeForTest()
+
+	final, err := db.GetProcessRun("run_branch_recovery")
+	require.NoError(t, err)
+	assert.Equal(t, db.ProcessRunStatusCompleted, final.Status)
+}

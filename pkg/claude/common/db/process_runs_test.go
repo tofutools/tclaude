@@ -167,6 +167,41 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 	}
 }
 
+// TestRunnableProcessRunIDsIncludeReadyBranchBesideAwaitedDecision covers
+// fan-out: an awaited decision no longer means the run is quiescent, because a
+// sibling branch can hold a ready task that only a resume will plan. Excluding
+// such a run would strand that branch until an unrelated event resumed it.
+func TestRunnableProcessRunIDsIncludeReadyBranchBesideAwaitedDecision(t *testing.T) {
+	setupTestDB(t)
+	for _, item := range []struct {
+		id, checkpoint string
+	}{
+		// Only the awaited decision is ready: genuinely quiescent, still excluded
+		// so the periodic fallback does not reload it every tick.
+		{"run_parked", `{"awaitingDecisions":[{"nodeId":"decide-b"}],
+			"nodes":{"decide-b":"ready","fork":"done","join":"pending","start":"done"}}`},
+		// A sibling branch task is ready beside the awaited decision: pushable.
+		{"run_ready_branch", `{"awaitingDecisions":[{"nodeId":"decide-b"}],
+			"nodes":{"decide-a":"done","decide-b":"ready","fork":"done","join":"pending",
+			"start":"done","task-a":"ready"}}`},
+		// Both branches parked on their own decisions: nothing to push.
+		{"run_two_parked", `{"awaitingDecisions":[{"nodeId":"decide-a"},{"nodeId":"decide-b"}],
+			"nodes":{"decide-a":"ready","decide-b":"ready","fork":"done","start":"done"}}`},
+		// An outstanding command still excludes the run regardless of ready nodes.
+		{"run_zz_command", `{"commands":[{"id":"command"}],
+			"awaitingDecisions":[{"nodeId":"decide-b"}],
+			"nodes":{"decide-b":"ready","task-a":"running","task-c":"ready"}}`},
+	} {
+		record := processRunFixture(t, item.id, "running", json.RawMessage(item.checkpoint))
+		require.NoError(t, CreateProcessRun(record))
+	}
+
+	ids, _, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"run_ready_branch"}, ids,
+		"only the run with work an engine pass can push is resumable")
+}
+
 func TestRunnableProcessRunIDsAdvanceByExaminedRowsNotMatches(t *testing.T) {
 	setupTestDB(t)
 	for i := range MaxProcessRunReadPage + 1 {

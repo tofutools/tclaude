@@ -483,6 +483,18 @@ func cloneCommand(command engine.Command) engine.Command {
 	return command
 }
 
+// Command returns the exact command this permission will execute. Callers that
+// need to act on the command being dispatched — selecting its authorization,
+// for instance — must read it from here rather than from a run-level view: a
+// view surfaces one entry out of a plural outbox, so acting on that entry would
+// silently pick a branch.
+func (d *Dispatch) Command() engine.Command {
+	if d == nil {
+		return engine.Command{}
+	}
+	return cloneCommand(d.command)
+}
+
 func (d *Dispatch) wasUsed() bool {
 	if d == nil {
 		return true

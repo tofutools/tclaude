@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
@@ -544,6 +545,11 @@ func TestNonJoinNodeRejectsMoreThanOneArrival(t *testing.T) {
 	err = completeAndSettle(&forced, definition, definition.index["slow"], arrivesAt(defaultEdgeOutcome(definition, "slow")))
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("second arrival into a non-join node = %v, want ErrInvalidTransition", err)
+	}
+	// Several preconditions in completeAndSettle share this sentinel, so pin the
+	// arrival guard specifically rather than accepting any refusal.
+	if !strings.Contains(err.Error(), "received more than one arrival") {
+		t.Fatalf("refused for the wrong reason: %v", err)
 	}
 }
 

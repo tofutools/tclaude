@@ -698,18 +698,36 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	if err != nil {
 		return nil, "", err
 	}
-	// A run is runnable when its durable command and decision-obligation
-	// outboxes are both empty. Those fields are parallel-ready arrays, so an
-	// empty (0-length) array, a JSON null, and an absent key all classify as
-	// runnable via COALESCE(json_array_length(...), 0) = 0; any populated array
-	// (a pending program command or awaited decision) excludes the run. In the
-	// current TCL-650 slice each array holds at most one entry, but this
-	// classification does not depend on that bound.
+	// A run is runnable when nothing external is holding it AND it still has
+	// work an engine pass could push. The outbox fields are parallel-ready
+	// arrays, so an empty (0-length) array, a JSON null, and an absent key all
+	// classify as empty via COALESCE(json_array_length(...), 0) = 0.
+	//
+	// An outstanding program command always excludes the run: it needs explicit
+	// reconciliation, not a resume.
+	//
+	// Awaited decisions are subtler, and fan-out is why. A decision parked on a
+	// human is excluded so the periodic fallback does not reload and re-prepare
+	// it every tick. But with fan-out an awaited decision no longer implies the
+	// run is quiescent: a sibling branch can hold a ready task that only a
+	// resume will plan. Every awaited obligation names a node that is itself
+	// ready, so the run still has pushable work exactly when it has MORE ready
+	// nodes than awaited obligations — a ready node that is not one of the
+	// awaited decisions is a task or an engine-owned node. Excluding those runs
+	// would strand that branch until an unrelated event happened to resume the
+	// run. The nested CASE keeps json_type/json_each off malformed checkpoints.
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
 			AND COALESCE(json_array_length(checkpoint_json, '$.commands'), 0) = 0
-			AND COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0) = 0
+			AND (
+				COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0) = 0
+				OR CASE WHEN json_type(checkpoint_json, '$.nodes') = 'object'
+					THEN (SELECT COUNT(*) FROM json_each(checkpoint_json, '$.nodes')
+						WHERE value = 'ready')
+					ELSE 0 END
+					> COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0)
+			)
 			THEN 1 ELSE 0 END
 		FROM (
 			SELECT id, checkpoint_json FROM process_runs
