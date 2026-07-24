@@ -190,7 +190,7 @@ func run() error {
 	// display name ("Opus 4.6" -> "o4.6"); when that's missing or a lone
 	// token it falls back to the requested full model ID so a model CC
 	// doesn't recognise yet (e.g. `--model claude-opus-5`) shows "opus-5"
-	// instead of the bare "ctx" placeholder.
+	// instead of an "unknown model" placeholder.
 	model := input.Model.DisplayName
 	modelLabel := shortModelLabel(input.Model.DisplayName, input.Model.ID)
 
@@ -468,9 +468,13 @@ func run() error {
 // the display name when present, otherwise the full model ID with the
 // "claude-" vendor prefix and any "[1m]" context-window suffix trimmed
 // ("claude-opus-5" -> "opus-5"). Only when neither field carries anything
-// does it use the neutral "ctx" placeholder, so the statusline never
-// renders a meaningless label when a real model string is available.
+// does it use the "ukn-mdl" (unknown model) placeholder, so the statusline
+// never renders a meaningless label when a real model string is available.
 func shortModelLabel(displayName, id string) string {
+	// unknownModel is the last-resort tag when neither display_name nor id
+	// carries anything — a distinct "unknown model" marker rather than a
+	// label that could be mistaken for a real model name.
+	const unknownModel = "ukn-mdl"
 	raw := strings.TrimSpace(displayName)
 	if raw == "" {
 		raw = strings.TrimSpace(id)
@@ -480,7 +484,7 @@ func shortModelLabel(displayName, id string) string {
 		raw = strings.TrimSpace(raw[:len(raw)-len("[1m]")])
 	}
 	if raw == "" {
-		return "ctx"
+		return unknownModel
 	}
 	if parts := strings.Fields(raw); len(parts) >= 2 {
 		return strings.ToLower(string([]rune(parts[0])[0])) + strings.Join(parts[1:], "")

@@ -79,8 +79,9 @@ func TestShortModelLabel(t *testing.T) {
 		{"empty display name id with 1m suffix", "", "claude-opus-5[1m]", "opus-5"},
 		{"single-token display name preferred over id", "Fable", "claude-fable-5", "fable"},
 		{"single-token raw id display name", "claude-opus-5", "claude-opus-5", "opus-5"},
-		{"nothing known yields placeholder", "", "", "ctx"},
-		{"whitespace-only fields yield placeholder", "   ", "  ", "ctx"},
+		{"nothing known yields placeholder", "", "", "ukn-mdl"},
+		{"whitespace-only fields yield placeholder", "   ", "  ", "ukn-mdl"},
+		{"lone 1m suffix yields placeholder", "[1m]", "[1m]", "ukn-mdl"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
