@@ -14,7 +14,51 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+// openCodeContextSnapshotFallback resolves the context snapshot a read surface
+// (dashboard, agent API) should render for an OpenCode conversation whose picked
+// session row carries no context-window data.
+//
+// Unlike Claude Code — which repopulates its row in-process via the statusline
+// on the first render after resume — and Codex — which agentd refreshes through
+// a read-through of the rollout on the dashboard read path — OpenCode's only
+// context writer is the live SSE consumer against the managed server. A resumed
+// OpenCode conversation mints a fresh session row keyed by the conv id, distinct
+// from the original spawn row keyed by the tclaude session label, so the
+// newest/picked row reads an all-zero window until the resumed server's SSE
+// backfill runs — and forever, while the agent is offline. That surfaced as the
+// dashboard context meter dropping to 0% the moment an OpenCode agent went
+// offline or was resumed, discarding a genuinely useful "usage before resume"
+// signal. When the picked snapshot is empty we fall back to the conversation's
+// last-known populated snapshot, giving OpenCode the same frozen-at-exit
+// behaviour the other harnesses already have.
+//
+// Scoped to OpenCode and gated on an all-zero picked snapshot: it never
+// overrides a row that already has data (including a deliberately reset one) and
+// leaves Claude Code and Codex read paths untouched.
+func openCodeContextSnapshotFallback(pick *db.SessionRow, snap db.ContextSnapshot) db.ContextSnapshot {
+	if pick == nil || pick.Harness != harness.OpenCodeName || pick.ConvID == "" {
+		return snap
+	}
+	if !openCodeContextSnapshotEmpty(snap) {
+		return snap
+	}
+	fallback, err := db.GetConvContextSnapshot(pick.ConvID)
+	if err != nil || openCodeContextSnapshotEmpty(fallback) {
+		return snap
+	}
+	return fallback
+}
+
+// openCodeContextSnapshotEmpty reports whether a snapshot carries no
+// context-window data, mirroring db.UpdateContextSnapshot's all-zero write
+// guard: context_pct is never legitimately 0 for a row that has received a real
+// telemetry snapshot, so an all-zero window is unambiguously "no data".
+func openCodeContextSnapshotEmpty(s db.ContextSnapshot) bool {
+	return s.ContextPct == 0 && s.TokensInput == 0 && s.TokensOutput == 0 && s.ContextWindowSize == 0
+}
 
 // OpenCode reports per-turn token usage on the assistant message delivered over
 // the `/event` SSE stream (`message.updated`), and the active model's

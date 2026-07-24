@@ -1714,6 +1714,33 @@ func GetContextSnapshot(sessionID string) (ContextSnapshot, error) {
 	return s, err
 }
 
+// GetConvContextSnapshot returns the most-recently-updated context snapshot
+// across a conversation's session rows that actually carries context-window
+// data — a non-all-zero snapshot, matching the write guard in
+// UpdateContextSnapshot. It backs the dashboard/API fallback for harnesses that
+// key context onto a per-generation session-row id: an OpenCode conversation
+// mints a fresh row on resume (id = conv id), distinct from its original spawn
+// row (id = spawn label), so the newest/picked row can read an all-zero window
+// until the resumed managed server's live SSE backfill runs — and never, while
+// the agent is offline. Returns the zero value with sql.ErrNoRows when no row
+// of the conversation carries a populated snapshot.
+func GetConvContextSnapshot(convID string) (ContextSnapshot, error) {
+	db, err := Open()
+	if err != nil {
+		return ContextSnapshot{}, err
+	}
+	var s ContextSnapshot
+	err = db.QueryRow(
+		`SELECT context_pct, tokens_input, tokens_output, context_window_size, model, model_id, effort_level, cost_usd, virtual_cost_usd
+		 FROM sessions
+		 WHERE conv_id = ?
+		   AND (context_pct != 0 OR tokens_input != 0 OR tokens_output != 0 OR context_window_size != 0)
+		 ORDER BY updated_at DESC
+		 LIMIT 1`, convID).
+		Scan(&s.ContextPct, &s.TokensInput, &s.TokensOutput, &s.ContextWindowSize, &s.Model, &s.ModelID, &s.EffortLevel, &s.CostUSD, &s.VirtualCostUSD)
+	return s, err
+}
+
 // ResetCompact clears the pre-compaction context snapshot and nudged_pct for
 // a session after a compaction. The context-window size remains known, but its
 // percentage and absolute input/output usage are stale until the next real
