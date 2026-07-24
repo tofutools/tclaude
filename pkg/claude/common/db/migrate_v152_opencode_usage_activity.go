@@ -29,6 +29,8 @@ func migrateV151toV152(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_opencode_usage_activity_observed
 			ON opencode_usage_activity(observed_at, provider_id);
+		CREATE INDEX IF NOT EXISTS idx_opencode_usage_activity_conv_message
+			ON opencode_usage_activity(conv_id, message_id);
 	`); err != nil {
 		return fmt.Errorf("migrate v151→v152 (OpenCode usage activity): create: %w", err)
 	}

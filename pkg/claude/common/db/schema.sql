@@ -981,3 +981,6 @@ CREATE TABLE opencode_usage_activity (
 CREATE INDEX idx_opencode_usage_activity_observed
 			ON opencode_usage_activity(observed_at, provider_id);
 
+CREATE INDEX idx_opencode_usage_activity_conv_message
+			ON opencode_usage_activity(conv_id, message_id);
+

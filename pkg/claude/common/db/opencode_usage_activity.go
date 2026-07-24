@@ -38,7 +38,19 @@ func UpsertOpenCodeUsageActivity(row OpenCodeUsageActivity) error {
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`INSERT INTO opencode_usage_activity
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if strings.TrimSpace(row.ConvID) != "" {
+		if _, err := tx.Exec(`DELETE FROM opencode_usage_activity
+			WHERE conv_id = ? AND message_id = ? AND session_id <> ?`,
+			row.ConvID, row.MessageID, row.SessionID); err != nil {
+			return fmt.Errorf("upsert OpenCode usage activity: clear resumed duplicate: %w", err)
+		}
+	}
+	_, err = tx.Exec(`INSERT INTO opencode_usage_activity
 		(session_id, message_id, conv_id, provider_id, model_id, observed_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id, message_id) DO UPDATE SET
@@ -51,28 +63,48 @@ func UpsertOpenCodeUsageActivity(row OpenCodeUsageActivity) error {
 	if err != nil {
 		return fmt.Errorf("upsert OpenCode usage activity: %w", err)
 	}
+	cutoff := time.Now().Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`DELETE FROM opencode_usage_activity WHERE observed_at < ?`, cutoff); err != nil {
+		return fmt.Errorf("upsert OpenCode usage activity: prune: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("upsert OpenCode usage activity: commit: %w", err)
+	}
 	return nil
 }
 
-func DeleteOpenCodeUsageActivity(sessionID, messageID string) error {
-	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(messageID) == "" {
+func DeleteOpenCodeUsageActivity(convID, sessionID, messageID string) error {
+	if strings.TrimSpace(messageID) == "" {
 		return nil
 	}
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	if _, err := d.Exec(`DELETE FROM opencode_usage_activity
-		WHERE session_id = ? AND message_id = ?`, sessionID, messageID); err != nil {
-		return fmt.Errorf("delete OpenCode usage activity: %w", err)
+	var deleteErr error
+	if strings.TrimSpace(convID) != "" {
+		_, deleteErr = d.Exec(`DELETE FROM opencode_usage_activity
+			WHERE conv_id = ? AND message_id = ?`, convID, messageID)
+	} else if strings.TrimSpace(sessionID) != "" {
+		_, deleteErr = d.Exec(`DELETE FROM opencode_usage_activity
+			WHERE session_id = ? AND message_id = ?`, sessionID, messageID)
+	}
+	if deleteErr != nil {
+		return fmt.Errorf("delete OpenCode usage activity: %w", deleteErr)
 	}
 	return nil
 }
 
 // ReplaceOpenCodeUsageActivity makes reconnect/recovery authoritative for one
-// session from GET /session/{id}/message, while pruning history beyond the
-// dashboard's maximum retained span.
-func ReplaceOpenCodeUsageActivity(sessionID string, rows []OpenCodeUsageActivity, now time.Time) error {
+// conversation from GET /session/{id}/message. A resumed conversation can use
+// a different local tclaude session ID, so replacement follows convID while
+// pruning history beyond the dashboard's maximum retained span.
+func ReplaceOpenCodeUsageActivity(
+	sessionID string,
+	convID string,
+	rows []OpenCodeUsageActivity,
+	now time.Time,
+) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
@@ -85,7 +117,11 @@ func ReplaceOpenCodeUsageActivity(sessionID string, rows []OpenCodeUsageActivity
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`DELETE FROM opencode_usage_activity WHERE session_id = ?`, sessionID); err != nil {
+	clearQuery, clearKey := `DELETE FROM opencode_usage_activity WHERE session_id = ?`, sessionID
+	if strings.TrimSpace(convID) != "" {
+		clearQuery, clearKey = `DELETE FROM opencode_usage_activity WHERE conv_id = ?`, convID
+	}
+	if _, err := tx.Exec(clearQuery, clearKey); err != nil {
 		return fmt.Errorf("replace OpenCode usage activity: clear: %w", err)
 	}
 	for _, row := range rows {

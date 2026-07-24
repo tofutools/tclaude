@@ -274,6 +274,66 @@ func TestReplaceSessionVirtualCostHistoryPreservesRowsAfterSessionDeletion(t *te
 		"a teardown race cannot erase denormalised retired-session history")
 }
 
+func TestReplaceSessionVirtualCostHistoryFollowsConversationAcrossResume(t *testing.T) {
+	setupTestDB(t)
+	yesterdayAt := time.Now().AddDate(0, 0, -1)
+	yesterday := yesterdayAt.Format(costDayFormat)
+	const convID = "conv-vc-resume"
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-spawn", TmuxSession: "tmux-vc-spawn", ConvID: convID,
+		Cwd: "/tmp/vc-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-spawn", 3, []VirtualCostDailySnapshot{{
+		Day: yesterday, CostUSD: 3, UpdatedAt: yesterdayAt, Model: "openai/gpt-a",
+	}}))
+	require.NoError(t, DeleteSession("vc-spawn"))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-resume", TmuxSession: "tmux-vc-resume", ConvID: convID,
+		Cwd: "/tmp/vc-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-resume", 1, []VirtualCostDailySnapshot{{
+		Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt, Model: "openai/gpt-a",
+	}}))
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Zero(t, dailyRowFor(t, rows, "vc-spawn", yesterday).VirtualCostUSD,
+		"authoritative resume correction clears the prior local session row")
+	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-resume", yesterday).VirtualCostUSD, 1e-12)
+	deltas := MixedCostDeltas(rows)
+	var total float64
+	for _, delta := range deltas {
+		if delta.ConvID == convID {
+			total += delta.USD
+		}
+	}
+	assert.InDelta(t, 1, total, 1e-12,
+		"the lower resumed total is not interpreted as a fresh additional counter")
+}
+
+func TestUpdateSessionCostClearsConversationVirtualHistory(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+	const convID = "conv-real-resume"
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "real-spawn", TmuxSession: "tmux-real-spawn", ConvID: convID,
+		Cwd: "/tmp/real-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, UpdateSessionVirtualCost("real-spawn", 4))
+	require.NoError(t, DeleteSession("real-spawn"))
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "real-resume", TmuxSession: "tmux-real-resume", ConvID: convID,
+		Cwd: "/tmp/real-resume", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, UpdateSessionCost("real-resume", 5))
+
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.Zero(t, dailyRowFor(t, rows, "real-spawn", today).VirtualCostUSD)
+	assert.InDelta(t, 5, dailyRowFor(t, rows, "real-resume", today).CostUSD, 1e-12,
+		"real spend replaces prior conversation WHAT-IF history")
+}
+
 // TestUpdateSessionCost_PrefersPersistedAgentID pins JOH-288: the daily
 // snapshot's agent_id is taken from the session's PERSISTED agent_id column
 // first, falling back to the live agent_conversations lookup only when that

@@ -336,6 +336,18 @@ func aggregateOpenCodeMessageCostUsage(state openCodeMessageCostUsage) openCodeC
 	return usage
 }
 
+func openCodeMessageUsageHasRealCost(state openCodeMessageCostUsage) bool {
+	if state.message.ReportedCost != nil && *state.message.ReportedCost > 0 {
+		return true
+	}
+	for _, step := range state.steps {
+		if step.ReportedCost != nil && *step.ReportedCost > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func openCodeActivityForUsage(runtime db.OpenCodeRuntime, usage openCodeContextUsage) db.OpenCodeUsageActivity {
 	observedAt := usage.CreatedAt
 	if observedAt.IsZero() {
@@ -403,6 +415,26 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	if !waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
 		return
 	}
+	openCodeVirtualCostState.Lock()
+	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
+	aggregated := make([]openCodeContextUsage, 0, len(usages))
+	haveReal := false
+	for _, state := range usages {
+		haveReal = haveReal || openCodeMessageUsageHasRealCost(state)
+		aggregated = append(aggregated, aggregateOpenCodeMessageCostUsage(state))
+	}
+	openCodeVirtualCostState.Unlock()
+	if haveReal {
+		if err := db.ReplaceSessionVirtualCostHistory(runtime.SessionID, 0, nil); err != nil {
+			slog.Warn("OpenCode virtual cost could not be cleared for real spend",
+				"session", runtime.SessionID, "error", err, "module", "agentd")
+			return
+		}
+		openCodeVirtualCostState.Lock()
+		openCodeVirtualCostState.bySession[runtime.SessionID] = map[string]openCodeProjectedMessageCost{}
+		openCodeVirtualCostState.Unlock()
+		return
+	}
 	prices, loaded := openCodeModelPrices(ctx, runtime)
 	if !loaded {
 		// A transient catalog failure is not an authoritative statement that
@@ -411,13 +443,6 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		// messages without moving old spend into today.
 		return
 	}
-	openCodeVirtualCostState.Lock()
-	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
-	aggregated := make([]openCodeContextUsage, 0, len(usages))
-	for _, state := range usages {
-		aggregated = append(aggregated, aggregateOpenCodeMessageCostUsage(state))
-	}
-	openCodeVirtualCostState.Unlock()
 
 	projections := make(map[string]openCodeProjectedMessageCost, len(aggregated))
 	type dailyContribution struct {
@@ -427,15 +452,10 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	}
 	byDay := make(map[string]dailyContribution)
 	total := 0.0
-	haveReal := false
 	haveIneligible := false
 	for _, usage := range aggregated {
 		projected := projectOpenCodeMessageCost(usage, prices)
 		projections[usage.MessageID] = projected
-		if projected.real {
-			haveReal = true
-			continue
-		}
 		if !projected.eligible {
 			// A successfully loaded catalog can still omit one model. Do not
 			// publish a deceptively partial total or erase the last complete
@@ -459,10 +479,7 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		byDay[day] = contribution
 		total += projected.usd
 	}
-	if haveReal {
-		total = 0
-		byDay = map[string]dailyContribution{}
-	} else if haveIneligible {
+	if haveIneligible {
 		return
 	}
 	days := make([]string, 0, len(byDay))
@@ -567,7 +584,9 @@ func applyOpenCodeVirtualCostRemoval(
 	}
 	openCodeVirtualCostState.Unlock()
 	if messageRemoved {
-		if err := db.DeleteOpenCodeUsageActivity(runtime.SessionID, removal.MessageID); err != nil {
+		if err := db.DeleteOpenCodeUsageActivity(
+			runtime.ConvID, runtime.SessionID, removal.MessageID,
+		); err != nil {
 			slog.Debug("OpenCode removed-message activity could not be deleted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}
@@ -590,7 +609,9 @@ func replaceOpenCodeVirtualCostUsage(
 		activity = append(activity, openCodeActivityForUsage(runtime, state.message))
 		usageState[usage.MessageID] = state
 	}
-	if err := db.ReplaceOpenCodeUsageActivity(runtime.SessionID, activity, time.Now()); err != nil {
+	if err := db.ReplaceOpenCodeUsageActivity(
+		runtime.SessionID, runtime.ConvID, activity, time.Now(),
+	); err != nil {
 		slog.Debug("OpenCode usage activity backfill could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}

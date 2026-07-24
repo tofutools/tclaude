@@ -1153,6 +1153,23 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var convID string
+	if err := tx.QueryRow(`SELECT conv_id FROM sessions WHERE id = ?`, sessionID).Scan(&convID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if convID != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0 WHERE conv_id = ?`, convID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE conv_id = ?`, convID); err != nil {
+			return err
+		}
+	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE sessions SET cost_usd = ?, virtual_cost_usd = 0 WHERE id = ?`, costUSD, sessionID); err != nil {
 		return err
 	}
@@ -1281,11 +1298,12 @@ type VirtualCostDailySnapshot struct {
 	Model     string
 }
 
-// ReplaceSessionVirtualCostHistory atomically rebuilds one session's virtual
-// daily prefixes. OpenCode can replay stable messages and parts with their
-// original timestamps, so a model correction or removal can be redistributed
-// to the day where it occurred rather than clamping an unrelated latest
-// aggregate. Existing real-cost columns and row attribution remain untouched.
+// ReplaceSessionVirtualCostHistory atomically rebuilds one OpenCode
+// conversation's virtual daily prefixes onto its current local session row.
+// Resumes can change the tclaude session ID while retaining conv_id, so old
+// denormalised rows are cleared across that conversation before the
+// authoritative prefixes are inserted. Existing real-cost columns and row
+// attribution remain untouched.
 func ReplaceSessionVirtualCostHistory(
 	sessionID string,
 	totalUSD float64,
@@ -1311,6 +1329,15 @@ func ReplaceSessionVirtualCostHistory(
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var convID string
+	if err := tx.QueryRow(`SELECT conv_id FROM sessions WHERE id = ?`, sessionID).Scan(&convID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// The SSE projector can race teardown. Preserve denormalised
+			// retired history when no live row remains to own the rebuild.
+			return nil
+		}
+		return err
+	}
 	result, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, totalUSD, sessionID)
 	if err != nil {
 		return err
@@ -1320,12 +1347,19 @@ func ReplaceSessionVirtualCostHistory(
 		return err
 	}
 	if affected == 0 {
-		// The SSE projector can race teardown after its caller checked the
-		// session row. Preserve the denormalised retired history rather than
-		// clearing it when there is no live row from which to rebuild.
 		return nil
 	}
-	if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE session_id = ?`, sessionID); err != nil {
+	if convID != "" {
+		if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = 0
+			WHERE conv_id = ? AND id <> ?`, convID, sessionID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+			WHERE conv_id = ?`, convID); err != nil {
+			return err
+		}
+	} else if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0
+		WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}
 	for _, snapshot := range snapshots {

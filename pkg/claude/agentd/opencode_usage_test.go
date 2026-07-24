@@ -568,6 +568,49 @@ func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {
 	assert.Zero(t, snap.VirtualCostUSD, "real history remains authoritative over WHAT-IF cost")
 }
 
+func TestBackfillOpenCodeRealCostClearsWhatIfDuringCatalogOutage(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID = "oc-real-outage", "ses_real_outage"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 2))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			http.Error(w, "catalog unavailable", http.StatusServiceUnavailable)
+		case "/session/" + convID + "/message":
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg-paid","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0.5,"tokens":{"input":1000,"output":100}}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}))
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12)
+	assert.Zero(t, snap.VirtualCostUSD,
+		"positive native cost clears WHAT-IF state without requiring model pricing")
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	for _, row := range rows {
+		if row.ConvID == convID {
+			assert.Zero(t, row.VirtualCostUSD,
+				"historical WHAT-IF prefixes are cleared when real spend becomes authoritative")
+		}
+	}
+}
+
 func TestOpenCodeLiveCostWaitsForAuthoritativeHydration(t *testing.T) {
 	setupTestDB(t)
 	resetOpenCodeLimitCacheForTest()

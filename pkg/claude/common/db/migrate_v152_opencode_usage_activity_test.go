@@ -20,4 +20,8 @@ func TestMigrateV151toV152OpenCodeUsageActivity(t *testing.T) {
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_opencode_usage_activity_observed'`,
 	).Scan(&have))
 	assert.Equal(t, 1, have)
+	require.NoError(t, d.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_opencode_usage_activity_conv_message'`,
+	).Scan(&have))
+	assert.Equal(t, 1, have)
 }
