@@ -146,6 +146,7 @@ instead of slash-command injection).
 | **Auto memory at spawn** | ⚙️ **off by default** — tclaude injects `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` so agents sharing a repo don't cross-pollute Claude Code's one per-project memory store; opt back in per-spawn or by profile (`auto_memory`). Does not affect `CLAUDE.md` | ➖ no auto-memory system | ➖ no auto-memory system |
 | **Status bar** | ✅ command-backed statusline | ⚠️ curated built-in status items | ⚠️ OpenCode TUI status only |
 | **Background shell tracking** ([dashboard](dashboard.md)) | ✅ `Bash` with `run_in_background` — tracked per task id and reconciled against live descendant processes, so an agent waiting on one shows `⚙+N` instead of `idle` | ➖ no background-shell mechanism | ➖ no background-shell mechanism |
+| **Context-window reporting** ([dashboard](dashboard.md)) | ✅ from the statusline hook | ✅ read-through from the rollout `token_count` | ✅ projected from the `/event` SSE `message.updated` usage + `/config/providers` model limit; blank when the model limit is unavailable |
 | **Dashboard** | ✅ | ✅ (with a harness badge + per-harness spawn menu) | ✅ (harness badge + managed launch) |
 
 Legend: ✅ supported · ⚙️ available, opt-in / configured elsewhere · ⚠️ partial ·
