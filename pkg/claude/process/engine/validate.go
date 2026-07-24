@@ -258,18 +258,21 @@ func DecodeCheckpoint(data []byte, definition *Definition) (Checkpoint, error) {
 	return checkpoint, nil
 }
 
-// ValidateCheckpoint is the runtime load/persist validator. It enforces
-// concrete structural safety against an immutable prepared definition:
-// checkpoint version and bounded run id, exact known node and edge references,
-// known status/disposition enum values, and unique bounded command/decision
-// obligation entries whose deterministic identity and node binding are
-// compatible with a known node. It deliberately does NOT run the whole-graph
-// exclusive-decision classification (single active node, single failure,
-// pending-arrival exclusion, activation proofs): those are current-slice
-// expectations demoted to ClassifyCheckpoint so Processes can load and persist
-// structurally safe parallel-ready state before parallelism semantics settle.
-// It is O(nodes + edges) in the edge-shape scan and never re-runs static
-// template or graph-shape validation, which happened once in Prepare.
+// ValidateCheckpoint is the boundary validator, run ONLY at the trusted load
+// (DecodeCheckpoint) and creation (Initialize) boundaries — never inside the
+// per-transition runtime cycle. Plan/Apply/Advance deliberately do not call it,
+// so the O(nodes + edges) whole-checkpoint scan happens once when untrusted
+// bytes enter, not on every transition. It enforces concrete structural safety
+// against an immutable prepared definition: checkpoint version and bounded run
+// id, exact known node and edge references, known status/disposition enum
+// values, and unique bounded command/decision obligation entries whose
+// deterministic identity and node binding are compatible with a known node. It
+// deliberately does NOT run the whole-graph exclusive-decision classification
+// (single active node, single failure, pending-arrival exclusion, activation
+// proofs): those are current-slice expectations demoted to ClassifyCheckpoint
+// so Processes can load and persist structurally safe parallel-ready state
+// before parallelism semantics settle. It never re-runs static template or
+// graph-shape validation, which happened once in Prepare.
 func ValidateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	return validateCheckpoint(checkpoint, definition)
 }

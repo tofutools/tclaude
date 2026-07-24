@@ -193,3 +193,43 @@ func defaultEdgeOutcome(definition *Definition, nodeID string) string {
 	node := definition.nodes[definition.index[nodeID]]
 	return definition.edges[node.outgoing[0]].outcome
 }
+
+// TestRuntimeCycleSkipsWholeCheckpointValidation proves the per-transition
+// runtime cycle does NOT run the O(nodes+edges) whole-checkpoint validator:
+// given state the trusted boundary validator (ValidateCheckpoint) rejects but
+// whose local transition preconditions still hold, Plan/Apply/AdvanceUntilQuiescent
+// proceed instead of re-scanning and failing. The whole-checkpoint scan is
+// confined to the load (DecodeCheckpoint) and creation (Initialize) boundaries.
+func TestRuntimeCycleSkipsWholeCheckpointValidation(t *testing.T) {
+	definition := mustPrepare(t, sequentialTemplate("task"), nil)
+	valid, err := Initialize("run-novalidate", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Taint the checkpoint with an extra unknown node so the boundary validator
+	// rejects it, without disturbing the start-advance transition's local
+	// preconditions (the real active node is still the sole ready start node).
+	tainted := cloneCheckpoint(valid)
+	tainted.Nodes["ghost"] = NodePending
+	if err := ValidateCheckpoint(tainted, definition); err == nil {
+		t.Fatal("boundary validator must reject the tainted checkpoint")
+	}
+
+	if _, err := Plan(tainted, definition); err != nil {
+		t.Fatalf("Plan must not re-run whole-checkpoint validation: %v", err)
+	}
+	advanced, err := Apply(tainted, definition, Transition{Kind: TransitionAdvance})
+	if err != nil {
+		t.Fatalf("Apply must not re-run whole-checkpoint validation: %v", err)
+	}
+	if advanced.Nodes["start"] != NodeDone || advanced.Nodes["task"] != NodeReady {
+		t.Fatalf("advance did not progress on the tainted state: %#v", advanced.Nodes)
+	}
+	if _, ok := advanced.Nodes["ghost"]; !ok {
+		t.Fatal("reducer unexpectedly scanned/pruned the unrelated node")
+	}
+	if _, err := AdvanceUntilQuiescent(tainted, definition); err != nil {
+		t.Fatalf("AdvanceUntilQuiescent must not re-run whole-checkpoint validation: %v", err)
+	}
+}

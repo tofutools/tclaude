@@ -8,7 +8,9 @@ import (
 
 // Initialize creates the exact pre-execution v2 state from one prepared
 // definition. It performs no implicit advancement: start is the sole ready
-// node and every authored edge begins unresolved.
+// node and every authored edge begins unresolved. As a creation boundary it
+// runs the full structural ValidateCheckpoint once on the constructed state;
+// the per-transition runtime cycle then trusts that boundary and does not.
 func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 	if definition == nil || len(definition.nodes) == 0 {
 		return Checkpoint{}, fmt.Errorf("%w: definition was not prepared", ErrInvalidDefinition)
@@ -39,10 +41,13 @@ func Initialize(runID string, definition *Definition) (Checkpoint, error) {
 }
 
 // Plan returns at most one deterministic program command using only the
-// prepared definition and typed checkpoint state.
+// prepared definition and typed checkpoint state. It runs no whole-checkpoint
+// validation: callers pass state already validated once at the load
+// (DecodeCheckpoint) or creation (Initialize) boundary, and the planner only
+// reads it. The cheap prepared-definition guard just avoids a nil dereference.
 func Plan(checkpoint Checkpoint, definition *Definition) (*Command, error) {
-	if err := validateCheckpoint(checkpoint, definition); err != nil {
-		return nil, err
+	if definition == nil || len(definition.nodes) == 0 {
+		return nil, fmt.Errorf("%w: definition was not prepared", ErrInvalidDefinition)
 	}
 	return plan(checkpoint, definition), nil
 }
@@ -63,15 +68,20 @@ func plan(checkpoint Checkpoint, definition *Definition) *Command {
 	return &command
 }
 
-// Apply is the side-effect-free reducer. Input maps and slices are cloned, and
-// both the loaded state and proposed output are checked against all invariants.
+// Apply is the side-effect-free reducer. Input maps and slices are cloned, so a
+// rejected transition never mutates the caller's state. It performs no
+// whole-checkpoint validation on entry or exit: callers pass state validated
+// once at the load (DecodeCheckpoint) or creation (Initialize) boundary, and
+// each transition preserves validity through cheap local preconditions and
+// monotonic guards. Engine-generated states are asserted against the strict
+// ClassifyCheckpoint diagnostic in tests, not in this production hot path.
 func Apply(checkpoint Checkpoint, definition *Definition, transition Transition) (Checkpoint, error) {
 	return apply(checkpoint, definition, transition)
 }
 
 func apply(checkpoint Checkpoint, definition *Definition, transition Transition) (Checkpoint, error) {
-	if err := validateCheckpoint(checkpoint, definition); err != nil {
-		return Checkpoint{}, err
+	if definition == nil || len(definition.nodes) == 0 {
+		return Checkpoint{}, fmt.Errorf("%w: definition was not prepared", ErrInvalidDefinition)
 	}
 	next := cloneCheckpoint(checkpoint)
 	invalid := func(format string, args ...any) (Checkpoint, error) {
@@ -166,10 +176,6 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		}
 	default:
 		return invalid("unknown transition kind %q", transition.Kind)
-	}
-
-	if err := validateCheckpoint(next, definition); err != nil {
-		return Checkpoint{}, fmt.Errorf("%w: proposed checkpoint: %v", ErrInvalidTransition, err)
 	}
 	return next, nil
 }
@@ -266,8 +272,8 @@ func AdvanceUntilQuiescent(checkpoint Checkpoint, definition *Definition) (Check
 }
 
 func advanceUntilQuiescent(checkpoint Checkpoint, definition *Definition, budget int) (Checkpoint, error) {
-	if err := validateCheckpoint(checkpoint, definition); err != nil {
-		return Checkpoint{}, err
+	if definition == nil || len(definition.nodes) == 0 {
+		return Checkpoint{}, fmt.Errorf("%w: definition was not prepared", ErrInvalidDefinition)
 	}
 	original := cloneCheckpoint(checkpoint)
 	current := cloneCheckpoint(checkpoint)

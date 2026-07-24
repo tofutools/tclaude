@@ -335,9 +335,9 @@ func TestDecodeAndReducerRejectMalformedOrInvalidCheckpoint(t *testing.T) {
 		}
 	}
 
-	// An unknown node status is a concrete structural violation the runtime
-	// load/persist validator still rejects, unlike the whole-graph slice
-	// invariants demoted to ClassifyCheckpoint.
+	// An unknown node status is a concrete structural violation the trusted
+	// load/persist boundary (DecodeCheckpoint) still rejects, unlike the
+	// whole-graph slice invariants demoted to ClassifyCheckpoint.
 	checkpoint.Nodes["start"] = NodeStatus("bogus")
 	invalid, err := json.Marshal(checkpoint)
 	if err != nil {
@@ -346,7 +346,11 @@ func TestDecodeAndReducerRejectMalformedOrInvalidCheckpoint(t *testing.T) {
 	if _, err := DecodeCheckpoint(invalid, definition); !errors.Is(err, ErrInvalidCheckpoint) {
 		t.Fatalf("semantic decode error = %v", err)
 	}
-	if _, err := Apply(checkpoint, definition, Transition{Kind: TransitionAdvance}); !errors.Is(err, ErrInvalidCheckpoint) {
+	// The reducer no longer re-validates the whole checkpoint on entry — that
+	// O(nodes+edges) scan is confined to the load/creation boundary. Handed such
+	// a structurally broken state directly it must still fail closed via a local
+	// precondition (no panic, no silent progress) rather than act on it.
+	if _, err := Apply(checkpoint, definition, Transition{Kind: TransitionAdvance}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("invalid loaded reducer error = %v", err)
 	}
 }
