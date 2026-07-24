@@ -61,6 +61,34 @@ func TestStatusLineInput_ModelIDAbsent(t *testing.T) {
 	assert.Equal(t, "", input.Model.ID, "absent model.id leaves field empty")
 }
 
+// TestShortModelLabel pins the head-of-context-line model tag, including
+// the fallback that keeps a full-ID-selected model (e.g. `--model
+// claude-opus-5`, which CC doesn't emit a two-word display name for) from
+// collapsing to the bare "ctx" placeholder.
+func TestShortModelLabel(t *testing.T) {
+	cases := []struct {
+		name        string
+		displayName string
+		id          string
+		want        string
+	}{
+		{"known two-word display name", "Opus 4.6", "claude-opus-4-6", "o4.6"},
+		{"three-word display name", "Claude Opus 4.8", "claude-opus-4-8", "cOpus4.8"},
+		{"display name with 1m suffix trimmed", "Opus 4.8[1m]", "claude-opus-4-8[1m]", "o4.8"},
+		{"empty display name falls back to id", "", "claude-opus-5", "opus-5"},
+		{"empty display name id with 1m suffix", "", "claude-opus-5[1m]", "opus-5"},
+		{"single-token display name preferred over id", "Fable", "claude-fable-5", "fable"},
+		{"single-token raw id display name", "claude-opus-5", "claude-opus-5", "opus-5"},
+		{"nothing known yields placeholder", "", "", "ctx"},
+		{"whitespace-only fields yield placeholder", "   ", "  ", "ctx"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shortModelLabel(tc.displayName, tc.id))
+		})
+	}
+}
+
 // TestStatusLineInput_EffortAbsent confirms a payload without the effort
 // block (model lacks reasoning-effort support) leaves Level empty — the
 // signal both surfaces use to omit the effort token rather than render a
