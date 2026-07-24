@@ -10457,14 +10457,23 @@ body.wizard #group-clone-modal #group-clone-submit:disabled::before { content: "
    on, whichever opened it. Every rule is scoped to #perm-edit-modal so nothing
    leaks. Crucially, the active Grant (green) / Deny (red) tri-state fills are
    LEFT ALONE — they're the safety signal and must stay legible; we recolor the
-   surrounding chrome only. */
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-modal {
+   surrounding chrome only.
+
+   The startup-context editor (#context-features-modal) reuses the same
+   .perm-row / .perm-tristate skeleton, so each rule below carries a SECOND,
+   id-scoped selector for it. The two ids are spelled out separately rather than
+   folded into one :is() — the wizard-theme tests assert the literal
+   `body.wizard #perm-edit-modal …` selector, and keeping every rule explicitly
+   id-scoped is exactly what TestDashboardCSS_WizardPermEditorScoped guards. */
+body.wizard #perm-edit-modal .perm-edit-modal,
+body.wizard #context-features-modal .perm-edit-modal {
   background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
   border: 1px solid #7a5db0;
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
   color: #e7d9f5;
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-modal h3 {
+body.wizard #perm-edit-modal .perm-edit-modal h3,
+body.wizard #context-features-modal .perm-edit-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
   letter-spacing: 1px;
@@ -10473,59 +10482,81 @@ body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-modal h3 {
 /* The PERMANENT banner is already violet — nudge it onto the arcane palette so
    it reads as themed, while staying a distinct bordered call-out (the "these
    persist" warning must still land). */
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-banner {
+body.wizard #perm-edit-modal .perm-edit-banner,
+body.wizard #context-features-modal .perm-edit-banner {
   background: #140f28; border-color: #3a2d5c; border-left-color: #a97bd6; color: #d2b8f5;
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-banner strong { color: #f3e6c0; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-subtitle { color: #b39ddb; }
+body.wizard #perm-edit-modal .perm-edit-banner strong,
+body.wizard #context-features-modal .perm-edit-banner strong { color: #f3e6c0; }
+body.wizard #perm-edit-modal .perm-edit-subtitle,
+body.wizard #context-features-modal .perm-edit-subtitle { color: #b39ddb; }
 /* Owner note keeps its gold call-out feel (it already sits on a dark gold). */
 body.wizard #perm-edit-modal .perm-edit-owner-note code { color: #f0c674; }
 /* Toolbar: violet-tinted filter + arcane "all default" button. */
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-toolbar input[type=text] {
+body.wizard #perm-edit-modal .perm-edit-toolbar input[type=text],
+body.wizard #context-features-modal .perm-edit-toolbar input[type=text] {
   background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-toolbar input[type=text]:focus { border-color: #a97bd6; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-toolbar button {
+body.wizard #perm-edit-modal .perm-edit-toolbar input[type=text]:focus,
+body.wizard #context-features-modal .perm-edit-toolbar input[type=text]:focus { border-color: #a97bd6; }
+body.wizard #perm-edit-modal .perm-edit-toolbar button,
+body.wizard #context-features-modal .perm-edit-toolbar button {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-toolbar button:hover { background: #3a2a63; }
+body.wizard #perm-edit-modal .perm-edit-toolbar button:hover,
+body.wizard #context-features-modal .perm-edit-toolbar button:hover { background: #3a2a63; }
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-row { border-bottom-color: rgba(122, 93, 176, 0.2); }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-row-slug { color: #f3e6c0; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-row-desc { color: #b39ddb; }
+body.wizard #perm-edit-modal .perm-edit-list,
+body.wizard #context-features-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
+body.wizard #perm-edit-modal .perm-row,
+body.wizard #context-features-modal .perm-row { border-bottom-color: rgba(122, 93, 176, 0.2); }
+body.wizard #perm-edit-modal .perm-row-slug,
+body.wizard #context-features-modal .perm-row-slug { color: #f3e6c0; }
+body.wizard #perm-edit-modal .perm-row-desc,
+body.wizard #context-features-modal .perm-row-desc { color: #b39ddb; }
 /* Tri-state control: recolor the frame + dividers, and repaint the INACTIVE
    cells + the active Default cell to the arcane palette. The active Grant / Deny
    cells are matched by :not(.active) exclusion and by not being re-stated here,
    so their base green / red safety fills survive untouched — the id-scoped
    inactive rule below can't bleed into them because :not(.active) excludes
    them. */
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-tristate { border-color: rgba(122, 93, 176, 0.5); }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-tristate button { border-right-color: rgba(122, 93, 176, 0.4); }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-tristate button:not(.active) { background: #140f28; color: #b39ddb; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-tristate button:not(.active):hover { background: #241b3d; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-tristate button.active[data-effect=default],
-body.wizard :is(#perm-edit-modal, #context-features-modal) .perm-tristate button.active[data-state=default] {
+body.wizard #perm-edit-modal .perm-tristate,
+body.wizard #context-features-modal .perm-tristate { border-color: rgba(122, 93, 176, 0.5); }
+body.wizard #perm-edit-modal .perm-tristate button,
+body.wizard #context-features-modal .perm-tristate button { border-right-color: rgba(122, 93, 176, 0.4); }
+body.wizard #perm-edit-modal .perm-tristate button:not(.active),
+body.wizard #context-features-modal .perm-tristate button:not(.active) { background: #140f28; color: #b39ddb; }
+body.wizard #perm-edit-modal .perm-tristate button:not(.active):hover,
+body.wizard #context-features-modal .perm-tristate button:not(.active):hover { background: #241b3d; }
+body.wizard #perm-edit-modal .perm-tristate button.active[data-effect=default],
+body.wizard #context-features-modal .perm-tristate button.active[data-effect=default],
+body.wizard #context-features-modal .perm-tristate button.active[data-state=default] {
   background: #3a2a63; color: #f3e6c0;
 }
 /* Footer: gilded Save lever + tarnished-gold Cancel, mirroring the dialogs. */
-body.wizard :is(#perm-edit-modal, #context-features-modal) .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .modal-buttons button:not(.primary) {
+body.wizard #perm-edit-modal .modal-buttons,
+body.wizard #context-features-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #perm-edit-modal .modal-buttons button:not(.primary),
+body.wizard #context-features-modal .modal-buttons button:not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .modal-buttons button:not(.primary):hover { background: #3a2a63; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .modal-buttons button.primary {
+body.wizard #perm-edit-modal .modal-buttons button:not(.primary):hover,
+body.wizard #context-features-modal .modal-buttons button:not(.primary):hover { background: #3a2a63; }
+body.wizard #perm-edit-modal .modal-buttons button.primary,
+body.wizard #context-features-modal .modal-buttons button.primary {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
   border: 1px solid #d9b45a; color: #f3e6c0;
   text-shadow: 0 0 6px rgba(169, 123, 214, 0.6);
   box-shadow: 0 0 10px rgba(122, 93, 176, 0.4);
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .modal-buttons button.primary:hover {
+body.wizard #perm-edit-modal .modal-buttons button.primary:hover,
+body.wizard #context-features-modal .modal-buttons button.primary:hover {
   background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
   border-color: #f3e6c0;
   box-shadow: 0 0 16px rgba(169, 123, 214, 0.7);
 }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .modal-buttons button.primary:disabled {
+body.wizard #perm-edit-modal .modal-buttons button.primary:disabled,
+body.wizard #context-features-modal .modal-buttons button.primary:disabled {
   background: #3a2a63; border-color: rgba(122, 93, 176, 0.5); color: #b39ddb; opacity: 0.6;
 }
 
@@ -10541,8 +10572,10 @@ body.wizard #perm-edit-title .perm-edit-title-regular { display: none; }
 body.wizard #perm-edit-title .perm-edit-title-wizard { display: inline; }
 
 .pe-btn-wizard { display: none; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .pe-btn-regular { display: none; }
-body.wizard :is(#perm-edit-modal, #context-features-modal) .pe-btn-wizard { display: inline; }
+body.wizard #perm-edit-modal .pe-btn-regular,
+body.wizard #context-features-modal .pe-btn-regular { display: none; }
+body.wizard #perm-edit-modal .pe-btn-wizard,
+body.wizard #context-features-modal .pe-btn-wizard { display: inline; }
 
 /* Save = ✒ Bind! — #694 already re-skinned the .primary lever chrome, so here
    we only hide its "Save" text (font-size: 0) and print the glyph via ::before,
