@@ -322,6 +322,44 @@ func TestEnsureOpenCodeSSESkipsAlreadyExitedProcess(t *testing.T) {
 		"a process that already died must not start a doomed SSE consumer")
 }
 
+func TestStopOpenCodeProcessJoinsSSEProjector(t *testing.T) {
+	const sessionID = "spwn-stop-joins-sse"
+	ctx, cancel := context.WithCancel(context.Background())
+	projectorStopped := make(chan struct{})
+	releaseProjector := make(chan struct{})
+	process := &openCodeProcess{cancel: cancel, sseDone: projectorStopped}
+	go func() {
+		<-ctx.Done()
+		<-releaseProjector
+		close(projectorStopped)
+	}()
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+
+	stopReturned := make(chan struct{})
+	go func() {
+		stopOpenCodeProcess(db.OpenCodeRuntime{SessionID: sessionID}, nil)
+		close(stopReturned)
+	}()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the SSE projector")
+	}
+	select {
+	case <-stopReturned:
+		t.Fatal("stop returned before the SSE projector exited")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseProjector)
+	select {
+	case <-stopReturned:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not return after the SSE projector exited")
+	}
+}
+
 func TestStopOpenCodeProcessVerifiesRecoveredPIDBeforeKill(t *testing.T) {
 	prev := openCodeRuntimeVerified
 	t.Cleanup(func() { openCodeRuntimeVerified = prev })

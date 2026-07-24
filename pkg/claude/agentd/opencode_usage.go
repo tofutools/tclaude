@@ -336,16 +336,17 @@ func aggregateOpenCodeMessageCostUsage(state openCodeMessageCostUsage) openCodeC
 	return usage
 }
 
-func openCodeMessageUsageHasRealCost(state openCodeMessageCostUsage) bool {
+func openCodeMessageUsageRealCost(state openCodeMessageCostUsage) float64 {
 	if state.message.ReportedCost != nil && *state.message.ReportedCost > 0 {
-		return true
+		return *state.message.ReportedCost
 	}
+	total := 0.0
 	for _, step := range state.steps {
 		if step.ReportedCost != nil && *step.ReportedCost > 0 {
-			return true
+			total += *step.ReportedCost
 		}
 	}
-	return false
+	return total
 }
 
 func openCodeActivityForUsage(runtime db.OpenCodeRuntime, usage openCodeContextUsage) db.OpenCodeUsageActivity {
@@ -418,15 +419,15 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	aggregated := make([]openCodeContextUsage, 0, len(usages))
-	haveReal := false
+	realCost := 0.0
 	for _, state := range usages {
-		haveReal = haveReal || openCodeMessageUsageHasRealCost(state)
+		realCost += openCodeMessageUsageRealCost(state)
 		aggregated = append(aggregated, aggregateOpenCodeMessageCostUsage(state))
 	}
 	openCodeVirtualCostState.Unlock()
-	if haveReal {
-		if err := db.ReplaceSessionVirtualCostHistory(runtime.SessionID, 0, nil); err != nil {
-			slog.Warn("OpenCode virtual cost could not be cleared for real spend",
+	if realCost > 0 {
+		if err := db.UpdateSessionCost(runtime.SessionID, realCost); err != nil {
+			slog.Warn("OpenCode native message cost could not be persisted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 			return
 		}
@@ -696,9 +697,6 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		if m.Info.Time.Created > 0 {
 			usage.CreatedAt = time.UnixMilli(m.Info.Time.Created)
 		}
-		if usage.total() <= 0 {
-			continue
-		}
 		costUsage := openCodeMessageCostUsage{
 			message: usage,
 			steps:   map[string]openCodeContextUsage{},
@@ -724,9 +722,19 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 				costUsage.hadSteps = true
 			}
 		}
+		effectiveUsage := aggregateOpenCodeMessageCostUsage(costUsage)
+		if effectiveUsage.total() <= 0 {
+			continue
+		}
 		costUsages = append(costUsages, costUsage)
 		if !haveAny || m.Info.Time.Created >= latestAt {
+			// Context occupancy is the latest model call, represented by the
+			// top-level token block. Only fall back to aggregated parts when
+			// that top-level update was interrupted and remains empty.
 			latest = usage
+			if latest.total() <= 0 {
+				latest = effectiveUsage
+			}
 			latestAt = m.Info.Time.Created
 			haveAny = true
 		}

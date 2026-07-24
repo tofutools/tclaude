@@ -369,6 +369,8 @@ func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {
 	snap, err := db.GetContextSnapshot(runtime.SessionID)
 	require.NoError(t, err)
 	assert.Zero(t, snap.VirtualCostUSD, "native real cost makes the session ineligible for WHAT-IF")
+	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12,
+		"positive live message cost is persisted without waiting for session.updated")
 
 	usage.MessageID, usage.ReportedCost = "msg-ambiguous", nil
 	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
@@ -494,6 +496,11 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 		case "/session/" + convID + "/message":
 			_, _ = w.Write([]byte(`[` +
 				`{"info":{"id":"msg_u","role":"user"}},` +
+				// Persisted step preceding its interrupted top-level update.
+				`{"info":{"id":"msg_step_only","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
+				`"time":{"created":50},"cost":0,"tokens":{"input":0,"output":0}},` +
+				`"parts":[{"id":"part-only","messageID":"msg_step_only","type":"step-finish","cost":0,` +
+				`"tokens":{"input":1000000,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}]},` +
 				// Older assistant turn (smaller context) — must NOT win.
 				`{"info":{"id":"msg_a1","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
 				`"time":{"created":100},"cost":0,"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
@@ -526,8 +533,8 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
 	assert.InDelta(t, float64(105000)/272000*100, snap.ContextPct, 1e-6)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
-	assert.InDelta(t, 0.257, snap.VirtualCostUSD, 1e-12,
-		"recovery prices every step-finish part without double-counting")
+	assert.InDelta(t, 2.257, snap.VirtualCostUSD, 1e-12,
+		"recovery prices every persisted step, including one whose top-level update was interrupted")
 }
 
 func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {

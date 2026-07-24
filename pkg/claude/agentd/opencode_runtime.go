@@ -56,9 +56,10 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd    *exec.Cmd
-	done   chan error
-	cancel context.CancelFunc
+	cmd     *exec.Cmd
+	done    chan error
+	cancel  context.CancelFunc
+	sseDone chan struct{}
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -763,6 +764,14 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 		if process.cancel != nil {
 			process.cancel()
 		}
+		if process.sseDone != nil {
+			// Cancellation interrupts the in-flight HTTP request/scanner and
+			// every retry wait. Join the projector before clearing its
+			// in-memory state or allowing a resume with the same conv_id;
+			// otherwise the stale runtime can repopulate authoritative cost
+			// and activity after teardown.
+			<-process.sseDone
+		}
 		if process.cmd != nil && process.cmd.Process != nil {
 			_ = process.cmd.Process.Signal(os.Interrupt)
 			select {
@@ -843,9 +852,14 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	sseDone := make(chan struct{})
 	process.cancel = cancel
+	process.sseDone = sseDone
 	openCodeProcesses.Unlock()
-	go consumeOpenCodeSSE(ctx, runtime)
+	go func() {
+		defer close(sseDone)
+		consumeOpenCodeSSE(ctx, runtime)
+	}()
 }
 
 func consumeOpenCodeSSE(ctx context.Context, runtime db.OpenCodeRuntime) {

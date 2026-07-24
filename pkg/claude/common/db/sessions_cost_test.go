@@ -278,28 +278,34 @@ func TestReplaceSessionVirtualCostHistoryFollowsConversationAcrossResume(t *test
 	setupTestDB(t)
 	yesterdayAt := time.Now().AddDate(0, 0, -1)
 	yesterday := yesterdayAt.Format(costDayFormat)
+	todayAt := time.Now()
+	today := todayAt.Format(costDayFormat)
 	const convID = "conv-vc-resume"
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "vc-spawn", TmuxSession: "tmux-vc-spawn", ConvID: convID,
 		Cwd: "/tmp/vc-resume", Status: "idle", Harness: "opencode",
 	}))
-	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-spawn", 3, []VirtualCostDailySnapshot{{
-		Day: yesterday, CostUSD: 3, UpdatedAt: yesterdayAt, Model: "openai/gpt-a",
-	}}))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-spawn", 3, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt, Model: "openai/gpt-a"},
+		{Day: today, CostUSD: 3, UpdatedAt: todayAt, Model: "openai/gpt-a"},
+	}))
 	require.NoError(t, DeleteSession("vc-spawn"))
 	require.NoError(t, SaveSession(&SessionRow{
 		ID: "vc-resume", TmuxSession: "tmux-vc-resume", ConvID: convID,
 		Cwd: "/tmp/vc-resume", Status: "idle", Harness: "opencode",
 	}))
-	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-resume", 1, []VirtualCostDailySnapshot{{
-		Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt, Model: "openai/gpt-a",
-	}}))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-resume", 2, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 1, UpdatedAt: yesterdayAt, Model: "openai/gpt-a"},
+		{Day: today, CostUSD: 2, UpdatedAt: todayAt, Model: "openai/gpt-a"},
+	}))
 
 	rows, err := AllCostDailyRows()
 	require.NoError(t, err)
 	assert.Zero(t, dailyRowFor(t, rows, "vc-spawn", yesterday).VirtualCostUSD,
 		"authoritative resume correction clears the prior local session row")
 	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-resume", yesterday).VirtualCostUSD, 1e-12)
+	assert.Zero(t, dailyRowFor(t, rows, "vc-spawn", today).VirtualCostUSD)
+	assert.InDelta(t, 2, dailyRowFor(t, rows, "vc-resume", today).VirtualCostUSD, 1e-12)
 	deltas := MixedCostDeltas(rows)
 	var total float64
 	for _, delta := range deltas {
@@ -307,8 +313,8 @@ func TestReplaceSessionVirtualCostHistoryFollowsConversationAcrossResume(t *test
 			total += delta.USD
 		}
 	}
-	assert.InDelta(t, 1, total, 1e-12,
-		"the lower resumed total is not interpreted as a fresh additional counter")
+	assert.InDelta(t, 2, total, 1e-12,
+		"zeroed multi-day spawn rows do not reset or duplicate the resumed prefix")
 }
 
 func TestUpdateSessionCostClearsConversationVirtualHistory(t *testing.T) {

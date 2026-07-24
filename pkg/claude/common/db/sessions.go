@@ -1544,6 +1544,13 @@ func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
 		if val <= 0 {
 			val, kind = r.VirtualCostUSD, "what_if"
 		}
+		if val <= 0 {
+			// Superseded conversation rows are retained for any real-cost
+			// attribution but their virtual prefix is zeroed. They carry no
+			// counter state and must not reset the baseline merely because
+			// their old local session ID differs from the resumed one.
+			continue
+		}
 		key := r.ConvID
 		if key == "" {
 			key = r.SessionID
