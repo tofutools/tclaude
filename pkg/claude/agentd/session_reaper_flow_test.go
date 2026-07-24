@@ -100,6 +100,46 @@ func TestSessionReaper_BackgroundActivityGatesStableIdleNotification(t *testing.
 		"a later sweep may announce the unchanged, activity-free idle state")
 }
 
+func TestSessionReaper_ExpiredBackgroundShellSettlesBeforeIdleNotification(t *testing.T) {
+	f := newFlow(t)
+
+	const (
+		conv      = "idleshell-1111-2222-3333-444444444444"
+		sessionID = "spwn-idleshell"
+	)
+	f.HaveAliveSession(conv, sessionID, "tmux-idleshell", f.TestCwd("idleshell"))
+
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	row.Status = session.StatusMainAgentIdle
+	row.StatusDetail = "1 background shell running"
+	row.BgShellsJSON = db.BgShellSet{
+		"shell-lost-exit": {
+			Command: "go test ./...",
+			Seen:    time.Now().Add(-db.BgShellTTL - time.Minute),
+		},
+	}.Encode()
+	require.NoError(t, db.SaveSession(row))
+	row, err = db.LoadSession(sessionID)
+	require.NoError(t, err)
+
+	var idleNotifications []string
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.SetIdleNotify(func(convID, _ string) {
+		idleNotifications = append(idleNotifications, convID)
+	})
+
+	settledAt := row.UpdatedAt.Add(time.Second)
+	reaper.TickAt(settledAt)
+	assert.Equal(t, session.StatusIdle, statusOf(t, sessionID))
+	assert.Empty(t, idleNotifications,
+		"the first shell-free observation only starts the stability window")
+
+	reaper.TickAt(settledAt.Add(6 * time.Second))
+	assert.Equal(t, []string{conv}, idleNotifications,
+		"an unchanged shell-free idle row is announced on the later sweep")
+}
+
 func TestSessionReaper_StartupDoesNotNotifyHistoricalIdleRows(t *testing.T) {
 	f := newFlow(t)
 

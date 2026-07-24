@@ -38,8 +38,6 @@ const sessionReaperGracePeriod = 90 * time.Second
 // Mirrors the flushSender injection pattern in flush.go.
 type reaperNotify func(st *session.SessionState, prevStatus string)
 
-type reaperIdleNotify func(st *session.SessionState, prevStatus string)
-
 type pendingIdleNotification struct {
 	updatedAt  time.Time
 	prevStatus string
@@ -100,7 +98,7 @@ type sessionReaper struct {
 	seeded                bool
 	grace                 time.Duration
 	notify                reaperNotify
-	idleNotify            reaperIdleNotify
+	idleNotify            reaperNotify
 	pendingIdle           map[string]pendingIdleNotification
 }
 
@@ -141,14 +139,9 @@ func defaultReaperIdleNotify(st *session.SessionState, prevStatus string) {
 // row for idleNotificationStablePeriod. That makes the eventual "Idle" banner
 // a stable observation rather than a momentary gap between hooks.
 func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now time.Time) {
-	if st == nil || (st.Status != session.StatusIdle && st.Status != session.StatusMainAgentIdle) {
-		if st != nil {
-			delete(r.pendingIdle, st.ID)
-		}
+	if st.Status != session.StatusIdle && st.Status != session.StatusMainAgentIdle {
+		delete(r.pendingIdle, st.ID)
 		return
-	}
-	if r.pendingIdle == nil {
-		r.pendingIdle = map[string]pendingIdleNotification{}
 	}
 	row, err := db.LoadSession(st.ID)
 	if err != nil || row == nil {
@@ -160,7 +153,7 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 	}
 
 	subagents := db.ParseSubagentSet(row.SubagentsJSON).LiveCount(now)
-	shells := bgShellCountOnRead(row, true)
+	shells := bgShellCountOnReadAt(row, true, now)
 	active := subagents > 0 || shells > 0
 
 	if active {
@@ -211,7 +204,7 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 		delete(r.pendingIdle, st.ID)
 		return
 	}
-	if now.Sub(pending.updatedAt) < idleNotificationStablePeriod || r.idleNotify == nil {
+	if now.Sub(pending.updatedAt) < idleNotificationStablePeriod {
 		return
 	}
 
@@ -223,7 +216,7 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 		latest.Status != session.StatusIdle ||
 		!latest.UpdatedAt.Equal(st.Updated) ||
 		db.ParseSubagentSet(latest.SubagentsJSON).LiveCount(now) > 0 ||
-		bgShellCountOnRead(latest, true) > 0 {
+		bgShellCountOnReadAt(latest, true, now) > 0 {
 		delete(r.pendingIdle, st.ID)
 		return
 	}
@@ -320,6 +313,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 	aliveNow := make(map[string]bool, len(states))
 	for _, st := range states {
 		if st.Status == session.StatusExited {
+			delete(r.pendingIdle, st.ID)
 			if st.Harness == harness.OpenCodeName {
 				if err := stopOpenCodeRuntime(st.ID); err != nil {
 					slog.Warn("reaper: OpenCode runtime cleanup failed",
@@ -446,6 +440,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			maybeFlushUndelivered(st.ConvID)
 			continue
 		}
+		delete(r.pendingIdle, st.ID)
 		// Looks dead. A row created within the grace window may just be
 		// mid-spawn (tmux session not up yet) — leave it for a later
 		// tick rather than reap a starting agent.
