@@ -50,6 +50,14 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		"const target = id || oldestPendingAccessRequestId();",
 		"function resolveArmedAccessAutoSelect(",
 		"resolveArmedAccessAutoSelect(list);",
+		// The armed intent is short-lived and loses to the operator: it expires,
+		// and an explicit row pick or a folder change disarms it.
+		"const ACCESS_AUTOSELECT_WINDOW_MS =",
+		"function disarmAccessAutoSelect(",
+		"Date.now() > accessAutoSelectDeadline",
+		// The folder switch is awaited before anything is selected, so a refused
+		// switch (bulk op in flight) cannot close the reader in another folder.
+		"const selected = await selectMailbox(ACCESS_ID);",
 		"renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0)",
 		// Recently-handled history: outcome chips + the divider stay in the list.
 		"function accessOutcome(",

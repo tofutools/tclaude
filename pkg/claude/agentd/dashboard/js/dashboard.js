@@ -462,7 +462,7 @@ async function settleInitialLayout() {
   // paints the pending request in.
   if (dlParams.get('tab') === 'messages') {
     const reqId = dlParams.get('access_request');
-    if (reqId !== null) focusAccessRequest(reqId || undefined);
+    if (reqId !== null) void focusAccessRequest(reqId || undefined);
     else document.querySelector('nav [data-tab="messages"]')?.click();
   }
 
