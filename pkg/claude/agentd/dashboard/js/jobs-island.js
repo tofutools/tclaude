@@ -76,8 +76,8 @@ function CronRow({ job, actions }) {
     </td>
     <td>
       <${CronTarget} job=${job} />
-      <div class="muted" title=${idTooltip(job.owner_agent, job.owner_conv)}>
-        by ${job.owner_label || shortAgentId(job.owner_agent, job.owner_conv)}
+      <div class="muted" title=${job.operator_authored ? 'Fires as the human operator (recipients see “the human operator”)' : idTooltip(job.owner_agent, job.owner_conv)}>
+        by ${job.operator_authored ? 'the operator' : (job.owner_label || shortAgentId(job.owner_agent, job.owner_conv))}
       </div>
     </td>
     <td><${CronStatus} status=${job.last_run_status} /></td>

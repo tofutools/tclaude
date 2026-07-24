@@ -93,6 +93,8 @@ func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 	assert.True(t, job.IsGroupTarget())
 	assert.Empty(t, job.TargetConv, "group-target job has no conv target")
 	assert.NotZero(t, job.GroupID, "group_id points at the target group")
+	assert.False(t, job.OperatorAuthored,
+		"an agent-owned job fires as that agent, not the operator")
 
 	require.Equal(t, "partial_offline", fireCronNow(t, f, id), "fire status")
 
@@ -105,6 +107,9 @@ func TestCronGroupMulticast_FiresToEveryMember(t *testing.T) {
 		assert.Contains(t, rows[0].Subject, "[cron:standup]",
 			"subject carries the cron-name tag")
 		assert.Equal(t, job.GroupID, rows[0].GroupID, "row stamped with the target group")
+		assert.Equal(t, po, rows[0].FromConv, "agent-owned cron attributes the owner as sender")
+		assert.False(t, db.IsOperatorAgentMessage(rows[0].ID),
+			"agent-owned cron mail is not operator-authored")
 	}
 	assert.Zero(t, msgRowCount(t, w2), "offline member's scheduled tick is discarded")
 	// The owner is skipped — a PO scheduling a team ping does not ping
@@ -265,12 +270,15 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 		GroupID          int64  `json:"group_id"`
 		GroupName        string `json:"group_name"`
 		QueueWhenOffline bool   `json:"queue_when_offline"`
+		OperatorAuthored bool   `json:"operator_authored"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp), "decode resp")
 	assert.Equal(t, "group", resp.TargetKind, "response marks the job group-kind")
 	assert.Equal(t, g.ID, resp.GroupID, "response carries the target group id")
 	assert.Equal(t, "team", resp.GroupName, "response carries the target group name")
 	assert.True(t, resp.QueueWhenOffline, "response carries the offline-queue opt-in")
+	assert.True(t, resp.OperatorAuthored,
+		"a dashboard job with no owner picked is attributed to the operator")
 
 	job, err := db.GetAgentCronJob(resp.ID)
 	require.NoError(t, err)
@@ -280,10 +288,17 @@ func TestCronGroupMulticast_DashboardCreate(t *testing.T) {
 	assert.Empty(t, job.TargetConv, "group-target job has no conv target")
 	assert.Empty(t, job.OwnerConv, "human-created job has no agent owner")
 	assert.True(t, job.QueueWhenOffline, "dashboard opt-in persists on the job")
+	assert.True(t, job.OperatorAuthored, "no-owner dashboard job persists operator attribution")
 
-	// And it actually fans out when fired.
+	// And it actually fans out when fired — as the operator: the delivered
+	// row has no sender conv and is tagged operator-authored.
 	require.Equal(t, "ok", fireCronNow(t, f, resp.ID))
-	assert.Equal(t, 1, msgRowCount(t, w1), "fired dashboard-created job reached the member")
+	rows, err := db.ListAgentMessagesForConv(w1, 100)
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "fired dashboard-created job reached the member")
+	assert.Empty(t, rows[0].FromConv, "operator cron mail carries no sender conv")
+	assert.True(t, db.IsOperatorAgentMessage(rows[0].ID),
+		"the fired row renders as the human operator")
 }
 
 // Scenario 6: deleting a group removes its group-target cron jobs (JOH-244) —

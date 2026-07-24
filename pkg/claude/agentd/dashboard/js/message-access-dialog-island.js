@@ -312,7 +312,6 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
   const submit = async () => {
     if (busyRef.current) return;
     setError('');
-    if (!from.trim()) { setError(wizWord('From is required — type a sender agent or use 🔍 to pick.', 'From is required — name a sending familiar or use 🔍 to pick.')); return; }
     if (!body) { setError(wizWord('Body is required (the message text to send).', 'Missive text is required.')); return; }
     let to = '', explicit = null;
     if (scopedGroup) {
@@ -330,12 +329,20 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       to = target.target.trim();
       if (!to) { setError(wizWord('Target is required — type a title / conv-id or use 🔍 to pick.', 'Recipient is required — name a familiar or use 🔍 to pick.')); return; }
     }
+    // A blank From multicasts AS THE OPERATOR (tagged "human operator"); a solo
+    // send still needs a sender agent to attribute and reply to.
+    const isGroup = to.startsWith('group:');
+    if (!from.trim() && !isGroup) {
+      setError(wizWord('From is required for a solo message — leave it blank only to multicast to a group as you, the operator.', 'A sending familiar is required for a solo missive — leave it blank only to multicast to a party as yourself.'));
+      return;
+    }
     busyRef.current = true;
     setBusy(true);
     try {
-      const payload = { from: from.trim(), to, subject: subject.trim(), body };
+      const payload = { to, subject: subject.trim(), body };
+      if (from.trim()) payload.from = from.trim();
       if (explicit) payload.members = explicit;
-      if (to.startsWith('group:') && role.trim()) payload.role = role.trim();
+      if (isGroup && role.trim()) payload.role = role.trim();
       await actions.sendMessage(payload);
       state.close();
     } catch (cause) { setError(errorText(cause)); }
@@ -348,10 +355,10 @@ function MessageDialog({ descriptor, state, actions, snapshot, confirmDiscard })
       plain=${scopedGroup ? `Send a message to group “${scopedGroup}”` : 'Send a message'}
       wizard=${scopedGroup ? `Send a missive to party “${scopedGroup}”` : 'Send a missive'}/></h3>
     <p id="message-create-desc" class="modal-hint"><${Words}
-      plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group.'}
-      wizard=${scopedGroup ? `Delivers one immediate missive to the familiars of “${scopedGroup}” ticked below.` : 'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party.'}/></p>
-    <label class="cron-create-row"><span class="cron-create-label">From</span><div class="cron-create-target"><div class="cron-target-input-row">
-      <input id="message-create-from" type="text" value=${from} placeholder="sender — agt_ id / title / conv-id / 8+-char prefix"
+      plain=${scopedGroup ? `Delivers one immediate message to the members of “${scopedGroup}” ticked below. Leave From blank to send it as you, the operator.` : 'Delivers one immediate message to a single agent, or multicasts it to every member of a group. Leave From blank on a group send to multicast as you, the operator.'}
+      wizard=${scopedGroup ? `Delivers one immediate missive to the familiars of “${scopedGroup}” ticked below. Leave the sender blank to send it as yourself.` : 'Delivers one immediate missive to a familiar, or multicasts it to every familiar in a party. Leave the sender blank on a party send to multicast as yourself.'}/></p>
+    <label class="cron-create-row"><span class="cron-create-label" title="Leave blank to multicast as the human operator; a solo message needs a sender agent">From</span><div class="cron-create-target"><div class="cron-target-input-row">
+      <input id="message-create-from" type="text" value=${from} placeholder="blank = you (the operator) · or a sender: agt_ id / title / conv-id"
         autocomplete="off" spellcheck="false" onInput=${(event) => setFrom(event.currentTarget.value)} />
       <button type="button" id="message-create-from-pick" title="Pick from the agent / familiar list" onClick=${chooseFrom}>🔍</button>
     </div></div></label>

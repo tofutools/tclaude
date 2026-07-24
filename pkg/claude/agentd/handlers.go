@@ -1138,7 +1138,40 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 			fmt.Sprintf("you are not a member or owner of group %q", g.Name))
 		return
 	}
-	recipients, err := fanOutToGroup(g, fromID, req.Subject, req.Body, req.Role, req.Members)
+	recipients, err := fanOutToGroup(g, fromID, req.Subject, req.Body, req.Role, req.Members, false)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, sendResp{ViaGroup: g.Name, Recipients: recipients})
+}
+
+// handleOperatorMulticast fans out req.Body to a group AS THE HUMAN OPERATOR —
+// there is no sender agent, so no member/owner gate applies (the dashboard
+// cookie + Origin pin in checkDashboardAuth is the human-consent layer, exactly
+// as for the operator 1:1 mail and the operator-owned cron path). Every
+// delivered row is stamped operator-authored: recipients see "the human
+// operator" as the sender and the row is non-replyable. The target group must
+// be named explicitly (an empty "group:" has no operator "own group" to fall
+// back to). req.Role / req.Members narrow the recipient set exactly as they do
+// for an agent multicast.
+func handleOperatorMulticast(w http.ResponseWriter, req *sendReq) {
+	token := strings.TrimSpace(strings.TrimPrefix(req.To, multicastPrefix))
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "invalid_arg",
+			"a group name or id is required after 'group:' when sending as the operator")
+		return
+	}
+	// fromID "" only resolves a named/numbered group here — resolveMulticastGroup
+	// never reaches resolveOwnGroup for a non-empty token.
+	g, ok := resolveMulticastGroup(w, "", token)
+	if !ok {
+		return
+	}
+	if !requireGroupActive(w, g) {
+		return
+	}
+	recipients, err := fanOutToGroup(g, "", req.Subject, req.Body, req.Role, req.Members, true)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", err.Error())
 		return
@@ -1167,9 +1200,13 @@ func handleMulticast(w http.ResponseWriter, fromID string, req *sendReq) {
 // and they can never drift apart. Caller-supplied auth is the caller's
 // responsibility — fanOutToGroup itself does no permission checking. Regular
 // group sends are bounded; cron uses the filtered core with bounded=false.
-func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string) ([]recipient, error) {
+//
+// operatorAuthored stamps every delivered row as human-operator mail (fromConv
+// is empty on that path); the recipient sees "the human operator" as the
+// sender and the row is non-replyable. Agent sends pass false.
+func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string, operatorAuthored bool) ([]recipient, error) {
 	recipients, _, err := fanOutToGroupFiltered(
-		g, fromConv, subject, body, roleFilter, memberFilter, nil, true)
+		g, fromConv, subject, body, roleFilter, memberFilter, nil, true, operatorAuthored)
 	return recipients, err
 }
 
@@ -1179,7 +1216,7 @@ func fanOutToGroup(g *db.AgentGroup, fromConv, subject, body, roleFilter string,
 // bounded=false also keeps correctness-critical cron traffic exempt from
 // regular-message backpressure.
 func fanOutToGroupFiltered(g *db.AgentGroup, fromConv, subject, body, roleFilter string, memberFilter []string,
-	recipientFilter func(string) bool, bounded bool,
+	recipientFilter func(string) bool, bounded, operatorAuthored bool,
 ) ([]recipient, int, error) {
 	members, err := db.ListAgentGroupMembers(g.ID)
 	if err != nil {
@@ -1262,12 +1299,13 @@ func fanOutToGroupFiltered(g *db.AgentGroup, fromConv, subject, body, roleFilter
 			continue
 		}
 		message := &db.AgentMessage{
-			GroupID:        g.ID,
-			FromConv:       fromConv,
-			ToConv:         finalConv,
-			OriginalToConv: originalTo,
-			Subject:        subject,
-			Body:           body,
+			GroupID:          g.ID,
+			FromConv:         fromConv,
+			ToConv:           finalConv,
+			OriginalToConv:   originalTo,
+			Subject:          subject,
+			Body:             body,
+			OperatorAuthored: operatorAuthored,
 		}
 		var id int64
 		var pending int

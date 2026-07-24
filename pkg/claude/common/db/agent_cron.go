@@ -93,6 +93,14 @@ type AgentCronJob struct {
 	// target has no live tmux pane. The default is false: scheduled nudges are
 	// time-sensitive, so offline ticks are discarded instead of accumulating.
 	QueueWhenOffline bool
+	// OperatorAuthored records that a human scheduled this job from the
+	// dashboard without attributing it to a sender agent (schema v154). At fire
+	// time every delivered row is stamped operator-authored so recipients see
+	// "the human operator" as the sender rather than a sender-less system
+	// message. It is an EXPLICIT marker, not inferred from an empty OwnerConv:
+	// template rhythms and other internal paths also leave the owner empty, so
+	// empty-owner alone cannot safely mean "the operator".
+	OperatorAuthored bool
 	// DisabledReason marks WHY a job is disabled (schema v94): '' for a normal,
 	// human-managed enable/disable, or CronDisabledReasonGroupRetired for a
 	// group-target job tclaude auto-paused when a retire emptied its group. A
@@ -183,14 +191,14 @@ func cronConvToAgentTx(tx *sql.Tx, convID string) (string, error) {
 // CURRENT conv so OwnerConv / TargetConv present (and the fire path delivers to)
 // the live generation. LEFT JOIN + COALESCE so a group-target job (target_agent
 // ”) or an owner-less job keeps an empty string rather than dropping the row.
-// The 20 projected columns match scanAgentCronJob's field order. owner_agent /
+// The 21 projected columns match scanAgentCronJob's field order. owner_agent /
 // target_agent are projected raw (the stable keys) alongside the LEFT-JOIN-
 // resolved current convs.
 const cronSelect = `SELECT j.id, j.name,
 	COALESCE(ow.current_conv_id, ''), j.target_kind, COALESCE(tg.current_conv_id, ''),
 	j.group_id, j.interval_seconds, j.subject, j.body, j.enabled, j.created_at,
 	j.last_run_at, j.last_run_status, j.owner_agent, j.target_agent, j.cron_expr, j.target_role,
-	j.disabled_reason, j.run_immediately, j.queue_when_offline
+	j.disabled_reason, j.run_immediately, j.queue_when_offline, j.operator_authored
 	FROM agent_cron_jobs j
 	LEFT JOIN agents ow ON ow.agent_id = j.owner_agent
 	LEFT JOIN agents tg ON tg.agent_id = j.target_agent`
@@ -252,10 +260,10 @@ func insertAgentCronJob(j *AgentCronJob, routingCaller *string) (int64, error) {
 	}
 	res, err := tx.Exec(`INSERT INTO agent_cron_jobs
 		(name, owner_agent, target_kind, target_agent, group_id, target_role, interval_seconds,
-		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, created_at, last_run_at, last_run_status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
+		 cron_expr, subject, body, enabled, run_immediately, queue_when_offline, operator_authored, created_at, last_run_at, last_run_status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '')`,
 		j.Name, ownerAgent, kind, targetAgent, j.GroupID, j.TargetRole, j.IntervalSeconds,
-		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), now)
+		j.CronExpr, j.Subject, j.Body, boolToInt(j.Enabled), boolToInt(j.RunImmediately), boolToInt(j.QueueWhenOffline), boolToInt(j.OperatorAuthored), now)
 	if err != nil {
 		return 0, err
 	}
@@ -651,6 +659,10 @@ type UpdateCronPatch struct {
 	Enabled          *bool
 	RunImmediately   *bool
 	QueueWhenOffline *bool
+	// OperatorAuthored, when non-nil, re-syncs human-operator attribution with a
+	// changed owner: a job re-owned to a sender agent must stop firing as the
+	// operator, and one cleared back to no owner resumes it.
+	OperatorAuthored *bool
 }
 
 // Empty reports whether the patch requests no stored-field mutation.
@@ -763,6 +775,10 @@ func UpdateAgentCronJobFields(id int64, p UpdateCronPatch) (int, error) {
 		sets = append(sets, "queue_when_offline = ?")
 		args = append(args, boolToInt(*p.QueueWhenOffline))
 	}
+	if p.OperatorAuthored != nil {
+		sets = append(sets, "operator_authored = ?")
+		args = append(args, boolToInt(*p.OperatorAuthored))
+	}
 	if hasPatchedOwner {
 		if err := requireLiveCronOwner(tx, patchedOwnerAgent); err != nil {
 			return 0, fmt.Errorf("UpdateAgentCronJobFields: replacement %w", err)
@@ -854,12 +870,12 @@ func ListAgentCronRunsForJob(jobID int64, limit int) ([]*AgentCronRun, error) {
 
 func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	var j AgentCronJob
-	var enabled, runImmediately, queueWhenOffline int
+	var enabled, runImmediately, queueWhenOffline, operatorAuthored int
 	var created, lastRun string
 	err := s.Scan(&j.ID, &j.Name, &j.OwnerConv, &j.TargetKind, &j.TargetConv, &j.GroupID,
 		&j.IntervalSeconds, &j.Subject, &j.Body, &enabled, &created,
 		&lastRun, &j.LastRunStatus, &j.OwnerAgent, &j.TargetAgent, &j.CronExpr, &j.TargetRole,
-		&j.DisabledReason, &runImmediately, &queueWhenOffline)
+		&j.DisabledReason, &runImmediately, &queueWhenOffline, &operatorAuthored)
 	if err != nil {
 		return nil, err
 	}
@@ -869,6 +885,7 @@ func scanAgentCronJob(s rowScanner) (*AgentCronJob, error) {
 	j.Enabled = enabled != 0
 	j.RunImmediately = runImmediately != 0
 	j.QueueWhenOffline = queueWhenOffline != 0
+	j.OperatorAuthored = operatorAuthored != 0
 	j.CreatedAt = parseTimeOrZero(created)
 	j.LastRunAt = parseTimeOrZero(lastRun)
 	return &j, nil

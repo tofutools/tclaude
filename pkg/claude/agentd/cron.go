@@ -251,13 +251,14 @@ func fireCronJob(j *db.AgentCronJob, now time.Time) string {
 	}
 
 	if _, err := queueAgentMessage(&db.AgentMessage{
-		GroupID:        j.GroupID,
-		FromConv:       j.OwnerConv,
-		ToConv:         targetConv,
-		OriginalToConv: originalTo,
-		Subject:        subject,
-		Body:           j.Body,
-		ToRecipients:   []string{targetConv},
+		GroupID:          j.GroupID,
+		FromConv:         j.OwnerConv,
+		ToConv:           targetConv,
+		OriginalToConv:   originalTo,
+		Subject:          subject,
+		Body:             j.Body,
+		ToRecipients:     []string{targetConv},
+		OperatorAuthored: j.OperatorAuthored,
 	}); err != nil {
 		slog.Warn("cron: queue message failed", "job", j.ID, "error", err)
 		return "send_failed"
@@ -302,7 +303,7 @@ func fireCronGroupJob(j *db.AgentCronJob, subject string, alive map[string]struc
 		onlineOnly = func(convID string) bool { return isConvOnlineIn(convID, alive) }
 	}
 	recipients, skippedOffline, err := fanOutToGroupFiltered(
-		g, j.OwnerConv, subject, j.Body, j.TargetRole, nil, onlineOnly, false)
+		g, j.OwnerConv, subject, j.Body, j.TargetRole, nil, onlineOnly, false, j.OperatorAuthored)
 	if err != nil {
 		slog.Warn("cron: group fan-out failed",
 			"job", j.ID, "group", g.Name, "error", err)

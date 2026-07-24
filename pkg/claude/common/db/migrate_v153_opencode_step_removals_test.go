@@ -21,7 +21,3 @@ func TestMigrateV152toV153OpenCodeStepRemovals(t *testing.T) {
 	).Scan(&have))
 	assert.Equal(t, 1, have)
 }
-
-func TestMigrateV153IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 153, currentVersion, "tripwire: bump this with the next migration")
-}

@@ -56,14 +56,34 @@ func handleDashboardMessageCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
-	if strings.TrimSpace(body.From) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"from is required (the sender agent the message is attributed to)")
-		return
-	}
 	if strings.TrimSpace(body.To) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
 			"to is required (a solo target or a 'group:NAME' multicast)")
+		return
+	}
+	// An empty From means "send as the human operator" — no sender agent is
+	// attributed, and every delivered row is tagged operator-authored. Only a
+	// group multicast supports this: a 1:1 operator message has its own door
+	// (POST /api/operator-message, which also carries attachments). The cookie +
+	// Origin pin in checkDashboardAuth is the human-consent layer, so the
+	// operator path skips the member/owner gate an agent send must clear.
+	if strings.TrimSpace(body.From) == "" {
+		if !strings.HasPrefix(strings.TrimSpace(body.To), multicastPrefix) {
+			writeError(w, http.StatusBadRequest, "invalid_arg",
+				"from is required for a solo message (leave it blank only to multicast to a 'group:NAME' as the operator)")
+			return
+		}
+		if strings.TrimSpace(body.Body) == "" {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
+			return
+		}
+		handleOperatorMulticast(w, &sendReq{
+			To:      strings.TrimSpace(body.To),
+			Subject: body.Subject,
+			Body:    body.Body,
+			Role:    body.Role,
+			Members: body.Members,
+		})
 		return
 	}
 	res, matches, err := agent.ResolveSelector(body.From)
