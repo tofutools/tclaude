@@ -213,6 +213,74 @@ func TestStaticScopeValidationRejectsUnstructuredClasses(t *testing.T) {
 	}
 }
 
+// TestForkReducerMustDeclareAJoinPolicy covers the one-time definition rule
+// that a node identified by this same scope analysis as a parallel fork's
+// structural reducer has to declare how it reduces. It is checked once on the
+// immutable definition, reusing the reducer the scope plan already computed, so
+// the runtime never has to discover an undeclared reducer mid-run.
+func TestForkReducerMustDeclareAJoinPolicy(t *testing.T) {
+	unannotated := func(tmpl *Template, reducer string) *Template {
+		node := tmpl.Nodes[reducer]
+		node.Join = ""
+		tmpl.Nodes[reducer] = node
+		return tmpl
+	}
+
+	t.Run("unannotated fork reducer is rejected", func(t *testing.T) {
+		tmpl := unannotated(simpleParallelTemplate(3), "merge")
+		diagnostics := Validate(tmpl, NormalizeEdges(tmpl))
+		if !hasDiagnostic(diagnostics, SeverityError, "missing_reducer_join") {
+			t.Fatalf("diagnostics = %#v", diagnostics)
+		}
+	})
+
+	t.Run("unannotated nested inner reducer is rejected", func(t *testing.T) {
+		tmpl := unannotated(nestedParallelTemplate(), "inner-join")
+		diagnostics := Validate(tmpl, NormalizeEdges(tmpl))
+		if !hasDiagnostic(diagnostics, SeverityError, "missing_reducer_join") {
+			t.Fatalf("diagnostics = %#v", diagnostics)
+		}
+	})
+
+	t.Run("declared join is accepted", func(t *testing.T) {
+		for name, tmpl := range map[string]*Template{
+			"all": simpleParallelTemplate(3),
+			"any": func() *Template {
+				tmpl := simpleParallelTemplate(3)
+				merge := tmpl.Nodes["merge"]
+				merge.Join = JoinAny
+				tmpl.Nodes["merge"] = merge
+				return tmpl
+			}(),
+			"nested": nestedParallelTemplate(),
+		} {
+			t.Run(name, func(t *testing.T) {
+				diagnostics := Validate(tmpl, NormalizeEdges(tmpl))
+				if hasDiagnostic(diagnostics, SeverityError, "missing_reducer_join") {
+					t.Fatalf("diagnostics = %#v", diagnostics)
+				}
+			})
+		}
+	})
+
+	t.Run("exclusive decision merge may stay unannotated", func(t *testing.T) {
+		// Several inbound candidates, but at most one can ever arrive, so this
+		// merge is not a parallel reducer and is not required to declare a join.
+		tmpl := &Template{
+			APIVersion: APIVersion, Kind: Kind, ID: "exclusive-merge", Start: "choose",
+			Nodes: map[string]Node{
+				"choose": {Type: NodeTypeDecision, Performer: &Performer{Kind: PerformerHuman, Ask: "choose"},
+					Next: Next{"left": "merge", "right": "merge"}},
+				"merge": {Type: NodeTypeEnd},
+			},
+		}
+		diagnostics := Validate(tmpl, NormalizeEdges(tmpl))
+		if diagnostics.HasErrors() {
+			t.Fatalf("exclusive merge was forced to declare a join: %#v", diagnostics.Errors())
+		}
+	})
+}
+
 func TestStaticScopeValidatorPropertyCompleteVsBypass(t *testing.T) {
 	property := func(seed uint8) bool {
 		degree := 2 + int(seed%9)

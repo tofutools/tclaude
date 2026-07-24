@@ -512,33 +512,82 @@ func TestJoinAllAcceptsPartialArrivalsAfterAnInnerSkip(t *testing.T) {
 	}
 }
 
-// TestNonJoinNodeRejectsMoreThanOneArrival pins the fail-closed rule: a
-// convergence node that did not declare join: all cannot absorb two arrivals,
-// so the transition is refused locally instead of silently picking one.
+// TestNonJoinNodeRejectsMoreThanOneArrival keeps the local fail-closed rule as
+// defense in depth behind the static reducer requirement: a convergence node
+// that declared no join policy cannot absorb two arrivals.
+//
+// Authoring now refuses to let a parallel fork reduce at an unannotated node
+// (see TestParallelForkReducerMustDeclareItsJoinPolicy), so this state is
+// unreachable from any valid template. It is built directly from an exclusive
+// decision merge — which legitimately stays unannotated, because at most one of
+// its candidates can normally arrive — to prove the reducer still fails closed
+// rather than silently picking one arrival.
 func TestNonJoinNodeRejectsMoreThanOneArrival(t *testing.T) {
-	tmpl := fanOutTemplate("left", "right")
-	join := tmpl.Nodes["join"]
-	join.Join = "" // authoring-valid, but not a declared reducer
-	tmpl.Nodes["join"] = join
-
-	definition := mustPrepare(t, tmpl, nil)
-	checkpoint, err := Initialize("run-double-arrival", definition)
+	definition := mustPrepare(t, decisionDiamondTemplate(), nil)
+	base := advanceToDecision(t, "run-double-arrival", definition, "choose", "intake")
+	next, err := Apply(base, definition, decided("choose", "approve"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	current, err := AdvanceUntilQuiescent(checkpoint, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current = observeNext(t, current, definition, "left")
-	if current.Nodes["join"] != NodePending {
-		t.Fatalf("join = %q after one arrival", current.Nodes["join"])
+	if definition.nodes[definition.index["merge"]].joinAll {
+		t.Fatal("fixture merge must be an unannotated exclusive merge")
 	}
 
-	current, command := advanceAndPlan(t, current, definition)
-	if _, err := Apply(current, definition, observed(command, ProgramSucceeded, 0)); !errors.Is(err, ErrInvalidTransition) {
+	// Force the state the static rule prevents: the closed branch is live again
+	// and the chosen branch has already arrived at the merge.
+	forced := cloneCheckpoint(next)
+	forced.Nodes["fast"] = NodeDone
+	forced.Edges["fast"]["next"] = EdgeArrived
+	forced.Nodes["slow"] = NodeReady
+	forced.Edges["slow"]["next"] = EdgeUnresolved
+
+	err = completeAndSettle(&forced, definition, definition.index["slow"], arrivesAt(defaultEdgeOutcome(definition, "slow")))
+	if !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("second arrival into a non-join node = %v, want ErrInvalidTransition", err)
 	}
+}
+
+// TestParallelForkReducerMustDeclareItsJoinPolicy pins the one-time definition
+// rule that makes the runtime guard above unreachable: the node the static
+// parallel-scope analysis identifies as a fork's structural reducer has to
+// declare how it reduces, and an unannotated one is refused before a run can
+// ever be created. Ordinary exclusive merges are untouched.
+func TestParallelForkReducerMustDeclareItsJoinPolicy(t *testing.T) {
+	t.Run("unannotated fork reducer is refused", func(t *testing.T) {
+		tmpl := fanOutTemplate("left", "right")
+		join := tmpl.Nodes["join"]
+		join.Join = ""
+		tmpl.Nodes["join"] = join
+
+		if !hasCode(CheckEligibility(tmpl), "missing_reducer_join") {
+			t.Fatalf("unannotated fork reducer was admitted: %#v", CheckEligibility(tmpl))
+		}
+		if _, err := Prepare(tmpl, nil); !errors.Is(err, ErrTemplateIneligible) {
+			t.Fatalf("Prepare error = %v, want an ineligible template", err)
+		}
+	})
+
+	t.Run("declared join all is admitted", func(t *testing.T) {
+		tmpl := fanOutTemplate("left", "right")
+		if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+			t.Fatalf("declared join: all was refused: %#v", diagnostics)
+		}
+		if _, err := Prepare(tmpl, nil); err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+	})
+
+	t.Run("exclusive decision merge stays unannotated", func(t *testing.T) {
+		// merge has two inbound candidates and declares no join policy; it is a
+		// decision merge, not a parallel fork's reducer.
+		tmpl := decisionDiamondTemplate()
+		if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+			t.Fatalf("exclusive merge was forced to declare a join: %#v", diagnostics)
+		}
+		if _, err := Prepare(tmpl, nil); err != nil {
+			t.Fatalf("Prepare: %v", err)
+		}
+	})
 }
 
 // TestBranchFailureAbandonsSiblingOutboxEntries pins how a failing branch ends

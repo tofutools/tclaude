@@ -230,12 +230,11 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			next.Nodes[node.id] = NodeFailed
 			next.Status = RunFailed
 			// A failed task fails the whole run, exactly as it did sequentially.
-			// The run is over, so no sibling branch will ever be dispatched or
-			// decided again and their entries must not survive into terminal
-			// state — the boundary validator rejects obligations on a non-running
-			// run precisely because they would read as still actionable. This is
-			// run abandonment at termination, not the per-transition cross-branch
-			// clearing the plural outboxes exist to avoid.
+			// This is terminal cleanup: the run is over, so sibling entries must
+			// not survive into terminal state, where they would read as still
+			// actionable and would be rejected by the load boundary. It is not
+			// the per-transition cross-branch clearing the plural outboxes exist
+			// to prevent — see abandonOutboxes.
 			//
 			// Under this slice's sequential consumption the observed command is
 			// the only one in flight, so this only ever drops sibling decision
@@ -468,9 +467,16 @@ func removeObligation(checkpoint *Checkpoint, nodeID string) {
 	}
 }
 
-// abandonOutboxes drops every outstanding request when a run terminates
-// abnormally. See the failure branch of Apply for why this is run abandonment
-// rather than the cross-branch clearing the plural outboxes exist to prevent.
+// abandonOutboxes is TERMINAL CLEANUP, not ordinary cross-branch clearing.
+//
+// The distinction matters and is deliberate. Ordinary reducer mutations are
+// strictly per-entry — planning, observing, and deciding each touch exactly one
+// branch's entry — because a live run must never let one branch invalidate
+// another's outstanding work. This function runs only on the transition that
+// ends the run, where no branch will ever be dispatched or decided again, and
+// where leaving entries behind would produce a checkpoint the load boundary
+// rejects (obligations require a running run). It must never be called from a
+// transition that leaves the run running.
 func abandonOutboxes(checkpoint *Checkpoint) {
 	checkpoint.Commands = nil
 	checkpoint.AwaitingDecisions = nil
