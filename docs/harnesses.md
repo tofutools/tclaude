@@ -133,8 +133,8 @@ instead of slash-command injection).
 | **Live-streamed ask output** (print mode → a TTY) | ✅ `--output-format stream-json`, answer rendered token-by-token | ➖ buffered (`codex exec` prints the final message at the end) | ➖ buffered |
 | **Conversation list & search** (`conv ls`/`search`) | ✅ cwd-indexed `.jsonl` | ✅ date-indexed rollout + state DB | ✅ cold `session list --format json` + tclaude cache |
 | **Rename** | ✅ in-pane `/rename` (writes the conversation file) | ✅ out-of-band (writes Codex's title store) | ✅ authenticated server API; local title cache when cold |
-| **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` | ✅ in-pane `/compact` |
-| **Graceful stop** | ✅ `/exit` | ✅ `/quit` | ✅ `/exit` |
+| **Compact** | ✅ in-pane `/compact` | ✅ in-pane `/compact` | ✅ managed TUI API (`session.compact`, no keystrokes) |
+| **Graceful stop** | ✅ `/exit` | ✅ `/quit` | ✅ managed TUI API (`app.exit`, no keystrokes) |
 | **Remote control** ([guide](remote-control.md)) | ✅ Claude's built-in Remote Access (claude.ai/code + mobile app); arm per-agent, at spawn, or by profile/group default | ❌ no built-in remote access | ❌ no hosted relay |
 | **Reincarnate / clone** | ✅ | ✅ (rename degrades to the title store) | ✅ managed resume + title store |
 | **Hooks / live status** | ✅ `~/.claude/settings.json` | ✅ `~/.codex/hooks.json` (+ setup-managed trust) | ⚠️ managed liveness; full SSE mapping pending |
