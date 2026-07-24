@@ -3459,6 +3459,14 @@ type spawnParams struct {
 	// the conv-id synchronously, so it stays blocking by design. See JOH-205
 	// inc2.
 	Async bool
+	// pendingSpawnLabel marks the background continuation of a deferred
+	// server-authoritative (OpenCode) spawn. The HTTP pass reserved this
+	// pending_spawns label (and AgentID) and may already have answered with a
+	// Pending row, so the continuation must reuse the label instead of
+	// minting one, and must claim/clear the reservation once the conv binds.
+	// Empty everywhere else. Unexported on purpose: only
+	// executeServerSpawnDeferred sets it.
+	pendingSpawnLabel string
 	// SpawnConfigJSON is the verbatim JSON of the agent.SpawnRequest this spawn
 	// came from, captured at the HTTP boundary (handleGroupSpawn). enrollSpawnedConv
 	// records it onto the new actor's agents.initial_spawn_config so there is a
@@ -3528,6 +3536,17 @@ var beforeExecuteSpawnForTest func()
 // wait should not keep the spawn modal open; a background back-fill continues
 // the old inline discovery window after the response returns.
 var codexAsyncSpawnResponseGrace = 750 * time.Millisecond
+
+// openCodeAsyncSpawnResponseGrace bounds how long the HTTP spawn endpoint
+// waits for a server-authoritative harness (OpenCode) launch to complete
+// inline before returning a visible Pending row. Unlike Codex — whose slow
+// phase is conv-id materialisation after the fork — OpenCode's dominant cost
+// is the managed `opencode serve` boot BEFORE the fork, so the whole launch
+// runs in the background and the response only lingers this long. A warm
+// healthy server is reused instantly and still answers inline with a real
+// conv-id; a cold boot goes Pending and the dashboard shows the reserved row
+// immediately instead of holding the spawn dialog open for seconds.
+var openCodeAsyncSpawnResponseGrace = 750 * time.Millisecond
 
 // groupDefaultProfile loads the group's default spawn profile (JOH-210), or nil
 // when the group has none or the referenced row is missing/unreadable (the
@@ -3895,9 +3914,21 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	if p.CleanupDirWriteProof {
-		defer cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
-	}
+	// Proof-marker cleanup is flag-gated (not a plain conditional defer) so
+	// the deferred server-authoritative branch below can hand marker
+	// ownership to its background continuation — which re-enters
+	// executeSpawn with the same CleanupDirWriteProof intent and registers
+	// its own cleanup. The markers were consumed at the HTTP boundary
+	// (reassertDirWriteProof only re-checks canonical paths); the hand-off
+	// exists to keep the launch-scoped lifetime — removal when the launch
+	// actually ends, owned exactly once — rather than tying it to a response
+	// that now returns mid-launch.
+	cleanupProofOnReturn := p.CleanupDirWriteProof
+	defer func() {
+		if cleanupProofOnReturn {
+			cleanupDirWriteProofMarkers(p.DirWriteProofToken, p.DirWriteProofDirs)
+		}
+	}()
 
 	// Fill blank launch fields from group then global default spawn profiles
 	// and apply the harness's secure launch defaults. On the handleGroupSpawn
@@ -3981,11 +4012,39 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		p.CodexGitCommonDirPinned = false
 	}
 
+	// Resolve the harness once for the rest of the spawn. A
+	// server-authoritative harness needs its daemon-owned endpoint and
+	// server-issued conversation id before enrollment or the pane fork; an
+	// empty/unknown --harness yields a nil descriptor and every Supports*/
+	// Uses* predicate degrades gracefully.
+	spawnHarness, _ := harness.Resolve(p.Harness)
+
+	// Async spawn of a server-authoritative harness (OpenCode): the managed
+	// server boot dominates spawn latency — typically seconds, bounded by
+	// openCodeStartupTimeout — and it runs BEFORE the pane fork, so the
+	// Codex-style conv-id poll cap cannot shorten the response. Instead,
+	// after the cheap validations above, reserve the pending row + stable
+	// actor id and continue the whole launch in the background. The response
+	// waits a short grace so a fast launch (a healthy warm server is reused
+	// instantly) still returns its conv-id inline; past the grace the caller
+	// gets the same Pending row the dashboard already renders for Codex, and
+	// the reservation is claimed once the conv binds (or removed on failure).
+	if p.Async && spawnHarness.UsesAuthoritativeServer() && p.pendingSpawnLabel == "" {
+		return executeServerSpawnDeferred(g, p, &cleanupProofOnReturn)
+	}
+
 	// Generate a label that's unlikely to collide with existing
 	// session IDs: crypto-random hex (like GenerateSessionID()), with
 	// a "spwn-" prefix so these rows are easy to spot in
 	// `tclaude session ls`.
-	label := generateSpawnLabel()
+	//
+	// The deferred server-authoritative continuation arrives with its label
+	// already reserved (it keys the pending_spawns row the response returned),
+	// so that label is authoritative and must not be re-minted.
+	label := p.pendingSpawnLabel
+	if label == "" {
+		label = generateSpawnLabel()
+	}
 
 	// Agent-directory declarations are resolved only once a unique launch key
 	// exists. Freeze their literal paths into the snapshot before enrollment or
@@ -4030,10 +4089,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		AutoMemory:                 p.AutoMemory,
 	}
 
-	// Resolve once before the enrollment branch. A server-authoritative
-	// harness needs its daemon-owned endpoint and server-issued conversation
-	// id before enrollment or the pane fork.
-	spawnHarness, _ := harness.Resolve(p.Harness)
 	var openCodeLaunch *openCodeLaunch
 	if spawnHarness.UsesAuthoritativeServer() {
 		resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
@@ -4176,7 +4231,16 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// process starts, so an immediate hook/reaper enrollment can only bind this
 	// exact id. The row is atomically replaced by the actor binding once the conv
 	// appears; a genuinely pending response simply leaves it for back-fill.
-	reservedPending := p.Async && !launchEnroll
+	//
+	// The deferred server-authoritative continuation already holds its
+	// reservation (pendingSpawnLabel) — it must NEVER re-reserve here, even
+	// when the legacy-injection revert turns launchEnroll off: re-minting
+	// would replace the row (INSERT OR REPLACE) with a second identity while
+	// the first was already returned to the caller. pendingHeld is the "some
+	// reservation exists for this label" predicate the shared claim/requeue/
+	// launch-marker sites key on.
+	reservedPending := p.Async && !launchEnroll && p.pendingSpawnLabel == ""
+	pendingHeld := reservedPending || p.pendingSpawnLabel != ""
 	if reservedPending {
 		if g == nil {
 			if openCodeLaunch != nil {
@@ -4211,7 +4275,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	// (runNew's liveOwnerConflict guard) whose row a label-keyed delete
 	// would then destroy.
 	launchFailed := func(err error) (*spawnOutcome, *spawnFailure) {
-		if reservedPending {
+		if pendingHeld {
 			if deleteErr := db.DeletePendingSpawn(label); deleteErr != nil {
 				slog.Warn("spawn: failed to remove reservation after launch failure",
 					"label", label, "error", deleteErr)
@@ -4331,7 +4395,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		s, err := db.LoadSession(label)
 		if err == nil && s != nil {
-			if reservedPending && !pendingLaunchMarked {
+			if pendingHeld && !pendingLaunchMarked {
 				if err := db.MarkPendingSpawnLaunched(label); err != nil {
 					slog.Warn("spawn: failed to clear pending launch marker", "label", label, "error", err)
 				} else {
@@ -4411,14 +4475,26 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		}
 		focusSpawn()
 		markBriefingConsumed(preConvID, preMsgID, briefingInlined)
-		return &spawnOutcome{ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode,
+		// Deferred server-authoritative continuation: atomically replace the
+		// pending reservation with the (already-made) actor binding, so the
+		// dashboard's Pending row promotes into the enrolled agent. A claim
+		// miss is benign — the sweeper saw the session row first and cleared
+		// the reservation against the same enrollment; a claim error leaves
+		// the row for the sweeper's idempotent already-enrolled path.
+		if p.pendingSpawnLabel != "" {
+			if _, err := db.ClaimPendingSpawnAndBindAgent(label, preConvID, p.AgentID, "spawn"); err != nil {
+				slog.Warn("spawn: failed to claim deferred pending reservation; leaving it for the sweeper",
+					"label", label, "conv", preConvID, "error", err)
+			}
+		}
+		return &spawnOutcome{AgentID: p.AgentID, ConvID: preConvID, Label: label, TmuxSession: label, FocusMode: focusMode,
 			Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
 	}
 
 	// Conv-id resolved within the poll: finish enrollment inline (Codex, or CC
 	// with the legacy-injection revert flag) and inject the rename + welcome.
 	if convID != "" {
-		if reservedPending {
+		if pendingHeld {
 			claimed, err := db.ClaimPendingSpawnAndBindAgent(label, convID, p.AgentID, "spawn")
 			if err != nil {
 				return nil, &spawnFailure{http.StatusInternalServerError, "identity",
@@ -4442,7 +4518,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 			}
 		}
 		if fail := finishSpawnEnrollment(g, p, convID); fail != nil {
-			if reservedPending {
+			if pendingHeld {
 				// The agent process is already running and its identity bound;
 				// a hard failure here would tell the caller the spawn failed —
 				// the CLI would even remove a just-created worktree under the
@@ -4500,6 +4576,135 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 	return nil, &spawnFailure{http.StatusGatewayTimeout, "timeout",
 		"spawned session " + label + " but conv-id never materialised within " + pollBudget.String() +
 			" — the session may still come up; check `tclaude session attach " + label + "`"}
+}
+
+// executeServerSpawnDeferred runs an async server-authoritative (OpenCode)
+// spawn without holding the HTTP response open for the managed server boot.
+// The caller (executeSpawn) has already run every synchronous validation; this
+// adds the two cheap OpenCode-specific pre-flights that should still fail the
+// spawn dialog synchronously, reserves the pending_spawns row + stable actor
+// id, and re-enters executeSpawn in the background with pendingSpawnLabel set.
+// The response waits openCodeAsyncSpawnResponseGrace for that continuation:
+// a fast launch (warm server reuse) returns its real outcome inline; past the
+// grace the caller gets a Pending outcome (empty conv-id) and the continuation
+// finishes on its own — claiming the reservation on success, or deleting it
+// and surfacing the failure to the operator on error.
+//
+// syncProofCleanup is executeSpawn's proof-marker ownership flag: it is
+// cleared the moment the continuation is scheduled, because the continuation
+// re-registers the same cleanup — marker removal stays launch-scoped (it
+// happens when the launch actually ends) and owned exactly once, instead of
+// racing a response that returns mid-launch. Pre-flight failures return
+// before that hand-off, leaving the synchronous cleanup in place.
+func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanup *bool) (*spawnOutcome, *spawnFailure) {
+	if g == nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "spawn", "ungrouped asynchronous spawn is not supported"}
+	}
+	// Cheap, deterministic pre-flights — a bad launch cwd or an unbuildable
+	// access-control policy must fail the dialog now, exactly as the inline
+	// path would, before anything durable is written.
+	resolvedCwd, err := resolveOpenCodeLaunchCwd(p.Cwd)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io", err.Error()}
+	}
+	p.Cwd = resolvedCwd
+	if _, err := openCodePermissionJSONForLaunch(
+		p.Cwd, p.SandboxMode, p.ApprovalPolicy, p.ToolGovernance, p.EffectiveSandbox); err != nil {
+		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
+			"could not build OpenCode access-control policy: " + err.Error()}
+	}
+
+	label := generateSpawnLabel()
+	p.AgentID = db.NewAgentID()
+	if err := db.InsertPendingSpawn(pendingSpawnFromParams(g, p, label)); err != nil {
+		return nil, &spawnFailure{http.StatusInternalServerError, "io",
+			"failed to reserve pending spawn " + label + ": " + err.Error()}
+	}
+
+	continuation := p
+	continuation.pendingSpawnLabel = label
+	*syncProofCleanup = false // the continuation owns the proof markers now
+
+	type deferredResult struct {
+		out  *spawnOutcome
+		fail *spawnFailure
+	}
+	// mu + responded pick exactly one owner for the outcome: either the
+	// request goroutine returns it inline (fast launch), or — past the grace
+	// — the background goroutine owns failure surfacing while the caller
+	// keeps the Pending row it already returned.
+	var mu sync.Mutex
+	responded := false
+	done := make(chan deferredResult, 1)
+	goBackground(func() {
+		out, fail := executeSpawn(g, continuation)
+		if fail != nil {
+			// No pane will ever write a session row for this label, so the
+			// reservation must not linger as a forever-Pending ghost. Success
+			// paths clear it via the atomic claim (or the sweeper); a delete
+			// after a late failure is an idempotent no-op there.
+			if err := db.DeletePendingSpawn(label); err != nil {
+				slog.Warn("spawn: failed to remove reservation after deferred launch failure",
+					"label", label, "error", err)
+			}
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if !responded {
+			done <- deferredResult{out, fail}
+			return
+		}
+		if fail != nil {
+			slog.Error("spawn: deferred OpenCode launch failed after pending response",
+				"label", label, "group", g.Name, "error", fail.Msg)
+			surfaceDeferredSpawnFailure(g, p, label, fail)
+		}
+	})
+
+	timer := time.NewTimer(openCodeAsyncSpawnResponseGrace)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.out, r.fail
+	case <-timer.C:
+	}
+	mu.Lock()
+	// Final drain under the lock: a continuation that finished right at the
+	// grace boundary still answers inline rather than going Pending.
+	select {
+	case r := <-done:
+		mu.Unlock()
+		return r.out, r.fail
+	default:
+	}
+	responded = true
+	mu.Unlock()
+	slog.Info("spawn: OpenCode launch continues in background; recorded pending spawn",
+		"label", label, "group", g.Name)
+	return &spawnOutcome{AgentID: p.AgentID, ConvID: "", Label: label,
+		Harness: p.Harness, Model: p.Model, Effort: p.Effort}, nil
+}
+
+// surfaceDeferredSpawnFailure lands a deferred spawn failure in the dashboard
+// Messages tab (the notify-human store). The operator watched the dialog close
+// on a Pending row; when the background launch then fails, the row is deleted
+// and this message is the remaining trace — without it, a failed spawn is
+// indistinguishable from a spawn that silently vanished. FromConv is empty:
+// the sender is the daemon, not an agent.
+func surfaceDeferredSpawnFailure(g *db.AgentGroup, p spawnParams, label string, fail *spawnFailure) {
+	name := p.Name
+	if name == "" {
+		name = p.Role
+	}
+	if name == "" {
+		name = label
+	}
+	body := fmt.Sprintf("Spawn of OpenCode agent %q into group %q (label %s) failed after its dialog closed: %s",
+		name, g.Name, label, fail.Msg)
+	if _, err := recordHumanMessage("", "Agent spawn failed: "+name, body); err != nil {
+		slog.Warn("spawn: failed to record deferred spawn failure message",
+			"label", label, "error", err)
+	}
 }
 
 func spawnGroupName(g *db.AgentGroup) string {
