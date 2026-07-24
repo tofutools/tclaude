@@ -536,10 +536,13 @@ func parseProcessParams(values []string) (map[string]string, error) {
 	return params, nil
 }
 
+// requireProcessRuntime is the precondition for every daemon-owned process
+// command: only that agentd is reachable. The feature flag itself is NOT
+// checked here — agentd is the sole authority and each process route returns a
+// stable {code:"processes_disabled"} response when the flag is off. Reading the
+// flag client-side previously loaded private config as defaults and wrongly
+// blocked sandboxed agents that legitimately could reach an enabled daemon.
 func requireProcessRuntime(stderr io.Writer) error {
-	if err := requireProcessesEnabled(); err != nil {
-		return err
-	}
 	if agent.RequireDaemonOrExit(stderr) != 0 {
 		return errProcessDaemonAlreadyReported
 	}
