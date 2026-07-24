@@ -88,6 +88,13 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// dashboard.js: the module is actually imported and bound.
 	must("mountCostsFeature(),", "Costs island mounted in the concurrent bounded-feature group")
 
+	// Header layout: the summary line always gets its own row under the
+	// controls, so a long total + projection can never squeeze the span
+	// buttons or run off the window edge.
+	must(`<div class="costs-header">`, "two-row Costs header wrapper rendered")
+	must(".costs-header .filter-bar {", "controls row scoped inside the header wrapper")
+	must(".costs-header #costs-summary { margin-top: 8px; }", "summary sits on its own row under the controls")
+
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")
 	must(".cost-col.projected .cost-bar", "projected bars styled hollow")

@@ -65,32 +65,38 @@ function FactorEditor({ state, actions }) {
 function Controls({ state, actions, current }) {
   const loadAfter = (change) => { change(); void actions.load(); };
   const monthView = current.span === 'month' || current.span === 'calmonth';
-  return html`<div class="filter-bar" id="costs-spans">
-    ${COST_SPANS.map((span) => html`<button class=${`tool${current.span === span.key ? ' active' : ''}`}
-      data-span=${span.key} title=${span.key === 'month' ? 'Calendar month to date — the only span with a projection' : `Trailing ${span.days} days`}
-      onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}</button>`)}
-    <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
-      <button class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
-        disabled=${current.monthOffset >= current.oldestMonthOffset}
-        onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹</button>
-      <button class=${`tool${monthView ? ' active' : ''}`} id="costs-month-cur" data-span="calmonth" title="View this month"
-        onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}</button>
-      <button class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
-        disabled=${current.monthOffset <= 0}
-        onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›</button>
-    </span>
-    <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-fill-weekdays-label"
-      title="Fill the empty weekdays before your first run this month with the per-weekday average.">
-      <input id="costs-fill-weekdays" type="checkbox" checked=${current.fillEmpty} disabled=${current.span !== 'month'}
-        onChange=${(event) => state.setFillEmpty(event.currentTarget.checked)} /><span>fill empty weekdays</span>
-    </label>
-    <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-include-weekends-label"
-      title="Count weekends in the month projection instead of projecting them at zero.">
-      <input id="costs-include-weekends" type="checkbox" checked=${current.includeWeekends} disabled=${current.span !== 'month'}
-        onChange=${(event) => state.setIncludeWeekends(event.currentTarget.checked)} /><span>include weekends</span>
-    </label>
-    <${FactorEditor} state=${state} actions=${actions} />
-    <span class="spacer"></span><${Summary} current=${current} />
+  // Two rows, always: the controls on top, the totals/projection line under
+  // them. Sharing one line only worked while the summary was short — with the
+  // real/WHAT-IF split, the date range and the month projection it now runs
+  // past the window edge, so it gets a row of its own regardless of length.
+  return html`<div class="costs-header">
+    <div class="filter-bar" id="costs-spans">
+      ${COST_SPANS.map((span) => html`<button class=${`tool${current.span === span.key ? ' active' : ''}`}
+        data-span=${span.key} title=${span.key === 'month' ? 'Calendar month to date — the only span with a projection' : `Trailing ${span.days} days`}
+        onClick=${() => loadAfter(() => state.setSpan(span.key))}>${span.label}</button>`)}
+      <span id="costs-month-nav" title="Browse a month — click the month, then ‹ / › to step">
+        <button class="tool costs-month-step" id="costs-month-prev" title="Older month" aria-label="Older month"
+          disabled=${current.monthOffset >= current.oldestMonthOffset}
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset + 1 : current.monthOffset))}>‹</button>
+        <button class=${`tool${monthView ? ' active' : ''}`} id="costs-month-cur" data-span="calmonth" title="View this month"
+          onClick=${() => loadAfter(() => state.activateMonth(current.monthOffset))}>${current.monthLabel}</button>
+        <button class="tool costs-month-step" id="costs-month-next" title="Newer month" aria-label="Newer month"
+          disabled=${current.monthOffset <= 0}
+          onClick=${() => loadAfter(() => state.activateMonth(monthView ? current.monthOffset - 1 : current.monthOffset))}>›</button>
+      </span>
+      <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-fill-weekdays-label"
+        title="Fill the empty weekdays before your first run this month with the per-weekday average.">
+        <input id="costs-fill-weekdays" type="checkbox" checked=${current.fillEmpty} disabled=${current.span !== 'month'}
+          onChange=${(event) => state.setFillEmpty(event.currentTarget.checked)} /><span>fill empty weekdays</span>
+      </label>
+      <label class=${`filter-toggle${current.span !== 'month' ? ' disabled' : ''}`} id="costs-include-weekends-label"
+        title="Count weekends in the month projection instead of projecting them at zero.">
+        <input id="costs-include-weekends" type="checkbox" checked=${current.includeWeekends} disabled=${current.span !== 'month'}
+          onChange=${(event) => state.setIncludeWeekends(event.currentTarget.checked)} /><span>include weekends</span>
+      </label>
+      <${FactorEditor} state=${state} actions=${actions} />
+    </div>
+    <${Summary} current=${current} />
   </div>`;
 }
 
