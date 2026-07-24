@@ -238,6 +238,33 @@ reopened individually** under `deny ~`; they stay denied. Losing `~/.gitconfig`
 Relocate the configuration into a directory you reopen, or supply it through the
 profile's `environment`.
 
+### Git sees Claude Code's built-in denies as device nodes
+
+Claude Code's own sandbox (independent of any tclaude profile) denies some
+paths by bind-mounting `/dev/null` over them on Linux: the repo's
+`.git/config`-family and `.git/hooks`, `.gitmodules`, ambient host dotfiles,
+and its protected `.claude/` settings/runtime paths (`settings.json`,
+`settings.local.json`, `loop.md`, …). Git then sees character device nodes
+where it expects regular files, which produces three symptoms inside a
+sandboxed agent:
+
+- Harmless warnings on some commands, e.g. `git fetch`:
+  `warning: unable to access '….git/config.worktree': Permission denied` and
+  the same for `.gitmodules`.
+- Stubs not covered by an ignore rule show up as untracked in `git status`.
+- `git add -A` and `git add .` **fail hard**
+  (`error: … can only add regular files, symbolic links or git-directories`).
+
+Git itself works — fetch, commit, diff, stash, worktree operations are all
+fine. These denies are Claude Code built-ins, enforced by the OS: a tclaude
+profile cannot reopen them, and the only documented off-switch disables *all*
+of Claude Code's filesystem isolation, which tclaude deliberately relies on.
+
+Mitigation: stage specific paths instead of bulk-adding. In the tclaude repo
+itself the stubs are covered by the committed `.gitignore` (see the "Sandbox
+artifacts" block there), so `git status` stays clean and `git add -A` works;
+in arbitrary other repos, "stage specific paths" is the practical rule.
+
 ### You cannot reopen a directory containing a protected root
 
 `~/.claude` contains `~/.claude/sessions`, which is protected, so an ordinary
@@ -318,6 +345,8 @@ read.
 | `tclaude: command not found`, socket otherwise fine | tclaude's binary dir not reopened — it is never implicit |
 | `tclaude agent` reports "agentd is not running" | Socket file hidden **or** the `AF_UNIX` syscall blocked — [check both](sandbox-hardening.md#keeping-the-daemon-socket-reachable) |
 | Git loses identity / credential helper | `~/.gitconfig` is a file and cannot be reopened under `deny ~` |
+| `git add -A` fails: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths ([above](#git-sees-claude-codes-built-in-denies-as-device-nodes)) |
+| `warning: unable to access '….git/config.worktree'` | Same device-node masking; harmless, git still works |
 | Launch refused, `unsupported_sandbox_profile_reopen_under_deny` | Claude not in sandbox `on`, or Codex not on Linux managed-profile with a verified probe |
 | Profile looks strict but nothing is denied | Claude sandbox `inherit`/`off`, or a legacy `read_baseline` profile (silently dropped — re-express as deny rows) |
 | An agent read a denied path with the `Read` tool, but not from Bash | Expected under a `deny ~` profile — that shape reaches layer 1 only ([above](#which-denies-reach-both-layers)) |

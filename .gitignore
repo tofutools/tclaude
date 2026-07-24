@@ -50,14 +50,18 @@ DONE.md
 excalidraw.log
 .claude/worktrees/
 
-# Sandbox artifacts — /dev/null device nodes the isolation-worktree
-# sub-agent sandbox drops in the repo root to mask the ambient host
-# config (~/.bashrc, ~/.gitconfig, …) from sandboxed sub-agents.
-# Harmless (not real files); ignored so they cannot be staged by
-# accident. NOTE: .mcp.json / .vscode / .gitmodules / .claude/agents /
-# .claude/commands / .claude/hooks / .claude/launch.json /
-# .claude/routines / .claude/workflows could be legitimate project files
-# someday — drop the matching line here if tclaude ever gains a real one.
+# Sandbox artifacts — /dev/null device nodes Claude Code's Bash sandbox
+# bind-mounts over paths it denies, in any sandboxed session (not just
+# isolation worktrees): ambient host config (~/.bashrc, ~/.gitconfig, …)
+# and its own protected settings/runtime paths under .claude/. Harmless
+# (not real files), but git chokes on unignored ones: they show as
+# untracked in `git status`, and `git add -A` / `git add .` fail hard
+# ("can only add regular files"). Ignored so bulk staging works.
+# NOTE: several of these could be legitimate project files someday —
+# .mcp.json / .vscode / .gitmodules / the .claude/ entries
+# (.claude/settings.json in particular is a documented pattern for
+# committed project-scoped Claude Code settings) — drop the matching
+# line here if tclaude ever gains a real one.
 /.bash_profile
 /.bashrc
 /.gitconfig
@@ -73,5 +77,14 @@ excalidraw.log
 /.claude/commands
 /.claude/hooks
 /.claude/launch.json
+/.claude/loop.md
+/.claude/output-styles
 /.claude/routines
+/.claude/scheduled_tasks.json
+/.claude/settings.json
+/.claude/settings.local.json
 /.claude/workflows
+
+# Claude Code runtime write-journal (a real directory, created in-repo
+# by sandboxed sessions; empty today but never a project file).
+/.claude/.cc-writes/
