@@ -8,7 +8,7 @@ const flush = () => new Promise((resolve) => { setImmediate(resolve); });
 
 // pollHarness records every injected-timer interaction so a test can fire the
 // scheduled tick by hand instead of waiting on wall-clock time.
-function pollHarness({ refresh, ...options } = {}) {
+function pollHarness(options = {}) {
   const calls = [];
   const listeners = new Map();
   const timers = [];
@@ -177,24 +177,63 @@ test('a refresh stalled past the stall bound stops blocking the cadence', async 
 });
 
 // Boot asks for the snapshot alone so the paint curtain is not held by the
-// Groups tab's heavy paginated lists. Only the bootstrap attempt is narrowed.
-test('immediateOptions reach the bootstrap attempt and no later tick', async (t) => {
+// Groups tab's heavy paginated lists. The narrowing spans the whole curtain:
+// scoping it to the first attempt would put the lists back in front of every
+// RETRY, which is exactly the case where the curtain is still up.
+test('boot options narrow every attempt until the boot window closes', async (t) => {
   const harness = await createPreactHarness(t);
   const { startSnapshotPoll } =
     await harness.importDashboardModule('js/snapshot-poll.js');
   const seen = [];
+  let curtainDown;
+  const bootUntil = new Promise((resolve) => { curtainDown = resolve; });
   const h = pollHarness();
-  const stop = startSnapshotPoll((options) => { seen.push(options); }, {
-    ...h.options,
-    immediateOptions: { includeLists: false },
-  });
+  // Every attempt rejects, as it would while agentd is restarting: the curtain
+  // stays up and the retries behind the failed bootstrap are still boot.
+  const stop = startSnapshotPoll((options) => {
+    seen.push(options);
+    return Promise.reject(new Error('agentd unreachable'));
+  }, { ...h.options, bootOptions: { includeLists: false }, bootUntil });
 
   assert.deepEqual(seen, [{ includeLists: false }]);
   await flush();
   h.fireTick();
   await flush();
-  assert.deepEqual(seen, [{ includeLists: false }, undefined]);
+  h.fireTick();
+  await flush();
+  assert.deepEqual(
+    seen,
+    [{ includeLists: false }, { includeLists: false }, { includeLists: false }],
+    'a failed bootstrap must not hand the heavy lists back to its own retries',
+  );
+
+  // Once the curtain is down — first snapshot published, or the bounded bail —
+  // the lists rejoin the cadence.
+  curtainDown();
+  await flush();
+  h.fireTick();
+  await flush();
+  assert.deepEqual(seen.at(-1), undefined);
+  assert.equal(seen.length, 4);
   stop();
+});
+
+// Half a pair is always a bug: options without a bound narrow FOREVER (the
+// Groups lists never fetched again for the life of the page), a bound without
+// options means no boot narrowing at all. Both must be loud.
+test('boot options and their bound are required together', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { startSnapshotPoll } =
+    await harness.importDashboardModule('js/snapshot-poll.js');
+  const h = pollHarness();
+  assert.throws(
+    () => startSnapshotPoll(() => {}, { ...h.options, bootOptions: { includeLists: false } }),
+    TypeError,
+  );
+  assert.throws(
+    () => startSnapshotPoll(() => {}, { ...h.options, bootUntil: Promise.resolve() }),
+    TypeError,
+  );
 });
 
 test('bootstrap waits for published snapshot even when first attempt finishes without one', async (t) => {
@@ -209,17 +248,23 @@ test('bootstrap waits for published snapshot even when first attempt finishes wi
   // The bootstrap attempt itself belongs to startSnapshotPoll; this helper only
   // gates URL restoration. A completed attempt — superseded, or a handled fetch
   // failure — publishes nothing and must not release the wait.
-  const waiting = waitForInitialSnapshot(snapshotReady, neverTimeout)
+  void waitForInitialSnapshot(snapshotReady, neverTimeout)
     .then(() => { settled = true; });
 
   await flush();
   assert.equal(settled, false);
 
   publishSnapshot();
-  await waiting;
+  await flush();
   assert.equal(settled, true);
 });
 
+// Both assertions read an ordering flag, and NEITHER awaits the helper itself:
+// node:test applies no per-test timeout and jstest/dashboard_node_test.go passes
+// none, so awaiting a helper that regressed to `await snapshotReady` would HANG
+// the suite until Go's package timeout instead of reporting a failure here.
+// Draining the microtask queue is enough — the race, the helper's resume and the
+// .then are all microtasks.
 test('bootstrap wait is released by the bounded timeout', async (t) => {
   const harness = await createPreactHarness(t);
   const { waitForInitialSnapshot } =
@@ -227,7 +272,17 @@ test('bootstrap wait is released by the bounded timeout', async (t) => {
   let bail;
   const bailed = new Promise((resolve) => { bail = resolve; });
   const neverPublishes = new Promise(() => {});
+  let released = false;
+
+  void waitForInitialSnapshot(neverPublishes, bailed)
+    .then(() => { released = true; });
+
+  // Control: with neither input settled the helper must still be waiting, so a
+  // helper that simply resolved would not pass for the wrong reason.
+  await flush();
+  assert.equal(released, false, 'the wait must not be released before the bail');
 
   bail();
-  await waitForInitialSnapshot(neverPublishes, bailed);
+  await flush();
+  assert.equal(released, true, 'the bounded bail must release the wait');
 });

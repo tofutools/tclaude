@@ -46,11 +46,17 @@ function groupsTabActive() {
   return !!s && s.classList.contains('active');
 }
 
-// Upper bound on one refresh's fetches. Deliberately generous: this is a
-// stuck-connection backstop, not a latency budget — a slow but progressing
-// snapshot must still be allowed to land. Its job is to guarantee that refresh()
-// always settles, so a wedged request cannot hold the poll's in-flight guard
-// (snapshot-poll.js) open.
+// Upper bound on one refresh CYCLE, not merely on its fetches: the timer is
+// armed before the requests and cleared in the finally, so it spans the response
+// bodies and the render pass too. The render pass itself is synchronous, so an
+// overrun can only land on a still-outstanding read: the snapshot's, which
+// surfaces "snapshot failed: timed out after 20s" (deliberate — a cycle that
+// slow has already lost the poll anyway), or a list sub-fetch's, which
+// stitchListPage degrades to "keep the previous rows" like any other sub-fetch
+// failure. Deliberately generous: this is a stuck-connection
+// backstop, not a latency budget — a slow but progressing snapshot must still be
+// allowed to land. Its job is to guarantee that refresh() always settles, so a
+// wedged request cannot hold the poll's in-flight guard (snapshot-poll.js) open.
 const SNAPSHOT_REQUEST_TIMEOUT_MS = 20000;
 
 // The abort handle of the refresh currently in flight. A newer refresh aborts
@@ -69,9 +75,9 @@ function abortReason(message) {
 }
 
 // refresh runs one poll cycle. options.includeLists:false asks for the snapshot
-// alone, skipping the Groups tab's paginated list endpoints — boot uses it so
-// the paint curtain is not held by the heavy lists (see startSnapshotPoll's
-// immediateOptions).
+// alone, skipping the Groups tab's paginated list endpoints — every attempt
+// taken while the paint curtain is up passes it, so the curtain is not held by
+// the heavy lists (see startSnapshotPoll's bootOptions).
 // Reading the flag off an optional object keeps every existing bare `refresh`
 // reference — including the ones handed to action modules as a callback — on the
 // full-fetch path whatever they happen to pass.
@@ -270,12 +276,23 @@ export async function refresh(options) {
       else jobs.failRequest(requestId, jobsResult.error);
     }
   } catch (e) {
+    // A superseded generation lands here too, because its in-flight fetches were
+    // aborted rather than left to complete. Route it where the isCurrentRequest
+    // bails in the success path route theirs — a DISCARD, not a failure. A
+    // timeout abort is NOT superseded, so it still takes the failure path below,
+    // which is the surface it should have. The jobs feature carries its own
+    // request token, and a successor
+    // only re-begins it while the Jobs tab is active; so after a switch away from
+    // Jobs the stale token still matches, and reporting failRequest there would
+    // write an AbortError phase into the jobs signal that no later generation
+    // rewrites. dashboardState's own guard already rejects a stale id, so this
+    // costs nothing on the shared store — it is the feature signal that needs it.
+    if (!dashboardState.isCurrentRequest(requestId)) {
+      jobs?.discardRequest(requestId);
+      return;
+    }
     jobs?.failRequest(requestId, e);
-    // A superseded generation lands here too, because its in-flight fetches
-    // were aborted rather than left to complete. It stays silent for the same
-    // reason it always did: failRequest reports "not the current request" and
-    // we return before touching the banner or the status line.
-    if (!dashboardState.failRequest(requestId, e, { responded })) return;
+    dashboardState.failRequest(requestId, e, { responded });
     // Only a REJECTED /api/snapshot fetch (agentd unreachable — connection
     // refused / network down, so `responded` never flipped) counts toward the
     // disconnect banner; a fault thrown after agentd already answered is a

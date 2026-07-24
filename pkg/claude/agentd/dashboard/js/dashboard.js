@@ -423,22 +423,28 @@ async function settleInitialLayout() {
   // counter. Set before the cadence starts so the bar names the phase for the
   // whole of it.
   bootApp({ label: 'Fetching data…' });
+  // The bound the paint curtain waits on. Started before the cadence so the poll
+  // can share it: every attempt taken while the curtain is still up is a boot
+  // attempt and skips the Groups tab's heavy paginated lists, not just the first
+  // one — a first attempt that fails (agentd restarting) must not put the lists
+  // back in front of the curtain for the retries behind it.
+  const bootFinished = waitForInitialSnapshot(firstSnapshot, bootTimedOut);
   // Install the recurring cadence BEFORE awaiting, and let it OWN the bootstrap
   // attempt (`immediate`). A fetch can remain pending at the network layer, and
   // later generations must still get their retry opportunities instead of
   // bootstrap wedging — but those retries may not cancel an attempt that is
   // still making progress, which is what a bootstrap fetch issued outside the
-  // poll's in-flight guard used to suffer at the very first tick. The first
-  // attempt skips the Groups tab's heavy paginated lists; see startSnapshotPoll.
+  // poll's in-flight guard used to suffer at the very first tick.
   pageCleanups.push(startSnapshotPoll(refresh, {
     immediate: true,
-    immediateOptions: { includeLists: false },
+    bootOptions: { includeLists: false },
+    bootUntil: bootFinished,
   }));
   // Independent of the snapshot cadence on purpose — see browser-notify.js.
   // Self-gating: it costs one no-op function call per tick until the human
   // has granted the browser notification permission.
   pageCleanups.push(startBrowserNotifyPoll());
-  await waitForInitialSnapshot(firstSnapshot, bootTimedOut);
+  await bootFinished;
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);
 
