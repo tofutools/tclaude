@@ -140,13 +140,12 @@ test('a refresh stalled past the stall bound stops blocking the cadence', async 
   const { startSnapshotPoll } =
     await harness.importDashboardModule('js/snapshot-poll.js');
   let started = 0;
-  let releaseFirst;
+  const releases = [];
   let now = 1000;
   const h = pollHarness({ nowImpl: () => now, stallMs: 5000 });
   const stop = startSnapshotPoll(() => {
     started += 1;
-    if (started === 1) return new Promise((resolve) => { releaseFirst = resolve; });
-    return Promise.resolve();
+    return new Promise((resolve) => { releases.push(resolve); });
   }, h.options);
 
   assert.equal(started, 1);
@@ -160,12 +159,20 @@ test('a refresh stalled past the stall bound stops blocking the cadence', async 
   await flush();
   assert.equal(started, 2, 'past the stall bound a successor may take over');
 
-  // The stalled straggler must not then unlock the guard its successor holds.
-  releaseFirst();
+  // The stalled straggler finally settles. It must NOT unlock the guard its
+  // successor now holds — the successor is still running.
+  releases[0]();
   await flush();
   h.fireTick();
   await flush();
   assert.equal(started, 2, 'the successor still owns the in-flight marker');
+
+  // When the successor itself finishes, the cadence resumes normally.
+  releases[1]();
+  await flush();
+  h.fireTick();
+  await flush();
+  assert.equal(started, 3);
   stop();
 });
 
