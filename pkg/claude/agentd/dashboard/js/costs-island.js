@@ -32,7 +32,7 @@ function Summary({ current }) {
     <span class="cost-sep">·</span><span class="muted">${current.narrowed.from} → ${to}</span>
     ${projection && html`<${Fragment}><span class="cost-sep">·</span>
       <span class="cost-proj" title=${tip}>
-        ${monthProjectionLabel(projection, current.hasReal)}:
+        ${monthProjectionLabel(projection, current.hasReal)}:${' '}
         <strong>~${fmtUSD(projection.total)}</strong> <span class="muted">(${fmtUSD(projection.perDay)}/${unit})</span>
       </span>
     </${Fragment}>`}
@@ -161,7 +161,7 @@ function CostsTable({ state, current }) {
             return html`<tr key=${`${agent.conv_id}:${agent.day}`} data-key=${`cost-${agent.conv_id}-${agent.day}`}
               data-conv=${chain ? agent.conv_id : undefined} class=${classes || undefined}>
               <td title=${agent.title || '(unknown)'}>${marker && html`<span class=${agent.continued ? 'cost-cont' : 'cost-head'}
-                title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`} 
+                title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`}${marker ? ' ' : ''}
                 <span class="rowname">${agent.title || '(unknown)'}</span> <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span></td>
               <td><span class=${`cost-amt${agent.cost_kind !== 'real' ? ' cost-amt-whatif' : ''}`}
                 title=${agent.cost_kind === 'real' ? `$${(agent.cost_usd || 0).toFixed(4)} real spend` : `${amount} — WHAT-IF values are hypothetical, not real charges`}>
