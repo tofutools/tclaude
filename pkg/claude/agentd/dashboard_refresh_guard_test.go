@@ -96,9 +96,16 @@ func TestDashboardHTML_RefreshOnCircleMutations(t *testing.T) {
 	}
 
 	// refresh() no longer has a force mode: every mutation uses the same path.
+	// Its one option (includeLists) narrows what a cycle FETCHES — boot skips the
+	// paginated lists — and never how a mutation's refresh is applied, so callers
+	// still share a single path. Reading it off an optional object keeps every
+	// bare `refresh` callback reference on the full-fetch default.
 	refreshJS := readMod("js/refresh.js")
-	if !strings.Contains(refreshJS, "export async function refresh()") {
-		t.Error("js/refresh.js must expose the option-free refresh() path")
+	if !strings.Contains(refreshJS, "export async function refresh(options)") {
+		t.Error("js/refresh.js must expose the single shared refresh() path")
+	}
+	if !strings.Contains(refreshJS, "const includeLists = options?.includeLists !== false;") {
+		t.Error("js/refresh.js must default an argument-less refresh() to the full fetch")
 	}
 	for _, retired := range []string{"ignoreModals", "opts.force", "refresh({ force: true })"} {
 		if strings.Contains(refreshJS, retired) {

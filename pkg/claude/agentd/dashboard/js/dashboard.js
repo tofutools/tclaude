@@ -416,19 +416,27 @@ async function settleInitialLayout() {
     bootTimeout = setTimeout(resolve, 7500);
   });
 
-  // Install the recurring cadence BEFORE awaiting the first attempt. A fetch
-  // can remain pending at the network layer; later request generations must
-  // still get their 2s retry opportunities instead of bootstrap wedging.
-  pageCleanups.push(startSnapshotPoll(refresh, { immediate: false }));
+  // Label-only (no step): the snapshot's arrival itself is what spends the boot
+  // bar's reserved top band, via the tclaude:snapshot listener in the inline
+  // counter. Set before the cadence starts so the bar names the phase for the
+  // whole of it.
+  bootApp({ label: 'Fetching data…' });
+  // Install the recurring cadence BEFORE awaiting, and let it OWN the bootstrap
+  // attempt (`immediate`). A fetch can remain pending at the network layer, and
+  // later generations must still get their retry opportunities instead of
+  // bootstrap wedging — but those retries may not cancel an attempt that is
+  // still making progress, which is what a bootstrap fetch issued outside the
+  // poll's in-flight guard used to suffer at the very first tick. The first
+  // attempt skips the Groups tab's heavy paginated lists; see startSnapshotPoll.
+  pageCleanups.push(startSnapshotPoll(refresh, {
+    immediate: true,
+    immediateOptions: { includeLists: false },
+  }));
   // Independent of the snapshot cadence on purpose — see browser-notify.js.
   // Self-gating: it costs one no-op function call per tick until the human
   // has granted the browser notification permission.
   pageCleanups.push(startBrowserNotifyPoll());
-  // Label-only (no step): the snapshot's arrival itself is what spends the boot
-  // bar's reserved top band, via the tclaude:snapshot listener in the inline
-  // counter.
-  bootApp({ label: 'Fetching data…' });
-  await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut);
+  await waitForInitialSnapshot(firstSnapshot, bootTimedOut);
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);
 

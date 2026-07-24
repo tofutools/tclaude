@@ -29,21 +29,22 @@ func TestDashboardStartupLayoutCurtain(t *testing.T) {
 		{css, `animation: dashboard-boot-failsafe 0s 8s forwards`, "a JS fault must not leave the dashboard permanently hidden"},
 		{css, `animation: dashboard-boot-label-failsafe 0s 8s forwards`, "the CSS failsafe must retire its loading label"},
 		{css, `pointer-events: none`, "the visual loading label must never block recovery interactions"},
-		{boot, `await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut)`, "the first snapshot wait must be bounded while the poll retries"},
+		{boot, `await waitForInitialSnapshot(firstSnapshot, bootTimedOut)`, "the first snapshot wait must be bounded while the poll retries"},
 		{boot, `await settleInitialLayout();`, "deferred dock/nav geometry must settle before reveal"},
 		{boot, `document.body.classList.remove('dashboard-booting')`, "successful bootstrap must reveal the dashboard"},
-		{boot, `startSnapshotPoll(refresh, { immediate: false })`, "the scheduler must retry without duplicating the explicit first refresh"},
-		{poll, `if (immediate) void refresh();`, "the poller must support the post-bootstrap scheduling mode"},
+		{boot, `startSnapshotPoll(refresh, {`, "the scheduler must own the recurring cadence"},
+		{boot, `immediateOptions: { includeLists: false }`, "the curtain must not wait on the Groups tab's paginated lists"},
+		{poll, `if (immediate) run(immediateOptions);`, "the poller must own the bootstrap attempt so its in-flight guard covers it"},
 	} {
 		if !strings.Contains(check.source, check.needle) {
 			t.Errorf("dashboard startup CLS guard missing %q: %s", check.needle, check.why)
 		}
 	}
 
-	refreshAt := strings.Index(boot, "await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut)")
+	refreshAt := strings.Index(boot, "await waitForInitialSnapshot(firstSnapshot, bootTimedOut)")
 	navAt := strings.Index(boot, "initNavHistory();")
 	revealAt := strings.Index(boot, "document.body.classList.remove('dashboard-booting')")
-	pollAt := strings.Index(boot, "startSnapshotPoll(refresh, { immediate: false })")
+	pollAt := strings.Index(boot, "startSnapshotPoll(refresh, {")
 	if pollAt < 0 || refreshAt < pollAt || navAt < refreshAt || revealAt < navAt {
 		t.Errorf("startup order must be recurring poll -> bounded initial refresh -> URL restore -> reveal (indexes %d, %d, %d, %d)", pollAt, refreshAt, navAt, revealAt)
 	}

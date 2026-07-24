@@ -33,6 +33,22 @@ func TestDashboardSnapshotStoreBoundary(t *testing.T) {
 			t.Errorf("authoritative poll is missing Signals bridge %q", needle)
 		}
 	}
+
+	// A superseded refresh bails without publishing, so an overlapping refresh
+	// CANCELS the earlier one rather than duplicating it. The scheduler's refusal
+	// to overlap is covered behaviourally in jstest/snapshot-poll.test.mjs; what
+	// only source inspection can pin here is the other half — a refresh that IS
+	// superseded must stop costing agentd a full snapshot build nobody will read,
+	// since under a slow cycle those pile up and worsen the latency that caused
+	// the overlap.
+	for _, needle := range []string{
+		"inFlightFetches?.abort(abortReason('superseded by a newer refresh'));",
+		"if (inFlightFetches === abort) inFlightFetches = null;",
+	} {
+		if !strings.Contains(string(refresh), needle) {
+			t.Errorf("authoritative poll is missing supersede-abort wiring %q", needle)
+		}
+	}
 }
 
 func TestDashboardHasOneAuthoritativeSnapshotPoll(t *testing.T) {
