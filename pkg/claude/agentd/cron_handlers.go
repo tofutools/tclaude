@@ -903,9 +903,11 @@ func handleCronPatch(w http.ResponseWriter, r *http.Request, id int64) {
 				patch.OwnerConv = &resolvedOwner.Conv
 				// Keep operator attribution in lockstep with the owner: an
 				// empty replacement owner fires as the operator, a real sender
-				// agent does not. Only a group job can be operator-authored, but
-				// setting it on any re-owned job is harmless (a conv job never
-				// reads it as the operator on the fire path).
+				// agent does not. In practice only a group job reaches this with
+				// an empty owner — a conv job's owner can never resolve to ""
+				// (agent.ResolveSelector rejects an empty selector), so a conv
+				// job stays operator_authored=false and its fire path (which does
+				// pass the flag through) simply never delivers as the operator.
 				operatorAuthored := strings.TrimSpace(resolvedOwner.Conv) == ""
 				patch.OperatorAuthored = &operatorAuthored
 			}
