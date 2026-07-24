@@ -48,8 +48,8 @@ func Plan(checkpoint Checkpoint, definition *Definition) (*Command, error) {
 }
 
 func plan(checkpoint Checkpoint, definition *Definition) *Command {
-	if checkpoint.OutstandingCommand != nil {
-		command := cloneCommand(*checkpoint.OutstandingCommand)
+	if outstanding := checkpoint.OutstandingCommand(); outstanding != nil {
+		command := cloneCommand(*outstanding)
 		return &command
 	}
 	if checkpoint.Status != RunRunning {
@@ -113,17 +113,17 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			return invalid("planned command does not match deterministic command for node %q", node.id)
 		}
 		next.Nodes[node.id] = NodeRunning
-		command := cloneCommand(expected)
-		next.OutstandingCommand = &command
+		next.Commands = []Command{cloneCommand(expected)}
 	case TransitionProgramObserved:
 		if transition.Observation == nil || transition.Command != nil || transition.Decision != nil {
 			return invalid("program_observed requires only an observation payload")
 		}
 		observation := transition.Observation
-		if next.OutstandingCommand == nil || observation.CommandID != next.OutstandingCommand.ID || observation.NodeID != next.OutstandingCommand.NodeID {
+		outstanding := next.OutstandingCommand()
+		if outstanding == nil || observation.CommandID != outstanding.ID || observation.NodeID != outstanding.NodeID {
 			return Checkpoint{}, fmt.Errorf("%w: observation does not match the outstanding command", ErrStaleObservation)
 		}
-		nodeID := next.OutstandingCommand.NodeID
+		nodeID := outstanding.NodeID
 		index, ok := definition.index[nodeID]
 		if !ok || definition.nodes[index].kind != definitionTask {
 			return invalid("outstanding command node %q is not prepared", nodeID)
@@ -137,12 +137,12 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			if observation.Error != "" {
 				return invalid("successful program observation cannot carry an error")
 			}
-			next.OutstandingCommand = nil
+			next.Commands = nil
 			if err := completeAndSettle(&next, definition, index, soleOutcome(definition, node)); err != nil {
 				return Checkpoint{}, err
 			}
 		case ProgramFailed:
-			next.OutstandingCommand = nil
+			next.Commands = nil
 			next.Nodes[nodeID] = NodeFailed
 			next.Status = RunFailed
 		default:
@@ -153,7 +153,7 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			return invalid("decision_recorded requires only a decision payload")
 		}
 		decision := transition.Decision
-		if next.AwaitingDecision == nil || next.AwaitingDecision.NodeID != decision.NodeID {
+		if awaited := next.AwaitingDecision(); awaited == nil || awaited.NodeID != decision.NodeID {
 			return Checkpoint{}, fmt.Errorf("%w: run is not awaiting a decision for node %q", ErrStaleDecision, decision.NodeID)
 		}
 		index := definition.index[decision.NodeID]
@@ -184,13 +184,25 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 // settlement pass is linear in the affected nodes and edges.
 func completeAndSettle(next *Checkpoint, definition *Definition, index int, chosenOutcome string) error {
 	node := definition.nodes[index]
+	// Monotonic guard: only an active node may complete. Final states never
+	// regress or reactivate, so a caller that lost track of node status fails
+	// closed here rather than silently rewriting a settled node.
+	if status := next.Nodes[node.id]; status != NodeReady && status != NodeRunning {
+		return fmt.Errorf("%w: node %q is not active and cannot complete", ErrInvalidTransition, node.id)
+	}
 	next.Nodes[node.id] = NodeDone
-	next.AwaitingDecision = nil
+	next.AwaitingDecisions = nil
 
 	touched := make(map[int]*edgeCounts)
 	queue := make([]int, 0, len(node.outgoing))
-	settleEdge := func(edgeIndex int, disposition EdgeDisposition) {
+	// settleEdge enforces edge monotonicity: an authored edge settles exactly
+	// once, so a re-settlement attempt fails closed instead of overwriting a
+	// committed disposition.
+	settleEdge := func(edgeIndex int, disposition EdgeDisposition) error {
 		edge := definition.edges[edgeIndex]
+		if next.Edges[edge.from][edge.outcome] != EdgeUnresolved {
+			return fmt.Errorf("%w: edge %q/%q is already settled", ErrInvalidTransition, edge.from, edge.outcome)
+		}
 		next.Edges[edge.from][edge.outcome] = disposition
 		if counts := touched[edge.toIndex]; counts != nil {
 			counts.unresolved--
@@ -199,12 +211,15 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, chos
 			}
 		}
 		queue = append(queue, edge.toIndex)
+		return nil
 	}
 	for _, edgeIndex := range node.outgoing {
+		disposition := EdgeNotTaken
 		if definition.edges[edgeIndex].outcome == chosenOutcome {
-			settleEdge(edgeIndex, EdgeArrived)
-		} else {
-			settleEdge(edgeIndex, EdgeNotTaken)
+			disposition = EdgeArrived
+		}
+		if err := settleEdge(edgeIndex, disposition); err != nil {
+			return err
 		}
 	}
 	for len(queue) > 0 {
@@ -227,12 +242,14 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, chos
 		case 0:
 			next.Nodes[target.id] = NodeSkipped
 			for _, edgeIndex := range target.outgoing {
-				settleEdge(edgeIndex, EdgeNotTaken)
+				if err := settleEdge(edgeIndex, EdgeNotTaken); err != nil {
+					return err
+				}
 			}
 		case 1:
 			next.Nodes[target.id] = NodeReady
 			if target.kind == definitionDecision {
-				next.AwaitingDecision = &DecisionObligation{NodeID: target.id}
+				next.AwaitingDecisions = []DecisionObligation{{NodeID: target.id}}
 			}
 		default:
 			return fmt.Errorf("%w: node %q received more than one arrival", ErrInvalidTransition, target.id)
@@ -272,7 +289,7 @@ func advanceUntilQuiescent(checkpoint Checkpoint, definition *Definition, budget
 }
 
 func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transition, bool) {
-	if checkpoint.Status != RunRunning || checkpoint.OutstandingCommand != nil || checkpoint.AwaitingDecision != nil {
+	if checkpoint.Status != RunRunning || len(checkpoint.Commands) > 0 || len(checkpoint.AwaitingDecisions) > 0 {
 		return Transition{}, false
 	}
 	index, ok := activeNodeIndex(checkpoint, definition)
@@ -331,13 +348,14 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 		maps.Copy(copied, dispositions)
 		clone.Edges[from] = copied
 	}
-	if checkpoint.AwaitingDecision != nil {
-		obligation := *checkpoint.AwaitingDecision
-		clone.AwaitingDecision = &obligation
+	if len(checkpoint.AwaitingDecisions) > 0 {
+		clone.AwaitingDecisions = append([]DecisionObligation(nil), checkpoint.AwaitingDecisions...)
 	}
-	if checkpoint.OutstandingCommand != nil {
-		command := cloneCommand(*checkpoint.OutstandingCommand)
-		clone.OutstandingCommand = &command
+	if len(checkpoint.Commands) > 0 {
+		clone.Commands = make([]Command, len(checkpoint.Commands))
+		for i := range checkpoint.Commands {
+			clone.Commands[i] = cloneCommand(checkpoint.Commands[i])
+		}
 	}
 	return clone
 }

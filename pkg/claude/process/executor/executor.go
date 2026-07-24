@@ -129,8 +129,8 @@ func (r *Run) Action() Action {
 		return Action{}
 	}
 	action := Action{Status: r.checkpoint.Status}
-	if r.checkpoint.OutstandingCommand != nil {
-		command := cloneCommand(*r.checkpoint.OutstandingCommand)
+	if outstanding := r.checkpoint.OutstandingCommand(); outstanding != nil {
+		command := cloneCommand(*outstanding)
 		action.Command = &command
 		if r.dispatch != nil && !r.dispatch.wasUsed() {
 			action.Kind = ActionDispatch
@@ -139,10 +139,10 @@ func (r *Run) Action() Action {
 		}
 		return action
 	}
-	if r.checkpoint.AwaitingDecision != nil {
-		obligation := *r.checkpoint.AwaitingDecision
+	if obligation := r.checkpoint.AwaitingDecision(); obligation != nil {
+		copied := *obligation
 		action.Kind = ActionAwaitDecision
-		action.Decision = &obligation
+		action.Decision = &copied
 		return action
 	}
 	if r.checkpoint.Status == engine.RunRunning {
@@ -156,10 +156,14 @@ func (r *Run) Action() Action {
 // DecisionVerdicts exposes the prepared verdict vocabulary of the run's
 // awaited decision, or nil when no decision is awaited.
 func (r *Run) DecisionVerdicts() []string {
-	if r == nil || r.definition == nil || r.checkpoint.AwaitingDecision == nil {
+	if r == nil || r.definition == nil {
 		return nil
 	}
-	verdicts, _ := r.definition.DecisionVerdicts(r.checkpoint.AwaitingDecision.NodeID)
+	obligation := r.checkpoint.AwaitingDecision()
+	if obligation == nil {
+		return nil
+	}
+	verdicts, _ := r.definition.DecisionVerdicts(obligation.NodeID)
 	return verdicts
 }
 
@@ -220,10 +224,10 @@ func Prepare(run *Run) (*Dispatch, error) {
 	if run == nil || run.definition == nil {
 		return nil, ErrInvalidRun
 	}
-	if run.checkpoint.OutstandingCommand != nil {
+	if run.checkpoint.OutstandingCommand() != nil {
 		return nil, ErrNeedsReconcile
 	}
-	if run.checkpoint.Status != engine.RunRunning || run.checkpoint.AwaitingDecision != nil {
+	if run.checkpoint.Status != engine.RunRunning || run.checkpoint.AwaitingDecision() != nil {
 		// An awaited decision is already quiescent: advancing again would only
 		// persist a no-op transition, so resumes return without a new version.
 		return nil, nil
@@ -235,12 +239,13 @@ func Prepare(run *Run) (*Dispatch, error) {
 	if err := persist(run, next, advanceEvidence(next)); err != nil {
 		return nil, err
 	}
-	if next.OutstandingCommand == nil {
+	outstanding := next.OutstandingCommand()
+	if outstanding == nil {
 		return nil, nil
 	}
 	dispatch := &Dispatch{
 		owner: run, stateVersion: run.stateVersion,
-		command: cloneCommand(*next.OutstandingCommand),
+		command: cloneCommand(*outstanding),
 	}
 	run.dispatch = dispatch
 	return dispatch, nil
@@ -357,10 +362,11 @@ func reconcileCommand(run *Run) (engine.Command, error) {
 	if run == nil || run.definition == nil {
 		return engine.Command{}, ErrInvalidRun
 	}
-	if run.checkpoint.OutstandingCommand == nil || run.dispatch != nil {
+	outstanding := run.checkpoint.OutstandingCommand()
+	if outstanding == nil || run.dispatch != nil {
 		return engine.Command{}, ErrNoReconciliation
 	}
-	return cloneCommand(*run.checkpoint.OutstandingCommand), nil
+	return cloneCommand(*outstanding), nil
 }
 
 func validateReconciliationActor(actor string) error {
@@ -421,14 +427,14 @@ func eventForNode(kind, nodeID, actor string, payload any) db.ProcessRunEvent {
 // advanceEvidence is the one human-facing row for an engine-owned advance:
 // the prepared command, the newly awaited decision, or the plain status move.
 func advanceEvidence(advanced engine.Checkpoint) db.ProcessRunEvent {
-	switch {
-	case advanced.OutstandingCommand != nil:
-		return event("program_prepared", advanced.OutstandingCommand, executorActor,
-			preparedEvidence{Command: cloneCommand(*advanced.OutstandingCommand)})
-	case advanced.AwaitingDecision != nil:
-		return eventForNode("decision_awaited", advanced.AwaitingDecision.NodeID, executorActor, struct {
+	switch outstanding, obligation := advanced.OutstandingCommand(), advanced.AwaitingDecision(); {
+	case outstanding != nil:
+		return event("program_prepared", outstanding, executorActor,
+			preparedEvidence{Command: cloneCommand(*outstanding)})
+	case obligation != nil:
+		return eventForNode("decision_awaited", obligation.NodeID, executorActor, struct {
 			NodeID string `json:"nodeId"`
-		}{NodeID: advanced.AwaitingDecision.NodeID})
+		}{NodeID: obligation.NodeID})
 	default:
 		return event("engine_advanced", nil, executorActor, struct {
 			Status engine.RunStatus `json:"status"`

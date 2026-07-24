@@ -139,9 +139,12 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 	for _, item := range []struct {
 		id, status, checkpoint string
 	}{
-		{"run_awaiting", "running", `{"awaitingDecision":{"nodeId":"choose"}}`},
-		{"run_reconcile", "running", `{"outstandingCommand":{"id":"command"}}`},
-		{"run_runnable", "running", `{"cursor":"ready"}`},
+		{"run_awaiting", "running", `{"awaitingDecisions":[{"nodeId":"choose"}]}`},
+		{"run_reconcile", "running", `{"commands":[{"id":"command"}]}`},
+		// A runnable row has empty outbox arrays; an absent-key row (run_absent)
+		// classifies runnable via COALESCE(json_array_length(...), 0) = 0 too.
+		{"run_runnable", "running", `{"commands":[],"awaitingDecisions":[]}`},
+		{"run_absent", "running", `{"cursor":"ready"}`},
 		{"run_terminal", ProcessRunStatusCompleted, `{"cursor":"done"}`},
 	} {
 		record := processRunFixture(t, item.id, item.status, json.RawMessage(item.checkpoint))
@@ -158,7 +161,7 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 	for range 2 {
 		ids, next, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
 		require.NoError(t, err)
-		assert.Equal(t, []string{"run_runnable"}, ids,
+		assert.Equal(t, []string{"run_absent", "run_runnable"}, ids,
 			"repeated recovery pages must keep reconciliation- and decision-blocked rows before LoadRun")
 		assert.Empty(t, next)
 	}
@@ -167,7 +170,7 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 func TestRunnableProcessRunIDsAdvanceByExaminedRowsNotMatches(t *testing.T) {
 	setupTestDB(t)
 	for i := range MaxProcessRunReadPage + 1 {
-		checkpoint := json.RawMessage(`{"outstandingCommand":{"id":"command"}}`)
+		checkpoint := json.RawMessage(`{"commands":[{"id":"command"}]}`)
 		if i == MaxProcessRunReadPage {
 			checkpoint = json.RawMessage(`{"cursor":"ready"}`)
 		}

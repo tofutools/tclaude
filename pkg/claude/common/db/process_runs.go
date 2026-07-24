@@ -698,11 +698,18 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 	if err != nil {
 		return nil, "", err
 	}
+	// A run is runnable when its durable command and decision-obligation
+	// outboxes are both empty. Those fields are parallel-ready arrays, so an
+	// empty (0-length) array, a JSON null, and an absent key all classify as
+	// runnable via COALESCE(json_array_length(...), 0) = 0; any populated array
+	// (a pending program command or awaited decision) excludes the run. In the
+	// current TCL-650 slice each array holds at most one entry, but this
+	// classification does not depend on that bound.
 	rows, err := d.Query(`SELECT
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
-			AND json_type(checkpoint_json, '$.outstandingCommand') IS NULL
-			AND json_type(checkpoint_json, '$.awaitingDecision') IS NULL
+			AND COALESCE(json_array_length(checkpoint_json, '$.commands'), 0) = 0
+			AND COALESCE(json_array_length(checkpoint_json, '$.awaitingDecisions'), 0) = 0
 			THEN 1 ELSE 0 END
 		FROM (
 			SELECT id, checkpoint_json FROM process_runs

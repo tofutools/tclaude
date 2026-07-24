@@ -60,12 +60,40 @@ type Checkpoint struct {
 	// model and editor layout already use. Nesting avoids inventing an escaped
 	// composite key for free-form outcome labels.
 	Edges map[string]map[string]EdgeDisposition `json:"edges"`
-	// AwaitingDecision is the one durable manual obligation this slice can
-	// produce: the ready decision node blocking the run. It exists so bounded
-	// store queries can exclude decision-waiting runs without loading them;
-	// the verdict vocabulary stays in the prepared Definition.
-	AwaitingDecision   *DecisionObligation `json:"awaitingDecision,omitempty"`
-	OutstandingCommand *Command            `json:"outstandingCommand,omitempty"`
+	// AwaitingDecisions and Commands are durable plural outboxes so the shape is
+	// already parallel-ready before parallelism lands (TCL-649): the checkpoint
+	// version does not have to change again to hold more than one entry. The
+	// TCL-650 decision-only reducer still produces at most one of each, which
+	// focused tests assert as slice behavior rather than a checkpoint invariant.
+	// AwaitingDecisions names the ready decision node(s) blocking the run so
+	// bounded store queries can exclude decision-waiting runs without loading
+	// them; the verdict vocabulary stays in the prepared Definition. Commands is
+	// the durable outbox of fully bound program requests.
+	AwaitingDecisions []DecisionObligation `json:"awaitingDecisions"`
+	Commands          []Command            `json:"commands"`
+}
+
+// OutstandingCommand returns the single command this sequential slice can carry,
+// or nil. It is a narrow element-zero accessor: the durable shape is plural for
+// parallel-readiness, but the TCL-650 reducer and executor only ever produce or
+// consume one command at a time under current eligibility.
+func (c Checkpoint) OutstandingCommand() *Command {
+	if len(c.Commands) == 0 {
+		return nil
+	}
+	command := c.Commands[0]
+	return &command
+}
+
+// AwaitingDecision returns the single awaited decision this slice can carry, or
+// nil. Like OutstandingCommand it is a current-eligibility element-zero helper
+// over the parallel-ready plural field.
+func (c Checkpoint) AwaitingDecision() *DecisionObligation {
+	if len(c.AwaitingDecisions) == 0 {
+		return nil
+	}
+	obligation := c.AwaitingDecisions[0]
+	return &obligation
 }
 
 // DecisionObligation names the decision node the run is durably waiting on.

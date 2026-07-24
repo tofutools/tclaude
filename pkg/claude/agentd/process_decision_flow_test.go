@@ -68,7 +68,7 @@ func TestProcessRuntimeDecisionLifecycleWithStaleDuplicateAndInvalidInput(t *tes
 	require.NotNil(t, run.AwaitingDecision)
 	assert.Equal(t, "choose", run.AwaitingDecision.NodeID)
 	assert.Equal(t, []string{"approve", "reject"}, run.AwaitingDecision.Verdicts)
-	require.NotNil(t, run.Checkpoint.AwaitingDecision)
+	require.NotNil(t, run.Checkpoint.AwaitingDecision())
 	assert.Equal(t, engine.NodeReady, run.Checkpoint.Nodes["choose"])
 	versionAwaiting := run.StateVersion
 
@@ -165,7 +165,7 @@ func TestProcessRuntimeAwaitingDecisionSurvivesRestartAndIsExcludedFromSweep(t *
 	require.NoError(t, err)
 	checkpoint, err = engine.AdvanceUntilQuiescent(checkpoint, definition)
 	require.NoError(t, err)
-	require.NotNil(t, checkpoint.AwaitingDecision)
+	require.NotNil(t, checkpoint.AwaitingDecision())
 	createProcessRunFixtureWithCheckpoint(t, "run_decision_restart", record.Ref, tmpl, checkpoint)
 
 	var dispatches atomic.Int32

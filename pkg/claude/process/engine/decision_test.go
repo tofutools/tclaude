@@ -93,10 +93,10 @@ func advanceToDecision(t *testing.T, runID string, definition *Definition, decis
 		if err != nil {
 			t.Fatal(err)
 		}
-		if checkpoint.OutstandingCommand == nil {
+		if checkpoint.OutstandingCommand() == nil {
 			break
 		}
-		nodeID := checkpoint.OutstandingCommand.NodeID
+		nodeID := checkpoint.OutstandingCommand().NodeID
 		allowed := false
 		for _, taskID := range succeed {
 			allowed = allowed || taskID == nodeID
@@ -104,13 +104,13 @@ func advanceToDecision(t *testing.T, runID string, definition *Definition, decis
 		if !allowed {
 			t.Fatalf("unexpected command for node %q on the way to decision %q", nodeID, decisionID)
 		}
-		checkpoint, err = Apply(checkpoint, definition, observed(checkpoint.OutstandingCommand, ProgramSucceeded, 0))
+		checkpoint, err = Apply(checkpoint, definition, observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if checkpoint.AwaitingDecision == nil || checkpoint.AwaitingDecision.NodeID != decisionID {
-		t.Fatalf("awaiting decision = %#v, want node %q", checkpoint.AwaitingDecision, decisionID)
+	if checkpoint.AwaitingDecision() == nil || checkpoint.AwaitingDecision().NodeID != decisionID {
+		t.Fatalf("awaiting decision = %#v, want node %q", checkpoint.AwaitingDecision(), decisionID)
 	}
 	return checkpoint
 }
@@ -130,7 +130,7 @@ func TestDecisionVerdictClosesAlternativesAndActivatesChosenBranch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.AwaitingDecision != nil || next.Nodes["choose"] != NodeDone {
+	if next.AwaitingDecision() != nil || next.Nodes["choose"] != NodeDone {
 		t.Fatalf("post-decision checkpoint = %#v", next)
 	}
 	if next.Edges["choose"]["approve"] != EdgeArrived || next.Edges["choose"]["reject"] != EdgeNotTaken {
@@ -153,7 +153,7 @@ func TestDecisionVerdictClosesAlternativesAndActivatesChosenBranch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterFast, err := Apply(running, definition, observed(running.OutstandingCommand, ProgramSucceeded, 0))
+	afterFast, err := Apply(running, definition, observed(running.OutstandingCommand(), ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestDecisionVerdictClosesAlternativesAndActivatesChosenBranch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterMerge, err := Apply(running, definition, observed(running.OutstandingCommand, ProgramSucceeded, 0))
+	afterMerge, err := Apply(running, definition, observed(running.OutstandingCommand(), ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,12 @@ func TestAwaitingDecisionCheckpointSurvivesRestartRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCheckpointValidatorRejectsBrokenDecisionAndEdgeInvariants(t *testing.T) {
+// TestClassifierRejectsBrokenDecisionAndEdgeInvariants exercises the strict
+// diagnostic classifier, not the runtime load/persist validator. The
+// whole-graph exclusive-decision invariants (single active node, arrival
+// exclusivity, activation proofs) are current-slice expectations demoted out of
+// the runtime hot path, so they are asserted here via ClassifyCheckpoint.
+func TestClassifierRejectsBrokenDecisionAndEdgeInvariants(t *testing.T) {
 	definition := mustPrepare(t, decisionDiamondTemplate(), nil)
 	base := advanceToDecision(t, "run-invariants", definition, "choose", "intake")
 
@@ -321,12 +326,12 @@ func TestCheckpointValidatorRejectsBrokenDecisionAndEdgeInvariants(t *testing.T)
 		{"missing edges map", func(c *Checkpoint) { c.Edges = nil }},
 		{"missing edge outcome", func(c *Checkpoint) { delete(c.Edges["choose"], "approve") }},
 		{"unknown edge disposition", func(c *Checkpoint) { c.Edges["choose"]["approve"] = "perhaps" }},
-		{"missing awaiting obligation", func(c *Checkpoint) { c.AwaitingDecision = nil }},
-		{"awaiting non-decision node", func(c *Checkpoint) { c.AwaitingDecision = &DecisionObligation{NodeID: "merge"} }},
+		{"missing awaiting obligation", func(c *Checkpoint) { c.AwaitingDecisions = nil }},
+		{"awaiting non-decision node", func(c *Checkpoint) { c.AwaitingDecisions = []DecisionObligation{{NodeID: "merge"}} }},
 		{"two active nodes", func(c *Checkpoint) { c.Nodes["merge"] = NodeReady }},
 		{"double arrival", func(c *Checkpoint) {
 			c.Nodes["choose"] = NodeDone
-			c.AwaitingDecision = nil
+			c.AwaitingDecisions = nil
 			c.Edges["choose"]["approve"] = EdgeArrived
 			c.Edges["choose"]["reject"] = EdgeNotTaken
 			c.Nodes["fast"] = NodeDone
@@ -338,7 +343,7 @@ func TestCheckpointValidatorRejectsBrokenDecisionAndEdgeInvariants(t *testing.T)
 		{"skipped node with live incoming", func(c *Checkpoint) { c.Nodes["slow"] = NodeSkipped }},
 		{"arrival parked on a pending merge", func(c *Checkpoint) {
 			c.Nodes["choose"] = NodeDone
-			c.AwaitingDecision = nil
+			c.AwaitingDecisions = nil
 			c.Edges["choose"]["approve"] = EdgeArrived
 			c.Edges["choose"]["reject"] = EdgeNotTaken
 			c.Nodes["fast"] = NodeDone
@@ -351,12 +356,12 @@ func TestCheckpointValidatorRejectsBrokenDecisionAndEdgeInvariants(t *testing.T)
 		}},
 		{"pending node with settled candidates", func(c *Checkpoint) {
 			c.Nodes["choose"] = NodePending
-			c.AwaitingDecision = nil
+			c.AwaitingDecisions = nil
 		}},
 		{"terminal with unsettled branch", func(c *Checkpoint) {
 			c.Status = RunCompleted
 			c.Nodes["choose"] = NodeDone
-			c.AwaitingDecision = nil
+			c.AwaitingDecisions = nil
 			c.Edges["choose"]["approve"] = EdgeArrived
 			c.Edges["choose"]["reject"] = EdgeNotTaken
 			c.Nodes["end"] = NodeDone
@@ -366,8 +371,8 @@ func TestCheckpointValidatorRejectsBrokenDecisionAndEdgeInvariants(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			broken := cloneCheckpoint(base)
 			test.corrupt(&broken)
-			if err := ValidateCheckpoint(broken, definition); !errors.Is(err, ErrInvalidCheckpoint) {
-				t.Fatalf("validator error = %v", err)
+			if err := ClassifyCheckpoint(broken, definition); !errors.Is(err, ErrInvalidCheckpoint) {
+				t.Fatalf("classifier error = %v", err)
 			}
 		})
 	}

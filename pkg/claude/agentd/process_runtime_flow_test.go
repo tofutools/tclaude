@@ -73,7 +73,7 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	assert.Equal(t, engine.RunCompleted, shown.Checkpoint.Status)
 	assert.Equal(t, int64(4), shown.StateVersion,
 		"creation, first prepare, and one atomic observation/advance transaction per task")
-	assert.Nil(t, shown.Checkpoint.OutstandingCommand)
+	assert.Nil(t, shown.Checkpoint.OutstandingCommand())
 	assert.Equal(t, "terminal", shown.Action)
 	assert.Equal(t, map[string]string{"branch": "main"}, shown.Params)
 	assert.Equal(t, []string{"safe"}, shown.ProgramAuthorizations)
@@ -264,7 +264,7 @@ func TestProcessRuntimeColdOutstandingNeedsReconcileWithoutRedispatch(t *testing
 	testharness.DecodeJSON(t, show, &cold)
 	assert.True(t, cold.NeedsReconcile)
 	assert.Equal(t, "needs_reconcile", cold.Action)
-	require.NotNil(t, cold.Checkpoint.OutstandingCommand)
+	require.NotNil(t, cold.Checkpoint.OutstandingCommand())
 
 	invalidResume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/resume", map[string]any{"unexpected": true})
 	assert.Equal(t, http.StatusBadRequest, invalidResume.Code, invalidResume.Body.String())
@@ -282,7 +282,7 @@ func TestProcessRuntimeExecutedButUnobservedNeedsReconcileWithoutRedispatch(t *t
 	_, err = database.Exec(`CREATE TRIGGER reject_process_observation
 		BEFORE UPDATE OF checkpoint_json ON process_runs
 		WHEN OLD.id = 'run_execution_ambiguous'
-			AND json_type(OLD.checkpoint_json, '$.outstandingCommand') = 'object'
+			AND json_array_length(OLD.checkpoint_json, '$.commands') > 0
 		BEGIN SELECT RAISE(ABORT, 'simulate daemon loss before observation commit'); END`)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = database.Exec(`DROP TRIGGER IF EXISTS reject_process_observation`) })
@@ -492,7 +492,7 @@ func TestProcessRuntimeRestartBetweenAtomicCommandsRequiresReconciliation(t *tes
 	assert.Equal(t, "needs_reconcile", halfway.Action)
 	assert.Equal(t, engine.NodeDone, halfway.Checkpoint.Nodes["task-01"])
 	assert.Equal(t, engine.NodeRunning, halfway.Checkpoint.Nodes["task-02"])
-	require.NotNil(t, halfway.Checkpoint.OutstandingCommand)
+	require.NotNil(t, halfway.Checkpoint.OutstandingCommand())
 
 	// Stop the original daemon-lifetime runtime and re-exec this test binary.
 	// The child constructs a new production mux and runtime manager in a new OS
@@ -666,7 +666,7 @@ func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
 	testharness.DecodeJSON(t, show, &stopped)
 	assert.Equal(t, engine.RunFailed, stopped.Status)
 	assert.Equal(t, "terminal", stopped.Action)
-	assert.Nil(t, stopped.Checkpoint.OutstandingCommand)
+	assert.Nil(t, stopped.Checkpoint.OutstandingCommand())
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 }
 
@@ -712,7 +712,7 @@ func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
 		testharness.DecodeJSON(t, show, &stopped)
 		assert.Equal(t, "needs_reconcile", stopped.Action, run.ID)
 		assert.True(t, stopped.NeedsReconcile, run.ID)
-		require.NotNil(t, stopped.Checkpoint.OutstandingCommand, run.ID)
+		require.NotNil(t, stopped.Checkpoint.OutstandingCommand(), run.ID)
 	}
 }
 
@@ -905,13 +905,13 @@ func TestProcessRuntimeReconciliationOnlyPageAdvancesFallbackCursor(t *testing.T
 	require.NoError(t, err)
 	checkpoint, err = engine.AdvanceUntilQuiescent(checkpoint, definition)
 	require.NoError(t, err)
-	require.NotNil(t, checkpoint.OutstandingCommand)
+	require.NotNil(t, checkpoint.OutstandingCommand())
 
 	for i := range db.MaxProcessRunReadPage {
 		id := fmt.Sprintf("run_cursor_%02d", i)
 		blocked := checkpoint
 		blocked.RunID = id
-		blocked.OutstandingCommand.ID = id + ":task-01:program"
+		blocked.Commands[0].ID = id + ":task-01:program"
 		createProcessRunFixtureWithCheckpoint(t, id, record.Ref, tmpl, blocked)
 	}
 	createRunnableProcessRunFixture(t, "run_cursor_zz", record.Ref, tmpl)

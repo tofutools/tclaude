@@ -258,12 +258,34 @@ func DecodeCheckpoint(data []byte, definition *Definition) (Checkpoint, error) {
 	return checkpoint, nil
 }
 
-// ValidateCheckpoint checks dynamic semantic state against an immutable
-// prepared definition. Reducer entry and exit paths use this same validator.
-// It is O(nodes + edges) and never re-runs static template or graph-shape
-// validation, which happened once in Prepare.
+// ValidateCheckpoint is the runtime load/persist validator. It enforces
+// concrete structural safety against an immutable prepared definition:
+// checkpoint version and bounded run id, exact known node and edge references,
+// known status/disposition enum values, and unique bounded command/decision
+// obligation entries whose deterministic identity and node binding are
+// compatible with a known node. It deliberately does NOT run the whole-graph
+// exclusive-decision classification (single active node, single failure,
+// pending-arrival exclusion, activation proofs): those are current-slice
+// expectations demoted to ClassifyCheckpoint so Processes can load and persist
+// structurally safe parallel-ready state before parallelism semantics settle.
+// It is O(nodes + edges) in the edge-shape scan and never re-runs static
+// template or graph-shape validation, which happened once in Prepare.
 func ValidateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	return validateCheckpoint(checkpoint, definition)
+}
+
+// ClassifyCheckpoint is the exhaustive, deliberately strict current-slice
+// invariant proof. It runs the runtime structural validator and then the
+// whole-graph exclusive-decision classification the runtime hot path no longer
+// performs on every transition. Tests call it after every engine-generated
+// transition so the TCL-650 slice keeps its full bug-finding coverage without
+// making those single-active/single-failure expectations the runtime
+// compatibility contract. It is a test/diagnostic entry point, not a hot path.
+func ClassifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
+	if err := validateCheckpoint(checkpoint, definition); err != nil {
+		return err
+	}
+	return classifyCheckpoint(checkpoint, definition)
 }
 
 // edgeCounts aggregates the dispositions on one side of a node.
@@ -286,34 +308,114 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	if !validRunID(checkpoint.RunID) {
 		return invalid("runId must be a lowercase runtime identifier of at most 128 bytes")
 	}
+	switch checkpoint.Status {
+	case RunRunning, RunCompleted, RunFailed, RunCanceled:
+	default:
+		return invalid("unknown run status %q", checkpoint.Status)
+	}
 	if len(checkpoint.Nodes) != len(definition.nodes) {
 		return invalid("nodes must contain exactly the %d prepared nodes", len(definition.nodes))
 	}
-	for nodeID := range checkpoint.Nodes {
+	for nodeID, status := range checkpoint.Nodes {
 		if _, ok := definitionNodeByID(definition, nodeID); !ok {
 			return invalid("nodes contains unknown node %q", nodeID)
+		}
+		switch status {
+		case NodePending, NodeReady, NodeRunning, NodeDone, NodeFailed, NodeSkipped:
+		default:
+			return invalid("node %q has unknown status %q", nodeID, status)
 		}
 	}
 	if err := validateEdgeShape(checkpoint, definition); err != nil {
 		return err
 	}
+	if err := validateCommands(checkpoint, definition); err != nil {
+		return err
+	}
+	return validateAwaitingDecisions(checkpoint, definition)
+}
 
-	if checkpoint.OutstandingCommand != nil {
-		command := checkpoint.OutstandingCommand
+// validateCommands enforces the durable command outbox is unique, bounded, and
+// deterministically bound to known running program tasks. The slice is
+// parallel-ready but the count is bounded by the prepared node set and each
+// entry must name a distinct running task carrying its exact deterministic
+// request, so malformed, unknown, or duplicate commands fail closed at the
+// load/persist boundary regardless of how many the current reducer produces.
+func validateCommands(checkpoint Checkpoint, definition *Definition) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidCheckpoint, fmt.Sprintf(format, args...))
+	}
+	if len(checkpoint.Commands) > len(definition.nodes) {
+		return invalid("commands must not exceed the %d prepared nodes", len(definition.nodes))
+	}
+	seen := make(map[string]struct{}, len(checkpoint.Commands))
+	for i := range checkpoint.Commands {
+		command := checkpoint.Commands[i]
 		if command.Kind != CommandProgram {
-			return invalid("outstanding command kind must be %q", CommandProgram)
+			return invalid("command kind must be %q", CommandProgram)
 		}
 		node, ok := definitionNodeByID(definition, command.NodeID)
 		if !ok || node.kind != definitionTask {
-			return invalid("outstanding command node %q is not a program task", command.NodeID)
+			return invalid("command node %q is not a program task", command.NodeID)
 		}
+		if _, dup := seen[command.NodeID]; dup {
+			return invalid("duplicate command for node %q", command.NodeID)
+		}
+		seen[command.NodeID] = struct{}{}
 		expected := programCommand(checkpoint.RunID, node)
-		if !commandsEqual(*command, expected) {
-			return invalid("outstanding command does not match the deterministic bound request for node %q", command.NodeID)
+		if !commandsEqual(command, expected) {
+			return invalid("command does not match the deterministic bound request for node %q", command.NodeID)
 		}
 		if checkpoint.Nodes[command.NodeID] != NodeRunning {
-			return invalid("outstanding command node %q must be running", command.NodeID)
+			return invalid("command node %q must be running", command.NodeID)
 		}
+	}
+	return nil
+}
+
+// validateAwaitingDecisions enforces the durable decision obligation outbox is
+// unique, bounded, and bound to known ready decision nodes on a running run.
+// Like validateCommands it is a structural boundary check that is agnostic to
+// how many obligations the current reducer produces.
+func validateAwaitingDecisions(checkpoint Checkpoint, definition *Definition) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidCheckpoint, fmt.Sprintf(format, args...))
+	}
+	if len(checkpoint.AwaitingDecisions) == 0 {
+		return nil
+	}
+	if checkpoint.Status != RunRunning {
+		return invalid("awaiting decisions require a running run")
+	}
+	if len(checkpoint.AwaitingDecisions) > len(definition.nodes) {
+		return invalid("awaiting decisions must not exceed the %d prepared nodes", len(definition.nodes))
+	}
+	seen := make(map[string]struct{}, len(checkpoint.AwaitingDecisions))
+	for _, obligation := range checkpoint.AwaitingDecisions {
+		node, ok := definitionNodeByID(definition, obligation.NodeID)
+		if !ok || node.kind != definitionDecision {
+			return invalid("awaiting decision node %q is not a prepared decision", obligation.NodeID)
+		}
+		if _, dup := seen[obligation.NodeID]; dup {
+			return invalid("duplicate awaiting decision for node %q", obligation.NodeID)
+		}
+		seen[obligation.NodeID] = struct{}{}
+		if checkpoint.Nodes[obligation.NodeID] != NodeReady {
+			return invalid("awaiting decision node %q must be ready", obligation.NodeID)
+		}
+	}
+	return nil
+}
+
+// classifyCheckpoint is the demoted whole-graph exclusive-decision proof. It
+// assumes validateCheckpoint already passed and encodes the TCL-650 slice's
+// current expectations — at most one active node, closure marks everything
+// unreachable as skipped, activation requires a fully settled candidate set
+// with exactly one arrival, and a run holds at most one failure or done end.
+// These are eligibility/test expectations, not universal checkpoint validity.
+func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
+	invalid := func(format string, args ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidCheckpoint, fmt.Sprintf(format, args...))
 	}
 
 	// Classify every node against its incoming and outgoing dispositions.
@@ -356,7 +458,7 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				if node.kind != definitionTask {
 					return invalid("only a task node may be running; got %q", node.id)
 				}
-				if checkpoint.OutstandingCommand == nil || checkpoint.OutstandingCommand.NodeID != node.id {
+				if command := checkpoint.OutstandingCommand(); command == nil || command.NodeID != node.id {
 					return invalid("running node %q requires its outstanding command", node.id)
 				}
 			}
@@ -405,8 +507,7 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		}
 	}
 
-	if checkpoint.AwaitingDecision != nil {
-		obligation := checkpoint.AwaitingDecision
+	if obligation := checkpoint.AwaitingDecision(); obligation != nil {
 		if checkpoint.Status != RunRunning {
 			return invalid("awaiting decision requires a running run")
 		}
@@ -431,18 +532,18 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("running run must have one ready or running node")
 		}
 		active := definition.nodes[activeIndex]
-		if checkpoint.Nodes[active.id] == NodeReady && checkpoint.OutstandingCommand != nil {
+		if checkpoint.Nodes[active.id] == NodeReady && checkpoint.OutstandingCommand() != nil {
 			return invalid("ready node %q cannot coexist with an outstanding command", active.id)
 		}
 		if active.kind == definitionDecision {
-			if checkpoint.AwaitingDecision == nil || checkpoint.AwaitingDecision.NodeID != active.id {
+			if obligation := checkpoint.AwaitingDecision(); obligation == nil || obligation.NodeID != active.id {
 				return invalid("ready decision %q requires its awaiting-decision obligation", active.id)
 			}
-		} else if checkpoint.AwaitingDecision != nil {
-			return invalid("awaiting decision %q disagrees with active node %q", checkpoint.AwaitingDecision.NodeID, active.id)
+		} else if obligation := checkpoint.AwaitingDecision(); obligation != nil {
+			return invalid("awaiting decision %q disagrees with active node %q", obligation.NodeID, active.id)
 		}
 	case RunCompleted, RunCanceled, RunFailed:
-		if checkpoint.OutstandingCommand != nil {
+		if checkpoint.OutstandingCommand() != nil {
 			return invalid("terminal run cannot have an outstanding command")
 		}
 		if activeIndex >= 0 {

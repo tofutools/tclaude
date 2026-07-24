@@ -176,8 +176,8 @@ func recordResult(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error
 	if err := persistEvents(run, advanced, events); err != nil {
 		return nil, err
 	}
-	if advanced.OutstandingCommand != nil {
-		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*advanced.OutstandingCommand)}
+	if outstanding := advanced.OutstandingCommand(); outstanding != nil {
+		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*outstanding)}
 		run.dispatch = d
 		return d, nil
 	}

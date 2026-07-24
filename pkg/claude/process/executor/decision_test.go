@@ -87,7 +87,7 @@ func TestRecordDecisionCommitsVerdictEdgeAndEvidenceAtomically(t *testing.T) {
 	require.NoError(t, err)
 	var checkpoint engine.Checkpoint
 	require.NoError(t, record.DecodeCheckpoint(&checkpoint))
-	assert.Nil(t, checkpoint.AwaitingDecision)
+	assert.Nil(t, checkpoint.AwaitingDecision())
 	assert.Equal(t, engine.NodeDone, checkpoint.Nodes["decide"])
 	assert.Equal(t, engine.NodeReady, checkpoint.Nodes["task"])
 	assert.Equal(t, engine.NodeSkipped, checkpoint.Nodes["canceled"])
@@ -197,6 +197,6 @@ func TestRecordDecisionRollsBackCheckpointWhenEvidenceCannotCommit(t *testing.T)
 	assert.Equal(t, versionBefore, record.StateVersion)
 	var checkpoint engine.Checkpoint
 	require.NoError(t, record.DecodeCheckpoint(&checkpoint))
-	require.NotNil(t, checkpoint.AwaitingDecision, "a failed evidence insert must roll back the decision")
+	require.NotNil(t, checkpoint.AwaitingDecision(), "a failed evidence insert must roll back the decision")
 	assert.Equal(t, engine.EdgeUnresolved, checkpoint.Edges["decide"]["go"])
 }

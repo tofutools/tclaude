@@ -839,13 +839,13 @@ func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
 	needsReconcile := false
 	var awaiting *processRunDecisionView
 	switch {
-	case checkpoint.OutstandingCommand != nil && claimed:
+	case checkpoint.OutstandingCommand() != nil && claimed:
 		action = "executing"
-	case checkpoint.OutstandingCommand != nil:
+	case checkpoint.OutstandingCommand() != nil:
 		action, needsReconcile = "needs_reconcile", true
-	case checkpoint.AwaitingDecision != nil:
+	case checkpoint.AwaitingDecision() != nil:
 		action = "awaiting_decision"
-		decision, err := processRunDecisionViewOf(record, checkpoint.AwaitingDecision.NodeID)
+		decision, err := processRunDecisionViewOf(record, checkpoint.AwaitingDecision().NodeID)
 		if err != nil {
 			return processRunView{}, err
 		}

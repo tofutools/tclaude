@@ -41,8 +41,8 @@ func TestPreparePersistsBoundCommandBeforeAnyDispatch(t *testing.T) {
 	require.NoError(t, err)
 	var checkpoint engine.Checkpoint
 	require.NoError(t, record.DecodeCheckpoint(&checkpoint))
-	require.NotNil(t, checkpoint.OutstandingCommand)
-	assert.Equal(t, dispatch.command, *checkpoint.OutstandingCommand)
+	require.NotNil(t, checkpoint.OutstandingCommand())
+	assert.Equal(t, dispatch.command, *checkpoint.OutstandingCommand())
 
 	cold := mustLoadRun(t, run.ID())
 	assert.Equal(t, ActionNeedsReconcile, cold.Action().Kind)
@@ -88,7 +88,7 @@ func TestPrepareRollsBackCheckpointWhenEvidenceCannotCommit(t *testing.T) {
 	assert.Equal(t, db.InitialProcessRunStateVersion, record.StateVersion)
 	var checkpoint engine.Checkpoint
 	require.NoError(t, record.DecodeCheckpoint(&checkpoint))
-	assert.Nil(t, checkpoint.OutstandingCommand)
+	assert.Nil(t, checkpoint.OutstandingCommand())
 	assert.Empty(t, eventKinds(t, run.ID()))
 }
 

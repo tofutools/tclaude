@@ -612,8 +612,7 @@ func requireProcessRuntime(stderr io.Writer) error {
 func printProcessRun(out io.Writer, run *processRunJSON) {
 	fmt.Fprintf(out, "id=%s\ntemplate=%s\nstatus=%s\naction=%s\nstateVersion=%d\n",
 		run.ID, run.TemplateRef, run.Status, run.Action, run.StateVersion)
-	if run.NeedsReconcile && run.Checkpoint.OutstandingCommand != nil {
-		command := run.Checkpoint.OutstandingCommand
+	if command := run.Checkpoint.OutstandingCommand(); run.NeedsReconcile && command != nil {
 		fmt.Fprintf(out, "needsReconcile=true\ncommand=%s\nnode=%s\nprofile=%s\nprogram=%s\n",
 			command.ID, command.NodeID, command.Program.Profile, command.Program.Run)
 	}
