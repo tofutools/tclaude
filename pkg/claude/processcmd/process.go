@@ -1,11 +1,13 @@
 package processcmd
 
 import (
-	"fmt"
-	"os"
+	"errors"
+	"io"
+	"net/http"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -40,9 +42,11 @@ func Cmd() *cobra.Command {
 			unavailableRuntimeCmd("repair", "Repair a process run"),
 		},
 		RunFunc: func(_ *Params, cmd *cobra.Command, _ []string) {
-			if err := requireProcessesEnabled(); err != nil {
-				exitWithError(err)
-			}
+			// Help is pure discoverability text; the sibling `runs` and
+			// `templates` parents already print it ungated. Enforcement of
+			// the feature flag lives on the leaf commands, daemon-side — the
+			// bare command must not read private config to decide whether to
+			// show its own help.
 			_ = cmd.Help()
 		},
 	}.ToCobra()
@@ -65,21 +69,33 @@ func unavailableRuntimeCmd(use, short string) *cobra.Command {
 	return cmd
 }
 
-func requireProcessesEnabled() error {
-	if processesEnabled() {
-		return nil
-	}
-	return fmt.Errorf("process commands are disabled; set features.processes=true in tclaude config to use this experimental surface")
-}
+// errProcessesDisabled carries the stable feature-disabled message for the
+// client surfaces that resolve the flag through the daemon capability
+// projection rather than an operation route (today: filesystem `templates
+// ls`). The wording matches the daemon's route-gate response so a disabled
+// surface reads identically no matter which layer detected it.
+var errProcessesDisabled = errors.New(config.ProcessesDisabledMessage)
 
-func processesEnabled() bool {
-	cfg, err := config.Load()
-	return err == nil && cfg.ProcessesEnabled()
-}
-
-func exitWithError(err error) {
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+// requireProcessesEnabledViaDaemon asks the daemon — the sole authority on the
+// experimental Processes flag — whether the surface is enabled, without the
+// client ever reading private ~/.tclaude/data/config.json. Used by process CLI
+// surfaces that do not otherwise contact the daemon; the daemon-owned runtime
+// commands instead rely on their operation route's own stable disabled
+// response. On a missing daemon it prints the standard guidance and returns
+// the already-reported sentinel so callers render nothing further.
+func requireProcessesEnabledViaDaemon(stderr io.Writer) error {
+	if agent.RequireDaemonOrExit(stderr) != 0 {
+		return errProcessDaemonAlreadyReported
 	}
+	var info struct {
+		Processes bool `json:"processes"`
+	}
+	if err := agent.DaemonRequest(http.MethodGet, "/v1/info", nil, &info,
+		agent.DaemonOpts{RetryOutput: stderr}); err != nil {
+		return err
+	}
+	if !info.Processes {
+		return errProcessesDisabled
+	}
+	return nil
 }

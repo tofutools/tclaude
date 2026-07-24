@@ -772,6 +772,11 @@ func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
 	off := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)
 	assert.Equal(t, http.StatusNotFound, off.Code, off.Body.String())
+	// The disabled response is stable and machine-recognizable — the CLI keys
+	// on the code (not the 404 status) to render config.ProcessesDisabledMessage
+	// rather than a bare not-found. The daemon, not the client, is authoritative.
+	assert.Contains(t, off.Body.String(), `"code":"processes_disabled"`)
+	assert.Contains(t, off.Body.String(), config.ProcessesDisabledMessage)
 
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
 	const worker = "process-runtime-worker"
@@ -787,6 +792,32 @@ func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
 	assert.Contains(t, eventsDenied.Body.String(), agentd.PermProcessRunsRead)
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsRead))
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsManage))
+}
+
+// TestInfoProjectsProcessesFlag proves the daemon capability projection: the
+// open /v1/info endpoint reflects the current Processes flag as a single
+// boolean (never the private config contents), so a sandboxed CLI that cannot
+// read ~/.tclaude/data/config.json can still resolve enabled/disabled through
+// the daemon.
+func TestInfoProjectsProcessesFlag(t *testing.T) {
+	f := newFlow(t)
+
+	off := processRuntimeRequest(t, f, http.MethodGet, "/v1/info", nil)
+	require.Equal(t, http.StatusOK, off.Code, off.Body.String())
+	var offInfo struct {
+		Processes bool `json:"processes"`
+	}
+	testharness.DecodeJSON(t, off, &offInfo)
+	assert.False(t, offInfo.Processes, "flag defaults off")
+
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
+	on := processRuntimeRequest(t, f, http.MethodGet, "/v1/info", nil)
+	require.Equal(t, http.StatusOK, on.Code, on.Body.String())
+	var onInfo struct {
+		Processes bool `json:"processes"`
+	}
+	testharness.DecodeJSON(t, on, &onInfo)
+	assert.True(t, onInfo.Processes, "projection reflects the enabled flag")
 }
 
 func TestProcessRuntimeStartupAndFallbackScansOneBoundedPage(t *testing.T) {
