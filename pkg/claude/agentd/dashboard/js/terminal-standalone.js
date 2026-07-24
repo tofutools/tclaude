@@ -44,6 +44,7 @@ export function createStandaloneTerminalsPage({
   let actions = null;
   let mountCleanup = null;
   let messageDialogsCleanup = null;
+  let messageDialogsPromise = null;
   let prefsReady = false;
   let soloSeed = null;
   let startPromise = null;
@@ -138,26 +139,41 @@ export function createStandaloneTerminalsPage({
 
   function start() {
     if (startPromise) return startPromise;
-    startPromise = Promise.resolve(initPrefs()).then(async () => {
+    startPromise = Promise.resolve(initPrefs()).then(() => {
       if (disposed) return false;
       initThemeSync();
       if (disposed) return false;
-      const cleanup = await mountMessageDialogs({
+
+      // The terminal is the primary surface, so connect it without waiting for
+      // the optional composer module graph. An early shortcut is queued against
+      // this promise and opens as soon as the shared dialog island is ready.
+      messageDialogsPromise = Promise.resolve().then(() => mountMessageDialogs({
+        fetchImpl,
         refresh: async () => {},
         notify: () => {},
         confirmDiscard: () => windowRef.confirm('Discard this message draft?'),
+      })).then((cleanup) => {
+        if (disposed) {
+          cleanup?.();
+          return null;
+        }
+        messageDialogsCleanup = cleanup;
+        return cleanup;
+      }, (error) => {
+        console.error('Detached terminal message composer unavailable.', error);
+        return null;
       });
-      if (disposed) {
-        cleanup?.();
-        return false;
-      }
-      messageDialogsCleanup = cleanup;
+      const composeWhenReady = (seed) => {
+        void messageDialogsPromise.then((cleanup) => {
+          if (!disposed && cleanup) openComposeMessage(seed);
+        });
+      };
       mountCleanup = mountShell({
         host,
         state,
         actions,
         widgetFactory,
-        onComposeMessage: cleanup ? openComposeMessage : null,
+        onComposeMessage: composeWhenReady,
         composeMessageDialogKind,
       });
       prefsReady = true;

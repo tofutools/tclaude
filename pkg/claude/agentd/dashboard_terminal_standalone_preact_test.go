@@ -96,8 +96,9 @@ func TestStandaloneTerminalShell_LifecycleContractsStayOutsideWidgetCore(t *test
 		"if (disposed) return",
 		"Promise.resolve(initPrefs()).then(",
 		"initThemeSync()",
-		"await mountMessageDialogs({",
-		"onComposeMessage: cleanup ? openComposeMessage : null",
+		"mountMessageDialogs({",
+		"fetchImpl,",
+		"onComposeMessage: composeWhenReady",
 		"composeMessageDialogKind",
 		"mountShell({",
 	} {

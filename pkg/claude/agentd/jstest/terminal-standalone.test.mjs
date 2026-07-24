@@ -59,7 +59,9 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   const calls = [];
   const beacons = [];
   let resolvePrefs;
+  let resolveDialogs;
   const prefs = new Promise((resolve) => { resolvePrefs = resolve; });
+  const dialogs = new Promise((resolve) => { resolveDialogs = resolve; });
   const mountShell = ({ state, actions }) => {
     calls.push('mount');
     return () => {
@@ -73,7 +75,7 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
     assert.equal(typeof confirmDiscard, 'function');
     assert.equal(typeof notify, 'function');
     assert.equal(typeof refresh, 'function');
-    return () => calls.push('dialogs-cleanup');
+    return dialogs;
   };
   const historyRef = {
     replaceState(_state, _unused, url) {
@@ -105,8 +107,11 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   resolvePrefs();
   assert.equal(await starting, true);
   assert.deepEqual(calls, [
-    'prefs', 'theme', 'dialogs', 'mount', 'replace:/terminals?solo=1',
+    'prefs', 'theme', 'mount', 'replace:/terminals?solo=1', 'dialogs',
   ]);
+  resolveDialogs(() => calls.push('dialogs-cleanup'));
+  await Promise.resolve();
+  await Promise.resolve();
   assert.equal(page.state.panes.value.length, 1);
   assert.equal(page.state.panes.value[0].seed.ws, seed.ws);
   assert.equal(harness.document.body.classList.contains('wizard'), true);
@@ -119,6 +124,7 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   assert.deepEqual(beacons, ['/api/hide/agt_one']);
   harness.window.dispatchEvent(new harness.window.Event('unload'));
   page.dispose();
+  await Promise.resolve();
   assert.equal(calls.filter((call) => call === 'cleanup').length, 1);
   assert.equal(calls.filter((call) => call === 'dialogs-cleanup').length, 1);
   assert.equal(page.state.panes.value.length, 0);
@@ -126,6 +132,92 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   const lateAuth = new harness.window.CustomEvent('tclaude:auth-expired', { detail: {} });
   harness.window.dispatchEvent(lateAuth);
   assert.equal(lateAuth.detail.returnTo, undefined, 'disposed lifecycle removes auth writer');
+});
+
+test('standalone lifecycle connects before the real composer loads and sends through its fetch seam', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.id = 'terminals-root';
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  dialogHost.id = 'message-access-dialog-root';
+  const fake = fakeWidgetFactory(harness);
+  const seed = {
+    ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo',
+  };
+  const locationRef = {
+    pathname: '/terminals', search: '?solo=1', hash: encodedSeed(seed),
+  };
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    return {
+      ok: true,
+      status: 202,
+      text: async () => JSON.stringify({ id: 17, queued: true }),
+    };
+  };
+  harness.window.confirm = () => true;
+  const { createStandaloneTerminalsPage } =
+    await harness.importDashboardModule('js/terminal-standalone.js');
+  const page = createStandaloneTerminalsPage({
+    host,
+    widgetFactory: fake.factory,
+    fetchImpl,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: () => true },
+  });
+
+  let started;
+  await harness.act(async () => { started = await page.start(); });
+  assert.equal(started, true);
+  assert.equal(fake.widgets.length, 1,
+    'the terminal shell mounts without awaiting the composer module graph');
+  assert.equal(fake.widgets[0].connectCount, 1);
+
+  for (let i = 0; i < 20 && dialogHost.dataset.islandOwner !== 'message-access-dialogs'; i++) {
+    await harness.act(() => new Promise((resolve) => setImmediate(resolve)));
+  }
+  assert.equal(dialogHost.dataset.islandOwner, 'message-access-dialogs');
+
+  const chord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(chord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
+  });
+  await harness.act(async () => {
+    host.querySelector('.mux-pane-header').dispatchEvent(chord);
+    await Promise.resolve();
+  });
+  assert.equal(chord.defaultPrevented, true);
+  for (let i = 0; i < 5 && !dialogHost.querySelector('#operator-message-modal'); i++) {
+    await harness.act(() => new Promise((resolve) => setImmediate(resolve)));
+  }
+  assert.ok(dialogHost.querySelector('#operator-message-modal'));
+
+  await harness.input(dialogHost.querySelector('#operator-message-body'), 'from detached mode');
+  await harness.act(async () => {
+    dialogHost.querySelector('#operator-message-submit').click();
+    for (let i = 0; i < 5 && dialogHost.querySelector('#operator-message-modal'); i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  });
+  assert.equal(dialogHost.querySelector('#operator-message-modal'), null);
+  assert.deepEqual(requests.map(({ url }) => url), ['/api/operator-message']);
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    to: 'agt_solo',
+    subject: '',
+    body: 'from detached mode',
+    attachment_token: '',
+  });
+
+  page.dispose();
+  assert.equal(dialogHost.dataset.islandOwner, undefined);
+  assert.equal(dialogHost.childElementCount, 0);
+  assert.equal(fake.widgets[0].disposeCount, 1);
 });
 
 test('standalone disposal before preference hydration prevents a late mount', async (t) => {
