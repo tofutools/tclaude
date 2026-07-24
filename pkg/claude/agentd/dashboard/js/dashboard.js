@@ -114,74 +114,58 @@ async function settleInitialLayout() {
 // than top-level await, to keep this entry module's evaluation
 // synchronous for the benign import cycles documented above.)
 (async () => {
-  await initDashPrefs();
-  // Start cross-window terminal-palette synchronization only after the local
-  // preference cache is authoritative. Popped-out terminals do the same in
-  // terminals.js, so toggling either surface repaints the other immediately.
-  initTerminalThemeSync();
-  // Preact islands call this stable action boundary rather than
-  // importing refresh.js. The interval below remains the sole poll owner.
-  configureDashboardActions({ refresh });
-  // sort.js seeds its in-memory sortState from a pref; re-seed it now
-  // that the cache is populated (its import-time read saw an empty one).
-  loadSortState();
-  const pageCleanups = [];
+  // Boot-bar instrumentation. The inline counter in dashboard.html fills its
+  // first band from modulepreload timings, but everything that runs AFTER the
+  // static graph lands — prefs, the island mounts below (each a burst of
+  // no-store dynamic imports), the first snapshot — used to be invisible to
+  // it, parking the bar near-full while most of the boot wall-time was still
+  // ahead. Announce the milestone total before the first await and report each
+  // completed milestone so the bar keeps moving through the whole boot. The
+  // total derives from featureMounts.length, so adding a mount can't drift the
+  // denominator.
+  const bootApp = (detail) => document.dispatchEvent(new CustomEvent('tclaude:boot-app', { detail }));
+  const bootStep = (label) => bootApp({ step: 1, label });
 
-  // Mount the cross-tab shell before feature islands and legacy binders. Its
-  // feedback services retain the existing function APIs, while Preact owns
-  // their stable DOM hosts and document-level lifecycle.
-  pageCleanups.push(await mountShellFeature({ notify: toast }));
-
-  // The Jobs pilot owns its filter, table, sort, paging, and badge subtrees.
-  // Await the mount before legacy modal binders look up the create button.
-  pageCleanups.push(await mountJobsFeature({
-    requestMutation: dashboardActions.requestMutation,
-    refresh: dashboardActions.refresh,
-    confirm: confirmModal,
-    notify: toast,
-    download: triggerExportDownload,
-    confirmDiscard,
-  }));
-  // The remaining bounded islands are independent. Load them concurrently so
-  // navigation setup is delayed by only the slowest optional feature import,
-  // not by the sum of seven dynamic-import chains. Await the whole group before
-  // initNavHistory below so initial deep links still find every lazy loader.
-  const featureCleanups = await Promise.all([
-    mountTerminalsFeature({
+  // The bounded feature islands, as lazily-invoked mount thunks. Shell and
+  // Jobs are NOT here: they must mount first / before the legacy modal
+  // binders, so they stay as the two sequential awaits below. The rest are
+  // independent and are started concurrently at the Promise.all.
+  const featureMounts = [
+    () => mountTerminalsFeature({
       confirm: confirmModal,
       onComposeMessage: (seed) => openOperatorMessageDialog(seed),
       composeMessageDialogKind: activeMessageAccessDialogKind,
     }),
-    mountMessageAccessDialogsFeature({
+    () => mountMessageAccessDialogsFeature({
       refresh: dashboardActions.refresh,
       notify: toast,
       confirmDiscard,
       words: wizWord,
     }),
-    mountGroupsFeature({
+    () => mountGroupsFeature({
       refresh: dashboardActions.refresh,
       notify: toast,
       confirmDiscard,
       openMemberPermissions: openPermEditModal,
     }),
-    mountLinksFeature({
+    () => mountLinksFeature({
       refresh: dashboardActions.refresh,
       confirm: confirmModal,
       confirmDiscard,
       notify: toast,
       words: wizWord,
     }),
-    mountSpawnHarnessPolicyFeature({ confirmDiscard, notify: toast }),
-    mountDockFeature(),
-    mountPluginsFeature({
+    () => mountSpawnHarnessPolicyFeature({ confirmDiscard, notify: toast }),
+    () => mountDockFeature(),
+    () => mountPluginsFeature({
       requestMutation: dashboardActions.requestMutation,
       refresh: dashboardActions.refresh,
       confirm: confirmModal,
       notify: toast,
     }),
-    mountCostsFeature(),
-    mountUsageHistoryFeature(),
-    mountAccessFeature({
+    () => mountCostsFeature(),
+    () => mountUsageHistoryFeature(),
+    () => mountAccessFeature({
       requestMutation: dashboardActions.requestMutation,
       confirm: confirmModal,
       notify: toast,
@@ -193,16 +177,16 @@ async function settleInitialLayout() {
         if (convID) openSudoGrantModal(convID);
       },
     }),
-    mountLogsFeature(),
-    mountMessagesFeature(),
-    mountAuditFeature(),
-    mountDebugFeature(),
-    mountConfigFeature({ toast, isCyclingTabs }),
-    mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
-    mountDirectoryPickerFeature({
+    () => mountLogsFeature(),
+    () => mountMessagesFeature(),
+    () => mountAuditFeature(),
+    () => mountDebugFeature(),
+    () => mountConfigFeature({ toast, isCyclingTabs }),
+    () => mountProcessesFeature({ confirm: confirmModal, confirmDiscard, notify: toast }),
+    () => mountDirectoryPickerFeature({
       prefersWeb: () => lastSnapshot?.default_directory_picker === 'web',
     }),
-    mountGroupCreateFeature({
+    () => mountGroupCreateFeature({
       getSnapshot: () => lastSnapshot,
       pickDirectory,
       openTemplateManager: openTemplatesManageModal,
@@ -213,7 +197,7 @@ async function settleInitialLayout() {
       setExpanded: (name) => dashPrefs.setItem(`tclaude.dash.group.${name}`, '1'),
       recordInteraction: recordGroupInteraction,
     }),
-    mountAgentSpawnFeature({
+    () => mountAgentSpawnFeature({
       getSnapshot: () => lastSnapshot,
       prefs: dashPrefs,
       loadProfiles,
@@ -232,7 +216,7 @@ async function settleInitialLayout() {
       recordInteraction: recordGroupInteraction,
       shortID: shortId,
     }),
-    mountManagementFeature({
+    () => mountManagementFeature({
       confirm: confirmModal, confirmDiscard, notify: toast,
       getSnapshot: () => lastSnapshot,
       openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
@@ -246,22 +230,22 @@ async function settleInitialLayout() {
         document.querySelector('nav [data-tab="groups"]')?.click();
       },
     }),
-    mountActionDialogsFeature({
+    () => mountActionDialogsFeature({
       confirmDiscard,
       refresh: dashboardActions.refresh,
       notify: toast,
       downloadExport: triggerExportDownload,
       getSnapshot: () => lastSnapshot,
     }),
-    mountToolbarProfilePickerFeature({
+    () => mountToolbarProfilePickerFeature({
       refresh: dashboardActions.refresh,
       notify: toast,
     }),
-    mountWorktreeCleanupFeature({
+    () => mountWorktreeCleanupFeature({
       refresh: dashboardActions.refresh,
       notify: toast,
     }),
-    mountTransactionDialogsFeature({
+    () => mountTransactionDialogsFeature({
       confirm: confirmModal,
       confirmDiscard,
       refresh: dashboardActions.refresh,
@@ -271,7 +255,48 @@ async function settleInitialLayout() {
       closeTerminalsForWindowOp,
       openWorktreeCleanup,
     }),
-  ]);
+  ];
+  // +3: prefs, shell, jobs — the sequential milestones below.
+  bootApp({ total: featureMounts.length + 3 });
+
+  await initDashPrefs();
+  bootStep('Loading preferences…');
+  // Start cross-window terminal-palette synchronization only after the local
+  // preference cache is authoritative. Popped-out terminals do the same in
+  // terminals.js, so toggling either surface repaints the other immediately.
+  initTerminalThemeSync();
+  // Preact islands call this stable action boundary rather than
+  // importing refresh.js. The interval below remains the sole poll owner.
+  configureDashboardActions({ refresh });
+  // sort.js seeds its in-memory sortState from a pref; re-seed it now
+  // that the cache is populated (its import-time read saw an empty one).
+  loadSortState();
+  const pageCleanups = [];
+
+  // Mount the cross-tab shell before feature islands and legacy binders. Its
+  // feedback services retain the existing function APIs, while Preact owns
+  // their stable DOM hosts and document-level lifecycle.
+  pageCleanups.push(await mountShellFeature({ notify: toast }));
+  bootStep('Starting shell…');
+
+  // The Jobs pilot owns its filter, table, sort, paging, and badge subtrees.
+  // Await the mount before legacy modal binders look up the create button.
+  pageCleanups.push(await mountJobsFeature({
+    requestMutation: dashboardActions.requestMutation,
+    refresh: dashboardActions.refresh,
+    confirm: confirmModal,
+    notify: toast,
+    download: triggerExportDownload,
+    confirmDiscard,
+  }));
+  bootStep('Loading features…');
+  // The remaining bounded islands are independent. Start them concurrently so
+  // navigation setup is delayed by only the slowest optional feature import,
+  // not by the sum of the dynamic-import chains. Await the whole group before
+  // initNavHistory below so initial deep links still find every lazy loader.
+  // Each completed mount advances the boot bar's app band.
+  const featureCleanups = await Promise.all(featureMounts.map((mount) =>
+    mount().then((cleanup) => { bootStep('Loading features…'); return cleanup; })));
   pageCleanups.push(...featureCleanups);
 
   pageCleanups.push(bindTabs(), bindTabHotkeys());
@@ -396,6 +421,10 @@ async function settleInitialLayout() {
   // Self-gating: it costs one no-op function call per tick until the human
   // has granted the browser notification permission.
   pageCleanups.push(startBrowserNotifyPoll());
+  // Label-only (no step): the snapshot's arrival itself is what spends the boot
+  // bar's reserved top band, via the tclaude:snapshot listener in the inline
+  // counter.
+  bootApp({ label: 'Fetching data…' });
   await waitForInitialSnapshot(refresh, firstSnapshot, bootTimedOut);
   clearTimeout(bootTimeout);
   document.removeEventListener('tclaude:snapshot', onFirstSnapshot);
