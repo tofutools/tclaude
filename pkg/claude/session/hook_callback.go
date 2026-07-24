@@ -987,8 +987,21 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 			// instant. Deliberately NOT setting stopped=true — that
 			// branch context-nudges into the pane, which would collide
 			// with a user mid-typing.
-			state.Status = StatusIdle
-			state.StatusDetail = ""
+			//
+			// The main thread can be idle while work it launched is not.
+			// Keep the same main_agent_idle contract as Stop whenever a
+			// sub-agent or background shell is still in the ledger. Besides
+			// keeping the dashboard honest, this prevents the generic
+			// "* → idle" notification rule from announcing completion while
+			// background work is active. The daemon's liveness reconcile
+			// eventually settles lost SubagentStop events and shell exits.
+			if state.hasBackgroundActivity() {
+				state.Status = StatusMainAgentIdle
+				state.StatusDetail = state.backgroundActivityDetail()
+			} else {
+				state.Status = StatusIdle
+				state.StatusDetail = ""
+			}
 		default:
 			// Unknown notification type - log but don't update status.
 			// One from inside a sub-agent still Sighted the ledger above,

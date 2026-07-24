@@ -39,18 +39,23 @@
      discovering it one importer at a time. The marker must stay verbatim — a
      server-side invariant asserts on it. -->
 <!--BOOT_PRELOAD-->
-<!-- Boot progress counter. Runs before the module graph is fetched and reflects
-     modulepreload completion into #boot-progress against the injected total, so
-     the boot curtain shows honest "N / M modules" progress instead of an
-     indefinite label. Classic (non-module) inline script on purpose: it must run
-     immediately and never depends on the graph it is measuring. -->
+<!-- Boot progress counter. Runs before the module graph is fetched and drives
+     #boot-progress through three bands so the bar covers the WHOLE boot, not
+     just the module downloads:
+       0–45%    boot-module downloads (modulepreload completion vs the total)
+       45–93%   app bootstrap — dashboard.js announces a milestone total and
+                reports each completed milestone via `tclaude:boot-app`
+       93–100%  first snapshot painted (`tclaude:snapshot`)
+     Classic (non-module) inline script on purpose: it must run immediately and
+     never depends on the graph it is measuring. -->
 <script>
 (function () {
-  // The exact set to count is derived from the modulepreload <link>s injected
-  // just above (absolute .href, matching PerformanceResourceTiming.name), so the
-  // numerator can only ever be a boot module — the per-tab dynamic import()s
-  // that also live under /static/js/ during boot are excluded, and the count
-  // stays in lockstep with the injected total with no separate list to drift.
+  // Module band. The exact set to count is derived from the modulepreload
+  // <link>s injected just above (absolute .href, matching
+  // PerformanceResourceTiming.name), so the numerator can only ever be a boot
+  // module — the per-tab dynamic import()s that also live under /static/js/
+  // during boot are excluded, and the count stays in lockstep with the
+  // injected total with no separate list to drift.
   var wanted = Object.create(null);
   var total = 0;
   try {
@@ -62,16 +67,26 @@
   if (!total) total = window.__BOOT_MODULE_TOTAL__ || 0;
   var loaded = 0;
   var seen = Object.create(null);
-  // Downloading the boot modules is only the FIRST half of boot: once they land,
-  // dashboard.js still has to execute the graph and fetch+paint the first
-  // snapshot before the curtain lifts (dashboard.js removes .dashboard-booting
-  // after the first `tclaude:snapshot`). Preloading makes the module set download
-  // in parallel and finish fast, so counting only that set would slam the bar to
-  // 100% while the app is still fetching data — full bar, network still busy.
-  // So module downloads fill to MODULE_CEIL, and the reserved top band is spent
-  // when the first snapshot actually paints (ready) — the honest "app is up"
-  // moment the curtain removal is already gated on.
-  var MODULE_CEIL = 90;
+  // Downloading the boot modules is only the FIRST part of boot: once they
+  // land, dashboard.js still has to execute the graph, load server-side prefs,
+  // mount every feature island (each a burst of dynamic imports, all served
+  // no-store), and fetch+paint the first snapshot before the curtain lifts
+  // (dashboard.js removes .dashboard-booting after the first
+  // `tclaude:snapshot`). Preloading makes the module set download in parallel
+  // and finish fast, so counting only that set would park the bar near-full
+  // while most of the boot wall-time is still ahead. So module downloads fill
+  // to MODULE_BAND, dashboard.js reports its bootstrap milestones via
+  // `tclaude:boot-app` events to fill the middle band, and the reserved top
+  // band is spent when the first snapshot actually paints (ready) — the honest
+  // "app is up" moment the curtain removal is already gated on. The band split
+  // is a fixed heuristic (wall-time varies per load); within each band the
+  // motion is an honest done/total count.
+  var MODULE_BAND = 45;
+  var APP_CEIL = 93;
+  var appTotal = 0;
+  var appDone = 0;
+  var appLabel = '';
+  var lastPct = 0;
   var ready = false;
   function stop() {
     if (window.__bootProgressPO) {
@@ -80,15 +95,22 @@
     }
   }
   function render() {
-    var modulePct = total ? Math.min(MODULE_CEIL, Math.round((loaded / total) * MODULE_CEIL)) : 0;
-    var pct = ready ? 100 : modulePct;
+    var moduleFrac = total ? Math.min(1, loaded / total) : 0;
+    var appFrac = appTotal ? Math.min(1, appDone / appTotal) : 0;
+    var pct = ready ? 100
+      : Math.round(moduleFrac * MODULE_BAND + appFrac * (APP_CEIL - MODULE_BAND));
+    // Monotonic: a late-arriving total or timing entry must never move the
+    // bar backwards.
+    if (pct < lastPct) pct = lastPct;
+    lastPct = pct;
     var fill = document.getElementById('boot-progress-fill');
     var count = document.getElementById('boot-progress-count');
     if (fill) fill.style.width = pct + '%';
     if (count) {
-      count.textContent = !total ? ''
-        : ready ? 'Starting…'
-        : loaded >= total ? 'Fetching data…'
+      count.textContent = ready ? 'Starting…'
+        : appLabel ? appLabel
+        : !total ? ''
+        : loaded >= total ? 'Starting app…'
         : loaded + ' / ' + total + ' modules';
     }
     if (ready) stop();
@@ -106,6 +128,19 @@
     window.__bootProgressPO = po;
   } catch (e) {}
   try { absorb(performance.getEntriesByType('resource')); } catch (e) {}
+  // App-bootstrap milestones. dashboard.js announces {total} before its first
+  // await and dispatches {step: 1} as each milestone (prefs, each island
+  // mount) completes. A label, alone or alongside a step, names the phase now
+  // IN FLIGHT (e.g. "Fetching data…" while the first snapshot request is
+  // pending), so the counter text describes what the wait is for.
+  document.addEventListener('tclaude:boot-app', function (ev) {
+    if (ready) return;
+    var d = (ev && ev.detail) || {};
+    if (d.total) appTotal = d.total;
+    if (d.step) appDone += d.step;
+    if (d.label) appLabel = String(d.label);
+    render();
+  });
   // First real snapshot painted → boot is genuinely done. refresh.js dispatches
   // `tclaude:snapshot` after every successful poll; the first one is what
   // dashboard.js awaits before lifting the curtain, so it's the honest moment to

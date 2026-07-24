@@ -76,13 +76,20 @@ type bgShellReadThrough struct {
 // degrade to the hook's view, never to zero, or the badge would silently
 // vanish on such a host.
 func bgShellCountOnRead(sess *db.SessionRow, alive bool) int {
+	return bgShellCountOnReadAt(sess, alive, time.Now())
+}
+
+// bgShellCountOnReadAt is the clock-injected core used by periodic daemon
+// reconciliation. Dashboard reads use bgShellCountOnRead above; sharing the
+// caller's sweep time keeps sub-agent TTL and shell TTL decisions on the same
+// observation boundary and makes the settle path deterministic in tests.
+func bgShellCountOnReadAt(sess *db.SessionRow, alive bool, now time.Time) int {
 	if sess == nil || !alive || sess.ID == "" || sess.BgShellsJSON == "" {
 		return 0
 	}
 	if h, err := harness.Resolve(sess.Harness); err != nil || !h.SupportsBackgroundShells() {
 		return 0
 	}
-	now := time.Now()
 	stored := db.ParseBgShellSet(sess.BgShellsJSON)
 	live := stored.Live(now)
 	if len(live) == 0 {

@@ -83,12 +83,19 @@ enabled block; set `false` to suppress just the human-message banners.
 Each transition rule has `from` and `to` fields. Use `*` as a wildcard to match any state.
 
 **Default transitions:**
-- `*` → `idle` - the harness finished processing
+- `*` → `idle` - the harness finished processing and no tracked sub-agent
+  or background shell is still working
 - `*` → `awaiting_permission` - the harness needs permission to proceed
 - `*` → `awaiting_input` - the harness is asking a question
 - `*` → `exited` - Session ended
 
 **Available states:** `working`, `idle`, `awaiting_permission`, `awaiting_input`, `exited`
+
+Claude Code's fallback `idle_prompt` signal arrives only after its own
+roughly one-minute quiet period. If a sub-agent or background shell is still
+tracked then, tclaude holds the session at `main_agent_idle` instead of
+emitting an Idle notification. Lost child-stop events and shell completion
+are reconciled by the daemon before that state is allowed to settle to idle.
 
 ### Human-message notifications
 

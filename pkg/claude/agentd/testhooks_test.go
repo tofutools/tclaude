@@ -843,6 +843,17 @@ func NewSessionReaperForTest(grace time.Duration, onNotify func(convID, prevStat
 // Tick runs one reaper sweep and returns the number of sessions reaped.
 func (h *SessionReaperHandle) Tick() int { return h.r.tick(time.Now()) }
 
+// TickAt runs one sweep at a caller-controlled time. Background-idle tests use
+// it to cross the production stability window without sleeping.
+func (h *SessionReaperHandle) TickAt(now time.Time) int { return h.r.tick(now) }
+
+// SetIdleNotify routes daemon-confirmed idle notifications to a test recorder.
+func (h *SessionReaperHandle) SetIdleNotify(onNotify func(convID, prevStatus string)) {
+	h.r.idleNotify = func(st *session.SessionState, prevStatus string) {
+		onNotify(st.ConvID, prevStatus)
+	}
+}
+
 // SeedPendingApprovalForTest registers a minimal pending approval under
 // id so flow tests can drive the dashboard access-request decision endpoint
 // against it. The decision channel is buffered, so a POST approve/deny records
