@@ -49,10 +49,11 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 	must("snap?.cost_tab_whatif", "WHAT-IF mode reads the server's cost_tab_whatif flag")
 	must("'hide-costs'", "refresh toggles body.hide-costs")
 
-	// costs.js: WHAT-IF mode appends ?whatif=1 and shows the banner; the toggle
-	// is bound and persisted.
-	must("current.whatif ? '&whatif=1'", "Costs actions read WHAT-IF mode from state")
-	must("'&whatif=1'", "the Costs tab fetches the virtual figures in WHAT-IF mode")
+	// Costs always fetches one mixed response, whose per-row kind metadata
+	// drives WHAT-IF labels; the toggle is bound and persisted.
+	must("what_if_total_usd", "Costs state carries the hypothetical subtotal")
+	must("agent.cost_kind === 'what_if'", "Costs table labels hypothetical rows per row")
+	must("segment.kind === 'what_if'", "Costs chart tooltips label hypothetical segments")
 	must("function bindCostDisplayToggle(", "the 💲 toggle is bound")
 	must("'agent-cost-hidden'", "the toggle drives body.agent-cost-hidden")
 	must("from './cost-display-toggle.js'", "bindCostDisplayToggle is wired from its shell module")

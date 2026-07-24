@@ -22,14 +22,17 @@ function Summary({ current }) {
   const projection = current.projection;
   const unit = projection?.weekendsIncluded ? 'day' : 'weekday';
   const tip = projection
-    ? `Spend so far divided by elapsed ${unit}s (${projection.daysElapsed}), extrapolated over the month's remaining ${unit}s — ${projection.weekendsIncluded ? 'weekends included in the estimate.' : 'weekends excluded from the estimate.'}${projection.fillEmpty ? ` The empty ${unit}s before the first run this month are also filled at the per-${unit} average, so this reflects a representative full month.` : ''}`
+    ? `Spend so far divided by elapsed ${unit}s (${projection.daysElapsed}), extrapolated over the month's remaining ${unit}s — ${projection.weekendsIncluded ? 'weekends included in the estimate.' : 'weekends excluded from the estimate.'}${projection.fillEmpty ? ` The empty ${unit}s before the first run this month are also filled at the per-${unit} average, so this reflects a representative full month.` : ''}${projection.includesWhatIf ? ' Projection includes hypothetical WHAT-IF cost.' : ''}`
     : '';
   return html`<span id="costs-summary">
     <span class="cost-total">Total: <strong>${fmtUSD(current.narrowed.total_usd)}</strong></span>
+    ${current.hasWhatIf && html`<span class="muted">
+      (${fmtUSD(current.narrowed.real_total_usd || 0)} real + ≈${fmtUSD(current.narrowed.what_if_total_usd || 0)} WHAT-IF)
+    </span>`}
     <span class="cost-sep">·</span><span class="muted">${current.narrowed.from} → ${to}</span>
     ${projection && html`<${Fragment}><span class="cost-sep">·</span>
       <span class="cost-proj" title=${tip}>
-        ${projection.fillEmpty ? 'Projected avg month total' : 'Projected month total'}:
+        ${projection.includesWhatIf ? 'WHAT-IF ' : ''}${projection.fillEmpty ? 'Projected avg month total' : 'Projected month total'}:
         <strong>~${fmtUSD(projection.total)}</strong> <span class="muted">(${fmtUSD(projection.perDay)}/${unit})</span>
       </span>
     </${Fragment}>`}
@@ -144,19 +147,28 @@ function CostsTable({ state, current }) {
             const chain = slices[agent.conv_id] > 1;
             const classes = [agent.continued ? 'cost-continued' : '', chain ? 'cost-chain' : '', hovered === agent.conv_id ? 'cost-chain-hl' : ''].filter(Boolean).join(' ');
             const marker = agent.continued ? '↩' : chain ? '↳' : '';
+            const amount = agent.cost_kind === 'what_if'
+              ? `≈${fmtUSD(agent.cost_usd)}`
+              : agent.cost_kind === 'mixed'
+                ? `${fmtUSD(agent.real_cost_usd)} + ≈${fmtUSD(agent.what_if_cost_usd)}`
+                : fmtUSD(agent.cost_usd);
             return html`<tr key=${`${agent.conv_id}:${agent.day}`} data-key=${`cost-${agent.conv_id}-${agent.day}`}
               data-conv=${chain ? agent.conv_id : undefined} class=${classes || undefined}>
               <td title=${agent.title || '(unknown)'}>${marker && html`<span class=${agent.continued ? 'cost-cont' : 'cost-head'}
                 title=${agent.continued ? 'Continued conversation — hover to highlight all its days' : `Latest day of an agent active across ${slices[agent.conv_id]} days`}>${marker}</span>`} 
                 <span class="rowname">${agent.title || '(unknown)'}</span> <span class="id" title=${idTooltip(agent.agent_id, agent.conv_id)}>${shortAgentId(agent.agent_id, agent.conv_id)}</span></td>
-              <td><span class="cost-amt" title=${`$${(agent.cost_usd || 0).toFixed(4)}`}>${fmtUSD(agent.cost_usd)}</span></td>
+              <td><span class=${`cost-amt${agent.cost_kind !== 'real' ? ' cost-amt-whatif' : ''}`}
+                title=${agent.cost_kind === 'real' ? `$${(agent.cost_usd || 0).toFixed(4)} real spend` : `${amount} — WHAT-IF values are hypothetical, not real charges`}>
+                ${amount}${agent.cost_kind !== 'real' && html` <small>WHAT-IF</small>`}</span></td>
               <td><span class="muted">${harnessLabel(agent.harness)}</span></td>
               <td><span class="muted">${agent.model || ''}</span></td>
               <td><span class="muted">${fmtLastActivity(agent)}</span></td>
             </tr>`;
           })}
           <tr class="cost-total-row"><td><span class="muted">${current.filtered ? 'matched' : 'total'} (${current.shownConversations} agent${current.shownConversations === 1 ? '' : 's'})</span></td>
-            <td><span class="cost-amt">${fmtUSD(current.tableTotal)}</span></td><td></td><td></td><td></td></tr>
+            <td><span class="cost-amt">${current.tableWhatIfTotal > 0
+              ? `${fmtUSD(current.tableTotal)} (${fmtUSD(current.tableTotal - current.tableWhatIfTotal)} real + ≈${fmtUSD(current.tableWhatIfTotal)} WHAT-IF)`
+              : fmtUSD(current.tableTotal)}</span></td><td></td><td></td><td></td></tr>
         </tbody></table>`}
     </div>
   </${Fragment}>`;
@@ -167,16 +179,16 @@ export function CostsApp({ state, actions }) {
   useEffect(() => {
     if (!current.snapshotLoaded) return;
     document.body.classList.toggle('hide-costs', !current.visible);
-    document.body.classList.toggle('cost-whatif', current.whatif);
+    document.body.classList.toggle('cost-whatif', current.whatIfEnabled);
     if (!current.visible && current.activeTab === 'costs') document.querySelector('nav [data-tab="groups"]')?.click();
-  }, [current.snapshotLoaded, current.visible, current.whatif, current.activeTab]);
+  }, [current.snapshotLoaded, current.visible, current.whatIfEnabled, current.activeTab]);
   useEffect(() => {
     if (!current.active) return undefined;
     void actions.load();
     void actions.loadFactor();
     const timer = setInterval(() => void actions.load(), 60_000);
     return () => clearInterval(timer);
-  }, [current.active, current.whatif]);
+  }, [current.active]);
   useEffect(() => {
     const onClick = (event) => {
       if (event.target.closest?.('[data-goto-tab="costs"]')) document.querySelector('nav [data-tab="costs"]')?.click();
@@ -187,8 +199,9 @@ export function CostsApp({ state, actions }) {
   return html`<div class="costs-island">
     <${Controls} state=${state} actions=${actions} current=${current} />
     <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
-    <div id="costs-whatif-banner" class="cost-whatif-banner" hidden=${!current.whatif}>
-      <strong>⚠ WHAT-IF</strong> — you're on a subscription, so these figures are an <em>estimate</em> of what this would cost on pay-per-token billing. They are <strong>not a real charge</strong>.
+    <div id="costs-whatif-banner" class="cost-whatif-banner" hidden=${!current.hasWhatIf}>
+      <strong>⚠ WHAT-IF</strong> — ${current.hasReal ? 'this view mixes real billed spend with hypothetical subscription estimates.' : 'these figures are hypothetical subscription estimates.'}
+      WHAT-IF values estimate equivalent pay-per-token pricing and are <strong>not real charges</strong>.
     </div>
     ${current.request.hasLoaded && html`<${Fragment}><${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} /><${CostsTable} state=${state} current=${current} /></${Fragment}>`}
   </div>`;

@@ -99,6 +99,7 @@ export function monthProjection(data, fillEmpty, weekendsIncluded, now = new Dat
     perDay, daysElapsed: elapsed, weekendsIncluded: !!weekendsIncluded,
     future, fillEmpty: !!fillEmpty, leadingFill,
     total: fillEmpty ? withoutFill + leadingTotal : withoutFill,
+    includesWhatIf: (data.what_if_total_usd || 0) > 0,
   };
 }
 
@@ -121,15 +122,31 @@ export function filterCostData(payload, selected) {
   if (harnesses.length <= 1 || selected.size === harnesses.length) return payload;
   const totals = {};
   let total = 0;
+  let realTotal = 0;
+  let whatIfTotal = 0;
   for (const agent of agents) {
     if (!selected.has(harnessLabel(agent.harness))) continue;
     totals[agent.day] = (totals[agent.day] || 0) + (agent.cost_usd || 0);
     total += agent.cost_usd || 0;
+    realTotal += agent.real_cost_usd || 0;
+    whatIfTotal += agent.what_if_cost_usd || 0;
   }
   return {
     ...payload,
-    days: (payload.days || []).map((day) => ({ day: day.day, cost_usd: totals[day.day] || 0 })),
+    days: (payload.days || []).map((day) => {
+      const matching = agents.filter((agent) => agent.day === day.day && selected.has(harnessLabel(agent.harness)));
+      const real = matching.reduce((sum, agent) => sum + (agent.real_cost_usd || 0), 0);
+      const whatIf = matching.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0);
+      return {
+        day: day.day, cost_usd: totals[day.day] || 0,
+        real_cost_usd: real, what_if_cost_usd: whatIf,
+        cost_kind: real > 0 && whatIf > 0 ? 'mixed' : whatIf > 0 ? 'what_if' : real > 0 ? 'real' : '',
+      };
+    }),
     total_usd: total,
+    real_total_usd: realTotal,
+    what_if_total_usd: whatIfTotal,
+    cost_kind: realTotal > 0 && whatIfTotal > 0 ? 'mixed' : whatIfTotal > 0 ? 'what_if' : realTotal > 0 ? 'real' : '',
   };
 }
 
@@ -139,7 +156,22 @@ export function dailyBreakdown(agents, selected) {
     const harness = harnessLabel(agent.harness);
     if (!selected.has(harness)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
-    day[harness] = (day[harness] || 0) + (agent.cost_usd || 0);
+    let real = agent.real_cost_usd || 0;
+    let whatIf = agent.what_if_cost_usd || 0;
+    // Defensive compatibility for a stale response retained across a rolling
+    // daemon/dashboard upgrade. New responses always carry the split fields.
+    if (!(real > 0) && !(whatIf > 0) && (agent.cost_usd || 0) > 0) {
+      if (agent.cost_kind === 'what_if') whatIf = agent.cost_usd;
+      else real = agent.cost_usd;
+    }
+    if (real > 0) {
+      const key = `${harness}\u0000real`;
+      day[key] = (day[key] || 0) + real;
+    }
+    if (whatIf > 0) {
+      const key = `${harness}\u0000what_if`;
+      day[key] = (day[key] || 0) + whatIf;
+    }
   }
   return result;
 }
@@ -212,13 +244,18 @@ export function buildCostChart(data, projection, agents, selected, harnesses) {
       return { day: day.day, cost: fill[day.day], projected: true, segments: [] };
     }
     const parts = breakdown[day.day] || {};
-    const segments = harnesses.filter((harness) => (parts[harness] || 0) > 0).map((harness) => ({
-      harness, cost: parts[harness], className: harnessSegmentClass(harness, harnesses),
-    }));
+    const segments = Object.entries(parts).map(([key, cost]) => {
+      const [harness, kind] = key.split('\u0000');
+      return {
+        harness, kind, cost,
+        className: `${harnessSegmentClass(harness, harnesses)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
+      };
+    }).filter((segment) => segment.cost > 0);
     return { day: day.day, cost: segments.reduce((sum, segment) => sum + segment.cost, 0), projected: false, segments };
   });
   const future = (projection?.future || []).map((day) => ({
     day: day.day, cost: day.cost_usd, projected: true, segments: [],
+    includesWhatIf: !!projection?.includesWhatIf,
   }));
   const days = actual.concat(future);
   const maximum = days.length ? Math.max(...days.map((day) => day.cost)) : 0;

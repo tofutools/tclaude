@@ -991,14 +991,13 @@ type snapshotPayload struct {
 	// the dashboard hides the Costs nav button + section entirely — the
 	// "don't show an empty Costs tab on a subscription" rule.
 	CostTabVisible bool `json:"cost_tab_visible"`
-	// CostTabWhatIf is true when the Costs tab is showing the hypothetical
-	// subscription estimate (no real spend, but the opt-in is on) rather
-	// than real spend — the front-end renders the WHAT-IF banner and fetches
-	// /api/costs?whatif=1. Implies CostTabVisible.
+	// CostTabWhatIf is the subscription-estimate display opt-in. The Costs API
+	// chooses real versus WHAT-IF per row; this flag reveals hypothetical
+	// per-agent badges even when real spend also exists.
 	CostTabWhatIf bool `json:"cost_tab_whatif"`
 	// UsageTabVisible is true while either subscription provider has retained
-	// quota samples in the 90-day history window. It stays true between live
-	// rolling windows, but a pay-per-token-only cache never exposes an empty tab.
+	// quota samples or OpenCode has retained provider activity that needs a
+	// coverage warning in the 90-day history window.
 	UsageTabVisible bool `json:"usage_tab_visible"`
 	// RemoteAccess surfaces the optional network-exposed dashboard listener's
 	// live state so the Config tab can guide setup: whether the cert/passphrase
@@ -2519,6 +2518,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		pluginsWarn      int
 		pluginsErr       error
 		usagePhases      []perfPhase
+		openCodeActivity bool
 	)
 	// These collectors do not depend on each other. Most are one or two small
 	// SQLite reads; serial execution made their fixed per-query overhead add up
@@ -2530,6 +2530,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot(groupNames) }},
 		snapshotNamedLoad{"usage", func() {
 			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
+		}},
+		snapshotNamedLoad{"opencode_usage_activity", func() {
+			openCodeActivity, _ = db.HasOpenCodeUsageActivitySince(time.Now().Add(-db.OpenCodeUsageActivityRetention))
 		}},
 		snapshotNamedLoad{"templates", func() { templates = collectTemplatesSnapshot() }},
 		snapshotNamedLoad{"profiles", func() { profiles = collectProfilesSnapshot() }},
@@ -2555,9 +2558,10 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Costs-tab visibility: show when there is real pay-per-token spend to
 	// display, OR a subscription account has opted into the WHAT-IF view
 	// (cost.show_on_subscription). A subscription-only account with the opt-in
-	// off hides the tab — it would only show an empty chart. WHAT-IF mode is
-	// "visible, but no real spend" → the front-end renders the hypothetical
-	// estimate behind a banner and fetches /api/costs?whatif=1. A DB error
+	// off hides the tab — it would only show an empty chart. The opt-in also
+	// reveals per-agent hypothetical badges. /api/costs always selects real
+	// versus WHAT-IF per row and reports kind metadata; the front-end renders a
+	// warning whenever hypothetical values contribute. A DB error
 	// degrades to "no real cost" (the opt-in still governs), matching how the
 	// cost figures themselves degrade to 0.
 	if costErr != nil {
@@ -2565,8 +2569,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	showOnSub := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
 	out.CostTabVisible = hasRealCost || showOnSub
-	out.CostTabWhatIf = !hasRealCost && showOnSub
-	out.UsageTabVisible = usage.historyAvailable
+	out.CostTabWhatIf = showOnSub
+	out.UsageTabVisible = usage.historyAvailable || openCodeActivity
 	out.Templates = templates
 	out.Profiles = profiles
 	if defaultProfile != nil {

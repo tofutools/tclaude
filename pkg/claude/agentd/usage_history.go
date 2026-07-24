@@ -61,9 +61,19 @@ type usageHistorySeries struct {
 }
 
 type usageHistoryResponse struct {
-	From        string               `json:"from"`
-	GeneratedAt string               `json:"generated_at"`
-	Series      []usageHistorySeries `json:"series"`
+	From             string                 `json:"from"`
+	GeneratedAt      string                 `json:"generated_at"`
+	Series           []usageHistorySeries   `json:"series"`
+	CoverageWarnings []usageCoverageWarning `json:"coverage_warnings"`
+}
+
+type usageCoverageWarning struct {
+	Provider     string   `json:"provider"`
+	NativeSource string   `json:"native_source,omitempty"`
+	Models       []string `json:"models"`
+	From         string   `json:"from"`
+	ActivityFrom string   `json:"activity_from"`
+	ActivityTo   string   `json:"activity_to"`
 }
 
 type usageSeriesKey struct{ provider, window string }
@@ -98,7 +108,7 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 	})
 	out := usageHistoryResponse{
 		From: since.UTC().Format(time.RFC3339Nano), GeneratedAt: now.UTC().Format(time.RFC3339Nano),
-		Series: make([]usageHistorySeries, 0, len(keys)),
+		Series: make([]usageHistorySeries, 0, len(keys)), CoverageWarnings: []usageCoverageWarning{},
 	}
 	for _, key := range keys {
 		rows := bySeries[key]
@@ -144,6 +154,92 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 			series.Points = append(series.Points, point)
 		}
 		out.Series = append(out.Series, series)
+	}
+	coverageSince := since
+	for _, override := range seriesSince {
+		if override.Before(coverageSince) {
+			coverageSince = override
+		}
+	}
+	out.CoverageWarnings, err = collectOpenCodeUsageCoverageWarnings(coverageSince, now, rows)
+	if err != nil {
+		return usageHistoryResponse{}, err
+	}
+	return out, nil
+}
+
+func openCodeNativeUsageSource(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case db.SubscriptionProviderOpenAI:
+		return db.SubscriptionProviderOpenAI
+	case db.SubscriptionProviderAnthropic:
+		return db.SubscriptionProviderAnthropic
+	default:
+		return ""
+	}
+}
+
+func collectOpenCodeUsageCoverageWarnings(
+	from, to time.Time,
+	nativeRows []db.SubscriptionUsageHistoryRow,
+) ([]usageCoverageWarning, error) {
+	activity, err := db.OpenCodeUsageActivityBetween(from, to)
+	if err != nil {
+		return nil, err
+	}
+	type activityGroup struct {
+		models map[string]struct{}
+		first  time.Time
+		last   time.Time
+	}
+	byProvider := map[string]*activityGroup{}
+	for _, row := range activity {
+		provider := strings.TrimSpace(row.ProviderID)
+		if provider == "" {
+			continue
+		}
+		group := byProvider[provider]
+		if group == nil {
+			group = &activityGroup{models: map[string]struct{}{}, first: row.ObservedAt, last: row.ObservedAt}
+			byProvider[provider] = group
+		}
+		group.models[row.ModelID] = struct{}{}
+		if row.ObservedAt.Before(group.first) {
+			group.first = row.ObservedAt
+		}
+		if row.ObservedAt.After(group.last) {
+			group.last = row.ObservedAt
+		}
+	}
+	nativeCovered := map[string]bool{}
+	for _, row := range nativeRows {
+		if !row.ObservedAt.Before(from) && !row.ObservedAt.After(to) {
+			nativeCovered[row.Provider] = true
+		}
+	}
+	providers := make([]string, 0, len(byProvider))
+	for provider := range byProvider {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	out := make([]usageCoverageWarning, 0)
+	for _, provider := range providers {
+		nativeSource := openCodeNativeUsageSource(provider)
+		if nativeSource != "" && nativeCovered[nativeSource] {
+			continue
+		}
+		group := byProvider[provider]
+		models := make([]string, 0, len(group.models))
+		for model := range group.models {
+			models = append(models, model)
+		}
+		sort.Strings(models)
+		out = append(out, usageCoverageWarning{
+			Provider: provider, NativeSource: nativeSource, Models: models,
+			From:         from.UTC().Format(time.RFC3339Nano),
+			ActivityFrom: group.first.UTC().Format(time.RFC3339Nano),
+			ActivityTo:   group.last.UTC().Format(time.RFC3339Nano),
+		})
 	}
 	return out, nil
 }

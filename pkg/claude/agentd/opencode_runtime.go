@@ -747,6 +747,7 @@ func stopOpenCodeRuntime(sessionID string) error {
 		return nil
 	}
 	stopOpenCodeProcess(*runtime, nil)
+	clearOpenCodeVirtualCostState(sessionID)
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
@@ -1001,6 +1002,9 @@ func consumeOpenCodeEvent(
 		// TCL-673: record the provider/model slug from the same message so the
 		// dashboard model column and cost-history denormalisation are populated.
 		persistOpenCodeModelSlug(runtime, usage)
+		// TCL-708: the same authoritative per-message usage drives the native
+		// catalog what-if projection and provider-aware Usage coverage index.
+		applyOpenCodeVirtualCostUsage(ctx, runtime, usage)
 	}
 	// TCL-673: OpenCode's own cumulative session cost rides session.updated.
 	// $0/N-A on a subscription; real spend on a pay-per-token key.

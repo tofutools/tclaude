@@ -17,6 +17,136 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
+func float64ptr(value float64) *float64 { return &value }
+
+func resetOpenCodeVirtualCostStateForTest() {
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.bySession = nil
+	openCodeVirtualCostState.Unlock()
+}
+
+func TestOpenCodeVirtualCostForUsageUsesNativeTiersAndCachePricing(t *testing.T) {
+	tier := openCodePriceTier{
+		Input: 4, Output: 20, Cache: openCodeCachePrice{Read: 0.4, Write: 8},
+	}
+	tier.Tier.Type, tier.Tier.Size = "context", 200_000
+	base := openCodeModelPrice{
+		Input: 2, Output: 10, Cache: openCodeCachePrice{Read: 0.2, Write: 0.5},
+		Tiers: []openCodePriceTier{tier},
+		ExperimentalOver200K: &struct {
+			Input  float64            `json:"input"`
+			Output float64            `json:"output"`
+			Cache  openCodeCachePrice `json:"cache"`
+		}{Input: 3, Output: 12, Cache: openCodeCachePrice{Read: 0.3, Write: 0.6}},
+	}
+	usage := openCodeContextUsage{
+		Input: 100_000, Output: 10_000, Reasoning: 5_000, CacheRead: 120_000, CacheWrite: 1_000,
+	}
+	got, ok := openCodeVirtualCostForUsage(usage, base)
+	require.True(t, ok)
+	assert.InDelta(t, 0.756, got, 1e-12,
+		"explicit >200k context tier wins and prices reasoning as output plus both cache buckets")
+
+	base.Tiers = nil
+	got, ok = openCodeVirtualCostForUsage(usage, base)
+	require.True(t, ok)
+	assert.InDelta(t, 0.5166, got, 1e-12, "legacy experimentalOver200K is the fallback")
+
+	base.ExperimentalOver200K = nil
+	got, ok = openCodeVirtualCostForUsage(usage, base)
+	require.True(t, ok)
+	assert.InDelta(t, 0.3745, got, 1e-12, "base pricing applies without a matching tier")
+
+	_, ok = openCodeVirtualCostForUsage(usage, openCodeModelPrice{})
+	assert.False(t, ok, "missing/zero pricing degrades without inventing a value")
+}
+
+func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/config/providers", r.URL.Path)
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{` +
+			`"gpt-a":{"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}},` +
+			`"gpt-b":{"cost":{"input":2,"output":4,"cache":{"read":0.2,"write":0.4}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	const sessionID, convID = "oc-virtual", "ses-virtual"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL, Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	_, directPrices, fetchErr := fetchOpenCodeModelCatalog(context.Background(), runtime)
+	require.NoError(t, fetchErr)
+	require.Contains(t, directPrices, "openai/gpt-a")
+	prices := openCodeModelPrices(context.Background(), runtime)
+	require.Contains(t, prices, "openai/gpt-a")
+	subscription := float64ptr(0)
+	first := openCodeContextUsage{
+		MessageID: "msg-1", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: subscription, Input: 1_000_000, CreatedAt: time.Now().Add(-time.Minute),
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12, "replayed update replaces, never increments")
+
+	second := openCodeContextUsage{
+		MessageID: "msg-2", ProviderID: "openai", ModelID: "gpt-b",
+		ReportedCost: subscription, Input: 500_000, CreatedAt: time.Now(),
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, second)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 2, snap.VirtualCostUSD, 1e-12, "messages on different models use their own prices")
+
+	first.Input = 2_000_000
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12, "a corrected repeated message replaces its prior contribution")
+
+	rows, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Len(t, rows, 2, "replays are also idempotent in provider activity history")
+}
+
+func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: "oc-real", ConvID: "ses-real", ServerURL: server.URL, Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	seedOpenCodeUsageSession(t, runtime.SessionID, runtime.ConvID)
+	usage := openCodeContextUsage{
+		MessageID: "msg-real", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0.5), Input: 1_000_000,
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+	snap, err := db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "native real cost makes the session ineligible for WHAT-IF")
+
+	usage.MessageID, usage.ReportedCost = "msg-ambiguous", nil
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "missing reported-cost metadata is not guessed to mean subscription")
+}
+
 // seedOpenCodeUsageSession inserts a minimal OpenCode session row so the usage
 // writers have a target to UPDATE.
 func seedOpenCodeUsageSession(t *testing.T, sessionID, convID string) {
@@ -123,16 +253,17 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 		switch r.URL.Path {
 		case "/config/providers":
 			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{` +
-				`"gpt-5.6-terra":{"limit":{"context":272000,"output":128000}}}}]}`))
+				`"gpt-5.6-terra":{"cost":{"input":2,"output":10,"cache":{"read":0.2,"write":0.5}},` +
+				`"limit":{"context":272000,"output":128000}}}}]}`))
 		case "/session/" + convID + "/message":
 			_, _ = w.Write([]byte(`[` +
 				`{"info":{"id":"msg_u","role":"user"}},` +
 				// Older assistant turn (smaller context) — must NOT win.
 				`{"info":{"id":"msg_a1","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
-				`"time":{"created":100},"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
+				`"time":{"created":100},"cost":0,"tokens":{"input":10000,"output":200,"reasoning":0,"cache":{"read":0,"write":0}}}},` +
 				// Newer assistant turn — this one wins.
 				`{"info":{"id":"msg_a2","role":"assistant","providerID":"openai","modelID":"gpt-5.6-terra",` +
-				`"time":{"created":200},"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}}}` +
+				`"time":{"created":200},"cost":0,"tokens":{"input":80000,"output":4000,"reasoning":1000,"cache":{"read":20000,"write":0}}}}` +
 				`]`))
 		default:
 			http.NotFound(w, r)
@@ -154,4 +285,6 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, int64(272000), snap.ContextWindowSize)
 	assert.InDelta(t, float64(105000)/272000*100, snap.ContextPct, 1e-6)
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
+	assert.InDelta(t, 0.236, snap.VirtualCostUSD, 1e-12,
+		"recovery recomputes every assistant message without double-counting")
 }

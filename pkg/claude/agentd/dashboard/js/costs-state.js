@@ -71,6 +71,9 @@ export function createCostsState({
     const tableTotal = filtered
       ? visibleRows.reduce((sum, agent) => sum + (agent.cost_usd || 0), 0)
       : (data?.total_usd || 0);
+    const tableWhatIfTotal = filtered
+      ? visibleRows.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0)
+      : (data?.what_if_total_usd || 0);
     return {
       span: span.value,
       monthOffset: monthOffset.value,
@@ -91,13 +94,16 @@ export function createCostsState({
       shownConversations,
       filtered,
       tableTotal,
+      tableWhatIfTotal,
+      hasWhatIf: (narrowed?.what_if_total_usd || 0) > 0,
+      hasReal: (narrowed?.real_total_usd || 0) > 0,
       request: request.value,
       factor: factor.value,
       active: activeTab.value === 'costs',
       activeTab: activeTab.value,
       snapshotLoaded: snap !== null,
       visible: !!snap?.cost_tab_visible,
-      whatif: !!snap?.cost_tab_whatif,
+      whatIfEnabled: !!snap?.cost_tab_whatif,
     };
   });
 

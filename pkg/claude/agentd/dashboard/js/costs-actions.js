@@ -24,8 +24,7 @@ export function createCostsActions({ state, fetchImpl = globalThis.fetch } = {})
     const current = state.view.value;
     const range = spanRange(current.span, current.monthOffset);
     const path = '/api/costs?from=' + encodeURIComponent(dayKey(range.from))
-      + '&to=' + encodeURIComponent(dayKey(range.to))
-      + (current.whatif ? '&whatif=1' : '');
+      + '&to=' + encodeURIComponent(dayKey(range.to));
     try {
       const response = await fetchImpl(path, { credentials: 'same-origin' });
       if (!response.ok) throw new Error(await responseError(response));

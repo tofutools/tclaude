@@ -729,12 +729,21 @@ the bundled `human-notify` skill so agents discover the `--attach` workflow.
 ### Usage
 
 Subscription accounts get an account-wide **Usage** tab once Claude or Codex
-has supplied a quota reading. It plots the retained 15-minute samples as one
-line chart per provider and quota window, with 24-hour, 7-day, 30-day, and
-90-day history views. A separate 5-hour, 24-hour, 7-day, or 30-day lookahead
-controls the future portion of every chart without refetching its history. The
-selected history and lookahead ranges are dashboard preferences and persist
-across daemon restarts.
+has supplied a quota reading. OpenCode provider/model activity also reveals the
+tab even when it cannot supply a quota reading. It plots the retained
+15-minute samples as one line chart per provider and quota window, with
+24-hour, 7-day, 30-day, and 90-day history views. A separate 5-hour, 24-hour,
+7-day, or 30-day lookahead controls the future portion of every chart without
+refetching its history. The selected history and lookahead ranges are dashboard
+preferences and persist across daemon restarts.
+
+OpenCode does not export provider-account usage-limit history. When OpenCode
+activity for OpenAI or Anthropic is present in the selected history span but
+there is no matching native Codex or Claude quota history, the tab warns that
+the visible graph may be incomplete or stale. The warning names the affected
+provider and models and does not hide any available graphs. It disappears once
+matching native history covers that span. Unknown OpenCode providers remain
+unattributed rather than being guessed.
 
 The dashed line estimates the current post-reset consumption rate and compares
 the projected 100% time with the provider's reported reset time. Hovering the

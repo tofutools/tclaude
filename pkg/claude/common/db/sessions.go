@@ -1153,7 +1153,7 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE sessions SET cost_usd = ? WHERE id = ?`, costUSD, sessionID); err != nil {
+	if _, err := tx.Exec(`UPDATE sessions SET cost_usd = ?, virtual_cost_usd = 0 WHERE id = ?`, costUSD, sessionID); err != nil {
 		return err
 	}
 	// Sibling write: snapshot the cumulative figure onto today's
@@ -1221,10 +1221,8 @@ func UpdateSessionCost(sessionID string, costUSD float64) error {
 // session normally populates virtual_cost_usd or cost_usd, not both (billing
 // mode is stable per account); the rare exception is an account whose
 // rate-limit state flips mid-session, which could leave both columns
-// non-zero — harmless, since the two delta walks read one column each and
-// HasAnyRealCost lets real spend win for tab visibility. The Costs tab's
-// WHAT-IF view runs the same per-day delta walk over the virtual column
-// that the real view runs over cost_usd. The recorded figure is hypothetical
+// non-zero. The Costs tab prefers real spend for that slice and otherwise
+// falls back to the virtual column. The recorded figure is hypothetical
 // ("what this would have cost on pay-per-token"), never a real charge — the
 // dashboard only surfaces it behind the cost.show_on_subscription opt-in.
 //
@@ -1292,8 +1290,8 @@ type CostDailyRow struct {
 	// VirtualCostUSD is the WHAT-IF sibling of CostUSD: the cumulative
 	// pay-per-token-equivalent cost captured on a subscription session
 	// (see UpdateSessionVirtualCost). Normally exclusive with CostUSD per
-	// session — one is populated, the other 0 — so the Costs tab's WHAT-IF
-	// view runs the same delta walk over this column. (See
+	// session — one is populated, the other 0. If both are present, the Costs
+	// tab's mixed delta walk prefers real spend for that slice. (See
 	// UpdateSessionVirtualCost for the rare mid-session-billing-flip case.)
 	VirtualCostUSD float64
 	UpdatedAt      string // RFC3339Nano of the day's last spend; "" if unknown
@@ -1320,6 +1318,9 @@ type CostDelta struct {
 	UpdatedAt string // RFC3339Nano of the day's last spend; "" if unknown
 	Model     string // model display name denormalised onto the row; "" if unknown
 	Harness   string // harness denormalised onto the row; "" if unknown/pre-v103
+	// Kind is "real" or "what_if" for MixedCostDeltas. The legacy single-column
+	// CostDeltas leaves it empty for backward compatibility.
+	Kind string
 }
 
 // CostDeltas turns cumulative (conv, day) snapshots into per-day spend
@@ -1408,6 +1409,46 @@ func CostDeltas(rows []CostDailyRow, whatif bool) []CostDelta {
 	return out
 }
 
+// MixedCostDeltas recovers the display cost for each session independently:
+// real cost wins whenever present; otherwise the subscription what-if value is
+// eligible. This lets one Costs view contain API-key spend and subscription
+// estimates without selecting one database column globally or double-counting
+// a row that happens to carry both.
+func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
+	var out []CostDelta
+	prevKey := ""
+	prevSession := ""
+	prevKind := ""
+	baseline := 0.0
+	for _, r := range rows {
+		val, kind := r.CostUSD, "real"
+		if val <= 0 {
+			val, kind = r.VirtualCostUSD, "what_if"
+		}
+		key := r.ConvID
+		if key == "" {
+			key = r.SessionID
+		}
+		switch {
+		case key != prevKey:
+			baseline = 0
+		case r.SessionID != prevSession && (val < baseline || kind != prevKind):
+			// A changed session can carry forward only the same kind of
+			// cumulative counter. Real and hypothetical totals are distinct.
+			baseline = 0
+		}
+		prevKey, prevSession, prevKind = key, r.SessionID, kind
+		if d := val - baseline; d > 0 {
+			out = append(out, CostDelta{
+				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,
+				UpdatedAt: r.UpdatedAt, Model: r.Model, Harness: r.Harness, Kind: kind,
+			})
+			baseline = val
+		}
+	}
+	return out
+}
+
 // SumCostSinceDay totals the actual spend recorded on or after fromDay
 // (a "2006-01-02" key) — the top bar's month-to-date figure.
 //
@@ -1482,8 +1523,8 @@ func AllCostDailyRows() ([]CostDailyRow, error) {
 // cost_usd (via UpdateSessionCost), subscription sessions populate only
 // virtual_cost_usd, so a true result means the Costs tab has real money to
 // show. Drives the Costs-tab auto-hide (a subscription-only account has no real
-// cost and hides the tab unless cost.show_on_subscription opts into the WHAT-IF
-// view). Cheap EXISTS probe — safe on the 2s snapshot tick.
+// cost and hides the tab unless cost.show_on_subscription opts into displaying
+// estimates). Cheap EXISTS probe — safe on the 2s snapshot tick.
 func HasAnyRealCost() (bool, error) {
 	db, err := Open()
 	if err != nil {

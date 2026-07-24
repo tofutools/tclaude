@@ -22,10 +22,11 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   state.beginRequest(1);
   state.commitRequest(1, {
     from: '2026-07-01', to: '2026-07-10', total_usd: 5,
-    days: [{ day: '2026-07-10', cost_usd: 5 }],
+    real_total_usd: 3, what_if_total_usd: 2, cost_kind: 'mixed',
+    days: [{ day: '2026-07-10', cost_usd: 5, real_cost_usd: 3, what_if_cost_usd: 2, cost_kind: 'mixed' }],
     agents: [
-      { conv_id: 'a', day: '2026-07-10', title: 'Alpha', harness: 'claude', model: 'opus', cost_usd: 3 },
-      { conv_id: 'b', day: '2026-07-10', title: 'Beta', harness: 'codex', model: 'gpt', cost_usd: 2 },
+      { conv_id: 'a', day: '2026-07-10', title: 'Alpha', harness: 'claude', model: 'opus', cost_usd: 3, real_cost_usd: 3, cost_kind: 'real' },
+      { conv_id: 'b', day: '2026-07-10', title: 'Beta', harness: 'codex', model: 'gpt', cost_usd: 2, what_if_cost_usd: 2, cost_kind: 'what_if' },
     ],
   });
   assert.equal(state.view.value.request.hasLoaded, true);

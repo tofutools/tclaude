@@ -250,12 +250,12 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <span class="cfg-label">Cost display multiplier</span>
         <${ConfigInput} type="number" id="cfg-cost-factor" min="0" max="10" step="0.01" placeholder="1.0" aria-label="Cost display multiplier" style="min-width:120px" />
-        <span class="cfg-hint">Scales every <em>displayed</em> cost estimate — the per-agent badge, the Costs tab, and the top-bar month-to-date / today figures. Claude Code estimates cost client-side and it tends to run a little under the actual bill, so <code>1.1</code> nudges the numbers up ~10% to match. Display-only: recorded data is never changed, so resetting to <code>1</code> restores the raw figures. Empty or <code>1</code> = no adjustment. Also editable live on the Costs tab.</span>
+        <span class="cfg-hint">Scales every <em>displayed</em> cost figure — the per-agent badge, the Costs tab, and the top-bar month-to-date / today figures. Use a value such as <code>1.1</code> only when you intentionally want a 10% display compensation. Recorded data is never changed, so resetting to <code>1</code> restores raw figures. Empty or <code>1</code> = no adjustment. Also editable live on the Costs tab.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Show cost on subscription</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-cost-show-on-subscription" /> show the Costs tab + per-agent cost on a subscription (WHAT-IF)</label>
-        <span class="cfg-hint">On a subscription there's no pay-per-token charge, so the Costs tab and per-agent cost badge are hidden by default. Enable this to show them in <strong>WHAT-IF</strong> mode — the estimated equivalent cost <em>if</em> you were billed pay-per-token (Claude Code's client-side <code>total_cost_usd</code>), clearly flagged as hypothetical. On pay-per-token the Costs tab always shows real spend regardless of this setting.</span>
+        <span class="cfg-hint">On a subscription there's no pay-per-token charge, so hypothetical costs are hidden by default. Enable this to show harness-provided <strong>WHAT-IF</strong> estimates of equivalent pay-per-token pricing, clearly separated from real billed spend. A mixed installation can show real and WHAT-IF rows together; pay-per-token spend is always shown regardless of this setting.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Poll Anthropic usage API</span>

@@ -45,7 +45,7 @@ func TestParseOpenCodeContextUsage(t *testing.T) {
 			name:  "assistant usage",
 			event: openCodeMessageUpdatedEventJSON("evt_1", convID, "openai", "gpt-5.4", 1000, 200, 50, 300, 10),
 			want: openCodeContextUsage{
-				ProviderID: "openai", ModelID: "gpt-5.4",
+				MessageID: "msg_1", ProviderID: "openai", ModelID: "gpt-5.4",
 				Input: 1000, Output: 200, Reasoning: 50, CacheRead: 300, CacheWrite: 10,
 			},
 			ok: true,

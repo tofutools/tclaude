@@ -9,6 +9,40 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
+func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, row := range []db.OpenCodeUsageActivity{
+		{SessionID: "oc-openai", MessageID: "m1", ConvID: "c1", ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-time.Hour)},
+		{SessionID: "oc-anthropic", MessageID: "m2", ConvID: "c2", ProviderID: "anthropic", ModelID: "claude-sonnet", ObservedAt: now.Add(-time.Hour)},
+		{SessionID: "oc-unknown", MessageID: "m3", ConvID: "c3", ProviderID: "openrouter", ModelID: "some-model", ObservedAt: now.Add(-time.Hour)},
+	} {
+		require.NoError(t, db.UpsertOpenCodeUsageActivity(row))
+	}
+	native := []db.SubscriptionUsageHistoryRow{{
+		Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour",
+		ObservedAt: now.Add(-30 * time.Minute),
+	}}
+	warnings, err := collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), now, native)
+	require.NoError(t, err)
+	require.Len(t, warnings, 2, "Anthropic native coverage suppresses only the matching warning")
+	assert.Equal(t, "openai", warnings[0].Provider)
+	assert.Equal(t, "openai", warnings[0].NativeSource)
+	assert.Equal(t, []string{"gpt-5"}, warnings[0].Models)
+	assert.Equal(t, "openrouter", warnings[1].Provider)
+	assert.Empty(t, warnings[1].NativeSource, "unknown providers have no fabricated native source")
+
+	native = append(native, db.SubscriptionUsageHistoryRow{
+		Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
+		ObservedAt: now.Add(-20 * time.Minute),
+	})
+	warnings, err = collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), now, native)
+	require.NoError(t, err)
+	require.Len(t, warnings, 1)
+	assert.Equal(t, "openrouter", warnings[0].Provider,
+		"matching Codex/OpenAI history removes the OpenAI warning while unknown remains")
+}
+
 func usageHistoryRows(base time.Time, values ...float64) []db.SubscriptionUsageHistoryRow {
 	rows := make([]db.SubscriptionUsageHistoryRow, len(values))
 	for i, value := range values {

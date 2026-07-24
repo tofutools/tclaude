@@ -43,7 +43,7 @@ This note therefore no longer needs to argue that the data is *reachable* or to
 prescribe wiring for it: it is on the wire and now projected. The two
 dimensions below are what remain unique to this feasibility finding.
 
-## Cost — partial (native, but honest-zero on subscription)
+## Cost — implemented as real-or-WHAT-IF
 
 OpenCode computes cost itself and exposes it as a plain `number` (USD) on
 `Session.cost`, `AssistantMessage.cost`, `StepFinishPart.cost`, and the
@@ -53,7 +53,7 @@ tclaude would **not** need to maintain its own price table (contrast
 `codexModelPrices` in `pkg/claude/harness/codex_cost.go`):
 
 ```jsonc
-// Model.cost — USD per token (not per 1M)
+// Model.cost — USD per million tokens
 "cost": {
   "input":  number,
   "output": number,
@@ -65,26 +65,24 @@ tclaude would **not** need to maintain its own price table (contrast
 
 The caveat, confirmed by the earlier hands-on exploration and consistent with
 the API shape: on a **ChatGPT/Codex subscription** OpenCode reports exact token
-counts but `cost` = 0, because there is no per-token bill. This matches
-TCL-673's own guidance that reporting tokens/context while reporting cost as
-not-applicable is the honest answer. An **API-key provider** instead reports a
-real non-zero `cost`.
+counts but `cost` = 0, because there is no per-token bill. An **API-key
+provider** instead reports a real non-zero `cost`.
 
-Recommended handling for a TCL-673 cost implementation:
+The implemented handling is:
 
 - **API-key providers:** trust OpenCode's `cost` → `sessions.cost_usd`.
 - **Subscription providers:** treat `cost == 0` as *not-applicable*, not free;
-  report tokens/context only. Optionally derive a *virtual* what-if cost from
-  `Model.cost` × token counts and land it in `sessions.virtual_cost_usd`
+  derive a virtual WHAT-IF cost from the native `Model.cost` catalog and land it
+  in `sessions.virtual_cost_usd`
   (Codex's never-billed estimate lives in that column too), keeping `cost_usd`
-  at 0 — mirroring the plan-type branch the Claude statusline already makes in
-  `pkg/claude/statusbar/statusbar.go` (real bill → `cost_usd`; subscription
-  what-if → `virtual_cost_usd`).
+  at 0. Input, output, reasoning, cache read/write, and model pricing tiers are
+  included. Message identity makes repeated SSE updates, reconnect history,
+  and recovery backfills replacement-safe instead of double-counting.
 
-Distinguishing the two is a provider/auth-mode question; the safe default is
-honest-zero (tokens + context, cost N/A) unless a real non-zero `cost` arrives.
-The cost source is the same SSE stream TCL-701 already consumes, so cost can be
-folded into the existing `opencode_context.go` projection when implemented.
+The Costs tab selects real spend per session/day slice when present and
+otherwise selects its WHAT-IF estimate. Mixed Claude, Codex, and OpenCode
+history therefore remains visible in one chart and table, with hypothetical
+values explicitly marked.
 
 ## Provider account usage / rate limits — no
 
@@ -117,13 +115,12 @@ needs separate credentials, and is a different facility from harness usage.
 
 - **Token counts + context window:** done on `main` (TCL-701 / #1492). No
   further action.
-- **Cost:** implement in TCL-673 with the honest-zero / virtual-cost split
-  above; prefer OpenCode's own `cost` for API-key providers and a
-  `Model.cost`-derived virtual cost for subscriptions. No hard-coded price
-  table needed.
+- **Cost:** implemented with the real/virtual split above. OpenCode's native
+  model catalog remains the price source; tclaude does not hard-code an
+  OpenCode price table.
 - **Provider account rate limits:** **descope** from TCL-673 as *not feasible
   via OpenCode*. The 429-reactive signal is the only available hint. If
   proactive limits are ever wanted, spin a separate provider-usage-API ticket —
   it is a different, provider-specific facility, not a harness-usage feature.
 
-No dedicated new implementation ticket is needed beyond TCL-673.
+Provider-account limit history remains a separate provider-specific facility.

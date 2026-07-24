@@ -473,6 +473,23 @@ func TestCostDeltas_WhatIf(t *testing.T) {
 	assert.Empty(t, CostDeltas(rows, false), "real walk sees nothing — these are subscription rows")
 }
 
+func TestMixedCostDeltasPrefersRealPerRowAndIncludesVirtualPeers(t *testing.T) {
+	rows := []CostDailyRow{
+		{SessionID: "real", Day: "2026-07-24", ConvID: "conv-real", CostUSD: 2, VirtualCostUSD: 99, Harness: "claude"},
+		{SessionID: "virtual", Day: "2026-07-24", ConvID: "conv-virtual", VirtualCostUSD: 3, Harness: "opencode"},
+	}
+	deltas := MixedCostDeltas(rows)
+	require.Len(t, deltas, 2)
+	got := map[string]CostDelta{}
+	for _, delta := range deltas {
+		got[delta.SessionID] = delta
+	}
+	assert.InDelta(t, 2, got["real"].USD, 1e-12, "real wins instead of double-counting the virtual column")
+	assert.Equal(t, "real", got["real"].Kind)
+	assert.InDelta(t, 3, got["virtual"].USD, 1e-12)
+	assert.Equal(t, "what_if", got["virtual"].Kind)
+}
+
 // TestSumCostSinceDay_EmptyDB pins the zero state: no rows at all must
 // read back 0, not a NULL scan failure — this is every
 // subscription-only install on the 2s snapshot tick.

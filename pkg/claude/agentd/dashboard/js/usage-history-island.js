@@ -121,6 +121,23 @@ function groupSeriesByProvider(series) {
   return rows;
 }
 
+function UsageCoverageWarnings({ warnings }) {
+  if (!warnings?.length) return null;
+  return html`<div class="usage-coverage-warnings" role="status">
+    ${warnings.map((warning) => {
+      const provider = usageProviderLabel(warning.provider);
+      const models = (warning.models || []).length ? ` (${warning.models.join(', ')})` : '';
+      const source = warning.native_source
+        ? `No ${usageProviderLabel(warning.native_source)} native usage-history coverage was recorded for the selected span.`
+        : 'This provider has no corresponding native usage source in tclaude.';
+      return html`<div class="usage-coverage-warning" key=${warning.provider}>
+        <strong>⚠ ${provider}${models}</strong> — OpenCode was active in this span, but OpenCode does not export provider-account usage-limit history.
+        ${source} Available graphs remain visible, but they may be incomplete or stale.
+      </div>`;
+    })}
+  </div>`;
+}
+
 export function UsageHistoryApp({ state, actions }) {
   const current = state.view.value;
   const wizard = useWizardTheme();
@@ -151,6 +168,7 @@ export function UsageHistoryApp({ state, actions }) {
     <h2 class="usage-wizard-title" aria-hidden="true">🔮 The Mana Reserves</h2>
     <${AsyncLoadState} label=${w('Usage', 'Reserves')} request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
+      <${UsageCoverageWarnings} warnings=${current.payload?.coverage_warnings} />
       ${current.series.length
         ? html`<div class="usage-series-grid">${groupSeriesByProvider(current.series).map((row) => html`
             <div class="usage-provider-row" key=${row.provider} style=${`--usage-cols:${row.series.length}`}>

@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
@@ -93,14 +97,191 @@ func applyOpenCodeCost(runtime db.OpenCodeRuntime, event json.RawMessage) {
 // reuses opencode_context.go's payload type.
 type openCodeHistoryMessage struct {
 	Info struct {
-		Role       string `json:"role"`
-		ProviderID string `json:"providerID"`
-		ModelID    string `json:"modelID"`
+		ID         string   `json:"id"`
+		Role       string   `json:"role"`
+		ProviderID string   `json:"providerID"`
+		ModelID    string   `json:"modelID"`
+		Cost       *float64 `json:"cost"`
 		Time       struct {
 			Created int64 `json:"created"`
 		} `json:"time"`
 		Tokens openCodeMessageTokensPayload `json:"tokens"`
 	} `json:"info"`
+}
+
+type openCodeProjectedMessageCost struct {
+	usd      float64
+	eligible bool
+	real     bool
+}
+
+var openCodeVirtualCostState struct {
+	sync.Mutex
+	bySession map[string]map[string]openCodeProjectedMessageCost
+}
+
+func clearOpenCodeVirtualCostState(sessionID string) {
+	openCodeVirtualCostState.Lock()
+	delete(openCodeVirtualCostState.bySession, sessionID)
+	openCodeVirtualCostState.Unlock()
+}
+
+func validOpenCodeRate(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0
+}
+
+func validOpenCodePrice(price openCodeModelPrice) bool {
+	if !validOpenCodeRate(price.Input) || !validOpenCodeRate(price.Output) ||
+		!validOpenCodeRate(price.Cache.Read) || !validOpenCodeRate(price.Cache.Write) {
+		return false
+	}
+	return price.Input > 0 || price.Output > 0 || price.Cache.Read > 0 || price.Cache.Write > 0
+}
+
+// openCodeVirtualCostForUsage mirrors OpenCode's native cost calculation:
+// rates are USD per million tokens; reasoning is charged as output; the
+// highest matching context tier wins, with experimentalOver200K as the legacy
+// fallback only when no explicit tier matches.
+func openCodeVirtualCostForUsage(usage openCodeContextUsage, base openCodeModelPrice) (float64, bool) {
+	price := base
+	contextTokens := usage.Input + usage.CacheRead + usage.CacheWrite
+	var (
+		matched     bool
+		matchedSize float64
+	)
+	for _, tier := range base.Tiers {
+		if tier.Tier.Type != "context" || tier.Tier.Size < 0 ||
+			float64(contextTokens) <= tier.Tier.Size || (matched && tier.Tier.Size <= matchedSize) {
+			continue
+		}
+		price.Input, price.Output, price.Cache = tier.Input, tier.Output, tier.Cache
+		matched, matchedSize = true, tier.Tier.Size
+	}
+	if !matched && contextTokens > 200_000 && base.ExperimentalOver200K != nil {
+		price.Input = base.ExperimentalOver200K.Input
+		price.Output = base.ExperimentalOver200K.Output
+		price.Cache = base.ExperimentalOver200K.Cache
+	}
+	if !validOpenCodePrice(price) {
+		return 0, false
+	}
+	for _, tokens := range []int64{usage.Input, usage.Output, usage.Reasoning, usage.CacheRead, usage.CacheWrite} {
+		if tokens < 0 {
+			return 0, false
+		}
+	}
+	const perMillion = 1_000_000
+	usd := (float64(usage.Input)*price.Input +
+		float64(usage.Output+usage.Reasoning)*price.Output +
+		float64(usage.CacheRead)*price.Cache.Read +
+		float64(usage.CacheWrite)*price.Cache.Write) / perMillion
+	if math.IsNaN(usd) || math.IsInf(usd, 0) || usd <= 0 {
+		return 0, false
+	}
+	return usd, true
+}
+
+func projectOpenCodeMessageCost(usage openCodeContextUsage, prices map[string]openCodeModelPrice) openCodeProjectedMessageCost {
+	if usage.ReportedCost == nil || usage.MessageID == "" {
+		return openCodeProjectedMessageCost{}
+	}
+	if *usage.ReportedCost > 0 {
+		return openCodeProjectedMessageCost{real: true}
+	}
+	if *usage.ReportedCost < 0 {
+		return openCodeProjectedMessageCost{}
+	}
+	price, ok := prices[strings.TrimSpace(usage.ProviderID)+"/"+strings.TrimSpace(usage.ModelID)]
+	if !ok {
+		return openCodeProjectedMessageCost{}
+	}
+	usd, ok := openCodeVirtualCostForUsage(usage, price)
+	return openCodeProjectedMessageCost{usd: usd, eligible: ok}
+}
+
+func persistOpenCodeVirtualCostState(runtime db.OpenCodeRuntime, messages map[string]openCodeProjectedMessageCost) {
+	total := 0.0
+	if len(messages) == 0 {
+		return
+	}
+	for _, message := range messages {
+		if message.real || !message.eligible {
+			return
+		}
+		total += message.usd
+	}
+	if total <= 0 {
+		return
+	}
+	if err := db.UpdateSessionVirtualCost(runtime.SessionID, total); err != nil {
+		slog.Warn("OpenCode virtual cost could not be persisted",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+	}
+}
+
+func openCodeActivityForUsage(runtime db.OpenCodeRuntime, usage openCodeContextUsage) db.OpenCodeUsageActivity {
+	observedAt := usage.CreatedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	return db.OpenCodeUsageActivity{
+		SessionID: runtime.SessionID, MessageID: usage.MessageID, ConvID: runtime.ConvID,
+		ProviderID: usage.ProviderID, ModelID: usage.ModelID, ObservedAt: observedAt,
+	}
+}
+
+// applyOpenCodeVirtualCostUsage replaces one message's projection. Replayed
+// SSE updates therefore converge instead of incrementing, while model changes
+// replace the old model's price contribution.
+func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
+	if usage.MessageID == "" {
+		return
+	}
+	if err := db.UpsertOpenCodeUsageActivity(openCodeActivityForUsage(runtime, usage)); err != nil {
+		slog.Debug("OpenCode usage activity could not be persisted",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+	}
+	projected := projectOpenCodeMessageCost(usage, openCodeModelPrices(ctx, runtime))
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.bySession == nil {
+		openCodeVirtualCostState.bySession = map[string]map[string]openCodeProjectedMessageCost{}
+	}
+	messages := openCodeVirtualCostState.bySession[runtime.SessionID]
+	if messages == nil {
+		messages = map[string]openCodeProjectedMessageCost{}
+		openCodeVirtualCostState.bySession[runtime.SessionID] = messages
+	}
+	messages[usage.MessageID] = projected
+	snapshot := make(map[string]openCodeProjectedMessageCost, len(messages))
+	for id, message := range messages {
+		snapshot[id] = message
+	}
+	openCodeVirtualCostState.Unlock()
+	persistOpenCodeVirtualCostState(runtime, snapshot)
+}
+
+func replaceOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRuntime, usages []openCodeContextUsage) {
+	prices := openCodeModelPrices(ctx, runtime)
+	messages := make(map[string]openCodeProjectedMessageCost, len(usages))
+	activity := make([]db.OpenCodeUsageActivity, 0, len(usages))
+	for _, usage := range usages {
+		if usage.MessageID == "" {
+			continue
+		}
+		messages[usage.MessageID] = projectOpenCodeMessageCost(usage, prices)
+		activity = append(activity, openCodeActivityForUsage(runtime, usage))
+	}
+	if err := db.ReplaceOpenCodeUsageActivity(runtime.SessionID, activity, time.Now()); err != nil {
+		slog.Debug("OpenCode usage activity backfill could not be persisted",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+	}
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.bySession == nil {
+		openCodeVirtualCostState.bySession = map[string]map[string]openCodeProjectedMessageCost{}
+	}
+	openCodeVirtualCostState.bySession[runtime.SessionID] = messages
+	openCodeVirtualCostState.Unlock()
+	persistOpenCodeVirtualCostState(runtime, messages)
 }
 
 // backfillOpenCodeContextUsage seeds the context snapshot from the
@@ -147,29 +328,37 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		latest   openCodeContextUsage
 		latestAt int64
 		haveAny  bool
+		usages   []openCodeContextUsage
 	)
 	for _, m := range messages {
 		if m.Info.Role != "assistant" {
 			continue
 		}
 		usage := openCodeContextUsage{
-			ProviderID: m.Info.ProviderID,
-			ModelID:    m.Info.ModelID,
-			Input:      m.Info.Tokens.Input,
-			Output:     m.Info.Tokens.Output,
-			Reasoning:  m.Info.Tokens.Reasoning,
-			CacheRead:  m.Info.Tokens.Cache.Read,
-			CacheWrite: m.Info.Tokens.Cache.Write,
+			MessageID:    m.Info.ID,
+			ProviderID:   m.Info.ProviderID,
+			ModelID:      m.Info.ModelID,
+			ReportedCost: m.Info.Cost,
+			Input:        m.Info.Tokens.Input,
+			Output:       m.Info.Tokens.Output,
+			Reasoning:    m.Info.Tokens.Reasoning,
+			CacheRead:    m.Info.Tokens.Cache.Read,
+			CacheWrite:   m.Info.Tokens.Cache.Write,
+		}
+		if m.Info.Time.Created > 0 {
+			usage.CreatedAt = time.UnixMilli(m.Info.Time.Created)
 		}
 		if usage.total() <= 0 {
 			continue
 		}
+		usages = append(usages, usage)
 		if !haveAny || m.Info.Time.Created >= latestAt {
 			latest = usage
 			latestAt = m.Info.Time.Created
 			haveAny = true
 		}
 	}
+	replaceOpenCodeVirtualCostUsage(ctx, runtime, usages)
 	if !haveAny {
 		return
 	}

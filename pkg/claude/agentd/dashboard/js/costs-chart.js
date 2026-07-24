@@ -18,8 +18,8 @@ function tooltipRows(day) {
   for (const segment of day.segments) {
     const row = element('div', 'cost-tip-row');
     row.append(element('span', `cost-tip-sw ${segment.className}`));
-    row.append(element('span', 'cost-tip-name', segment.harness));
-    row.append(element('span', 'cost-tip-amt', fmtUSD(segment.cost)));
+    row.append(element('span', 'cost-tip-name', segment.kind === 'what_if' ? `${segment.harness} · WHAT-IF` : segment.harness));
+    row.append(element('span', 'cost-tip-amt', `${segment.kind === 'what_if' ? '≈' : ''}${fmtUSD(segment.cost)}`));
     fragment.append(row);
   }
   const total = element('div', 'cost-tip-total');
@@ -69,13 +69,17 @@ export function mountImperativeCostChart(host, chart) {
   const byDay = new Map();
   const spanHarnesses = new Set(chart.days.flatMap((day) =>
     (day.segments || []).map((segment) => segment.harness)));
-  const showHarnessBreakdown = spanHarnesses.size > 1;
+  const showHarnessBreakdown = spanHarnesses.size > 1 || chart.days.some((day) =>
+    (day.segments || []).some((segment) => segment.kind === 'what_if'));
   const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
   chart.days.forEach((day, index) => {
     byDay.set(day.day, day);
     const column = element('div', `cost-col${isWeekendKey(day.day) ? ' weekend' : ''}${day.projected ? ' projected' : ''}`);
     if (day.cost > 0) {
-      column.dataset.tip = day.projected ? `${day.day} — projected ~${fmtUSD(day.cost)}` : `${day.day} — ${fmtUSD(day.cost)}`;
+      const hasWhatIf = day.segments?.some((segment) => segment.kind === 'what_if');
+      column.dataset.tip = day.projected
+        ? `${day.day} — projected ~${fmtUSD(day.cost)}${day.includesWhatIf ? ' · includes WHAT-IF estimates' : ''}`
+        : `${day.day} — ${fmtUSD(day.cost)}${hasWhatIf ? ' · includes WHAT-IF estimates' : ''}`;
       column.dataset.day = day.day;
     }
     const area = element('div', 'cost-bararea');
