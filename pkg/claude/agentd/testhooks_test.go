@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"net/http"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,12 +96,31 @@ func ShutdownProcessRunRuntimeForTest() (remaining int, restore func(), err erro
 	}, err
 }
 
-// SetProcessProgramExecuteForTest swaps the daemon/executor call boundary so
-// flow tests can place deterministic channels around real executor execution.
-func SetProcessProgramExecuteForTest(fn func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error)) func() {
-	previous := processProgramExecute
-	processProgramExecute = fn
-	return func() { processProgramExecute = previous }
+// SetProcessProgramPerformForTest swaps the daemon/worker call boundary — the
+// one place an external program is executed — so flow tests can place
+// deterministic channels around real program execution. It is the worker side:
+// the replacement runs on a worker goroutine and, like production, must not
+// touch run or checkpoint state.
+func SetProcessProgramPerformForTest(fn func(context.Context, *executor.Dispatch) (executor.Result, error)) func() {
+	previous := processProgramPerform
+	processProgramPerform = fn
+	return func() { processProgramPerform = previous }
+}
+
+// ProcessRunConcurrencyForTest exposes the fixed per-run program concurrency so
+// a flow test asserts against the production constant rather than a copy.
+func ProcessRunConcurrencyForTest() int { return processRunConcurrency }
+
+// ProcessRunAccountedNodesForTest reports which of a run's commands the live
+// claim has taken responsibility for.
+func ProcessRunAccountedNodesForTest(runID string) []string {
+	accounted, _ := processRuns.accountedCommands(runID)
+	nodes := make([]string, 0, len(accounted))
+	for nodeID := range accounted {
+		nodes = append(nodes, nodeID)
+	}
+	slices.Sort(nodes)
+	return nodes
 }
 
 // RunProcessRunSweepForTest executes the same bounded startup/fallback page

@@ -25,28 +25,41 @@ const (
 	defaultProcessEventPayloadDisplayBytes = 120
 	processEventPageMax                    = 16
 	maxProcessEventPayloadDisplayBytes     = 512
+	// processCommandNeedsReconcile mirrors the daemon's per-command state
+	// label; the CLI keys on it to offer the right next action.
+	processCommandNeedsReconcile = "needs_reconcile"
 )
 
 var errProcessDaemonAlreadyReported = errors.New("daemon requirement already reported")
 
 type processRunJSON struct {
-	ID                    string                  `json:"id"`
-	TemplateRef           string                  `json:"templateRef"`
-	Params                map[string]string       `json:"params"`
-	ProgramAuthorizations []string                `json:"programAuthorizations"`
-	Status                engine.RunStatus        `json:"status"`
-	StateVersion          int64                   `json:"stateVersion"`
-	Checkpoint            engine.Checkpoint       `json:"checkpoint"`
-	Action                string                  `json:"action"`
-	NeedsReconcile        bool                    `json:"needsReconcile"`
-	AwaitingDecision      *processRunDecisionJSON `json:"awaitingDecision,omitempty"`
-	CreatedAt             time.Time               `json:"createdAt"`
-	UpdatedAt             time.Time               `json:"updatedAt"`
+	ID                    string                   `json:"id"`
+	TemplateRef           string                   `json:"templateRef"`
+	Params                map[string]string        `json:"params"`
+	ProgramAuthorizations []string                 `json:"programAuthorizations"`
+	Status                engine.RunStatus         `json:"status"`
+	StateVersion          int64                    `json:"stateVersion"`
+	Checkpoint            engine.Checkpoint        `json:"checkpoint"`
+	Action                string                   `json:"action"`
+	NeedsReconcile        bool                     `json:"needsReconcile"`
+	AwaitingDecision      *processRunDecisionJSON  `json:"awaitingDecision,omitempty"`
+	AwaitingDecisions     []processRunDecisionJSON `json:"awaitingDecisions"`
+	Commands              []processRunCommandJSON  `json:"commands"`
+	CreatedAt             time.Time                `json:"createdAt"`
+	UpdatedAt             time.Time                `json:"updatedAt"`
 }
 
 type processRunDecisionJSON struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+}
+
+type processRunCommandJSON struct {
+	CommandID string `json:"commandId"`
+	NodeID    string `json:"nodeId"`
+	Profile   string `json:"profile"`
+	Program   string `json:"program"`
+	State     string `json:"state"`
 }
 
 type processRunSummaryJSON struct {
@@ -404,11 +417,32 @@ func runProcessShow(runID, askHuman string, reconcileOnly, jsonOutput bool, stdo
 }
 
 func processResumeCmd() *cobra.Command {
-	return processRunMutationCmd("resume", "Resume or tick one runnable process run", "/resume")
+	return boa.CmdT[processRunMutationParams]{
+		Use: "resume", Short: "Resume or tick one runnable process run",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *processRunMutationParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessMutation(p, "/resume", nil, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
 }
 
 func processReissueCmd() *cobra.Command {
-	return processRunMutationCmd("reissue", "Explicitly reissue a cold outstanding program command", "/reissue")
+	return boa.CmdT[processReissueParams]{
+		Use:   "reissue",
+		Short: "Explicitly reissue a cold outstanding program command",
+		Long: "Records an explicit operator retry for one outstanding command. " +
+			"A run can hold several at once, so --node is required unless exactly one command needs reconciliation.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *processReissueParams, _ *cobra.Command, _ []string) {
+			request := map[string]any{}
+			if node := strings.TrimSpace(p.Node); node != "" {
+				request["nodeId"] = node
+			}
+			exitProcessRuntime(runProcessMutation(&processRunMutationParams{
+				RunID: p.RunID, AskHuman: p.AskHuman,
+			}, "/reissue", request, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
 }
 
 type processRunMutationParams struct {
@@ -416,16 +450,13 @@ type processRunMutationParams struct {
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
 
-func processRunMutationCmd(use, short, suffix string) *cobra.Command {
-	return boa.CmdT[processRunMutationParams]{
-		Use: use, Short: short, ParamEnrich: common.DefaultParamEnricher(),
-		RunFunc: func(p *processRunMutationParams, _ *cobra.Command, _ []string) {
-			exitProcessRuntime(runProcessMutation(p, suffix, os.Stdout, os.Stderr), os.Stderr)
-		},
-	}.ToCobra()
+type processReissueParams struct {
+	RunID    string `pos:"true" help:"Process run id"`
+	Node     string `long:"node" optional:"true" help:"Node id of the outstanding command to reissue; required when more than one needs reconciliation"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
 }
 
-func runProcessMutation(p *processRunMutationParams, suffix string, stdout, stderr io.Writer) error {
+func runProcessMutation(p *processRunMutationParams, suffix string, request map[string]any, stdout, stderr io.Writer) error {
 	if err := requireProcessRuntime(stderr); err != nil {
 		return err
 	}
@@ -433,12 +464,15 @@ func runProcessMutation(p *processRunMutationParams, suffix string, stdout, stde
 	if err != nil {
 		return err
 	}
+	if request == nil {
+		request = map[string]any{}
+	}
 	var response struct {
 		Started bool           `json:"started"`
 		Run     processRunJSON `json:"run"`
 	}
 	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + suffix
-	if err := agent.DaemonRequest(http.MethodPost, path, map[string]any{}, &response,
+	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
 		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
 		return err
 	}
@@ -449,6 +483,7 @@ func runProcessMutation(p *processRunMutationParams, suffix string, stdout, stde
 
 type processRecordOutcomeParams struct {
 	RunID    string `pos:"true" help:"Process run id"`
+	Node     string `long:"node" optional:"true" help:"Node id of the outstanding command; required when more than one needs reconciliation"`
 	Outcome  string `long:"outcome" help:"Operator-supplied outcome: succeeded or failed"`
 	ExitCode int    `long:"exit-code" optional:"true" help:"Observed program exit code"`
 	Error    string `long:"error" optional:"true" help:"Observed failure text"`
@@ -480,11 +515,12 @@ func runProcessRecordOutcome(p *processRecordOutcomeParams, stdout, stderr io.Wr
 		return err
 	}
 	request := struct {
+		NodeID   string                `json:"nodeId,omitempty"`
 		Outcome  engine.ProgramOutcome `json:"outcome"`
 		ExitCode int                   `json:"exitCode"`
 		Error    string                `json:"error,omitempty"`
 		Note     string                `json:"note,omitempty"`
-	}{Outcome: outcome, ExitCode: p.ExitCode, Error: p.Error, Note: p.Note}
+	}{NodeID: strings.TrimSpace(p.Node), Outcome: outcome, ExitCode: p.ExitCode, Error: p.Error, Note: p.Note}
 	var response struct {
 		Started bool           `json:"started"`
 		Run     processRunJSON `json:"run"`
@@ -609,18 +645,59 @@ func requireProcessRuntime(stderr io.Writer) error {
 	return nil
 }
 
+// printProcessRun renders the run's header plus both plural outboxes. A run
+// under bounded concurrency can hold several commands and several awaited
+// decisions at once, and each of them is separately addressable, so each gets
+// its own row rather than one line standing in for all of them.
 func printProcessRun(out io.Writer, run *processRunJSON) {
 	fmt.Fprintf(out, "id=%s\ntemplate=%s\nstatus=%s\naction=%s\nstateVersion=%d\n",
 		run.ID, run.TemplateRef, run.Status, run.Action, run.StateVersion)
-	if command := run.Checkpoint.FirstCommand(); run.NeedsReconcile && command != nil {
-		fmt.Fprintf(out, "needsReconcile=true\ncommand=%s\nnode=%s\nprofile=%s\nprogram=%s\n",
-			command.ID, command.NodeID, command.Program.Profile, command.Program.Run)
+	if run.NeedsReconcile {
+		fmt.Fprintln(out, "needsReconcile=true")
 	}
-	if run.AwaitingDecision != nil {
-		fmt.Fprintf(out, "awaitingDecision=%s\nverdicts=%s\n",
-			run.AwaitingDecision.NodeID, strings.Join(run.AwaitingDecision.Verdicts, ", "))
+	if len(run.Commands) > 0 {
+		fmt.Fprintln(out, "commands:")
+		tw := newTable(out)
+		fmt.Fprintln(tw, "NODE\tSTATE\tPROFILE\tPROGRAM\tCOMMAND")
+		for _, command := range run.Commands {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", command.NodeID, command.State,
+				displayProcessEventField(command.Profile), command.Program, command.CommandID)
+		}
+		_ = tw.Flush()
+	}
+	if len(run.AwaitingDecisions) > 0 {
+		fmt.Fprintln(out, "awaitingDecisions:")
+		tw := newTable(out)
+		fmt.Fprintln(tw, "NODE\tVERDICTS")
+		for _, decision := range run.AwaitingDecisions {
+			fmt.Fprintf(tw, "%s\t%s\n", decision.NodeID, strings.Join(decision.Verdicts, ", "))
+		}
+		_ = tw.Flush()
+	}
+	printProcessRunNextSteps(out, run)
+}
+
+// printProcessRunNextSteps names the exact command the operator would run next.
+// With more than one candidate the selector is mandatory, so the hint carries
+// it rather than suggesting an invocation that would be refused as ambiguous.
+func printProcessRunNextSteps(out io.Writer, run *processRunJSON) {
+	var ambiguous []string
+	for _, command := range run.Commands {
+		if command.State == processCommandNeedsReconcile {
+			ambiguous = append(ambiguous, command.NodeID)
+		}
+	}
+	switch {
+	case len(ambiguous) == 1:
+		fmt.Fprintf(out, "Next: tclaude process reissue %s; tclaude process record-outcome %s --outcome <succeeded|failed>\n",
+			run.ID, run.ID)
+	case len(ambiguous) > 1:
+		fmt.Fprintf(out, "Next: name one of %s, for example tclaude process reissue %s --node %s\n",
+			strings.Join(ambiguous, ", "), run.ID, ambiguous[0])
+	}
+	for _, decision := range run.AwaitingDecisions {
 		fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --verdict <verdict>\n",
-			run.ID, run.AwaitingDecision.NodeID)
+			run.ID, decision.NodeID)
 	}
 }
 

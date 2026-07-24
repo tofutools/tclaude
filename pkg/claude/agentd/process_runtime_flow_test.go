@@ -34,10 +34,10 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("sequential", 2))
 
 	completed := make(chan struct{}, 2)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
-		result, next, err := executor.Execute(ctx, run, dispatch, authorization)
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		result, err := executor.Perform(ctx, dispatch)
 		completed <- struct{}{}
-		return result, next, err
+		return result, err
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -205,9 +205,9 @@ func TestProcessRuntimeRefusesImplicitProgramAuthorization(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("authorization", 1))
 	var dispatched atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		dispatched.Add(1)
-		return executor.Execute(ctx, run, dispatch, authorization)
+		return executor.Perform(ctx, dispatch)
 	}))
 
 	refused := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -232,10 +232,10 @@ func TestProcessRuntimeColdOutstandingNeedsReconcileWithoutRedispatch(t *testing
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("cold", 1))
 	var attempts atomic.Int32
 	prepared := make(chan struct{}, 1)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(context.Context, *executor.Dispatch) (executor.Result, error) {
 		attempts.Add(1)
 		prepared <- struct{}{}
-		return executor.Result{}, nil, errors.New("simulate daemon loss before dispatch")
+		return executor.Result{}, errors.New("simulate daemon loss before dispatch")
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -289,11 +289,11 @@ func TestProcessRuntimeExecutedButUnobservedNeedsReconcileWithoutRedispatch(t *t
 
 	executed := make(chan executor.Result, 1)
 	var attempts atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		attempts.Add(1)
-		result, next, executeErr := executor.Execute(ctx, run, dispatch, authorization)
+		result, executeErr := executor.Perform(ctx, dispatch)
 		executed <- result
-		return result, next, executeErr
+		return result, executeErr
 	}))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_execution_ambiguous", "templateId": "execution-ambiguous",
@@ -337,8 +337,8 @@ func TestProcessRuntimeExecutedButUnobservedNeedsReconcileWithoutRedispatch(t *t
 func TestProcessRuntimeExplicitReissueAndRecordOutcome(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reconcile", 1))
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
-		return executor.Result{}, nil, errors.New("leave a cold outstanding command")
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(context.Context, *executor.Dispatch) (executor.Result, error) {
+		return executor.Result{}, errors.New("leave a cold outstanding command")
 	}))
 
 	create := func(id string) processRuntimeRunView {
@@ -355,7 +355,7 @@ func TestProcessRuntimeExplicitReissueAndRecordOutcome(t *testing.T) {
 	agentd.WaitForProcessRunRuntimeForTest()
 
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(executor.Execute))
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(executor.Perform))
 	invalidReissue := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+reissueRun.ID+"/reissue", map[string]any{"outcome": "succeeded"})
 	require.Equal(t, http.StatusBadRequest, invalidReissue.Code, invalidReissue.Body.String())
 	reissue := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+reissueRun.ID+"/reissue", map[string]any{})
@@ -379,8 +379,8 @@ func TestProcessRuntimeExplicitReissueAndRecordOutcome(t *testing.T) {
 func TestProcessRuntimeConcurrentReconcileCannotDoubleDispatch(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("reconcile-race", 1))
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
-		return executor.Result{}, nil, errors.New("leave command ambiguous")
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(context.Context, *executor.Dispatch) (executor.Result, error) {
+		return executor.Result{}, errors.New("leave command ambiguous")
 	}))
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
 		"id": "run_reconcile_race", "templateId": "reconcile-race",
@@ -393,12 +393,12 @@ func TestProcessRuntimeConcurrentReconcileCannotDoubleDispatch(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		if dispatches.Add(1) == 1 {
 			close(entered)
 		}
 		<-release
-		return executor.Execute(ctx, run, dispatch, authorization)
+		return executor.Perform(ctx, dispatch)
 	}))
 
 	start := make(chan struct{})
@@ -463,15 +463,17 @@ func TestProcessRuntimeRestartBetweenAtomicCommandsRequiresReconciliation(t *tes
 	testharness.DecodeJSON(t, reopened, &edit)
 	assert.Equal(t, "saved before runtime creation", edit.Template.Description)
 
-	var executions atomic.Int32
-	firstObserved := make(chan struct{})
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
-		result, next, err := executor.Execute(ctx, run, dispatch, authorization)
-		if executions.Add(1) == 1 && err == nil {
-			close(firstObserved)
-			return result, next, errors.New("stop daemon after first durable observation")
+	// Model a daemon that dies with the FIRST observation durably committed and
+	// the SECOND command already durable but never reported: the first program
+	// runs for real, the second one's worker returns no observation at all.
+	var performs atomic.Int32
+	secondReached := make(chan struct{})
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		if performs.Add(1) == 1 {
+			return executor.Perform(ctx, dispatch)
 		}
-		return result, next, err
+		close(secondReached)
+		return executor.Result{}, errors.New("stop daemon after the first durable observation")
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -481,9 +483,9 @@ func TestProcessRuntimeRestartBetweenAtomicCommandsRequiresReconciliation(t *tes
 	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
 	var run processRuntimeRunView
 	testharness.DecodeJSON(t, created, &run)
-	<-firstObserved
+	<-secondReached
 	agentd.WaitForProcessRunRuntimeForTest()
-	require.Equal(t, int32(1), executions.Load())
+	require.Equal(t, int32(2), performs.Load())
 	between := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+run.ID, nil)
 	require.Equal(t, http.StatusOK, between.Code, between.Body.String())
 	var halfway processRuntimeRunView
@@ -499,7 +501,8 @@ func TestProcessRuntimeRestartBetweenAtomicCommandsRequiresReconciliation(t *tes
 	// process; the only state it shares is HOME (SQLite) and the authoring root.
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
 	freshView := runProcessRuntimeFreshHost(t, f.World.HomeDir, root, run.ID)
-	assert.Equal(t, int32(1), executions.Load(), "the old host never executes the second command")
+	assert.Equal(t, int32(2), performs.Load(),
+		"neither host re-runs the second command; the fresh host only reports it")
 	assert.Equal(t, engine.RunRunning, freshView.Status)
 	assert.Equal(t, "needs_reconcile", freshView.Action)
 
@@ -520,7 +523,7 @@ func TestProcessRuntimeFreshHostHelper(t *testing.T) {
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
 	t.Cleanup(agentd.SetProcessStoreRootForTest(os.Getenv("TCLAUDE_TEST_PROCESS_STORE_ROOT")))
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(executor.Execute))
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(executor.Perform))
 	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
 
 	mux := agentd.BuildHandlerForTest()
@@ -561,12 +564,12 @@ func TestProcessRuntimeConcurrentResumeCannotDoubleDispatch(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		if dispatches.Add(1) == 1 {
 			close(entered)
 		}
 		<-release
-		return executor.Execute(ctx, run, dispatch, authorization)
+		return executor.Perform(ctx, dispatch)
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -595,11 +598,11 @@ func TestProcessRuntimeCapacityReturnsCreatedRunnableRun(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{}, db.MaxProcessRunReadPage)
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(context.Context, *executor.Dispatch) (executor.Result, error) {
 		dispatches.Add(1)
 		entered <- struct{}{}
 		<-release
-		return executor.Result{}, nil, errors.New("release capacity test claim")
+		return executor.Result{}, errors.New("release capacity test claim")
 	}))
 
 	for i := range db.MaxProcessRunReadPage {
@@ -643,10 +646,10 @@ func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown", 1))
 	entered := make(chan struct{})
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, run *executor.Run, dispatch *executor.Dispatch, authorization executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
 		close(entered)
 		<-ctx.Done()
-		return executor.Execute(ctx, run, dispatch, authorization)
+		return executor.Perform(ctx, dispatch)
 	}))
 
 	created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -674,10 +677,10 @@ func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
 	f, root := processRuntimeFlow(t)
 	putProcessRuntimeTemplate(t, root, processRuntimeTemplate("shutdown-capacity", 1))
 	entered := make(chan struct{}, db.MaxProcessRunReadPage)
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(ctx context.Context, _ *executor.Run, _ *executor.Dispatch, _ executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(ctx context.Context, _ *executor.Dispatch) (executor.Result, error) {
 		entered <- struct{}{}
 		<-ctx.Done()
-		return executor.Result{}, nil, ctx.Err()
+		return executor.Result{}, ctx.Err()
 	}))
 	for i := range db.MaxProcessRunReadPage {
 		created := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs", map[string]any{
@@ -882,9 +885,9 @@ func TestProcessRuntimeStartupAndFallbackScansOneBoundedPage(t *testing.T) {
 		createRunnableProcessRunFixture(t, fmt.Sprintf("run_%03d", i), record.Ref, tmpl)
 	}
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(context.Context, *executor.Dispatch) (executor.Result, error) {
 		dispatches.Add(1)
-		return executor.Result{}, nil, errors.New("stop after the bounded page prepared")
+		return executor.Result{}, errors.New("stop after the bounded page prepared")
 	}))
 
 	agentd.RunProcessRunSweepForTest()
@@ -925,9 +928,9 @@ func TestProcessRuntimeReconciliationOnlyPageAdvancesFallbackCursor(t *testing.T
 		WHERE id >= 'run_cursor_00' AND id <= 'run_cursor_31'`)
 	require.NoError(t, err)
 	var dispatches atomic.Int32
-	t.Cleanup(agentd.SetProcessProgramExecuteForTest(func(context.Context, *executor.Run, *executor.Dispatch, executor.Authorization) (executor.Result, *executor.Dispatch, error) {
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(context.Context, *executor.Dispatch) (executor.Result, error) {
 		dispatches.Add(1)
-		return executor.Result{}, nil, errors.New("stop after cursor proof")
+		return executor.Result{}, errors.New("stop after cursor proof")
 	}))
 
 	agentd.RunProcessRunSweepForTest()
@@ -941,20 +944,30 @@ func TestProcessRuntimeReconciliationOnlyPageAdvancesFallbackCursor(t *testing.T
 }
 
 type processRuntimeRunView struct {
-	ID                    string                      `json:"id"`
-	Params                map[string]string           `json:"params"`
-	ProgramAuthorizations []string                    `json:"programAuthorizations"`
-	Status                engine.RunStatus            `json:"status"`
-	StateVersion          int64                       `json:"stateVersion"`
-	Action                string                      `json:"action"`
-	NeedsReconcile        bool                        `json:"needsReconcile"`
-	AwaitingDecision      *processRuntimeDecisionView `json:"awaitingDecision"`
-	Checkpoint            engine.Checkpoint           `json:"checkpoint"`
+	ID                    string                       `json:"id"`
+	Params                map[string]string            `json:"params"`
+	ProgramAuthorizations []string                     `json:"programAuthorizations"`
+	Status                engine.RunStatus             `json:"status"`
+	StateVersion          int64                        `json:"stateVersion"`
+	Action                string                       `json:"action"`
+	NeedsReconcile        bool                         `json:"needsReconcile"`
+	AwaitingDecision      *processRuntimeDecisionView  `json:"awaitingDecision"`
+	AwaitingDecisions     []processRuntimeDecisionView `json:"awaitingDecisions"`
+	Commands              []processRuntimeCommandView  `json:"commands"`
+	Checkpoint            engine.Checkpoint            `json:"checkpoint"`
 }
 
 type processRuntimeDecisionView struct {
 	NodeID   string   `json:"nodeId"`
 	Verdicts []string `json:"verdicts"`
+}
+
+type processRuntimeCommandView struct {
+	CommandID string `json:"commandId"`
+	NodeID    string `json:"nodeId"`
+	Profile   string `json:"profile"`
+	Program   string `json:"program"`
+	State     string `json:"state"`
 }
 
 type processRuntimeEventPage struct {

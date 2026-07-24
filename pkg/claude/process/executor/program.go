@@ -46,44 +46,28 @@ type Result struct {
 	CleanupError    string                    `json:"cleanupError,omitempty"`
 }
 
-// Execute validates explicit per-run authorization, dispatches argv without a
-// shell, waits for process cleanup, and atomically commits the observation plus
-// the next prepared command (or terminal state). It returns that committed
-// next dispatch to the same live owner. A commit failure leaves the durable
-// outstanding command for explicit reconciliation.
-func Execute(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, *Dispatch, error) {
-	result, err := runProgram(ctx, run, dispatch, authorization)
-	if err != nil {
-		return Result{}, nil, err
-	}
-	next, err := recordResult(run, dispatch, result)
-	if err != nil {
-		// The program may have executed, so the spent in-memory permission must
-		// never become dispatchable again. Dropping it exposes the same explicit
-		// reconciliation actions as a cold load of the durable outstanding row.
-		run.dispatch = nil
-		return result, nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
-	}
-	return result, next, nil
-}
-
-func runProgram(ctx context.Context, run *Run, dispatch *Dispatch, authorization Authorization) (Result, error) {
-	if run == nil || dispatch == nil || dispatch.owner != run || dispatch.stateVersion != run.stateVersion || run.dispatch != dispatch {
+// Perform runs one claimed permission's program: argv without a shell, waited
+// for through process cleanup.
+//
+// It is the ONLY executor entry point a worker goroutine may call. It reads
+// nothing but the permission's own immutable command, mutates no run or
+// checkpoint state, and touches no store. Everything durable about the result
+// happens later, in the owner, through Observe. The permission must already
+// have been Claimed by that owner, which is what proves the authorization was
+// checked against this exact command and that no second worker can run it.
+func Perform(ctx context.Context, dispatch *Dispatch) (Result, error) {
+	if dispatch == nil || !dispatch.claimed.Load() {
 		return Result{}, ErrStaleDispatch
 	}
-	command := dispatch.command
-	if authorization.RunID != run.id || authorization.Profile != command.Program.Profile {
-		return Result{}, ErrUnauthorized
-	}
-	dispatch.mu.Lock()
-	if dispatch.used {
-		dispatch.mu.Unlock()
+	// Consume the permission BEFORE the external program can start. This is the
+	// last line of defence against running one command twice: it does not
+	// assume the caller followed Claim-then-Perform-once, and it holds for a
+	// concurrent second attempt as much as a sequential one. A program that
+	// then fails, times out, or is cancelled does not hand the permission back.
+	if !dispatch.spent.CompareAndSwap(false, true) {
 		return Result{}, ErrStaleDispatch
 	}
-	dispatch.used = true
-	dispatch.mu.Unlock()
-
-	return programPerform(ctx, run.id, command)
+	return programPerform(ctx, dispatch.runID, dispatch.command)
 }
 
 func performProgram(ctx context.Context, runID string, command engine.Command) (Result, error) {
@@ -153,8 +137,27 @@ func performProgram(ctx context.Context, runID string, command engine.Command) (
 	return result, nil
 }
 
-func recordResult(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
-	if run == nil || dispatch == nil || dispatch.owner != run || dispatch.stateVersion != run.stateVersion || run.dispatch != dispatch || !dispatch.wasUsed() {
+// Observe atomically commits one worker's program observation together with
+// whatever the engine can immediately advance and the at-most-one command that
+// advance plans. It is owner-only, and it is the single point at which an
+// external program's outcome becomes durable.
+//
+// Committing the observation and its follow-on plan in one transaction is what
+// makes a finished branch refill exactly one concurrency slot without ever
+// leaving a gap a crash could land in. The owner tops up the rest of its
+// capacity with Prepare.
+//
+// A commit failure drops the spent permission: the program may really have run,
+// so the durable command stays outstanding and becomes explicitly reconcilable
+// exactly as a cold load would leave it.
+func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
+	// Claimed, still live, and still this run's permission for that node. It
+	// deliberately does NOT require the permission to be spent: the owner
+	// substitutes its own performer at the worker boundary, and whether that
+	// performer went through Perform is not Observe's business. Running a
+	// command at most once is enforced where the program actually starts.
+	if run == nil || dispatch == nil || dispatch.owner != run || !dispatch.claimed.Load() ||
+		run.dispatches[dispatch.command.NodeID] != dispatch {
 		return nil, ErrStaleDispatch
 	}
 	command := dispatch.command
@@ -168,21 +171,20 @@ func recordResult(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error
 		return nil, err
 	}
 	observed := event("program_observed", &command, executorActor, result)
-	// Settling this observation can activate more than one branch, so the follow-on
-	// advance plans the next single command this sequential driver can carry. The
-	// branches it did not plan stay ready and are planned by later calls.
+	// Settling this observation can activate more than one branch; the follow-on
+	// advance plans one of them. The branches it did not plan stay ready until
+	// the owner has capacity for them.
 	advanced, planned, _, err := engine.AdvanceAndPlan(next, run.definition)
 	if err != nil {
 		return nil, err
 	}
 	events := append([]db.ProcessRunEvent{observed}, advanceEvidence(next, advanced, planned)...)
 	if err := persistEvents(run, advanced, events); err != nil {
-		return nil, err
+		Abandon(run, dispatch)
+		return nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)
 	}
 	if planned != nil {
-		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*planned)}
-		run.dispatch = d
-		return d, nil
+		return run.grant(*planned), nil
 	}
 	return nil, nil
 }

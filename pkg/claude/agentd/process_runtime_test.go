@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 )
 
 func TestProcessRunCreateAuditDetailExcludesParams(t *testing.T) {
@@ -47,4 +48,32 @@ func TestProcessRunManagerCapsRetainedActiveClaims(t *testing.T) {
 		manager.release(id, claim)
 	}
 	manager.wg.Wait()
+}
+
+// TestProcessRunClaimAccountsUnderTheSameLockTheViewReads pins the ordering
+// property that makes the accounting windows safe at all: the owner holds the
+// accounting lock ACROSS its planning commit, so a reader — which takes the
+// same lock — cannot slip between "the command became durable" and "its owner
+// accounts for it". The flow tests exercise the real handoff windows; this
+// states the invariant they rely on, without depending on timing.
+func TestProcessRunClaimAccountsUnderTheSameLockTheViewReads(t *testing.T) {
+	claim := &processRunClaim{accounted: map[string]struct{}{}}
+	committed := false
+
+	_, err := claim.plan(func() (*executor.Dispatch, error) {
+		committed = true
+		// The accounting lock is the same one accountedNodes takes, and it is
+		// already held while this commit runs. Nothing else has taken it, so a
+		// failed acquisition here can only mean plan is holding it.
+		assert.False(t, claim.mu.TryLock(),
+			"the planning commit must run with the accounting lock held")
+		return nil, nil
+	})
+	require.NoError(t, err)
+	assert.True(t, committed)
+
+	// And it is released afterwards, so readers are not starved.
+	require.True(t, claim.mu.TryLock())
+	claim.mu.Unlock()
+	assert.Empty(t, claim.accountedNodes(), "a commit that planned nothing accounts nothing")
 }

@@ -109,7 +109,7 @@ func TestFanOutRunDispatchesAndCompletesEveryBranchSequentially(t *testing.T) {
 	for dispatch != nil {
 		require.Len(t, run.checkpoint.Commands, 1, "sequential consumption must keep one command in flight")
 		executed = append(executed, dispatch.command.NodeID)
-		_, next, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
+		_, next, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
 		require.NoError(t, err)
 		dispatch = next
 	}
@@ -155,7 +155,7 @@ func TestFanOutColdRestartKeepsTheDurableCommandReconcilable(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNeedsReconcile)
 
 	// Reconciling that one command releases the branch and the run keeps going.
-	require.NoError(t, RecordOutcome(cold, "operator", RecordedOutcome{
+	require.NoError(t, RecordOutcome(cold, "operator", "", RecordedOutcome{
 		Outcome: engine.ProgramSucceeded, Note: "verified out of band",
 	}))
 	resumed, err := Prepare(cold)
@@ -164,7 +164,7 @@ func TestFanOutColdRestartKeepsTheDurableCommandReconcilable(t *testing.T) {
 	assert.NotEqual(t, firstNode, resumed.command.NodeID, "reconciliation must not replay the same branch")
 
 	for resumed != nil {
-		_, next, err := Execute(t.Context(), cold, resumed, Authorization{RunID: cold.ID(), Profile: program.Profile})
+		_, next, err := executeForTest(t.Context(), cold, resumed, Authorization{RunID: cold.ID(), Profile: program.Profile})
 		require.NoError(t, err)
 		resumed = next
 	}
@@ -191,7 +191,7 @@ func TestConcurrentDecisionObligationsAreIndividuallyAddressable(t *testing.T) {
 	require.Equal(t, ActionAwaitDecision, action.Kind)
 	require.NotNil(t, action.Decision)
 	assert.Equal(t, "decide-a", action.Decision.NodeID)
-	assert.Equal(t, []string{"no", "yes"}, run.DecisionVerdicts())
+	assert.Equal(t, []string{"no", "yes"}, run.VerdictsFor(action.Decision.NodeID))
 
 	// Address the SECOND branch directly, out of presentation order.
 	require.NoError(t, RecordDecision(run, "operator", DecisionInput{NodeID: "decide-b", Verdict: "yes"}))
@@ -252,7 +252,7 @@ func TestBranchTaskDispatchesWhileAnotherBranchAwaitsADecision(t *testing.T) {
 	assert.Equal(t, "task-b", dispatch.command.NodeID)
 	require.Len(t, run.checkpoint.AwaitingDecisions, 1)
 
-	_, next, err := Execute(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
+	_, next, err := executeForTest(t.Context(), run, dispatch, Authorization{RunID: run.ID(), Profile: program.Profile})
 	require.NoError(t, err)
 	assert.Nil(t, next)
 	// With its own branch settled, the run correctly reports the remaining
