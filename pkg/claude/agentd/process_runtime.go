@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -67,26 +68,37 @@ const (
 	processRunResume processRunStartMode = iota
 	processRunReissue
 	processRunRecordOutcome
+	processRunDecide
 )
 
 type processRunStart struct {
-	mode    processRunStartMode
-	actor   string
-	outcome executor.RecordedOutcome
+	mode     processRunStartMode
+	actor    string
+	outcome  executor.RecordedOutcome
+	decision executor.DecisionInput
 }
 
 type processRunView struct {
-	ID                    string            `json:"id"`
-	TemplateRef           string            `json:"templateRef"`
-	Params                map[string]string `json:"params"`
-	ProgramAuthorizations []string          `json:"programAuthorizations"`
-	Status                engine.RunStatus  `json:"status"`
-	StateVersion          int64             `json:"stateVersion"`
-	Checkpoint            engine.Checkpoint `json:"checkpoint"`
-	Action                string            `json:"action"`
-	NeedsReconcile        bool              `json:"needsReconcile"`
-	CreatedAt             time.Time         `json:"createdAt"`
-	UpdatedAt             time.Time         `json:"updatedAt"`
+	ID                    string                  `json:"id"`
+	TemplateRef           string                  `json:"templateRef"`
+	Params                map[string]string       `json:"params"`
+	ProgramAuthorizations []string                `json:"programAuthorizations"`
+	Status                engine.RunStatus        `json:"status"`
+	StateVersion          int64                   `json:"stateVersion"`
+	Checkpoint            engine.Checkpoint       `json:"checkpoint"`
+	Action                string                  `json:"action"`
+	NeedsReconcile        bool                    `json:"needsReconcile"`
+	AwaitingDecision      *processRunDecisionView `json:"awaitingDecision,omitempty"`
+	CreatedAt             time.Time               `json:"createdAt"`
+	UpdatedAt             time.Time               `json:"updatedAt"`
+}
+
+// processRunDecisionView presents the awaited decision with its selectable
+// verdicts derived from the prepared definition; the durable checkpoint keeps
+// only the obligation identity.
+type processRunDecisionView struct {
+	NodeID   string   `json:"nodeId"`
+	Verdicts []string `json:"verdicts"`
 }
 
 type processRunSummaryView struct {
@@ -119,6 +131,12 @@ type processRunOutcomeRequest struct {
 	ExitCode int                   `json:"exitCode"`
 	Error    string                `json:"error,omitempty"`
 	Note     string                `json:"note,omitempty"`
+}
+
+type processRunDecideRequest struct {
+	NodeID   string `json:"nodeId"`
+	Verdict  string `json:"verdict"`
+	Evidence string `json:"evidence,omitempty"`
 }
 
 func newProcessRunManager() *processRunManager {
@@ -215,6 +233,15 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		if err == nil {
 			dispatch, err = prepareProcessRun(run)
 		}
+	case processRunDecide:
+		err = executor.RecordDecision(run, start.actor, start.decision)
+		if err == nil {
+			// The decision itself committed atomically above. A failure in this
+			// follow-on prepare surfaces as an error even though the verdict is
+			// durable; the bounded sweep resumes the run, and a client retry is
+			// correctly refused as stale.
+			dispatch, err = prepareProcessRun(run)
+		}
 	default:
 		err = fmt.Errorf("unknown process run start mode")
 	}
@@ -225,10 +252,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		switch run.Action().Kind {
 		case executor.ActionNeedsReconcile:
 			return false, executor.ErrNeedsReconcile
-		case executor.ActionTerminal:
+		case executor.ActionAwaitDecision, executor.ActionTerminal:
 			return false, nil
 		default:
-			return false, fmt.Errorf("process run did not become dispatchable or terminal")
+			return false, fmt.Errorf("process run did not become dispatchable, decision-blocked, or terminal")
 		}
 	}
 
@@ -243,7 +270,7 @@ func prepareProcessRun(run *executor.Run) (*executor.Dispatch, error) {
 		return executor.Prepare(run)
 	case executor.ActionNeedsReconcile:
 		return nil, executor.ErrNeedsReconcile
-	case executor.ActionTerminal:
+	case executor.ActionAwaitDecision, executor.ActionTerminal:
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("process run already has a live dispatch")
@@ -277,7 +304,7 @@ func (m *processRunManager) drive(ctx context.Context, runID string, claim *proc
 			continue
 		}
 		switch claim.run.Action().Kind {
-		case executor.ActionTerminal, executor.ActionNeedsReconcile:
+		case executor.ActionTerminal, executor.ActionNeedsReconcile, executor.ActionAwaitDecision:
 			return
 		default:
 			slog.Warn("process runtime: unexpected post-execution action", "run", runID,
@@ -599,6 +626,57 @@ func handleProcessRunRecordOutcome(w http.ResponseWriter, r *http.Request) {
 	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
 }
 
+// handleProcessRunDecide records one manual decision verdict. The input is
+// bound to the awaited decision node and the durable state-version CAS, so
+// duplicate, stale, wrong-node, and concurrent attempts are refused; the actor
+// is always the authenticated caller, never request content.
+func handleProcessRunDecide(w http.ResponseWriter, r *http.Request) {
+	caller, ok := requirePermission(w, r, PermProcessRunsManage)
+	if !ok {
+		return
+	}
+	var request processRunDecideRequest
+	if err := decodeProcessRuntimeRequest(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, "process_run_request", err.Error())
+		return
+	}
+	actor, err := processTemplateAuthor(caller)
+	if err != nil {
+		writeError(w, http.StatusForbidden, "process_run_actor", err.Error())
+		return
+	}
+	runID := r.PathValue("id")
+	// The detail records the attempt (including refused input), so the raw
+	// request fields are neutralized before they reach the audit row.
+	setAuditDetail(r, "run: "+runID+", decision node: "+stripControl(request.NodeID)+
+		", verdict: "+stripControl(request.Verdict))
+	started, err := processRuns.begin(runID, processRunStart{
+		mode: processRunDecide, actor: string(actor),
+		decision: executor.DecisionInput{NodeID: request.NodeID, Verdict: request.Verdict, Evidence: request.Evidence},
+	})
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	view, err := loadProcessRunView(runID)
+	if err != nil {
+		writeProcessRuntimeError(w, err)
+		return
+	}
+	writeProcessJSON(w, http.StatusAccepted, map[string]any{"started": started, "run": view})
+}
+
+// stripControl drops control characters from untrusted request text before it
+// is embedded in a human-facing audit detail line.
+func stripControl(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, value)
+}
+
 func createProcessRun(ctx context.Context, request processRunCreateRequest, actor string) (*executor.Run, error) {
 	templateID := strings.TrimSpace(request.TemplateID)
 	if templateID == "" {
@@ -759,11 +837,19 @@ func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
 	claimed := processRuns.claimed(record.ID)
 	action := "runnable"
 	needsReconcile := false
+	var awaiting *processRunDecisionView
 	switch {
-	case checkpoint.OutstandingCommand != nil && claimed:
+	case checkpoint.OutstandingCommand() != nil && claimed:
 		action = "executing"
-	case checkpoint.OutstandingCommand != nil:
+	case checkpoint.OutstandingCommand() != nil:
 		action, needsReconcile = "needs_reconcile", true
+	case checkpoint.AwaitingDecision() != nil:
+		action = "awaiting_decision"
+		decision, err := processRunDecisionViewOf(record, checkpoint.AwaitingDecision().NodeID)
+		if err != nil {
+			return processRunView{}, err
+		}
+		awaiting = decision
 	case checkpoint.Status != engine.RunRunning:
 		action = "terminal"
 	case claimed:
@@ -773,9 +859,32 @@ func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
 		ID: record.ID, TemplateRef: record.TemplateRef, Params: params,
 		ProgramAuthorizations: authorizations, Status: checkpoint.Status,
 		StateVersion: record.StateVersion, Checkpoint: checkpoint,
-		Action: action, NeedsReconcile: needsReconcile,
+		Action: action, NeedsReconcile: needsReconcile, AwaitingDecision: awaiting,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}, nil
+}
+
+// processRunDecisionViewOf derives the awaited decision's verdict vocabulary
+// by preparing the run's pinned snapshot once for this read. The checkpoint
+// deliberately stores only the obligation identity.
+func processRunDecisionViewOf(record *db.ProcessRun, nodeID string) (*processRunDecisionView, error) {
+	var tmpl model.Template
+	if err := strictjson.Decode(record.TemplateSnapshotJSON, &tmpl); err != nil {
+		return nil, fmt.Errorf("%w: decode template snapshot: %v", executor.ErrInvalidRun, err)
+	}
+	var params map[string]string
+	if err := record.DecodeParams(&params); err != nil {
+		return nil, fmt.Errorf("%w: %v", executor.ErrInvalidRun, err)
+	}
+	definition, err := engine.Prepare(&tmpl, params)
+	if err != nil {
+		return nil, fmt.Errorf("%w: prepare definition: %v", executor.ErrInvalidRun, err)
+	}
+	verdicts, ok := definition.DecisionVerdicts(nodeID)
+	if !ok {
+		return nil, fmt.Errorf("%w: awaited node %q is not a prepared decision", executor.ErrInvalidRun, nodeID)
+	}
+	return &processRunDecisionView{NodeID: nodeID, Verdicts: verdicts}, nil
 }
 
 func decodeProcessRuntimeRequest(w http.ResponseWriter, r *http.Request, dst any) error {
@@ -813,6 +922,14 @@ func writeProcessRuntimeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "process_run_needs_reconcile", err.Error())
 	case errors.Is(err, executor.ErrNoReconciliation):
 		writeError(w, http.StatusConflict, "process_run_not_reconcilable", err.Error())
+	case errors.Is(err, engine.ErrStaleDecision):
+		writeError(w, http.StatusConflict, "process_decision_stale", err.Error())
+	case errors.Is(err, db.ErrProcessRunVersionConflict):
+		writeError(w, http.StatusConflict, "process_run_conflict", err.Error())
+	case errors.Is(err, engine.ErrInvalidDecisionVerdict):
+		writeError(w, http.StatusUnprocessableEntity, "process_decision_verdict", err.Error())
+	case errors.Is(err, executor.ErrInvalidDecisionInput):
+		writeError(w, http.StatusUnprocessableEntity, "process_decision_invalid", err.Error())
 	case errors.As(err, &eligibilityErr), errors.Is(err, engine.ErrTemplateIneligible),
 		errors.Is(err, engine.ErrInvalidCheckpoint), errors.Is(err, engine.ErrInvalidTransition),
 		errors.Is(err, executor.ErrInvalidRun), errors.Is(err, db.ErrProcessRunInvalid),
