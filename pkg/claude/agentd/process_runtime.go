@@ -1060,7 +1060,9 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 	}}
 	// A template whose entry node is a decision is parked on a human from the
 	// moment it is created, so the obligation has to be announced here: no
-	// engine advance will ever produce the evidence row for it.
+	// engine advance will ever produce the evidence row for it. The caller
+	// asked for a run, not for this obligation — initialization created it —
+	// so it carries the same engine actor a downstream obligation would.
 	for _, obligation := range checkpoint.AwaitingDecisions {
 		awaited, err := json.Marshal(struct {
 			NodeID string `json:"nodeId"`
@@ -1070,7 +1072,7 @@ func createProcessRun(ctx context.Context, request processRunCreateRequest, acto
 		}
 		initialEvents = append(initialEvents, db.ProcessRunEvent{
 			Sequence: int64(len(initialEvents)) + 1, OccurredAt: createdAt, NodeID: obligation.NodeID,
-			Kind: "decision_awaited", PayloadJSON: awaited, Actor: actor,
+			Kind: "decision_awaited", PayloadJSON: awaited, Actor: executor.EngineActor,
 		})
 	}
 	err = db.CreateProcessRun(db.ProcessRunCreate{

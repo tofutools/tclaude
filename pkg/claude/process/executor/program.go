@@ -170,7 +170,7 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	observed := event("program_observed", &command, executorActor, result)
+	observed := event("program_observed", &command, EngineActor, result)
 	// Settling this observation can activate more than one branch; the follow-on
 	// advance plans one of them. The branches it did not plan stay ready until
 	// the owner has capacity for them.

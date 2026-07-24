@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/process/engine"
+	"github.com/tofutools/tclaude/pkg/claude/process/executor"
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -167,8 +168,24 @@ func TestProcessRuntimeDirectDecisionEntryIsAwaitedAtCreationAndSurvivesRestart(
 	assert.Empty(t, run.Commands)
 
 	// Creation is the only thing that ever happened, so it has to be what
-	// announces the obligation: no engine advance will.
-	assert.Equal(t, []string{"run_created", "decision_awaited"}, processRunEventKinds(t, f, run.ID))
+	// announces the obligation: no engine advance will. The caller asked for a
+	// run; initialization is what created the obligation, so the two rows are
+	// attributed to different actors.
+	created := processRunEvents(t, f, run.ID)
+	require.Len(t, created.Events, 2)
+	assert.Equal(t, int64(1), created.Events[0].Sequence)
+	assert.Equal(t, "run_created", created.Events[0].Kind)
+	assert.Empty(t, created.Events[0].NodeID)
+	creator := created.Events[0].Actor
+	assert.NotEmpty(t, creator, "run_created is attributed to the authenticated caller")
+	assert.NotEqual(t, executor.EngineActor, creator)
+
+	assert.Equal(t, int64(2), created.Events[1].Sequence)
+	assert.Equal(t, "decision_awaited", created.Events[1].Kind)
+	assert.Equal(t, "choose", created.Events[1].NodeID)
+	assert.JSONEq(t, `{"nodeId":"choose"}`, string(created.Events[1].Payload))
+	assert.Equal(t, executor.EngineActor, created.Events[1].Actor,
+		"an obligation the engine created is attributed to the engine, exactly as a downstream one is")
 
 	// Restart: a fresh OS process rebuilds the mux and runs the recovery sweep.
 	// An awaited decision is not runnable work, so nothing is dispatched.
@@ -180,6 +197,13 @@ func TestProcessRuntimeDirectDecisionEntryIsAwaitedAtCreationAndSurvivesRestart(
 	assert.Equal(t, "choose", fresh.AwaitingDecision.NodeID)
 	assert.Equal(t, []string{"approve", "reject"}, fresh.AwaitingDecision.Verdicts)
 	assert.Zero(t, gate.performs.Load(), "an entry decision must not dispatch anything")
+	assert.Equal(t, []string{"run_created", "decision_awaited"}, processRunEventKinds(t, f, run.ID),
+		"a restart re-reads the durable obligation; it does not re-announce it")
+
+	// A resume against the same standing obligation is a durable no-op too.
+	resume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/resume", map[string]any{})
+	require.Equal(t, http.StatusAccepted, resume.Code, resume.Body.String())
+	assert.Equal(t, []string{"run_created", "decision_awaited"}, processRunEventKinds(t, f, run.ID))
 
 	decide := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/decide",
 		map[string]any{"nodeId": "choose", "verdict": "approve", "evidence": "answered after restart"})
@@ -194,10 +218,24 @@ func TestProcessRuntimeDirectDecisionEntryIsAwaitedAtCreationAndSurvivesRestart(
 	assert.Equal(t, engine.NodeDone, final.Checkpoint.Nodes["choose"])
 	assert.Equal(t, engine.NodeDone, final.Checkpoint.Nodes["work"])
 	assert.Equal(t, engine.NodeSkipped, final.Checkpoint.Nodes["canceled"])
+	settled := processRunEvents(t, f, run.ID)
+	kinds := make([]string, 0, len(settled.Events))
+	awaited := 0
+	for _, event := range settled.Events {
+		kinds = append(kinds, event.Kind)
+		if event.Kind == "decision_awaited" {
+			awaited++
+		}
+		if event.Kind == "decision_recorded" {
+			assert.Equal(t, "choose", event.NodeID)
+			assert.Equal(t, creator, event.Actor, "the verdict is the human's, not the engine's")
+		}
+	}
 	assert.Equal(t, []string{
 		"run_created", "decision_awaited", "decision_recorded",
 		"program_prepared", "program_observed", "engine_advanced",
-	}, processRunEventKinds(t, f, run.ID))
+	}, kinds)
+	assert.Equal(t, 1, awaited, "the entry obligation is announced exactly once for the run's lifetime")
 
 	duplicate := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/decide",
 		map[string]any{"nodeId": "choose", "verdict": "reject"})
@@ -241,12 +279,18 @@ func TestProcessRuntimeDirectEntryKeepsUnsupportedShapesRefused(t *testing.T) {
 	assert.Empty(t, listed.Runs, "an ineligible template must not create a run")
 }
 
-func processRunEventKinds(t *testing.T, f *testharness.Flow, runID string) []string {
+func processRunEvents(t *testing.T, f *testharness.Flow, runID string) processRuntimeEventPage {
 	t.Helper()
 	events := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/"+runID+"/events", nil)
 	require.Equal(t, http.StatusOK, events.Code, events.Body.String())
 	var page processRuntimeEventPage
 	testharness.DecodeJSON(t, events, &page)
+	return page
+}
+
+func processRunEventKinds(t *testing.T, f *testharness.Flow, runID string) []string {
+	t.Helper()
+	page := processRunEvents(t, f, runID)
 	kinds := make([]string, 0, len(page.Events))
 	for _, event := range page.Events {
 		kinds = append(kinds, event.Kind)
