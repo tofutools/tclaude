@@ -46,7 +46,37 @@ function groupsTabActive() {
   return !!s && s.classList.contains('active');
 }
 
-export async function refresh() {
+// Upper bound on one refresh's fetches. Deliberately generous: this is a
+// stuck-connection backstop, not a latency budget — a slow but progressing
+// snapshot must still be allowed to land. Its job is to guarantee that refresh()
+// always settles, so a wedged request cannot hold the poll's in-flight guard
+// (snapshot-poll.js) open.
+const SNAPSHOT_REQUEST_TIMEOUT_MS = 20000;
+
+// The abort handle of the refresh currently in flight. A newer refresh aborts
+// it: agentd rebuilds the entire snapshot per request, so letting a superseded
+// generation run to completion spends a full server-side build on a response the
+// request guard is going to discard anyway. Under a slow cycle those pile up and
+// make the very latency that caused the overlap worse.
+let inFlightFetches = null;
+
+// abortReason builds the rejection a cancelled fetch surfaces. Named AbortError
+// so it reads correctly anywhere the platform's own aborts are handled.
+function abortReason(message) {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
+}
+
+// refresh runs one poll cycle. options.includeLists:false asks for the snapshot
+// alone, skipping the Groups tab's paginated list endpoints — boot uses it so
+// the paint curtain is not held by the heavy lists (see startSnapshotPoll's
+// immediateOptions).
+// Reading the flag off an optional object keeps every existing bare `refresh`
+// reference — including the ones handed to action modules as a callback — on the
+// full-fetch path whatever they happen to pass.
+export async function refresh(options) {
+  const includeLists = options?.includeLists !== false;
   // responded flips true the instant the /api/snapshot fetch resolves (agentd
   // answered, any status). The catch below counts a disconnect ONLY when it's
   // still false — i.e. the fetch itself REJECTED (agentd unreachable) — so an
@@ -54,6 +84,16 @@ export async function refresh() {
   // masquerades as a connection drop. See connection.js.
   let responded = false;
   const requestId = dashboardState.beginRequest();
+  // Order matters: supersede the previous generation only after beginRequest
+  // has already invalidated it, so the abort can never race ahead of the
+  // generation bump and cancel a request that is still the current one.
+  const abort = new AbortController();
+  inFlightFetches?.abort(abortReason('superseded by a newer refresh'));
+  inFlightFetches = abort;
+  const timeoutId = setTimeout(
+    () => abort.abort(abortReason(`timed out after ${SNAPSHOT_REQUEST_TIMEOUT_MS / 1000}s`)),
+    SNAPSHOT_REQUEST_TIMEOUT_MS,
+  );
   const jobs = featureState('jobs');
   const jobsActive = dashboardState.activeTab.value === 'jobs' && !!jobs;
   if (jobsActive) jobs.beginRequest(requestId);
@@ -76,11 +116,14 @@ export async function refresh() {
     // error rejects to the outer catch.
     const groups = featureState('groups');
     const groupsQ = (groups?.query.value || '').trim();
-    const onGroups = groupsTabActive();
+    const onGroups = includeLists && groupsTabActive();
     // The Jobs tab's unified table (exports + cron) is windowed the same way —
     // fetched only while its tab is showing; the nav badge stays live off the
     // snapshot's export_jobs_active count regardless.
-    const get = (path) => fetch(path, { credentials: 'same-origin' }).catch(() => null);
+    const get = (path) => fetch(path, {
+      credentials: 'same-origin',
+      signal: abort.signal,
+    }).catch(() => null);
     const staticVersion = lastSnapshot?.static_version || '';
     const [retiredRequest, convRequest, replacedRequest] = fetchVisibleGroupListPages(
       groups, onGroups, groupsQ, get,
@@ -88,7 +131,7 @@ export async function refresh() {
     const [snapR, retiredR, convR, replacedR, jobsR] = await Promise.all([
       fetch('/api/snapshot' + (staticVersion
         ? '?static_version=' + encodeURIComponent(staticVersion)
-        : ''), { credentials: 'same-origin', cache: 'no-store' }),
+        : ''), { credentials: 'same-origin', cache: 'no-store', signal: abort.signal }),
       retiredRequest,
       convRequest,
       replacedRequest,
@@ -228,6 +271,10 @@ export async function refresh() {
     }
   } catch (e) {
     jobs?.failRequest(requestId, e);
+    // A superseded generation lands here too, because its in-flight fetches
+    // were aborted rather than left to complete. It stays silent for the same
+    // reason it always did: failRequest reports "not the current request" and
+    // we return before touching the banner or the status line.
     if (!dashboardState.failRequest(requestId, e, { responded })) return;
     // Only a REJECTED /api/snapshot fetch (agentd unreachable — connection
     // refused / network down, so `responded` never flipped) counts toward the
@@ -235,6 +282,12 @@ export async function refresh() {
     // client-side error, not a lost connection.
     if (!responded) noteDisconnected();
     showStatus('snapshot failed: ' + (e.message || e), true);
+  } finally {
+    clearTimeout(timeoutId);
+    // Only release the shared handle if a newer refresh has not already claimed
+    // it — otherwise a straggler would drop the successor's abort handle and
+    // leave that generation uncancellable.
+    if (inFlightFetches === abort) inFlightFetches = null;
   }
 }
 

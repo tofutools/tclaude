@@ -15,7 +15,7 @@ func TestDashboardSnapshotTransportWiring(t *testing.T) {
 	for _, needle := range []string{
 		"fetchVisibleGroupListPages(",
 		"const staticVersion = lastSnapshot?.static_version || ''",
-		"{ credentials: 'same-origin', cache: 'no-store' }",
+		"{ credentials: 'same-origin', cache: 'no-store', signal: abort.signal }",
 		"data.static_unchanged && prevSnap.static_version === data.static_version",
 		"data[key] = prevSnap[key]",
 	} {
