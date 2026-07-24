@@ -5665,11 +5665,12 @@ body:has(#tab-terminals.active) > nav {
 .cost-toggle:hover { opacity: 1; }
 .cost-toggle.off { opacity: 0.35; filter: grayscale(1); }
 
-/* WHAT-IF banner above the Costs chart — shown by costs.js only in WHAT-IF
-   mode (a subscription account that opted in). Amber so it reads as a caveat:
-   the figures below are hypothetical, not a real charge. */
+/* WHAT-IF banner at the top of the Costs tab — shown by the costs island only
+   in WHAT-IF mode (a subscription account that opted in). Amber so it reads as
+   a caveat: everything below it, header totals included, is hypothetical and
+   not a real charge. It leads the tab, so it carries no top margin. */
 .cost-whatif-banner {
-  margin: 8px 0; padding: 8px 12px; border-radius: 6px;
+  margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
   background: rgba(210, 153, 34, 0.12); border: 1px solid rgba(210, 153, 34, 0.4);
   color: #d6b25a; font-size: 12px; line-height: 1.5;
 }

@@ -40,6 +40,12 @@ func TestDashboardHTML_WhatIfCostWired(t *testing.T) {
 
 	// dashboard.html: the banner, the Config-tab opt-in checkbox, the toggle.
 	must(`id="costs-whatif-banner"`, "the WHAT-IF banner element exists in the Costs tab")
+	// The caveat qualifies every figure below it, header totals included, so it
+	// leads the island — before the controls, not between them and the chart.
+	if banner, controls := strings.Index(dashboardAssets, `id="costs-whatif-banner"`), strings.Index(dashboardAssets, "<${Controls} state="); banner < 0 || controls < 0 || banner > controls {
+		t.Errorf("WHAT-IF banner must render above the Costs controls (banner at %d, controls at %d)", banner, controls)
+	}
+	must("subscription estimates.'}${' '}", "the two banner sentences keep a space across htm's newline")
 	must(`id="cfg-cost-show-on-subscription"`, "the Config tab carries the show-on-subscription checkbox")
 	must(`id="groups-cost-toggle"`, "the Groups filter bar carries the 💲 cost toggle")
 

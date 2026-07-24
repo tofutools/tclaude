@@ -202,13 +202,17 @@ export function CostsApp({ state, actions }) {
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
   }, []);
+  // The WHAT-IF caveat leads the tab: it qualifies every figure below it,
+  // including the totals in the header, so it has to be read before them.
+  // (htm drops the whitespace around a newline, hence the explicit ${' '}
+  // between the interpolated first sentence and the second one.)
   return html`<div class="costs-island">
-    <${Controls} state=${state} actions=${actions} current=${current} />
-    <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
     <div id="costs-whatif-banner" class="cost-whatif-banner" hidden=${!current.hasWhatIf}>
-      <strong>⚠ WHAT-IF</strong> — ${current.hasReal ? 'this view mixes real billed spend with hypothetical subscription estimates.' : 'these figures are hypothetical subscription estimates.'}
+      <strong>⚠ WHAT-IF</strong> — ${current.hasReal ? 'this view mixes real billed spend with hypothetical subscription estimates.' : 'these figures are hypothetical subscription estimates.'}${' '}
       WHAT-IF values estimate equivalent pay-per-token pricing and are <strong>not real charges</strong>.
     </div>
+    <${Controls} state=${state} actions=${actions} current=${current} />
+    <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
     ${current.request.hasLoaded && html`<${Fragment}><${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} /><${CostsTable} state=${state} current=${current} /></${Fragment}>`}
   </div>`;
 }
