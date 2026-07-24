@@ -794,6 +794,55 @@ func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsManage))
 }
 
+// TestProcessRuntimeDisabledPrecedesPermissionAndApproval proves the ordering
+// invariant: while features.processes is off, EVERY daemon-owned runtime route
+// rejects with the stable processes_disabled response BEFORE permission
+// resolution and before any --ask-human access request can be created. A
+// disabled feature must never be approval-overridable. The agent caller holds
+// no process permission and supplies an --ask-human header; when the feature is
+// on the same POST would 403 on PermProcessRunsManage (see
+// TestProcessRuntimeFeatureFlagAndPermissionBoundaries), so a 404
+// processes_disabled here proves the gate runs first.
+func TestProcessRuntimeDisabledPrecedesPermissionAndApproval(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
+	const worker = "process-disabled-worker"
+	f.HaveEnrolledAgent(worker)
+
+	for _, route := range []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodGet, "/v1/process/runs", nil},
+		{http.MethodPost, "/v1/process/runs", map[string]any{"templateId": "demo"}},
+		{http.MethodGet, "/v1/process/runs/run_x", nil},
+		{http.MethodGet, "/v1/process/runs/run_x/events", nil},
+		{http.MethodPost, "/v1/process/runs/run_x/resume", map[string]any{}},
+		{http.MethodPost, "/v1/process/runs/run_x/reissue", map[string]any{}},
+		{http.MethodPost, "/v1/process/runs/run_x/record-outcome", map[string]any{"outcome": "succeeded"}},
+	} {
+		r := agentd.AsAgentPeer(testharness.JSONRequest(t, route.method, route.path, route.body), worker)
+		r.Header.Set("X-Tclaude-Ask-Human", "30s")
+		rec := testharness.Serve(f.Mux, r)
+		// A disabled route returns the stable processes_disabled 404 synchronously.
+		// Two things follow deterministically from the response alone:
+		//  - it is not a 403 carrying a process permission slug, so the gate ran
+		//    BEFORE permission resolution;
+		//  - it is not an approval outcome — had the --ask-human path been entered,
+		//    the handler would have created an access request and BLOCKED on the
+		//    human decision, never returning processes_disabled. So no approval
+		//    request can be created while the feature is off: it is not
+		//    approval-overridable.
+		assert.Equalf(t, http.StatusNotFound, rec.Code, "%s %s: %s", route.method, route.path, rec.Body.String())
+		assert.Containsf(t, rec.Body.String(), `"code":"processes_disabled"`, "%s %s", route.method, route.path)
+		assert.NotContainsf(t, rec.Body.String(), agentd.PermProcessRunsManage,
+			"%s %s must reject before permission resolution", route.method, route.path)
+		assert.NotContainsf(t, rec.Body.String(), agentd.PermProcessRunsRead,
+			"%s %s must reject before permission resolution", route.method, route.path)
+	}
+}
+
 // TestInfoProjectsProcessesFlag proves the daemon capability projection: the
 // open /v1/info endpoint reflects the current Processes flag as a single
 // boolean (never the private config contents), so a sandboxed CLI that cannot

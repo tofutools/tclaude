@@ -232,6 +232,85 @@ func TestRuntimeReachesEnabledDaemonRegardlessOfClientConfigView(t *testing.T) {
 	assert.Contains(t, stdout.String(), "run_reached")
 }
 
+// TestRuntimeReachesEnabledDaemonWhenPrivateConfigIsUnreadable models the
+// managed-agent sandbox faithfully: ~/.tclaude/data/config.json EXISTS but is
+// unreadable (permission denied) — the precise reason a sandboxed client's
+// config.Load() cannot be trusted. The runtime command must still reach an
+// enabled daemon rather than bailing on the unreadable local view.
+func TestRuntimeReachesEnabledDaemonWhenPrivateConfigIsUnreadable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// The on-disk flag even says ENABLED, but the client cannot read it.
+	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))
+	path := config.ConfigPath()
+	require.NoError(t, os.Chmod(path, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("cannot make config unreadable as this user (running as root?)")
+	}
+	// Prove the client's own config view is now unusable, so reaching the
+	// daemon cannot be an accident of a readable local flag.
+	cfg, err := config.Load()
+	require.Error(t, err)
+	assert.False(t, cfg.ProcessesEnabled())
+
+	previousAvailable := agent.DaemonAvailableImpl
+	agent.DaemonAvailableImpl = func() bool { return true }
+	t.Cleanup(func() { agent.DaemonAvailableImpl = previousAvailable })
+	var reachedPath string
+	previousRequest := agent.DaemonRequestImpl
+	agent.DaemonRequestImpl = func(_, p string, _, out any, _ agent.DaemonOpts) error {
+		reachedPath = p
+		return copyProcessJSON(processRunJSON{ID: "run_reached"}, out)
+	}
+	t.Cleanup(func() { agent.DaemonRequestImpl = previousRequest })
+
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runProcessRun(&processRunParams{TemplateID: "demo"}, &stdout, &stderr))
+	assert.Equal(t, "/v1/process/runs", reachedPath, "unreadable private config must not block reaching the daemon")
+	assert.Contains(t, stdout.String(), "run_reached")
+}
+
+// TestRuntimeMutationVerbsReachDaemon proves the remaining daemon-owned runtime
+// verbs beyond run/show/events — resume, reissue, record-outcome — also reach
+// the daemon without a client-side feature gate, each hitting its own route.
+func TestRuntimeMutationVerbsReachDaemon(t *testing.T) {
+	tests := map[string]struct {
+		run      func(stdout, stderr *bytes.Buffer) error
+		wantPath string
+	}{
+		"resume": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/resume", stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/resume",
+		},
+		"reissue": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessMutation(&processRunMutationParams{RunID: "run_1"}, "/reissue", stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/reissue",
+		},
+		"record-outcome": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessRecordOutcome(&processRecordOutcomeParams{RunID: "run_1", Outcome: "succeeded"}, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/record-outcome",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			var gotPath string
+			stubProcessRuntime(t, func(_ string, path string, _ any, _ any, _ agent.DaemonOpts) error {
+				gotPath = path
+				return nil
+			})
+			var stdout, stderr bytes.Buffer
+			require.NoError(t, test.run(&stdout, &stderr))
+			assert.Equal(t, test.wantPath, gotPath)
+		})
+	}
+}
+
 // TestRuntimeDisabledDaemonRejectsWithStableMessage proves that when the daemon
 // reports the feature disabled — its stable {code:"processes_disabled"} route
 // response — the client surfaces that exact message, even though the client's
