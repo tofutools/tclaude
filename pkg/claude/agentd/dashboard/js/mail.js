@@ -94,6 +94,12 @@ const ACCESS_ID = 'access-requests';
 // card with this id gets an .attn pulse + scrollIntoView on the next paint,
 // then it's cleared so the highlight doesn't stick across ticks.
 let accessHighlightId = null;
+// accessAutoSelectPending is armed when a jump to the approvals folder could
+// not name its target yet (focusAccessRequest with no id, before any snapshot
+// carrying a pending request has landed). The next snapshot that does carry one
+// opens it, then disarms. Leaving the folder disarms it too — by then the
+// operator has moved on and a late auto-open would yank the reader.
+let accessAutoSelectPending = false;
 // Group folders are keyed "group:<name>" (the server's groupMailboxPrefix).
 // They're aggregate views like the "all" firehose — every row renders
 // from→to, there's no per-folder "mark all read" (a group isn't a single
@@ -1062,6 +1068,16 @@ function accessRequests() {
     : [];
 }
 
+// oldestPendingAccessRequestId names the request an operator who jumped at the
+// approvals folder without picking a row almost certainly means: the one that
+// has been blocking an agent longest. The snapshot's pending block is already
+// sorted oldest-first server-side (dashboardSnapshot), so the first pending row
+// is that request.
+function oldestPendingAccessRequestId() {
+  const first = accessRequests().find(accessIsPending);
+  return first ? first.id : null;
+}
+
 function accessMatchesSearch(r, q) {
   if (!q) return true;
   q = q.toLowerCase();
@@ -1135,11 +1151,29 @@ async function decideAccess(id, decision) {
   }
 }
 
+// resolveArmedAccessAutoSelect completes a jump that arrived before the
+// snapshot knew of any pending request. Scoped tightly: it only fires while the
+// approvals folder is the open one and the operator has not picked a row
+// themselves in the meantime, so a late snapshot can never steal a selection.
+function resolveArmedAccessAutoSelect(list) {
+  if (!accessAutoSelectPending) return;
+  if (mail.selected !== ACCESS_ID) { accessAutoSelectPending = false; return; }
+  const rows = Array.isArray(list) ? list : [];
+  const target = rows.find(accessIsPending);
+  if (!target) return;
+  accessAutoSelectPending = false;
+  if (mail.selectedMsgId) return;
+  accessHighlightId = target.id;
+  mail.selectedMsgId = target.id;
+  paintMail();
+}
+
 // renderAccessRequests updates the global attention affordances each snapshot
 // tick: the non-blocking top banner with a "Review" deep link when approvals
 // are pending. The blinking Messages-tab badge is driven from the shell model's
 // renderMessagesBadge; the cards themselves repaint via renderMailTab.
 function renderAccessRequests(list, pending) {
+  resolveArmedAccessAutoSelect(list);
   const banner = $('#access-banner');
   if (!banner) return;
   const n = pending || 0;
@@ -1153,20 +1187,30 @@ function renderAccessRequests(list, pending) {
   }
 }
 
-// focusAccessRequest brings the Messages tab forward and opens the
-// access-requests folder, optionally flagging one request for a highlight
+// focusAccessRequest brings the Messages tab forward, opens the
+// access-requests folder, and opens one request in the reader with a highlight
 // pulse. The deep-link target for ?tab=messages&access_request=<id> and the
 // banner's Review button.
+//
+// Called without an id (the banner's Review button, or a deep link whose
+// ?access_request= is empty) it resolves the oldest pending request itself
+// rather than dropping the operator on an unselected list — landing on the
+// folder and making them click the top row is the same work the jump was
+// supposed to save. If no snapshot has painted a pending request yet (a deep
+// link racing the first poll), the intent is armed and the next snapshot that
+// carries one opens it.
 function focusAccessRequest(id) {
-  accessHighlightId = id || null;
+  const target = id || oldestPendingAccessRequestId();
+  accessAutoSelectPending = !id && !target;
+  accessHighlightId = target || null;
   const navBtn = $('nav [data-tab="messages"]');
   if (navBtn) {
     suppressNextMessagesAttention();
     navBtn.click();
   }
   selectMailbox(ACCESS_ID);
-  if (id) {
-    mail.selectedMsgId = id;
+  if (target) {
+    mail.selectedMsgId = target;
     paintMail();
   }
 }

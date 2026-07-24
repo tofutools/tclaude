@@ -132,9 +132,11 @@ func TestRequestHumanApproval_OptInOpensBrowserAndNotifies(t *testing.T) {
 
 	var opened, notified atomic.Int32
 	openedCh := make(chan struct{}, 1)
+	openedURL := make(chan string, 1)
 	prevOpen := approvalBrowserOpener
-	approvalBrowserOpener = func(string) error {
+	approvalBrowserOpener = func(url string) error {
 		opened.Add(1)
+		openedURL <- url
 		openedCh <- struct{}{}
 		return nil
 	}
@@ -165,6 +167,11 @@ func TestRequestHumanApproval_OptInOpensBrowserAndNotifies(t *testing.T) {
 	}
 	if got := notified.Load(); got != 1 {
 		t.Fatalf("opt-in config sent access-request notification %d time(s), want 1", got)
+	}
+	// The raised window must land on this request, not merely on the dashboard.
+	url := <-openedURL
+	if want := accessRequestDeepLinkQuery(req.id); !strings.Contains(url, want) {
+		t.Fatalf("auto-raised URL %q missing deep link %q", url, want)
 	}
 }
 

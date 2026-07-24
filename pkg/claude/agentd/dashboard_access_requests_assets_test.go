@@ -44,6 +44,12 @@ func TestDashboardAssets_AccessRequestsWired(t *testing.T) {
 		// Deep link (?tab=messages&access_request=<id>) + the tick wiring.
 		"function focusAccessRequest(",
 		"dlParams.get('access_request')",
+		// A jump with no named request still opens one: the oldest pending,
+		// resolved now or armed for the first snapshot that carries one.
+		"function oldestPendingAccessRequestId(",
+		"const target = id || oldestPendingAccessRequestId();",
+		"function resolveArmedAccessAutoSelect(",
+		"resolveArmedAccessAutoSelect(list);",
 		"renderAccessRequests(data.access_requests || [], data.access_requests_pending || 0)",
 		// Recently-handled history: outcome chips + the divider stay in the list.
 		"function accessOutcome(",
