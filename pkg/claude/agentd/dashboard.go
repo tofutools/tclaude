@@ -1764,6 +1764,12 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 	// exited agent is genuinely informative ("it died at 80%"), unlike
 	// a frozen "idle" status that would mislabel a dead agent.
 	if snap, err := db.GetContextSnapshot(pick.ID); err == nil {
+		// OpenCode keys context onto a per-generation session-row id, so a
+		// resumed or offline conv can pick a fresh all-zero row; fall back to
+		// the conv's last-known populated snapshot (no-op for other harnesses
+		// and for a picked row that already has data). See TCL-701 / the
+		// OpenCode offline context-meter fix.
+		snap = openCodeContextSnapshotFallback(pick, snap)
 		out.ContextPct = snap.ContextPct
 		out.TokensInput = snap.TokensInput
 		out.TokensOutput = snap.TokensOutput

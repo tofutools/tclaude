@@ -163,6 +163,82 @@ func TestDashboardSnapshot_CodexCompactionKeepsAbsoluteUsageReset(t *testing.T) 
 		"known model window survives the usage reset")
 }
 
+// Regression: OpenCode keys its context snapshot onto a per-generation
+// session-row id — the original spawn writes to a row keyed by the tclaude
+// session label, but a resume mints a fresh row keyed by the conv id. Because
+// OpenCode's only context writer is the live SSE consumer (no in-process
+// statusline like Claude Code, no rollout read-through like Codex), the
+// newest/picked row reads an all-zero window whenever the managed server isn't
+// live — so a resumed-then-offline OpenCode agent dropped its context meter to
+// 0%, discarding the "usage before resume" signal.
+//
+// The read-path fallback surfaces the conversation's last-known populated
+// snapshot when the picked row is empty. This stands up both rows offline (a
+// populated spawn row plus a newer, empty resume row) and asserts the meter
+// shows the pre-resume usage rather than 0.
+func TestDashboardSnapshot_OpenCodeContextSurvivesOfflineResume(t *testing.T) {
+	const conv = "occx-1111-2222-3333-444444444444"
+	const spawnLabel = "spwn-occx"
+	const cwdName = "occx"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveConvWithTitle(conv, "opencode-worker")
+	f.HaveAliveSession(conv, spawnLabel, "tmux-occx", f.TestCwd(cwdName))
+	f.HaveGroup("oc-crew")
+	f.HaveMember("oc-crew", conv)
+
+	// The original spawn ran as OpenCode and its live SSE consumer persisted a
+	// good context snapshot onto the spawn-label-keyed row.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          spawnLabel,
+		TmuxSession: "tmux-occx",
+		ConvID:      conv,
+		Cwd:         f.TestCwd(cwdName),
+		Status:      "idle",
+		Harness:     "opencode",
+	}), "mark spawn row as opencode")
+	require.NoError(t,
+		db.UpdateContextSnapshot(spawnLabel, 42.0, 90000, 4000, 200000),
+		"spawn-row context snapshot")
+
+	// A resume mints a fresh session row keyed by the conv id. Its context is
+	// all-zero until the resumed server's SSE backfill runs — and the agent is
+	// offline, so it never will. This newer row is the one the dashboard picks.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID:          conv,
+		TmuxSession: "tmux-occx-resume",
+		ConvID:      conv,
+		Cwd:         f.TestCwd(cwdName),
+		Status:      "idle",
+		Harness:     "opencode",
+	}), "resume row keyed by conv id")
+
+	// Both generations are offline: no managed server, no live context writer.
+	f.MarkOffline("tmux-occx")
+	f.MarkOffline("tmux-occx-resume")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from snapshot Agents[]", conv)
+	assert.Equal(t, "exited", agentRow.State.Status, "offline OpenCode agent reports exited")
+	assert.Equal(t, 42.0, agentRow.State.ContextPct,
+		"context_pct must fall back to the last-known snapshot on offline resume")
+	assert.Equal(t, int64(90000), agentRow.State.TokensInput,
+		"tokens_input must fall back to the last-known snapshot")
+	assert.Equal(t, int64(4000), agentRow.State.TokensOutput,
+		"tokens_output must fall back to the last-known snapshot")
+	assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize,
+		"context_window_size must fall back to the last-known snapshot")
+
+	memberRow := findDashMember(snap, "oc-crew", conv)
+	require.NotNil(t, memberRow, "agent %s missing from group oc-crew members", conv)
+	assert.Equal(t, 42.0, memberRow.State.ContextPct, "Members[] context_pct fallback")
+	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] window fallback")
+}
+
 // Scenario: a freshly-spawned agent whose statusline hook has not yet
 // fired has no context snapshot row. The dashboard meter must render a
 // neutral / empty indicator, never a broken one — so /api/snapshot

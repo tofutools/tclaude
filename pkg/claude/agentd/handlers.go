@@ -2247,7 +2247,11 @@ func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap
 	}
 	refreshCodexContextSnapshotOnRead(sess, sessionRowAliveIn(sess, aliveSet))
 	if s, err := db.GetContextSnapshot(sess.ID); err == nil {
-		snap = s
+		// OpenCode's resumed/offline conv can pick a fresh all-zero row; fall
+		// back to the conv's last-known populated snapshot so `agent
+		// context-info` and group listings keep showing usage before a resume
+		// (no-op for other harnesses and for a picked row that already has data).
+		snap = openCodeContextSnapshotFallback(sess, s)
 	}
 	return snap, sess.ID, true
 }
