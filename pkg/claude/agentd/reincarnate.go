@@ -427,6 +427,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AskUserQuestionTimeout: relaunch.AskUserQuestionTimeout,
 		RemoteControl:          remoteControl,
 		AutoMemory:             relaunch.AutoMemory,
+		ContextFeatures:        relaunch.ContextFeatures,
 	}); err != nil {
 		rollbackSandbox(true)
 		writeError(w, http.StatusInternalServerError, "spawn",

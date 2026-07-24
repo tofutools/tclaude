@@ -47,6 +47,10 @@ export function openSpawnPermEditor(options = {}) {
   return requireController().openBufferedPermissions(options);
 }
 
+export function openContextFeaturesEditor(options = {}) {
+  return requireController().openContextFeatures(options);
+}
+
 export function pickAgent(options = {}) {
   return requireController().pickAgent(options);
 }

@@ -151,6 +151,8 @@ export function spawnCapabilityView(draft, context) {
     showTrustDir: draft.harness === 'codex',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
+    showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
+    contextFeatureCatalog: Array.isArray(harness?.context_features) ? harness.context_features : [],
     sandboxProfilesDisabled,
   };
 }
@@ -219,6 +221,10 @@ export function createSpawnDraft({
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
     permissionOverrides: {},
+    // Startup-context trims, sparse by construction: only features the operator
+    // steered appear, so an untouched dialog changes nothing about what the
+    // agent loads.
+    contextFeatures: {},
     cwd,
     cwdOrigin: cwd ? 'group' : '',
     wtRepo: cwd,
@@ -265,6 +271,9 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     remoteControl: harness?.can_remote_control
       ? groupRemoteControlDefault(group) : false,
     autoMemory: harness?.can_auto_memory ? draft.autoMemory : false,
+    // A harness with no steerable startup context cannot carry trims, and keeping
+    // them would send a map the daemon rejects with a 400.
+    contextFeatures: harness?.can_context_features ? draft.contextFeatures : {},
   };
 }
 
@@ -340,6 +349,11 @@ export function applySpawnProfile(
   if (profile.permission_overrides) {
     next.permissionOverrides = { ...profile.permission_overrides };
   }
+  // The profile's trims REPLACE the form's rather than merging, matching the
+  // daemon's whole-tier resolution: one profile always tells the whole story of
+  // what its agents load. A profile that trims nothing clears the form.
+  next.contextFeatures = view.showContextFeatures && profile.context_features
+    ? { ...profile.context_features } : {};
   return syncSpawnWorktree(next, pickerUsable);
 }
 
@@ -373,6 +387,7 @@ export function clearSpawnProfileFields(draft, context, {
     autoMemory: false,
     owner: false,
     permissionOverrides: {},
+    contextFeatures: {},
     syncWorktree: defaults.syncWorktree,
     autoFocus: defaults.autoFocus,
     includeGroupContext: true,
@@ -438,6 +453,32 @@ export function spawnPermissionIndicator(overrides) {
   return parts.join(' · ');
 }
 
+// contextFeaturesKey renders a trim map as a stable string for dirty comparison.
+// Object key order is insertion order in JS, so two equal maps built in different
+// orders would compare unequal under a bare JSON.stringify.
+export function contextFeaturesKey(features) {
+  return Object.entries(features || {})
+    .filter(([, state]) => state === 'on' || state === 'off')
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([slug, state]) => `${slug}=${state}`)
+    .join(',');
+}
+
+// spawnContextFeatureIndicator summarises a trim map for the button's badge —
+// the twin of spawnPermissionIndicator.
+export function spawnContextFeatureIndicator(features) {
+  let trimmed = 0;
+  let kept = 0;
+  for (const state of Object.values(features || {})) {
+    if (state === 'off') trimmed += 1;
+    else if (state === 'on') kept += 1;
+  }
+  const parts = [];
+  if (trimmed) parts.push(`${trimmed} trimmed`);
+  if (kept) parts.push(`${kept} kept`);
+  return parts.join(' · ');
+}
+
 export function spawnProfileSeed(draft, context) {
   const view = spawnCapabilityView(draft, context);
   const seed = {
@@ -455,6 +496,9 @@ export function spawnProfileSeed(draft, context) {
   };
   if (Object.keys(draft.permissionOverrides || {}).length) {
     seed.permission_overrides = { ...draft.permissionOverrides };
+  }
+  if (view.showContextFeatures && Object.keys(draft.contextFeatures || {}).length) {
+    seed.context_features = { ...draft.contextFeatures };
   }
   if (view.sandbox.visible) seed.sandbox = draft.sandbox;
   if (view.approval.visible) seed.approval = draft.approval;
@@ -482,8 +526,9 @@ const DIRTY_FIELDS = [
 export function spawnDraftIsDirty(draft, baseline, attachmentCount = 0) {
   if (attachmentCount) return true;
   if (DIRTY_FIELDS.some((key) => draft[key] !== baseline[key])) return true;
-  return JSON.stringify(draft.permissionOverrides || {})
-    !== JSON.stringify(baseline.permissionOverrides || {});
+  if (JSON.stringify(draft.permissionOverrides || {})
+    !== JSON.stringify(baseline.permissionOverrides || {})) return true;
+  return contextFeaturesKey(draft.contextFeatures) !== contextFeaturesKey(baseline.contextFeatures);
 }
 
 export function validateSpawnDraft(draft, context) {
@@ -550,6 +595,13 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   if (draft.owner) body.is_owner = true;
   if (Object.keys(draft.permissionOverrides || {}).length) {
     body.permission_overrides = { ...draft.permissionOverrides };
+  }
+  // Sent whenever the harness can take it, INCLUDING as an empty object: the
+  // form is the authoritative statement of what this agent loads, so an operator
+  // who cleared a profile's trims must not silently get them back from the
+  // daemon's profile tier stack. See SpawnRequest.ContextFeatures.
+  if (view.showContextFeatures) {
+    body.context_features = { ...(draft.contextFeatures || {}) };
   }
   const cwd = text(draft.cwd).trim();
   const repo = text(draft.wtRepo).trim();

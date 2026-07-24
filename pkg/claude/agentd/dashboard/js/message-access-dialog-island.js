@@ -550,6 +550,94 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   </${Overlay}>`;
 }
 
+// ContextFeaturesDialog edits which parts of Claude Code's startup context an
+// agent loads (TCL-597) — the "Context…" twin of PermissionsDialog.
+//
+// It is a pure buffer editor: the draft belongs to the spawn form or the profile
+// editor, and Save hands the map back through descriptor.onSave rather than
+// writing anything itself. The three states mirror the permission editor's
+// tri-state so the two dialogs read the same way — Default (leave the harness
+// alone), Keep, Trim — and only the non-default entries are handed back, keeping
+// a saved profile's map sparse.
+function ContextFeaturesDialog({ descriptor, state, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
+  const catalog = descriptor.catalog || [];
+  const [baseline] = useState(() => ({ ...(descriptor.selection || {}) }));
+  const [selection, setSelection] = useState(() => ({ ...baseline }));
+  const [filter, setFilter] = useState('');
+  const needle = filter.trim().toLowerCase();
+  const visible = catalog.filter((row) => !needle
+    || [row.slug, row.label, row.descr].some((value) => String(value || '').toLowerCase().includes(needle)));
+  const currentState = (slug) => selection[slug] || 'default';
+  const dirty = catalog.some((row) => currentState(row.slug) !== (baseline[row.slug] || 'default'));
+  const trimmed = catalog.filter((row) => currentState(row.slug) === 'off').length;
+  const kept = catalog.filter((row) => currentState(row.slug) === 'on').length;
+  const setState = (slug, next) => setSelection((current) => {
+    const draft = { ...current };
+    // Keep the handed-back map sparse: a row set back to Default is an ABSENT
+    // entry, not a stored "default", so a profile only ever persists real intent.
+    if (next === 'default') delete draft[slug];
+    else draft[slug] = next;
+    return draft;
+  });
+  const submit = () => {
+    descriptor.onSave?.({ ...selection });
+    state.close();
+  };
+  return html`<${Overlay} id="context-features-modal" dialogClass="perm-edit-modal context-features-modal"
+    labelledby="context-features-title" onClose=${state.close} dirty=${dirty} confirmDiscard=${confirmDiscard}
+    registerClose=${registerClose}>
+    <h3 id="context-features-title"><span class="perm-edit-title-regular">Startup context</span>
+      <span class="perm-edit-title-wizard">🧹 Trim the Tome</span></h3>
+    <div class="perm-edit-banner" id="context-features-banner"><${Words}
+      plain=${html`<strong>FOCUS</strong> — every capability the harness advertises is context the agent reads past before it reaches your brief. <strong>Trim</strong> what this agent will not use; <strong>Keep</strong> overrides a profile that trimmed it; <strong>Default</strong> leaves the harness alone.`}
+      wizard=${html`<strong>FOCUS</strong> — every spell in the tome is a page the familiar must turn before it finds your task. <strong>Tear out</strong> what it will not cast; <strong>Keep</strong> restores a page a profile removed; <strong>Default</strong> leaves the tome untouched.`}/></div>
+    <p class="perm-edit-subtitle" id="context-features-subtitle">${
+      descriptor.label ? `New agent “${descriptor.label}”` : 'New agent'} · applied at launch${
+      trimmed || kept ? ` · ${[trimmed ? `${trimmed} trimmed` : '', kept ? `${kept} kept` : ''].filter(Boolean).join(' · ')}` : ''}</p>
+    <div class="perm-edit-toolbar">
+      <input id="context-features-filter" type="text" value=${filter} placeholder="Filter features…"
+        autocomplete="off" spellcheck="false" onInput=${(event) => setFilter(event.currentTarget.value)} />
+      <button type="button" id="context-features-lean" title="Trim every feature flagged as a large startup-context win, and leave the rest alone"
+        onClick=${() => setSelection((current) => {
+    const draft = { ...current };
+    for (const row of catalog) if (row.heavy) draft[row.slug] = 'off';
+    return draft;
+  })}>lean</button>
+      <button type="button" id="context-features-reset" title="Set every feature back to Default (leave the harness alone)"
+        onClick=${() => setSelection({})}>all default</button>
+    </div>
+    <div id="context-features-list" class="perm-edit-list">${visible.length ? visible.map((row) => html`
+      <div class="perm-row" key=${row.slug} data-slug=${row.slug}>
+        <div class="perm-row-info">
+          <span class="perm-row-slug">${row.label || row.slug}${row.heavy
+    ? html` <span class="owner-badge" title="One of the largest startup-context wins">★ heavy</span>` : null}</span>
+          <span class="perm-row-desc" title=${row.descr || ''}>${row.descr || ''}</span>
+          ${row.caution ? html`<span class="perm-row-desc context-features-caution" title=${row.caution}>⚠ ${row.caution}</span>` : null}
+        </div>
+        <div class="perm-tristate">
+          <button type="button" data-state="default" class=${currentState(row.slug) === 'default' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'default')}>Default</button>
+          <button type="button" data-state="on" class=${currentState(row.slug) === 'on' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'on')}>Keep</button>
+          <button type="button" data-state="off" class=${currentState(row.slug) === 'off' ? 'active' : ''}
+            onClick=${() => setState(row.slug, 'off')}>Trim</button>
+        </div>
+        <span class=${`perm-row-eff ${currentState(row.slug) === 'off' ? 'denied' : 'granted'}`}>${
+  currentState(row.slug) === 'off' ? '✂ trimmed'
+    : currentState(row.slug) === 'on' ? '✓ kept'
+      : '— harness default'}</span>
+      </div>`) : html`<div class="empty" style="padding:10px">${catalog.length
+    ? 'No matching features.'
+    : 'This harness has no steerable startup-context features.'}</div>`}</div>
+    <div class="modal-buttons">
+      <button id="context-features-cancel" type="button" onClick=${() => { void requestClose(); }}>Cancel</button>
+      <span class="spacer"></span>
+      <button id="context-features-submit" class="primary" type="button" onClick=${submit}>Save</button>
+    </div>
+  </${Overlay}>`;
+}
+
 export function MessageAccessDialogApp({ state, actions, snapshot, confirmDiscard }) {
   const current = state.view.value;
   const descriptor = current.dialog;
@@ -559,6 +647,7 @@ export function MessageAccessDialogApp({ state, actions, snapshot, confirmDiscar
   else if (descriptor?.kind === 'human-reply') parent = html`<${HumanReplyDialog} key=${`reply:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'sudo-grant') parent = html`<${SudoGrantDialog} key=${`sudo:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
   else if (descriptor?.kind === 'permissions') parent = html`<${PermissionsDialog} key=${`permissions:${descriptor.launchID}`} descriptor=${descriptor} state=${state} actions=${actions} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`;
+  else if (descriptor?.kind === 'context-features') parent = html`<${ContextFeaturesDialog} key=${`context-features:${descriptor.launchID}`} descriptor=${descriptor} state=${state} confirmDiscard=${confirmDiscard}/>`;
   return html`<${Fragment}>${parent}${current.picker && html`<${AgentPicker} key=${`picker:${current.picker.launchID}`}
     descriptor=${current.picker} state=${state} snapshot=${snapshot} confirmDiscard=${confirmDiscard}/>`}</${Fragment}>`;
 }
@@ -575,6 +664,7 @@ export function mountMessageAccessDialogIsland({
     openAgentPermissions: state.openAgentPermissions,
     openGroupPermissions: state.openGroupPermissions,
     openBufferedPermissions: state.openBufferedPermissions,
+    openContextFeatures: state.openContextFeatures,
     pickAgent: state.pickAgent,
   };
   let unregister = null;

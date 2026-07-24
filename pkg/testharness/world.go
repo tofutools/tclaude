@@ -55,6 +55,7 @@ type World struct {
 	spawnTrustDir      map[string]bool
 	spawnRemoteControl map[string]bool
 	spawnAutoMemory    map[string]bool
+	spawnContextTrims  map[string]map[string]string
 	spawnCwdProofs     map[string]string
 	spawnDirProofs     map[string]string
 	spawnGitCommonDirs map[string]string
@@ -97,6 +98,7 @@ func New(t *testing.T) *World {
 		spawnTrustDir:       map[string]bool{},
 		spawnRemoteControl:  map[string]bool{},
 		spawnAutoMemory:     map[string]bool{},
+		spawnContextTrims:   map[string]map[string]string{},
 		spawnCwdProofs:      map[string]string{},
 		spawnDirProofs:      map[string]string{},
 		spawnGitCommonDirs:  map[string]string{},
@@ -340,6 +342,37 @@ func (w *World) SpawnAutoMemory(convID string) (bool, bool) {
 	defer w.spawnMu.Unlock()
 	mem, ok := w.spawnAutoMemory[convID]
 	return mem, ok
+}
+
+// RecordSpawnContextFeatures captures the startup-context trim map a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert what the spawn path resolved. An empty map is recorded
+// too: "trims nothing" is a real, assertable outcome, distinct from a conv the
+// spawner never saw.
+func (w *World) RecordSpawnContextFeatures(convID string, features map[string]string) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	copied := map[string]string{}
+	for slug, state := range features {
+		copied[slug] = state
+	}
+	w.spawnContextTrims[convID] = copied
+}
+
+// SpawnContextFeatures returns the startup-context trim map recorded for a
+// spawned conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnContextFeatures(convID string) (map[string]string, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	features, ok := w.spawnContextTrims[convID]
+	if !ok {
+		return nil, false
+	}
+	copied := map[string]string{}
+	for slug, state := range features {
+		copied[slug] = state
+	}
+	return copied, true
 }
 
 // RecordSpawnCwdWriteProof captures the internal cwd proof token forwarded to

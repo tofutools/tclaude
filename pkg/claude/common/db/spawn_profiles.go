@@ -65,6 +65,13 @@ type SpawnProfile struct {
 	// recommends memory disabled and injects CLAUDE_CODE_DISABLE_AUTO_MEMORY
 	// accordingly. Claude-Code-only, validated against the profile's harness.
 	AutoMemory *bool
+	// ContextFeatures is the profile's per-agent startup-context trim map (slug →
+	// "on" | "off"), stored as a JSON object in the context_features column ("" =
+	// the profile trims nothing). Sparse by construction: only features the
+	// operator explicitly steered appear, so an untouched feature keeps Claude
+	// Code's own default. Claude-Code-only, validated against the profile's
+	// harness through harness.ResolveContextFeatures. See TCL-597.
+	ContextFeatures map[string]string
 
 	// Identity / enrollment fields (dialog-side). "" = unset.
 	AgentName      string // the dialog's "Name" field (the spawned agent's display name)
@@ -143,9 +150,9 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		    auto_review, trust_dir,
 		    agent_name, role, descr, initial_message,
 		    sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
-		    is_owner, permission_overrides,
+		    is_owner, permission_overrides, context_features,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, p.Descr, p.InitialMessage,
@@ -153,6 +160,7 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
+		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		now, now)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
@@ -201,7 +209,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   agent_name = ?, role = ?, descr = ?, initial_message = ?,
 		   sync_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   auto_memory = ?,
-		   is_owner = ?, permission_overrides = ?,
+		   is_owner = ?, permission_overrides = ?, context_features = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
 		p.Name, p.Disabled, p.DisabledReason, p.Harness, p.Model, p.Effort, p.Sandbox, p.Approval, p.ToolGovernance,
@@ -212,6 +220,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
 		boolPtrToNull(p.AutoMemory),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
+		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		time.Now().Format(time.RFC3339Nano), p.ID)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
@@ -454,19 +463,19 @@ const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, harness,
 	tools, ask_user_question_timeout,
 	auto_review, trust_dir, agent_name, role, descr, initial_message,
 	sync_worktree, auto_focus, include_group_default_context, remote_control, auto_memory,
-	is_owner, permission_overrides, created_at, updated_at
+	is_owner, permission_overrides, context_features, created_at, updated_at
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
 	var autoReview, trustDir, syncWorktree, autoFocus, includeCtx, remoteControl, autoMemory, isOwner sql.NullInt64
-	var permOverrides, createdAt, updatedAt string
+	var permOverrides, contextFeatures, createdAt, updatedAt string
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.Harness, &p.Model, &p.Effort, &p.Sandbox, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.Descr, &p.InitialMessage,
 		&syncWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory,
-		&isOwner, &permOverrides, &createdAt, &updatedAt); err != nil {
+		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	p.Disabled = disabled != 0
@@ -479,6 +488,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.AutoMemory = nullToBoolPtr(autoMemory)
 	p.IsOwner = nullToBoolPtr(isOwner)
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
+	p.ContextFeatures = unmarshalStringMapColumn(contextFeatures, "spawn_profiles.context_features")
 	p.CreatedAt = parseTimeOrZero(createdAt)
 	p.UpdatedAt = parseTimeOrZero(updatedAt)
 	return &p, nil

@@ -246,6 +246,10 @@ function profileSummary(p) {
   if (p.is_owner != null) parts.push(`owner ${p.is_owner ? 'on' : 'off'}`);
   const nOverrides = p.permission_overrides ? Object.keys(p.permission_overrides).length : 0;
   if (nOverrides) parts.push(`${nOverrides} perm${nOverrides === 1 ? '' : 's'}`);
+  // Startup-context trims: a count, since the individual slugs belong in the
+  // expanded view rather than the compact summary.
+  const nTrimmed = Object.values(p.context_features || {}).filter((state) => state === 'off').length;
+  if (nTrimmed) parts.push(`${nTrimmed} trimmed`);
   return parts.join(' · ');
 }
 
@@ -280,6 +284,9 @@ function profileDetailChips(p) {
   toggle('owner', p.is_owner);
   for (const [slug, effect] of Object.entries(p.permission_overrides || {}).sort(([a], [b]) => a.localeCompare(b))) {
     parts.push(`perm ${slug} ${effect}`);
+  }
+  for (const [slug, state] of Object.entries(p.context_features || {}).sort(([a], [b]) => a.localeCompare(b))) {
+    parts.push(`context ${slug} ${state}`);
   }
   return parts;
 }

@@ -90,6 +90,12 @@ type spawnProfileJSON struct {
 	IsOwner             *bool             `json:"is_owner,omitempty"`
 	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
 
+	// ContextFeatures is the profile's per-agent startup-context trim map (slug →
+	// "on" | "off"; absent = trims nothing), validated against the catalog AND
+	// the profile's own harness at save. Claude-Code-only, so a non-empty map on
+	// a Codex profile is a 400. See harness/context_features.go and TCL-597.
+	ContextFeatures map[string]string `json:"context_features,omitempty"`
+
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
@@ -122,6 +128,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		IncludeGroupDefaultContext: p.IncludeGroupDefaultContext,
 		IsOwner:                    p.IsOwner,
 		PermissionOverrides:        p.PermissionOverrides,
+		ContextFeatures:            p.ContextFeatures,
 	}
 	if !p.CreatedAt.IsZero() {
 		out.CreatedAt = p.CreatedAt.Format(time.RFC3339)
@@ -302,6 +309,15 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_permission_overrides", povErr}
 	}
 
+	// Startup-context trims: same catalog + harness validation the spawn boundary
+	// applies, so a profile can't persist an unknown feature or a trim its own
+	// harness cannot deliver. Default/blank states are dropped here too — the
+	// saved map holds only real overrides.
+	contextFeatures, err := harness.ResolveContextFeatures(h, body.ContextFeatures)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_features", err.Error()}
+	}
+
 	return &db.SpawnProfile{
 		Name:                       name,
 		Aliases:                    aliases,
@@ -327,6 +343,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		IncludeGroupDefaultContext: body.IncludeGroupDefaultContext,
 		IsOwner:                    body.IsOwner,
 		PermissionOverrides:        permOverrides,
+		ContextFeatures:            contextFeatures,
 	}, nil
 }
 
@@ -1052,6 +1069,12 @@ func seedProfileFromConv(convID string) spawnProfileJSON {
 	if launch.AutoReviewSet {
 		autoReview := launch.AutoReview
 		seed.AutoReview = &autoReview
+	}
+	// The startup-context trims this agent actually launched with, so
+	// "capture this agent as a profile" reproduces its context shape too and not
+	// just its model/sandbox/permissions.
+	if features, _ := db.ContextFeaturesForConv(convID); len(features) > 0 {
+		seed.ContextFeatures = features
 	}
 	if perms, _ := db.ListAgentPermissionsForConv(convID); len(perms) > 0 {
 		overrides := make(map[string]string, len(perms))

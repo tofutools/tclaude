@@ -1344,6 +1344,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		ToolGovernance:             launchConfig.ToolGovernance,
 		RemoteControl:              remoteControl,
 		AutoMemory:                 launchConfig.AutoMemory,
+		ContextFeatures:            launchConfig.ContextFeatures,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -2763,7 +2764,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var autoReviewSet, trustDirSet bool
-	var autoReviewNote, trustDirNote, autoMemoryNote string
+	var autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
@@ -2793,12 +2794,26 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
 	}
+	// Startup-context trims ride the tier stack whole rather than merging — see
+	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",
+	// so an agent's startup context only shrinks when someone asked for it.
+	requestedFeatures := map[string]string{}
+	if body.ContextFeatures != nil {
+		requestedFeatures = *body.ContextFeatures
+	}
+	contextFeatures, cfNote, cfFail := resolveContextFeaturesLaunchField(
+		requestedFeatures, body.ContextFeatures != nil, h, profileTiers)
+	if cfFail != nil {
+		writeError(w, cfFail.Status, cfFail.Kind, cfFail.Msg)
+		return
+	}
+	contextFeaturesNote = cfNote
 	resolvedLaunch := &agent.ResolvedLaunch{
 		Harness: agent.ResolvedField{Value: h.Name, Source: harnessSource},
 		Model:   agent.ResolvedField{Value: body.Model, Source: modelSource, Note: modelNote},
 		Effort:  agent.ResolvedField{Value: body.Effort, Source: effortSource, Note: effortNote},
 	}
-	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoReviewNote, trustDirNote, autoMemoryNote} {
+	for _, note := range []string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoReviewNote, trustDirNote, autoMemoryNote, contextFeaturesNote} {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -3177,6 +3192,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		TrustDirSet:                trustDirSet,
 		RemoteControl:              remoteControl,
 		AutoMemory:                 autoMemory,
+		ContextFeatures:            contextFeatures,
 		ReplyToConv:                replyToConv,
 		SpawnedByConv:              spawnerConvID,
 		IsOwner:                    body.IsOwner,
@@ -3393,6 +3409,14 @@ type spawnParams struct {
 	// (handleGroupSpawn → harness.ResolveAutoMemory); a harness with no
 	// auto-memory system (Codex) rejects a true value.
 	AutoMemory bool
+	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
+	// "on" | "off"), forwarding `--context-features <slug>=<state>,…` to `tclaude
+	// session new`; nil/empty omits the flag so the agent keeps Claude Code's own
+	// startup context. Resolved down the profile tier stack at the spawn boundary
+	// (handleGroupSpawn → resolveContextFeaturesLaunchField) and harness-gated
+	// there; a harness with no steerable startup context (Codex) rejects a
+	// non-empty map. See TCL-597.
+	ContextFeatures map[string]string
 	// AskUserQuestionTimeout is the resolved per-session Claude Code
 	// AskUserQuestion idle-timeout override (never|60s|5m|10m), forwarding
 	// `--ask-user-question-timeout <v>` to `tclaude session new`; "" omits it.
@@ -3765,6 +3789,59 @@ func resolveBoolLaunchField(
 	return false, false, note, nil
 }
 
+// resolveContextFeaturesLaunchField resolves the startup-context trim map down
+// the same tier stack as the scalar launch fields (explicit request → group
+// default profile → global default profile), with one deliberate difference: the
+// tiers do NOT merge.
+//
+// The winning tier's map is taken whole. Merging would make the effective
+// startup context of an agent a function of every profile in its lineage, which
+// is exactly the kind of action-at-a-distance this feature exists to remove — an
+// operator reading one profile could not tell what their agent will actually
+// load. "The most specific tier that says anything wins, entirely" keeps the
+// answer readable from one place.
+//
+// An explicitly-supplied EMPTY map is still a decision ("trim nothing"), so
+// explicitSet is tracked separately from len(explicitValue) and short-circuits
+// the tiers just like an explicit false does for a bool field.
+func resolveContextFeaturesLaunchField(
+	explicitValue map[string]string, explicitSet bool, h *harness.Harness,
+	tiers []launchProfileTier,
+) (map[string]string, string, *spawnFailure) {
+	const field = "context_features"
+	if explicitSet {
+		value, err := harness.ResolveContextFeatures(h, explicitValue)
+		if err != nil {
+			return nil, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field, err.Error()}
+		}
+		return value, "", nil
+	}
+	var note string
+	addNote := func(text string) {
+		if note == "" {
+			note = text
+		} else {
+			note += "; " + text
+		}
+	}
+	for _, tier := range tiers {
+		if tier.profile == nil || len(tier.profile.ContextFeatures) == 0 {
+			continue
+		}
+		if !profileMatchesHarness(tier.profile, h.Name) {
+			addNote(fmt.Sprintf("%s %s ignored (not valid for %s)", tier.source, field, h.Name))
+			continue
+		}
+		value, err := harness.ResolveContextFeatures(h, tier.profile.ContextFeatures)
+		if err != nil {
+			return nil, "", &spawnFailure{http.StatusBadRequest, "invalid_" + field,
+				fmt.Sprintf("profile %q: %v", tier.profile.Name, err)}
+		}
+		return value, note, nil
+	}
+	return nil, note, nil
+}
+
 // applyDefaultProfile fills blank launch fields on p from the group's default
 // spawn profile and then the global default profile, then APPLIES the chosen
 // harness's secure launch
@@ -4087,6 +4164,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (*spawnOutcome, *spawnFailure
 		TrustDir:                   p.TrustDir,
 		RemoteControl:              p.RemoteControl,
 		AutoMemory:                 p.AutoMemory,
+		ContextFeatures:            p.ContextFeatures,
 	}
 
 	var openCodeLaunch *openCodeLaunch
@@ -5855,7 +5933,20 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendTrustDirFlag(args, a.TrustDir)
 	args = appendRemoteControlFlag(args, a.RemoteControl)
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
+	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	args = appendInitialPromptArg(args, a)
+	return args
+}
+
+// appendContextFeaturesFlag adds `--context-features <slug>=<state>,…` to a
+// `tclaude session new` argv when the launch resolved any startup-context trims.
+// An empty map appends nothing: there is no flag spelling for "trim nothing"
+// that differs from omitting it, because the forked `session new` has no profile
+// tier stack of its own to override — the daemon already resolved the answer.
+func appendContextFeaturesFlag(args []string, features map[string]string) []string {
+	if rendered := harness.FormatContextFeatures(features); rendered != "" {
+		args = append(args, "--context-features", rendered)
+	}
 	return args
 }
 
@@ -5954,6 +6045,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// Omitted when false, which is the recommended posture and makes the forked
 	// `session new -r` inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
+	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	return args
 }
 

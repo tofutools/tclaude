@@ -195,6 +195,7 @@ type templateInlineProfileJSON struct {
 	AutoMemory             *bool             `json:"auto_memory,omitempty"`
 	IsOwner                *bool             `json:"is_owner,omitempty"`
 	PermissionOverrides    map[string]string `json:"permission_overrides,omitempty"`
+	ContextFeatures        map[string]string `json:"context_features,omitempty"`
 }
 
 // inlineProfileToJSON marshals a template-local profile for the
@@ -218,6 +219,7 @@ func inlineProfileToJSON(p *SpawnProfile) string {
 		AutoMemory:             p.AutoMemory,
 		IsOwner:                p.IsOwner,
 		PermissionOverrides:    p.PermissionOverrides,
+		ContextFeatures:        p.ContextFeatures,
 	})
 	if err != nil {
 		return ""
@@ -250,6 +252,7 @@ func inlineProfileFromJSON(s string) *SpawnProfile {
 		AutoMemory:             j.AutoMemory,
 		IsOwner:                j.IsOwner,
 		PermissionOverrides:    j.PermissionOverrides,
+		ContextFeatures:        j.ContextFeatures,
 	}
 }
 

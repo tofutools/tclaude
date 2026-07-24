@@ -207,6 +207,14 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	// Same read-before-write ordering for the startup-context trims, for exactly
+	// the same reason: reading after this resume's own row exists would echo the
+	// new row's empty default and quietly un-trim the agent on the next resume.
+	contextFeatures, err := db.ContextFeaturesForConv(rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 
 	// Launch through the shared script mechanism, not an inline `sh -c`: the
 	// resume command carries the same env exports and sandbox dir lists as a
@@ -250,6 +258,13 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		if err := db.SetSessionAutoMemory(sessionID, autoMemory); err != nil {
 			slog.Warn("failed to record resumed session auto-memory posture",
 				"session_id", sessionID, "auto_memory", autoMemory, "error", err)
+		}
+	}
+	if h.SupportsContextFeatures() {
+		if err := db.SetSessionContextFeatures(sessionID, contextFeatures); err != nil {
+			slog.Warn("failed to record resumed session context features",
+				"session_id", sessionID,
+				"context_features", harness.FormatContextFeatures(contextFeatures), "error", err)
 		}
 	}
 

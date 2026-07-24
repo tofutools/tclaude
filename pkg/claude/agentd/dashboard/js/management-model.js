@@ -57,6 +57,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null } 
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
     is_owner: triValue(seed?.is_owner), permission_overrides: { ...(seed?.permission_overrides || {}) },
+    context_features: { ...(seed?.context_features || {}) },
   };
 }
 
@@ -88,6 +89,11 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     const parsed = readTri(value); if (parsed != null) body[key] = parsed;
   }
   if (Object.keys(draft.permission_overrides).length) body.permission_overrides = { ...draft.permission_overrides };
+  // Only send trims the harness can actually deliver: a Codex profile carrying
+  // Claude-Code trims would be a 400, and the editor hides the control there.
+  if ((!h || h.can_context_features) && Object.keys(draft.context_features || {}).length) {
+    body.context_features = { ...draft.context_features };
+  }
   const norm = (name) => name || 'claude';
   if (original && norm(original.harness) === norm(draft.harness)) {
     if (!surfacesApproval && original.approval) body.approval = original.approval;

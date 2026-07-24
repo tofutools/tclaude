@@ -2335,6 +2335,16 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
 	}
 	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
+	// Likewise for the startup-context trims: a deliberately lean agent must come
+	// back lean. Reading the recorded map back (rather than re-resolving from a
+	// profile that may since have changed) is what makes the resumed pane the same
+	// agent. A conv with nothing recorded reads nil and injects nothing — the
+	// untrimmed posture such a session originally ran with.
+	contextFeatures, err := db.ContextFeaturesForConv(convID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("load startup-context trims for conversation %s: %w", convID, err)
+	}
+	session.ApplyContextFeaturesEnv(h, contextFeatures, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {
@@ -2406,6 +2416,14 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		SandboxDenyDirs:  denyDirs,
 		ApprovalPolicy:   approvalPolicy,
 		AutoReview:       autoReview,
+		// The trims must reach the spec, not just the env: the settings-only
+		// entries (those with no CLAUDE_CODE_DISABLE_* twin) ride the `--settings`
+		// payload the spec builds, and ApplyContextFeaturesEnv above delivers only
+		// the env-backed majority. Without this a resumed pane silently regained
+		// e.g. the claude.ai connector tools while the session row, the durable
+		// relaunch profile and a template re-snapshot all still reported them
+		// trimmed — the misreporting being worse than the lost trim.
+		ContextFeatures: contextFeatures,
 
 		SandboxBreakGlassReadDirs:  breakGlassReadDirs,
 		SandboxBreakGlassWriteDirs: breakGlassWriteDirs,

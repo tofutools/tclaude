@@ -179,4 +179,12 @@ type SpawnArgs struct {
 	// Only ever true via an explicit opt-in (profile field or spawn request).
 	// Harnesses with no auto-memory system (Codex) ignore it.
 	AutoMemory bool
+
+	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
+	// "on" | "off"; see harness.ContextFeatures and TCL-597), forwarded as
+	// `tclaude session new --context-features <slug>=<state>,…`. Sparse: only
+	// features explicitly steered appear, and nil/empty forwards no flag at all,
+	// leaving the agent on Claude Code's own startup context. Claude-Code-only;
+	// harnesses with no steerable startup-context surface ignore it.
+	ContextFeatures map[string]string
 }

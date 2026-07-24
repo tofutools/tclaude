@@ -321,6 +321,28 @@ type SpawnRequest struct {
 	// new --auto-memory`.
 	AutoMemory *bool `json:"auto_memory,omitempty"`
 
+	// ContextFeatures trims Claude Code's startup context for the spawned agent —
+	// bundled skills, tool schemas for capabilities it will never use,
+	// system-prompt blocks — as a map of catalog slug → "on" | "off". See
+	// harness/context_features.go for the catalog and TCL-597 for why.
+	//
+	// The point is focus, not thrift: a worker spawned for one job reads past
+	// every irrelevant capability the harness advertises, and that competes with
+	// its actual brief. Trimming raises the share of the window that is about the
+	// task.
+	//
+	// A non-nil map (INCLUDING an explicitly empty one, which means "trim
+	// nothing") is the AUTHORITATIVE per-spawn intent and replaces any profile
+	// default outright — the tiers do not merge, so one profile always tells the
+	// whole story. nil = unspecified, so the daemon's profile tier stack fills it.
+	// The daemon gates a non-empty map on the chosen harness having steerable
+	// startup context (Claude Code); requesting it for Codex is a 400. Forwarded
+	// to `tclaude session new --context-features`.
+	// It is a POINTER so the three states survive JSON: absent/null =
+	// unspecified, {} = an explicit "trim nothing", non-empty = these trims. A
+	// plain map with omitempty could not express the middle case.
+	ContextFeatures *map[string]string `json:"context_features,omitempty"`
+
 	// WorktreePath / WorktreeBranch describe a git worktree the agent
 	// should do its code work in, when Cwd is a parent "monorepo"
 	// directory rather than the repo itself. They are purely
@@ -554,6 +576,18 @@ type SpawnParams struct {
 	// --remote-control: the flag sends &true and its absence leaves the
 	// pointer nil so a profile default can still speak.
 	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for the new agent. Off by default: tclaude disables it because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
+
+	// ContextFeatures trims the new agent's Claude Code startup context. Unset
+	// leaves the pointer nil so a profile default can still speak, matching
+	// --auto-memory's opt-in-only CLI shape; an explicit "none" is how the CLI
+	// says "trim nothing, ignore the profile".
+	// No --help-context-features twin here: Group is a REQUIRED positional, and
+	// cobra validates args before RunFunc, so a bare `agent spawn
+	// --help-context-features` could only ever fail with "accepts 1 arg". The
+	// catalog listing lives on `tclaude session new`, which has no required
+	// positional; the help below points there rather than shipping a flag that
+	// cannot work.
+	ContextFeatures string `long:"context-features" optional:"true" help:"Trim the new agent's Claude Code startup context: comma-separated <feature>[=on|off] (a bare feature means off), or 'none' to override a profile and trim nothing. E.g. bundled-skills,artifact,workflows. Unset = filled by the profile chain. Run 'tclaude session new --help-context-features' for the catalog. Not applicable to codex"`
 }
 
 // spawnCmd starts a fresh CC session and registers it in an existing
@@ -655,6 +689,10 @@ type resolvedSpawnFields struct {
 
 	IsOwner             bool
 	PermissionOverrides map[string]string
+	// Deliberately NO ContextFeatures here. The CLI does not fold a --profile's
+	// trims into the request: it sends its own map or nothing, and lets the
+	// daemon's tier stack resolve the named profile (the same reason
+	// remote_control is not folded in). A field here would imply otherwise.
 
 	// IncludeGroupContext is tri-state on the wire: nil = default (the daemon
 	// includes the group context), &false = exclude. --no-group-context forces
@@ -941,6 +979,27 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	trustDir := false
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
+	// --context-features is tri-state on the wire: unset leaves the map nil so the
+	// daemon's profile tier stack still speaks, while an explicit `none` sends an
+	// empty (non-nil) map, which is how the CLI says "ignore the profile, trim
+	// nothing". Everything else parses as a slug list.
+	var contextFeatures map[string]string
+	contextFeaturesSet := strings.TrimSpace(p.ContextFeatures) != ""
+	if contextFeaturesSet {
+		if strings.EqualFold(strings.TrimSpace(p.ContextFeatures), "none") {
+			contextFeatures = map[string]string{}
+		} else {
+			parsed, parseErr := harness.ParseContextFeatures(p.ContextFeatures)
+			if parseErr != nil {
+				fmt.Fprintf(stderr, "Error: %v\n", parseErr)
+				return nil, rcInvalidArg
+			}
+			if parsed == nil {
+				parsed = map[string]string{}
+			}
+			contextFeatures = parsed
+		}
+	}
 	clientHarness := strings.TrimSpace(p.Harness)
 	validationHarness := clientHarness
 	validateMergedProfile := false
@@ -1036,6 +1095,19 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
+		// Gate --context-features the same way: unknown slugs, bad states, and
+		// trims asked of a harness with no steerable startup context all fail fast
+		// here with a clear message. The daemon re-gates server-side. When the flag
+		// is absent, validate the profile's map instead (the profile is what would
+		// then decide) so a bad saved profile is caught here too.
+		featuresToCheck := contextFeatures
+		if !contextFeaturesSet && validateMergedProfile && prof != nil {
+			featuresToCheck = prof.ContextFeatures
+		}
+		if _, err = harness.ResolveContextFeatures(h, featuresToCheck); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 	}
 	cwd := p.Cwd
 	if cwd == "" {
@@ -1069,6 +1141,12 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		TrustDir:               trustDir,
 		IsOwner:                merged.IsOwner,
 		PermissionOverrides:    merged.PermissionOverrides,
+	}
+	// Send the map only when the flag spoke. An empty-but-non-nil map is a real
+	// instruction ("trim nothing") and must survive JSON, so it is set explicitly
+	// rather than left to omitempty.
+	if contextFeaturesSet {
+		req.ContextFeatures = &contextFeatures
 	}
 	req.autoReviewSpecified = p.AutoReview
 	req.trustDirSpecified = false

@@ -41,7 +41,7 @@ import { bindDockSaveDnd } from './dock-save-dnd.js';
 import { bindGroupsCleanupButtons } from './modal-message.js';
 import {
   activeMessageAccessDialogKind, openOperatorMessageDialog,
-  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, pickAgent,
+  openPermEditModal, openSudoGrantModal, openSpawnPermEditor, openContextFeaturesEditor, pickAgent,
 } from './message-access-dialog-controller.js';
 import {
   bindTemplatesUI, bindGroupImportModal, openTemplatesManageModal, summonTemplateScribe,
@@ -209,6 +209,7 @@ async function settleInitialLayout() {
       pickDirectory,
       openProfileEditor,
       openPermissions: (options) => openSpawnPermEditor({ ...options, group: options.group || 'the spawn group' }),
+      openContextFeatures: (options) => openContextFeaturesEditor(options),
       confirm: confirmModal,
       confirmDiscard,
       notify: toast,
@@ -223,6 +224,7 @@ async function settleInitialLayout() {
       confirm: confirmModal, confirmDiscard, notify: toast,
       getSnapshot: () => lastSnapshot,
       openProfilePermissions: (options) => openSpawnPermEditor({ ...options, group: 'the spawn group' }),
+      openProfileContextFeatures: (options) => openContextFeaturesEditor(options),
       refreshSandboxSpawn: refreshAgentSpawnSandboxPolicy,
       summonSandboxScribe,
       summonTemplateScribe,

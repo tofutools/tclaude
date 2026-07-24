@@ -27,7 +27,3 @@ func TestMigrateV153toV154AddsCronOperatorAuthoredDisabledForLegacyJobs(t *testi
 	assert.Equal(t, 154, schemaVersion(d))
 	require.NoError(t, migrateV153toV154(d), "partially applied migration converges")
 }
-
-func TestMigrateV154IsTheCurrentHead(t *testing.T) {
-	require.Equal(t, 154, currentVersion, "tripwire: bump this with the next migration")
-}

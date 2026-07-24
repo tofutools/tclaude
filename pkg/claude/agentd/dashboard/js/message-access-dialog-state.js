@@ -84,6 +84,20 @@ export function createMessageAccessDialogState({ canRestoreFocus = () => true } 
     openBufferedPermissions(options = {}) {
       return open({ kind: 'permissions', ...options, mode: 'buffer', overrides: { ...(options.overrides || {}) } });
     },
+    // Startup-context trims (TCL-597). Always buffered: the dialog edits a draft
+    // the spawn form or profile editor owns and hands back on save, never a live
+    // agent — trimming a running agent's startup context is meaningless, since
+    // that context was loaded at launch. The catalog rides the descriptor because
+    // it is harness-specific and the caller is the one that knows which harness
+    // the draft selected.
+    openContextFeatures(options = {}) {
+      return open({
+        kind: 'context-features',
+        ...options,
+        catalog: [...(options.catalog || [])],
+        selection: { ...(options.selection || {}) },
+      });
+    },
     close, pickAgent, finishPicker, dispose,
   });
 }
