@@ -387,7 +387,13 @@ func realRequestHumanApproval(req *approvalRequest, popupBaseURL string) bool {
 		// Optional compatibility path for operators who still want the old
 		// auto-raise behavior. By default the dashboard's Messages badge and
 		// access-request banner are the attention surface.
-		url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard)
+		//
+		// The deep-link query rides along so the raised window lands on THIS
+		// request in the approvals folder — the old popup opened the one
+		// decision it was raised for, and dropping the operator on the default
+		// tab to go find it themselves is a regression from that.
+		url := popupBaseURL + "/?init_token=" + mintInitToken(initScopeDashboard) +
+			"&" + accessRequestDeepLinkQuery(req.id)
 		go func() {
 			if err := approvalBrowserOpener(url); err != nil {
 				slog.Warn("popup: failed to open browser", "err", err, "url", url)

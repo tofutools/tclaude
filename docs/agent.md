@@ -1786,6 +1786,12 @@ no OS banner is sent; opt into those extra alerts with
 `agent.access_request_auto_open_browser` and
 `agent.access_request_system_notification`.
 
+Every jump to the approvals folder opens a request, not just the folder: the
+top banner's **Review** button and the Messages badge both open the oldest
+pending request in the reader, and the auto-raised browser window (and the
+tray's pending-approvals menu) deep-links to the specific request that
+triggered it.
+
 **Always allow for this agent.** For a small allowlist of low-blast-radius
 slugs (today `human.clipboard` and `human.notify`), the access-request card shows a
 fourth button — **Always allow for this agent**. It approves the pending
