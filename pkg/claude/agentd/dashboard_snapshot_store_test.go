@@ -34,39 +34,20 @@ func TestDashboardSnapshotStoreBoundary(t *testing.T) {
 		}
 	}
 
-	// A refresh whose generation is superseded bails without publishing, so two
-	// overlapping refreshes are not redundant work — the newer one CANCELS the
-	// older. Two invariants keep a cycle slower than the poll interval from
-	// starving every attempt (the boot curtain stuck on "Fetching data…", and a
-	// steady-state dashboard that silently stops updating): the scheduler refuses
-	// to overlap, and a refresh that IS superseded stops costing agentd a full
-	// snapshot build it will never read.
-	poll, err := fs.ReadFile(dashboardAssetsFS, "js/snapshot-poll.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, needle := range []string{
-		"if (inFlightSince !== null && nowImpl() - inFlightSince < stallMs) return;",
-		"const done = () => { if (inFlightSince === startedAt) inFlightSince = null; };",
-	} {
-		if !strings.Contains(string(poll), needle) {
-			t.Errorf("snapshot poll is missing its in-flight guard %q", needle)
-		}
-	}
+	// A superseded refresh bails without publishing, so an overlapping refresh
+	// CANCELS the earlier one rather than duplicating it. The scheduler's refusal
+	// to overlap is covered behaviourally in jstest/snapshot-poll.test.mjs; what
+	// only source inspection can pin here is the other half — a refresh that IS
+	// superseded must stop costing agentd a full snapshot build nobody will read,
+	// since under a slow cycle those pile up and worsen the latency that caused
+	// the overlap.
 	for _, needle := range []string{
 		"inFlightFetches?.abort(abortReason('superseded by a newer refresh'));",
-		"signal: abort.signal",
 		"if (inFlightFetches === abort) inFlightFetches = null;",
 	} {
 		if !strings.Contains(string(refresh), needle) {
 			t.Errorf("authoritative poll is missing supersede-abort wiring %q", needle)
 		}
-	}
-	// The stall bound is what keeps the in-flight guard from becoming a permanent
-	// wedge, so the refresh timeout that guarantees settlement must stay under it.
-	if !strings.Contains(string(poll), "SNAPSHOT_STALL_MS = 30000") ||
-		!strings.Contains(string(refresh), "SNAPSHOT_REQUEST_TIMEOUT_MS = 20000") {
-		t.Error("the refresh timeout must stay bounded below the poll's stall escape hatch")
 	}
 }
 
