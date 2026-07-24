@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -87,14 +88,22 @@ type CommandState struct {
 // Dispatch is an in-memory permission to execute a command whose complete
 // request has already committed. It cannot be constructed outside this package.
 //
-// It is mutated only by the run's owner, and only before Claim hands it to a
-// worker. After Claim the value is immutable, so a worker goroutine can read
-// its command without synchronization and without touching the Run.
+// It is one-shot, and enforced as such rather than by convention: `claimed` is
+// taken by the owner in Claim, and `spent` is taken by Perform immediately
+// before the external program starts. Both are atomic compare-and-swaps, so a
+// second attempt — sequential or concurrent, correct caller or not — loses the
+// race and is refused before any side effect. A failed or cancelled program
+// does not give the permission back; reissuing is a durable operator decision.
+//
+// Everything else here is written once, before the permission reaches a worker,
+// so a worker can read its command without synchronization and without ever
+// touching the Run.
 type Dispatch struct {
 	owner   *Run
 	runID   string
 	command engine.Command
-	claimed bool
+	claimed atomic.Bool
+	spent   atomic.Bool
 }
 
 // Authorization is the concrete decision supplied by the daemon-owned caller.
@@ -501,7 +510,7 @@ func Abandon(run *Run, dispatch *Dispatch) {
 // be called by the run's single state owner; afterwards the Dispatch is
 // immutable and Perform can read it from a worker goroutine.
 func Claim(run *Run, dispatch *Dispatch, authorization Authorization) error {
-	if run == nil || dispatch == nil || dispatch.owner != run || dispatch.claimed {
+	if run == nil || dispatch == nil || dispatch.owner != run {
 		return ErrStaleDispatch
 	}
 	if run.dispatches[dispatch.command.NodeID] != dispatch {
@@ -515,7 +524,11 @@ func Claim(run *Run, dispatch *Dispatch, authorization Authorization) error {
 	if authorization.RunID != run.id || authorization.Profile != dispatch.command.Program.Profile {
 		return ErrUnauthorized
 	}
-	dispatch.claimed = true
+	// Last, and atomically: an unauthorized attempt must leave the permission
+	// usable, but a second authorized claim must not.
+	if !dispatch.claimed.CompareAndSwap(false, true) {
+		return ErrStaleDispatch
+	}
 	return nil
 }
 

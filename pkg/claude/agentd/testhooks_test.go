@@ -111,12 +111,12 @@ func SetProcessProgramPerformForTest(fn func(context.Context, *executor.Dispatch
 // a flow test asserts against the production constant rather than a copy.
 func ProcessRunConcurrencyForTest() int { return processRunConcurrency }
 
-// ProcessRunExecutingNodesForTest reports which of a run's commands the live
-// claim is currently running a program for.
-func ProcessRunExecutingNodesForTest(runID string) []string {
-	executing, _ := processRuns.executingCommands(runID)
-	nodes := make([]string, 0, len(executing))
-	for nodeID := range executing {
+// ProcessRunAccountedNodesForTest reports which of a run's commands the live
+// claim has taken responsibility for.
+func ProcessRunAccountedNodesForTest(runID string) []string {
+	accounted, _ := processRuns.accountedCommands(runID)
+	nodes := make([]string, 0, len(accounted))
+	for nodeID := range accounted {
 		nodes = append(nodes, nodeID)
 	}
 	slices.Sort(nodes)

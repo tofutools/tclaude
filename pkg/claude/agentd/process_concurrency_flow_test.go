@@ -308,7 +308,7 @@ func TestProcessRuntimeConcurrentBranchesReallyOverlap(t *testing.T) {
 
 	// All K are inside their program at the same instant: none can have
 	// returned, because none has been released.
-	assert.Equal(t, entered, agentd.ProcessRunExecutingNodesForTest(run.ID))
+	assert.Equal(t, entered, agentd.ProcessRunAccountedNodesForTest(run.ID))
 	states := commandStates(showProcessRun(t, f, run.ID))
 	require.Len(t, states, concurrency)
 	for _, node := range entered {
@@ -319,7 +319,9 @@ func TestProcessRuntimeConcurrentBranchesReallyOverlap(t *testing.T) {
 	agentd.WaitForProcessRunRuntimeForTest()
 	final := showProcessRun(t, f, run.ID)
 	assert.Equal(t, engine.RunCompleted, final.Status)
-	assert.Empty(t, agentd.ProcessRunExecutingNodesForTest(run.ID))
+	assert.Empty(t, final.Commands)
+	assert.Empty(t, agentd.ProcessRunAccountedNodesForTest(run.ID),
+		"the claim is gone once the run finished, so nothing is accounted any more")
 }
 
 // TestProcessRuntimeDecisionSucceedsWhileSiblingProgramsExecute is the
@@ -352,8 +354,10 @@ func TestProcessRuntimeDecisionSucceedsWhileSiblingProgramsExecute(t *testing.T)
 		map[string]any{"nodeId": "decide", "verdict": "approve", "evidence": "checked while tasks ran"})
 	require.Equal(t, http.StatusAccepted, decide.Code, decide.Body.String())
 	assert.NotContains(t, decide.Body.String(), "process_run_claimed")
-	require.Equal(t, []string{"task-01", "task-02"}, agentd.ProcessRunExecutingNodesForTest(run.ID),
+	require.Equal(t, []string{"task-01", "task-02"}, agentd.ProcessRunAccountedNodesForTest(run.ID),
 		"the verdict committed without disturbing either running branch")
+	assert.Equal(t, map[string]string{"task-01": "executing", "task-02": "executing"},
+		commandStates(showProcessRun(t, f, run.ID)))
 
 	decided := showProcessRun(t, f, run.ID)
 	assert.Empty(t, decided.AwaitingDecisions)
@@ -797,4 +801,145 @@ func TestProcessRuntimeDaemonWideCapacityStillBoundsConcurrentRuns(t *testing.T)
 	gate.releaseAll()
 	agentd.WaitForProcessRunRuntimeForTest()
 	assert.Equal(t, engine.RunCompleted, showProcessRun(t, f, deferred.ID).Status)
+}
+
+// TestProcessRuntimeOwnedCommandsAreAccountedBeforeTheResponseReturns is the
+// accounting-window regression. Every durable command an owner takes on must be
+// presented as executing from the instant it is visible at all — never, even
+// briefly, as needing reconciliation. The performer here blocks before it
+// reports entry, so the assertions land while no program has started: if
+// accounting waited for a worker to run, these would fail.
+func TestProcessRuntimeOwnedCommandsAreAccountedBeforeTheResponseReturns(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	concurrency := agentd.ProcessRunConcurrencyForTest()
+	putProcessRuntimeTemplate(t, root, processMixedFanOutTemplate("accounted", concurrency))
+	stuck := make(chan struct{})
+	var release sync.Once
+	unstick := func() { release.Do(func() { close(stuck) }) }
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(_ context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		<-stuck
+		return executor.Result{}, fmt.Errorf("worker never reported for %s", dispatch.Command().NodeID)
+	}))
+	t.Cleanup(unstick)
+
+	requireAllExecuting := func(t *testing.T, view processRuntimeRunView, why string) {
+		t.Helper()
+		require.NotEmpty(t, view.Commands, why)
+		assert.False(t, view.NeedsReconcile, why)
+		assert.Equal(t, "executing", view.Action, why)
+		for _, command := range view.Commands {
+			assert.Equalf(t, "executing", command.State, "%s: %s", why, command.NodeID)
+		}
+	}
+
+	// create: the response body itself is produced after beginRun, so it must
+	// already classify every owned command.
+	created := createProcessRun(t, f, "run_accounted", "accounted")
+	requireAllExecuting(t, created, "create response")
+	require.Len(t, created.Commands, concurrency)
+	requireAllExecuting(t, showProcessRun(t, f, "run_accounted"), "GET right after create")
+
+	// decide: routed to the live owner, and its response must classify too.
+	decide := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_accounted/decide",
+		map[string]any{"nodeId": "decide", "verdict": "approve"})
+	require.Equal(t, http.StatusAccepted, decide.Code, decide.Body.String())
+	var decided processDecideResponse
+	testharness.DecodeJSON(t, decide, &decided)
+	requireAllExecuting(t, decided.Run, "decide response")
+
+	// resume: a no-op on an already-driven run, and still consistent.
+	resume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_accounted/resume", map[string]any{})
+	require.Equal(t, http.StatusAccepted, resume.Code, resume.Body.String())
+	var resumed processDecideResponse
+	testharness.DecodeJSON(t, resume, &resumed)
+	requireAllExecuting(t, resumed.Run, "resume response")
+
+	// While the owner accounts for these commands, reconciliation is refused —
+	// they are not the operator's to resolve yet.
+	for _, route := range []struct {
+		path string
+		body map[string]any
+	}{
+		{"/reissue", map[string]any{"nodeId": "task-01"}},
+		{"/record-outcome", map[string]any{"nodeId": "task-01", "outcome": "succeeded"}},
+	} {
+		refused := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/run_accounted"+route.path, route.body)
+		assert.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
+		assert.Contains(t, refused.Body.String(), `"code":"process_run_claimed"`)
+	}
+
+	// Only when the owner is gone do the still-durable commands honestly become
+	// the operator's problem.
+	unstick()
+	t.Cleanup(agentd.ResetProcessRunRuntimeForTest())
+	released := showProcessRun(t, f, "run_accounted")
+	assert.True(t, released.NeedsReconcile, "claim released: unresolved commands are reconcilable again")
+	assert.Equal(t, "needs_reconcile", released.Action)
+	require.Len(t, released.Commands, concurrency)
+	for _, command := range released.Commands {
+		assert.Equal(t, "needs_reconcile", command.State, command.NodeID)
+	}
+}
+
+// TestProcessRuntimeConcurrentReadsNeverSeeATransientNeedsReconcile hammers the
+// read path across a whole multi-stage concurrent run — initial fill, every
+// completion-to-refill handoff, and shutdown — and asserts no reader ever
+// catches a command belonging to the live owner in the reconcilable state. The
+// handoff windows are the point: a refill is planned inside the observation
+// transaction, so a reader that could see the committed command without its
+// owner accounting for it would be inviting an operator to reconcile work that
+// is about to run.
+func TestProcessRuntimeConcurrentReadsNeverSeeATransientNeedsReconcile(t *testing.T) {
+	f, root := processRuntimeFlow(t)
+	concurrency := agentd.ProcessRunConcurrencyForTest()
+	branches := concurrency * 3
+	putProcessRuntimeTemplate(t, root, processFanOutTemplate("no-transient", branches))
+	// Programs return immediately, so completions and refills churn continuously
+	// while the readers run.
+	t.Cleanup(agentd.SetProcessProgramPerformForTest(func(_ context.Context, dispatch *executor.Dispatch) (executor.Result, error) {
+		command := dispatch.Command()
+		return executor.Result{Dispatched: true, Observation: engine.ProgramObservation{
+			CommandID: command.ID, NodeID: command.NodeID, Outcome: engine.ProgramSucceeded,
+		}}, nil
+	}))
+
+	stop := make(chan struct{})
+	var offered atomic.Int32
+	var reads atomic.Int32
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				show := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs/run_no_transient", nil)
+				if show.Code != http.StatusOK {
+					continue
+				}
+				var view processRuntimeRunView
+				testharness.DecodeJSON(t, show, &view)
+				reads.Add(1)
+				if view.NeedsReconcile && view.Status == engine.RunRunning {
+					offered.Add(1)
+				}
+			}
+		}()
+	}
+
+	createProcessRun(t, f, "run_no_transient", "no-transient")
+	agentd.WaitForProcessRunRuntimeForTest()
+	close(stop)
+	wg.Wait()
+
+	assert.Positive(t, reads.Load(), "the readers actually observed the run")
+	assert.Zero(t, offered.Load(),
+		"a live owner's command was offered for reconciliation at least once")
+	final := showProcessRun(t, f, "run_no_transient")
+	assert.Equal(t, engine.RunCompleted, final.Status)
+	assert.Empty(t, final.Commands)
 }

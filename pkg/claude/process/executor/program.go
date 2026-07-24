@@ -56,7 +56,15 @@ type Result struct {
 // have been Claimed by that owner, which is what proves the authorization was
 // checked against this exact command and that no second worker can run it.
 func Perform(ctx context.Context, dispatch *Dispatch) (Result, error) {
-	if dispatch == nil || !dispatch.claimed {
+	if dispatch == nil || !dispatch.claimed.Load() {
+		return Result{}, ErrStaleDispatch
+	}
+	// Consume the permission BEFORE the external program can start. This is the
+	// last line of defence against running one command twice: it does not
+	// assume the caller followed Claim-then-Perform-once, and it holds for a
+	// concurrent second attempt as much as a sequential one. A program that
+	// then fails, times out, or is cancelled does not hand the permission back.
+	if !dispatch.spent.CompareAndSwap(false, true) {
 		return Result{}, ErrStaleDispatch
 	}
 	return programPerform(ctx, dispatch.runID, dispatch.command)
@@ -143,7 +151,12 @@ func performProgram(ctx context.Context, runID string, command engine.Command) (
 // so the durable command stays outstanding and becomes explicitly reconcilable
 // exactly as a cold load would leave it.
 func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
-	if run == nil || dispatch == nil || dispatch.owner != run || !dispatch.claimed ||
+	// Claimed, still live, and still this run's permission for that node. It
+	// deliberately does NOT require the permission to be spent: the owner
+	// substitutes its own performer at the worker boundary, and whether that
+	// performer went through Perform is not Observe's business. Running a
+	// command at most once is enforced where the program actually starts.
+	if run == nil || dispatch == nil || dispatch.owner != run || !dispatch.claimed.Load() ||
 		run.dispatches[dispatch.command.NodeID] != dispatch {
 		return nil, ErrStaleDispatch
 	}

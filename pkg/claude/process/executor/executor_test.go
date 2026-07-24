@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -628,4 +630,116 @@ func waitForProcessExit(t *testing.T, pid int) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("descendant process %d survived executor cleanup", pid)
+}
+
+// TestDispatchPermissionIsSingleUseSequentially proves the permission is spent
+// by the act of performing, not by convention: a second Perform on the same
+// dispatch is refused BEFORE any external program starts, whether the first
+// attempt succeeded, failed, or was cancelled.
+func TestDispatchPermissionIsSingleUseSequentially(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		program string
+	}{
+		{name: "successful program", program: "success"},
+		{name: "failing program", program: "output"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setupExecutorTest(t)
+			runID := "run_single_use_" + strings.ReplaceAll(test.name, " ", "_")
+			createRun(t, runID, helperProgram(t, test.program))
+			run := mustLoadRun(t, runID)
+			dispatch, err := Prepare(run)
+			require.NoError(t, err)
+
+			var entries int
+			t.Cleanup(SetProgramPerformForTest(func(context.Context, string, engine.Command) (Result, error) {
+				entries++
+				return Result{Observation: engine.ProgramObservation{
+					CommandID: dispatch.command.ID, NodeID: dispatch.command.NodeID,
+					Outcome: engine.ProgramSucceeded,
+				}}, nil
+			}))
+
+			require.NoError(t, Claim(run, dispatch, Authorization{RunID: run.ID()}))
+			_, err = Perform(t.Context(), dispatch)
+			require.NoError(t, err)
+			require.Equal(t, 1, entries)
+
+			// Straight replay of the same permission.
+			_, err = Perform(t.Context(), dispatch)
+			assert.ErrorIs(t, err, ErrStaleDispatch)
+			// Re-claiming first does not launder it either.
+			assert.ErrorIs(t, Claim(run, dispatch, Authorization{RunID: run.ID()}), ErrStaleDispatch)
+			_, err = Perform(t.Context(), dispatch)
+			assert.ErrorIs(t, err, ErrStaleDispatch)
+			assert.Equal(t, 1, entries, "the external program must have been entered exactly once")
+		})
+	}
+}
+
+// TestDispatchPermissionIsSingleUseUnderConcurrentPerform is the same guarantee
+// against a race rather than a sequence: many goroutines call Perform on one
+// permission at once and exactly one reaches the program.
+func TestDispatchPermissionIsSingleUseUnderConcurrentPerform(t *testing.T) {
+	setupExecutorTest(t)
+	createRun(t, "run_single_use_race", helperProgram(t, "success"))
+	run := mustLoadRun(t, "run_single_use_race")
+	dispatch, err := Prepare(run)
+	require.NoError(t, err)
+	require.NoError(t, Claim(run, dispatch, Authorization{RunID: run.ID()}))
+
+	// The performer holds every entrant until the test releases them, so a
+	// second entry cannot be missed by finishing too quickly to overlap.
+	var entries atomic.Int32
+	release := make(chan struct{})
+	t.Cleanup(SetProgramPerformForTest(func(context.Context, string, engine.Command) (Result, error) {
+		entries.Add(1)
+		<-release
+		return Result{}, nil
+	}))
+
+	const attempts = 16
+	var wg sync.WaitGroup
+	refused := make(chan error, attempts)
+	for range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := Perform(t.Context(), dispatch); err != nil {
+				refused <- err
+			}
+		}()
+	}
+	// Every loser must be refused without waiting for the winner to finish.
+	for range attempts - 1 {
+		assert.ErrorIs(t, <-refused, ErrStaleDispatch)
+	}
+	assert.Equal(t, int32(1), entries.Load(), "exactly one goroutine reached the external program")
+	close(release)
+	wg.Wait()
+	assert.Equal(t, int32(1), entries.Load())
+}
+
+// TestUnauthorizedClaimLeavesThePermissionUsable pins the other half: only an
+// ACCEPTED claim consumes the claim bit, so a rejected authorization does not
+// strand a command that was never executed.
+func TestUnauthorizedClaimLeavesThePermissionUsable(t *testing.T) {
+	setupExecutorTest(t)
+	program := helperProgram(t, "success")
+	program.Profile = "profile-a"
+	createRun(t, "run_claim_refusal", program)
+	run := mustLoadRun(t, "run_claim_refusal")
+	dispatch, err := Prepare(run)
+	require.NoError(t, err)
+
+	assert.ErrorIs(t, Claim(run, dispatch, Authorization{RunID: "other", Profile: "profile-a"}), ErrUnauthorized)
+	assert.ErrorIs(t, Claim(run, dispatch, Authorization{RunID: run.ID(), Profile: "profile-b"}), ErrUnauthorized)
+	_, err = Perform(t.Context(), dispatch)
+	assert.ErrorIs(t, err, ErrStaleDispatch, "an unclaimed permission cannot start a program")
+
+	require.NoError(t, Claim(run, dispatch, Authorization{RunID: run.ID(), Profile: "profile-a"}))
+	result, err := Perform(t.Context(), dispatch)
+	require.NoError(t, err)
+	assert.Equal(t, engine.ProgramSucceeded, result.Observation.Outcome)
 }

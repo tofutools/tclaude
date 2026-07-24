@@ -93,10 +93,24 @@ type processRunClaim struct {
 	gone     chan struct{}
 	released sync.Once
 
-	// mu guards only the presentation set below. It is written by the owner and
-	// read by HTTP readers; it is not run state.
+	// mu guards only the accounting set below, and is HELD ACROSS every planning
+	// commit this owner makes. That ordering is the whole point: a reader that
+	// can see a committed command in SQLite can never fail to see this owner
+	// accounting for it, so a durable command is never briefly presented as
+	// needing reconciliation while its owner is about to run it.
+	//
+	// accounted names every command this claim has taken responsibility for. It
+	// is never pruned while the claim lives — a handled command stays accounted
+	// until the claim goes away — which keeps a stale read conservative: it may
+	// say executing a moment longer than necessary, but it can never invite an
+	// operator to reconcile work the owner is executing or has just committed.
+	// On release the claim disappears and any still-durable command honestly
+	// becomes needs_reconcile.
+	//
+	// It is accounting, not run state: the executor's own live dispatch table
+	// remains the authority on what may still be planned or observed.
 	mu        sync.Mutex
-	executing map[string]struct{}
+	accounted map[string]struct{}
 }
 
 // processRunManager owns only short-lived in-process claims. SQLite remains
@@ -110,23 +124,26 @@ type processRunManager struct {
 	wg          sync.WaitGroup
 }
 
-func (c *processRunClaim) markExecuting(nodeID string) {
+// plan runs one planning call with the accounting lock held, so the command it
+// commits and this claim's responsibility for that command become visible to
+// readers together. Every path that can durably produce a command for this
+// owner — the initial fill, an operator reissue, and the refill an observation
+// plans — goes through here.
+func (c *processRunClaim) plan(commit func() (*executor.Dispatch, error)) (*executor.Dispatch, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.executing[nodeID] = struct{}{}
+	dispatch, err := commit()
+	if dispatch != nil {
+		c.accounted[dispatch.Command().NodeID] = struct{}{}
+	}
+	return dispatch, err
 }
 
-func (c *processRunClaim) clearExecuting(nodeID string) {
+func (c *processRunClaim) accountedNodes() map[string]struct{} {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.executing, nodeID)
-}
-
-func (c *processRunClaim) executingNodes() map[string]struct{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	nodes := make(map[string]struct{}, len(c.executing))
-	for nodeID := range c.executing {
+	nodes := make(map[string]struct{}, len(c.accounted))
+	for nodeID := range c.accounted {
 		nodes[nodeID] = struct{}{}
 	}
 	return nodes
@@ -294,7 +311,7 @@ func (m *processRunManager) claim(runID string) (*processRunClaim, bool, error) 
 		workerCtx: workerCtx, cancelWorkers: cancelWorkers,
 		decisions: make(chan *processRunDecisionRequest),
 		gone:      make(chan struct{}),
-		executing: make(map[string]struct{}),
+		accounted: make(map[string]struct{}),
 	}
 	m.claims[runID] = claim
 	m.wg.Add(1)
@@ -328,16 +345,19 @@ func (m *processRunManager) liveClaim(runID string) (*processRunClaim, bool, err
 	return claim, ok, nil
 }
 
-// executingCommands reports which of a run's durable commands this daemon is
-// still running a program for, and whether the run is claimed at all.
-func (m *processRunManager) executingCommands(runID string) (map[string]struct{}, bool) {
+// accountedCommands reports which of a run's durable commands a live owner has
+// taken responsibility for, and whether the run is claimed at all. It returns
+// an empty set rather than nil for an unclaimed run, so callers can union
+// snapshots without a nil check. See loadProcessRunView for why it is read on
+// both sides of the record.
+func (m *processRunManager) accountedCommands(runID string) (map[string]struct{}, bool) {
 	m.mu.Lock()
 	claim, ok := m.claims[runID]
 	m.mu.Unlock()
 	if !ok {
-		return nil, false
+		return map[string]struct{}{}, false
 	}
-	return claim.executingNodes(), true
+	return claim.accountedNodes(), true
 }
 
 func (m *processRunManager) begin(runID string, start processRunStart) (bool, error) {
@@ -388,20 +408,23 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		if run.Action().Kind == executor.ActionNeedsReconcile {
 			return false, executor.ErrNeedsReconcile
 		}
-		dispatches, err = fillProcessRun(run, processRunConcurrency)
+		dispatches, err = fillProcessRun(claim, run, processRunConcurrency)
 	case processRunReissue:
 		var reissued *executor.Dispatch
-		if reissued, err = executor.Reissue(run, start.actor, start.selector); err == nil {
+		reissued, err = claim.plan(func() (*executor.Dispatch, error) {
+			return executor.Reissue(run, start.actor, start.selector)
+		})
+		if err == nil {
 			committed = true
 			dispatches = append(dispatches, reissued)
 			var more []*executor.Dispatch
-			more, fillErr = fillProcessRun(run, processRunConcurrency-1)
+			more, fillErr = fillProcessRun(claim, run, processRunConcurrency-1)
 			dispatches = append(dispatches, more...)
 		}
 	case processRunRecordOutcome:
 		if err = executor.RecordOutcome(run, start.actor, start.selector, start.outcome); err == nil {
 			committed = true
-			dispatches, fillErr = fillProcessRun(run, processRunConcurrency)
+			dispatches, fillErr = fillProcessRun(claim, run, processRunConcurrency)
 		}
 	case processRunDecide:
 		if err = executor.RecordDecision(run, start.actor, start.decision); err == nil {
@@ -410,7 +433,7 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 			// this run again even when a sibling branch is still awaiting its
 			// own decision, because the runnable predicate admits a run whose
 			// ready nodes outnumber its awaited obligations.
-			dispatches, fillErr = fillProcessRun(run, processRunConcurrency)
+			dispatches, fillErr = fillProcessRun(claim, run, processRunConcurrency)
 		}
 	default:
 		err = fmt.Errorf("unknown process run start mode")
@@ -444,12 +467,13 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 }
 
 // fillProcessRun plans durable commands until capacity is used up or no ready
-// task remains. Each one commits before its program is allowed to start; the
-// ready branches it did not reach are simply left ready.
-func fillProcessRun(run *executor.Run, capacity int) ([]*executor.Dispatch, error) {
+// task remains. Each one commits before its program is allowed to start, and
+// each commit carries this claim's accounting with it; the ready branches it
+// did not reach are simply left ready.
+func fillProcessRun(claim *processRunClaim, run *executor.Run, capacity int) ([]*executor.Dispatch, error) {
 	var dispatches []*executor.Dispatch
 	for range capacity {
-		dispatch, err := executor.Prepare(run)
+		dispatch, err := claim.plan(func() (*executor.Dispatch, error) { return executor.Prepare(run) })
 		if err != nil {
 			return dispatches, err
 		}
@@ -496,7 +520,6 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 				executor.Abandon(claim.run, dispatch)
 				continue
 			}
-			claim.markExecuting(command.NodeID)
 			inFlight++
 			go func() {
 				result, err := processProgramPerform(claim.workerCtx, dispatch)
@@ -511,7 +534,6 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 		select {
 		case result := <-results:
 			inFlight--
-			claim.clearExecuting(result.dispatch.Command().NodeID)
 			if next := m.observeProcessRunResult(runID, claim, result); next != nil {
 				pending = append(pending, next)
 			}
@@ -522,7 +544,7 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// winner left behind.
 			request.reply <- executor.RecordDecision(claim.run, request.actor, request.input)
 		}
-		more, err := fillProcessRun(claim.run, processRunConcurrency-inFlight-len(pending))
+		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-len(pending))
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {
 			slog.Warn("process runtime: planning stopped", "run", runID, "error", err)
 		}
@@ -547,7 +569,9 @@ func (m *processRunManager) observeProcessRunResult(runID string, claim *process
 		// as ordinary observations, so nothing is lost or assumed.
 		claim.cancelWorkers()
 	}
-	next, err := executor.Observe(claim.run, result.dispatch, result.result)
+	next, err := claim.plan(func() (*executor.Dispatch, error) {
+		return executor.Observe(claim.run, result.dispatch, result.result)
+	})
 	if err != nil {
 		// The worker is gone either way, so this branch can no longer be
 		// accounted for in memory. Dropping the permission is what stops the
@@ -1096,15 +1120,34 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 	return missing
 }
 
+// loadProcessRunView brackets the record read with the owner's accounting.
+//
+// Neither order is safe on its own, and both failures point the same wrong way
+// — at an operator being told to reconcile work that is not theirs:
+//
+//   - accounting first, then the record, misses a command planned in between;
+//   - the record first, then accounting, misses a command whose owner released
+//     the claim after the read, having in fact resolved it.
+//
+// Reading it on both sides and taking the union is conservative in both
+// directions. A command counts as owned if EITHER snapshot saw its owner, so
+// the worst case is a moment of stale "executing", never a false invitation to
+// reconcile. Once the owner is genuinely gone, both snapshots agree.
 func loadProcessRunView(runID string) (processRunView, error) {
-	record, err := db.GetProcessRun(strings.TrimSpace(runID))
+	runID = strings.TrimSpace(runID)
+	before, claimedBefore := processRuns.accountedCommands(runID)
+	record, err := db.GetProcessRun(runID)
 	if err != nil {
 		return processRunView{}, err
 	}
-	return processRunViewOf(record)
+	after, claimedAfter := processRuns.accountedCommands(runID)
+	for nodeID := range after {
+		before[nodeID] = struct{}{}
+	}
+	return processRunViewOf(record, before, claimedBefore || claimedAfter)
 }
 
-func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
+func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, claimed bool) (processRunView, error) {
 	var checkpoint engine.Checkpoint
 	if err := record.DecodeCheckpoint(&checkpoint); err != nil {
 		return processRunView{}, err
@@ -1119,16 +1162,15 @@ func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
 	}
 	// SQLite alone cannot tell an executing command from an abandoned one — that
 	// is precisely why a cold load calls every outstanding command ambiguous.
-	// The live claim is the only thing that knows which ones it is still
-	// running.
-	executing, claimed := processRuns.executingCommands(record.ID)
+	// The live claim is the only thing that knows which ones it owns; see
+	// loadProcessRunView for how that reading is kept conservative.
 	commands := make([]processRunCommandView, 0, len(checkpoint.Commands))
 	needsReconcile := false
 	anyExecuting := false
 	for i := range checkpoint.Commands {
 		command := checkpoint.Commands[i]
 		state := processCommandNeedsReconcile
-		if _, live := executing[command.NodeID]; live {
+		if _, live := accounted[command.NodeID]; live {
 			state, anyExecuting = processCommandExecuting, true
 		} else {
 			needsReconcile = true
