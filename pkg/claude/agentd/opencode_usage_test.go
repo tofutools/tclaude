@@ -70,6 +70,29 @@ func TestOpenCodeVirtualCostForUsageUsesNativeTiersAndCachePricing(t *testing.T)
 	assert.False(t, missing.eligible, "an absent catalog entry still degrades without inventing a price")
 }
 
+func TestOpenCodeVirtualCostPricesEachStepBeforeApplyingContextTier(t *testing.T) {
+	tier := openCodePriceTier{Input: 2}
+	tier.Tier.Type, tier.Tier.Size = "context", 200_000
+	zero := float64(0)
+	state := openCodeMessageCostUsage{
+		message: openCodeContextUsage{
+			MessageID: "msg-tiered", ProviderID: "openai", ModelID: "gpt-tiered",
+			ReportedCost: &zero,
+		},
+		hadSteps: true,
+		steps: map[string]openCodeContextUsage{
+			"part-1": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 120_000},
+			"part-2": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 120_000},
+		},
+	}
+	projected := projectOpenCodeMessageCostUsage(state, map[string]openCodeModelPrice{
+		"openai/gpt-tiered": {Input: 1, Tiers: []openCodePriceTier{tier}},
+	})
+	require.True(t, projected.eligible)
+	assert.InDelta(t, 0.24, projected.usd, 1e-12,
+		"two sub-threshold model calls remain base-priced instead of becoming one tiered 240k call")
+}
+
 func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *testing.T) {
 	setupTestDB(t)
 	resetOpenCodeLimitCacheForTest()
@@ -372,11 +395,25 @@ func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {
 	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12,
 		"positive live message cost is persisted without waiting for session.updated")
 
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, openCodeStepCostUsage{
+		PartID: "part-later",
+		Usage: openCodeContextUsage{
+			MessageID: "msg-real", ReportedCost: float64ptr(0.7), Input: 1_000_000,
+		},
+	})
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.7, snap.CostUSD, 1e-12,
+		"a persisted later step wins over a stale lower top-level cumulative cost")
+
 	usage.MessageID, usage.ReportedCost = "msg-ambiguous", nil
 	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
 	snap, err = db.GetContextSnapshot(runtime.SessionID)
 	require.NoError(t, err)
 	assert.Zero(t, snap.VirtualCostUSD, "missing reported-cost metadata is not guessed to mean subscription")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "real and ambiguous traffic do not create subscription coverage")
 }
 
 // seedOpenCodeUsageSession inserts a minimal OpenCode session row so the usage
@@ -554,9 +591,14 @@ func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {
 		case "/session/" + convID + "/message":
 			_, _ = w.Write([]byte(`[` +
 				`{"info":{"id":"msg-1","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
-				`"time":{"created":100},"cost":0.2,"tokens":{"input":1000,"output":100}}},` +
+				`"time":{"created":100},"cost":0.1,"tokens":{"input":1000,"output":100}},` +
+				`"parts":[` +
+				`{"id":"p1","messageID":"msg-1","type":"step-finish","cost":0.1,"tokens":{"input":500,"output":50}},` +
+				`{"id":"p2","messageID":"msg-1","type":"step-finish","cost":0.2,"tokens":{"input":1000,"output":100}}]},` +
 				`{"info":{"id":"msg-2","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
-				`"time":{"created":200},"cost":0.3,"tokens":{"input":2000,"output":200}}}` +
+				`"time":{"created":200},"cost":0.3,"tokens":{"input":2000,"output":200}}},` +
+				`{"info":{"id":"msg-ambiguous","role":"assistant","providerID":"openai","modelID":"gpt-a",` +
+				`"time":{"created":300},"tokens":{"input":1000,"output":100}}}` +
 				`]`))
 		default:
 			http.NotFound(w, r)
@@ -570,9 +612,12 @@ func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {
 	})
 	snap, err := db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
-	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12,
-		"assistant history recovers real spend when cumulative SSE cost was missed")
+	assert.InDelta(t, 0.6, snap.CostUSD, 1e-12,
+		"recovery uses persisted step totals when the top-level cumulative cost is stale")
 	assert.Zero(t, snap.VirtualCostUSD, "real history remains authoritative over WHAT-IF cost")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Unix(0, 0), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "real and ambiguous backfill traffic do not create subscription coverage")
 }
 
 func TestBackfillOpenCodeRealCostClearsWhatIfDuringCatalogOutage(t *testing.T) {
