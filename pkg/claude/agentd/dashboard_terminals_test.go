@@ -84,10 +84,12 @@ func TestDashboardTerminals_SoloServesPopout(t *testing.T) {
 	body := rec.Body.String()
 	for _, needle := range []string{
 		`id="terminals-root"`,
+		`id="message-access-dialog-root"`,
 		`type="importmap"`,
 		`"preact": "/static/vendor/preact/preact.module.js"`,
 		`/static/js/terminals.js`,
 		`/static/terminals.css`,
+		`/static/dashboard.css`,
 		`/static/mux.css`,
 		`/static/vendor/xterm/xterm.min.js`,
 		`/static/vendor/xterm/addon-web-links.min.js`,

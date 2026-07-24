@@ -59,7 +59,9 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   const calls = [];
   const beacons = [];
   let resolvePrefs;
+  let resolveDialogs;
   const prefs = new Promise((resolve) => { resolvePrefs = resolve; });
+  const dialogs = new Promise((resolve) => { resolveDialogs = resolve; });
   const mountShell = ({ state, actions }) => {
     calls.push('mount');
     return () => {
@@ -67,6 +69,13 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
       actions.dispose();
       state.dispose();
     };
+  };
+  const mountMessageDialogs = ({ confirmDiscard, notify, refresh }) => {
+    calls.push('dialogs');
+    assert.equal(typeof confirmDiscard, 'function');
+    assert.equal(typeof notify, 'function');
+    assert.equal(typeof refresh, 'function');
+    return dialogs;
   };
   const historyRef = {
     replaceState(_state, _unused, url) {
@@ -89,6 +98,7 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
     initPrefs: () => { calls.push('prefs'); return prefs; },
     initThemeSync: () => calls.push('theme'),
     mountShell,
+    mountMessageDialogs,
   });
 
   const starting = page.start();
@@ -97,8 +107,11 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   resolvePrefs();
   assert.equal(await starting, true);
   assert.deepEqual(calls, [
-    'prefs', 'theme', 'mount', 'replace:/terminals?solo=1',
+    'prefs', 'theme', 'mount', 'replace:/terminals?solo=1', 'dialogs',
   ]);
+  resolveDialogs(() => calls.push('dialogs-cleanup'));
+  await Promise.resolve();
+  await Promise.resolve();
   assert.equal(page.state.panes.value.length, 1);
   assert.equal(page.state.panes.value[0].seed.ws, seed.ws);
   assert.equal(harness.document.body.classList.contains('wizard'), true);
@@ -111,12 +124,102 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   assert.deepEqual(beacons, ['/api/hide/agt_one']);
   harness.window.dispatchEvent(new harness.window.Event('unload'));
   page.dispose();
+  await Promise.resolve();
   assert.equal(calls.filter((call) => call === 'cleanup').length, 1);
+  assert.equal(calls.filter((call) => call === 'dialogs-cleanup').length, 1);
   assert.equal(page.state.panes.value.length, 0);
 
   const lateAuth = new harness.window.CustomEvent('tclaude:auth-expired', { detail: {} });
   harness.window.dispatchEvent(lateAuth);
   assert.equal(lateAuth.detail.returnTo, undefined, 'disposed lifecycle removes auth writer');
+});
+
+test('standalone lifecycle connects before the real composer loads and sends through its fetch seam', async (t) => {
+  const harness = await createPreactHarness(t);
+  const host = harness.document.body.appendChild(harness.document.createElement('div'));
+  host.id = 'terminals-root';
+  const dialogHost = harness.document.body.appendChild(harness.document.createElement('div'));
+  dialogHost.id = 'message-access-dialog-root';
+  const fake = fakeWidgetFactory(harness);
+  const seed = {
+    ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo',
+  };
+  const locationRef = {
+    pathname: '/terminals', search: '?solo=1', hash: encodedSeed(seed),
+  };
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options });
+    return {
+      ok: true,
+      status: 202,
+      text: async () => JSON.stringify({ id: 17, queued: true }),
+    };
+  };
+  harness.window.confirm = () => true;
+  const { createStandaloneTerminalsPage } =
+    await harness.importDashboardModule('js/terminal-standalone.js');
+  const page = createStandaloneTerminalsPage({
+    host,
+    widgetFactory: fake.factory,
+    fetchImpl,
+    initPrefs: async () => {},
+    initThemeSync: () => {},
+    windowRef: harness.window,
+    documentRef: harness.document,
+    locationRef,
+    historyRef: { replaceState: () => { locationRef.hash = ''; } },
+    navigatorRef: { sendBeacon: () => true },
+  });
+
+  let started;
+  await harness.act(async () => { started = await page.start(); });
+  assert.equal(started, true);
+  assert.equal(fake.widgets.length, 1,
+    'the terminal shell mounts without awaiting the composer module graph');
+  assert.equal(fake.widgets[0].connectCount, 1);
+
+  for (let i = 0; i < 20 && !host.querySelector('[title*="queued message"]'); i++) {
+    await harness.act(() => new Promise((resolve) => setImmediate(resolve)));
+  }
+  assert.equal(dialogHost.dataset.islandOwner, 'message-access-dialogs');
+  assert.ok(host.querySelector('[title*="queued message"]'),
+    'successful composer mount enables its button and shell-level shortcut');
+
+  const chord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(chord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
+  });
+  await harness.act(async () => {
+    host.querySelector('.mux-pane-header').dispatchEvent(chord);
+    await Promise.resolve();
+  });
+  assert.equal(chord.defaultPrevented, true);
+  for (let i = 0; i < 5 && !dialogHost.querySelector('#operator-message-modal'); i++) {
+    await harness.act(() => new Promise((resolve) => setImmediate(resolve)));
+  }
+  assert.ok(dialogHost.querySelector('#operator-message-modal'));
+
+  await harness.input(dialogHost.querySelector('#operator-message-body'), 'from detached mode');
+  await harness.act(async () => {
+    dialogHost.querySelector('#operator-message-submit').click();
+    for (let i = 0; i < 5 && dialogHost.querySelector('#operator-message-modal'); i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  });
+  assert.equal(dialogHost.querySelector('#operator-message-modal'), null);
+  assert.deepEqual(requests.map(({ url }) => url), ['/api/operator-message']);
+  assert.deepEqual(JSON.parse(requests[0].options.body), {
+    to: 'agt_solo',
+    subject: '',
+    body: 'from detached mode',
+    attachment_token: '',
+  });
+
+  page.dispose();
+  assert.equal(dialogHost.dataset.islandOwner, undefined);
+  assert.equal(dialogHost.childElementCount, 0);
+  assert.equal(fake.widgets[0].disposeCount, 1);
 });
 
 test('standalone disposal before preference hydration prevents a late mount', async (t) => {
@@ -260,14 +363,22 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
     documentRef: harness.document,
     fetchImpl: async () => ({ ok: true }),
   });
+  const composed = [];
+  const composeMessageReady = harness.signals.signal(false);
+  let dialogKind = '';
   const cleanup = mountStandaloneTerminalShell({
     host, state, actions, widgetFactory: fake.factory,
+    onComposeMessage: (seed) => composed.push(seed),
+    composeMessageReady,
+    composeMessageDialogKind: () => dialogKind,
   });
   await harness.act(() => {});
   assert.ok(host.querySelector('#mux-empty'));
 
   await harness.act(async () => {
-    actions.openPane({ ws: '/solo', key: 'solo', label: 'solo terminal' });
+    actions.openPane({
+      ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo',
+    });
     await Promise.resolve();
   });
   assert.equal(host.querySelector('[role="tablist"]'), null);
@@ -281,6 +392,43 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   assert.equal(fake.widgets[0].connectCount, 1);
   assert.equal(harness.document.title, 'solo terminal — tclaude terminals');
+
+  assert.equal(host.querySelector('[title*="queued message"]'), null,
+    'the composer control stays absent until its optional island is ready');
+  const unavailableChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(unavailableChord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
+  });
+  host.querySelector('.mux-pane-header').dispatchEvent(unavailableChord);
+  assert.equal(unavailableChord.defaultPrevented, false,
+    'an unavailable composer does not consume the browser/terminal shortcut');
+  assert.equal(composed.length, 0);
+
+  await harness.act(() => { composeMessageReady.value = true; });
+  const message = getByRole(host, 'button', { name: '✉ Message' });
+  harness.fireEvent(message, 'click');
+  const headerChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(headerChord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
+  });
+  host.querySelector('.mux-pane-header').dispatchEvent(headerChord);
+  assert.equal(headerChord.defaultPrevented, true,
+    'the standalone shell captures Cmd+M above xterm and header controls');
+  assert.deepEqual(composed.map(({ restoreFocus, ...target }) => target), [
+    { ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo' },
+    { ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo' },
+  ]);
+  assert.equal(typeof composed[0].restoreFocus, 'function');
+
+  dialogKind = 'operator-message';
+  const held = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(held, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
+  });
+  harness.document.dispatchEvent(held);
+  assert.equal(held.defaultPrevented, true,
+    'the open standalone composer consumes repeated Ctrl/Cmd+M');
+  assert.equal(composed.length, 2, 'the held shortcut does not reopen or retarget the composer');
 
   const beforeUnload = new harness.window.Event('beforeunload', { cancelable: true });
   harness.window.dispatchEvent(beforeUnload);

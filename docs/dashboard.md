@@ -799,8 +799,9 @@ agents can be opened before switching tabs. Either modifier is accepted on
 every supported desktop platform.
 
 An agent terminal pane also has a **✉ Message** button. Pressing
-**Ctrl+M** or **Cmd+M** while that pane has focus opens the same composer with
-the pane's agent locked as recipient. The composer accepts text, files,
+**Ctrl+M** or **Cmd+M** anywhere on the active Terminals tab—or in a terminal
+detached into its own browser tab/window—opens the same composer with the
+active pane's agent locked as recipient. The composer accepts text, files,
 drag-and-drop, and pasted screenshots; **Ctrl/Cmd+Enter** sends. The message is
 stored in the agent's mailbox and handed to its normal asynchronous delivery
 queue rather than typed through xterm, so terminal output and agent nudges

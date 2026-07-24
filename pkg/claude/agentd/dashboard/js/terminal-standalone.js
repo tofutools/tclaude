@@ -2,9 +2,14 @@
 // owns the page's single stable root; xterm remains behind the same opaque
 // adapter as the dashboard shell.
 
+import { signal } from '@preact/signals';
 import { createTerminalShellActions } from './terminal-shell-actions.js';
 import { mountStandaloneTerminalShell } from './terminal-shell-island.js';
 import { createTerminalShellState } from './terminal-shell-state.js';
+import {
+  activeMessageAccessDialogKind, openOperatorMessageDialog,
+} from './message-access-dialog-controller.js';
+import { mountMessageAccessDialogsFeature } from './preact-loader.js';
 import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
@@ -24,6 +29,9 @@ export function createStandaloneTerminalsPage({
   historyRef = globalThis.history,
   navigatorRef = globalThis.navigator,
   mountShell = mountStandaloneTerminalShell,
+  mountMessageDialogs = mountMessageAccessDialogsFeature,
+  openComposeMessage = openOperatorMessageDialog,
+  composeMessageDialogKind = activeMessageAccessDialogKind,
 } = {}) {
   if (!host) throw new TypeError('standalone terminal page requires a host');
   if (typeof initPrefs !== 'function' || typeof initThemeSync !== 'function') {
@@ -33,9 +41,12 @@ export function createStandaloneTerminalsPage({
   // A solo pop-out has no tab strip, so it must not overwrite the dashboard's
   // persisted presentation order merely by attaching its one pane.
   const state = createTerminalShellState({ persistOrder: false });
+  const composeMessageReady = signal(false);
   const detachConversations = new Set();
   let actions = null;
   let mountCleanup = null;
+  let messageDialogsCleanup = null;
+  let messageDialogsPromise = null;
   let prefsReady = false;
   let soloSeed = null;
   let startPromise = null;
@@ -118,7 +129,9 @@ export function createStandaloneTerminalsPage({
     windowRef.removeEventListener('unload', dispose);
     if (mountCleanup) mountCleanup();
     else actions.dispose();
+    if (messageDialogsCleanup) messageDialogsCleanup();
     mountCleanup = null;
+    messageDialogsCleanup = null;
   }
 
   windowRef.addEventListener('hashchange', onHashChange);
@@ -132,7 +145,41 @@ export function createStandaloneTerminalsPage({
       if (disposed) return false;
       initThemeSync();
       if (disposed) return false;
-      mountCleanup = mountShell({ host, state, actions, widgetFactory });
+
+      // The terminal is the primary surface, so connect it without waiting for
+      // the optional composer module graph. An early shortcut is queued against
+      // this promise and opens as soon as the shared dialog island is ready.
+      messageDialogsPromise = Promise.resolve().then(() => mountMessageDialogs({
+        fetchImpl,
+        refresh: async () => {},
+        notify: () => {},
+        confirmDiscard: () => windowRef.confirm('Discard this message draft?'),
+      })).then((cleanup) => {
+        if (disposed) {
+          cleanup?.();
+          return null;
+        }
+        messageDialogsCleanup = cleanup;
+        composeMessageReady.value = Boolean(cleanup);
+        return cleanup;
+      }, (error) => {
+        console.error('Detached terminal message composer unavailable.', error);
+        return null;
+      });
+      const composeWhenReady = (seed) => {
+        void messageDialogsPromise.then((cleanup) => {
+          if (!disposed && cleanup) openComposeMessage(seed);
+        });
+      };
+      mountCleanup = mountShell({
+        host,
+        state,
+        actions,
+        widgetFactory,
+        onComposeMessage: composeWhenReady,
+        composeMessageReady,
+        composeMessageDialogKind,
+      });
       prefsReady = true;
       consumeHash();
       return true;

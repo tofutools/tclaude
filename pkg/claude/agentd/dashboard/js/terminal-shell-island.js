@@ -649,10 +649,13 @@ function PaneContextMenu({
 }
 
 function TerminalTabs({
-  state, actions, widgetFactory, onComposeMessage, composeMessageDialogKind = () => '',
+  state, actions, widgetFactory, onComposeMessage, composeMessageReady = null,
+  composeMessageDialogKind = () => '',
   solo = false, manageTitle = false, empty = false,
 }) {
   const current = state.view.value;
+  const composeMessageAvailable = Boolean(onComposeMessage) &&
+    (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
   const shellRef = useRef(null);
   const tabsRef = useRef(null);
@@ -1115,12 +1118,15 @@ function TerminalTabs({
   }, [hasPanes, manageTitle]);
 
   useEffect(() => {
-    if (solo || !onComposeMessage) return undefined;
+    if (!composeMessageAvailable) return undefined;
     const onComposeShortcut = (event) => {
       const pane = current.panes.find((candidate) => candidate.key === current.activeKey);
       const dialogKind = composeMessageDialogKind();
       const action = terminalComposeShortcutAction(event, {
-        tabActive: document.getElementById('tab-terminals')?.classList.contains('active'),
+        // The standalone page is itself the active terminal surface. Keep this
+        // document-level capture path in both modes so header/tab controls get
+        // the shortcut too, before xterm or browser Cmd+M handling sees it.
+        tabActive: solo || document.getElementById('tab-terminals')?.classList.contains('active'),
         operatorModalOpen: dialogKind === 'operator-message',
         blockingOverlayOpen: hasShownOverlay(),
         eligiblePane: Boolean(pane?.seed?.agent),
@@ -1134,7 +1140,10 @@ function TerminalTabs({
     // the shortcut available from the pane, tab strip, and header alike.
     document.addEventListener('keydown', onComposeShortcut, true);
     return () => document.removeEventListener('keydown', onComposeShortcut, true);
-  }, [actions, composeMessageDialogKind, current.activeKey, current.panes, onComposeMessage, solo]);
+  }, [
+    actions, composeMessageAvailable, composeMessageDialogKind, current.activeKey,
+    current.panes, onComposeMessage, solo,
+  ]);
 
   return html`
     <div ref=${shellRef} class="terminal-shell-root">
@@ -1247,7 +1256,7 @@ function TerminalTabs({
               manageTitle=${manageTitle}
               actions=${actions}
               widgetFactory=${widgetFactory}
-              onComposeMessage=${onComposeMessage}
+              onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
             />
           `)}
         </div>
@@ -1360,6 +1369,9 @@ export function mountStandaloneTerminalShell({
   state,
   actions,
   widgetFactory = mountTerminalWidget,
+  onComposeMessage = null,
+  composeMessageReady = null,
+  composeMessageDialogKind = () => '',
 }) {
   let disposed = false;
   render(html`
@@ -1367,6 +1379,9 @@ export function mountStandaloneTerminalShell({
       state=${state}
       actions=${actions}
       widgetFactory=${widgetFactory}
+      onComposeMessage=${onComposeMessage}
+      composeMessageReady=${composeMessageReady}
+      composeMessageDialogKind=${composeMessageDialogKind}
       solo=${true}
       manageTitle=${true}
       empty=${true}

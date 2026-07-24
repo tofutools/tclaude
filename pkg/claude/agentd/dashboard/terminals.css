@@ -3,15 +3,16 @@
    "Terminals" tab, this page exists only for the "⧉ tab" pop-out (?solo=1: one
    terminal in its own window).
 
-   Deliberately self-contained: this page is NOT the dashboard SPA, so it does
-   not pull in dashboard.css. The reusable pane / button widgets are shared
-   with the in-dashboard tab via mux.css; this file adds only the full-page
-   host and empty-state layout. */
+   This page is NOT the dashboard SPA, but it reuses dashboard.css for the
+   shared operator-message dialog. The reusable pane / button widgets are
+   shared with the in-dashboard tab via mux.css; this file supplies the
+   full-page host overrides and empty-state layout. */
 
 * { box-sizing: border-box; }
 
 html, body {
   margin: 0; height: 100%;
+  padding: 0; overflow: hidden;
   background: #0d1117; color: #c9d1d9;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px;
@@ -21,6 +22,17 @@ html, body {
 #terminals-root > .terminal-shell-root {
   display: flex; flex-direction: column;
   height: 100vh; height: 100dvh;
+}
+
+/* Optional dialog-island failures must remain visible even though the
+   full-height terminal clips ordinary document overflow. The island lifecycle
+   renders this alert when the shared composer bundle cannot mount. */
+#message-access-dialog-root > .message-access-dialog-error {
+  position: fixed; z-index: 200; right: 12px; bottom: 12px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 9px 12px; border: 1px solid #f85149; border-radius: 5px;
+  background: #2d1413; color: #ffa198;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
 }
 
 /* Empty state — shown when no terminals are open (e.g. a hand-navigated

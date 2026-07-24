@@ -10,6 +10,8 @@ func TestStandaloneTerminalShell_PreactOwnsStableRoot(t *testing.T) {
 	for _, want := range []string{
 		`<body class="solo">`,
 		`<div id="terminals-root"></div>`,
+		`<div id="message-access-dialog-root"></div>`,
+		`<link rel="stylesheet" href="/static/dashboard.css">`,
 		`<script type="importmap">`,
 		`"preact/hooks": "/static/vendor/preact/hooks.module.js"`,
 		`"@preact/signals-core": "/static/vendor/preact/signals-core.module.js"`,
@@ -71,6 +73,9 @@ func TestStandaloneTerminalShell_PreactOwnsStableRoot(t *testing.T) {
 		"solo=${true}",
 		"manageTitle=${true}",
 		"empty=${true}",
+		"onComposeMessage=${onComposeMessage}",
+		"composeMessageReady=${composeMessageReady}",
+		"composeMessageDialogKind=${composeMessageDialogKind}",
 	} {
 		if !strings.Contains(island, want) {
 			t.Errorf("standalone mount does not reuse the shared Preact pane shell %q", want)
@@ -92,7 +97,12 @@ func TestStandaloneTerminalShell_LifecycleContractsStayOutsideWidgetCore(t *test
 		"if (disposed) return",
 		"Promise.resolve(initPrefs()).then(",
 		"initThemeSync()",
-		"mountShell({ host, state, actions, widgetFactory })",
+		"mountMessageDialogs({",
+		"fetchImpl,",
+		"onComposeMessage: composeWhenReady",
+		"composeMessageReady,",
+		"composeMessageDialogKind",
+		"mountShell({",
 	} {
 		if !strings.Contains(lifecycle, want) {
 			t.Errorf("standalone terminal lifecycle missing %q", want)
@@ -102,7 +112,7 @@ func TestStandaloneTerminalShell_LifecycleContractsStayOutsideWidgetCore(t *test
 		t.Fatal("standalone terminal lifecycle does not hydrate preferences")
 	} else if theme := strings.Index(lifecycle[prefs:], "initThemeSync()"); theme < 0 {
 		t.Fatal("standalone terminal lifecycle does not start theme sync after preferences")
-	} else if mount := strings.Index(lifecycle[prefs:], "mountShell({ host, state, actions, widgetFactory })"); mount < theme {
+	} else if mount := strings.Index(lifecycle[prefs:], "mountShell({"); mount < theme {
 		t.Fatal("standalone terminal shell mounts before preference hydration and theme sync")
 	}
 }
