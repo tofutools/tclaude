@@ -352,12 +352,26 @@ func TestStopOpenCodeProcessJoinsSSEProjector(t *testing.T) {
 		t.Fatal("stop returned before the SSE projector exited")
 	case <-time.After(25 * time.Millisecond):
 	}
+	ensureOpenCodeSSE(db.OpenCodeRuntime{
+		SessionID: sessionID, ServerURL: "http://127.0.0.1:1", Cwd: "/tmp/project",
+	})
+	openCodeProcesses.Lock()
+	registered := openCodeProcesses.bySession[sessionID]
+	stopping := registered != nil && registered.stopping
+	openCodeProcesses.Unlock()
+	assert.Same(t, process, registered,
+		"concurrent SSE registration must retain the stopping process tombstone")
+	assert.True(t, stopping)
 	close(releaseProjector)
 	select {
 	case <-stopReturned:
 	case <-time.After(time.Second):
 		t.Fatal("stop did not return after the SSE projector exited")
 	}
+	openCodeProcesses.Lock()
+	_, registeredAfterStop := openCodeProcesses.bySession[sessionID]
+	openCodeProcesses.Unlock()
+	assert.False(t, registeredAfterStop, "the stopping tombstone is removed after projector join")
 }
 
 func TestStopOpenCodeProcessVerifiesRecoveredPIDBeforeKill(t *testing.T) {

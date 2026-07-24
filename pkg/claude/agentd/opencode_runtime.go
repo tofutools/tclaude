@@ -65,7 +65,8 @@ type openCodeProcess struct {
 	// started against an already-dead server. Only processes with a cmd.Wait
 	// watcher set it; synthetic reuse entries (ensureOpenCodeSSE's placeholder)
 	// leave it false and rely on the reaper, exactly as before.
-	exited bool
+	exited   bool
+	stopping bool
 }
 
 var beforeOpenCodeTUICommandStatusCheckForTest func()
@@ -758,8 +759,23 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	if process == nil {
 		process = openCodeProcesses.bySession[runtime.SessionID]
 	}
-	delete(openCodeProcesses.bySession, runtime.SessionID)
+	if process == nil {
+		process = &openCodeProcess{}
+		openCodeProcesses.bySession[runtime.SessionID] = process
+	}
+	// Keep this tombstone registered until cancellation and projector join
+	// complete. A concurrent health/reconcile path must not interpret a
+	// temporarily missing entry as permission to launch a replacement SSE
+	// consumer during teardown.
+	process.stopping = true
 	openCodeProcesses.Unlock()
+	defer func() {
+		openCodeProcesses.Lock()
+		if openCodeProcesses.bySession[runtime.SessionID] == process {
+			delete(openCodeProcesses.bySession, runtime.SessionID)
+		}
+		openCodeProcesses.Unlock()
+	}()
 	if process != nil {
 		if process.cancel != nil {
 			process.cancel()
@@ -844,10 +860,10 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		openCodeProcesses.Unlock()
 		return
 	}
-	if process.exited {
-		// The server died before its consumer was ever registered. Starting one
-		// now would just spin the reconnect loop until the reaper cleans up; the
-		// watcher already cancelled, so honour that and start nothing.
+	if process.exited || process.stopping {
+		// A dead server would spin the reconnect loop until reaping; a stopping
+		// server must retain its registry tombstone until the old projector is
+		// joined. In either state, starting a consumer is forbidden.
 		openCodeProcesses.Unlock()
 		return
 	}
