@@ -8,17 +8,24 @@ import (
 )
 
 // CheckEligibility reports why an authoring-valid template cannot execute in
-// the deliberately small M2 exclusive-decision engine. Authoring errors are
-// returned unchanged; execution capability checks never redefine what
-// templates are valid to edit.
+// the deliberately small M2 engine. Authoring errors are returned unchanged;
+// execution capability checks never redefine what templates are valid to edit.
 //
-// The executable shape is a DAG of start, program tasks, human decisions, and
-// end nodes. Decisions may branch to any number of authored outcomes and
-// branches may converge on shared nodes; start and task nodes keep exactly one
-// outgoing route. Authoring validation already guarantees reachability and
-// rejects every cycle except the poison-escalation retry loop, whose compound
-// source node is itself ineligible here, so no separate graph-shape walk is
-// repeated in this layer.
+// The executable shape is a DAG of start, program tasks, human decisions,
+// engine-owned parallel forks, and end nodes. Decisions branch to one authored
+// outcome; a parallel fork takes every authored branch at once; branches may
+// converge on shared nodes and a convergence node may declare join: all. Start
+// and task nodes keep exactly one outgoing route.
+//
+// Authoring validation runs first and already proves the structural parallel
+// contract this layer relies on: a parallel node has at least two outgoing
+// edges and declares no performer or stages, a join names at least two inbound
+// candidates, and every fork reduces at exactly one complete structural
+// reducer before leaving its scope (model.validateParallelScopePlan). It also
+// guarantees reachability and rejects every cycle except the poison-escalation
+// retry loop, whose compound source node is itself ineligible here. So no
+// graph-shape or scope walk is repeated in this layer; it only names the
+// capabilities the engine cannot execute yet.
 func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 	edges, budgetDiagnostics := model.NormalizeEdgesWithinBudget(tmpl)
 	if budgetDiagnostics.HasErrors() {
@@ -43,8 +50,11 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
 
-		if node.Join != "" {
-			add("unsupported_join", path+".join", "join policies are not executable in the exclusive-decision engine")
+		// join: all is executable: a join target activates once its complete
+		// candidate input set has settled with at least one arrival. join: any
+		// needs branch cancellation semantics the engine does not have (TCL-715).
+		if node.Join == model.JoinAny {
+			add("unsupported_join", path+".join", "join: any is not executable in this engine yet")
 		}
 		if node.Retry != nil {
 			add("unsupported_retry", path+".retry", "retries and poison handling are not executable in the exclusive-decision engine")
@@ -100,7 +110,9 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 			}
 		case model.NodeTypeEnd:
 		case model.NodeTypeParallel:
-			add("unsupported_parallel", path+".type", "parallel forks are not executable in the exclusive-decision engine")
+			// Engine-owned: completing a ready fork settles every authored branch
+			// as arrived. Authoring validation already proved the degree and
+			// structured-scope contract, so nothing is re-checked here.
 		case model.NodeTypeWait:
 			add("unsupported_wait", path+".type", "wait nodes are not executable in the exclusive-decision engine")
 		}

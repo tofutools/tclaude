@@ -21,31 +21,37 @@ func TestEngineGeneratedStatesPassStrictClassifierAndStayBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	current = stepAssertingClassifier(t, current, definition)
-	current = applyAssertingClassifier(t, current, definition, observed(current.OutstandingCommand(), ProgramSucceeded, 0))
+	current = applyAssertingClassifier(t, current, definition, observed(current.FirstCommand(), ProgramSucceeded, 0))
 	current = stepAssertingClassifier(t, current, definition)
-	if current.AwaitingDecision() == nil {
+	if current.FirstAwaitingDecision() == nil {
 		t.Fatalf("run did not park on its decision: %#v", current)
 	}
 	current = applyAssertingClassifier(t, current, definition, decided("choose", "approve"))
 	current = stepAssertingClassifier(t, current, definition)
-	current = applyAssertingClassifier(t, current, definition, observed(current.OutstandingCommand(), ProgramSucceeded, 0))
+	current = applyAssertingClassifier(t, current, definition, observed(current.FirstCommand(), ProgramSucceeded, 0))
 	current = stepAssertingClassifier(t, current, definition)
-	current = applyAssertingClassifier(t, current, definition, observed(current.OutstandingCommand(), ProgramSucceeded, 0))
+	current = applyAssertingClassifier(t, current, definition, observed(current.FirstCommand(), ProgramSucceeded, 0))
 	current = stepAssertingClassifier(t, current, definition)
 	if current.Status != RunCompleted {
 		t.Fatalf("run did not complete: %#v", current)
 	}
 }
 
-// stepAssertingClassifier applies every engine-owned transition until quiescent,
-// asserting the strict classifier and the single-entry outbox bound before each.
+// stepAssertingClassifier commits every engine-owned transition and then the
+// next planned command, exactly as the sequential driver does, asserting the
+// strict classifier and the single-entry outbox bound before each one.
 func stepAssertingClassifier(t *testing.T, checkpoint Checkpoint, definition *Definition) Checkpoint {
 	t.Helper()
 	for {
 		assertClassifiedAndBounded(t, checkpoint, definition)
 		transition, ok := nextEngineTransition(checkpoint, definition)
 		if !ok {
-			return checkpoint
+			node, plannable := nextPlannableTask(checkpoint, definition)
+			if !plannable {
+				return checkpoint
+			}
+			command := programCommand(checkpoint.RunID, node)
+			transition = Transition{Kind: TransitionCommandPlanned, Command: &command}
 		}
 		next, err := apply(checkpoint, definition, transition)
 		if err != nil {
@@ -123,10 +129,8 @@ func TestStructuralBoundaryRejectsMalformedCommandsAndObligations(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runningCommand, err = AdvanceUntilQuiescent(runningCommand, commandDefinition); err != nil {
-		t.Fatal(err)
-	}
-	if runningCommand.OutstandingCommand() == nil {
+	runningCommand, _ = advanceAndPlan(t, runningCommand, commandDefinition)
+	if len(runningCommand.Commands) != 1 {
 		t.Fatalf("fixture did not reach a running command: %#v", runningCommand)
 	}
 
@@ -176,7 +180,7 @@ func TestReducerMonotonicGuardsRejectResettlementAndRegression(t *testing.T) {
 	// Final-node regression: completing an already-done node fails closed.
 	regressed := cloneCheckpoint(base)
 	regressed.Nodes["start"] = NodeDone
-	if err := completeAndSettle(&regressed, definition, definition.index["start"], defaultEdgeOutcome(definition, "start")); !errors.Is(err, ErrInvalidTransition) {
+	if err := completeAndSettle(&regressed, definition, definition.index["start"], arrivesAt(defaultEdgeOutcome(definition, "start"))); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("final-node regression guard error = %v", err)
 	}
 
@@ -184,7 +188,7 @@ func TestReducerMonotonicGuardsRejectResettlementAndRegression(t *testing.T) {
 	// cannot settle it a second time.
 	resettled := cloneCheckpoint(base)
 	resettled.Edges["start"][defaultEdgeOutcome(definition, "start")] = EdgeArrived
-	if _, err := Apply(resettled, definition, Transition{Kind: TransitionAdvance}); !errors.Is(err, ErrInvalidTransition) {
+	if _, err := Apply(resettled, definition, advanced("start")); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("edge re-settlement guard error = %v", err)
 	}
 }
@@ -197,9 +201,10 @@ func defaultEdgeOutcome(definition *Definition, nodeID string) string {
 // TestRuntimeCycleSkipsWholeCheckpointValidation proves the per-transition
 // runtime cycle does NOT run the O(nodes+edges) whole-checkpoint validator:
 // given state the trusted boundary validator (ValidateCheckpoint) rejects but
-// whose local transition preconditions still hold, Plan/Apply/AdvanceUntilQuiescent
-// proceed instead of re-scanning and failing. The whole-checkpoint scan is
-// confined to the load (DecodeCheckpoint) and creation (Initialize) boundaries.
+// whose local transition preconditions still hold, Apply/AdvanceAndPlan/
+// AdvanceUntilQuiescent proceed instead of re-scanning and failing. The
+// whole-checkpoint scan is confined to the load (DecodeCheckpoint) and creation
+// (Initialize) boundaries.
 func TestRuntimeCycleSkipsWholeCheckpointValidation(t *testing.T) {
 	definition := mustPrepare(t, sequentialTemplate("task"), nil)
 	valid, err := Initialize("run-novalidate", definition)
@@ -216,17 +221,17 @@ func TestRuntimeCycleSkipsWholeCheckpointValidation(t *testing.T) {
 		t.Fatal("boundary validator must reject the tainted checkpoint")
 	}
 
-	if _, err := Plan(tainted, definition); err != nil {
-		t.Fatalf("Plan must not re-run whole-checkpoint validation: %v", err)
+	if _, _, _, err := AdvanceAndPlan(tainted, definition); err != nil {
+		t.Fatalf("AdvanceAndPlan must not re-run whole-checkpoint validation: %v", err)
 	}
-	advanced, err := Apply(tainted, definition, Transition{Kind: TransitionAdvance})
+	progressed, err := Apply(tainted, definition, advanced("start"))
 	if err != nil {
 		t.Fatalf("Apply must not re-run whole-checkpoint validation: %v", err)
 	}
-	if advanced.Nodes["start"] != NodeDone || advanced.Nodes["task"] != NodeReady {
-		t.Fatalf("advance did not progress on the tainted state: %#v", advanced.Nodes)
+	if progressed.Nodes["start"] != NodeDone || progressed.Nodes["task"] != NodeReady {
+		t.Fatalf("advance did not progress on the tainted state: %#v", progressed.Nodes)
 	}
-	if _, ok := advanced.Nodes["ghost"]; !ok {
+	if _, ok := progressed.Nodes["ghost"]; !ok {
 		t.Fatal("reducer unexpectedly scanned/pruned the unrelated node")
 	}
 	if _, err := AdvanceUntilQuiescent(tainted, definition); err != nil {

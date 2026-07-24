@@ -89,28 +89,25 @@ func advanceToDecision(t *testing.T, runID string, definition *Definition, decis
 		t.Fatal(err)
 	}
 	for {
-		checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if checkpoint.OutstandingCommand() == nil {
+		var command *Command
+		checkpoint, command = advanceAndPlan(t, checkpoint, definition)
+		if command == nil {
 			break
 		}
-		nodeID := checkpoint.OutstandingCommand().NodeID
 		allowed := false
 		for _, taskID := range succeed {
-			allowed = allowed || taskID == nodeID
+			allowed = allowed || taskID == command.NodeID
 		}
 		if !allowed {
-			t.Fatalf("unexpected command for node %q on the way to decision %q", nodeID, decisionID)
+			t.Fatalf("unexpected command for node %q on the way to decision %q", command.NodeID, decisionID)
 		}
-		checkpoint, err = Apply(checkpoint, definition, observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0))
+		checkpoint, err = Apply(checkpoint, definition, observed(command, ProgramSucceeded, 0))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if checkpoint.AwaitingDecision() == nil || checkpoint.AwaitingDecision().NodeID != decisionID {
-		t.Fatalf("awaiting decision = %#v, want node %q", checkpoint.AwaitingDecision(), decisionID)
+	if checkpoint.FirstAwaitingDecision() == nil || checkpoint.FirstAwaitingDecision().NodeID != decisionID {
+		t.Fatalf("awaiting decision = %#v, want node %q", checkpoint.FirstAwaitingDecision(), decisionID)
 	}
 	return checkpoint
 }
@@ -119,8 +116,8 @@ func TestDecisionVerdictClosesAlternativesAndActivatesChosenBranch(t *testing.T)
 	definition := mustPrepare(t, decisionDiamondTemplate(), nil)
 	checkpoint := advanceToDecision(t, "run-diamond", definition, "choose", "intake")
 
-	if command, err := Plan(checkpoint, definition); err != nil || command != nil {
-		t.Fatalf("awaiting-decision plan = %#v, %v", command, err)
+	if _, command := advanceAndPlan(t, checkpoint, definition); command != nil {
+		t.Fatalf("awaiting-decision plan = %#v", command)
 	}
 	if verdicts, ok := definition.DecisionVerdicts("choose"); !ok || !reflect.DeepEqual(verdicts, []string{"approve", "reject"}) {
 		t.Fatalf("decision verdicts = %#v, %t", verdicts, ok)
@@ -130,7 +127,7 @@ func TestDecisionVerdictClosesAlternativesAndActivatesChosenBranch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next.AwaitingDecision() != nil || next.Nodes["choose"] != NodeDone {
+	if next.FirstAwaitingDecision() != nil || next.Nodes["choose"] != NodeDone {
 		t.Fatalf("post-decision checkpoint = %#v", next)
 	}
 	if next.Edges["choose"]["approve"] != EdgeArrived || next.Edges["choose"]["reject"] != EdgeNotTaken {
@@ -149,29 +146,20 @@ func TestDecisionVerdictClosesAlternativesAndActivatesChosenBranch(t *testing.T)
 		t.Fatalf("merge = %q", next.Nodes["merge"])
 	}
 
-	running, err := AdvanceUntilQuiescent(next, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterFast, err := Apply(running, definition, observed(running.OutstandingCommand(), ProgramSucceeded, 0))
+	running, fastCommand := advanceAndPlan(t, next, definition)
+	afterFast, err := Apply(running, definition, observed(fastCommand, ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if afterFast.Nodes["merge"] != NodeReady {
 		t.Fatalf("merge after chosen-branch arrival = %q", afterFast.Nodes["merge"])
 	}
-	running, err = AdvanceUntilQuiescent(afterFast, definition)
+	running, mergeCommand := advanceAndPlan(t, afterFast, definition)
+	afterMerge, err := Apply(running, definition, observed(mergeCommand, ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterMerge, err := Apply(running, definition, observed(running.OutstandingCommand(), ProgramSucceeded, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	completed, err := AdvanceUntilQuiescent(afterMerge, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	completed, _ := advanceAndPlan(t, afterMerge, definition)
 	if completed.Status != RunCompleted {
 		t.Fatalf("status = %q", completed.Status)
 	}
@@ -237,8 +225,8 @@ func TestDecisionSelectsTerminalEndAndClosesImpossiblePath(t *testing.T) {
 	if !reflect.DeepEqual(canceled.Nodes, want) {
 		t.Fatalf("terminal nodes = %#v", canceled.Nodes)
 	}
-	if command, err := Plan(canceled, definition); err != nil || command != nil {
-		t.Fatalf("terminal plan = %#v, %v", command, err)
+	if _, command := advanceAndPlan(t, canceled, definition); command != nil {
+		t.Fatalf("terminal plan = %#v", command)
 	}
 }
 

@@ -8,8 +8,6 @@ import (
 
 const CheckpointVersion = 2
 
-const MaxEngineTransitions = 8
-
 type RunStatus string
 
 const (
@@ -60,12 +58,15 @@ type Checkpoint struct {
 	// model and editor layout already use. Nesting avoids inventing an escaped
 	// composite key for free-form outcome labels.
 	Edges map[string]map[string]EdgeDisposition `json:"edges"`
-	// AwaitingDecisions and Commands are durable plural outboxes so the shape is
-	// already parallel-ready before parallelism lands (TCL-649): the checkpoint
-	// version does not have to change again to hold more than one entry. The
-	// TCL-650 decision-only reducer still produces at most one of each, which
-	// focused tests assert as slice behavior rather than a checkpoint invariant.
-	// AwaitingDecisions names the ready decision node(s) blocking the run so
+	// AwaitingDecisions and Commands are the durable plural outboxes. With
+	// fan-out they genuinely hold one entry per branch that is waiting on an
+	// external actor. Every reducer mutation is per-entry: planning writes only
+	// the planned node's command, an observation removes only its exact command,
+	// and a verdict removes only its exact obligation, so branches never clear
+	// each other. Entries are kept sorted by node id so one logical state has
+	// one durable encoding.
+	//
+	// AwaitingDecisions names the ready decision nodes blocking a branch so
 	// bounded store queries can exclude decision-waiting runs without loading
 	// them; the verdict vocabulary stays in the prepared Definition. Commands is
 	// the durable outbox of fully bound program requests.
@@ -73,11 +74,14 @@ type Checkpoint struct {
 	Commands          []Command            `json:"commands"`
 }
 
-// OutstandingCommand returns the single command this sequential slice can carry,
-// or nil. It is a narrow element-zero accessor: the durable shape is plural for
-// parallel-readiness, but the TCL-650 reducer and executor only ever produce or
-// consume one command at a time under current eligibility.
-func (c Checkpoint) OutstandingCommand() *Command {
+// FirstCommand returns the lowest-node-id entry of the command outbox, or nil.
+//
+// It is a presentation accessor for surfaces that show one item at a time. It
+// is NOT a reducer input and must never be used to decide what to observe or
+// dispatch: with fan-out the outbox can hold one command per branch, so acting
+// on the first entry would silently pick a branch. Transitions bind to an exact
+// (command id, node id) pair instead.
+func (c Checkpoint) FirstCommand() *Command {
 	if len(c.Commands) == 0 {
 		return nil
 	}
@@ -85,10 +89,11 @@ func (c Checkpoint) OutstandingCommand() *Command {
 	return &command
 }
 
-// AwaitingDecision returns the single awaited decision this slice can carry, or
-// nil. Like OutstandingCommand it is a current-eligibility element-zero helper
-// over the parallel-ready plural field.
-func (c Checkpoint) AwaitingDecision() *DecisionObligation {
+// FirstAwaitingDecision returns the lowest-node-id awaited decision, or nil.
+// Like FirstCommand it is a presentation accessor over a plural outbox that can
+// hold one obligation per branch, never a reducer input; a verdict names the
+// obligation it resolves.
+func (c Checkpoint) FirstAwaitingDecision() *DecisionObligation {
 	if len(c.AwaitingDecisions) == 0 {
 		return nil
 	}
@@ -160,9 +165,16 @@ const (
 )
 
 // Transition is an explicit reducer input. Exactly one payload is allowed for
-// payload-bearing kinds; plain advance carries neither payload.
+// payload-bearing kinds; a plain advance carries no payload and instead names
+// the engine-owned node it advances.
+//
+// Every transition is node-addressed: NodeID for an advance, and the node named
+// by the command, observation, or decision otherwise. Under fan-out more than
+// one node can be ready at once, so the reducer must never infer which node a
+// transition means.
 type Transition struct {
 	Kind        TransitionKind
+	NodeID      string
 	Command     *Command
 	Observation *ProgramObservation
 	Decision    *DecisionRecord

@@ -25,6 +25,50 @@ func TestExclusiveDecisionTemplatesAreEligible(t *testing.T) {
 	}
 }
 
+// TestStructuredParallelTemplatesAreEligible pins the admission rule: a fan-out
+// shape is executable exactly where the static authoring parallel-scope
+// validator already says it is structured and valid.
+func TestStructuredParallelTemplatesAreEligible(t *testing.T) {
+	for _, tmpl := range []*model.Template{
+		parallelTemplate(),
+		fanOutTemplate("left", "right"),
+		fanOutTemplate("one", "two", "three", "four"),
+		nestedFanOutTemplate(),
+		wideFanOutTemplate(12),
+	} {
+		assertAuthoringValid(t, tmpl)
+		if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+			t.Fatalf("eligibility diagnostics for %q = %#v", tmpl.ID, diagnostics)
+		}
+		if _, err := Prepare(tmpl, nil); err != nil {
+			t.Fatalf("prepare %q: %v", tmpl.ID, err)
+		}
+	}
+}
+
+// TestUnstructuredParallelStaysIneligible proves admission is delegated to the
+// static scope validator rather than re-derived: a fork whose branches never
+// reduce at one complete structural join is refused, and the refusal keeps the
+// authoring validator's own diagnostic code.
+func TestUnstructuredParallelStaysIneligible(t *testing.T) {
+	tmpl := parallelTemplate()
+	// Let the left branch run straight to its own end, so the fork's branches
+	// never converge on a single complete reducer.
+	tmpl.Nodes["left"] = programTask("escaped", "left")
+	tmpl.Nodes["escaped"] = model.Node{Type: model.NodeTypeEnd}
+	right := tmpl.Nodes["right"]
+	right.Next = model.Next{model.DefaultOutcome: "join"}
+	tmpl.Nodes["right"] = right
+	tmpl.Nodes["join"] = model.Node{Type: model.NodeTypeEnd}
+
+	if !hasCode(CheckEligibility(tmpl), "cross_scope_join_v1") {
+		t.Fatalf("unstructured fan-out was admitted: %#v", CheckEligibility(tmpl))
+	}
+	if _, err := Prepare(tmpl, nil); err == nil {
+		t.Fatal("Prepare admitted an unstructured fan-out")
+	}
+}
+
 func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 	tests := []struct {
 		name string
@@ -55,14 +99,17 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 			},
 		},
 		{
-			name: "parallel and join",
-			code: "unsupported_parallel",
-			tmpl: parallelTemplate,
-		},
-		{
-			name: "join",
+			// join: any needs branch cancellation the engine does not have; the
+			// otherwise identical join: all shape is executable (TCL-715).
+			name: "join any",
 			code: "unsupported_join",
-			tmpl: parallelTemplate,
+			tmpl: func() *model.Template {
+				tmpl := parallelTemplate()
+				node := tmpl.Nodes["join"]
+				node.Join = model.JoinAny
+				tmpl.Nodes["join"] = node
+				return tmpl
+			},
 		},
 		{
 			name: "wait",

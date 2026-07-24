@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -124,13 +125,21 @@ func (r *Run) AuthorizationFor(profile string) (Authorization, bool) {
 	return Authorization{RunID: r.id, Profile: profile}, true
 }
 
+// Action reports what a driver should do with this run next.
+//
+// This slice consumes work sequentially: the engine commits at most one command
+// per plan, so a run carries at most one command at a time and that entry is
+// unambiguous here. Decisions are different — fan-out can park several branches
+// on humans at once — so an awaited decision is only reported once the engine
+// has no work left to push. Reporting it earlier would stop the driver while a
+// sibling branch still had a task to run.
 func (r *Run) Action() Action {
 	if r == nil {
 		return Action{}
 	}
 	action := Action{Status: r.checkpoint.Status}
-	if outstanding := r.checkpoint.OutstandingCommand(); outstanding != nil {
-		command := cloneCommand(*outstanding)
+	if len(r.checkpoint.Commands) > 0 {
+		command := cloneCommand(r.checkpoint.Commands[0])
 		action.Command = &command
 		if r.dispatch != nil && !r.dispatch.wasUsed() {
 			action.Kind = ActionDispatch
@@ -139,10 +148,14 @@ func (r *Run) Action() Action {
 		}
 		return action
 	}
-	if obligation := r.checkpoint.AwaitingDecision(); obligation != nil {
-		copied := *obligation
+	if engine.Runnable(r.checkpoint, r.definition) {
+		action.Kind = ActionContinue
+		return action
+	}
+	if len(r.checkpoint.AwaitingDecisions) > 0 {
+		obligation := r.checkpoint.AwaitingDecisions[0]
 		action.Kind = ActionAwaitDecision
-		action.Decision = &copied
+		action.Decision = &obligation
 		return action
 	}
 	if r.checkpoint.Status == engine.RunRunning {
@@ -159,7 +172,7 @@ func (r *Run) DecisionVerdicts() []string {
 	if r == nil || r.definition == nil {
 		return nil
 	}
-	obligation := r.checkpoint.AwaitingDecision()
+	obligation := r.checkpoint.FirstAwaitingDecision()
 	if obligation == nil {
 		return nil
 	}
@@ -219,33 +232,37 @@ func LoadPreparedRun(record *db.ProcessRun, definition *engine.Definition) (*Run
 }
 
 // Prepare advances only reducer-owned state and atomically persists the fully
-// bound command before returning a dispatch permission.
+// bound command before returning a dispatch permission. It commits one command
+// per call, which is what this sequential driver consumes; the remaining ready
+// branches are planned by the following calls as each command completes.
 func Prepare(run *Run) (*Dispatch, error) {
 	if run == nil || run.definition == nil {
 		return nil, ErrInvalidRun
 	}
-	if run.checkpoint.OutstandingCommand() != nil {
+	if len(run.checkpoint.Commands) > 0 {
 		return nil, ErrNeedsReconcile
 	}
-	if run.checkpoint.Status != engine.RunRunning || run.checkpoint.AwaitingDecision() != nil {
-		// An awaited decision is already quiescent: advancing again would only
-		// persist a no-op transition, so resumes return without a new version.
+	if run.checkpoint.Status != engine.RunRunning {
 		return nil, nil
 	}
-	next, err := engine.AdvanceUntilQuiescent(run.checkpoint, run.definition)
+	next, command, advanced, err := engine.AdvanceAndPlan(run.checkpoint, run.definition)
 	if err != nil {
 		return nil, err
 	}
-	if err := persist(run, next, advanceEvidence(next)); err != nil {
+	if !advanced {
+		// Quiescent: every live branch is waiting on an external actor, so there
+		// is nothing to commit and a resume must not bump the state version.
+		return nil, nil
+	}
+	if err := persistEvents(run, next, advanceEvidence(run.checkpoint, next, command)); err != nil {
 		return nil, err
 	}
-	outstanding := next.OutstandingCommand()
-	if outstanding == nil {
+	if command == nil {
 		return nil, nil
 	}
 	dispatch := &Dispatch{
 		owner: run, stateVersion: run.stateVersion,
-		command: cloneCommand(*outstanding),
+		command: cloneCommand(*command),
 	}
 	run.dispatch = dispatch
 	return dispatch, nil
@@ -358,15 +375,18 @@ func validateDecisionInput(input DecisionInput) error {
 	return nil
 }
 
+// reconcileCommand returns the one ambiguous command an operator can reissue or
+// record an outcome for. It requires exactly one outbox entry: this slice never
+// produces more, and an operator action that did not name which command it
+// meant must fail closed rather than silently reconcile a branch at random.
 func reconcileCommand(run *Run) (engine.Command, error) {
 	if run == nil || run.definition == nil {
 		return engine.Command{}, ErrInvalidRun
 	}
-	outstanding := run.checkpoint.OutstandingCommand()
-	if outstanding == nil || run.dispatch != nil {
+	if len(run.checkpoint.Commands) != 1 || run.dispatch != nil {
 		return engine.Command{}, ErrNoReconciliation
 	}
-	return cloneCommand(*outstanding), nil
+	return cloneCommand(run.checkpoint.Commands[0]), nil
 }
 
 func validateReconciliationActor(actor string) error {
@@ -424,22 +444,34 @@ func eventForNode(kind, nodeID, actor string, payload any) db.ProcessRunEvent {
 	}
 }
 
-// advanceEvidence is the one human-facing row for an engine-owned advance:
-// the prepared command, the newly awaited decision, or the plain status move.
-func advanceEvidence(advanced engine.Checkpoint) db.ProcessRunEvent {
-	switch outstanding, obligation := advanced.OutstandingCommand(), advanced.AwaitingDecision(); {
-	case outstanding != nil:
-		return event("program_prepared", outstanding, executorActor,
-			preparedEvidence{Command: cloneCommand(*outstanding)})
-	case obligation != nil:
-		return eventForNode("decision_awaited", obligation.NodeID, executorActor, struct {
+// advanceEvidence is the human-facing record of one engine-owned advance: the
+// prepared command, plus one row per decision the advance newly parked a branch
+// on. Fan-out can park several branches in a single advance, and each of those
+// obligations is separately addressable, so each gets its own row rather than
+// one row standing in for all of them. An advance that did neither leaves the
+// plain status move.
+func advanceEvidence(before, advanced engine.Checkpoint, command *engine.Command) []db.ProcessRunEvent {
+	var events []db.ProcessRunEvent
+	for _, obligation := range advanced.AwaitingDecisions {
+		if slices.ContainsFunc(before.AwaitingDecisions, func(existing engine.DecisionObligation) bool {
+			return existing.NodeID == obligation.NodeID
+		}) {
+			continue
+		}
+		events = append(events, eventForNode("decision_awaited", obligation.NodeID, executorActor, struct {
 			NodeID string `json:"nodeId"`
-		}{NodeID: obligation.NodeID})
-	default:
-		return event("engine_advanced", nil, executorActor, struct {
-			Status engine.RunStatus `json:"status"`
-		}{Status: advanced.Status})
+		}{NodeID: obligation.NodeID}))
 	}
+	if command != nil {
+		events = append(events, event("program_prepared", command, executorActor,
+			preparedEvidence{Command: cloneCommand(*command)}))
+	}
+	if len(events) == 0 {
+		events = append(events, event("engine_advanced", nil, executorActor, struct {
+			Status engine.RunStatus `json:"status"`
+		}{Status: advanced.Status}))
+	}
+	return events
 }
 
 type preparedEvidence struct {

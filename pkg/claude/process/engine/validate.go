@@ -27,6 +27,7 @@ const (
 	definitionTask
 	definitionEnd
 	definitionDecision
+	definitionParallel
 )
 
 type definitionNode struct {
@@ -37,6 +38,10 @@ type definitionNode struct {
 	verdicts []string       // decision nodes only: sorted authored outcome labels
 	outgoing []int          // edge indices, sorted by outcome label
 	incoming []int          // edge indices, in edge order
+	// joinAll marks a convergence node authored with join: all. Such a node
+	// activates once its complete candidate input set has settled with one or
+	// more arrivals, instead of the non-join exactly-one-arrival rule.
+	joinAll bool
 }
 
 type definitionEdge struct {
@@ -65,10 +70,12 @@ func Prepare(tmpl *model.Template, params map[string]string) (*Definition, error
 	}
 	for _, nodeID := range order {
 		node := tmpl.Nodes[nodeID]
-		prepared := definitionNode{id: nodeID}
+		prepared := definitionNode{id: nodeID, joinAll: node.Join == model.JoinAll}
 		switch node.Type {
 		case model.NodeTypeStart:
 			prepared.kind = definitionStart
+		case model.NodeTypeParallel:
+			prepared.kind = definitionParallel
 		case model.NodeTypeTask:
 			prepared.kind = definitionTask
 			program, err := bindProgram(nodeID, *node.Performer, params)
@@ -277,13 +284,16 @@ func ValidateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	return validateCheckpoint(checkpoint, definition)
 }
 
-// ClassifyCheckpoint is the exhaustive, deliberately strict current-slice
+// ClassifyCheckpoint is the exhaustive, deliberately strict SEQUENTIAL-slice
 // invariant proof. It runs the runtime structural validator and then the
-// whole-graph exclusive-decision classification the runtime hot path no longer
-// performs on every transition. Tests call it after every engine-generated
-// transition so the TCL-650 slice keeps its full bug-finding coverage without
-// making those single-active/single-failure expectations the runtime
-// compatibility contract. It is a test/diagnostic entry point, not a hot path.
+// whole-graph exclusive-decision classification the runtime hot path never
+// performs. Sequential and exclusive-decision tests call it after every
+// transition so that behavior keeps its full bug-finding coverage.
+//
+// It describes a single-token run: one active node, one outbox entry, one
+// failure. Fan-out deliberately violates all three, so parallel templates are
+// NOT classifiable and parallel tests assert their properties directly. It is a
+// test/diagnostic entry point, not a hot path.
 func ClassifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	if err := validateCheckpoint(checkpoint, definition); err != nil {
 		return err
@@ -461,7 +471,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 				if node.kind != definitionTask {
 					return invalid("only a task node may be running; got %q", node.id)
 				}
-				if command := checkpoint.OutstandingCommand(); command == nil || command.NodeID != node.id {
+				if command := checkpoint.FirstCommand(); command == nil || command.NodeID != node.id {
 					return invalid("running node %q requires its outstanding command", node.id)
 				}
 			}
@@ -510,7 +520,7 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 		}
 	}
 
-	if obligation := checkpoint.AwaitingDecision(); obligation != nil {
+	if obligation := checkpoint.FirstAwaitingDecision(); obligation != nil {
 		if checkpoint.Status != RunRunning {
 			return invalid("awaiting decision requires a running run")
 		}
@@ -535,18 +545,18 @@ func classifyCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 			return invalid("running run must have one ready or running node")
 		}
 		active := definition.nodes[activeIndex]
-		if checkpoint.Nodes[active.id] == NodeReady && checkpoint.OutstandingCommand() != nil {
+		if checkpoint.Nodes[active.id] == NodeReady && checkpoint.FirstCommand() != nil {
 			return invalid("ready node %q cannot coexist with an outstanding command", active.id)
 		}
 		if active.kind == definitionDecision {
-			if obligation := checkpoint.AwaitingDecision(); obligation == nil || obligation.NodeID != active.id {
+			if obligation := checkpoint.FirstAwaitingDecision(); obligation == nil || obligation.NodeID != active.id {
 				return invalid("ready decision %q requires its awaiting-decision obligation", active.id)
 			}
-		} else if obligation := checkpoint.AwaitingDecision(); obligation != nil {
+		} else if obligation := checkpoint.FirstAwaitingDecision(); obligation != nil {
 			return invalid("awaiting decision %q disagrees with active node %q", obligation.NodeID, active.id)
 		}
 	case RunCompleted, RunCanceled, RunFailed:
-		if checkpoint.OutstandingCommand() != nil {
+		if checkpoint.FirstCommand() != nil {
 			return invalid("terminal run cannot have an outstanding command")
 		}
 		if activeIndex >= 0 {
