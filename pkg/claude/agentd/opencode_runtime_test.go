@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -240,6 +241,126 @@ func TestOpenCodeLaunchPromptCarriesModelAndVariant(t *testing.T) {
 	}, body["model"])
 	parts := body["parts"].([]any)
 	assert.Equal(t, "startup brief", parts[0].(map[string]any)["text"])
+}
+
+func TestOpenCodeSSEClientBoundsSetupWithoutWholeRequestTimeout(t *testing.T) {
+	// The /event stream is long-lived, so a whole-request Timeout would sever a
+	// healthy stream. The client must bound only setup: dial + response headers.
+	assert.Zero(t, openCodeSSEHTTPClient.Timeout,
+		"a whole-request timeout would kill a healthy SSE stream")
+	transport, ok := openCodeSSEHTTPClient.Transport.(*http.Transport)
+	require.True(t, ok, "the SSE client must use a bounded *http.Transport")
+	assert.NotNil(t, transport.DialContext, "the SSE client must bound connection dial")
+	assert.Equal(t, 10*time.Second, transport.ResponseHeaderTimeout,
+		"the SSE client must bound the wait for response headers")
+}
+
+func TestOpenCodeRuntimeOwnsRecordedPID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+
+	assert.True(t, openCodeRuntimeOwnsRecordedPID(db.OpenCodeRuntime{
+		PID: os.Getpid(), ServerURL: server.URL,
+	}), "the process owning the recorded endpoint must pass the recovered-pid gate")
+	assert.False(t, openCodeRuntimeOwnsRecordedPID(db.OpenCodeRuntime{
+		PID: 99_999_999, ServerURL: server.URL,
+	}), "a pid that does not own the recorded endpoint must fail the gate (PID reuse)")
+	assert.False(t, openCodeRuntimeOwnsRecordedPID(db.OpenCodeRuntime{
+		PID: 1, ServerURL: server.URL,
+	}), "pid<=1 must fail closed")
+}
+
+func TestFinishOpenCodeProcessExitCancelsSSEAndFlagsExit(t *testing.T) {
+	const sessionID = "spwn-exit-cancel"
+	ctx, cancel := context.WithCancel(context.Background())
+	process := &openCodeProcess{cancel: cancel}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+	t.Cleanup(func() {
+		openCodeProcesses.Lock()
+		delete(openCodeProcesses.bySession, sessionID)
+		openCodeProcesses.Unlock()
+	})
+
+	finishOpenCodeProcessExit(process, sessionID, 4242, nil, nil)
+
+	openCodeProcesses.Lock()
+	exited := process.exited
+	openCodeProcesses.Unlock()
+	assert.True(t, exited, "a server exit must flag the process")
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("a server exit must cancel the SSE consumer context")
+	}
+}
+
+func TestEnsureOpenCodeSSESkipsAlreadyExitedProcess(t *testing.T) {
+	const sessionID = "spwn-exited-nosse"
+	process := &openCodeProcess{exited: true}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+	t.Cleanup(func() {
+		openCodeProcesses.Lock()
+		if p := openCodeProcesses.bySession[sessionID]; p != nil && p.cancel != nil {
+			p.cancel()
+		}
+		delete(openCodeProcesses.bySession, sessionID)
+		openCodeProcesses.Unlock()
+	})
+
+	ensureOpenCodeSSE(db.OpenCodeRuntime{
+		SessionID: sessionID, ServerURL: "http://127.0.0.1:1", Cwd: "/tmp/project",
+	})
+
+	openCodeProcesses.Lock()
+	started := process.cancel != nil
+	openCodeProcesses.Unlock()
+	assert.False(t, started,
+		"a process that already died must not start a doomed SSE consumer")
+}
+
+func TestStopOpenCodeProcessVerifiesRecoveredPIDBeforeKill(t *testing.T) {
+	prev := openCodeRuntimeVerified
+	t.Cleanup(func() { openCodeRuntimeVerified = prev })
+	var asked db.OpenCodeRuntime
+	consulted := false
+	openCodeRuntimeVerified = func(r db.OpenCodeRuntime) bool {
+		asked = r
+		consulted = true
+		return false // not our managed server → the recovered pid must be spared
+	}
+
+	stopOpenCodeProcess(db.OpenCodeRuntime{
+		SessionID: "spwn-recovered-kill", PID: 99_999_999,
+		ServerURL: "http://127.0.0.1:2",
+	}, nil)
+
+	assert.True(t, consulted, "the recovered-pid path must consult the ownership gate")
+	assert.Equal(t, 99_999_999, asked.PID, "the gate must be asked about the recorded pid")
+}
+
+func TestStopOpenCodeProcessNeverSelfKillsOnRecoveredPID(t *testing.T) {
+	// Subtree endpoint ownership would match agentd's own pid (managed serves
+	// are its children), so a stale row whose pid coincided with ours after
+	// reuse must be short-circuited before the ownership gate — no self-kill.
+	prev := openCodeRuntimeVerified
+	t.Cleanup(func() { openCodeRuntimeVerified = prev })
+	consulted := false
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool {
+		consulted = true
+		return true
+	}
+
+	stopOpenCodeProcess(db.OpenCodeRuntime{
+		SessionID: "spwn-self-pid", PID: os.Getpid(),
+		ServerURL: "http://127.0.0.1:3",
+	}, nil)
+
+	assert.False(t, consulted,
+		"a recorded pid equal to our own must be excluded before the ownership gate")
 }
 
 func TestRandomOpenCodePassword(t *testing.T) {
