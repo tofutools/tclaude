@@ -20,8 +20,8 @@ func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
 		require.NoError(t, db.UpsertOpenCodeUsageActivity(row))
 	}
 	native := []db.SubscriptionUsageHistoryRow{
-		{Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour", ObservedAt: now.Add(-2 * time.Hour)},
-		{Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour", ObservedAt: now.Add(-30 * time.Minute)},
+		{Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour", ObservedAt: now.Add(-70 * time.Minute)},
+		{Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour", ObservedAt: now.Add(-50 * time.Minute)},
 	}
 	warnings, err := collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), nil, now, native)
 	require.NoError(t, err)
@@ -35,11 +35,11 @@ func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
 	native = append(native,
 		db.SubscriptionUsageHistoryRow{
 			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
-			ObservedAt: now.Add(-2 * time.Hour),
+			ObservedAt: now.Add(-70 * time.Minute),
 		},
 		db.SubscriptionUsageHistoryRow{
 			Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
-			ObservedAt: now.Add(-20 * time.Minute),
+			ObservedAt: now.Add(-50 * time.Minute),
 		},
 	)
 	warnings, err = collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), nil, now, native)
@@ -67,6 +67,18 @@ func TestOpenCodeUsageCoverageWarningRequiresNativeHistoryToBracketActivity(t *t
 	require.Len(t, warnings, 1,
 		"a lone native sample after OpenCode activity cannot qualify the missing interval")
 	assert.Equal(t, db.SubscriptionProviderOpenAI, warnings[0].Provider)
+}
+
+func TestOpenCodeUsageCoverageWarningDetectsGapBetweenNativeEndpoints(t *testing.T) {
+	base := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	assert.False(t, openCodeActivityCoveredByNativeSamples(
+		[]time.Time{base.Add(14 * 24 * time.Hour)},
+		[]time.Time{base, base.Add(29 * 24 * time.Hour)},
+	), "distant first/last samples do not fabricate coverage across the gap")
+	assert.True(t, openCodeActivityCoveredByNativeSamples(
+		[]time.Time{base.Add(14 * 24 * time.Hour)},
+		[]time.Time{base.Add(14*24*time.Hour + 10*time.Minute)},
+	), "a native sample within one retained sampling interval covers the activity")
 }
 
 func TestOpenCodeUsageCoverageWarningsUseProviderSelectedSpan(t *testing.T) {

@@ -54,6 +54,21 @@ func UpsertOpenCodeUsageActivity(row OpenCodeUsageActivity) error {
 	return nil
 }
 
+func DeleteOpenCodeUsageActivity(sessionID, messageID string) error {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(messageID) == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	if _, err := d.Exec(`DELETE FROM opencode_usage_activity
+		WHERE session_id = ? AND message_id = ?`, sessionID, messageID); err != nil {
+		return fmt.Errorf("delete OpenCode usage activity: %w", err)
+	}
+	return nil
+}
+
 // ReplaceOpenCodeUsageActivity makes reconnect/recovery authoritative for one
 // session from GET /session/{id}/message, while pruning history beyond the
 // dashboard's maximum retained span.

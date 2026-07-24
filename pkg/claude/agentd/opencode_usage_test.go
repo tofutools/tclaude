@@ -58,8 +58,14 @@ func TestOpenCodeVirtualCostForUsageUsesNativeTiersAndCachePricing(t *testing.T)
 	require.True(t, ok)
 	assert.InDelta(t, 0.3745, got, 1e-12, "base pricing applies without a matching tier")
 
-	_, ok = openCodeVirtualCostForUsage(usage, openCodeModelPrice{})
-	assert.False(t, ok, "missing/zero pricing degrades without inventing a value")
+	got, ok = openCodeVirtualCostForUsage(usage, openCodeModelPrice{})
+	require.True(t, ok, "an explicitly cataloged free model is valid")
+	assert.Zero(t, got)
+	missing := projectOpenCodeMessageCost(openCodeContextUsage{
+		MessageID: "missing", ProviderID: "openai", ModelID: "not-cataloged",
+		ReportedCost: float64ptr(0), Input: 1,
+	}, map[string]openCodeModelPrice{})
+	assert.False(t, missing.eligible, "an absent catalog entry still degrades without inventing a price")
 }
 
 func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *testing.T) {
@@ -73,7 +79,8 @@ func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *test
 		require.Equal(t, "/config/providers", r.URL.Path)
 		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{` +
 			`"gpt-a":{"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}},` +
-			`"gpt-b":{"cost":{"input":2,"output":4,"cache":{"read":0.2,"write":0.4}},"limit":{"context":200000}}}}]}`))
+			`"gpt-b":{"cost":{"input":2,"output":4,"cache":{"read":0.2,"write":0.4}},"limit":{"context":200000}},` +
+			`"free":{"cost":{"input":0,"output":0,"cache":{"read":0,"write":0}},"limit":{"context":200000}}}}]}`))
 	}))
 	t.Cleanup(server.Close)
 	const sessionID, convID = "oc-virtual", "ses-virtual"
@@ -84,7 +91,8 @@ func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *test
 	_, directPrices, fetchErr := fetchOpenCodeModelCatalog(context.Background(), runtime)
 	require.NoError(t, fetchErr)
 	require.Contains(t, directPrices, "openai/gpt-a")
-	prices := openCodeModelPrices(context.Background(), runtime)
+	prices, loaded := openCodeModelPrices(context.Background(), runtime)
+	require.True(t, loaded)
 	require.Contains(t, prices, "openai/gpt-a")
 	subscription := float64ptr(0)
 	first := openCodeContextUsage{
@@ -123,12 +131,82 @@ func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *test
 	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
 	snap, err = db.GetContextSnapshot(sessionID)
 	require.NoError(t, err)
-	assert.Zero(t, snap.VirtualCostUSD,
-		"an unpriceable authoritative replay clears rather than retaining stale cost")
+	assert.InDelta(t, 1.25, snap.VirtualCostUSD, 1e-12,
+		"missing pricing retains the last complete estimate instead of publishing a partial total")
+
+	first.ModelID = "gpt-a"
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, first)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-free", ProviderID: "openai", ModelID: "free",
+		ReportedCost: subscription, Input: 1_000_000, CreatedAt: time.Now(),
+	})
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, snap.VirtualCostUSD, 1e-12,
+		"a valid free-model message contributes zero without erasing earlier priced usage")
 
 	rows, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	require.NoError(t, err)
-	assert.Len(t, rows, 2, "replays are also idempotent in provider activity history")
+	assert.Len(t, rows, 3, "replays are also idempotent in provider activity history")
+}
+
+func TestOpenCodeVirtualCostRetainsHistoryAcrossTransientCatalogFailure(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID = "oc-transient", "ses-transient"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 2), "seed retained projection")
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(failing.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: failing.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	yesterdayAt := time.Now().AddDate(0, 0, -1)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, openCodeContextUsage{
+		MessageID: "msg-recovered", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000, CreatedAt: yesterdayAt,
+	})
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 2, snap.VirtualCostUSD, 1e-12,
+		"a failed catalog fetch is not treated as authoritative missing pricing")
+
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(healthy.Close)
+	runtime.ServerURL = healthy.URL
+	projectAndPersistOpenCodeCostState(context.Background(), runtime)
+
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12)
+	rows, err := db.AllCostDailyRows()
+	require.NoError(t, err)
+	yesterday := yesterdayAt.In(time.Local).Format("2006-01-02")
+	var yesterdayCost, todayCost float64
+	for _, row := range rows {
+		if row.SessionID != sessionID {
+			continue
+		}
+		switch row.Day {
+		case yesterday:
+			yesterdayCost = row.VirtualCostUSD
+		case time.Now().Format("2006-01-02"):
+			todayCost = row.VirtualCostUSD
+		}
+	}
+	assert.InDelta(t, 1, yesterdayCost, 1e-12,
+		"successful recovery rebuilds the original day from the message timestamp")
+	assert.Zero(t, todayCost, "recovery does not move prior spend into today")
 }
 
 func openCodeStepUpdatedEventJSON(convID, messageID, partID string, input int64) json.RawMessage {
@@ -136,6 +214,13 @@ func openCodeStepUpdatedEventJSON(convID, messageID, partID string, input int64)
 		`"sessionID":%q,"part":{"id":%q,"messageID":%q,"sessionID":%q,"type":"step-finish",`+
 		`"cost":0,"tokens":{"input":%d,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}}`,
 		partID, convID, partID, messageID, convID, input))
+}
+
+func openCodeRemovedEventJSON(eventType, convID, messageID, partID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(
+		`{"id":"evt-rm","type":%q,"properties":{"sessionID":%q,"messageID":%q,"partID":%q}}`,
+		eventType, convID, messageID, partID,
+	))
 }
 
 func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
@@ -184,6 +269,30 @@ func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
 	require.NoError(t, err)
 	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12,
 		"both model calls are priced once; the latest-step message field does not undercount")
+
+	removal, ok := parseOpenCodeCostRemoval(
+		openCodeRemovedEventJSON("message.part.removed", runtime.ConvID, "msg-tools", "part-2"),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"removing a live step rebuilds the message from its retained parts")
+
+	removal, ok = parseOpenCodeCostRemoval(
+		openCodeRemovedEventJSON("message.removed", runtime.ConvID, "msg-tools", ""),
+		runtime.ConvID,
+	)
+	require.True(t, ok)
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD, "removing the message clears its projected history")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "removed messages also leave the Usage coverage index")
 }
 
 func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {

@@ -208,7 +208,7 @@ func TestUpdateSessionVirtualCost_DenormalisesHarness(t *testing.T) {
 	assert.Equal(t, "codex", row.Harness, "harness denormalised onto virtual cost history")
 }
 
-func TestReplaceSessionVirtualCostLowersAndClearsAuthoritativeProjection(t *testing.T) {
+func TestReplaceSessionVirtualCostHistoryRedistributesAndClearsProjection(t *testing.T) {
 	setupTestDB(t)
 	today := time.Now().Format(costDayFormat)
 	require.NoError(t, SaveSession(&SessionRow{
@@ -224,20 +224,21 @@ func TestReplaceSessionVirtualCostLowersAndClearsAuthoritativeProjection(t *test
 		"vc-replace", yesterday, "conv-vc-replace", 4,
 		time.Now().AddDate(0, 0, -1).Format(time.RFC3339Nano), "opencode")
 	require.NoError(t, err)
-	require.NoError(t, ReplaceSessionVirtualCost("vc-replace", 3))
-	require.NoError(t, ReplaceSessionVirtualCost("vc-replace", 1))
 
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 1, []VirtualCostDailySnapshot{
+		{Day: yesterday, CostUSD: 0.5, UpdatedAt: time.Now().AddDate(0, 0, -1)},
+		{Day: today, CostUSD: 1, UpdatedAt: time.Now()},
+	}))
 	snap, err := GetContextSnapshot("vc-replace")
 	require.NoError(t, err)
 	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12)
 	rows, err := AllCostDailyRows()
 	require.NoError(t, err)
-	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-replace", yesterday).VirtualCostUSD, 1e-12,
-		"a prior-day cumulative prefix cannot exceed the corrected total")
+	assert.InDelta(t, 0.5, dailyRowFor(t, rows, "vc-replace", yesterday).VirtualCostUSD, 1e-12)
 	assert.InDelta(t, 1, dailyRowFor(t, rows, "vc-replace", today).VirtualCostUSD, 1e-12,
-		"authoritative lower replay replaces today's earlier estimate")
+		"the replayed timestamped history redistributes the correction exactly")
 
-	require.NoError(t, ReplaceSessionVirtualCost("vc-replace", 0))
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-replace", 0, nil))
 	snap, err = GetContextSnapshot("vc-replace")
 	require.NoError(t, err)
 	assert.Zero(t, snap.VirtualCostUSD)

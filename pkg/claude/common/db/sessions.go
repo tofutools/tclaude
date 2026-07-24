@@ -1272,15 +1272,34 @@ func UpdateSessionVirtualCost(sessionID string, costUSD float64) error {
 	return tx.Commit()
 }
 
-// ReplaceSessionVirtualCost writes an authoritative cumulative WHAT-IF
-// projection, including a lower value or zero. OpenCode uses this after
-// replaying stable message/step identities: a corrected model, removed step,
-// unavailable price, or real-cost discovery must replace rather than preserve
-// the earlier estimate. The exact write is deliberately separate from
-// UpdateSessionVirtualCost's monotonic statusline path.
-func ReplaceSessionVirtualCost(sessionID string, costUSD float64) error {
-	if costUSD < 0 {
+// VirtualCostDailySnapshot is an authoritative cumulative WHAT-IF prefix for
+// one local calendar day.
+type VirtualCostDailySnapshot struct {
+	Day       string
+	CostUSD   float64
+	UpdatedAt time.Time
+}
+
+// ReplaceSessionVirtualCostHistory atomically rebuilds one session's virtual
+// daily prefixes. OpenCode can replay stable messages and parts with their
+// original timestamps, so a model correction or removal can be redistributed
+// to the day where it occurred rather than clamping an unrelated latest
+// aggregate. Existing real-cost columns and row attribution remain untouched.
+func ReplaceSessionVirtualCostHistory(
+	sessionID string,
+	totalUSD float64,
+	snapshots []VirtualCostDailySnapshot,
+) error {
+	if totalUSD < 0 {
 		return nil
+	}
+	for _, snapshot := range snapshots {
+		if snapshot.CostUSD < 0 {
+			return nil
+		}
+		if _, err := time.ParseInLocation(costDayFormat, snapshot.Day, time.Local); err != nil {
+			return fmt.Errorf("replace session virtual cost history: bad day %q: %w", snapshot.Day, err)
+		}
 	}
 	d, err := Open()
 	if err != nil {
@@ -1291,40 +1310,38 @@ func ReplaceSessionVirtualCost(sessionID string, costUSD float64) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, costUSD, sessionID); err != nil {
+	if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, totalUSD, sessionID); err != nil {
 		return err
 	}
-	// Every historical row is a cumulative prefix of the same authoritative
-	// total. If recovery lowers that total, no earlier prefix may remain above
-	// it; clamping prevents a stale prior-day high from surviving forever in
-	// the Costs delta walk. Increases leave prior day boundaries untouched.
-	if _, err := tx.Exec(`UPDATE session_cost_daily
-		SET virtual_cost_usd = ? WHERE session_id = ? AND virtual_cost_usd > ?`,
-		costUSD, sessionID, costUSD); err != nil {
+	if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}
-	now := time.Now()
-	_, err = tx.Exec(`INSERT INTO session_cost_daily (session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
-		SELECT id, ?, conv_id, ?, ?, model,
-		       COALESCE(NULLIF(sessions.agent_id, ''),
-		                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
-		       COALESCE(NULLIF(harness, ''), 'claude')
-		FROM sessions WHERE id = ?
-		ON CONFLICT(session_id, day) DO UPDATE SET
-			updated_at = CASE WHEN excluded.virtual_cost_usd <> session_cost_daily.virtual_cost_usd
-			                  THEN excluded.updated_at ELSE session_cost_daily.updated_at END,
-			virtual_cost_usd = excluded.virtual_cost_usd,
-			conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
-			                ELSE session_cost_daily.conv_id END,
-			model    = CASE WHEN excluded.model <> '' THEN excluded.model
-			                ELSE session_cost_daily.model END,
-			agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
-			                ELSE session_cost_daily.agent_id END,
-			harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
-			                ELSE session_cost_daily.harness END`,
-		now.Format(costDayFormat), costUSD, now.Format(time.RFC3339Nano), sessionID)
-	if err != nil {
-		return err
+	for _, snapshot := range snapshots {
+		updatedAt := snapshot.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = time.Now()
+		}
+		if _, err := tx.Exec(`INSERT INTO session_cost_daily
+			(session_id, day, conv_id, virtual_cost_usd, updated_at, model, agent_id, harness)
+			SELECT id, ?, conv_id, ?, ?, model,
+			       COALESCE(NULLIF(sessions.agent_id, ''),
+			                (SELECT agent_id FROM agent_conversations WHERE conv_id = sessions.conv_id), ''),
+			       COALESCE(NULLIF(harness, ''), 'claude')
+			FROM sessions WHERE id = ?
+			ON CONFLICT(session_id, day) DO UPDATE SET
+				virtual_cost_usd = excluded.virtual_cost_usd,
+				updated_at = excluded.updated_at,
+				conv_id  = CASE WHEN excluded.conv_id <> '' THEN excluded.conv_id
+				                ELSE session_cost_daily.conv_id END,
+				model    = CASE WHEN excluded.model <> '' THEN excluded.model
+				                ELSE session_cost_daily.model END,
+				agent_id = CASE WHEN excluded.agent_id <> '' THEN excluded.agent_id
+				                ELSE session_cost_daily.agent_id END,
+				harness  = CASE WHEN excluded.harness <> '' THEN excluded.harness
+				                ELSE session_cost_daily.harness END`,
+			snapshot.Day, snapshot.CostUSD, updatedAt.Format(time.RFC3339Nano), sessionID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

@@ -194,6 +194,11 @@ var openCodeLimitCache struct {
 type openCodeLimitEntry struct {
 	limits map[string]int64
 	prices map[string]openCodeModelPrice
+	// loaded distinguishes a successful (possibly empty) native catalog from
+	// a transient fetch failure. Cost recovery must never erase retained
+	// history merely because the local OpenCode server was temporarily
+	// unavailable after restart.
+	loaded bool
 	at     time.Time
 	// ttl bounds this entry's freshness. A successful fetch earns the full
 	// cache TTL; a failed fetch with no prior good data earns a shorter backoff
@@ -220,8 +225,9 @@ func openCodeModelLimits(ctx context.Context, runtime db.OpenCodeRuntime) map[st
 	return openCodeModelCatalog(ctx, runtime).limits
 }
 
-func openCodeModelPrices(ctx context.Context, runtime db.OpenCodeRuntime) map[string]openCodeModelPrice {
-	return openCodeModelCatalog(ctx, runtime).prices
+func openCodeModelPrices(ctx context.Context, runtime db.OpenCodeRuntime) (map[string]openCodeModelPrice, bool) {
+	entry := openCodeModelCatalog(ctx, runtime)
+	return entry.prices, entry.loaded
 }
 
 func openCodeModelCatalog(ctx context.Context, runtime db.OpenCodeRuntime) openCodeLimitEntry {
@@ -258,7 +264,7 @@ func openCodeModelCatalog(ctx context.Context, runtime db.OpenCodeRuntime) openC
 		return empty
 	}
 
-	entry = openCodeLimitEntry{limits: limits, prices: prices, at: time.Now(), ttl: openCodeLimitCacheTTL}
+	entry = openCodeLimitEntry{limits: limits, prices: prices, loaded: true, at: time.Now(), ttl: openCodeLimitCacheTTL}
 	openCodeLimitCache.byServer[runtime.ServerURL] = entry
 	return entry
 }

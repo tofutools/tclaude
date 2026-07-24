@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -137,6 +138,43 @@ type openCodeStepUpdatedEvent struct {
 	} `json:"properties"`
 }
 
+type openCodeCostRemoval struct {
+	MessageID string
+	PartID    string
+}
+
+type openCodeRemovedEvent struct {
+	Type       string `json:"type"`
+	Properties struct {
+		SessionID string `json:"sessionID"`
+		MessageID string `json:"messageID"`
+		PartID    string `json:"partID"`
+	} `json:"properties"`
+}
+
+func parseOpenCodeCostRemoval(event json.RawMessage, convID string) (openCodeCostRemoval, bool) {
+	if convID == "" || !bytes.Contains(event, []byte(`.removed"`)) {
+		return openCodeCostRemoval{}, false
+	}
+	var decoded openCodeRemovedEvent
+	if json.Unmarshal(event, &decoded) != nil || decoded.Properties.SessionID != convID ||
+		decoded.Properties.MessageID == "" {
+		return openCodeCostRemoval{}, false
+	}
+	switch decoded.Type {
+	case "message.removed":
+		return openCodeCostRemoval{MessageID: decoded.Properties.MessageID}, true
+	case "message.part.removed":
+		if decoded.Properties.PartID != "" {
+			return openCodeCostRemoval{
+				MessageID: decoded.Properties.MessageID,
+				PartID:    decoded.Properties.PartID,
+			}, true
+		}
+	}
+	return openCodeCostRemoval{}, false
+}
+
 // parseOpenCodeStepCostUsage extracts OpenCode's per-model-call usage. An
 // AssistantMessage can contain several step-finish parts when a turn calls
 // tools; its top-level tokens field contains only the latest step even though
@@ -176,8 +214,9 @@ type openCodeProjectedMessageCost struct {
 }
 
 type openCodeMessageCostUsage struct {
-	message openCodeContextUsage
-	steps   map[string]openCodeContextUsage
+	message  openCodeContextUsage
+	steps    map[string]openCodeContextUsage
+	hadSteps bool
 }
 
 var openCodeVirtualCostState struct {
@@ -198,11 +237,8 @@ func validOpenCodeRate(value float64) bool {
 }
 
 func validOpenCodePrice(price openCodeModelPrice) bool {
-	if !validOpenCodeRate(price.Input) || !validOpenCodeRate(price.Output) ||
-		!validOpenCodeRate(price.Cache.Read) || !validOpenCodeRate(price.Cache.Write) {
-		return false
-	}
-	return price.Input > 0 || price.Output > 0 || price.Cache.Read > 0 || price.Cache.Write > 0
+	return validOpenCodeRate(price.Input) && validOpenCodeRate(price.Output) &&
+		validOpenCodeRate(price.Cache.Read) && validOpenCodeRate(price.Cache.Write)
 }
 
 // openCodeVirtualCostForUsage mirrors OpenCode's native cost calculation:
@@ -242,7 +278,7 @@ func openCodeVirtualCostForUsage(usage openCodeContextUsage, base openCodeModelP
 		float64(usage.Output+usage.Reasoning)*price.Output +
 		float64(usage.CacheRead)*price.Cache.Read +
 		float64(usage.CacheWrite)*price.Cache.Write) / perMillion
-	if math.IsNaN(usd) || math.IsInf(usd, 0) || usd <= 0 {
+	if math.IsNaN(usd) || math.IsInf(usd, 0) || usd < 0 {
 		return 0, false
 	}
 	return usd, true
@@ -268,7 +304,7 @@ func projectOpenCodeMessageCost(usage openCodeContextUsage, prices map[string]op
 
 func aggregateOpenCodeMessageCostUsage(state openCodeMessageCostUsage) openCodeContextUsage {
 	usage := state.message
-	if len(state.steps) == 0 {
+	if !state.hadSteps {
 		return usage
 	}
 	usage.Input, usage.Output, usage.Reasoning, usage.CacheRead, usage.CacheWrite = 0, 0, 0, 0, 0
@@ -290,21 +326,6 @@ func aggregateOpenCodeMessageCostUsage(state openCodeMessageCostUsage) openCodeC
 		usage.ReportedCost = &reportedCost
 	}
 	return usage
-}
-
-func persistOpenCodeVirtualCostState(runtime db.OpenCodeRuntime, messages map[string]openCodeProjectedMessageCost) {
-	total := 0.0
-	for _, message := range messages {
-		if message.real || !message.eligible {
-			total = 0
-			break
-		}
-		total += message.usd
-	}
-	if err := db.ReplaceSessionVirtualCost(runtime.SessionID, total); err != nil {
-		slog.Warn("OpenCode virtual cost could not be persisted",
-			"session", runtime.SessionID, "error", err, "module", "agentd")
-	}
 }
 
 func openCodeActivityForUsage(runtime db.OpenCodeRuntime, usage openCodeContextUsage) db.OpenCodeUsageActivity {
@@ -341,21 +362,87 @@ func ensureOpenCodeVirtualCostStateLocked(sessionID string) (
 	return messages, usages
 }
 
-func projectAndPersistOpenCodeMessage(
-	ctx context.Context,
-	runtime db.OpenCodeRuntime,
-	usage openCodeContextUsage,
-) {
-	projected := projectOpenCodeMessageCost(usage, openCodeModelPrices(ctx, runtime))
+func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCodeRuntime) {
+	prices, loaded := openCodeModelPrices(ctx, runtime)
+	if !loaded {
+		// A transient catalog failure is not an authoritative statement that
+		// pricing disappeared. Retain both the recovered usage state and the
+		// last persisted history so a later successful fetch can recompute all
+		// messages without moving old spend into today.
+		return
+	}
 	openCodeVirtualCostState.Lock()
-	messages, _ := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
-	messages[usage.MessageID] = projected
-	snapshot := make(map[string]openCodeProjectedMessageCost, len(messages))
-	for id, message := range messages {
-		snapshot[id] = message
+	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
+	aggregated := make([]openCodeContextUsage, 0, len(usages))
+	for _, state := range usages {
+		aggregated = append(aggregated, aggregateOpenCodeMessageCostUsage(state))
 	}
 	openCodeVirtualCostState.Unlock()
-	persistOpenCodeVirtualCostState(runtime, snapshot)
+
+	projections := make(map[string]openCodeProjectedMessageCost, len(aggregated))
+	type dailyContribution struct {
+		usd       float64
+		updatedAt time.Time
+	}
+	byDay := make(map[string]dailyContribution)
+	total := 0.0
+	haveReal := false
+	haveIneligible := false
+	for _, usage := range aggregated {
+		projected := projectOpenCodeMessageCost(usage, prices)
+		projections[usage.MessageID] = projected
+		if projected.real {
+			haveReal = true
+			continue
+		}
+		if !projected.eligible {
+			// A successfully loaded catalog can still omit one model. Do not
+			// publish a deceptively partial total or erase the last complete
+			// projection; wait for authoritative pricing or real cost.
+			haveIneligible = true
+			continue
+		}
+		observedAt := usage.CreatedAt
+		if observedAt.IsZero() {
+			observedAt = time.Now()
+		}
+		day := observedAt.In(time.Local).Format("2006-01-02")
+		contribution := byDay[day]
+		contribution.usd += projected.usd
+		if observedAt.After(contribution.updatedAt) {
+			contribution.updatedAt = observedAt
+		}
+		byDay[day] = contribution
+		total += projected.usd
+	}
+	if haveReal {
+		total = 0
+		byDay = map[string]dailyContribution{}
+	} else if haveIneligible {
+		return
+	}
+	days := make([]string, 0, len(byDay))
+	for day := range byDay {
+		days = append(days, day)
+	}
+	sort.Strings(days)
+	snapshots := make([]db.VirtualCostDailySnapshot, 0, len(days))
+	cumulative := 0.0
+	for _, day := range days {
+		contribution := byDay[day]
+		cumulative += contribution.usd
+		snapshots = append(snapshots, db.VirtualCostDailySnapshot{
+			Day: day, CostUSD: cumulative, UpdatedAt: contribution.updatedAt,
+		})
+	}
+	if err := db.ReplaceSessionVirtualCostHistory(runtime.SessionID, total, snapshots); err != nil {
+		slog.Warn("OpenCode virtual cost could not be persisted",
+			"session", runtime.SessionID, "error", err, "module", "agentd")
+		return
+	}
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.bySession[runtime.SessionID] = projections
+	openCodeVirtualCostState.Unlock()
 }
 
 // applyOpenCodeVirtualCostUsage replaces one message's metadata and projection.
@@ -375,9 +462,8 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 	state := usages[usage.MessageID]
 	state.message = usage
 	usages[usage.MessageID] = state
-	aggregated := aggregateOpenCodeMessageCostUsage(state)
 	openCodeVirtualCostState.Unlock()
-	projectAndPersistOpenCodeMessage(ctx, runtime, aggregated)
+	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
 
 // applyOpenCodeVirtualCostStep replaces one model-call part by stable part ID.
@@ -393,14 +479,42 @@ func applyOpenCodeVirtualCostStep(ctx context.Context, runtime db.OpenCodeRuntim
 	if state.steps == nil {
 		state.steps = map[string]openCodeContextUsage{}
 	}
+	state.hadSteps = true
 	state.steps[step.PartID] = step.Usage
 	usages[step.Usage.MessageID] = state
-	aggregated := aggregateOpenCodeMessageCostUsage(state)
 	haveMessage := state.message.MessageID != ""
 	openCodeVirtualCostState.Unlock()
 	if haveMessage {
-		projectAndPersistOpenCodeMessage(ctx, runtime, aggregated)
+		projectAndPersistOpenCodeCostState(ctx, runtime)
 	}
+}
+
+func applyOpenCodeVirtualCostRemoval(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	removal openCodeCostRemoval,
+) {
+	if removal.MessageID == "" {
+		return
+	}
+	messageRemoved := removal.PartID == ""
+	openCodeVirtualCostState.Lock()
+	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
+	if messageRemoved {
+		delete(usages, removal.MessageID)
+	} else if state, ok := usages[removal.MessageID]; ok {
+		delete(state.steps, removal.PartID)
+		state.hadSteps = true
+		usages[removal.MessageID] = state
+	}
+	openCodeVirtualCostState.Unlock()
+	if messageRemoved {
+		if err := db.DeleteOpenCodeUsageActivity(runtime.SessionID, removal.MessageID); err != nil {
+			slog.Debug("OpenCode removed-message activity could not be deleted",
+				"session", runtime.SessionID, "error", err, "module", "agentd")
+		}
+	}
+	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
 
 func replaceOpenCodeVirtualCostUsage(
@@ -408,8 +522,6 @@ func replaceOpenCodeVirtualCostUsage(
 	runtime db.OpenCodeRuntime,
 	usages []openCodeMessageCostUsage,
 ) {
-	prices := openCodeModelPrices(ctx, runtime)
-	messages := make(map[string]openCodeProjectedMessageCost, len(usages))
 	activity := make([]db.OpenCodeUsageActivity, 0, len(usages))
 	usageState := make(map[string]openCodeMessageCostUsage, len(usages))
 	for _, state := range usages {
@@ -417,7 +529,6 @@ func replaceOpenCodeVirtualCostUsage(
 		if usage.MessageID == "" {
 			continue
 		}
-		messages[usage.MessageID] = projectOpenCodeMessageCost(usage, prices)
 		activity = append(activity, openCodeActivityForUsage(runtime, state.message))
 		usageState[usage.MessageID] = state
 	}
@@ -427,10 +538,10 @@ func replaceOpenCodeVirtualCostUsage(
 	}
 	openCodeVirtualCostState.Lock()
 	ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
-	openCodeVirtualCostState.bySession[runtime.SessionID] = messages
+	openCodeVirtualCostState.bySession[runtime.SessionID] = map[string]openCodeProjectedMessageCost{}
 	openCodeVirtualCostState.usageSession[runtime.SessionID] = usageState
 	openCodeVirtualCostState.Unlock()
-	persistOpenCodeVirtualCostState(runtime, messages)
+	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
 
 // backfillOpenCodeContextUsage seeds the context snapshot from the
@@ -522,6 +633,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			}
 			if step.total() > 0 {
 				costUsage.steps[part.ID] = step
+				costUsage.hadSteps = true
 			}
 		}
 		costUsages = append(costUsages, costUsage)

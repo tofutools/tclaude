@@ -997,6 +997,9 @@ func consumeOpenCodeEvent(
 	if step, ok := parseOpenCodeStepCostUsage(event, runtime.ConvID); ok {
 		applyOpenCodeVirtualCostStep(ctx, runtime, step)
 	}
+	if removal, ok := parseOpenCodeCostRemoval(event, runtime.ConvID); ok {
+		applyOpenCodeVirtualCostRemoval(ctx, runtime, removal)
+	}
 	// Context-window usage rides on the same directory-wide SSE stream as the
 	// lifecycle hooks but is a session-row side effect, not a hook event, so it
 	// is projected independently of the lifecycle projector, and after it so the

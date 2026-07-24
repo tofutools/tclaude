@@ -203,6 +203,7 @@ func collectOpenCodeUsageCoverageWarnings(
 	}
 	type activityGroup struct {
 		models map[string]struct{}
+		times  []time.Time
 		first  time.Time
 		last   time.Time
 	}
@@ -227,6 +228,7 @@ func collectOpenCodeUsageCoverageWarnings(
 			byProvider[provider] = group
 		}
 		group.models[row.ModelID] = struct{}{}
+		group.times = append(group.times, row.ObservedAt)
 		if row.ObservedAt.Before(group.first) {
 			group.first = row.ObservedAt
 		}
@@ -234,11 +236,7 @@ func collectOpenCodeUsageCoverageWarnings(
 			group.last = row.ObservedAt
 		}
 	}
-	type nativeRange struct {
-		first time.Time
-		last  time.Time
-	}
-	nativeRanges := map[string]nativeRange{}
+	nativeTimes := map[string][]time.Time{}
 	for _, row := range nativeRows {
 		if row.Excluded {
 			continue
@@ -250,14 +248,7 @@ func collectOpenCodeUsageCoverageWarnings(
 		if row.ObservedAt.Before(from) || row.ObservedAt.After(to) {
 			continue
 		}
-		span, ok := nativeRanges[row.Provider]
-		if !ok || row.ObservedAt.Before(span.first) {
-			span.first = row.ObservedAt
-		}
-		if !ok || row.ObservedAt.After(span.last) {
-			span.last = row.ObservedAt
-		}
-		nativeRanges[row.Provider] = span
+		nativeTimes[row.Provider] = append(nativeTimes[row.Provider], row.ObservedAt)
 	}
 	providers := make([]string, 0, len(byProvider))
 	for provider := range byProvider {
@@ -268,9 +259,11 @@ func collectOpenCodeUsageCoverageWarnings(
 	for _, provider := range providers {
 		nativeSource := openCodeNativeUsageSource(provider)
 		group := byProvider[provider]
-		nativeSpan, haveNativeSpan := nativeRanges[nativeSource]
-		if nativeSource != "" && haveNativeSpan &&
-			!nativeSpan.first.After(group.first) && !nativeSpan.last.Before(group.last) {
+		covered := nativeSource != "" && openCodeActivityCoveredByNativeSamples(
+			group.times,
+			nativeTimes[nativeSource],
+		)
+		if covered {
 			continue
 		}
 		models := make([]string, 0, len(group.models))
@@ -292,6 +285,29 @@ func collectOpenCodeUsageCoverageWarnings(
 		})
 	}
 	return out, nil
+}
+
+func openCodeActivityCoveredByNativeSamples(activity, native []time.Time) bool {
+	if len(activity) == 0 || len(native) == 0 {
+		return false
+	}
+	for _, observedAt := range activity {
+		matched := false
+		for _, sampleAt := range native {
+			delta := sampleAt.Sub(observedAt)
+			if delta < 0 {
+				delta = -delta
+			}
+			if delta <= db.SubscriptionUsageSampleInterval {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 func downsampleUsageResets(resets []usageHistoryReset, max int) []usageHistoryReset {
