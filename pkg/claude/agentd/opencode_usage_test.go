@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,10 @@ func resetOpenCodeVirtualCostStateForTest() {
 	openCodeVirtualCostState.bySession = nil
 	openCodeVirtualCostState.usageSession = nil
 	openCodeVirtualCostState.hydratedSession = nil
+	openCodeVirtualCostState.pendingRemovals = nil
+	openCodeVirtualCostState.knownSteps = nil
+	openCodeVirtualCostState.snapshotSteps = nil
+	openCodeVirtualCostState.removalRetries = nil
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -467,7 +472,30 @@ func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
 		runtime.ConvID,
 	)
 	require.True(t, ok)
+	originalMark := markOpenCodePricingStepsRemoved
+	t.Cleanup(func() { markOpenCodePricingStepsRemoved = originalMark })
+	var markAttempts atomic.Int32
+	markOpenCodePricingStepsRemoved = func(string, string, string, time.Time) error {
+		if markAttempts.Add(1) == 1 {
+			return errors.New("database busy")
+		}
+		return originalMark(runtime.ConvID, runtime.SessionID, "msg-tools", time.Now())
+	}
 	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, removal)
+	snap, err = db.GetContextSnapshot(runtime.SessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"a failed durable marker keeps the final step eligible so replay can retry")
+	activity, err = db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.Len(t, activity, 1,
+		"a failed durable marker does not clear Usage coverage only to resurrect it later")
+
+	require.Eventually(t, func() bool {
+		snapshot, snapshotErr := db.GetContextSnapshot(runtime.SessionID)
+		return snapshotErr == nil && snapshot.VirtualCostUSD == 0
+	}, 2*openCodeSSERetryDelay, 25*time.Millisecond,
+		"the scheduled retry applies a one-shot final-step removal without SSE replay")
 	snap, err = db.GetContextSnapshot(runtime.SessionID)
 	require.NoError(t, err)
 	assert.Zero(t, snap.VirtualCostUSD, "removing the final pricing step clears projected history")
@@ -491,6 +519,226 @@ func TestOpenCodeVirtualCostAggregatesStepFinishParts(t *testing.T) {
 	activity, err = db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	require.NoError(t, err)
 	assert.Empty(t, activity, "reconnect and resume keep Usage coverage cleared")
+}
+
+func TestStaleOpenCodeProjectorGenerationCannotMutateUsageAfterBlockingCall(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID = "oc-stale-generation", "ses-stale-generation"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+
+	oldGeneration := &openCodeProcess{}
+	replacement := &openCodeProcess{}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = oldGeneration
+	openCodeProcesses.Unlock()
+	t.Cleanup(func() {
+		openCodeProcesses.Lock()
+		delete(openCodeProcesses.bySession, sessionID)
+		openCodeProcesses.Unlock()
+	})
+	ctx := context.WithValue(context.Background(), openCodeSSEGenerationKey{}, oldGeneration)
+	originalHook := afterOpenCodeStepMarkerClearTest
+	t.Cleanup(func() { afterOpenCodeStepMarkerClearTest = originalHook })
+	afterOpenCodeStepMarkerClearTest = func() {
+		// Model a stop timeout followed by replacement while the old projector
+		// was blocked in its durable marker call.
+		openCodeProcesses.Lock()
+		oldGeneration.stopping = true
+		openCodeProcesses.bySession[sessionID] = replacement
+		openCodeProcesses.Unlock()
+	}
+
+	applyOpenCodeVirtualCostStep(ctx, db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID,
+	}, openCodeStepCostUsage{
+		PartID: "part-late",
+		Usage: openCodeContextUsage{
+			MessageID: "msg-late", ReportedCost: float64ptr(0), Input: 1_000,
+		},
+	})
+
+	openCodeVirtualCostState.Lock()
+	state := openCodeVirtualCostState.usageSession[sessionID]["msg-late"]
+	openCodeVirtualCostState.Unlock()
+	assert.Empty(t, state.steps,
+		"the timed-out generation must not repopulate usage after the replacement owns the registry")
+}
+
+func TestLaterOpenCodeStepCancelsPendingFinalRemoval(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID, messageID = "oc-pending-later", "ses-pending-later", "msg-pending"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	openCodeVirtualCostState.Lock()
+	_, usages := ensureOpenCodeVirtualCostStateLocked(sessionID)
+	usages[messageID] = openCodeMessageCostUsage{
+		hadSteps: true,
+		steps: map[string]openCodeContextUsage{
+			"part-removed": {MessageID: messageID, ReportedCost: float64ptr(0), Input: 1_000},
+		},
+	}
+	openCodeVirtualCostState.Unlock()
+
+	originalMark := markOpenCodePricingStepsRemoved
+	t.Cleanup(func() { markOpenCodePricingStepsRemoved = originalMark })
+	markOpenCodePricingStepsRemoved = func(string, string, string, time.Time) error {
+		return errors.New("database busy")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
+	applyOpenCodeVirtualCostRemoval(ctx, runtime, openCodeCostRemoval{
+		MessageID: messageID, PartID: "part-removed",
+	})
+	require.True(t, hasOpenCodePendingRemoval(convID, messageID))
+
+	applyOpenCodeVirtualCostStep(ctx, runtime, openCodeStepCostUsage{
+		PartID: "part-new",
+		Usage: openCodeContextUsage{
+			MessageID: messageID, ReportedCost: float64ptr(0), Input: 2_000,
+		},
+	})
+	assert.False(t, hasOpenCodePendingRemoval(convID, messageID),
+		"a later eligible step cancels the pending final-removal tombstone")
+	openCodeVirtualCostState.Lock()
+	state := openCodeVirtualCostState.usageSession[sessionID][messageID]
+	openCodeVirtualCostState.Unlock()
+	assert.NotContains(t, state.steps, "part-removed")
+	assert.Contains(t, state.steps, "part-new")
+}
+
+func TestReplacementProjectorReschedulesInheritedPendingRemoval(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail func(int32) bool
+	}{
+		{name: "all immediate writes fail", fail: func(attempt int32) bool {
+			return attempt <= 2
+		}},
+		{name: "mixed immediate success and failure", fail: func(attempt int32) bool {
+			return attempt == 2
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestDB(t)
+			resetOpenCodeVirtualCostStateForTest()
+			t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+			const sessionID, convID = "oc-pending-replacement", "ses-pending-replacement"
+			seedOpenCodeUsageSession(t, sessionID, convID)
+			removals := []openCodeCostRemoval{
+				{MessageID: "msg-pending-1", PartID: "part-removed-1"},
+				{MessageID: "msg-pending-2", PartID: "part-removed-2"},
+			}
+			openCodeVirtualCostState.Lock()
+			_, usages := ensureOpenCodeVirtualCostStateLocked(sessionID)
+			for _, removal := range removals {
+				usages[removal.MessageID] = openCodeMessageCostUsage{
+					hadSteps: true,
+					steps: map[string]openCodeContextUsage{
+						removal.PartID: {
+							MessageID: removal.MessageID, ReportedCost: float64ptr(0), Input: 1_000,
+						},
+					},
+				}
+			}
+			openCodeVirtualCostState.Unlock()
+			for _, removal := range removals {
+				rememberOpenCodePendingRemoval(convID, removal, time.Now())
+			}
+
+			originalMark := markOpenCodePricingStepsRemoved
+			t.Cleanup(func() { markOpenCodePricingStepsRemoved = originalMark })
+			var markAttempts atomic.Int32
+			markOpenCodePricingStepsRemoved = func(
+				convID, sessionID, messageID string,
+				removedAt time.Time,
+			) error {
+				if tc.fail(markAttempts.Add(1)) {
+					return errors.New("database still busy")
+				}
+				return originalMark(convID, sessionID, messageID, removedAt)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/config/providers":
+					_, _ = w.Write([]byte(`{"providers":[]}`))
+				case "/session/" + convID + "/message":
+					_, _ = w.Write([]byte(`[` +
+						`{"info":{"id":"msg-pending-1","role":"assistant","cost":0,` +
+						`"tokens":{"input":1000,"output":0}}},` +
+						`{"info":{"id":"msg-pending-2","role":"assistant","cost":0,` +
+						`"tokens":{"input":1000,"output":0}}}` +
+						`]`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			runtime := db.OpenCodeRuntime{
+				SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+				Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+			}
+			require.False(t, backfillOpenCodeContextUsage(context.Background(), runtime),
+				"at least one replacement marker write still fails and transfers batch ownership")
+
+			require.Eventually(t, func() bool {
+				return markAttempts.Load() >= int32(2*len(removals)) &&
+					!hasOpenCodePendingRemoval(convID, removals[0].MessageID) &&
+					!hasOpenCodePendingRemoval(convID, removals[1].MessageID)
+			}, 2*openCodeSSERetryDelay, 25*time.Millisecond,
+				"the current replacement generation takes over every inherited retry")
+		})
+	}
+}
+
+func TestPendingRemovalRetryDeduplicatesPerProjectorGeneration(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID = "oc-pending-dedupe", "ses-pending-dedupe"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	for i := 1; i <= 2; i++ {
+		removal := openCodeCostRemoval{
+			MessageID: fmt.Sprintf("msg-pending-%d", i),
+			PartID:    fmt.Sprintf("part-pending-%d", i),
+		}
+		rememberOpenCodePendingRemoval(convID, removal, time.Now())
+	}
+	originalMark := markOpenCodePricingStepsRemoved
+	originalDelay := openCodeRemovalRetryDelay
+	t.Cleanup(func() {
+		markOpenCodePricingStepsRemoved = originalMark
+		openCodeRemovalRetryDelay = originalDelay
+	})
+	var markAttempts atomic.Int32
+	markOpenCodePricingStepsRemoved = func(string, string, string, time.Time) error {
+		markAttempts.Add(1)
+		return errors.New("database remains busy")
+	}
+	openCodeRemovalRetryDelay = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
+	require.False(t, backfillOpenCodeContextUsage(ctx, runtime))
+	for range 10 {
+		scheduleOpenCodeRemovalRetry(ctx, runtime)
+	}
+	openCodeVirtualCostState.Lock()
+	scheduled := len(openCodeVirtualCostState.removalRetries)
+	openCodeVirtualCostState.Unlock()
+	require.Equal(t, 1, scheduled,
+		"one generation owns one batch retry regardless of pending-message count")
+	require.Eventually(t, func() bool {
+		return markAttempts.Load() >= 6
+	}, time.Second, 5*time.Millisecond)
+	cancel()
+	require.Eventually(t, func() bool {
+		openCodeVirtualCostState.Lock()
+		defer openCodeVirtualCostState.Unlock()
+		return len(openCodeVirtualCostState.removalRetries) == 0
+	}, time.Second, 5*time.Millisecond)
 }
 
 func TestApplyOpenCodeVirtualCostUsageSkipsRealAndAmbiguousCost(t *testing.T) {
@@ -696,6 +944,127 @@ func TestBackfillOpenCodeContextUsage(t *testing.T) {
 	assert.Equal(t, "openai/gpt-5.6-terra", snap.Model)
 	assert.InDelta(t, 2.257, snap.VirtualCostUSD, 1e-12,
 		"recovery prices every persisted step, including one whose top-level update was interrupted")
+}
+
+func TestBufferedFinalStepRemovalSurvivesReconnectBackfill(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID, messageID = "oc-buffered-removal", "ses_buffered_removal", "msg-buffered"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+		case "/session/" + convID + "/message":
+			// The live stream was opened first and has the corresponding
+			// removal buffered, while this snapshot already omits the part and
+			// still exposes stale top-level tokens.
+			_, _ = w.Write([]byte(`[{"info":{"id":"` + messageID + `","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0,"tokens":{"input":1000000,"output":0}}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	usage := openCodeContextUsage{
+		MessageID: messageID, ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000,
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+	applyOpenCodeVirtualCostStep(context.Background(), runtime, openCodeStepCostUsage{
+		PartID: "part-buffered", Usage: usage,
+	})
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), runtime))
+	openCodeVirtualCostState.Lock()
+	_, stepStillInSnapshot := openCodeVirtualCostState.
+		usageSession[sessionID][messageID].steps["part-buffered"]
+	openCodeVirtualCostState.Unlock()
+	require.False(t, stepStillInSnapshot,
+		"the reconnect snapshot already reflects the absent part")
+
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, openCodeCostRemoval{
+		MessageID: messageID, PartID: "part-buffered",
+	})
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD,
+		"the buffered removal remains classifiable after backfill replaces step state")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity)
+	removed, err := db.OpenCodePricingStepsRemoved(convID, time.Now())
+	require.NoError(t, err)
+	assert.True(t, removed[messageID], "the buffered final removal becomes durable")
+}
+
+func TestReconnectPrunesDisconnectedStepBeforeLiveFinalRemoval(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID, messageID = "oc-disconnected-removal", "ses_disconnected_removal", "msg-disconnected"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+		case "/session/" + convID + "/message":
+			// part-a disappeared before this SSE stream opened. Only part-b is
+			// authoritative in the reconnect snapshot.
+			_, _ = w.Write([]byte(`[{"info":{"id":"` + messageID + `","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0,"tokens":{"input":1000000,"output":0}},` +
+				`"parts":[{"id":"part-b","messageID":"` + messageID + `","type":"step-finish",` +
+				`"cost":0,"tokens":{"input":1000000,"output":0}}]}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	usage := openCodeContextUsage{
+		MessageID: messageID, ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000,
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, usage)
+	for _, partID := range []string{"part-a", "part-b"} {
+		applyOpenCodeVirtualCostStep(context.Background(), runtime, openCodeStepCostUsage{
+			PartID: partID, Usage: usage,
+		})
+	}
+	require.True(t, backfillOpenCodeContextUsage(context.Background(), runtime))
+
+	applyOpenCodeVirtualCostRemoval(context.Background(), runtime, openCodeCostRemoval{
+		MessageID: messageID, PartID: "part-b",
+	})
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.Zero(t, snap.VirtualCostUSD,
+		"the reconnect snapshot prunes part-a before classifying part-b as final")
+	activity, err := db.OpenCodeUsageActivityBetween(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity)
+	removed, err := db.OpenCodePricingStepsRemoved(convID, time.Now())
+	require.NoError(t, err)
+	assert.True(t, removed[messageID], "the true live final removal becomes durable")
 }
 
 func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {

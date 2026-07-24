@@ -225,7 +225,29 @@ var openCodeVirtualCostState struct {
 	bySession       map[string]map[string]openCodeProjectedMessageCost
 	usageSession    map[string]map[string]openCodeMessageCostUsage
 	hydratedSession map[string]bool
+	pendingRemovals map[string]map[string]openCodePendingRemoval
+	knownSteps      map[string]map[string]map[string]struct{}
+	snapshotSteps   map[string]map[string]map[string]struct{}
+	removalRetries  map[openCodeRemovalRetryKey]struct{}
 }
+
+type openCodePendingRemoval struct {
+	removal   openCodeCostRemoval
+	removedAt time.Time
+}
+
+type openCodeRemovalRetryKey struct {
+	convID     string
+	sessionID  string
+	generation *openCodeProcess
+}
+
+var (
+	markOpenCodePricingStepsRemoved  = db.MarkOpenCodePricingStepsRemoved
+	clearOpenCodePricingStepsRemoved = db.ClearOpenCodePricingStepsRemoved
+	afterOpenCodeStepMarkerClearTest func()
+	openCodeRemovalRetryDelay        = openCodeSSERetryDelay
+)
 
 func clearOpenCodeVirtualCostState(sessionID string) {
 	openCodeVirtualCostState.Lock()
@@ -233,6 +255,225 @@ func clearOpenCodeVirtualCostState(sessionID string) {
 	delete(openCodeVirtualCostState.usageSession, sessionID)
 	delete(openCodeVirtualCostState.hydratedSession, sessionID)
 	openCodeVirtualCostState.Unlock()
+}
+
+func clearOpenCodeConversationStepState(convID string) {
+	if convID == "" {
+		return
+	}
+	openCodeVirtualCostState.Lock()
+	delete(openCodeVirtualCostState.knownSteps, convID)
+	delete(openCodeVirtualCostState.snapshotSteps, convID)
+	openCodeVirtualCostState.Unlock()
+}
+
+func rememberOpenCodePendingRemoval(
+	convID string,
+	removal openCodeCostRemoval,
+	removedAt time.Time,
+) {
+	if convID == "" || removal.MessageID == "" {
+		return
+	}
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.pendingRemovals == nil {
+		openCodeVirtualCostState.pendingRemovals =
+			map[string]map[string]openCodePendingRemoval{}
+	}
+	pending := openCodeVirtualCostState.pendingRemovals[convID]
+	if pending == nil {
+		pending = map[string]openCodePendingRemoval{}
+		openCodeVirtualCostState.pendingRemovals[convID] = pending
+	}
+	pending[removal.MessageID] = openCodePendingRemoval{
+		removal: removal, removedAt: removedAt,
+	}
+	openCodeVirtualCostState.Unlock()
+}
+
+func forgetOpenCodePendingRemoval(convID, messageID string) {
+	_ = takeOpenCodePendingRemoval(convID, messageID)
+}
+
+func takeOpenCodePendingRemoval(convID, messageID string) bool {
+	openCodeVirtualCostState.Lock()
+	found := false
+	if pending := openCodeVirtualCostState.pendingRemovals[convID]; pending != nil {
+		if _, found = pending[messageID]; found {
+			delete(pending, messageID)
+		}
+		if len(pending) == 0 {
+			delete(openCodeVirtualCostState.pendingRemovals, convID)
+		}
+	}
+	openCodeVirtualCostState.Unlock()
+	return found
+}
+
+func hasOpenCodePendingRemoval(convID, messageID string) bool {
+	openCodeVirtualCostState.Lock()
+	_, found := openCodeVirtualCostState.pendingRemovals[convID][messageID]
+	openCodeVirtualCostState.Unlock()
+	return found
+}
+
+func hasAnyOpenCodePendingRemoval(convID string) bool {
+	openCodeVirtualCostState.Lock()
+	found := len(openCodeVirtualCostState.pendingRemovals[convID]) > 0
+	openCodeVirtualCostState.Unlock()
+	return found
+}
+
+func forgetAllOpenCodePendingRemovals(convID string) {
+	openCodeVirtualCostState.Lock()
+	delete(openCodeVirtualCostState.pendingRemovals, convID)
+	openCodeVirtualCostState.Unlock()
+}
+
+func rememberOpenCodeKnownStepLocked(convID, messageID, partID string) {
+	if convID == "" || messageID == "" || partID == "" {
+		return
+	}
+	if openCodeVirtualCostState.knownSteps == nil {
+		openCodeVirtualCostState.knownSteps =
+			map[string]map[string]map[string]struct{}{}
+	}
+	messages := openCodeVirtualCostState.knownSteps[convID]
+	if messages == nil {
+		messages = map[string]map[string]struct{}{}
+		openCodeVirtualCostState.knownSteps[convID] = messages
+	}
+	parts := messages[messageID]
+	if parts == nil {
+		parts = map[string]struct{}{}
+		messages[messageID] = parts
+	}
+	parts[partID] = struct{}{}
+}
+
+func forgetOpenCodeKnownStepLocked(convID, messageID, partID string) {
+	messages := openCodeVirtualCostState.knownSteps[convID]
+	parts := messages[messageID]
+	delete(parts, partID)
+	if len(parts) == 0 {
+		delete(messages, messageID)
+	}
+	if len(messages) == 0 {
+		delete(openCodeVirtualCostState.knownSteps, convID)
+	}
+}
+
+func forgetOpenCodeKnownMessageLocked(convID, messageID string) {
+	messages := openCodeVirtualCostState.knownSteps[convID]
+	delete(messages, messageID)
+	if len(messages) == 0 {
+		delete(openCodeVirtualCostState.knownSteps, convID)
+	}
+}
+
+func rememberOpenCodeSnapshotStepLocked(convID, messageID, partID string) {
+	if openCodeVirtualCostState.snapshotSteps == nil {
+		openCodeVirtualCostState.snapshotSteps =
+			map[string]map[string]map[string]struct{}{}
+	}
+	messages := openCodeVirtualCostState.snapshotSteps[convID]
+	if messages == nil {
+		messages = map[string]map[string]struct{}{}
+		openCodeVirtualCostState.snapshotSteps[convID] = messages
+	}
+	parts := messages[messageID]
+	if parts == nil {
+		parts = map[string]struct{}{}
+		messages[messageID] = parts
+	}
+	parts[partID] = struct{}{}
+}
+
+func forgetOpenCodeSnapshotStepLocked(convID, messageID, partID string) {
+	messages := openCodeVirtualCostState.snapshotSteps[convID]
+	parts := messages[messageID]
+	delete(parts, partID)
+	if len(parts) == 0 {
+		delete(messages, messageID)
+	}
+	if len(messages) == 0 {
+		delete(openCodeVirtualCostState.snapshotSteps, convID)
+	}
+}
+
+func forgetOpenCodeSnapshotMessageLocked(convID, messageID string) {
+	messages := openCodeVirtualCostState.snapshotSteps[convID]
+	delete(messages, messageID)
+	if len(messages) == 0 {
+		delete(openCodeVirtualCostState.snapshotSteps, convID)
+	}
+}
+
+func retryOpenCodePendingRemovals(ctx context.Context, runtime db.OpenCodeRuntime) bool {
+	openCodeVirtualCostState.Lock()
+	pending := make(
+		map[string]openCodePendingRemoval,
+		len(openCodeVirtualCostState.pendingRemovals[runtime.ConvID]),
+	)
+	for messageID, removal := range openCodeVirtualCostState.pendingRemovals[runtime.ConvID] {
+		pending[messageID] = removal
+	}
+	openCodeVirtualCostState.Unlock()
+	allPersisted := true
+	for messageID, pendingRemoval := range pending {
+		if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+			return false
+		}
+		if err := markOpenCodePricingStepsRemoved(
+			runtime.ConvID, runtime.SessionID, messageID, pendingRemoval.removedAt,
+		); err != nil {
+			allPersisted = false
+		}
+	}
+	return allPersisted
+}
+
+func scheduleOpenCodeRemovalRetry(ctx context.Context, runtime db.OpenCodeRuntime) {
+	key := openCodeRemovalRetryKey{
+		convID: runtime.ConvID, sessionID: runtime.SessionID,
+	}
+	key.generation, _ = ctx.Value(openCodeSSEGenerationKey{}).(*openCodeProcess)
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.removalRetries == nil {
+		openCodeVirtualCostState.removalRetries =
+			map[openCodeRemovalRetryKey]struct{}{}
+	}
+	if _, scheduled := openCodeVirtualCostState.removalRetries[key]; scheduled {
+		openCodeVirtualCostState.Unlock()
+		return
+	}
+	openCodeVirtualCostState.removalRetries[key] = struct{}{}
+	openCodeVirtualCostState.Unlock()
+	go func() {
+		defer func() {
+			openCodeVirtualCostState.Lock()
+			delete(openCodeVirtualCostState.removalRetries, key)
+			openCodeVirtualCostState.Unlock()
+		}()
+		for hasAnyOpenCodePendingRemoval(runtime.ConvID) {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(openCodeRemovalRetryDelay):
+			}
+			applied := false
+			if !withOpenCodeProjectorApplyLock(ctx, runtime, func() {
+				if openCodeProjectorCurrent(ctx, runtime.SessionID) {
+					applied = backfillOpenCodeContextUsage(ctx, runtime)
+				}
+			}) && ctx.Err() != nil {
+				return
+			}
+			if applied {
+				return
+			}
+		}
+	}()
 }
 
 func openCodeVirtualCostHydrated(sessionID string) bool {
@@ -455,11 +696,17 @@ func waitForOpenCodeCostSessionRow(ctx context.Context, sessionID string) bool {
 }
 
 func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCodeRuntime) {
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 	// Resume launches start the managed runtime and its SSE consumer before the
 	// child `session new` process inserts the local session row. Keep the
 	// recovered usage state in memory while waiting for that row, otherwise the
 	// first authoritative backfill can become a silent UPDATE/INSERT no-op.
 	if !waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
+		return
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
 	openCodeVirtualCostState.Lock()
@@ -477,6 +724,9 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 			return
 		}
+		if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+			return
+		}
 		openCodeVirtualCostState.Lock()
 		openCodeVirtualCostState.bySession[runtime.SessionID] = map[string]openCodeProjectedMessageCost{}
 		openCodeVirtualCostState.Unlock()
@@ -491,6 +741,9 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 		return
 	}
 	legacyLongContextCutoff := openCodeLegacyLongContextPricingCutoff()
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 
 	projections := make(map[string]openCodeProjectedMessageCost, len(states))
 	type dailyContribution struct {
@@ -550,6 +803,9 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 		return
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 	openCodeVirtualCostState.Lock()
 	openCodeVirtualCostState.bySession[runtime.SessionID] = projections
 	openCodeVirtualCostState.Unlock()
@@ -560,13 +816,16 @@ func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCode
 // changes replace the old model's price contribution. When step-finish parts
 // have arrived, their sum replaces the top-level latest-step token block.
 func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRuntime, usage openCodeContextUsage) {
-	if usage.MessageID == "" {
+	if usage.MessageID == "" || !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
 	if !openCodeVirtualCostHydrated(runtime.SessionID) &&
 		!backfillOpenCodeContextUsage(ctx, runtime) {
 		// A partial in-memory state must never replace retained authoritative
 		// history. Retry hydration on the next live event or SSE reconnect.
+		return
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
 	openCodeVirtualCostState.Lock()
@@ -586,6 +845,9 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 		slog.Debug("OpenCode non-subscription activity could not be cleared",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
 
@@ -593,25 +855,46 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 // OpenCode emits the part before its corresponding message update; in that
 // order it is retained until the message supplies provider/model metadata.
 func applyOpenCodeVirtualCostStep(ctx context.Context, runtime db.OpenCodeRuntime, step openCodeStepCostUsage) {
-	if step.PartID == "" || step.Usage.MessageID == "" {
+	if step.PartID == "" || step.Usage.MessageID == "" ||
+		!openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
 	if !openCodeVirtualCostHydrated(runtime.SessionID) &&
 		!backfillOpenCodeContextUsage(ctx, runtime) {
 		return
 	}
-	if err := db.ClearOpenCodePricingStepsRemoved(runtime.ConvID, step.Usage.MessageID); err != nil {
+	if err := clearOpenCodePricingStepsRemoved(runtime.ConvID, step.Usage.MessageID); err != nil {
 		slog.Debug("OpenCode pricing-step removal marker could not be cleared",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
+	}
+	replacedPendingRemoval := takeOpenCodePendingRemoval(runtime.ConvID, step.Usage.MessageID)
+	if afterOpenCodeStepMarkerClearTest != nil {
+		afterOpenCodeStepMarkerClearTest()
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
 	}
 	openCodeVirtualCostState.Lock()
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	state := usages[step.Usage.MessageID]
+	if replacedPendingRemoval {
+		// A later eligible step supersedes a pending final-step tombstone. Drop
+		// the preserved removed step before adding the new authoritative one.
+		state.steps = nil
+		forgetOpenCodeKnownMessageLocked(runtime.ConvID, step.Usage.MessageID)
+		forgetOpenCodeSnapshotMessageLocked(runtime.ConvID, step.Usage.MessageID)
+	}
 	if state.steps == nil {
 		state.steps = map[string]openCodeContextUsage{}
 	}
 	state.hadSteps = true
 	state.steps[step.PartID] = step.Usage
+	rememberOpenCodeKnownStepLocked(
+		runtime.ConvID, step.Usage.MessageID, step.PartID,
+	)
+	rememberOpenCodeSnapshotStepLocked(
+		runtime.ConvID, step.Usage.MessageID, step.PartID,
+	)
 	usages[step.Usage.MessageID] = state
 	haveMessage := state.message.MessageID != ""
 	openCodeVirtualCostState.Unlock()
@@ -625,11 +908,14 @@ func applyOpenCodeVirtualCostRemoval(
 	runtime db.OpenCodeRuntime,
 	removal openCodeCostRemoval,
 ) {
-	if removal.MessageID == "" {
+	if removal.MessageID == "" || !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
 	if !openCodeVirtualCostHydrated(runtime.SessionID) &&
 		!backfillOpenCodeContextUsage(ctx, runtime) {
+		return
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return
 	}
 	messageRemoved := removal.PartID == ""
@@ -638,20 +924,78 @@ func applyOpenCodeVirtualCostRemoval(
 	_, usages := ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	if messageRemoved {
 		delete(usages, removal.MessageID)
-	} else if state, ok := usages[removal.MessageID]; ok {
-		if _, knownStep := state.steps[removal.PartID]; !knownStep {
+		forgetOpenCodeKnownMessageLocked(runtime.ConvID, removal.MessageID)
+		forgetOpenCodeSnapshotMessageLocked(runtime.ConvID, removal.MessageID)
+	} else {
+		state, haveState := usages[removal.MessageID]
+		knownParts := openCodeVirtualCostState.knownSteps[runtime.ConvID][removal.MessageID]
+		if len(knownParts) == 0 {
+			for partID := range state.steps {
+				rememberOpenCodeKnownStepLocked(runtime.ConvID, removal.MessageID, partID)
+				rememberOpenCodeSnapshotStepLocked(runtime.ConvID, removal.MessageID, partID)
+			}
+		}
+		knownParts = openCodeVirtualCostState.knownSteps[runtime.ConvID][removal.MessageID]
+		snapshotParts := openCodeVirtualCostState.snapshotSteps[runtime.ConvID][removal.MessageID]
+		for partID := range knownParts {
+			if partID != removal.PartID {
+				if _, presentInSnapshot := snapshotParts[partID]; !presentInSnapshot {
+					// Parts absent before this stream opened cannot have a
+					// buffered removal. Prune them before classifying the
+					// current event; retain the current part itself because its
+					// removal may have raced the snapshot fetch.
+					forgetOpenCodeKnownStepLocked(runtime.ConvID, removal.MessageID, partID)
+				}
+			}
+		}
+		knownParts = openCodeVirtualCostState.knownSteps[runtime.ConvID][removal.MessageID]
+		if _, knownStep := knownParts[removal.PartID]; !knownStep {
 			openCodeVirtualCostState.Unlock()
 			return
 		}
-		delete(state.steps, removal.PartID)
-		state.hadSteps = true
-		usages[removal.MessageID] = state
-		finalStepRemoved = len(state.steps) == 0
-	} else {
-		openCodeVirtualCostState.Unlock()
-		return
+		finalStepRemoved = len(knownParts) == 1
+		if !finalStepRemoved {
+			forgetOpenCodeKnownStepLocked(runtime.ConvID, removal.MessageID, removal.PartID)
+			forgetOpenCodeSnapshotStepLocked(runtime.ConvID, removal.MessageID, removal.PartID)
+			if haveState {
+				delete(state.steps, removal.PartID)
+				state.hadSteps = true
+				usages[removal.MessageID] = state
+			}
+		}
 	}
 	openCodeVirtualCostState.Unlock()
+	if finalStepRemoved {
+		// The history API cannot reconstruct a final-step removal. Persist that
+		// fact before changing memory; a transient write failure leaves the old
+		// projection visible and allows a replay to retry instead of clearing it
+		// only to resurrect it later.
+		removedAt := time.Now()
+		if err := markOpenCodePricingStepsRemoved(
+			runtime.ConvID, runtime.SessionID, removal.MessageID, removedAt,
+		); err != nil {
+			slog.Debug("OpenCode final-step removal could not be persisted",
+				"session", runtime.SessionID, "error", err, "module", "agentd")
+			rememberOpenCodePendingRemoval(runtime.ConvID, removal, removedAt)
+			scheduleOpenCodeRemovalRetry(ctx, runtime)
+			return
+		}
+		forgetOpenCodePendingRemoval(runtime.ConvID, removal.MessageID)
+		if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+			return
+		}
+		openCodeVirtualCostState.Lock()
+		_, usages = ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
+		state, ok := usages[removal.MessageID]
+		forgetOpenCodeKnownStepLocked(runtime.ConvID, removal.MessageID, removal.PartID)
+		forgetOpenCodeSnapshotStepLocked(runtime.ConvID, removal.MessageID, removal.PartID)
+		if ok {
+			delete(state.steps, removal.PartID)
+			state.hadSteps = true
+			usages[removal.MessageID] = state
+		}
+		openCodeVirtualCostState.Unlock()
+	}
 	if messageRemoved {
 		if err := db.DeleteOpenCodeUsageActivity(
 			runtime.ConvID, runtime.SessionID, removal.MessageID,
@@ -659,17 +1003,14 @@ func applyOpenCodeVirtualCostRemoval(
 			slog.Debug("OpenCode removed-message activity could not be deleted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}
-		if err := db.ClearOpenCodePricingStepsRemoved(runtime.ConvID, removal.MessageID); err != nil {
+		if err := clearOpenCodePricingStepsRemoved(runtime.ConvID, removal.MessageID); err != nil {
 			slog.Debug("OpenCode removed-message pricing marker could not be deleted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}
-	} else if finalStepRemoved {
-		if err := db.MarkOpenCodePricingStepsRemoved(
-			runtime.ConvID, runtime.SessionID, removal.MessageID, time.Now(),
-		); err != nil {
-			slog.Debug("OpenCode final-step removal could not be persisted",
-				"session", runtime.SessionID, "error", err, "module", "agentd")
-		}
+		forgetOpenCodePendingRemoval(runtime.ConvID, removal.MessageID)
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
 	}
 	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
@@ -697,6 +1038,9 @@ func replaceOpenCodeVirtualCostUsage(
 		slog.Debug("OpenCode usage activity backfill could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 	openCodeVirtualCostState.Lock()
 	ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	openCodeVirtualCostState.bySession[runtime.SessionID] = map[string]openCodeProjectedMessageCost{}
@@ -720,7 +1064,14 @@ func replaceOpenCodeVirtualCostUsage(
 // event was missed during a disconnect. Best-effort — it never fails the
 // stream.
 func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime) bool {
-	if runtime.ConvID == "" {
+	if runtime.ConvID == "" || !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return false
+	}
+	if !retryOpenCodePendingRemovals(ctx, runtime) {
+		// Stale history is unsafe until every locally observed final removal is
+		// durable. Leave the previous authoritative state intact and retry on
+		// this projector's deduplicated batch path or the next reconnect.
+		scheduleOpenCodeRemovalRetry(ctx, runtime)
 		return false
 	}
 	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
@@ -729,6 +1080,9 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	if err != nil {
 		slog.Debug("OpenCode context backfill request could not be built",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
+		return false
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
 		return false
 	}
 	response, err := openCodeConfigHTTPClient.Do(request.WithContext(ctx))
@@ -758,6 +1112,9 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			"session", runtime.SessionID, "error", err, "module", "agentd")
 		return false
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return false
+	}
 
 	var (
 		latest     openCodeContextUsage
@@ -765,6 +1122,7 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		haveAny    bool
 		costUsages []openCodeMessageCostUsage
 		realCost   float64
+		snapshot   = map[string]map[string]struct{}{}
 	)
 	for _, m := range messages {
 		if m.Info.Role != "assistant" {
@@ -809,6 +1167,11 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 				costUsage.hadSteps = true
 			}
 		}
+		snapshotParts := make(map[string]struct{}, len(costUsage.steps))
+		for partID := range costUsage.steps {
+			snapshotParts[partID] = struct{}{}
+		}
+		snapshot[usage.MessageID] = snapshotParts
 		if len(costUsage.steps) == 0 && removedPricingSteps[usage.MessageID] {
 			// OpenCode can retain stale top-level message tokens after the last
 			// step-finish part is removed. Keep aggregate mode active with an
@@ -816,10 +1179,25 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			costUsage.hadSteps = true
 		} else if len(costUsage.steps) > 0 && removedPricingSteps[usage.MessageID] {
 			// History is authoritative that a later eligible step exists.
-			if err := db.ClearOpenCodePricingStepsRemoved(runtime.ConvID, usage.MessageID); err != nil {
+			if err := clearOpenCodePricingStepsRemoved(runtime.ConvID, usage.MessageID); err != nil {
 				slog.Debug("OpenCode recovered pricing-step marker could not be cleared",
 					"session", runtime.SessionID, "error", err, "module", "agentd")
 			}
+			if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+				return false
+			}
+		}
+		if len(costUsage.steps) > 0 {
+			openCodeVirtualCostState.Lock()
+			if removedPricingSteps[usage.MessageID] {
+				// A durable final-removal marker followed by historical steps
+				// means a later model call superseded the removed set.
+				forgetOpenCodeKnownMessageLocked(runtime.ConvID, usage.MessageID)
+			}
+			for partID := range costUsage.steps {
+				rememberOpenCodeKnownStepLocked(runtime.ConvID, usage.MessageID, partID)
+			}
+			openCodeVirtualCostState.Unlock()
 		}
 		realCost += openCodeMessageUsageRealCost(costUsage)
 		effectiveUsage := aggregateOpenCodeMessageCostUsage(costUsage)
@@ -842,17 +1220,38 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 			haveAny = true
 		}
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return false
+	}
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.snapshotSteps == nil {
+		openCodeVirtualCostState.snapshotSteps =
+			map[string]map[string]map[string]struct{}{}
+	}
+	openCodeVirtualCostState.snapshotSteps[runtime.ConvID] = snapshot
+	openCodeVirtualCostState.Unlock()
 	replaceOpenCodeVirtualCostUsage(ctx, runtime, costUsages)
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return false
+	}
 	if realCost > 0 && waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
 		if err := db.UpdateSessionCost(runtime.SessionID, realCost); err != nil {
 			slog.Warn("OpenCode real cost backfill could not be persisted",
 				"session", runtime.SessionID, "error", err, "module", "agentd")
 		}
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return false
+	}
 	if !haveAny {
+		forgetAllOpenCodePendingRemovals(runtime.ConvID)
 		return true
 	}
 	persistOpenCodeContextUsage(ctx, runtime, latest)
 	persistOpenCodeModelSlug(runtime, latest)
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return false
+	}
+	forgetAllOpenCodePendingRemovals(runtime.ConvID)
 	return true
 }

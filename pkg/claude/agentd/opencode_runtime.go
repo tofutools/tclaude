@@ -60,6 +60,7 @@ type openCodeProcess struct {
 	done    chan error
 	cancel  context.CancelFunc
 	sseDone chan struct{}
+	convID  string
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -70,6 +71,7 @@ type openCodeProcess struct {
 }
 
 var beforeOpenCodeTUICommandStatusCheckForTest func()
+var openCodeConversationStateCleanupDelay = 2 * openCodeSSERetryDelay
 
 var openCodeProcesses = struct {
 	sync.Mutex
@@ -80,6 +82,27 @@ var openCodeProcesses = struct {
 // once. Serialize stop -> endpoint release -> restart per session so those
 // recovery attempts cannot tear down or contend for the same replacement.
 var openCodeReconcileLocks sync.Map // map[sessionID]*sync.Mutex
+
+// A projector that outlives the bounded stop join must finish its current
+// side effect before a replacement projector applies newer state. Generation
+// checks then discard the old continuation, while the replacement runs last.
+var (
+	openCodeProjectorApplyLocks   sync.Map // map[conversation key]*openCodeProjectorApplyLock
+	openCodeProjectorApplyLocksMu sync.Mutex
+)
+
+type openCodeProjectorApplyLock struct {
+	token chan struct{}
+	users int
+}
+
+func newOpenCodeProjectorApplyLock() *openCodeProjectorApplyLock {
+	lock := &openCodeProjectorApplyLock{token: make(chan struct{}, 1)}
+	lock.token <- struct{}{}
+	return lock
+}
+
+type openCodeSSEGenerationKey struct{}
 
 var openCodeHTTPClient = &http.Client{Timeout: 5 * time.Second}
 var openCodeHealthHTTPClient = &http.Client{Timeout: time.Second}
@@ -240,7 +263,7 @@ func startOpenCodeProcess(runtime db.OpenCodeRuntime) (*openCodeProcess, error) 
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	process := &openCodeProcess{cmd: cmd, done: make(chan error, 1)}
+	process := &openCodeProcess{cmd: cmd, done: make(chan error, 1), convID: runtime.ConvID}
 	openCodeProcesses.Lock()
 	openCodeProcesses.bySession[runtime.SessionID] = process
 	openCodeProcesses.Unlock()
@@ -770,6 +793,7 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	process.stopping = true
 	cancel := process.cancel
 	sseDone := process.sseDone
+	projectorStopped := sseDone == nil
 	openCodeProcesses.Unlock()
 	defer func() {
 		openCodeProcesses.Lock()
@@ -777,6 +801,9 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			delete(openCodeProcesses.bySession, runtime.SessionID)
 		}
 		openCodeProcesses.Unlock()
+		if projectorStopped {
+			scheduleOpenCodeConversationStateCleanup(runtime)
+		}
 	}()
 	if process != nil {
 		if cancel != nil {
@@ -790,6 +817,7 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 			// and activity after teardown.
 			select {
 			case <-sseDone:
+				projectorStopped = true
 			case <-time.After(openCodeProcessStopWait):
 				slog.Warn("OpenCode SSE projector did not stop before timeout",
 					"session", runtime.SessionID, "timeout", openCodeProcessStopWait)
@@ -837,6 +865,38 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	}
 }
 
+func scheduleOpenCodeConversationStateCleanup(runtime db.OpenCodeRuntime) {
+	if runtime.ConvID == "" {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(openCodeConversationStateCleanupDelay)
+		defer timer.Stop()
+		<-timer.C
+		cleared := false
+		_ = withOpenCodeProjectorApplyLock(context.Background(), runtime, func() {
+			openCodeProcesses.Lock()
+			active := false
+			for _, process := range openCodeProcesses.bySession {
+				if process.convID == runtime.ConvID &&
+					!process.stopping && !process.exited {
+					active = true
+					break
+				}
+			}
+			openCodeProcesses.Unlock()
+			if active {
+				return
+			}
+			clearOpenCodeConversationStepState(runtime.ConvID)
+			cleared = true
+		})
+		if cleared {
+			deleteOpenCodeProjectorApplyLockIfIdle(runtime)
+		}
+	}()
+}
+
 func waitForOpenCodeEndpointRelease(endpoint string, timeout time.Duration) bool {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
@@ -863,6 +923,7 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		process = &openCodeProcess{}
 		openCodeProcesses.bySession[runtime.SessionID] = process
 	}
+	process.convID = runtime.ConvID
 	if process.cancel != nil {
 		openCodeProcesses.Unlock()
 		return
@@ -875,6 +936,7 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, openCodeSSEGenerationKey{}, process)
 	sseDone := make(chan struct{})
 	process.cancel = cancel
 	process.sseDone = sseDone
@@ -883,6 +945,77 @@ func ensureOpenCodeSSE(runtime db.OpenCodeRuntime) {
 		defer close(sseDone)
 		consumeOpenCodeSSE(ctx, runtime)
 	}()
+}
+
+func openCodeProjectorCurrent(ctx context.Context, sessionID string) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	generation, hasGeneration := ctx.Value(openCodeSSEGenerationKey{}).(*openCodeProcess)
+	if !hasGeneration {
+		// Direct unit/backfill callers are still bounded by their context.
+		return true
+	}
+	openCodeProcesses.Lock()
+	current := openCodeProcesses.bySession[sessionID]
+	ok := current == generation && !generation.stopping && !generation.exited
+	openCodeProcesses.Unlock()
+	return ok
+}
+
+func openCodeProjectorApplyKey(runtime db.OpenCodeRuntime) string {
+	if runtime.ConvID != "" {
+		return "conv:" + runtime.ConvID
+	}
+	return "session:" + runtime.SessionID
+}
+
+func withOpenCodeProjectorApplyLock(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	apply func(),
+) bool {
+	key := openCodeProjectorApplyKey(runtime)
+	openCodeProjectorApplyLocksMu.Lock()
+	value, ok := openCodeProjectorApplyLocks.Load(key)
+	if !ok {
+		value = newOpenCodeProjectorApplyLock()
+		openCodeProjectorApplyLocks.Store(key, value)
+	}
+	lock := value.(*openCodeProjectorApplyLock)
+	lock.users++
+	openCodeProjectorApplyLocksMu.Unlock()
+	defer func() {
+		openCodeProjectorApplyLocksMu.Lock()
+		lock.users--
+		openCodeProjectorApplyLocksMu.Unlock()
+	}()
+	timer := time.NewTimer(openCodeProcessStopWait)
+	select {
+	case <-ctx.Done():
+		timer.Stop()
+		return false
+	case <-timer.C:
+		slog.Warn("OpenCode projector apply lock timed out",
+			"session", runtime.SessionID, "conv_id", runtime.ConvID,
+			"timeout", openCodeProcessStopWait)
+		return false
+	case <-lock.token:
+		timer.Stop()
+	}
+	defer func() { lock.token <- struct{}{} }()
+	apply()
+	return true
+}
+
+func deleteOpenCodeProjectorApplyLockIfIdle(runtime db.OpenCodeRuntime) {
+	key := openCodeProjectorApplyKey(runtime)
+	openCodeProjectorApplyLocksMu.Lock()
+	if value, ok := openCodeProjectorApplyLocks.Load(key); ok &&
+		value.(*openCodeProjectorApplyLock).users == 0 {
+		openCodeProjectorApplyLocks.Delete(key)
+	}
+	openCodeProjectorApplyLocksMu.Unlock()
 }
 
 // closeOpenCodeSSEBodyOnCancel actively interrupts Scanner.Scan when request
@@ -918,28 +1051,50 @@ func consumeOpenCodeSSEWithRetry(ctx context.Context, runtime db.OpenCodeRuntime
 			response, err = openCodeSSEHTTPClient.Do(request)
 			if err == nil && response.StatusCode == http.StatusOK {
 				stopBodyCancellation := closeOpenCodeSSEBodyOnCancel(ctx, response.Body)
-				// The stream is live before snapshots are read, so events that
-				// race reconciliation remain buffered on this response and are
-				// applied afterward in server order.
-				if reconcileErr := reconcileOpenCodeSSE(ctx, runtime, projector); reconcileErr != nil {
-					slog.Debug("OpenCode SSE reconciliation failed",
-						"session", runtime.SessionID, "error", reconcileErr)
-				}
-				// TCL-673: seed context from message history so a resumed session
-				// or a daemon restart is authoritative before its next live turn.
-				backfillOpenCodeContextUsage(ctx, runtime)
-				scanner := bufio.NewScanner(response.Body)
-				scanner.Buffer(make([]byte, 64<<10), openCodeMaxSSEEventBytes)
-				for scanner.Scan() {
-					line := scanner.Text()
-					if strings.HasPrefix(line, "data:") {
-						consumeOpenCodeEvent(ctx, runtime, projector,
-							json.RawMessage(strings.TrimSpace(strings.TrimPrefix(line, "data:"))))
+				reconciled := withOpenCodeProjectorApplyLock(ctx, runtime, func() {
+					if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+						return
+					}
+					// The stream is live before snapshots are read, so events that
+					// race reconciliation remain buffered on this response and are
+					// applied afterward in server order. Serializing snapshots with
+					// event application also makes a replacement generation run
+					// after any timed-out predecessor finishes its current write.
+					if reconcileErr := reconcileOpenCodeSSE(ctx, runtime, projector); reconcileErr != nil {
+						slog.Debug("OpenCode SSE reconciliation failed",
+							"session", runtime.SessionID, "error", reconcileErr)
+					}
+					// TCL-673: seed context from message history so a resumed session
+					// or a daemon restart is authoritative before its next live turn.
+					if openCodeProjectorCurrent(ctx, runtime.SessionID) {
+						backfillOpenCodeContextUsage(ctx, runtime)
+					}
+				})
+				if !reconciled {
+					stopBodyCancellation()
+					_ = response.Body.Close()
+					err = errors.New("OpenCode SSE reconciliation apply lock unavailable")
+				} else {
+					scanner := bufio.NewScanner(response.Body)
+					scanner.Buffer(make([]byte, 64<<10), openCodeMaxSSEEventBytes)
+					applyLockUnavailable := false
+					for scanner.Scan() {
+						line := scanner.Text()
+						if strings.HasPrefix(line, "data:") {
+							if !consumeOpenCodeEvent(ctx, runtime, projector,
+								json.RawMessage(strings.TrimSpace(strings.TrimPrefix(line, "data:")))) {
+								applyLockUnavailable = true
+								break
+							}
+						}
+					}
+					stopBodyCancellation()
+					_ = response.Body.Close()
+					err = scanner.Err()
+					if applyLockUnavailable {
+						err = errors.New("OpenCode SSE event apply lock unavailable")
 					}
 				}
-				stopBodyCancellation()
-				_ = response.Body.Close()
-				err = scanner.Err()
 			} else if response != nil {
 				err = fmt.Errorf("OpenCode SSE returned HTTP %d", response.StatusCode)
 				_ = response.Body.Close()
@@ -1039,7 +1194,21 @@ func consumeOpenCodeEvent(
 	runtime db.OpenCodeRuntime,
 	projector *openCodeEventProjector,
 	event json.RawMessage,
+) bool {
+	return withOpenCodeProjectorApplyLock(ctx, runtime, func() {
+		consumeOpenCodeEventLocked(ctx, runtime, projector, event)
+	})
+}
+
+func consumeOpenCodeEventLocked(
+	ctx context.Context,
+	runtime db.OpenCodeRuntime,
+	projector *openCodeEventProjector,
+	event json.RawMessage,
 ) {
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 	projected, err := projector.project(event)
 	if err != nil {
 		slog.Debug("OpenCode SSE event could not be projected",
@@ -1054,8 +1223,14 @@ func consumeOpenCodeEvent(
 	if step, ok := parseOpenCodeStepCostUsage(event, runtime.ConvID); ok {
 		applyOpenCodeVirtualCostStep(ctx, runtime, step)
 	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
+	}
 	if removal, ok := parseOpenCodeCostRemoval(event, runtime.ConvID); ok {
 		applyOpenCodeVirtualCostRemoval(ctx, runtime, removal)
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
 	}
 	// Context-window usage rides on the same directory-wide SSE stream as the
 	// lifecycle hooks but is a session-row side effect, not a hook event, so it
@@ -1072,6 +1247,9 @@ func consumeOpenCodeEvent(
 		// TCL-708: the same authoritative per-message usage drives the native
 		// catalog what-if projection and provider-aware Usage coverage index.
 		applyOpenCodeVirtualCostUsage(ctx, runtime, usage)
+	}
+	if !openCodeProjectorCurrent(ctx, runtime.SessionID) {
+		return
 	}
 	// TCL-673: OpenCode's own cumulative session cost rides session.updated.
 	// $0/N-A on a subscription; real spend on a pay-per-token key.
