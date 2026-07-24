@@ -221,15 +221,23 @@ type openCodeMessageCostUsage struct {
 
 var openCodeVirtualCostState struct {
 	sync.Mutex
-	bySession    map[string]map[string]openCodeProjectedMessageCost
-	usageSession map[string]map[string]openCodeMessageCostUsage
+	bySession       map[string]map[string]openCodeProjectedMessageCost
+	usageSession    map[string]map[string]openCodeMessageCostUsage
+	hydratedSession map[string]bool
 }
 
 func clearOpenCodeVirtualCostState(sessionID string) {
 	openCodeVirtualCostState.Lock()
 	delete(openCodeVirtualCostState.bySession, sessionID)
 	delete(openCodeVirtualCostState.usageSession, sessionID)
+	delete(openCodeVirtualCostState.hydratedSession, sessionID)
 	openCodeVirtualCostState.Unlock()
+}
+
+func openCodeVirtualCostHydrated(sessionID string) bool {
+	openCodeVirtualCostState.Lock()
+	defer openCodeVirtualCostState.Unlock()
+	return openCodeVirtualCostState.hydratedSession[sessionID]
 }
 
 func validOpenCodeRate(value float64) bool {
@@ -489,6 +497,12 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 	if usage.MessageID == "" {
 		return
 	}
+	if !openCodeVirtualCostHydrated(runtime.SessionID) &&
+		!backfillOpenCodeContextUsage(ctx, runtime) {
+		// A partial in-memory state must never replace retained authoritative
+		// history. Retry hydration on the next live event or SSE reconnect.
+		return
+	}
 	if err := db.UpsertOpenCodeUsageActivity(openCodeActivityForUsage(runtime, usage)); err != nil {
 		slog.Debug("OpenCode usage activity could not be persisted",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
@@ -507,6 +521,10 @@ func applyOpenCodeVirtualCostUsage(ctx context.Context, runtime db.OpenCodeRunti
 // order it is retained until the message supplies provider/model metadata.
 func applyOpenCodeVirtualCostStep(ctx context.Context, runtime db.OpenCodeRuntime, step openCodeStepCostUsage) {
 	if step.PartID == "" || step.Usage.MessageID == "" {
+		return
+	}
+	if !openCodeVirtualCostHydrated(runtime.SessionID) &&
+		!backfillOpenCodeContextUsage(ctx, runtime) {
 		return
 	}
 	openCodeVirtualCostState.Lock()
@@ -531,6 +549,10 @@ func applyOpenCodeVirtualCostRemoval(
 	removal openCodeCostRemoval,
 ) {
 	if removal.MessageID == "" {
+		return
+	}
+	if !openCodeVirtualCostHydrated(runtime.SessionID) &&
+		!backfillOpenCodeContextUsage(ctx, runtime) {
 		return
 	}
 	messageRemoved := removal.PartID == ""
@@ -576,6 +598,10 @@ func replaceOpenCodeVirtualCostUsage(
 	ensureOpenCodeVirtualCostStateLocked(runtime.SessionID)
 	openCodeVirtualCostState.bySession[runtime.SessionID] = map[string]openCodeProjectedMessageCost{}
 	openCodeVirtualCostState.usageSession[runtime.SessionID] = usageState
+	if openCodeVirtualCostState.hydratedSession == nil {
+		openCodeVirtualCostState.hydratedSession = map[string]bool{}
+	}
+	openCodeVirtualCostState.hydratedSession[runtime.SessionID] = true
 	openCodeVirtualCostState.Unlock()
 	projectAndPersistOpenCodeCostState(ctx, runtime)
 }
@@ -590,9 +616,9 @@ func replaceOpenCodeVirtualCostUsage(
 // costs are summed as well: this recovers real spend when a session.updated
 // event was missed during a disconnect. Best-effort — it never fails the
 // stream.
-func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime) {
+func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntime) bool {
 	if runtime.ConvID == "" {
-		return
+		return false
 	}
 	endpoint := runtime.ServerURL + "/session/" + url.PathEscape(runtime.ConvID) +
 		"/message?directory=" + url.QueryEscape(runtime.Cwd)
@@ -600,25 +626,25 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 	if err != nil {
 		slog.Debug("OpenCode context backfill request could not be built",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
-		return
+		return false
 	}
 	response, err := openCodeConfigHTTPClient.Do(request.WithContext(ctx))
 	if err != nil {
 		slog.Debug("OpenCode context backfill fetch failed",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
-		return
+		return false
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		slog.Debug("OpenCode context backfill returned non-200",
 			"session", runtime.SessionID, "status", response.StatusCode, "module", "agentd")
-		return
+		return false
 	}
 	var messages []openCodeHistoryMessage
 	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<20)).Decode(&messages); err != nil {
 		slog.Debug("OpenCode context backfill decode failed",
 			"session", runtime.SessionID, "error", err, "module", "agentd")
-		return
+		return false
 	}
 
 	var (
@@ -692,8 +718,9 @@ func backfillOpenCodeContextUsage(ctx context.Context, runtime db.OpenCodeRuntim
 		}
 	}
 	if !haveAny {
-		return
+		return true
 	}
 	persistOpenCodeContextUsage(ctx, runtime, latest)
 	persistOpenCodeModelSlug(runtime, latest)
+	return true
 }

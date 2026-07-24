@@ -1311,8 +1311,19 @@ func ReplaceSessionVirtualCostHistory(
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, totalUSD, sessionID); err != nil {
+	result, err := tx.Exec(`UPDATE sessions SET virtual_cost_usd = ? WHERE id = ?`, totalUSD, sessionID)
+	if err != nil {
 		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		// The SSE projector can race teardown after its caller checked the
+		// session row. Preserve the denormalised retired history rather than
+		// clearing it when there is no live row from which to rebuild.
+		return nil
 	}
 	if _, err := tx.Exec(`UPDATE session_cost_daily SET virtual_cost_usd = 0 WHERE session_id = ?`, sessionID); err != nil {
 		return err
@@ -1493,7 +1504,6 @@ func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
 	var out []CostDelta
 	prevKey := ""
 	prevSession := ""
-	prevKind := ""
 	baseline := 0.0
 	for _, r := range rows {
 		val, kind := r.CostUSD, "real"
@@ -1507,15 +1517,11 @@ func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
 		switch {
 		case key != prevKey:
 			baseline = 0
-		case kind != prevKind:
-			// Real and hypothetical totals are distinct cumulative counters,
-			// even when an auth-mode change happens within one session.
-			baseline = 0
 		case r.SessionID != prevSession && val < baseline:
-			// A changed session whose same-kind counter drops starts fresh.
+			// A changed session whose counter drops starts fresh.
 			baseline = 0
 		}
-		prevKey, prevSession, prevKind = key, r.SessionID, kind
+		prevKey, prevSession = key, r.SessionID
 		if d := val - baseline; d > 0 {
 			out = append(out, CostDelta{
 				Day: r.Day, ConvID: r.ConvID, SessionID: r.SessionID, USD: d,

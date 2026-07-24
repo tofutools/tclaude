@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ func resetOpenCodeVirtualCostStateForTest() {
 	openCodeVirtualCostState.Lock()
 	openCodeVirtualCostState.bySession = nil
 	openCodeVirtualCostState.usageSession = nil
+	openCodeVirtualCostState.hydratedSession = nil
 	openCodeVirtualCostState.Unlock()
 }
 
@@ -226,6 +228,9 @@ func TestOpenCodeVirtualCostWaitsForResumeSessionRow(t *testing.T) {
 		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
 		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
 	}
+	openCodeVirtualCostState.Lock()
+	openCodeVirtualCostState.hydratedSession = map[string]bool{sessionID: true}
+	openCodeVirtualCostState.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
 	done := make(chan struct{})
@@ -380,6 +385,12 @@ func seedOpenCodeUsageSession(t *testing.T, sessionID, convID string) {
 		ID: sessionID, ConvID: convID, TmuxSession: "oc-usage",
 		Status: "idle", Harness: harness.OpenCodeName, CreatedAt: time.Now(),
 	}))
+	openCodeVirtualCostState.Lock()
+	if openCodeVirtualCostState.hydratedSession == nil {
+		openCodeVirtualCostState.hydratedSession = map[string]bool{}
+	}
+	openCodeVirtualCostState.hydratedSession[sessionID] = true
+	openCodeVirtualCostState.Unlock()
 }
 
 func openCodeSessionUpdatedEventJSON(envelopeSessionID, infoID string, cost float64) string {
@@ -555,4 +566,60 @@ func TestBackfillOpenCodeContextUsageRecoversMissedRealCost(t *testing.T) {
 	assert.InDelta(t, 0.5, snap.CostUSD, 1e-12,
 		"assistant history recovers real spend when cumulative SSE cost was missed")
 	assert.Zero(t, snap.VirtualCostUSD, "real history remains authoritative over WHAT-IF cost")
+}
+
+func TestOpenCodeLiveCostWaitsForAuthoritativeHydration(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	const sessionID, convID = "oc-hydration", "ses_hydration"
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 2))
+	openCodeVirtualCostState.Lock()
+	delete(openCodeVirtualCostState.hydratedSession, sessionID)
+	openCodeVirtualCostState.Unlock()
+
+	var historyReady atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/providers":
+			_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+				`"cost":{"input":1,"output":2},"limit":{"context":200000}}}}]}`))
+		case "/session/" + convID + "/message":
+			if !historyReady.Load() {
+				http.Error(w, "not ready", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`[{"info":{"id":"msg-old","role":"assistant",` +
+				`"providerID":"openai","modelID":"gpt-a","time":{"created":100},` +
+				`"cost":0,"tokens":{"input":2000000,"output":0}}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	require.False(t, backfillOpenCodeContextUsage(context.Background(), runtime))
+	live := openCodeContextUsage{
+		MessageID: "msg-live", ProviderID: "openai", ModelID: "gpt-a",
+		ReportedCost: float64ptr(0), Input: 1_000_000, CreatedAt: time.Now(),
+	}
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, live)
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 2, snap.VirtualCostUSD, 1e-12,
+		"a failed restart hydration cannot replace retained history with one live message")
+
+	historyReady.Store(true)
+	applyOpenCodeVirtualCostUsage(context.Background(), runtime, live)
+	snap, err = db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 3, snap.VirtualCostUSD, 1e-12,
+		"the next live event retries hydration before adding its own contribution")
 }

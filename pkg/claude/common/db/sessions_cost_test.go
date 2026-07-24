@@ -255,6 +255,25 @@ func TestReplaceSessionVirtualCostHistoryRedistributesAndClearsProjection(t *tes
 		"missing pricing or real-cost discovery clears today's stale estimate")
 }
 
+func TestReplaceSessionVirtualCostHistoryPreservesRowsAfterSessionDeletion(t *testing.T) {
+	setupTestDB(t)
+	today := time.Now().Format(costDayFormat)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: "vc-retired", TmuxSession: "tmux-vc-retired", ConvID: "conv-vc-retired",
+		Cwd: "/tmp/vc-retired", Status: "idle", Harness: "opencode",
+	}))
+	require.NoError(t, UpdateSessionVirtualCost("vc-retired", 4))
+	require.NoError(t, DeleteSession("vc-retired"))
+
+	require.NoError(t, ReplaceSessionVirtualCostHistory("vc-retired", 1, []VirtualCostDailySnapshot{{
+		Day: today, CostUSD: 1, UpdatedAt: time.Now(), Model: "openai/gpt-new",
+	}}))
+	rows, err := AllCostDailyRows()
+	require.NoError(t, err)
+	assert.InDelta(t, 4, dailyRowFor(t, rows, "vc-retired", today).VirtualCostUSD, 1e-12,
+		"a teardown race cannot erase denormalised retired-session history")
+}
+
 // TestUpdateSessionCost_PrefersPersistedAgentID pins JOH-288: the daily
 // snapshot's agent_id is taken from the session's PERSISTED agent_id column
 // first, falling back to the live agent_conversations lookup only when that
@@ -537,17 +556,17 @@ func TestMixedCostDeltasPrefersRealPerRowAndIncludesVirtualPeers(t *testing.T) {
 	assert.Equal(t, "what_if", got["virtual"].Kind)
 }
 
-func TestMixedCostDeltasResetsWhenKindChangesWithinSession(t *testing.T) {
+func TestMixedCostDeltasPreservesBaselineWhenKindChangesWithinSession(t *testing.T) {
 	rows := []CostDailyRow{
 		{SessionID: "flip", Day: "2026-07-23", ConvID: "conv-flip", VirtualCostUSD: 5},
-		{SessionID: "flip", Day: "2026-07-24", ConvID: "conv-flip", CostUSD: 1, VirtualCostUSD: 5},
+		{SessionID: "flip", Day: "2026-07-24", ConvID: "conv-flip", CostUSD: 6, VirtualCostUSD: 5},
 	}
 	deltas := MixedCostDeltas(rows)
 	require.Len(t, deltas, 2)
 	assert.InDelta(t, 5, deltas[0].USD, 1e-12)
 	assert.Equal(t, "what_if", deltas[0].Kind)
 	assert.InDelta(t, 1, deltas[1].USD, 1e-12,
-		"the real counter starts from zero instead of the hypothetical baseline")
+		"a real cumulative total continues from the same session baseline")
 	assert.Equal(t, "real", deltas[1].Kind)
 }
 
