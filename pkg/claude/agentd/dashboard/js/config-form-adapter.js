@@ -42,6 +42,13 @@ function cfgInt(id, fallback) {
   const v = parseInt($('#' + id).value, 10);
   return Number.isFinite(v) ? v : fallback;
 }
+function cfgPositiveSafeInt(id, label) {
+  const v = Number($('#' + id).value.trim());
+  if (!Number.isSafeInteger(v) || v <= 0) {
+    throw new Error(label + ' must be a positive whole number');
+  }
+  return v;
+}
 function cfgFloat(id, fallback) {
   const v = parseFloat($('#' + id).value);
   return Number.isFinite(v) ? v : fallback;
@@ -646,13 +653,17 @@ function assembleConfig() {
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
 
   // opencode is an optional tclaude integration block. Preserve future
-  // sub-fields and set this form-owned cutoff when non-blank. Non-positive
-  // values are kept for server-side validation.
+  // sub-fields and set this form-owned cutoff when non-blank. Parse the whole
+  // number so valid exponent notation is not truncated by parseInt, and reject
+  // fractional/unsafe values before they can produce a misleading diff.
   const opencode = (cfg.opencode && typeof cfg.opencode === 'object') ? cfg.opencode : {};
   const ocLegacyCutoffRaw = $('#cfg-opencode-legacy-long-context-pricing-cutoff').value.trim();
   if (ocLegacyCutoffRaw !== '') {
     opencode.legacy_long_context_pricing_cutoff =
-      cfgInt('cfg-opencode-legacy-long-context-pricing-cutoff', 0);
+      cfgPositiveSafeInt(
+        'cfg-opencode-legacy-long-context-pricing-cutoff',
+        'OpenCode legacy long-context pricing cutoff',
+      );
   } else {
     delete opencode.legacy_long_context_pricing_cutoff;
   }
