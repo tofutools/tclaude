@@ -21,6 +21,7 @@ type ActionKind string
 const (
 	ActionContinue       ActionKind = "continue"
 	ActionDispatch       ActionKind = "dispatch"
+	ActionAwaitDecision  ActionKind = "await_decision"
 	ActionNeedsReconcile ActionKind = "needs_reconcile"
 	ActionTerminal       ActionKind = "terminal"
 )
@@ -28,11 +29,20 @@ const (
 const executorActor = "engine:program-executor"
 
 var (
-	ErrInvalidRun       = errors.New("invalid executable process run")
-	ErrNeedsReconcile   = errors.New("process command needs explicit reconciliation")
-	ErrNoReconciliation = errors.New("process run has no command to reconcile")
-	ErrStaleDispatch    = errors.New("stale or already-used process dispatch")
-	ErrInvalidActor     = errors.New("reconciliation actor is invalid")
+	ErrInvalidRun           = errors.New("invalid executable process run")
+	ErrNeedsReconcile       = errors.New("process command needs explicit reconciliation")
+	ErrNoReconciliation     = errors.New("process run has no command to reconcile")
+	ErrStaleDispatch        = errors.New("stale or already-used process dispatch")
+	ErrInvalidActor         = errors.New("reconciliation actor is invalid")
+	ErrInvalidDecisionInput = errors.New("invalid process decision input")
+)
+
+// Decision input mirrors the evidence-payload scale used elsewhere: verdicts
+// are authored outcome labels and evidence is short human prose.
+const (
+	MaxDecisionNodeIDBytes   = 256
+	MaxDecisionVerdictBytes  = 1024
+	MaxDecisionEvidenceBytes = 4096
 )
 
 // Run is one cold-reconstructed run. The immutable Definition is prepared
@@ -47,9 +57,10 @@ type Run struct {
 }
 
 type Action struct {
-	Kind    ActionKind
-	Status  engine.RunStatus
-	Command *engine.Command
+	Kind     ActionKind
+	Status   engine.RunStatus
+	Command  *engine.Command
+	Decision *engine.DecisionObligation
 }
 
 // Dispatch is an in-memory permission to execute a command whose complete
@@ -74,6 +85,15 @@ type RecordedOutcome struct {
 	ExitCode int
 	Error    string
 	Note     string
+}
+
+// DecisionInput is one attempt at resolving the run's awaited decision. It is
+// bound to the durable obligation identity (run id + decision node id); the
+// store's state-version compare-and-swap serializes concurrent attempts.
+type DecisionInput struct {
+	NodeID   string
+	Verdict  string
+	Evidence string
 }
 
 func (r *Run) ID() string {
@@ -119,12 +139,28 @@ func (r *Run) Action() Action {
 		}
 		return action
 	}
+	if r.checkpoint.AwaitingDecision != nil {
+		obligation := *r.checkpoint.AwaitingDecision
+		action.Kind = ActionAwaitDecision
+		action.Decision = &obligation
+		return action
+	}
 	if r.checkpoint.Status == engine.RunRunning {
 		action.Kind = ActionContinue
 	} else {
 		action.Kind = ActionTerminal
 	}
 	return action
+}
+
+// DecisionVerdicts exposes the prepared verdict vocabulary of the run's
+// awaited decision, or nil when no decision is awaited.
+func (r *Run) DecisionVerdicts() []string {
+	if r == nil || r.definition == nil || r.checkpoint.AwaitingDecision == nil {
+		return nil
+	}
+	verdicts, _ := r.definition.DecisionVerdicts(r.checkpoint.AwaitingDecision.NodeID)
+	return verdicts
 }
 
 // LoadRun is the cold reconstruction boundary. Evidence is not read. Any
@@ -187,22 +223,16 @@ func Prepare(run *Run) (*Dispatch, error) {
 	if run.checkpoint.OutstandingCommand != nil {
 		return nil, ErrNeedsReconcile
 	}
-	if run.checkpoint.Status != engine.RunRunning {
+	if run.checkpoint.Status != engine.RunRunning || run.checkpoint.AwaitingDecision != nil {
+		// An awaited decision is already quiescent: advancing again would only
+		// persist a no-op transition, so resumes return without a new version.
 		return nil, nil
 	}
 	next, err := engine.AdvanceUntilQuiescent(run.checkpoint, run.definition)
 	if err != nil {
 		return nil, err
 	}
-	kind := "engine_advanced"
-	payload := any(struct {
-		Status engine.RunStatus `json:"status"`
-	}{Status: next.Status})
-	if next.OutstandingCommand != nil {
-		kind = "program_prepared"
-		payload = preparedEvidence{Command: cloneCommand(*next.OutstandingCommand)}
-	}
-	if err := persist(run, next, event(kind, next.OutstandingCommand, executorActor, payload)); err != nil {
+	if err := persist(run, next, advanceEvidence(next)); err != nil {
 		return nil, err
 	}
 	if next.OutstandingCommand == nil {
@@ -266,6 +296,63 @@ func RecordOutcome(run *Run, actor string, outcome RecordedOutcome) error {
 	return persist(run, next, event("program_outcome_recorded", &command, actor, payload))
 }
 
+// RecordDecision durably applies one manual decision verdict to the run's
+// awaited decision node. The engine refuses stale, duplicate, or wrong-node
+// input and verdicts outside the authored outcome vocabulary; the checkpoint,
+// chosen/closed edge dispositions, and decision evidence commit in one
+// state-version-guarded transaction. It never executes a program.
+func RecordDecision(run *Run, actor string, input DecisionInput) error {
+	if err := validateReconciliationActor(actor); err != nil {
+		return err
+	}
+	if err := validateDecisionInput(input); err != nil {
+		return err
+	}
+	if run == nil || run.definition == nil {
+		return ErrInvalidRun
+	}
+	next, err := engine.Apply(run.checkpoint, run.definition, engine.Transition{
+		Kind:     engine.TransitionDecisionRecorded,
+		Decision: &engine.DecisionRecord{NodeID: input.NodeID, Verdict: input.Verdict},
+	})
+	if err != nil {
+		return err
+	}
+	chosen, ok := run.definition.DecisionEdge(input.NodeID, input.Verdict)
+	if !ok {
+		return fmt.Errorf("%w: decision %q has no edge for verdict %q", ErrInvalidRun, input.NodeID, input.Verdict)
+	}
+	payload := struct {
+		Verdict    string            `json:"verdict"`
+		Evidence   string            `json:"evidence,omitempty"`
+		ChosenEdge engine.ChosenEdge `json:"chosenEdge"`
+	}{Verdict: input.Verdict, Evidence: input.Evidence, ChosenEdge: chosen}
+	return persist(run, next, eventForNode("decision_recorded", input.NodeID, actor, payload))
+}
+
+func validateDecisionInput(input DecisionInput) error {
+	if input.NodeID == "" || len(input.NodeID) > MaxDecisionNodeIDBytes || !utf8.ValidString(input.NodeID) {
+		return fmt.Errorf("%w: node id must be 1..%d bytes of UTF-8", ErrInvalidDecisionInput, MaxDecisionNodeIDBytes)
+	}
+	if input.Verdict == "" || len(input.Verdict) > MaxDecisionVerdictBytes || !utf8.ValidString(input.Verdict) {
+		return fmt.Errorf("%w: verdict must be 1..%d bytes of UTF-8", ErrInvalidDecisionInput, MaxDecisionVerdictBytes)
+	}
+	for _, value := range input.NodeID + input.Verdict {
+		if unicode.IsControl(value) {
+			return fmt.Errorf("%w: node id and verdict cannot contain control characters", ErrInvalidDecisionInput)
+		}
+	}
+	if len(input.Evidence) > MaxDecisionEvidenceBytes || !utf8.ValidString(input.Evidence) {
+		return fmt.Errorf("%w: evidence must be at most %d bytes of UTF-8", ErrInvalidDecisionInput, MaxDecisionEvidenceBytes)
+	}
+	for _, value := range input.Evidence {
+		if unicode.IsControl(value) && value != '\n' && value != '\r' && value != '\t' {
+			return fmt.Errorf("%w: evidence cannot contain control characters other than line breaks and tabs", ErrInvalidDecisionInput)
+		}
+	}
+	return nil
+}
+
 func reconcileCommand(run *Run) (engine.Command, error) {
 	if run == nil || run.definition == nil {
 		return engine.Command{}, ErrInvalidRun
@@ -313,17 +400,39 @@ func persistEvents(run *Run, checkpoint engine.Checkpoint, events []db.ProcessRu
 }
 
 func event(kind string, command *engine.Command, actor string, payload any) db.ProcessRunEvent {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		panic("executor evidence payload is not JSON encodable: " + err.Error())
-	}
 	nodeID := ""
 	if command != nil {
 		nodeID = command.NodeID
 	}
+	return eventForNode(kind, nodeID, actor, payload)
+}
+
+func eventForNode(kind, nodeID, actor string, payload any) db.ProcessRunEvent {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		panic("executor evidence payload is not JSON encodable: " + err.Error())
+	}
 	return db.ProcessRunEvent{
 		OccurredAt: time.Now().UTC(), NodeID: nodeID, Kind: kind,
 		PayloadJSON: encoded, Actor: actor,
+	}
+}
+
+// advanceEvidence is the one human-facing row for an engine-owned advance:
+// the prepared command, the newly awaited decision, or the plain status move.
+func advanceEvidence(advanced engine.Checkpoint) db.ProcessRunEvent {
+	switch {
+	case advanced.OutstandingCommand != nil:
+		return event("program_prepared", advanced.OutstandingCommand, executorActor,
+			preparedEvidence{Command: cloneCommand(*advanced.OutstandingCommand)})
+	case advanced.AwaitingDecision != nil:
+		return eventForNode("decision_awaited", advanced.AwaitingDecision.NodeID, executorActor, struct {
+			NodeID string `json:"nodeId"`
+		}{NodeID: advanced.AwaitingDecision.NodeID})
+	default:
+		return event("engine_advanced", nil, executorActor, struct {
+			Status engine.RunStatus `json:"status"`
+		}{Status: advanced.Status})
 	}
 }
 

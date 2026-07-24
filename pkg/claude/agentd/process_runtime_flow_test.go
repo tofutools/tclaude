@@ -735,7 +735,7 @@ func TestProcessRuntimeUnsupportedTemplateReturnsClearDiagnostic(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), `"code":"process_run_invalid"`)
 	assert.Contains(t, refused.Body.String(), "nodes.task-01.performer.kind")
-	assert.Contains(t, refused.Body.String(), "sequential MVP executes only program performers")
+	assert.Contains(t, refused.Body.String(), "executes only program task performers")
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 }
 
@@ -790,6 +790,10 @@ func TestProcessRuntimeFeatureFlagAndPermissionBoundaries(t *testing.T) {
 	eventsDenied := agentReq(t, f, worker, http.MethodGet, "/v1/process/runs/run_denied/events", nil)
 	assert.Equal(t, http.StatusForbidden, eventsDenied.Code, eventsDenied.Body.String())
 	assert.Contains(t, eventsDenied.Body.String(), agentd.PermProcessRunsRead)
+	decideDenied := agentReq(t, f, worker, http.MethodPost, "/v1/process/runs/run_denied/decide",
+		map[string]any{"nodeId": "choose", "verdict": "approve"})
+	assert.Equal(t, http.StatusForbidden, decideDenied.Code, decideDenied.Body.String())
+	assert.Contains(t, decideDenied.Body.String(), agentd.PermProcessRunsManage)
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsRead))
 	assert.True(t, agentd.IsKnownPermSlug(agentd.PermProcessRunsManage))
 }
@@ -821,6 +825,7 @@ func TestProcessRuntimeDisabledPrecedesPermissionAndApproval(t *testing.T) {
 		{http.MethodPost, "/v1/process/runs/run_x/resume", map[string]any{}},
 		{http.MethodPost, "/v1/process/runs/run_x/reissue", map[string]any{}},
 		{http.MethodPost, "/v1/process/runs/run_x/record-outcome", map[string]any{"outcome": "succeeded"}},
+		{http.MethodPost, "/v1/process/runs/run_x/decide", map[string]any{"nodeId": "choose", "verdict": "approve"}},
 	} {
 		r := agentd.AsAgentPeer(testharness.JSONRequest(t, route.method, route.path, route.body), worker)
 		r.Header.Set("X-Tclaude-Ask-Human", "30s")
@@ -936,14 +941,20 @@ func TestProcessRuntimeReconciliationOnlyPageAdvancesFallbackCursor(t *testing.T
 }
 
 type processRuntimeRunView struct {
-	ID                    string            `json:"id"`
-	Params                map[string]string `json:"params"`
-	ProgramAuthorizations []string          `json:"programAuthorizations"`
-	Status                engine.RunStatus  `json:"status"`
-	StateVersion          int64             `json:"stateVersion"`
-	Action                string            `json:"action"`
-	NeedsReconcile        bool              `json:"needsReconcile"`
-	Checkpoint            engine.Checkpoint `json:"checkpoint"`
+	ID                    string                      `json:"id"`
+	Params                map[string]string           `json:"params"`
+	ProgramAuthorizations []string                    `json:"programAuthorizations"`
+	Status                engine.RunStatus            `json:"status"`
+	StateVersion          int64                       `json:"stateVersion"`
+	Action                string                      `json:"action"`
+	NeedsReconcile        bool                        `json:"needsReconcile"`
+	AwaitingDecision      *processRuntimeDecisionView `json:"awaitingDecision"`
+	Checkpoint            engine.Checkpoint           `json:"checkpoint"`
+}
+
+type processRuntimeDecisionView struct {
+	NodeID   string   `json:"nodeId"`
+	Verdicts []string `json:"verdicts"`
 }
 
 type processRuntimeEventPage struct {

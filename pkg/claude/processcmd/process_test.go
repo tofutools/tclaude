@@ -25,7 +25,7 @@ func TestRuntimeMVPVerbsAndDeferredVerbsRemainDiscoverable(t *testing.T) {
 		Features: &config.FeaturesConfig{Processes: true},
 	}))
 
-	want := []string{"advance", "apply", "events", "observe", "preview", "reconcile", "record-outcome", "reissue", "repair", "report", "resolve", "resume", "run", "runs", "show", "unblock", "verify", "worklist"}
+	want := []string{"advance", "apply", "decide", "events", "observe", "preview", "reconcile", "record-outcome", "reissue", "repair", "report", "resolve", "resume", "run", "runs", "show", "unblock", "verify", "worklist"}
 	root := Cmd()
 	for _, name := range want {
 		command, _, err := root.Find([]string{name})
@@ -295,6 +295,12 @@ func TestRuntimeMutationVerbsReachDaemon(t *testing.T) {
 				return runProcessRecordOutcome(&processRecordOutcomeParams{RunID: "run_1", Outcome: "succeeded"}, stdout, stderr)
 			},
 			wantPath: "/v1/process/runs/run_1/record-outcome",
+		},
+		"decide": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessDecide(&processDecideParams{RunID: "run_1", Node: "choose", Verdict: "approve"}, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/decide",
 		},
 	}
 	for name, test := range tests {
@@ -645,6 +651,41 @@ type processFailingWriter struct{}
 
 func (processFailingWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write failed")
+}
+
+func TestRuntimeDecideValidatesInputAndPrintsAwaitedFollowUpDecision(t *testing.T) {
+	requested := false
+	stubProcessRuntime(t, func(_ string, _ string, in, out any, _ agent.DaemonOpts) error {
+		requested = true
+		encoded, err := json.Marshal(in)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"nodeId":"choose","verdict":"approve","evidence":"reviewed"}`, string(encoded))
+		response := out.(*struct {
+			Started bool           `json:"started"`
+			Run     processRunJSON `json:"run"`
+		})
+		response.Run = processRunJSON{
+			ID: "run_1", Action: "awaiting_decision",
+			AwaitingDecision: &processRunDecisionJSON{NodeID: "confirm", Verdicts: []string{"no", "yes"}},
+		}
+		return nil
+	})
+
+	var stdout, stderr bytes.Buffer
+	err := runProcessDecide(&processDecideParams{RunID: "run_1", Verdict: "approve"}, &stdout, &stderr)
+	require.ErrorContains(t, err, "--node is required")
+	err = runProcessDecide(&processDecideParams{RunID: "run_1", Node: "choose"}, &stdout, &stderr)
+	require.ErrorContains(t, err, "--verdict is required")
+	require.False(t, requested, "validation failures must not reach the daemon")
+
+	require.NoError(t, runProcessDecide(&processDecideParams{
+		RunID: "run_1", Node: "choose", Verdict: "approve", Evidence: "reviewed",
+	}, &stdout, &stderr))
+	assert.True(t, requested)
+	assert.Contains(t, stdout.String(), `Recorded decision "approve" for process run run_1.`)
+	assert.Contains(t, stdout.String(), "awaitingDecision=confirm")
+	assert.Contains(t, stdout.String(), "verdicts=no, yes")
+	assert.Contains(t, stdout.String(), "tclaude process decide run_1 --node confirm")
 }
 
 func stubProcessRuntime(

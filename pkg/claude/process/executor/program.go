@@ -172,14 +172,7 @@ func recordResult(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error
 	if err != nil {
 		return nil, err
 	}
-	events := []db.ProcessRunEvent{observed}
-	if advanced.OutstandingCommand != nil {
-		events = append(events, event("program_prepared", advanced.OutstandingCommand, executorActor, preparedEvidence{Command: cloneCommand(*advanced.OutstandingCommand)}))
-	} else {
-		events = append(events, event("engine_advanced", nil, executorActor, struct {
-			Status engine.RunStatus `json:"status"`
-		}{Status: advanced.Status}))
-	}
+	events := []db.ProcessRunEvent{observed, advanceEvidence(advanced)}
 	if err := persistEvents(run, advanced, events); err != nil {
 		return nil, err
 	}

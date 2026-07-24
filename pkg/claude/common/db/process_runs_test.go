@@ -139,6 +139,7 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 	for _, item := range []struct {
 		id, status, checkpoint string
 	}{
+		{"run_awaiting", "running", `{"awaitingDecision":{"nodeId":"choose"}}`},
 		{"run_reconcile", "running", `{"outstandingCommand":{"id":"command"}}`},
 		{"run_runnable", "running", `{"cursor":"ready"}`},
 		{"run_terminal", ProcessRunStatusCompleted, `{"cursor":"done"}`},
@@ -158,7 +159,7 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 		ids, next, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"run_runnable"}, ids,
-			"repeated recovery pages must keep reconciliation-blocked rows before LoadRun")
+			"repeated recovery pages must keep reconciliation- and decision-blocked rows before LoadRun")
 		assert.Empty(t, next)
 	}
 }
@@ -558,6 +559,52 @@ func TestProcessRunBoundsExactAndPlusOne(t *testing.T) {
 	assert.ErrorIs(t, err, ErrProcessRunInvalid)
 	_, err = ListProcessRunEvents("run_exact_bound", 0, MaxProcessRunEventReadPage+1)
 	assert.ErrorIs(t, err, ErrProcessRunInvalid)
+}
+
+func TestDeleteProcessRunsWithoutCheckpointVersionRemovesOnlyIncompatibleRuns(t *testing.T) {
+	setupTestDB(t)
+	outdated := processRunFixture(t, "run_v1", "running", json.RawMessage(`{"version":1,"cursor":"old"}`))
+	outdated.InitialEvents = []ProcessRunEvent{processRunEvent(1, "created")}
+	require.NoError(t, CreateProcessRun(outdated))
+	unversioned := processRunFixture(t, "run_unversioned", "running", json.RawMessage(`{"cursor":"older"}`))
+	require.NoError(t, CreateProcessRun(unversioned))
+	current := processRunFixture(t, "run_v2", "running", json.RawMessage(`{"version":2,"cursor":"new"}`))
+	current.InitialEvents = []ProcessRunEvent{processRunEvent(1, "created")}
+	require.NoError(t, CreateProcessRun(current))
+	_, _, err := CreateProcessSnippet("Keep", "keep", `{"kind":"keep"}`)
+	require.NoError(t, err)
+
+	root := t.TempDir()
+	fs, err := store.NewFS(root)
+	require.NoError(t, err)
+	record, err := fs.PutTemplate(t.Context(), storetest.Template())
+	require.NoError(t, err)
+
+	wiped, err := DeleteProcessRunsWithoutCheckpointVersion(2)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), wiped)
+	_, err = GetProcessRun("run_v1")
+	assert.ErrorIs(t, err, ErrProcessRunNotFound)
+	_, err = GetProcessRun("run_unversioned")
+	assert.ErrorIs(t, err, ErrProcessRunNotFound)
+
+	kept, err := GetProcessRun("run_v2")
+	require.NoError(t, err)
+	assert.Equal(t, current.CheckpointJSON, kept.CheckpointJSON)
+	events, err := ListProcessRunEvents("run_v2", 0, MaxProcessRunEventReadPage)
+	require.NoError(t, err)
+	assert.Len(t, events, 1, "compatible run evidence must survive the version wipe")
+
+	d, err := Open()
+	require.NoError(t, err)
+	var orphaned int
+	require.NoError(t, d.QueryRow(`SELECT COUNT(*) FROM process_run_events WHERE run_id != 'run_v2'`).Scan(&orphaned))
+	assert.Zero(t, orphaned, "incompatible run evidence must cascade away with its checkpoint")
+	library, err := ListProcessSnippets()
+	require.NoError(t, err)
+	require.Len(t, library.Snippets, 1)
+	_, err = fs.GetTemplate(t.Context(), record.Ref)
+	require.NoError(t, err, "checkpoint version wipe must not touch filesystem template data")
 }
 
 func TestWipeProcessRuntimeDataPreservesTemplateAuthoringAndOtherDBData(t *testing.T) {

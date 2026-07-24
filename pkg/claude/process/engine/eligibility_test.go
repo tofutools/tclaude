@@ -12,6 +12,19 @@ func TestSequentialProgramTemplateIsEligible(t *testing.T) {
 	}
 }
 
+func TestExclusiveDecisionTemplatesAreEligible(t *testing.T) {
+	for _, tmpl := range []*model.Template{
+		decisionDiamondTemplate(),
+		decisionDirectMergeTemplate(),
+		decisionMultiEndTemplate(),
+	} {
+		assertAuthoringValid(t, tmpl)
+		if diagnostics := CheckEligibility(tmpl); len(diagnostics) != 0 {
+			t.Fatalf("eligibility diagnostics for %q = %#v", tmpl.ID, diagnostics)
+		}
+	}
+}
+
 func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 	tests := []struct {
 		name string
@@ -19,16 +32,25 @@ func TestEligibilityRejectsUnsupportedAuthoringValidFeatures(t *testing.T) {
 		tmpl func() *model.Template
 	}{
 		{
-			name: "decision",
-			code: "unsupported_decision",
+			name: "agent decider",
+			code: "unsupported_performer",
 			tmpl: func() *model.Template {
-				tmpl := sequentialTemplate("task")
-				tmpl.Nodes["start"] = model.Node{Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "choose"}}
-				tmpl.Nodes["choose"] = model.Node{
-					Type:      model.NodeTypeDecision,
-					Performer: &model.Performer{Kind: model.PerformerHuman, Ask: "Continue?"},
-					Next:      model.Next{"yes": "task"},
-				}
+				tmpl := decisionDiamondTemplate()
+				node := tmpl.Nodes["choose"]
+				node.Performer = &model.Performer{Kind: model.PerformerAgent, Prompt: "Decide"}
+				tmpl.Nodes["choose"] = node
+				return tmpl
+			},
+		},
+		{
+			name: "decider contact schedule",
+			code: "unsupported_contact",
+			tmpl: func() *model.Template {
+				tmpl := decisionDiamondTemplate()
+				node := tmpl.Nodes["choose"]
+				node.Performer = &model.Performer{Kind: model.PerformerHuman, Ask: "Continue?",
+					Contact: &model.ContactSchedule{Cadence: "1h", Budget: 3, EscalationTarget: "operator"}}
+				tmpl.Nodes["choose"] = node
 				return tmpl
 			},
 		},

@@ -30,17 +30,23 @@ const (
 var errProcessDaemonAlreadyReported = errors.New("daemon requirement already reported")
 
 type processRunJSON struct {
-	ID                    string            `json:"id"`
-	TemplateRef           string            `json:"templateRef"`
-	Params                map[string]string `json:"params"`
-	ProgramAuthorizations []string          `json:"programAuthorizations"`
-	Status                engine.RunStatus  `json:"status"`
-	StateVersion          int64             `json:"stateVersion"`
-	Checkpoint            engine.Checkpoint `json:"checkpoint"`
-	Action                string            `json:"action"`
-	NeedsReconcile        bool              `json:"needsReconcile"`
-	CreatedAt             time.Time         `json:"createdAt"`
-	UpdatedAt             time.Time         `json:"updatedAt"`
+	ID                    string                  `json:"id"`
+	TemplateRef           string                  `json:"templateRef"`
+	Params                map[string]string       `json:"params"`
+	ProgramAuthorizations []string                `json:"programAuthorizations"`
+	Status                engine.RunStatus        `json:"status"`
+	StateVersion          int64                   `json:"stateVersion"`
+	Checkpoint            engine.Checkpoint       `json:"checkpoint"`
+	Action                string                  `json:"action"`
+	NeedsReconcile        bool                    `json:"needsReconcile"`
+	AwaitingDecision      *processRunDecisionJSON `json:"awaitingDecision,omitempty"`
+	CreatedAt             time.Time               `json:"createdAt"`
+	UpdatedAt             time.Time               `json:"updatedAt"`
+}
+
+type processRunDecisionJSON struct {
+	NodeID   string   `json:"nodeId"`
+	Verdicts []string `json:"verdicts"`
 }
 
 type processRunSummaryJSON struct {
@@ -493,6 +499,60 @@ func runProcessRecordOutcome(p *processRecordOutcomeParams, stdout, stderr io.Wr
 	return nil
 }
 
+type processDecideParams struct {
+	RunID    string `pos:"true" help:"Process run id"`
+	Node     string `long:"node" help:"Awaited decision node id"`
+	Verdict  string `long:"verdict" help:"Authored outcome label to select"`
+	Evidence string `long:"evidence" optional:"true" help:"Human-facing evidence recorded with the decision"`
+	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout"`
+}
+
+func processDecideCmd() *cobra.Command {
+	return boa.CmdT[processDecideParams]{
+		Use:         "decide",
+		Short:       "Record a manual verdict for the run's awaited decision node",
+		Long:        "Selects exactly one authored outcome edge of the awaited decision node and closes every alternative. Duplicate, stale, or wrong-node input is refused; use tclaude process show to see the awaited node and its verdicts.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		RunFunc: func(p *processDecideParams, _ *cobra.Command, _ []string) {
+			exitProcessRuntime(runProcessDecide(p, os.Stdout, os.Stderr), os.Stderr)
+		},
+	}.ToCobra()
+}
+
+func runProcessDecide(p *processDecideParams, stdout, stderr io.Writer) error {
+	if err := requireProcessRuntime(stderr); err != nil {
+		return err
+	}
+	node := strings.TrimSpace(p.Node)
+	if node == "" {
+		return fmt.Errorf("--node is required")
+	}
+	if p.Verdict == "" {
+		return fmt.Errorf("--verdict is required")
+	}
+	ask, err := agent.ParseAskHuman(p.AskHuman)
+	if err != nil {
+		return err
+	}
+	request := struct {
+		NodeID   string `json:"nodeId"`
+		Verdict  string `json:"verdict"`
+		Evidence string `json:"evidence,omitempty"`
+	}{NodeID: node, Verdict: p.Verdict, Evidence: p.Evidence}
+	var response struct {
+		Started bool           `json:"started"`
+		Run     processRunJSON `json:"run"`
+	}
+	path := "/v1/process/runs/" + url.PathEscape(strings.TrimSpace(p.RunID)) + "/decide"
+	if err := agent.DaemonRequest(http.MethodPost, path, request, &response,
+		agent.DaemonOpts{AskHuman: ask, RetryOutput: stderr}); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Recorded decision %q for process run %s.\n", p.Verdict, response.Run.ID)
+	printProcessRun(stdout, &response.Run)
+	return nil
+}
+
 func fetchProcessRun(runID string, askHuman time.Duration, stderr io.Writer) (*processRunJSON, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
@@ -556,6 +616,12 @@ func printProcessRun(out io.Writer, run *processRunJSON) {
 		command := run.Checkpoint.OutstandingCommand
 		fmt.Fprintf(out, "needsReconcile=true\ncommand=%s\nnode=%s\nprofile=%s\nprogram=%s\n",
 			command.ID, command.NodeID, command.Program.Profile, command.Program.Run)
+	}
+	if run.AwaitingDecision != nil {
+		fmt.Fprintf(out, "awaitingDecision=%s\nverdicts=%s\n",
+			run.AwaitingDecision.NodeID, strings.Join(run.AwaitingDecision.Verdicts, ", "))
+		fmt.Fprintf(out, "Next: tclaude process decide %s --node %s --verdict <verdict>\n",
+			run.ID, run.AwaitingDecision.NodeID)
 	}
 }
 

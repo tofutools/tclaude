@@ -685,8 +685,8 @@ func ListProcessRunSummaries(afterID string, limit int) ([]ProcessRunSummary, er
 // ListRunnableProcessRunIDs examines one raw ID-ordered active page and returns
 // the runnable IDs within it plus an exclusive cursor for the last examined
 // row. Applying LIMIT inside the subquery bounds JSON classification even when
-// every row requires human reconciliation; snapshots and checkpoint bytes are
-// never returned to Go.
+// every row requires human reconciliation or a manual decision; snapshots and
+// checkpoint bytes are never returned to Go.
 func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, error) {
 	if afterID != "" && !validProcessRuntimeIdentifier(afterID, MaxProcessRunIDBytes, false) {
 		return nil, "", fmt.Errorf("%w: invalid runnable-run cursor", ErrProcessRunInvalid)
@@ -702,6 +702,7 @@ func ListRunnableProcessRunIDs(afterID string, limit int) ([]string, string, err
 		CASE WHEN typeof(id) = 'text' AND length(CAST(id AS BLOB)) BETWEEN 1 AND ? THEN id END,
 		CASE WHEN json_valid(checkpoint_json) = 1
 			AND json_type(checkpoint_json, '$.outstandingCommand') IS NULL
+			AND json_type(checkpoint_json, '$.awaitingDecision') IS NULL
 			THEN 1 ELSE 0 END
 		FROM (
 			SELECT id, checkpoint_json FROM process_runs
@@ -817,6 +818,32 @@ func ListProcessRunEvents(runID string, afterSequence int64, limit int) ([]Proce
 		events = append(events, event)
 	}
 	return events, rows.Err()
+}
+
+// DeleteProcessRunsWithoutCheckpointVersion removes run checkpoints (and, via
+// the schema's cascade, their evidence rows) whose stored checkpoint does not
+// carry the given schema version. This is the sanctioned Take2 wipe for a
+// pre-graduation checkpoint schema change: there are deliberately no
+// migrators, and filesystem template/authoring state plus every non-runtime
+// SQLite table stay untouched. The returned count is the number of run
+// checkpoints removed.
+func DeleteProcessRunsWithoutCheckpointVersion(version int) (int64, error) {
+	if version <= 0 {
+		return 0, fmt.Errorf("%w: invalid checkpoint schema version", ErrProcessRunInvalid)
+	}
+	d, err := Open()
+	if err != nil {
+		return 0, err
+	}
+	// IS NOT keeps the predicate true when json_extract yields NULL (missing
+	// key or non-JSON bytes), so unversioned and corrupt checkpoints wipe too.
+	result, err := d.Exec(`DELETE FROM process_runs
+		WHERE json_valid(checkpoint_json) = 0
+			OR json_extract(checkpoint_json, '$.version') IS NOT ?`, version)
+	if err != nil {
+		return 0, fmt.Errorf("wipe incompatible process runs: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // WipeProcessRuntimeData removes only SQLite run checkpoints and their

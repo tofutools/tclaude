@@ -233,6 +233,12 @@ func runServe(p *serveParams) error {
 	if err := openDatabaseReportingMigrations(); err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
+	// The Take2 runtime keeps one checkpoint schema and no migrators: a schema
+	// change before graduation wipes incompatible run rows (and their cascading
+	// evidence) while template authoring and every other table stay untouched.
+	if err := wipeIncompatibleProcessRuns(); err != nil {
+		return err
+	}
 	if err := restoreDashboardGraceSessions(); err != nil {
 		// Restart handoff is convenience, not an availability or auth
 		// prerequisite. Fail closed to the existing sign-in path if the private
@@ -971,6 +977,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/process/runs/{id}/resume", processRoute(handleProcessRunResume))
 	mux.HandleFunc("POST /v1/process/runs/{id}/reissue", processRoute(handleProcessRunReissue))
 	mux.HandleFunc("POST /v1/process/runs/{id}/record-outcome", processRoute(handleProcessRunRecordOutcome))
+	mux.HandleFunc("POST /v1/process/runs/{id}/decide", processRoute(handleProcessRunDecide))
 	return idempotencyRequests(logRequest(auditRequests(mux)))
 }
 

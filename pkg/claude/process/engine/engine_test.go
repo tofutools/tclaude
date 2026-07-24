@@ -10,7 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-func TestInitializeExactV1CheckpointShape(t *testing.T) {
+func TestInitializeExactV2CheckpointShape(t *testing.T) {
 	tmpl := sequentialTemplate("task")
 	definition := mustPrepare(t, tmpl, nil)
 	checkpoint, err := Initialize("run-1", definition)
@@ -21,7 +21,9 @@ func TestInitializeExactV1CheckpointShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"version":1,"runId":"run-1","status":"running","nodes":{"end":"pending","start":"ready","task":"pending"}}`
+	want := `{"version":2,"runId":"run-1","status":"running",` +
+		`"nodes":{"end":"pending","start":"ready","task":"pending"},` +
+		`"edges":{"start":{"next":"unresolved"},"task":{"next":"unresolved"}}}`
 	if string(encoded) != want {
 		t.Fatalf("checkpoint JSON\n got: %s\nwant: %s", encoded, want)
 	}

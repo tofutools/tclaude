@@ -6,7 +6,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-const CheckpointVersion = 1
+const CheckpointVersion = 2
 
 const MaxEngineTransitions = 8
 
@@ -27,21 +27,51 @@ const (
 	NodeRunning NodeStatus = "running"
 	NodeDone    NodeStatus = "done"
 	NodeFailed  NodeStatus = "failed"
+	// NodeSkipped marks a node every path to which was closed by an exclusive
+	// decision. Skipped nodes can never activate for the rest of the run.
+	NodeSkipped NodeStatus = "skipped"
+)
+
+// EdgeDisposition is the durable per-run state of one authored edge. An edge
+// is identified by its authored (from node, outcome label) pair; the target is
+// determined by the immutable definition.
+type EdgeDisposition string
+
+const (
+	EdgeUnresolved EdgeDisposition = "unresolved"
+	EdgeArrived    EdgeDisposition = "arrived"
+	EdgeNotTaken   EdgeDisposition = "not_taken"
 )
 
 type CommandKind string
 
 const CommandProgram CommandKind = "program"
 
-// Checkpoint is the complete v1 reducer state. The pinned template and run
+// Checkpoint is the complete v2 reducer state. The pinned template and run
 // parameters live beside it in the run record, rather than being copied into
 // every transition.
 type Checkpoint struct {
-	Version            int                   `json:"version"`
-	RunID              string                `json:"runId"`
-	Status             RunStatus             `json:"status"`
-	Nodes              map[string]NodeStatus `json:"nodes"`
-	OutstandingCommand *Command              `json:"outstandingCommand,omitempty"`
+	Version int                   `json:"version"`
+	RunID   string                `json:"runId"`
+	Status  RunStatus             `json:"status"`
+	Nodes   map[string]NodeStatus `json:"nodes"`
+	// Edges holds one disposition per authored edge, keyed by source node and
+	// then outcome label — the same (from, outcome) identity the authoring
+	// model and editor layout already use. Nesting avoids inventing an escaped
+	// composite key for free-form outcome labels.
+	Edges map[string]map[string]EdgeDisposition `json:"edges"`
+	// AwaitingDecision is the one durable manual obligation this slice can
+	// produce: the ready decision node blocking the run. It exists so bounded
+	// store queries can exclude decision-waiting runs without loading them;
+	// the verdict vocabulary stays in the prepared Definition.
+	AwaitingDecision   *DecisionObligation `json:"awaitingDecision,omitempty"`
+	OutstandingCommand *Command            `json:"outstandingCommand,omitempty"`
+}
+
+// DecisionObligation names the decision node the run is durably waiting on.
+// Together with the run id it is the narrow identity decision input binds to.
+type DecisionObligation struct {
+	NodeID string `json:"nodeId"`
 }
 
 // Command is the one durable outbox item this sequential slice can produce.
@@ -76,12 +106,29 @@ type ProgramObservation struct {
 	Error     string         `json:"error,omitempty"`
 }
 
+// DecisionRecord is the reducer payload for one authored exclusive decision:
+// the deciding verdict must name exactly one authored outcome edge of the
+// awaited decision node.
+type DecisionRecord struct {
+	NodeID  string `json:"nodeId"`
+	Verdict string `json:"verdict"`
+}
+
+// ChosenEdge is the structural authored edge a decision selected, kept as its
+// (from, outcome, to) parts for evidence rather than a concatenated label.
+type ChosenEdge struct {
+	From    string `json:"from"`
+	Outcome string `json:"outcome"`
+	To      string `json:"to"`
+}
+
 type TransitionKind string
 
 const (
-	TransitionAdvance         TransitionKind = "advance"
-	TransitionCommandPlanned  TransitionKind = "command_planned"
-	TransitionProgramObserved TransitionKind = "program_observed"
+	TransitionAdvance          TransitionKind = "advance"
+	TransitionCommandPlanned   TransitionKind = "command_planned"
+	TransitionProgramObserved  TransitionKind = "program_observed"
+	TransitionDecisionRecorded TransitionKind = "decision_recorded"
 )
 
 // Transition is an explicit reducer input. Exactly one payload is allowed for
@@ -90,15 +137,18 @@ type Transition struct {
 	Kind        TransitionKind
 	Command     *Command
 	Observation *ProgramObservation
+	Decision    *DecisionRecord
 }
 
 var (
-	ErrTemplateIneligible        = errors.New("process template is not executable by the sequential engine")
+	ErrTemplateIneligible        = errors.New("process template is not executable by the exclusive-decision engine")
 	ErrInvalidProgramBinding     = errors.New("invalid bound program command")
 	ErrInvalidDefinition         = errors.New("invalid prepared process definition")
 	ErrInvalidCheckpoint         = errors.New("invalid process checkpoint")
 	ErrInvalidTransition         = errors.New("invalid process transition")
 	ErrStaleObservation          = errors.New("stale process command observation")
+	ErrStaleDecision             = errors.New("stale or duplicate process decision input")
+	ErrInvalidDecisionVerdict    = errors.New("process decision verdict does not name an authored outcome")
 	ErrTransitionBudgetExhausted = errors.New("process engine transition budget exhausted")
 )
 
