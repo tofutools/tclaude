@@ -649,10 +649,13 @@ function PaneContextMenu({
 }
 
 function TerminalTabs({
-  state, actions, widgetFactory, onComposeMessage, composeMessageDialogKind = () => '',
+  state, actions, widgetFactory, onComposeMessage, composeMessageReady = null,
+  composeMessageDialogKind = () => '',
   solo = false, manageTitle = false, empty = false,
 }) {
   const current = state.view.value;
+  const composeMessageAvailable = Boolean(onComposeMessage) &&
+    (composeMessageReady === null || composeMessageReady.value);
   const hasPanes = current.panes.length > 0;
   const shellRef = useRef(null);
   const tabsRef = useRef(null);
@@ -1115,7 +1118,7 @@ function TerminalTabs({
   }, [hasPanes, manageTitle]);
 
   useEffect(() => {
-    if (!onComposeMessage) return undefined;
+    if (!composeMessageAvailable) return undefined;
     const onComposeShortcut = (event) => {
       const pane = current.panes.find((candidate) => candidate.key === current.activeKey);
       const dialogKind = composeMessageDialogKind();
@@ -1137,7 +1140,10 @@ function TerminalTabs({
     // the shortcut available from the pane, tab strip, and header alike.
     document.addEventListener('keydown', onComposeShortcut, true);
     return () => document.removeEventListener('keydown', onComposeShortcut, true);
-  }, [actions, composeMessageDialogKind, current.activeKey, current.panes, onComposeMessage, solo]);
+  }, [
+    actions, composeMessageAvailable, composeMessageDialogKind, current.activeKey,
+    current.panes, onComposeMessage, solo,
+  ]);
 
   return html`
     <div ref=${shellRef} class="terminal-shell-root">
@@ -1250,7 +1256,7 @@ function TerminalTabs({
               manageTitle=${manageTitle}
               actions=${actions}
               widgetFactory=${widgetFactory}
-              onComposeMessage=${onComposeMessage}
+              onComposeMessage=${composeMessageAvailable ? onComposeMessage : null}
             />
           `)}
         </div>
@@ -1364,6 +1370,7 @@ export function mountStandaloneTerminalShell({
   actions,
   widgetFactory = mountTerminalWidget,
   onComposeMessage = null,
+  composeMessageReady = null,
   composeMessageDialogKind = () => '',
 }) {
   let disposed = false;
@@ -1373,6 +1380,7 @@ export function mountStandaloneTerminalShell({
       actions=${actions}
       widgetFactory=${widgetFactory}
       onComposeMessage=${onComposeMessage}
+      composeMessageReady=${composeMessageReady}
       composeMessageDialogKind=${composeMessageDialogKind}
       solo=${true}
       manageTitle=${true}

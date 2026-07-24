@@ -179,10 +179,12 @@ test('standalone lifecycle connects before the real composer loads and sends thr
     'the terminal shell mounts without awaiting the composer module graph');
   assert.equal(fake.widgets[0].connectCount, 1);
 
-  for (let i = 0; i < 20 && dialogHost.dataset.islandOwner !== 'message-access-dialogs'; i++) {
+  for (let i = 0; i < 20 && !host.querySelector('[title*="queued message"]'); i++) {
     await harness.act(() => new Promise((resolve) => setImmediate(resolve)));
   }
   assert.equal(dialogHost.dataset.islandOwner, 'message-access-dialogs');
+  assert.ok(host.querySelector('[title*="queued message"]'),
+    'successful composer mount enables its button and shell-level shortcut');
 
   const chord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
   Object.defineProperties(chord, {
@@ -362,10 +364,12 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
     fetchImpl: async () => ({ ok: true }),
   });
   const composed = [];
+  const composeMessageReady = harness.signals.signal(false);
   let dialogKind = '';
   const cleanup = mountStandaloneTerminalShell({
     host, state, actions, widgetFactory: fake.factory,
     onComposeMessage: (seed) => composed.push(seed),
+    composeMessageReady,
     composeMessageDialogKind: () => dialogKind,
   });
   await harness.act(() => {});
@@ -389,6 +393,18 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assert.equal(fake.widgets[0].connectCount, 1);
   assert.equal(harness.document.title, 'solo terminal — tclaude terminals');
 
+  assert.equal(host.querySelector('[title*="queued message"]'), null,
+    'the composer control stays absent until its optional island is ready');
+  const unavailableChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(unavailableChord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
+  });
+  host.querySelector('.mux-pane-header').dispatchEvent(unavailableChord);
+  assert.equal(unavailableChord.defaultPrevented, false,
+    'an unavailable composer does not consume the browser/terminal shortcut');
+  assert.equal(composed.length, 0);
+
+  await harness.act(() => { composeMessageReady.value = true; });
   const message = getByRole(host, 'button', { name: '✉ Message' });
   harness.fireEvent(message, 'click');
   const headerChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });

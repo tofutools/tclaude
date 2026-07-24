@@ -2,6 +2,7 @@
 // owns the page's single stable root; xterm remains behind the same opaque
 // adapter as the dashboard shell.
 
+import { signal } from '@preact/signals';
 import { createTerminalShellActions } from './terminal-shell-actions.js';
 import { mountStandaloneTerminalShell } from './terminal-shell-island.js';
 import { createTerminalShellState } from './terminal-shell-state.js';
@@ -40,6 +41,7 @@ export function createStandaloneTerminalsPage({
   // A solo pop-out has no tab strip, so it must not overwrite the dashboard's
   // persisted presentation order merely by attaching its one pane.
   const state = createTerminalShellState({ persistOrder: false });
+  const composeMessageReady = signal(false);
   const detachConversations = new Set();
   let actions = null;
   let mountCleanup = null;
@@ -158,6 +160,7 @@ export function createStandaloneTerminalsPage({
           return null;
         }
         messageDialogsCleanup = cleanup;
+        composeMessageReady.value = Boolean(cleanup);
         return cleanup;
       }, (error) => {
         console.error('Detached terminal message composer unavailable.', error);
@@ -174,6 +177,7 @@ export function createStandaloneTerminalsPage({
         actions,
         widgetFactory,
         onComposeMessage: composeWhenReady,
+        composeMessageReady,
         composeMessageDialogKind,
       });
       prefsReady = true;

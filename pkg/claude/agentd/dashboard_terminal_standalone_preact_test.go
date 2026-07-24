@@ -74,6 +74,7 @@ func TestStandaloneTerminalShell_PreactOwnsStableRoot(t *testing.T) {
 		"manageTitle=${true}",
 		"empty=${true}",
 		"onComposeMessage=${onComposeMessage}",
+		"composeMessageReady=${composeMessageReady}",
 		"composeMessageDialogKind=${composeMessageDialogKind}",
 	} {
 		if !strings.Contains(island, want) {
@@ -99,6 +100,7 @@ func TestStandaloneTerminalShell_LifecycleContractsStayOutsideWidgetCore(t *test
 		"mountMessageDialogs({",
 		"fetchImpl,",
 		"onComposeMessage: composeWhenReady",
+		"composeMessageReady,",
 		"composeMessageDialogKind",
 		"mountShell({",
 	} {
