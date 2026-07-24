@@ -64,6 +64,11 @@ type Config struct {
 	// no adjustment (the recorded figures are shown verbatim).
 	Cost *CostConfig `json:"cost,omitempty"`
 
+	// OpenCode holds tclaude-side OpenCode integration settings. These values
+	// tune tclaude's projection of OpenCode data; they are not written into
+	// OpenCode's own configuration.
+	OpenCode *OpenCodeConfig `json:"opencode,omitempty"`
+
 	// Ask holds the default model/effort profile for `tclaude ask` — see
 	// AskConfig. Absent / blank fields fall back to the built-in default
 	// constants (DefaultAskModel + DefaultAskEffort); see
@@ -809,6 +814,34 @@ func (c *Config) ResolvedCostFactor() float64 {
 		return maxCostEstimateFactor
 	}
 	return f
+}
+
+// OpenCodeConfig tunes tclaude's OpenCode integration.
+type OpenCodeConfig struct {
+	// LegacyLongContextPricingCutoff is the per-call context-token boundary
+	// above which OpenCode's legacy experimentalOver200K catalog price is
+	// selected. Explicit catalog context tiers remain authoritative. Nil,
+	// zero, and negative values resolve to the built-in default so a stale or
+	// hand-edited config cannot move the boundary to an unsafe value.
+	LegacyLongContextPricingCutoff *int64 `json:"legacy_long_context_pricing_cutoff,omitempty"`
+}
+
+// DefaultOpenCodeLegacyLongContextPricingCutoff is the current OpenAI
+// long-context boundary used for OpenCode catalogs that still expose only the
+// legacy experimentalOver200K price shape.
+const DefaultOpenCodeLegacyLongContextPricingCutoff int64 = 272_000
+
+// ResolvedOpenCodeLegacyLongContextPricingCutoff returns the effective
+// per-call token boundary for OpenCode's legacy long-context price fallback.
+// It is deliberately forgiving for runtime reads: absent, zero, or negative
+// values use the documented default. Validate reports explicit non-positive
+// values to the dashboard editor instead of silently accepting them.
+func (c *Config) ResolvedOpenCodeLegacyLongContextPricingCutoff() int64 {
+	if c == nil || c.OpenCode == nil || c.OpenCode.LegacyLongContextPricingCutoff == nil ||
+		*c.OpenCode.LegacyLongContextPricingCutoff <= 0 {
+		return DefaultOpenCodeLegacyLongContextPricingCutoff
+	}
+	return *c.OpenCode.LegacyLongContextPricingCutoff
 }
 
 // UsageConfig tunes the dashboard's subscription-usage readout (the 5h/7d
@@ -2360,6 +2393,13 @@ func Validate(c *Config) []string {
 		if v := c.RateLimit.SevenDayPercentMaxUsed; v <= 0 || v > 100 {
 			errs = append(errs, fmt.Sprintf("ratelimit.seven_day_percent_max_used %g is out of range (>0 and ≤100)", v))
 		}
+	}
+
+	if oc := c.OpenCode; oc != nil && oc.LegacyLongContextPricingCutoff != nil &&
+		*oc.LegacyLongContextPricingCutoff <= 0 {
+		errs = append(errs, fmt.Sprintf(
+			"opencode.legacy_long_context_pricing_cutoff %d must be positive (default %d)",
+			*oc.LegacyLongContextPricingCutoff, DefaultOpenCodeLegacyLongContextPricingCutoff))
 	}
 
 	// claude_cleanup_period_days maps to Claude Code's cleanupPeriodDays, which

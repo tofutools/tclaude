@@ -139,6 +139,30 @@ func TestDashboardConfig_PostInvalidReturns400(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "an invalid POST must not write the file")
 }
 
+func TestDashboardConfig_OpenCodeLegacyPricingCutoffRoundTripAndValidation(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w, resp := postConfig(t, "/api/config", wrapBody(
+		`{"opencode":{"legacy_long_context_pricing_cutoff":180000}}`, ""))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.Contains(t, resp.Raw, `"legacy_long_context_pricing_cutoff": 180000`)
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, int64(180_000), cfg.ResolvedOpenCodeLegacyLongContextPricingCutoff())
+
+	w, resp = postConfig(t, "/api/config", wrapBody(
+		`{"opencode":{"legacy_long_context_pricing_cutoff":0}}`, ""))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assertErrorContains(t, resp.Errors, "opencode.legacy_long_context_pricing_cutoff")
+
+	w, resp = postConfig(t, "/api/config", wrapBody(
+		`{"opencode":{"legacy_long_context_pricing_cutoff":"many"}}`, ""))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assertErrorContains(t, resp.Errors, "valid JSON")
+}
+
 // A malformed body must use the same {"errors":[...]} 400 contract as
 // a validation failure — not a plain-text http.Error.
 func TestDashboardConfig_MalformedJSONReturns400(t *testing.T) {

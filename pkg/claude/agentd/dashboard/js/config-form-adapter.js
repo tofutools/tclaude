@@ -42,6 +42,13 @@ function cfgInt(id, fallback) {
   const v = parseInt($('#' + id).value, 10);
   return Number.isFinite(v) ? v : fallback;
 }
+function cfgPositiveSafeInt(id, label) {
+  const v = Number($('#' + id).value.trim());
+  if (!Number.isSafeInteger(v) || v <= 0) {
+    throw new Error(label + ' must be a positive whole number');
+  }
+  return v;
+}
 function cfgFloat(id, fallback) {
   const v = parseFloat($('#' + id).value);
   return Number.isFinite(v) ? v : fallback;
@@ -403,6 +410,14 @@ function populateConfigForm(cfg) {
   // Default off (auto-hide on subscription).
   $('#cfg-cost-show-on-subscription').checked = !!(cfg.cost && cfg.cost.show_on_subscription);
 
+  // OpenCode legacy long-context WHAT-IF pricing — blank when unset so the
+  // documented Go default (272000) remains visibly a default, not persisted
+  // configuration. Explicit zero/negative hand-edits render as-is so a save
+  // surfaces the validation error.
+  const ocLegacyCutoff = cfg.opencode && cfg.opencode.legacy_long_context_pricing_cutoff;
+  $('#cfg-opencode-legacy-long-context-pricing-cutoff').value =
+    (ocLegacyCutoff != null) ? ocLegacyCutoff : '';
+
   // Usage readout — statusline/cached by default, with an explicit opt-in for
   // periodic Anthropic usage API polling. Idle timeout is how long the Claude
   // 5h/7d bars keep their last-known reading after the source goes quiet.
@@ -636,6 +651,23 @@ function assembleConfig() {
   // `omitempty`) so an all-default cost block doesn't marshal a spurious key.
   if ($('#cfg-cost-show-on-subscription').checked) cost.show_on_subscription = true; else delete cost.show_on_subscription;
   if (Object.keys(cost).length) cfg.cost = cost; else delete cfg.cost;
+
+  // opencode is an optional tclaude integration block. Preserve future
+  // sub-fields and set this form-owned cutoff when non-blank. Parse the whole
+  // number so valid exponent notation is not truncated by parseInt, and reject
+  // fractional/unsafe values before they can produce a misleading diff.
+  const opencode = (cfg.opencode && typeof cfg.opencode === 'object') ? cfg.opencode : {};
+  const ocLegacyCutoffRaw = $('#cfg-opencode-legacy-long-context-pricing-cutoff').value.trim();
+  if (ocLegacyCutoffRaw !== '') {
+    opencode.legacy_long_context_pricing_cutoff =
+      cfgPositiveSafeInt(
+        'cfg-opencode-legacy-long-context-pricing-cutoff',
+        'OpenCode legacy long-context pricing cutoff',
+      );
+  } else {
+    delete opencode.legacy_long_context_pricing_cutoff;
+  }
+  if (Object.keys(opencode).length) cfg.opencode = opencode; else delete cfg.opencode;
 
   // usage is an optional block. Clone the existing one so a future sub-field
   // with no widget round-trips, then set the form-owned keys. poll_anthropic_api

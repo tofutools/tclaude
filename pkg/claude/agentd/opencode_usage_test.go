@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -45,34 +46,108 @@ func TestOpenCodeVirtualCostForUsageUsesNativeTiersAndCachePricing(t *testing.T)
 	usage := openCodeContextUsage{
 		Input: 100_000, Output: 10_000, Reasoning: 5_000, CacheRead: 120_000, CacheWrite: 1_000,
 	}
-	got, ok := openCodeVirtualCostForUsage(usage, base)
+	got, ok := openCodeVirtualCostForUsage(
+		usage, base, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	require.True(t, ok)
 	assert.InDelta(t, 0.756, got, 1e-12,
 		"explicit >200k context tier wins and prices reasoning as output plus both cache buckets")
 
 	base.Tiers = nil
-	got, ok = openCodeVirtualCostForUsage(usage, base)
+	got, ok = openCodeVirtualCostForUsage(
+		usage, base, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	require.True(t, ok)
-	assert.InDelta(t, 0.5166, got, 1e-12, "legacy experimentalOver200K is the fallback")
+	assert.InDelta(t, 0.3745, got, 1e-12,
+		"the 221k call remains base-priced below the default 272k cutoff")
+
+	got, ok = openCodeVirtualCostForUsage(usage, base, 200_000)
+	require.True(t, ok)
+	assert.InDelta(t, 0.5166, got, 1e-12,
+		"a configured cutoff selects legacy experimentalOver200K pricing")
 
 	base.ExperimentalOver200K = nil
-	got, ok = openCodeVirtualCostForUsage(usage, base)
+	got, ok = openCodeVirtualCostForUsage(
+		usage, base, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	require.True(t, ok)
 	assert.InDelta(t, 0.3745, got, 1e-12, "base pricing applies without a matching tier")
 
-	got, ok = openCodeVirtualCostForUsage(usage, openCodeModelPrice{})
+	got, ok = openCodeVirtualCostForUsage(
+		usage, openCodeModelPrice{}, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	require.True(t, ok, "an explicitly cataloged free model is valid")
 	assert.Zero(t, got)
 	missing := projectOpenCodeMessageCost(openCodeContextUsage{
 		MessageID: "missing", ProviderID: "openai", ModelID: "not-cataloged",
 		ReportedCost: float64ptr(0), Input: 1,
-	}, map[string]openCodeModelPrice{})
+	}, map[string]openCodeModelPrice{}, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	assert.False(t, missing.eligible, "an absent catalog entry still degrades without inventing a price")
 }
 
-func TestOpenCodeVirtualCostPricesEachStepBeforeApplyingContextTier(t *testing.T) {
-	tier := openCodePriceTier{Input: 2}
+func TestOpenCodeLegacyLongContextPricingCutoffBoundaries(t *testing.T) {
+	legacy := &struct {
+		Input  float64            `json:"input"`
+		Output float64            `json:"output"`
+		Cache  openCodeCachePrice `json:"cache"`
+	}{Input: 2}
+	base := openCodeModelPrice{Input: 1, ExperimentalOver200K: legacy}
+
+	for _, tc := range []struct {
+		name       string
+		cutoff     int64
+		input      int64
+		wantPerTok float64
+	}{
+		{"default exactly at boundary", config.DefaultOpenCodeLegacyLongContextPricingCutoff, 272_000, 1},
+		{"default just over boundary", config.DefaultOpenCodeLegacyLongContextPricingCutoff, 272_001, 2},
+		{"override exactly at boundary", 180_000, 180_000, 1},
+		{"override just over boundary", 180_000, 180_001, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := openCodeVirtualCostForUsage(
+				openCodeContextUsage{Input: tc.input}, base, tc.cutoff)
+			require.True(t, ok)
+			assert.InDelta(t, float64(tc.input)*tc.wantPerTok/1_000_000, got, 1e-12)
+		})
+	}
+}
+
+func TestOpenCodeLegacyLongContextPricingCutoffReadsConfig(t *testing.T) {
+	setupTestDB(t)
+	assert.Equal(t, config.DefaultOpenCodeLegacyLongContextPricingCutoff,
+		openCodeLegacyLongContextPricingCutoff())
+
+	configured := int64(180_000)
+	cfg := config.DefaultConfig()
+	cfg.OpenCode = &config.OpenCodeConfig{LegacyLongContextPricingCutoff: &configured}
+	require.NoError(t, config.Save(cfg))
+	assert.Equal(t, configured, openCodeLegacyLongContextPricingCutoff())
+
+	invalid := int64(-1)
+	cfg.OpenCode.LegacyLongContextPricingCutoff = &invalid
+	require.NoError(t, config.Save(cfg), "hand-edited invalid config can bypass dashboard validation")
+	assert.Equal(t, config.DefaultOpenCodeLegacyLongContextPricingCutoff,
+		openCodeLegacyLongContextPricingCutoff())
+}
+
+func TestOpenCodeExplicitContextTierWinsOverConfiguredLegacyCutoff(t *testing.T) {
+	tier := openCodePriceTier{Input: 4}
 	tier.Tier.Type, tier.Tier.Size = "context", 200_000
+	base := openCodeModelPrice{
+		Input: 1,
+		Tiers: []openCodePriceTier{tier},
+		ExperimentalOver200K: &struct {
+			Input  float64            `json:"input"`
+			Output float64            `json:"output"`
+			Cache  openCodeCachePrice `json:"cache"`
+		}{Input: 2},
+	}
+
+	got, ok := openCodeVirtualCostForUsage(
+		openCodeContextUsage{Input: 250_000}, base, 100_000)
+	require.True(t, ok)
+	assert.InDelta(t, 1.0, got, 1e-12,
+		"the matching explicit tier wins even when the configured legacy cutoff also matches")
+}
+
+func TestOpenCodeVirtualCostPricesEachStepBeforeApplyingContextTier(t *testing.T) {
 	zero := float64(0)
 	state := openCodeMessageCostUsage{
 		message: openCodeContextUsage{
@@ -81,16 +156,23 @@ func TestOpenCodeVirtualCostPricesEachStepBeforeApplyingContextTier(t *testing.T
 		},
 		hadSteps: true,
 		steps: map[string]openCodeContextUsage{
-			"part-1": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 120_000},
-			"part-2": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 120_000},
+			"part-1": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 200_000},
+			"part-2": {MessageID: "msg-tiered", ReportedCost: &zero, Input: 200_000},
 		},
 	}
 	projected := projectOpenCodeMessageCostUsage(state, map[string]openCodeModelPrice{
-		"openai/gpt-tiered": {Input: 1, Tiers: []openCodePriceTier{tier}},
-	})
+		"openai/gpt-tiered": {
+			Input: 1,
+			ExperimentalOver200K: &struct {
+				Input  float64            `json:"input"`
+				Output float64            `json:"output"`
+				Cache  openCodeCachePrice `json:"cache"`
+			}{Input: 2},
+		},
+	}, config.DefaultOpenCodeLegacyLongContextPricingCutoff)
 	require.True(t, projected.eligible)
-	assert.InDelta(t, 0.24, projected.usd, 1e-12,
-		"two sub-threshold model calls remain base-priced instead of becoming one tiered 240k call")
+	assert.InDelta(t, 0.4, projected.usd, 1e-12,
+		"two sub-threshold model calls remain base-priced instead of becoming one legacy-tier 400k call")
 }
 
 func TestApplyOpenCodeVirtualCostUsageIsReplaySafeAndHandlesModelChanges(t *testing.T) {

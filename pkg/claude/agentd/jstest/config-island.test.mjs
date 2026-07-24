@@ -113,6 +113,32 @@ test('Config treats agent directory parent mounting as default-on with an explic
   await mounted.unmount();
 });
 
+test('Config parses the OpenCode legacy pricing cutoff as a positive safe integer', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: '{}' }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+  const cutoff = mounted.container.querySelector('#cfg-opencode-legacy-long-context-pricing-cutoff');
+
+  cutoff.value = '2e5';
+  assert.equal(adapter.assembleConfig().opencode.legacy_long_context_pricing_cutoff, 200000,
+    'valid exponent notation is parsed as the complete number');
+
+  for (const invalid of ['272000.5', '0', '-1', '9007199254740992']) {
+    cutoff.value = invalid;
+    assert.throws(() => adapter.assembleConfig(), /positive whole number/,
+      `${invalid} must not be silently truncated or persisted`);
+  }
+  await mounted.unmount();
+});
+
 test('Config save validates, confirms, writes against its baseline, and clears dirty state', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
