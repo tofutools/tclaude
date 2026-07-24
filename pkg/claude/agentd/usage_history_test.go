@@ -23,7 +23,7 @@ func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
 		Provider: db.SubscriptionProviderAnthropic, WindowName: "five_hour",
 		ObservedAt: now.Add(-30 * time.Minute),
 	}}
-	warnings, err := collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), now, native)
+	warnings, err := collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), nil, now, native)
 	require.NoError(t, err)
 	require.Len(t, warnings, 2, "Anthropic native coverage suppresses only the matching warning")
 	assert.Equal(t, "openai", warnings[0].Provider)
@@ -36,11 +36,60 @@ func TestOpenCodeUsageCoverageWarningsAreProviderAware(t *testing.T) {
 		Provider: db.SubscriptionProviderOpenAI, WindowName: "five_hour",
 		ObservedAt: now.Add(-20 * time.Minute),
 	})
-	warnings, err = collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), now, native)
+	warnings, err = collectOpenCodeUsageCoverageWarnings(now.Add(-24*time.Hour), nil, now, native)
 	require.NoError(t, err)
 	require.Len(t, warnings, 1)
 	assert.Equal(t, "openrouter", warnings[0].Provider,
 		"matching Codex/OpenAI history removes the OpenAI warning while unknown remains")
+}
+
+func TestOpenCodeUsageCoverageWarningsUseProviderSelectedSpan(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, db.UpsertOpenCodeUsageActivity(db.OpenCodeUsageActivity{
+		SessionID: "oc-openai", MessageID: "m1", ConvID: "c1",
+		ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-48 * time.Hour),
+	}))
+
+	warnings, err := collectOpenCodeUsageCoverageWarnings(
+		now.Add(-7*24*time.Hour),
+		map[string]time.Time{
+			db.SubscriptionProviderOpenAI:    now.Add(-24 * time.Hour),
+			db.SubscriptionProviderAnthropic: now.Add(-7 * 24 * time.Hour),
+		},
+		now,
+		nil,
+	)
+	require.NoError(t, err)
+	assert.Empty(t, warnings,
+		"Anthropic's longer selected span must not pull old activity into OpenAI's 24-hour warning")
+}
+
+func TestCollectUsageHistoryHonorsShorterProviderSpanForCoverage(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
+		Provider: db.SubscriptionProviderOpenAI, ObservedAt: now.Add(-48 * time.Hour), Source: "codex",
+		Windows: []db.SubscriptionUsageWindow{{Name: "five_hour", UsedPercent: 10}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertOpenCodeUsageActivity(db.OpenCodeUsageActivity{
+		SessionID: "oc-openai", MessageID: "m1", ConvID: "c1",
+		ProviderID: "openai", ModelID: "gpt-5", ObservedAt: now.Add(-12 * time.Hour),
+	}))
+
+	out, err := collectUsageHistory(
+		now.Add(-7*24*time.Hour),
+		map[usageSeriesKey]time.Time{
+			{provider: db.SubscriptionProviderOpenAI, window: "five_hour"}: now.Add(-24 * time.Hour),
+		},
+		now,
+	)
+	require.NoError(t, err)
+	require.Len(t, out.CoverageWarnings, 1,
+		"native history outside the selected 24-hour card span does not qualify current OpenCode activity")
+	assert.Equal(t, db.SubscriptionProviderOpenAI, out.CoverageWarnings[0].Provider)
+	assert.Equal(t, now.Add(-24*time.Hour).Format(time.RFC3339Nano), out.CoverageWarnings[0].From)
 }
 
 func usageHistoryRows(base time.Time, values ...float64) []db.SubscriptionUsageHistoryRow {

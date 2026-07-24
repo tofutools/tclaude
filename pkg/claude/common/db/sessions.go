@@ -1432,9 +1432,12 @@ func MixedCostDeltas(rows []CostDailyRow) []CostDelta {
 		switch {
 		case key != prevKey:
 			baseline = 0
-		case r.SessionID != prevSession && (val < baseline || kind != prevKind):
-			// A changed session can carry forward only the same kind of
-			// cumulative counter. Real and hypothetical totals are distinct.
+		case kind != prevKind:
+			// Real and hypothetical totals are distinct cumulative counters,
+			// even when an auth-mode change happens within one session.
+			baseline = 0
+		case r.SessionID != prevSession && val < baseline:
+			// A changed session whose same-kind counter drops starts fresh.
 			baseline = 0
 		}
 		prevKey, prevSession, prevKind = key, r.SessionID, kind

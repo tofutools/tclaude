@@ -490,6 +490,20 @@ func TestMixedCostDeltasPrefersRealPerRowAndIncludesVirtualPeers(t *testing.T) {
 	assert.Equal(t, "what_if", got["virtual"].Kind)
 }
 
+func TestMixedCostDeltasResetsWhenKindChangesWithinSession(t *testing.T) {
+	rows := []CostDailyRow{
+		{SessionID: "flip", Day: "2026-07-23", ConvID: "conv-flip", VirtualCostUSD: 5},
+		{SessionID: "flip", Day: "2026-07-24", ConvID: "conv-flip", CostUSD: 1, VirtualCostUSD: 5},
+	}
+	deltas := MixedCostDeltas(rows)
+	require.Len(t, deltas, 2)
+	assert.InDelta(t, 5, deltas[0].USD, 1e-12)
+	assert.Equal(t, "what_if", deltas[0].Kind)
+	assert.InDelta(t, 1, deltas[1].USD, 1e-12,
+		"the real counter starts from zero instead of the hypothetical baseline")
+	assert.Equal(t, "real", deltas[1].Kind)
+}
+
 // TestSumCostSinceDay_EmptyDB pins the zero state: no rows at all must
 // read back 0, not a NULL scan failure — this is every
 // subscription-only install on the 2s snapshot tick.

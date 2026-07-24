@@ -193,11 +193,12 @@ const maxCostSpanDays = 366
 // underlying session_cost_daily rows stay raw. factor 1 (the default)
 // is a no-op.
 //
-// Each daily session slice contributes real pay-per-token spend when present;
-// otherwise it contributes the subscription WHAT-IF estimate. The response
-// carries both subtotals and per-row kind metadata so the client can identify
-// mixed spans without maintaining a second aggregation path.
-func collectCosts(from, to time.Time, factor float64) (costsResponse, error) {
+// Each daily session slice contributes real pay-per-token spend when present.
+// When includeWhatIf is true, a slice without real spend contributes its
+// subscription WHAT-IF estimate instead. The response carries both subtotals
+// and per-row kind metadata so the client can identify mixed spans without
+// maintaining a second aggregation path.
+func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costsResponse, error) {
 	if min := to.AddDate(0, 0, -(maxCostSpanDays - 1)); from.Before(min) {
 		from = min
 	}
@@ -208,7 +209,10 @@ func collectCosts(from, to time.Time, factor float64) (costsResponse, error) {
 	if err != nil {
 		return costsResponse{}, err
 	}
-	deltas := mixedCostDeltasFromRows(rows)
+	deltas := costDeltasFromRows(rows, false)
+	if includeWhatIf {
+		deltas = mixedCostDeltasFromRows(rows)
+	}
 	models, err := db.SessionModels()
 	if err != nil {
 		return costsResponse{}, err
@@ -406,10 +410,11 @@ func costRowRecencyKey(a costAgentRow) string {
 // month (the tab's default span); to defaults to today. The "browse an
 // earlier month" spans pass an explicit to (a completed month's last day)
 // so a bounded past window can be shown; the trailing/current-month spans
-// omit it and get today. Each row prefers real spend and falls back to the
-// WHAT-IF subscription estimate; the payload identifies the contributing
-// kind at row, day, and total levels. Fetched on tab activation and span
-// change, not on the 2s snapshot tick — history doesn't move that fast.
+// omit it and get today. Each row prefers real spend and, when
+// cost.show_on_subscription is enabled, falls back to the WHAT-IF subscription
+// estimate; the payload identifies the contributing kind at row, day, and
+// total levels. Fetched on tab activation and span change, not on the 2s
+// snapshot tick — history doesn't move that fast.
 func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -438,7 +443,8 @@ func handleDashboardCosts(w http.ResponseWriter, r *http.Request) {
 		to = t
 	}
 	cfg, _ := config.Load()
-	out, err := collectCosts(from, to, cfg.ResolvedCostFactor())
+	includeWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
+	out, err := collectCosts(from, to, cfg.ResolvedCostFactor(), includeWhatIf)
 	if err != nil {
 		http.Error(w, "collect costs: "+err.Error(), http.StatusInternalServerError)
 		return

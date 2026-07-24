@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -72,7 +73,20 @@ func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
 		}
 	}
 	from := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)
+	mux := agentd.BuildDashboardHandlerForTest()
+	out := fetchCosts(t, mux, "?from="+from)
+	assert.InDelta(t, 1, out.TotalUSD, 1e-12,
+		"default-off preference keeps hypothetical peers out of mixed totals")
+	assert.InDelta(t, 1, out.RealTotalUSD, 1e-12)
+	assert.Zero(t, out.WhatIfTotalUSD)
+	assert.Equal(t, "real", out.CostKind)
+	require.Len(t, out.Agents, 1)
+	assert.Equal(t, "claude", out.Agents[0].Harness)
+
+	require.NoError(t, config.Save(&config.Config{
+		Cost: &config.CostConfig{ShowOnSubscription: true},
+	}), "enable subscription estimates")
+	out = fetchCosts(t, mux, "?from="+from)
 	assert.InDelta(t, 6, out.TotalUSD, 1e-12)
 	assert.InDelta(t, 1, out.RealTotalUSD, 1e-12)
 	assert.InDelta(t, 5, out.WhatIfTotalUSD, 1e-12)
@@ -400,6 +414,9 @@ func TestDashboardCosts_HarnessSurvivesSessionDeletion(t *testing.T) {
 	}), "SaveSession")
 	require.NoError(t, db.UpdateSessionVirtualCost(sessionID, 3.50), "virtual cost")
 	require.NoError(t, db.DeleteSession(sessionID), "DeleteSession")
+	require.NoError(t, config.Save(&config.Config{
+		Cost: &config.CostConfig{ShowOnSubscription: true},
+	}), "enable subscription estimates")
 
 	from := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 	out := fetchCosts(t, agentd.BuildDashboardHandlerForTest(), "?from="+from)

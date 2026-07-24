@@ -155,13 +155,19 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 		}
 		out.Series = append(out.Series, series)
 	}
-	coverageSince := since
-	for _, override := range seriesSince {
-		if override.Before(coverageSince) {
-			coverageSince = override
+	coverageFrom := make(map[string]time.Time)
+	for key := range bySeries {
+		effective := since
+		if override, ok := seriesSince[key]; ok {
+			effective = override
+		}
+		if prior, ok := coverageFrom[key.provider]; !ok || effective.Before(prior) {
+			// A provider-level warning qualifies every visible card for that
+			// provider, so its range is the union of those cards' spans.
+			coverageFrom[key.provider] = effective
 		}
 	}
-	out.CoverageWarnings, err = collectOpenCodeUsageCoverageWarnings(coverageSince, now, rows)
+	out.CoverageWarnings, err = collectOpenCodeUsageCoverageWarnings(since, coverageFrom, now, rows)
 	if err != nil {
 		return usageHistoryResponse{}, err
 	}
@@ -180,10 +186,18 @@ func openCodeNativeUsageSource(provider string) string {
 }
 
 func collectOpenCodeUsageCoverageWarnings(
-	from, to time.Time,
+	defaultFrom time.Time,
+	providerFrom map[string]time.Time,
+	to time.Time,
 	nativeRows []db.SubscriptionUsageHistoryRow,
 ) ([]usageCoverageWarning, error) {
-	activity, err := db.OpenCodeUsageActivityBetween(from, to)
+	queryFrom := defaultFrom
+	for _, from := range providerFrom {
+		if from.Before(queryFrom) {
+			queryFrom = from
+		}
+	}
+	activity, err := db.OpenCodeUsageActivityBetween(queryFrom, to)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +210,15 @@ func collectOpenCodeUsageCoverageWarnings(
 	for _, row := range activity {
 		provider := strings.TrimSpace(row.ProviderID)
 		if provider == "" {
+			continue
+		}
+		from := defaultFrom
+		if nativeSource := openCodeNativeUsageSource(provider); nativeSource != "" {
+			if selected, ok := providerFrom[nativeSource]; ok {
+				from = selected
+			}
+		}
+		if row.ObservedAt.Before(from) {
 			continue
 		}
 		group := byProvider[provider]
@@ -213,6 +236,10 @@ func collectOpenCodeUsageCoverageWarnings(
 	}
 	nativeCovered := map[string]bool{}
 	for _, row := range nativeRows {
+		from := defaultFrom
+		if selected, ok := providerFrom[row.Provider]; ok {
+			from = selected
+		}
 		if !row.ObservedAt.Before(from) && !row.ObservedAt.After(to) {
 			nativeCovered[row.Provider] = true
 		}
@@ -234,6 +261,12 @@ func collectOpenCodeUsageCoverageWarnings(
 			models = append(models, model)
 		}
 		sort.Strings(models)
+		from := defaultFrom
+		if nativeSource != "" {
+			if selected, ok := providerFrom[nativeSource]; ok {
+				from = selected
+			}
+		}
 		out = append(out, usageCoverageWarning{
 			Provider: provider, NativeSource: nativeSource, Models: models,
 			From:         from.UTC().Format(time.RFC3339Nano),
