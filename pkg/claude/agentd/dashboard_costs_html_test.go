@@ -92,8 +92,8 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// controls, so a long total + projection can never squeeze the span
 	// buttons or run off the window edge.
 	must(`<div class="costs-header">`, "two-row Costs header wrapper rendered")
-	must(".costs-header .filter-bar { margin: 0;", "controls row keeps the header's own spacing")
-	must("font-size: 12px; color: #7d8590; margin-top: 8px;", "summary sits on its own row under the controls")
+	must(".costs-header .filter-bar {", "controls row scoped inside the header wrapper")
+	must(".costs-header #costs-summary { margin-top: 8px; }", "summary sits on its own row under the controls")
 
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")

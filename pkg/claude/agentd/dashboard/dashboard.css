@@ -1825,8 +1825,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    segments themselves stay unbroken and wrap between each other. */
 .costs-header { margin: 0 0 12px 0; }
 .costs-header .filter-bar { margin: 0; flex-wrap: wrap; }
+.costs-header #costs-summary { margin-top: 8px; }
 #costs-summary {
-  font-size: 12px; color: #7d8590; margin-top: 8px;
+  font-size: 12px; color: #7d8590;
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; white-space: nowrap;
 }
 #costs-summary strong { color: #6e9c7d; font-weight: 600; }
