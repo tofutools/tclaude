@@ -186,12 +186,13 @@ func run() error {
 		return fmt.Errorf("no input received on stdin")
 	}
 
-	// Short model label: "Opus 4.6" -> "o4.6"
+	// Short model label for the head of the context line. Prefers CC's
+	// display name ("Opus 4.6" -> "o4.6"); when that's missing or a lone
+	// token it falls back to the requested full model ID so a model CC
+	// doesn't recognise yet (e.g. `--model claude-opus-5`) shows "opus-5"
+	// instead of an "unknown model" placeholder.
 	model := input.Model.DisplayName
-	modelLabel := "ctx"
-	if parts := strings.Fields(model); len(parts) >= 2 {
-		modelLabel = strings.ToLower(string([]rune(parts[0])[0])) + strings.Join(parts[1:], "")
-	}
+	modelLabel := shortModelLabel(input.Model.DisplayName, input.Model.ID)
 
 	// === Line 1: git-links ===
 	var line1 []string
@@ -454,6 +455,43 @@ func run() error {
 	}
 
 	return nil
+}
+
+// shortModelLabel derives the compact model tag shown at the head of the
+// statusbar's context line from Claude Code's statusline model block.
+//
+// It prefers the human display name and keeps the long-standing compact
+// style for a multi-word name ("Opus 4.6" -> "o4.6"). When the display
+// name is absent or a single token — which is what Claude Code emits for
+// a model it doesn't recognise yet, e.g. one selected by full ID via
+// `--model claude-opus-5` — it falls back to the requested model string:
+// the display name when present, otherwise the full model ID with the
+// "claude-" vendor prefix and any "[1m]" context-window suffix trimmed
+// ("claude-opus-5" -> "opus-5"). Only when neither field carries anything
+// does it use the "ukn-mdl" (unknown model) placeholder, so the statusline
+// never renders a meaningless label when a real model string is available.
+func shortModelLabel(displayName, id string) string {
+	// unknownModel is the last-resort tag when neither display_name nor id
+	// carries anything — a distinct "unknown model" marker rather than a
+	// label that could be mistaken for a real model name.
+	const unknownModel = "ukn-mdl"
+	raw := strings.TrimSpace(displayName)
+	if raw == "" {
+		raw = strings.TrimSpace(id)
+	}
+	// Drop a trailing [1m]/[1M] 1M-window suffix; the label never showed it.
+	if len(raw) >= len("[1m]") && strings.EqualFold(raw[len(raw)-len("[1m]"):], "[1m]") {
+		raw = strings.TrimSpace(raw[:len(raw)-len("[1m]")])
+	}
+	if raw == "" {
+		return unknownModel
+	}
+	if parts := strings.Fields(raw); len(parts) >= 2 {
+		return strings.ToLower(string([]rune(parts[0])[0])) + strings.Join(parts[1:], "")
+	}
+	// Single token: a full model ID or a one-word display name. Strip the
+	// "claude-" vendor prefix so "claude-opus-5" reads as "opus-5".
+	return strings.TrimPrefix(strings.ToLower(raw), "claude-")
 }
 
 // gitCmd runs a git command and returns trimmed stdout, or empty string on error.
