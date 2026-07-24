@@ -23,6 +23,14 @@ test('Costs derivation projects months, filters harnesses, sorts, and builds cha
   const withWeekends = model.monthProjection(payload, true, true, now);
   assert.ok(withWeekends.leadingFill['2026-07-04'] > 0);
   assert.equal(withWeekends.weekendsIncluded, true);
+  assert.equal(model.monthProjectionLabel({ fillEmpty: false, includesWhatIf: false }, true),
+    'Projected month total', 'real-only projection retains the normal label');
+  assert.equal(model.monthProjectionLabel({ fillEmpty: false, includesWhatIf: true }, false),
+    'WHAT-IF Projected month total', 'WHAT-IF-only projection remains wholly hypothetical');
+  assert.equal(model.monthProjectionLabel({ fillEmpty: false, includesWhatIf: true }, true),
+    'Projected month total (includes WHAT-IF)', 'mixed projection does not label real spend as hypothetical');
+  assert.equal(model.monthProjectionLabel({ fillEmpty: true, includesWhatIf: true }, true),
+    'Projected avg month total (includes WHAT-IF)', 'mixed full-month fill uses the same qualified label');
 
   const selected = new Set(['claude']);
   const narrowed = model.filterCostData(payload, selected);

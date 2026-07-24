@@ -95,6 +95,108 @@ func DeleteOpenCodeUsageActivity(convID, sessionID, messageID string) error {
 	return nil
 }
 
+// MarkOpenCodePricingStepsRemoved atomically clears one message from Usage
+// coverage and remembers that its now-empty history previously contained
+// step-finish parts. The marker follows the OpenCode conversation across local
+// resumes and shares the activity index's 90-day retention bound.
+func MarkOpenCodePricingStepsRemoved(
+	convID string,
+	sessionID string,
+	messageID string,
+	removedAt time.Time,
+) error {
+	if strings.TrimSpace(messageID) == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if strings.TrimSpace(convID) != "" {
+		if _, err := tx.Exec(`DELETE FROM opencode_usage_activity
+			WHERE conv_id = ? AND message_id = ?`, convID, messageID); err != nil {
+			return fmt.Errorf("mark OpenCode pricing steps removed: clear activity: %w", err)
+		}
+		if removedAt.IsZero() {
+			removedAt = time.Now()
+		}
+		if _, err := tx.Exec(`INSERT INTO opencode_usage_step_removals
+			(conv_id, message_id, removed_at) VALUES (?, ?, ?)
+			ON CONFLICT(conv_id, message_id) DO UPDATE SET
+				removed_at = excluded.removed_at`,
+			convID, messageID, removedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("mark OpenCode pricing steps removed: remember removal: %w", err)
+		}
+	} else if strings.TrimSpace(sessionID) != "" {
+		if _, err := tx.Exec(`DELETE FROM opencode_usage_activity
+			WHERE session_id = ? AND message_id = ?`, sessionID, messageID); err != nil {
+			return fmt.Errorf("mark OpenCode pricing steps removed: clear activity: %w", err)
+		}
+	}
+	cutoff := time.Now().Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`DELETE FROM opencode_usage_step_removals WHERE removed_at < ?`, cutoff); err != nil {
+		return fmt.Errorf("mark OpenCode pricing steps removed: prune: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark OpenCode pricing steps removed: commit: %w", err)
+	}
+	return nil
+}
+
+// ClearOpenCodePricingStepsRemoved removes a final-step tombstone after a new
+// eligible step for the same OpenCode message appears.
+func ClearOpenCodePricingStepsRemoved(convID, messageID string) error {
+	if strings.TrimSpace(convID) == "" || strings.TrimSpace(messageID) == "" {
+		return nil
+	}
+	d, err := Open()
+	if err != nil {
+		return err
+	}
+	if _, err := d.Exec(`DELETE FROM opencode_usage_step_removals
+		WHERE conv_id = ? AND message_id = ?`, convID, messageID); err != nil {
+		return fmt.Errorf("clear OpenCode pricing step removal: %w", err)
+	}
+	return nil
+}
+
+// OpenCodePricingStepsRemoved returns retained final-step tombstones for one
+// conversation. Expired markers are ignored even before the next write prunes
+// them physically.
+func OpenCodePricingStepsRemoved(convID string, now time.Time) (map[string]bool, error) {
+	out := map[string]bool{}
+	if strings.TrimSpace(convID) == "" {
+		return out, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	cutoff := now.Add(-OpenCodeUsageActivityRetention).UTC().Format(time.RFC3339Nano)
+	rows, err := d.Query(`SELECT message_id FROM opencode_usage_step_removals
+		WHERE conv_id = ? AND removed_at >= ?`, convID, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("read OpenCode pricing step removals: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var messageID string
+		if err := rows.Scan(&messageID); err != nil {
+			return nil, fmt.Errorf("read OpenCode pricing step removals: scan: %w", err)
+		}
+		out[messageID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read OpenCode pricing step removals: rows: %w", err)
+	}
+	return out, nil
+}
+
 // ReplaceOpenCodeUsageActivity makes reconnect/recovery authoritative for one
 // conversation from GET /session/{id}/message. A resumed conversation can use
 // a different local tclaude session ID, so replacement follows convID while

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,21 @@ import (
 )
 
 const openCodeTestPermissionJSON = `[{"permission":"*","pattern":"*","action":"deny"},{"permission":"read","pattern":"*","action":"allow"}]`
+
+type openCodeBlockingReadCloser struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *openCodeBlockingReadCloser) Read([]byte) (int, error) {
+	<-b.closed
+	return 0, context.Canceled
+}
+
+func (b *openCodeBlockingReadCloser) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
 
 func TestOpenCodeControlPlaneUsesBasicAuthAndMintsSession(t *testing.T) {
 	const password = "private-password"
@@ -372,6 +388,165 @@ func TestStopOpenCodeProcessJoinsSSEProjector(t *testing.T) {
 	_, registeredAfterStop := openCodeProcesses.bySession[sessionID]
 	openCodeProcesses.Unlock()
 	assert.False(t, registeredAfterStop, "the stopping tombstone is removed after projector join")
+}
+
+func openCodeProjectorApplyLockExists(runtime db.OpenCodeRuntime) bool {
+	openCodeProjectorApplyLocksMu.Lock()
+	defer openCodeProjectorApplyLocksMu.Unlock()
+	return openCodeProjectorApplyLocks[openCodeProjectorApplyKey(runtime)] != nil
+}
+
+func TestStoppedOpenCodeProjectorReleasesConversationCaches(t *testing.T) {
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+	const sessionID, convID = "spwn-stop-cleans-cache", "ses-stop-cleans-cache"
+	runtime := db.OpenCodeRuntime{SessionID: sessionID, ConvID: convID}
+	openCodeVirtualCostState.Lock()
+	rememberOpenCodeKnownStepLocked(convID, "msg-cleanup", "part-cleanup")
+	rememberOpenCodeSnapshotStepLocked(convID, "msg-cleanup", "part-cleanup")
+	openCodeVirtualCostState.Unlock()
+	require.True(t, withOpenCodeProjectorApplyLock(context.Background(), runtime, func() {}))
+	require.True(t, openCodeProjectorApplyLockExists(runtime))
+
+	originalDelay := openCodeConversationStateCleanupDelay
+	openCodeConversationStateCleanupDelay = 10 * time.Millisecond
+	t.Cleanup(func() {
+		openCodeConversationStateCleanupDelay = originalDelay
+		openCodeProjectorApplyLocksMu.Lock()
+		delete(openCodeProjectorApplyLocks, openCodeProjectorApplyKey(runtime))
+		openCodeProjectorApplyLocksMu.Unlock()
+	})
+	projectorStopped := make(chan struct{})
+	close(projectorStopped)
+	process := &openCodeProcess{sseDone: projectorStopped}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+
+	stopOpenCodeProcess(runtime, process)
+
+	require.Eventually(t, func() bool {
+		openCodeVirtualCostState.Lock()
+		known := len(openCodeVirtualCostState.knownSteps[convID])
+		snapshot := len(openCodeVirtualCostState.snapshotSteps[convID])
+		openCodeVirtualCostState.Unlock()
+		return known == 0 && snapshot == 0 && !openCodeProjectorApplyLockExists(runtime)
+	}, time.Second, 5*time.Millisecond,
+		"a joined, inactive conversation releases its step caches and projector lock")
+}
+
+func TestOpenCodeSSEBodyIsActivelyClosedOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	body := &openCodeBlockingReadCloser{closed: make(chan struct{})}
+	stopWatching := closeOpenCodeSSEBodyOnCancel(ctx, body)
+	cancel()
+	select {
+	case <-body.closed:
+	case <-time.After(time.Second):
+		t.Fatal("SSE response body was not actively closed after cancellation")
+	}
+	stopWatching()
+}
+
+func TestStopOpenCodeProcessBoundsStuckSSEProjectorJoin(t *testing.T) {
+	const sessionID = "spwn-stop-bounds-stuck-sse"
+	ctx, cancel := context.WithCancel(context.Background())
+	process := &openCodeProcess{cancel: cancel, sseDone: make(chan struct{})}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+
+	started := time.Now()
+	stopReturned := make(chan struct{})
+	go func() {
+		stopOpenCodeProcess(db.OpenCodeRuntime{SessionID: sessionID}, nil)
+		close(stopReturned)
+	}()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel the stuck SSE projector")
+	}
+	openCodeProcesses.Lock()
+	registered := openCodeProcesses.bySession[sessionID]
+	openCodeProcesses.Unlock()
+	require.Same(t, process, registered,
+		"stopping tombstone remains registered during the bounded join")
+	assert.True(t, registered.stopping)
+
+	select {
+	case <-stopReturned:
+	case <-time.After(openCodeProcessStopWait + time.Second):
+		t.Fatal("stop remained blocked after the bounded SSE-projector join")
+	}
+	assert.GreaterOrEqual(t, time.Since(started), openCodeProcessStopWait,
+		"stop must still give the projector its bounded grace period")
+	openCodeProcesses.Lock()
+	_, registeredAfterTimeout := openCodeProcesses.bySession[sessionID]
+	openCodeProcesses.Unlock()
+	assert.False(t, registeredAfterTimeout,
+		"stopping tombstone is safely removed after the bounded join expires")
+}
+
+func TestOpenCodeProjectorApplyLockFollowsConversationAcrossResume(t *testing.T) {
+	oldRuntime := db.OpenCodeRuntime{SessionID: "spawn", ConvID: "ses-shared"}
+	resumedRuntime := db.OpenCodeRuntime{SessionID: "resume", ConvID: "ses-shared"}
+	oldEntered := make(chan struct{})
+	releaseOld := make(chan struct{})
+	oldDone := make(chan struct{})
+	go func() {
+		withOpenCodeProjectorApplyLock(context.Background(), oldRuntime, func() {
+			close(oldEntered)
+			<-releaseOld
+		})
+		close(oldDone)
+	}()
+	<-oldEntered
+
+	resumedEntered := make(chan struct{})
+	go withOpenCodeProjectorApplyLock(context.Background(), resumedRuntime, func() {
+		close(resumedEntered)
+	})
+	select {
+	case <-resumedEntered:
+		t.Fatal("resumed local session overtook the old projector for the same conversation")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseOld)
+	select {
+	case <-oldDone:
+	case <-time.After(time.Second):
+		t.Fatal("old conversation projector did not release its apply lock")
+	}
+	select {
+	case <-resumedEntered:
+	case <-time.After(time.Second):
+		t.Fatal("resumed projector did not acquire the conversation lock after release")
+	}
+}
+
+func TestOpenCodeProjectorApplyLockBoundsStuckGeneration(t *testing.T) {
+	oldRuntime := db.OpenCodeRuntime{SessionID: "spawn-stuck", ConvID: "ses-stuck"}
+	resumedRuntime := db.OpenCodeRuntime{SessionID: "resume-stuck", ConvID: "ses-stuck"}
+	oldEntered := make(chan struct{})
+	releaseOld := make(chan struct{})
+	go withOpenCodeProjectorApplyLock(context.Background(), oldRuntime, func() {
+		close(oldEntered)
+		<-releaseOld
+	})
+	<-oldEntered
+
+	started := time.Now()
+	entered := false
+	acquired := withOpenCodeProjectorApplyLock(context.Background(), resumedRuntime, func() {
+		entered = true
+	})
+	assert.False(t, acquired)
+	assert.False(t, entered)
+	assert.GreaterOrEqual(t, time.Since(started), openCodeProcessStopWait)
+	assert.Less(t, time.Since(started), openCodeProcessStopWait+time.Second,
+		"replacement lock acquisition must be bounded")
+	close(releaseOld)
 }
 
 func TestStopOpenCodeProcessVerifiesRecoveredPIDBeforeKill(t *testing.T) {

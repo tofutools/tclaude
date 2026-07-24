@@ -79,3 +79,38 @@ func TestOpenCodeUsageActivityFollowsConversationAcrossResumeAndPrunes(t *testin
 		WHERE message_id = 'msg-expired'`).Scan(&expired))
 	assert.Zero(t, expired, "live upserts enforce the 90-day retention bound")
 }
+
+func TestOpenCodePricingStepRemovalFollowsConversationClearsActivityAndExpires(t *testing.T) {
+	setupTestDB(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, UpsertOpenCodeUsageActivity(OpenCodeUsageActivity{
+		SessionID: "spawn", MessageID: "msg-removed", ConvID: "ses-resume",
+		ProviderID: "openai", ModelID: "gpt-a", ObservedAt: now,
+	}))
+	require.NoError(t, MarkOpenCodePricingStepsRemoved(
+		"ses-resume", "resume", "msg-removed", now,
+	))
+
+	activity, err := OpenCodeUsageActivityBetween(now.Add(-time.Hour), now.Add(time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, activity, "final-step removal clears provider Usage coverage across local resumes")
+	removed, err := OpenCodePricingStepsRemoved("ses-resume", now)
+	require.NoError(t, err)
+	assert.True(t, removed["msg-removed"], "conversation-keyed removal survives a local session ID change")
+
+	d, err := Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`INSERT INTO opencode_usage_step_removals
+		(conv_id, message_id, removed_at) VALUES (?, ?, ?)`,
+		"ses-resume", "msg-expired",
+		now.Add(-OpenCodeUsageActivityRetention-time.Hour).Format(time.RFC3339Nano))
+	require.NoError(t, err)
+	removed, err = OpenCodePricingStepsRemoved("ses-resume", now)
+	require.NoError(t, err)
+	assert.False(t, removed["msg-expired"], "removal markers share the 90-day activity boundary")
+
+	require.NoError(t, ClearOpenCodePricingStepsRemoved("ses-resume", "msg-removed"))
+	removed, err = OpenCodePricingStepsRemoved("ses-resume", now)
+	require.NoError(t, err)
+	assert.Empty(t, removed, "a later eligible step clears the final-step marker")
+}

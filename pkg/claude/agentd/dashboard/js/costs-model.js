@@ -103,6 +103,12 @@ export function monthProjection(data, fillEmpty, weekendsIncluded, now = new Dat
   };
 }
 
+export function monthProjectionLabel(projection, includesReal) {
+  const base = projection?.fillEmpty ? 'Projected avg month total' : 'Projected month total';
+  if (!projection?.includesWhatIf) return base;
+  return includesReal ? `${base} (includes WHAT-IF)` : `WHAT-IF ${base}`;
+}
+
 export const harnessLabel = (harness) => harness || 'unknown';
 
 export function costHarnesses(agents) {
