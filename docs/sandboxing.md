@@ -238,13 +238,15 @@ reopened individually** under `deny ~`; they stay denied. Losing `~/.gitconfig`
 Relocate the configuration into a directory you reopen, or supply it through the
 profile's `environment`.
 
-### Git sees Claude Code's built-in denies as device nodes
+### Git sees Claude Code's built-in denies as device nodes (Linux)
 
 Claude Code's own sandbox (independent of any tclaude profile) denies some
-paths by bind-mounting `/dev/null` over them on Linux: the repo's
-`.git/config`-family and `.git/hooks`, `.gitmodules`, ambient host dotfiles,
-and its protected `.claude/` settings/runtime paths (`settings.json`,
-`settings.local.json`, `loop.md`, …). Git then sees character device nodes
+paths by bind-mounting `/dev/null` over them on Linux: `.git/config.worktree`
+and `.git/config.lock`, `.gitmodules`, ambient host dotfiles, and its
+protected `.claude/` settings/runtime paths (`settings.json`,
+`settings.local.json`, `loop.md`, …). (Other protected paths, such as
+`.git/hooks` and `.git/config` itself, stay ordinary files and directories —
+those denies are enforced without a stub.) Git then sees character device nodes
 where it expects regular files, which produces three symptoms inside a
 sandboxed agent:
 
@@ -345,7 +347,7 @@ read.
 | `tclaude: command not found`, socket otherwise fine | tclaude's binary dir not reopened — it is never implicit |
 | `tclaude agent` reports "agentd is not running" | Socket file hidden **or** the `AF_UNIX` syscall blocked — [check both](sandbox-hardening.md#keeping-the-daemon-socket-reachable) |
 | Git loses identity / credential helper | `~/.gitconfig` is a file and cannot be reopened under `deny ~` |
-| `git add -A` fails: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths ([above](#git-sees-claude-codes-built-in-denies-as-device-nodes)) |
+| `git add -A` fails: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths ([above](#git-sees-claude-codes-built-in-denies-as-device-nodes-linux)) |
 | `warning: unable to access '….git/config.worktree'` | Same device-node masking; harmless, git still works |
 | Launch refused, `unsupported_sandbox_profile_reopen_under_deny` | Claude not in sandbox `on`, or Codex not on Linux managed-profile with a verified probe |
 | Profile looks strict but nothing is denied | Claude sandbox `inherit`/`off`, or a legacy `read_baseline` profile (silently dropped — re-express as deny rows) |
