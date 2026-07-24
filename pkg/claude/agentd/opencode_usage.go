@@ -362,7 +362,39 @@ func ensureOpenCodeVirtualCostStateLocked(sessionID string) (
 	return messages, usages
 }
 
+func waitForOpenCodeCostSessionRow(ctx context.Context, sessionID string) bool {
+	deadline := time.Now().Add(openCodeHookRowWait)
+	for {
+		exists, err := db.SessionExists(sessionID)
+		if err != nil {
+			slog.Debug("OpenCode virtual cost session lookup failed",
+				"session", sessionID, "error", err, "module", "agentd")
+			return false
+		}
+		if exists {
+			return true
+		}
+		if time.Now().After(deadline) {
+			slog.Debug("OpenCode virtual cost session row did not appear before timeout",
+				"session", sessionID, "module", "agentd")
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(openCodeHookRowRetryDelay):
+		}
+	}
+}
+
 func projectAndPersistOpenCodeCostState(ctx context.Context, runtime db.OpenCodeRuntime) {
+	// Resume launches start the managed runtime and its SSE consumer before the
+	// child `session new` process inserts the local session row. Keep the
+	// recovered usage state in memory while waiting for that row, otherwise the
+	// first authoritative backfill can become a silent UPDATE/INSERT no-op.
+	if !waitForOpenCodeCostSessionRow(ctx, runtime.SessionID) {
+		return
+	}
 	prices, loaded := openCodeModelPrices(ctx, runtime)
 	if !loaded {
 		// A transient catalog failure is not an authoritative statement that

@@ -209,6 +209,52 @@ func TestOpenCodeVirtualCostRetainsHistoryAcrossTransientCatalogFailure(t *testi
 	assert.Zero(t, todayCost, "recovery does not move prior spend into today")
 }
 
+func TestOpenCodeVirtualCostWaitsForResumeSessionRow(t *testing.T) {
+	setupTestDB(t)
+	resetOpenCodeLimitCacheForTest()
+	resetOpenCodeVirtualCostStateForTest()
+	t.Cleanup(resetOpenCodeLimitCacheForTest)
+	t.Cleanup(resetOpenCodeVirtualCostStateForTest)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"providers":[{"id":"openai","models":{"gpt-a":{` +
+			`"cost":{"input":1,"output":2,"cache":{"read":0.1,"write":0.2}},"limit":{"context":200000}}}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	const sessionID, convID = "oc-resume-race", "ses-resume-race"
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: convID, ServerURL: server.URL,
+		Password: "pw", PID: os.Getpid(), Cwd: t.TempDir(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+	done := make(chan struct{})
+	go func() {
+		applyOpenCodeVirtualCostUsage(ctx, runtime, openCodeContextUsage{
+			MessageID: "msg-recovered", ProviderID: "openai", ModelID: "gpt-a",
+			ReportedCost: float64ptr(0), Input: 1_000_000, CreatedAt: time.Now(),
+		})
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("cost projection returned before the resume session row was inserted")
+	case <-time.After(2 * openCodeHookRowRetryDelay):
+	}
+	seedOpenCodeUsageSession(t, sessionID, convID)
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("cost projection did not retry after the resume session row was inserted")
+	}
+
+	snap, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 1, snap.VirtualCostUSD, 1e-12,
+		"the authoritative resume backfill persists without waiting for a later message")
+}
+
 func openCodeStepUpdatedEventJSON(convID, messageID, partID string, input int64) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{"id":"evt-%s","type":"message.part.updated","properties":{`+
 		`"sessionID":%q,"part":{"id":%q,"messageID":%q,"sessionID":%q,"type":"step-finish",`+
