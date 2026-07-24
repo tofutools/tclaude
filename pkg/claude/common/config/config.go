@@ -152,6 +152,14 @@ type FeaturesConfig struct {
 	AgentDirsMountParent *bool `json:"agent_dirs_mount_parent,omitempty"`
 }
 
+// ProcessesDisabledMessage is the stable operator-facing text surfaced when
+// the experimental Processes feature flag is off. The daemon is the sole
+// authority on the flag (it reads private config; sandboxed agent clients
+// never do), so both the daemon's process-route gate and the process CLI's
+// daemon capability probe render this exact wording — enabled/disabled reads
+// identically regardless of which layer detected it.
+const ProcessesDisabledMessage = "process commands are disabled; set features.processes=true in tclaude config to use this experimental surface"
+
 // ProcessesEnabled reports whether the opt-in Processes feature flag is set.
 // Nil-safe on both the config and the features block, so callers can gate on
 // a bare Load() result without nil checks.

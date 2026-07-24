@@ -34,9 +34,15 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
+	// "processes" is the agent-reachable capability projection of the
+	// experimental Processes feature flag: a single boolean, never the
+	// private config contents. It lets a sandboxed CLI that cannot read
+	// ~/.tclaude/data/config.json still resolve enabled/disabled state
+	// through the daemon. Open like the rest of /v1/info.
+	writeJSON(w, http.StatusOK, map[string]any{
 		"popup_base_url": popupBaseURL,
 		"idempotency":    "v1",
+		"processes":      processRoutesEnabled(),
 	})
 }
 
