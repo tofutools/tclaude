@@ -168,16 +168,19 @@ func recordResult(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error
 		return nil, err
 	}
 	observed := event("program_observed", &command, executorActor, result)
-	advanced, err := engine.AdvanceUntilQuiescent(next, run.definition)
+	// Settling this observation can activate more than one branch, so the follow-on
+	// advance plans the next single command this sequential driver can carry. The
+	// branches it did not plan stay ready and are planned by later calls.
+	advanced, planned, _, err := engine.AdvanceAndPlan(next, run.definition)
 	if err != nil {
 		return nil, err
 	}
-	events := []db.ProcessRunEvent{observed, advanceEvidence(advanced)}
+	events := append([]db.ProcessRunEvent{observed}, advanceEvidence(next, advanced, planned)...)
 	if err := persistEvents(run, advanced, events); err != nil {
 		return nil, err
 	}
-	if outstanding := advanced.OutstandingCommand(); outstanding != nil {
-		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*outstanding)}
+	if planned != nil {
+		d := &Dispatch{owner: run, stateVersion: run.stateVersion, command: cloneCommand(*planned)}
 		run.dispatch = d
 		return d, nil
 	}

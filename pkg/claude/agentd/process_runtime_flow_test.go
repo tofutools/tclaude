@@ -73,7 +73,7 @@ func TestProcessRuntimeCreateRunListShowAndAutomaticSequentialCompletion(t *test
 	assert.Equal(t, engine.RunCompleted, shown.Checkpoint.Status)
 	assert.Equal(t, int64(4), shown.StateVersion,
 		"creation, first prepare, and one atomic observation/advance transaction per task")
-	assert.Nil(t, shown.Checkpoint.OutstandingCommand())
+	assert.Nil(t, shown.Checkpoint.FirstCommand())
 	assert.Equal(t, "terminal", shown.Action)
 	assert.Equal(t, map[string]string{"branch": "main"}, shown.Params)
 	assert.Equal(t, []string{"safe"}, shown.ProgramAuthorizations)
@@ -264,7 +264,7 @@ func TestProcessRuntimeColdOutstandingNeedsReconcileWithoutRedispatch(t *testing
 	testharness.DecodeJSON(t, show, &cold)
 	assert.True(t, cold.NeedsReconcile)
 	assert.Equal(t, "needs_reconcile", cold.Action)
-	require.NotNil(t, cold.Checkpoint.OutstandingCommand())
+	require.NotNil(t, cold.Checkpoint.FirstCommand())
 
 	invalidResume := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/runs/"+run.ID+"/resume", map[string]any{"unexpected": true})
 	assert.Equal(t, http.StatusBadRequest, invalidResume.Code, invalidResume.Body.String())
@@ -492,7 +492,7 @@ func TestProcessRuntimeRestartBetweenAtomicCommandsRequiresReconciliation(t *tes
 	assert.Equal(t, "needs_reconcile", halfway.Action)
 	assert.Equal(t, engine.NodeDone, halfway.Checkpoint.Nodes["task-01"])
 	assert.Equal(t, engine.NodeRunning, halfway.Checkpoint.Nodes["task-02"])
-	require.NotNil(t, halfway.Checkpoint.OutstandingCommand())
+	require.NotNil(t, halfway.Checkpoint.FirstCommand())
 
 	// Stop the original daemon-lifetime runtime and re-exec this test binary.
 	// The child constructs a new production mux and runtime manager in a new OS
@@ -666,7 +666,7 @@ func TestProcessRuntimeShutdownCancelsAndRecordsActiveDispatch(t *testing.T) {
 	testharness.DecodeJSON(t, show, &stopped)
 	assert.Equal(t, engine.RunFailed, stopped.Status)
 	assert.Equal(t, "terminal", stopped.Action)
-	assert.Nil(t, stopped.Checkpoint.OutstandingCommand())
+	assert.Nil(t, stopped.Checkpoint.FirstCommand())
 	assert.Zero(t, agentd.ProcessRunClaimCountForTest())
 }
 
@@ -712,7 +712,7 @@ func TestProcessRuntimeShutdownReleasesFullClaimCapacity(t *testing.T) {
 		testharness.DecodeJSON(t, show, &stopped)
 		assert.Equal(t, "needs_reconcile", stopped.Action, run.ID)
 		assert.True(t, stopped.NeedsReconcile, run.ID)
-		require.NotNil(t, stopped.Checkpoint.OutstandingCommand(), run.ID)
+		require.NotNil(t, stopped.Checkpoint.FirstCommand(), run.ID)
 	}
 }
 
@@ -903,9 +903,9 @@ func TestProcessRuntimeReconciliationOnlyPageAdvancesFallbackCursor(t *testing.T
 	require.NoError(t, err)
 	checkpoint, err := engine.Initialize("placeholder", definition)
 	require.NoError(t, err)
-	checkpoint, err = engine.AdvanceUntilQuiescent(checkpoint, definition)
+	checkpoint, command, _, err := engine.AdvanceAndPlan(checkpoint, definition)
 	require.NoError(t, err)
-	require.NotNil(t, checkpoint.OutstandingCommand())
+	require.NotNil(t, command)
 
 	for i := range db.MaxProcessRunReadPage {
 		id := fmt.Sprintf("run_cursor_%02d", i)

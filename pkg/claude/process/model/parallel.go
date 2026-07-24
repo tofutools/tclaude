@@ -165,9 +165,28 @@ func validateParallelScopePlan(tmpl *Template, edges []Edge) Diagnostics {
 	}
 
 	for _, nodeID := range sortedKeys(tmpl.Nodes) {
-		if tmpl.Nodes[nodeID].Type == NodeTypeParallel && reachable[nodeID] && reducers[nodeID] == "" {
+		if tmpl.Nodes[nodeID].Type != NodeTypeParallel || !reachable[nodeID] {
+			continue
+		}
+		reducer := reducers[nodeID]
+		if reducer == "" {
 			diagnostics = append(diagnostics, diagError("cross_scope_join_v1", "nodes."+nodeID+".next",
 				"parallel fork branches must have one complete structural reducer before leaving their scope"))
+			continue
+		}
+		// A node that this analysis already identified as the structural reducer
+		// of a parallel fork must say how it reduces. Requiring the annotation
+		// here — once, on the immutable definition — is what keeps a fork's
+		// reducer from silently receiving several arrivals at runtime.
+		//
+		// The requirement is only that the policy is declared: `all` is the one
+		// an engine can execute today, and `any` remains authorable for the
+		// ticket that implements it. Nodes that merely have several inbound
+		// edges — exclusive decision merges, where at most one candidate can
+		// ever arrive — are deliberately untouched and stay unannotated.
+		if tmpl.Nodes[reducer].Join == "" {
+			diagnostics = append(diagnostics, diagError("missing_reducer_join", "nodes."+reducer+".join",
+				fmt.Sprintf("node %q reduces parallel fork %q and must declare a join policy", reducer, nodeID)))
 		}
 	}
 	return diagnostics

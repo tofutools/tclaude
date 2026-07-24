@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,72 +44,55 @@ func TestSequentialProgramsProgressToSuccessfulEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command, err := Plan(initial, definition); err != nil || command != nil {
-		t.Fatalf("plan before start advancement = %#v, %v", command, err)
+	if _, plannable := nextPlannableTask(initial, definition); plannable {
+		t.Fatal("a task was plannable before the start node advanced")
 	}
-	firstRunning, err := AdvanceUntilQuiescent(initial, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if initial.Nodes["start"] != NodeReady || initial.OutstandingCommand() != nil {
+	firstRunning, first := advanceAndPlan(t, initial, definition)
+	if initial.Nodes["start"] != NodeReady || len(initial.Commands) != 0 {
 		t.Fatalf("advance mutated input: %#v", initial)
 	}
-	first := firstRunning.OutstandingCommand()
 	if first == nil || first.ID != "cmd_5_run-1_5_first_program" || first.NodeID != "first" {
 		t.Fatalf("first command = %#v", first)
 	}
 	if first.Program.Run != "printf" || !reflect.DeepEqual(first.Program.Args, []string{"hello world"}) {
 		t.Fatalf("bound program = %#v", first.Program)
 	}
-	replanned, err := Plan(firstRunning, definition)
-	if err != nil {
-		t.Fatal(err)
+	// Planning again while that command is outstanding must neither duplicate it
+	// nor mint a second one: the task is running, so nothing is plannable.
+	replanned, again := advanceAndPlan(t, firstRunning, definition)
+	if again != nil {
+		t.Fatalf("outstanding command was replanned: %#v", again)
 	}
-	if !reflect.DeepEqual(replanned, first) {
-		t.Fatalf("outstanding replanning changed command\n got: %#v\nwant: %#v", replanned, first)
+	if !reflect.DeepEqual(replanned.Commands, firstRunning.Commands) {
+		t.Fatalf("replanning changed the outbox\n got: %#v\nwant: %#v", replanned.Commands, firstRunning.Commands)
 	}
 
 	secondReady, err := Apply(firstRunning, definition, observed(first, ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondReady.Nodes["first"] != NodeDone || secondReady.Nodes["second"] != NodeReady || secondReady.OutstandingCommand() != nil {
+	if secondReady.Nodes["first"] != NodeDone || secondReady.Nodes["second"] != NodeReady || len(secondReady.Commands) != 0 {
 		t.Fatalf("state after first observation = %#v", secondReady)
 	}
-	plannedOnce, err := Plan(secondReady, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plannedTwice, err := Plan(secondReady, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, plannedOnce := advanceAndPlan(t, secondReady, definition)
+	_, plannedTwice := advanceAndPlan(t, secondReady, definition)
 	if !reflect.DeepEqual(plannedOnce, plannedTwice) || plannedOnce.ID != "cmd_5_run-1_6_second_program" {
-		t.Fatalf("ready-state replanning is unstable: %#v / %#v", plannedOnce, plannedTwice)
+		t.Fatalf("ready-state planning is unstable: %#v / %#v", plannedOnce, plannedTwice)
 	}
 
-	secondRunning, err := AdvanceUntilQuiescent(secondReady, definition)
+	secondRunning, second := advanceAndPlan(t, secondReady, definition)
+	endReady, err := Apply(secondRunning, definition, observed(second, ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	endReady, err := Apply(secondRunning, definition, observed(secondRunning.OutstandingCommand(), ProgramSucceeded, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	completed, err := AdvanceUntilQuiescent(endReady, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if completed.Status != RunCompleted || completed.OutstandingCommand() != nil {
+	completed, terminalCommand := advanceAndPlan(t, endReady, definition)
+	if completed.Status != RunCompleted || len(completed.Commands) != 0 || terminalCommand != nil {
 		t.Fatalf("completed checkpoint = %#v", completed)
 	}
 	for nodeID, status := range completed.Nodes {
 		if status != NodeDone {
 			t.Fatalf("terminal node %q = %q", nodeID, status)
 		}
-	}
-	if command, err := Plan(completed, definition); err != nil || command != nil {
-		t.Fatalf("terminal plan = %#v, %v", command, err)
 	}
 }
 
@@ -136,14 +120,7 @@ func TestPreparedDefinitionIsReusedWithoutTemplateValidationOrRebinding(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	planned, err := Plan(checkpoint, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	checkpoint, planned := advanceAndPlan(t, checkpoint, definition)
 	if planned.Program.Run != "printf" || !reflect.DeepEqual(planned.Program.Args, []string{"prepared"}) {
 		t.Fatalf("prepared command was rebound: %#v", planned.Program)
 	}
@@ -152,18 +129,12 @@ func TestPreparedDefinitionIsReusedWithoutTemplateValidationOrRebinding(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
+	checkpoint, second := advanceAndPlan(t, checkpoint, definition)
+	checkpoint, err = Apply(checkpoint, definition, observed(second, ProgramSucceeded, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = Apply(checkpoint, definition, observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	checkpoint, _ = advanceAndPlan(t, checkpoint, definition)
 	if checkpoint.Status != RunCompleted {
 		t.Fatalf("prepared run status = %q", checkpoint.Status)
 	}
@@ -176,15 +147,12 @@ func TestProgramFailureTerminatesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
+	checkpoint, command := advanceAndPlan(t, checkpoint, definition)
+	failed, err := Apply(checkpoint, definition, observed(command, ProgramFailed, 7))
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed, err := Apply(checkpoint, definition, observed(checkpoint.OutstandingCommand(), ProgramFailed, 7))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failed.Status != RunFailed || failed.Nodes["task"] != NodeFailed || failed.Nodes["never"] != NodePending || failed.OutstandingCommand() != nil {
+	if failed.Status != RunFailed || failed.Nodes["task"] != NodeFailed || failed.Nodes["never"] != NodePending || len(failed.Commands) != 0 {
 		t.Fatalf("failed checkpoint = %#v", failed)
 	}
 	quiescent, err := AdvanceUntilQuiescent(failed, definition)
@@ -235,22 +203,19 @@ func TestDuplicateAndStaleObservationsAreRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stale := observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0)
+	checkpoint, command := advanceAndPlan(t, checkpoint, definition)
+	stale := observed(command, ProgramSucceeded, 0)
 	stale.Observation.CommandID += "-old"
 	if _, err := Apply(checkpoint, definition, stale); !errors.Is(err, ErrStaleObservation) {
 		t.Fatalf("stale error = %v", err)
 	}
-	wrongNode := observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0)
+	wrongNode := observed(command, ProgramSucceeded, 0)
 	wrongNode.Observation.NodeID = "next"
 	if _, err := Apply(checkpoint, definition, wrongNode); !errors.Is(err, ErrStaleObservation) {
 		t.Fatalf("wrong-node error = %v", err)
 	}
 
-	accepted := observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0)
+	accepted := observed(command, ProgramSucceeded, 0)
 	next, err := Apply(checkpoint, definition, accepted)
 	if err != nil {
 		t.Fatal(err)
@@ -258,10 +223,7 @@ func TestDuplicateAndStaleObservationsAreRefused(t *testing.T) {
 	if _, err := Apply(next, definition, accepted); !errors.Is(err, ErrStaleObservation) {
 		t.Fatalf("duplicate error = %v", err)
 	}
-	nextRunning, err := AdvanceUntilQuiescent(next, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	nextRunning, _ := advanceAndPlan(t, next, definition)
 	if _, err := Apply(nextRunning, definition, accepted); !errors.Is(err, ErrStaleObservation) {
 		t.Fatalf("old-command error = %v", err)
 	}
@@ -287,15 +249,12 @@ func TestReducerRejectsForgedCommandWithoutMutatingInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoint, err = Apply(checkpoint, definition, Transition{Kind: TransitionAdvance})
+	checkpoint, err = Apply(checkpoint, definition, advanced("start"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := cloneCheckpoint(checkpoint)
-	command, err := Plan(checkpoint, definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, command := advanceAndPlan(t, checkpoint, definition)
 	command.Program.Run = "something-else"
 	if _, err := Apply(checkpoint, definition, Transition{Kind: TransitionCommandPlanned, Command: command}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("forged command error = %v", err)
@@ -350,24 +309,39 @@ func TestDecodeAndReducerRejectMalformedOrInvalidCheckpoint(t *testing.T) {
 	// O(nodes+edges) scan is confined to the load/creation boundary. Handed such
 	// a structurally broken state directly it must still fail closed via a local
 	// precondition (no panic, no silent progress) rather than act on it.
-	if _, err := Apply(checkpoint, definition, Transition{Kind: TransitionAdvance}); !errors.Is(err, ErrInvalidTransition) {
+	if _, err := Apply(checkpoint, definition, advanced("start")); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("invalid loaded reducer error = %v", err)
 	}
 }
 
 func TestAdvanceUntilQuiescentRefusesPartialStateOnBudgetExhaustion(t *testing.T) {
-	tmpl := sequentialTemplate("task")
-	definition := mustPrepare(t, tmpl, nil)
+	// start -> end needs two engine-owned advances, so a budget of one leaves
+	// work pending and must surface as exhaustion rather than partial state.
+	definition := mustPrepare(t, startToEndTemplate(), nil)
 	checkpoint, err := Initialize("run-budget", definition)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := advanceUntilQuiescent(checkpoint, definition, 1)
+	got, _, err := advanceUntilQuiescent(checkpoint, definition, 1)
 	if !errors.Is(err, ErrTransitionBudgetExhausted) {
 		t.Fatalf("budget error = %v", err)
 	}
 	if !reflect.DeepEqual(got, checkpoint) {
 		t.Fatalf("budget exhaustion exposed partial state\n got: %#v\nwant: %#v", got, checkpoint)
+	}
+}
+
+// TestTransitionBudgetDerivesFromPreparedGraphSize proves the budget is the
+// acyclic node-completion bound of the prepared graph, not a sequential
+// constant: a fan-out wide enough to need many engine-owned advances still
+// reaches quiescence in one pass.
+func TestTransitionBudgetDerivesFromPreparedGraphSize(t *testing.T) {
+	definition := mustPrepare(t, wideFanOutTemplate(24), nil)
+	if got, want := transitionBudget(definition), len(definition.nodes); got != want {
+		t.Fatalf("transition budget = %d, want the prepared node count %d", got, want)
+	}
+	if transitionBudget(definition) <= 8 {
+		t.Fatal("the wide fixture must exceed the old sequential constant to be meaningful")
 	}
 }
 
@@ -390,23 +364,34 @@ func TestEndResultSelectsTerminalRunStatus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
+			checkpoint, command := advanceAndPlan(t, checkpoint, definition)
+			checkpoint, err = Apply(checkpoint, definition, observed(command, ProgramSucceeded, 0))
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkpoint, err = Apply(checkpoint, definition, observed(checkpoint.OutstandingCommand(), ProgramSucceeded, 0))
-			if err != nil {
-				t.Fatal(err)
-			}
-			checkpoint, err = AdvanceUntilQuiescent(checkpoint, definition)
-			if err != nil {
-				t.Fatal(err)
-			}
+			checkpoint, _ = advanceAndPlan(t, checkpoint, definition)
 			if checkpoint.Status != test.want {
 				t.Fatalf("status = %q, want %q", checkpoint.Status, test.want)
 			}
 		})
 	}
+}
+
+// advanceAndPlan mirrors exactly what the sequential driver does between two
+// external events: commit every engine-owned transition, then plan the single
+// next command it can carry.
+func advanceAndPlan(t *testing.T, checkpoint Checkpoint, definition *Definition) (Checkpoint, *Command) {
+	t.Helper()
+	next, command, _, err := AdvanceAndPlan(checkpoint, definition)
+	if err != nil {
+		t.Fatalf("advance and plan: %v", err)
+	}
+	return next, command
+}
+
+// advanced applies one node-addressed engine-owned advance.
+func advanced(nodeID string) Transition {
+	return Transition{Kind: TransitionAdvance, NodeID: nodeID}
 }
 
 func observed(command *Command, outcome ProgramOutcome, exitCode int) Transition {
@@ -450,6 +435,50 @@ func sequentialTemplate(taskIDs ...string) *model.Template {
 		Start:      "start",
 		Nodes:      nodes,
 	}
+}
+
+func startToEndTemplate() *model.Template {
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "start-to-end", Start: "start",
+		Nodes: map[string]model.Node{
+			"start": {Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "end"}},
+			"end":   {Type: model.NodeTypeEnd},
+		},
+	}
+}
+
+// fanOutTemplate builds start -> fork -> {branch...} -> join(all) -> end, with
+// one program task per branch. It is the canonical structured fan-out shape:
+// every branch reduces at exactly one join before leaving the fork's scope.
+func fanOutTemplate(branches ...string) *model.Template {
+	nodes := map[string]model.Node{
+		"start": {Type: model.NodeTypeStart, Next: model.Next{model.DefaultOutcome: "fork"}},
+		"join":  joinAllTask("end", "true"),
+		"end":   {Type: model.NodeTypeEnd},
+	}
+	next := model.Next{}
+	for _, branch := range branches {
+		next[branch] = branch
+		nodes[branch] = programTask("join", "true")
+	}
+	nodes["fork"] = model.Node{Type: model.NodeTypeParallel, Next: next}
+	return &model.Template{
+		APIVersion: model.APIVersion, Kind: model.Kind, ID: "fan-out", Start: "start", Nodes: nodes,
+	}
+}
+
+func wideFanOutTemplate(width int) *model.Template {
+	branches := make([]string, 0, width)
+	for i := range width {
+		branches = append(branches, fmt.Sprintf("branch%02d", i))
+	}
+	return fanOutTemplate(branches...)
+}
+
+func joinAllTask(next, run string) model.Node {
+	node := programTask(next, run)
+	node.Join = model.JoinAll
+	return node
 }
 
 func programTask(next, run string, args ...string) model.Node {

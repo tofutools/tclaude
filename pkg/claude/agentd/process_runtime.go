@@ -239,7 +239,10 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 			// The decision itself committed atomically above. A failure in this
 			// follow-on prepare surfaces as an error even though the verdict is
 			// durable; the bounded sweep resumes the run, and a client retry is
-			// correctly refused as stale.
+			// correctly refused as stale. The sweep reaches this run even when a
+			// sibling branch is still awaiting its own decision, because the
+			// runnable predicate admits a run whose ready nodes outnumber its
+			// awaited obligations.
 			dispatch, err = prepareProcessRun(run)
 		}
 	default:
@@ -280,18 +283,21 @@ func prepareProcessRun(run *executor.Run) (*executor.Dispatch, error) {
 func (m *processRunManager) drive(ctx context.Context, runID string, claim *processRunClaim, dispatch *executor.Dispatch) {
 	defer m.release(runID, claim)
 	for dispatch != nil {
-		action := claim.run.Action()
-		if action.Kind != executor.ActionDispatch || action.Command == nil {
+		if action := claim.run.Action(); action.Kind != executor.ActionDispatch || action.Command == nil {
 			slog.Warn("process runtime: dispatch claim lost its command", "run", runID)
 			return
 		}
-		authorization, ok := claim.run.AuthorizationFor(action.Command.Program.Profile)
+		// Authorize the command this dispatch actually executes, not the one a
+		// run-level view happens to surface first: the command outbox is plural,
+		// so the two only coincide while a single command is in flight.
+		command := dispatch.Command()
+		authorization, ok := claim.run.AuthorizationFor(command.Program.Profile)
 		if !ok {
 			// Creation refuses this shape, but an old/future malformed row must
 			// still fail closed. Dropping the live permission makes the durable
 			// outstanding command explicitly reconcilable on the next load.
 			slog.Warn("process runtime: persisted program authorization missing",
-				"run", runID, "profile", action.Command.Program.Profile)
+				"run", runID, "profile", command.Program.Profile)
 			return
 		}
 		_, next, err := processProgramExecute(ctx, claim.run, dispatch, authorization)
@@ -839,13 +845,13 @@ func processRunViewOf(record *db.ProcessRun) (processRunView, error) {
 	needsReconcile := false
 	var awaiting *processRunDecisionView
 	switch {
-	case checkpoint.OutstandingCommand() != nil && claimed:
+	case checkpoint.FirstCommand() != nil && claimed:
 		action = "executing"
-	case checkpoint.OutstandingCommand() != nil:
+	case checkpoint.FirstCommand() != nil:
 		action, needsReconcile = "needs_reconcile", true
-	case checkpoint.AwaitingDecision() != nil:
+	case checkpoint.FirstAwaitingDecision() != nil:
 		action = "awaiting_decision"
-		decision, err := processRunDecisionViewOf(record, checkpoint.AwaitingDecision().NodeID)
+		decision, err := processRunDecisionViewOf(record, checkpoint.FirstAwaitingDecision().NodeID)
 		if err != nil {
 			return processRunView{}, err
 		}
