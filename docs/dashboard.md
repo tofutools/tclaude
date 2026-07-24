@@ -133,7 +133,9 @@ the agent has *N* sub-agents (Task-tool children) still running. It appears
 even when the agent's own turn has ended (status `idle` / `main_agent_idle`),
 and that is exactly the point: a sub-agent launched in the background
 outlives the parent's turn, so the badge flags that an idle-looking agent
-is not actually finished. Hover it for the exact count. The badge is shown
+is not actually finished. While one is live, a bare `idle` reading is
+presented as `idle + work`, consistently with the background-shell case.
+Hover the badge for the exact count. The badge is shown
 only for a live agent — an offline agent's sub-agents died with its process.
 The hook-fed ledger has a conservative staleness timeout for lost stop events;
 for Codex sessions, the dashboard additionally replays the rollout's

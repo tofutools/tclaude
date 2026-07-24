@@ -728,6 +728,68 @@ func TestRunHookCallback_NotificationIdlePromptClearsWorking(t *testing.T) {
 		"idle_prompt must clear the stale status_detail (e.g. 'UserPromptSubmit')")
 }
 
+func TestRunHookCallback_NotificationIdlePromptDoesNotAnnounceIdleWithBackgroundWork(t *testing.T) {
+	tests := []struct {
+		name       string
+		subagents  db.SubagentSet
+		bgShells   db.BgShellSet
+		wantDetail string
+	}{
+		{
+			name: "live sub-agent",
+			subagents: db.SubagentSet{
+				"agent-live": {Type: "Explore", Seen: time.Now()},
+			},
+			wantDetail: "1 subagents running",
+		},
+		{
+			name: "background shell",
+			bgShells: db.BgShellSet{
+				"shell-live": {Command: "go test ./...", Seen: time.Now()},
+			},
+			wantDetail: "1 background shell running",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", dir)
+			db.ResetForTest()
+
+			var notifiedTo []string
+			prev := notifyOnStateTransition
+			notifyOnStateTransition = func(_, _, _, to, _, _, _ string) {
+				notifiedTo = append(notifiedTo, to)
+			}
+			t.Cleanup(func() { notifyOnStateTransition = prev })
+
+			require.NoError(t, SaveSessionState(&SessionState{
+				ID:           "idle-work-sess",
+				ConvID:       "conv-idle-work",
+				Status:       StatusWorking,
+				StatusDetail: "UserPromptSubmit",
+				Subagents:    tt.subagents,
+				BgShells:     tt.bgShells,
+			}))
+
+			feedHook(t, "idle-work-sess", map[string]any{
+				"session_id":        "conv-idle-work",
+				"hook_event_name":   "Notification",
+				"notification_type": "idle_prompt",
+				"cwd":               dir,
+			})
+
+			got, err := LoadSessionState("idle-work-sess")
+			require.NoError(t, err)
+			assert.Equal(t, StatusMainAgentIdle, got.Status)
+			assert.Equal(t, tt.wantDetail, got.StatusDetail)
+			assert.NotContains(t, notifiedTo, StatusIdle,
+				"the generic idle notification must not fire while background work is active")
+		})
+	}
+}
+
 // mustEnsureAgent registers conv as an agent (the catch-all ensure), failing
 // the test on error. The actor-table successor to the old db.EnrollAgent.
 func mustEnsureAgent(t *testing.T, conv string) {

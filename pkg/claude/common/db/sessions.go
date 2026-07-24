@@ -628,6 +628,36 @@ func MarkSessionExitedIfUnchanged(id, observedStatus string, observedUpdatedAt t
 	return n > 0, nil
 }
 
+// SetSessionStatusIfUnchanged compare-and-swaps only the status projection of
+// a session row. The daemon uses it when its live background-activity
+// reconcile has newer evidence than the last hook: an idle row may need to be
+// held at main_agent_idle, or a main_agent_idle row may finally settle to
+// idle. updated_at participates in the guard so a concurrent hook always wins.
+func SetSessionStatusIfUnchanged(
+	id, observedStatus string,
+	observedUpdatedAt time.Time,
+	status, detail string,
+	at time.Time,
+) (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE sessions
+		SET status = ?, status_detail = ?, updated_at = ?
+		WHERE id = ? AND status = ? AND updated_at = ?`,
+		status, detail, at.Format(time.RFC3339Nano),
+		id, observedStatus, observedUpdatedAt.Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // MarkSessionsIdleAfterInterrupt flips every 'working' session row of a
 // conversation back to 'idle', clearing status_detail. It is the
 // recovery path for a user-interrupt: when the user cancels an
