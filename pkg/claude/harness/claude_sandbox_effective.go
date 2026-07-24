@@ -265,6 +265,14 @@ func readClaudeSandboxEnabled(path string) (enabled, found bool, diagnostic stri
 	if err != nil {
 		return false, false, fmt.Sprintf("Could not read %s, so tclaude cannot tell whether it enables the Claude Code sandbox.", displayClaudeSettingsPath(path))
 	}
+	// An empty or whitespace-only file (including a `/dev/null` bind mount, which
+	// reads as zero bytes) carries no configuration. Claude Code creates such
+	// placeholder settings files, and json.Unmarshal would reject them as "not
+	// valid JSON" — so treat them like an absent file and fall through silently
+	// rather than warning. Only files with real, malformed content warn below.
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return false, false, ""
+	}
 	var settings struct {
 		Sandbox struct {
 			Enabled *bool `json:"enabled"`

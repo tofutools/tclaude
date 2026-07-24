@@ -146,6 +146,38 @@ func TestResolveClaudeSandboxEnabledReportsUnparseableFile(t *testing.T) {
 	}
 }
 
+// Claude Code sometimes drops empty or `/dev/null`-mounted placeholder settings
+// files. They carry no configuration, so they must fall through silently like an
+// absent file — never producing a "Could not parse" warning across spawn
+// dialogs. Only settings files with real, malformed content warn.
+func TestResolveClaudeSandboxEnabledIgnoresEmptyFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"zero bytes", ""},
+		{"whitespace only", "  \n\t\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, _ := isolateClaudeSettings(t)
+			project := filepath.Join(home, "repo")
+			// The empty placeholder must not shadow the user tier below it, and it
+			// must not add a diagnostic of its own.
+			writeSettings(t, filepath.Join(project, ".claude", "settings.local.json"), tc.body)
+			writeSettings(t, filepath.Join(project, ".claude", "settings.json"), tc.body)
+			writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
+
+			got := ResolveClaudeSandboxEnabled("", project)
+			if got.State != ClaudeSandboxStateOn {
+				t.Fatalf("got state %v, want on (user tier should decide)", got.State)
+			}
+			if len(got.Diagnostics) != 0 {
+				t.Fatalf("got diagnostics %v, want none for empty placeholder files", got.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestResolveClaudeSandboxEnabledIgnoresRelativeCwd(t *testing.T) {
 	home, _ := isolateClaudeSettings(t)
 	writeSettings(t, filepath.Join(home, ".claude", "settings.json"), `{"sandbox":{"enabled":true}}`)
