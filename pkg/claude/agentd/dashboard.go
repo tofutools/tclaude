@@ -1136,6 +1136,30 @@ type dashboardHarness struct {
 	// without it (Codex). The spawn dialog and profile editor gate their
 	// auto-memory controls on this.
 	CanAutoMemory bool `json:"can_auto_memory"`
+	// CanContextFeatures mirrors Harness.CanContextFeatures — true only for a
+	// harness whose startup context tclaude can trim (Claude Code). The spawn
+	// dialog and profile editor gate their "Context…" control on it.
+	CanContextFeatures bool `json:"can_context_features"`
+	// ContextFeatures is the trim catalog this harness offers, in presentation
+	// order, so the dialog can render the rows (label + description + cautions)
+	// without a second endpoint. [] (not null) for a harness with none, so the
+	// page's .map() is always safe.
+	ContextFeatures []dashboardContextFeature `json:"context_features"`
+}
+
+// dashboardContextFeature is one row of the startup-context trim catalog as the
+// dashboard sees it. It is a projection of harness.ContextFeature minus the
+// delivery mechanism (env var / settings key), which is an implementation
+// detail the operator does not choose between.
+type dashboardContextFeature struct {
+	Slug string `json:"slug"`
+	// Label / Descr are the row's human copy.
+	Label string `json:"label"`
+	Descr string `json:"descr"`
+	// Heavy marks the biggest startup-context wins so the UI can lead with them.
+	Heavy bool `json:"heavy"`
+	// Caution is a non-empty warning for a trim that needs a deliberate decision.
+	Caution string `json:"caution,omitempty"`
 }
 
 // buildHarnessCatalog assembles the spawnable-harness catalog for the
@@ -1164,6 +1188,17 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanAskTimeout:    h.SupportsAskTimeout(),
 			CanRemoteControl: h.CanRemoteControl(),
 			CanAutoMemory:    h.CanAutoMemory(),
+
+			CanContextFeatures: h.CanContextFeatures(),
+		}
+		dh.ContextFeatures = []dashboardContextFeature{}
+		if h.CanContextFeatures() {
+			for _, f := range harness.ContextFeatures() {
+				dh.ContextFeatures = append(dh.ContextFeatures, dashboardContextFeature{
+					Slug: f.Slug, Label: f.Label, Descr: f.Descr,
+					Heavy: f.Heavy, Caution: f.Caution,
+				})
+			}
 		}
 		if dh.Models == nil {
 			dh.Models = []string{} // JSON [] not null, so JS .map() is safe

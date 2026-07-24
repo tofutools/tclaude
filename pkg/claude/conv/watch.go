@@ -2335,6 +2335,16 @@ func resumeLaunchCmd(harnessName, sessionID, convID string, extraArgs []string) 
 		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
 	}
 	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
+	// Likewise for the startup-context trims: a deliberately lean agent must come
+	// back lean. Reading the recorded map back (rather than re-resolving from a
+	// profile that may since have changed) is what makes the resumed pane the same
+	// agent. A conv with nothing recorded reads nil and injects nothing — the
+	// untrimmed posture such a session originally ran with.
+	contextFeatures, err := db.ContextFeaturesForConv(convID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("load startup-context trims for conversation %s: %w", convID, err)
+	}
+	session.ApplyContextFeaturesEnv(h, contextFeatures, resumeEnv)
 	sandboxMode, resumeCwd := resumeSandboxState(convID)
 	approvalPolicy, autoReview, err := resumeApprovalState(h, convID)
 	if err != nil {

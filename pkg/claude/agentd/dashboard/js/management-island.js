@@ -246,7 +246,7 @@ function HarnessFields({ draft, setDraft, catalog, actions, profile = false }) {
   `;
 }
 
-function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfilePermissions }) {
+function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const { seed, options = {}, catalog = [] } = descriptor;
   const baseline = useMemo(() => profileDraft(seed, options, catalog), [descriptor]);
@@ -273,6 +273,7 @@ function ProfileEditor({ descriptor, state, actions, confirmDiscard, openProfile
     <${Row} label="Initial msg" hidden=${local}><textarea value=${draft.initial_message} onInput=${(event) => change(setDraft, 'initial_message', event.currentTarget.value)} rows="3" placeholder="optional — task brief pre-filled into the spawn dialog" spellcheck="false" /></${Row}>
     ${[['Sync worktree', 'sync_worktree'], ['Auto focus', 'auto_focus'], ['Group context', 'include_group_default_context'], ['Group owner', 'is_owner']].map(([label, key]) => html`<${Row} key=${key} label=${label} hidden=${local && key !== 'is_owner'}><${Select} id=${key === 'is_owner' ? 'profile-editor-owner' : `profile-editor-${key.replaceAll('_', '-')}`} value=${draft[key]} onChange=${(value) => change(setDraft, key, value)} options=${TRI_OPTIONS}/></${Row}>`)}
     <div class="cron-create-row"><span class="cron-create-label">Permissions</span><button id="profile-editor-perms" class="tool" type="button" onClick=${() => openProfilePermissions({ overrides: draft.permission_overrides, ownsGroup: readTri(draft.is_owner) === true, label: draft.agent_name.trim(), onSave: (kept) => change(setDraft, 'permission_overrides', kept) })}>Permissions…</button><span>${Object.keys(draft.permission_overrides).length || ''}</span></div>
+    ${(!hEntry || hEntry.can_context_features) && html`<div class="cron-create-row" title="How much of Claude Code's startup context agents from this profile load. Trimming bundled skills, unused tool schemas and system-prompt blocks leaves more of the window for the actual task."><span class="cron-create-label">Startup context</span><button id="profile-editor-context-features" class="tool" type="button" onClick=${() => openProfileContextFeatures({ catalog: hEntry?.context_features || [], selection: draft.context_features, label: draft.agent_name.trim(), onSave: (kept) => change(setDraft, 'context_features', kept) })}>Context…</button><span>${contextFeatureSummary(draft.context_features)}</span></div>`}
     <div class="cron-create-error" role="alert">${state.error.value}</div><div class="modal-buttons"><button disabled=${saving} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button id="profile-editor-submit" class="primary" disabled=${saving} onClick=${submit}>${saving ? 'Saving…' : local ? 'Apply' : 'Save profile'}</button></div>
   </${Overlay}>`;
 }
@@ -703,11 +704,19 @@ function ManagerSlot({ state, actions, confirmDiscard }) {
   return html`<${Manager} kind=${kind} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
 }
 
-function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions }) {
+// contextFeatureSummary renders the profile editor's inline badge for a trim map.
+function contextFeatureSummary(features) {
+  const states = Object.values(features || {});
+  const trimmed = states.filter((state) => state === 'off').length;
+  const kept = states.filter((state) => state === 'on').length;
+  return [trimmed ? `${trimmed} trimmed` : '', kept ? `${kept} kept` : ''].filter(Boolean).join(' · ');
+}
+
+function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   const descriptor = state.dialog.value;
   switch (descriptor?.kind) {
     case 'profile-editor':
-      return html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>`;
+      return html`<${ProfileEditor} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>`;
     case 'role-editor':
       return html`<${RoleEditor} descriptor=${descriptor} current=${{ profiles: state.profiles.value || [] }} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'profile-export':
@@ -748,15 +757,15 @@ function SandboxDiffSlot({ state }) {
   return html`<${SandboxDiffModal} model=${model} close=${state.cancelSandboxDiff} profiles=${model ? state.sandboxProfiles.value || [] : []} />`;
 }
 
-function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions }) {
+function ManagementApp({ state, actions, confirm, confirmDiscard, openProfilePermissions, openProfileContextFeatures }) {
   return html`<${TemplateManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
     <${TemplateEditorSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} confirm=${confirm}/>
     <${ManagerSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>
-    <${DialogSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>
+    <${DialogSlot} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>
     <${SandboxDiffSlot} state=${state}/>`;
 }
 
-export function mountManagementIsland({ host, state, actions, confirm, confirmDiscard, openProfilePermissions, registerCleanup }) {
+export function mountManagementIsland({ host, state, actions, confirm, confirmDiscard, openProfilePermissions, openProfileContextFeatures, registerCleanup }) {
   const controller = {
     openProfilesManageModal: () => actions.openManager('profiles'), openProfileEditor: actions.openProfileEditor, removeProfile: actions.removeProfile,
     openRolesManageModal: () => actions.openManager('roles'), openRoleEditor: actions.openRoleEditor, removeRole: actions.removeRole,
@@ -770,6 +779,6 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext, openGroupClone: actions.openGroupClone,
   };
   const unregister = registerManagementController(controller);
-  render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions}/>` , host);
+  render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>` , host);
   registerCleanup(() => { state.cancelSandboxDiff(false); unregister(); render(null, host); });
 }

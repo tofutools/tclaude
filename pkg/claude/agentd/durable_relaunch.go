@@ -24,6 +24,7 @@ type durableRelaunchConfig struct {
 	AskUserQuestionTimeout string
 	RemoteControl          bool
 	AutoMemory             bool
+	ContextFeatures        map[string]string
 }
 
 // relaunchProfileForSpawn freezes the already-resolved launch posture at an
@@ -47,6 +48,13 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	askTimeout := p.AskUserQuestionTimeout
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
+	// Freeze the trim map as KNOWN intent even when it is empty: an agent
+	// deliberately spawned untrimmed should stay untrimmed, and a nil here would
+	// instead read as "unknown" and let a later profile edit change it.
+	contextFeatures := map[string]string{}
+	for slug, state := range p.ContextFeatures {
+		contextFeatures[slug] = state
+	}
 	return db.AgentRelaunchProfile{
 		Version:                db.RelaunchProfileVersion,
 		SandboxMode:            &sandboxMode,
@@ -59,6 +67,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		AskUserQuestionTimeout: &askTimeout,
 		RemoteControl:          &remoteControl,
 		AutoMemory:             &autoMemory,
+		ContextFeatures:        &contextFeatures,
 	}
 }
 
@@ -104,6 +113,9 @@ func composeAgentRelaunchProfile(fallback, agent *db.AgentRelaunchProfile) *db.A
 	}
 	if agent.AutoMemory != nil {
 		merged.AutoMemory = agent.AutoMemory
+	}
+	if agent.ContextFeatures != nil {
+		merged.ContextFeatures = agent.ContextFeatures
 	}
 	return &merged
 }
@@ -231,6 +243,22 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if autoMemory && !h.CanAutoMemory() {
 		autoMemory = false
 	}
+	// Re-resolve the recorded trims against the harness this relaunch will
+	// actually use. A harness change (or a catalog entry retired since the agent
+	// was born) drops the trims rather than wedging the relaunch: losing a trim
+	// costs context, never correctness, so failing closed here would be the worse
+	// trade.
+	contextFeatures := map[string]string{}
+	if agentProfile.ContextFeatures != nil && h.CanContextFeatures() {
+		for slug, state := range *agentProfile.ContextFeatures {
+			if _, ok := harness.LookupContextFeature(slug); !ok {
+				continue
+			}
+			if normalized, stateErr := harness.ValidateContextFeatureState(state); stateErr == nil && normalized != "" {
+				contextFeatures[slug] = normalized
+			}
+		}
+	}
 
 	return &durableRelaunchConfig{
 		Harness:                h.Name,
@@ -245,5 +273,6 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		AskUserQuestionTimeout: askTimeout,
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
+		ContextFeatures:        contextFeatures,
 	}, nil
 }

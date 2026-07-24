@@ -12,6 +12,7 @@ import (
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
@@ -82,6 +83,9 @@ type profileJSON struct {
 	// Birth-time access controls.
 	IsOwner             *bool             `json:"is_owner,omitempty"`
 	PermissionOverrides map[string]string `json:"permission_overrides,omitempty"`
+	// ContextFeatures is the profile's startup-context trim map (slug → "on" |
+	// "off"). Absent = the profile trims nothing. See harness/context_features.go.
+	ContextFeatures map[string]string `json:"context_features,omitempty"`
 
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
@@ -730,6 +734,9 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 			parts = append(parts, k+"="+p.PermissionOverrides[k])
 		}
 		fmt.Fprintf(w, "  perms:   %s\n", strings.Join(parts, ", "))
+	}
+	if trims := harness.FormatContextFeatures(p.ContextFeatures); trims != "" {
+		fmt.Fprintf(w, "  context: %s\n", trims)
 	}
 
 	if msg := strings.TrimSpace(p.InitialMessage); msg != "" {

@@ -732,7 +732,12 @@ type templateAgentLaunch struct {
 	// AutoMemory keeps Claude Code's auto memory on for a template-deployed
 	// agent. Resolved from the profile tiers like RemoteControl; defaults off,
 	// which makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
-	AutoMemory             bool
+	AutoMemory bool
+	// ContextFeatures is the startup-context trim map a template-deployed agent
+	// launches with, resolved from the profile tiers (whole, not merged — see
+	// resolveContextFeaturesLaunchField). Empty means the agent keeps Claude
+	// Code's own startup context.
+	ContextFeatures        map[string]string
 	AskUserQuestionTimeout string
 	// Notes disclose profile-tier fields that were skipped because they are not
 	// valid for the independently resolved harness. They ride the per-agent
@@ -904,6 +909,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.AutoMemory != nil {
 		if _, err := harness.ResolveAutoMemory(h, p.AutoMemory); err != nil {
 			return wrap("invalid_auto_memory", err.Error())
+		}
+	}
+	if len(p.ContextFeatures) > 0 {
+		if _, err := harness.ResolveContextFeatures(h, p.ContextFeatures); err != nil {
+			return wrap("invalid_context_features", err.Error())
 		}
 	}
 	return nil
@@ -1153,6 +1163,15 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 	if memNote != "" {
 		notes = append(notes, memNote)
 	}
+	// Startup-context trims: no explicit per-deploy request exists, so the tiers
+	// alone decide. Resolved whole rather than merged, like every other consumer.
+	contextFeatures, cfNote, fail := resolveContextFeaturesLaunchField(nil, false, h, tiers)
+	if fail != nil {
+		return templateAgentLaunch{}, fail
+	}
+	if cfNote != "" {
+		notes = append(notes, cfNote)
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -1175,6 +1194,7 @@ func resolveTemplateAgentLaunch(a db.GroupTemplateAgent, role *db.Role, cwd, cal
 		AutoReviewSet:          autoReviewSet,
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
+		ContextFeatures:        contextFeatures,
 		AskUserQuestionTimeout: askTimeout,
 		Notes:                  notes,
 	}, nil
@@ -1233,6 +1253,14 @@ func traceMemberLaunch(convID string) templateAgentLaunch {
 		if ar, err := harness.ResolveAutoReview(h, prof.ApprovalAutoReview); err == nil {
 			out.AutoReview = ar
 			out.AutoReviewSet = true
+		}
+	}
+	// The startup-context trims this member actually launched with. Observable
+	// (recorded on the session row / durable relaunch profile), so a re-snapshot
+	// captures a lean member as lean instead of quietly widening the template.
+	if features, err := db.ContextFeaturesForConv(convID); err == nil {
+		if resolved, err := harness.ResolveContextFeatures(h, features); err == nil {
+			out.ContextFeatures = resolved
 		}
 	}
 	return out
@@ -3640,6 +3668,12 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	out.TrustDir = prev.TrustDir
 	out.RemoteControl = prev.RemoteControl
 	out.AutoMemory = prev.AutoMemory
+	// ContextFeatures IS observable, so the traced value wins like harness/model.
+	// prev carries forward only when the re-trace saw nothing at all (a pruned
+	// session row), which would otherwise silently un-trim the template.
+	if len(out.ContextFeatures) == 0 {
+		out.ContextFeatures = prev.ContextFeatures
+	}
 	for slug, effect := range prev.PermissionOverrides {
 		if effect != db.PermEffectGrant {
 			if out.PermissionOverrides == nil {
@@ -3653,6 +3687,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile) *db.SpawnProfile 
 	if out.Harness == "" && out.Model == "" && out.Effort == "" && out.Sandbox == "" &&
 		out.Approval == "" && out.ToolGovernance == "" && out.AskUserQuestionTimeout == "" &&
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
+		len(out.ContextFeatures) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil
 	}
@@ -3706,7 +3741,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 		// starts life behind the read-only "legacy inline" notice.
 		launch := traceMemberLaunch(convID)
 		var inline *db.SpawnProfile
-		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || len(perms) > 0 {
+		if launch.Harness != "" || launch.Model != "" || launch.Effort != "" || launch.Sandbox != "" || launch.Approval != "" || launch.AutoReviewSet || len(launch.ContextFeatures) > 0 || len(perms) > 0 {
 			po := map[string]string{}
 			for _, s := range perms {
 				po[s] = db.PermEffectGrant
@@ -3718,6 +3753,7 @@ func snapshotGroupTemplate(name string, g *db.AgentGroup, members []*db.AgentGro
 				Sandbox:             launch.Sandbox,
 				Approval:            launch.Approval,
 				PermissionOverrides: po,
+				ContextFeatures:     launch.ContextFeatures,
 			}
 			if launch.AutoReviewSet {
 				autoReview := launch.AutoReview

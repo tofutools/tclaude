@@ -175,6 +175,21 @@ type NewParams struct {
 	// this definite bool; a direct human `session new` may set it too.
 	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for this session. Off by default for every Claude Code session tclaude launches (it injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1), because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
 
+	// ContextFeatures trims Claude Code's startup context for this session —
+	// bundled skills, unused tool schemas, system-prompt blocks (TCL-597). Unset
+	// changes nothing, so the session keeps whatever the operator's own
+	// environment and settings give it. The daemon spawn path forwards the
+	// resolved profile/spawn map here; a direct human `session new` may set it
+	// too. Claude-Code-only; a value for a harness without these switches is an
+	// error rather than a silent drop.
+	ContextFeatures string `long:"context-features" optional:"true" help:"Trim Claude Code startup context for this session: comma-separated <feature>[=on|off] (a bare feature means off). E.g. bundled-skills,artifact,workflows. Unset changes nothing. Run 'tclaude session new --help-context-features' for the catalog. Not applicable to codex"`
+
+	// HelpContextFeatures prints the catalog and exits. A dedicated flag rather
+	// than a giant help string keeps `--help` readable while still making the
+	// slugs discoverable from the CLI (the dashboard shows the same catalog with
+	// its descriptions inline).
+	HelpContextFeatures bool `long:"help-context-features" help:"List the startup-context features --context-features can trim, then exit"`
+
 	// --join-group makes the new session auto-join an existing agent group
 	// the moment its conv-id materialises. Routed through the daemon's
 	// `groups.spawn` orchestration; not compatible with --resume / --label.
@@ -278,6 +293,10 @@ func sandboxDescr(sandboxMode, permissionProfile string) string {
 var JoinGroupHandler func(*NewParams) error
 
 func runNew(params *NewParams) error {
+	if params.HelpContextFeatures {
+		harness.PrintContextFeatureCatalog(os.Stdout)
+		return nil
+	}
 	var effectiveSandbox *sandboxpolicy.Snapshot
 	params.SandboxSnapshotPath = strings.TrimSpace(params.SandboxSnapshotPath)
 	params.SandboxSnapshotDigest = strings.TrimSpace(params.SandboxSnapshotDigest)
@@ -585,6 +604,20 @@ func runNew(params *NewParams) error {
 	}
 	params.AskUserQuestionTimeout = askTimeout
 
+	// Gate --context-features the same way: parse the CLI spelling, then resolve
+	// it against the harness so an unknown slug, a bad state, or a trim requested
+	// for a harness with no steerable startup context (Codex) errors here rather
+	// than silently doing nothing. Unset stays nil, which injects nothing.
+	requestedFeatures, err := harness.ParseContextFeatures(params.ContextFeatures)
+	if err != nil {
+		return err
+	}
+	contextFeatures, err := harness.ResolveContextFeatures(h, requestedFeatures)
+	if err != nil {
+		return err
+	}
+	params.ContextFeatures = harness.FormatContextFeatures(contextFeatures)
+
 	if params.JoinGroup != "" {
 		if JoinGroupHandler == nil {
 			return fmt.Errorf("--join-group is not wired up in this binary")
@@ -779,6 +812,11 @@ func runNew(params *NewParams) error {
 	// memory files that every other agent on the repo would inherit. No-op for
 	// harnesses without an auto-memory system. See ApplyAutoMemoryEnv.
 	ApplyAutoMemoryEnv(h, autoMemory, additionalEnv)
+	// Trim this pane's Claude Code startup context to what the operator actually
+	// wants the agent thinking about. Sparse and opt-in: an empty map injects
+	// nothing. Settings-only trims ride the `--settings` payload the spec builds
+	// below instead. See ApplyContextFeaturesEnv.
+	ApplyContextFeaturesEnv(h, contextFeatures, additionalEnv)
 	envExports := clcommon.BuildEnvExports(additionalEnv)
 	openCodeServerURL := ""
 	if h.UsesAuthoritativeServer() {
@@ -964,6 +1002,7 @@ func runNew(params *NewParams) error {
 		SandboxBreakGlassReadDirs:  sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessRead),
 		SandboxBreakGlassWriteDirs: sandboxSnapshotBreakGlassDirs(launchSandbox, sandboxpolicy.AccessWrite),
 		AskUserQuestionTimeout:     askTimeout,
+		ContextFeatures:            contextFeatures,
 		PermissionProfile:          launchPermissionProfile,
 		ApprovalPolicy:             approvalPolicy,
 		AutoReview:                 autoReview,
@@ -1100,6 +1139,19 @@ func runNew(params *NewParams) error {
 		if err := db.SetSessionAutoMemory(sessionID, autoMemory); err != nil {
 			slog.Warn("failed to record session auto-memory posture",
 				"session_id", sessionID, "auto_memory", autoMemory, "error", err)
+		}
+	}
+	if h.SupportsContextFeatures() {
+		// Same discipline for the startup-context trims: record what this launch
+		// resolved to so a resume / clone / reincarnation hands the successor the
+		// same lean context. Written unconditionally (including the empty map) so
+		// the row distinguishes "known: trims nothing" from a legacy unknown.
+		// Best-effort for the same reason as the auto-memory write above — a lost
+		// write costs a future relaunch its trims, not this session's.
+		if err := db.SetSessionContextFeatures(sessionID, contextFeatures); err != nil {
+			slog.Warn("failed to record session context features",
+				"session_id", sessionID,
+				"context_features", harness.FormatContextFeatures(contextFeatures), "error", err)
 		}
 	}
 	if h.Name == harness.CodexName {

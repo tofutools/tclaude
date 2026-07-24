@@ -111,6 +111,10 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := relaunch.RemoteControl
 	autoMemory := relaunch.AutoMemory
+	// A clone is meant to be the same agent working alongside the original, so it
+	// inherits the source's startup-context shape too — a lean source must not
+	// produce a fat sibling.
+	contextFeatures := relaunch.ContextFeatures
 	cloneSandbox := relaunch.Sandbox
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(srcHarness, cloneSandbox)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {
@@ -176,6 +180,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
 		proofArgs.AutoMemory = autoMemory
+		proofArgs.ContextFeatures = contextFeatures
 		if err := SpawnDetachedTclaudeNew(proofArgs); err != nil {
 			agentDirectoryCleanup()
 			return "", "", "", "", &cloneSpawnError{
@@ -254,6 +259,7 @@ func cloneSpawnOnce(sourceConv, cwd string, noCopyConv bool, effort, model, proo
 	proofArgs.AskUserQuestionTimeout = askTimeout
 	proofArgs.RemoteControl = remoteControl
 	proofArgs.AutoMemory = autoMemory
+	proofArgs.ContextFeatures = contextFeatures
 	if err := SpawnDetachedTclaudeResume(proofArgs); err != nil {
 		agentDirectoryCleanup()
 		return "", "", "", "", &cloneSpawnError{

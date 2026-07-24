@@ -47,6 +47,7 @@ nav:
   - Agent Operations:
       - Coordination: agent.md
       - Dashboard: dashboard.md
+      - Startup Context: startup-context.md
       - Remote Control: remote-control.md
       - Remote Dashboard Access: remote-access.md
       - Sandboxing: sandboxing.md

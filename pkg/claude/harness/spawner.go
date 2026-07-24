@@ -121,6 +121,19 @@ type SpawnSpec struct {
 	// Harness.AskTimeout / ResolveAskTimeoutMode before building the spec.
 	// Harnesses with no AskUserQuestion dialog (Codex) ignore it.
 	AskUserQuestionTimeout string
+	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
+	// "on"|"off"; absent = leave alone), validated through
+	// ResolveContextFeatures before the spec is built. See context_features.go
+	// for the catalog and why tclaude steers these at all.
+	//
+	// It is delivered along TWO paths, because Claude Code splits the switches
+	// that way: env-backed entries ride the launch environment
+	// (ApplyContextFeaturesEnv, so tclaude never edits the operator's
+	// settings.json), and the handful with no env twin join the SAME `--settings`
+	// payload as SandboxMode and AskUserQuestionTimeout. nil / empty injects
+	// nothing. Harnesses with no steerable startup-context surface (Codex,
+	// OpenCode) ignore it.
+	ContextFeatures map[string]string
 	// PermissionProfile names a tclaude-managed Codex permission profile to run
 	// under, realised as `codex -p <name>` (a layered config-profile file whose
 	// default_permissions activates the profile for this spawn only). It is the

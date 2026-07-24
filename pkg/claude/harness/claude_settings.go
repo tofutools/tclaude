@@ -119,6 +119,13 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 	if v := claudeAskTimeoutValue(spec.AskUserQuestionTimeout); v != "" {
 		settings["askUserQuestionTimeout"] = v
 	}
+	// Startup-context trims with no CLAUDE_CODE_DISABLE_* twin (TCL-597). The
+	// env-backed majority of the catalog rides ApplyContextFeaturesEnv instead;
+	// only these need the settings payload, and they join the shared object here
+	// rather than growing a second `--settings` flag.
+	for key, disabled := range ContextFeatureSettings(spec.ContextFeatures) {
+		settings[key] = disabled
+	}
 	if len(settings) == 0 {
 		return ""
 	}

@@ -30,6 +30,7 @@ import {
   spawnDraftIsDirty,
   spawnModelDefaultLabel,
   spawnNameHint,
+  spawnContextFeatureIndicator,
   spawnPermissionIndicator,
   spawnProfileChoices,
   spawnProfileSeed,
@@ -47,6 +48,7 @@ const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
   'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'owner', 'permissionOverrides',
+  'contextFeatures',
   'syncWorktree', 'autoFocus', 'includeGroupContext',
 ];
 
@@ -177,6 +179,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const dirty = spawnDraftIsDirty(draft, baseline, attachments.length);
   const nameHint = spawnNameHint(draft.name, context.normalizeNames);
   const permissionsLabel = spawnPermissionIndicator(draft.permissionOverrides);
+  const contextFeaturesLabel = spawnContextFeatureIndicator(draft.contextFeatures);
 
   useEffect(() => () => {
     profileRequest.current += 1;
@@ -321,7 +324,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   };
   const changeHarness = (value) => {
     touched.current.add('harness');
-    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory']) {
+    for (const key of ['model', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout', 'trustDir', 'remoteControl', 'autoMemory', 'contextFeatures']) {
       touched.current.add(key);
     }
     setDraft((before) => selectSpawnHarness(before, value, context, rememberedEffort));
@@ -494,6 +497,19 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         if (!state.isCurrent(generation)) return;
         touched.current.add('permissionOverrides');
         setDraft((before) => ({ ...before, permissionOverrides: { ...kept } }));
+      },
+    });
+  };
+  const openContextFeatures = () => {
+    const generation = current.generation;
+    actions.openContextFeatures({
+      catalog: view.contextFeatureCatalog,
+      selection: draft.contextFeatures,
+      label: draft.name.trim(),
+      onSave: (kept) => {
+        if (!state.isCurrent(generation)) return;
+        touched.current.add('contextFeatures');
+        setDraft((before) => ({ ...before, contextFeatures: { ...kept } }));
       },
     });
   };
@@ -758,6 +774,11 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         title="Set the new agent's permanent per-slug permissions (grant / deny / inherit) to apply when it spawns."
         onClick=${openPermissions}>Permissions…</button>
       <span id="agent-spawn-perms-indicator" class="spawn-perms-indicator" hidden=${!permissionsLabel}>${permissionsLabel}</span>
+      ${view.showContextFeatures && html`<button type="button" id="agent-spawn-context-features" disabled=${busy}
+        title="Choose how much of Claude Code's startup context this agent loads — trim bundled skills, unused tool schemas and system-prompt blocks so more of its window is about your task."
+        onClick=${openContextFeatures}>Context…</button>`}
+      ${view.showContextFeatures && html`<span id="agent-spawn-context-features-indicator" class="spawn-perms-indicator"
+        hidden=${!contextFeaturesLabel}>${contextFeaturesLabel}</span>`}
     </div>
     <label class="cron-create-row">
       <span class="cron-create-label">Descr</span>
