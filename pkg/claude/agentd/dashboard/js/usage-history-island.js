@@ -5,8 +5,9 @@ import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
 import {
-  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageResetCountdown, formatUsageTime,
-  usageForecastView, usageProviderLabel, usageScopeLabel, usageSeriesKeyOf, usageWindowScopeLabel,
+  USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageDuration, formatUsageResetCountdown,
+  formatUsageTime, usageForecastView, usageProviderLabel, usageScopeLabel, usageSeriesKeyOf,
+  usageWindowScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -134,15 +135,27 @@ function groupSeriesByProvider(series) {
   return rows;
 }
 
-function UsageCoverageWarnings({ warnings }) {
+// The warning fires only when OpenCode activity outran the newest native
+// sample for that provider, so the copy names that tail — a sample taken after
+// an OpenCode turn already contains its spend, and saying "no coverage in this
+// span" when the graph ends on a fresh sample reads as a false alarm.
+function UsageCoverageWarnings({ warnings, generatedAt }) {
   if (!warnings?.length) return null;
+  const now = new Date(generatedAt).getTime();
   return html`<div class="usage-coverage-warnings" role="status">
     ${warnings.map((warning) => {
       const provider = usageProviderLabel(warning.provider);
       const models = (warning.models || []).length ? ` (${warning.models.join(', ')})` : '';
-      const source = warning.native_source
-        ? `No ${usageProviderLabel(warning.native_source)} native usage-history coverage was recorded for the selected span.`
-        : 'This provider has no corresponding native usage source in tclaude.';
+      const native = usageProviderLabel(warning.native_source);
+      // The lag is stated as a duration rather than two relative times: both
+      // sides routinely round into the same bucket ("1h ago" … "1h ago"),
+      // which reads as a contradiction rather than a gap.
+      const lag = new Date(warning.activity_to).getTime() - new Date(warning.native_latest).getTime();
+      const source = !warning.native_source
+        ? 'This provider has no corresponding native usage source in tclaude.'
+        : warning.native_latest
+          ? `The most recent OpenCode activity (${formatUsageTime(warning.activity_to, now)}) came ${formatUsageDuration(lag)} after the newest ${native} sample.`
+          : `No ${native} native usage-history coverage was recorded for the selected span.`;
       return html`<div class="usage-coverage-warning" key=${warning.provider}>
         <strong>⚠ ${provider}${models}</strong> — OpenCode was active in this span, but OpenCode does not export provider-account usage-limit history.
         ${source} Available graphs remain visible, but they may be incomplete or stale.
@@ -182,7 +195,8 @@ export function UsageHistoryApp({ state, actions }) {
     <h2 class="usage-wizard-title" aria-hidden="true">🔮 The Mana Reserves</h2>
     <${AsyncLoadState} label=${w('Usage', 'Reserves')} request=${current.request} retry=${actions.load} errorClass="usage-history-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
-      <${UsageCoverageWarnings} warnings=${current.payload?.coverage_warnings} />
+      <${UsageCoverageWarnings} warnings=${current.payload?.coverage_warnings}
+        generatedAt=${current.payload?.generated_at} />
       ${current.series.length
         ? html`<div class="usage-series-grid">${groupSeriesByProvider(current.series).map((row) => html`
             <div class="usage-provider-row" key=${row.provider} style=${`--usage-cols:${row.series.length}`}>

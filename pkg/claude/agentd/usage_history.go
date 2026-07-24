@@ -26,6 +26,13 @@ const (
 	maxUsageSpanOverrides    = 100
 )
 
+// openCodeCoverageGrace is how long a sample may be overdue before the next
+// one stops counting as in flight. One and a half sampling intervals keeps the
+// warning quiet while sampling is merely trailing an active OpenCode session,
+// so the warning reads as "sampling has fallen behind the work" rather than "a
+// sample is due".
+const openCodeCoverageGrace = 3 * db.SubscriptionUsageSampleInterval / 2
+
 type usageHistoryPoint struct {
 	At       string  `json:"at"`
 	Pct      float64 `json:"pct"`
@@ -74,6 +81,7 @@ type usageCoverageWarning struct {
 	From         string   `json:"from"`
 	ActivityFrom string   `json:"activity_from"`
 	ActivityTo   string   `json:"activity_to"`
+	NativeLatest string   `json:"native_latest,omitempty"`
 }
 
 type usageSeriesKey struct{ provider, window string }
@@ -203,7 +211,6 @@ func collectOpenCodeUsageCoverageWarnings(
 	}
 	type activityGroup struct {
 		models map[string]struct{}
-		times  []time.Time
 		first  time.Time
 		last   time.Time
 	}
@@ -228,7 +235,6 @@ func collectOpenCodeUsageCoverageWarnings(
 			byProvider[provider] = group
 		}
 		group.models[row.ModelID] = struct{}{}
-		group.times = append(group.times, row.ObservedAt)
 		if row.ObservedAt.Before(group.first) {
 			group.first = row.ObservedAt
 		}
@@ -236,7 +242,10 @@ func collectOpenCodeUsageCoverageWarnings(
 			group.last = row.ObservedAt
 		}
 	}
-	nativeTimes := map[string][]time.Time{}
+	// Only the newest native sample per provider matters: samples are absolute
+	// readings of the account quota rather than deltas, so anything plotted at
+	// or after an OpenCode turn already contains that turn's spend.
+	latestNative := map[string]time.Time{}
 	for _, row := range nativeRows {
 		if row.Excluded {
 			continue
@@ -248,7 +257,9 @@ func collectOpenCodeUsageCoverageWarnings(
 		if row.ObservedAt.Before(from) || row.ObservedAt.After(to) {
 			continue
 		}
-		nativeTimes[row.Provider] = append(nativeTimes[row.Provider], row.ObservedAt)
+		if row.ObservedAt.After(latestNative[row.Provider]) {
+			latestNative[row.Provider] = row.ObservedAt
+		}
 	}
 	providers := make([]string, 0, len(byProvider))
 	for provider := range byProvider {
@@ -259,12 +270,12 @@ func collectOpenCodeUsageCoverageWarnings(
 	for _, provider := range providers {
 		nativeSource := openCodeNativeUsageSource(provider)
 		group := byProvider[provider]
-		covered := nativeSource != "" && openCodeActivityCoveredByNativeSamples(
-			group.times,
-			nativeTimes[nativeSource],
-		)
-		if covered {
-			continue
+		var native time.Time
+		if nativeSource != "" {
+			native = latestNative[nativeSource]
+			if openCodeActivityCoveredByNativeSamples(group.last, native, to) {
+				continue
+			}
 		}
 		models := make([]string, 0, len(group.models))
 		for model := range group.models {
@@ -277,37 +288,43 @@ func collectOpenCodeUsageCoverageWarnings(
 				from = selected
 			}
 		}
-		out = append(out, usageCoverageWarning{
+		warning := usageCoverageWarning{
 			Provider: provider, NativeSource: nativeSource, Models: models,
 			From:         from.UTC().Format(time.RFC3339Nano),
 			ActivityFrom: group.first.UTC().Format(time.RFC3339Nano),
 			ActivityTo:   group.last.UTC().Format(time.RFC3339Nano),
-		})
+		}
+		if !native.IsZero() {
+			warning.NativeLatest = native.UTC().Format(time.RFC3339Nano)
+		}
+		out = append(out, warning)
 	}
 	return out, nil
 }
 
-func openCodeActivityCoveredByNativeSamples(activity, native []time.Time) bool {
-	if len(activity) == 0 || len(native) == 0 {
+// openCodeActivityCoveredByNativeSamples reports whether the newest native
+// sample can be trusted to already include the newest OpenCode turn.
+//
+// Each native sample is an absolute reading of the provider account's quota,
+// not a delta, so a sample taken after an OpenCode turn contains that turn's
+// spend and every plotted point stays true regardless of how the sampler
+// behaved earlier in the span. A gap in the middle only blurs where between
+// two correct readings the consumption landed. What genuinely leaves the
+// graphs incomplete is activity that outruns the newest sample.
+//
+// The grace is anchored on now rather than on the activity: forgiving an
+// uncovered turn because a sample was due shortly after it would forgive it
+// forever, including the case this warning exists for — the OpenAI series only
+// advances when Codex itself runs, so once sampling stops, the sample that
+// would have covered that turn is never coming.
+func openCodeActivityCoveredByNativeSamples(latestActivity, latestNative, now time.Time) bool {
+	if latestActivity.IsZero() || latestNative.IsZero() {
 		return false
 	}
-	for _, observedAt := range activity {
-		matched := false
-		for _, sampleAt := range native {
-			delta := sampleAt.Sub(observedAt)
-			// A sample taken before the OpenCode turn cannot include that
-			// activity. Coverage requires the next native observation, within
-			// one expected sampling interval.
-			if delta >= 0 && delta <= db.SubscriptionUsageSampleInterval {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
+	if !latestActivity.After(latestNative) {
+		return true
 	}
-	return true
+	return !now.After(latestNative.Add(openCodeCoverageGrace))
 }
 
 func downsampleUsageResets(resets []usageHistoryReset, max int) []usageHistoryReset {
