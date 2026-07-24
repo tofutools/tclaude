@@ -6,8 +6,10 @@
 <title>tclaude terminals</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50" y="52" font-size="70" text-anchor="middle" dominant-baseline="central">🖥️</text></svg>'>
 <link rel="stylesheet" href="/static/vendor/xterm/xterm.min.css">
-<!-- Shared terminal shell styles (also loaded by the dashboard's Terminals
-     tab); terminals.css adds only this page's full-page layout. -->
+<!-- The detached page reuses the dashboard's operator-message dialog as well
+     as its terminal shell. dashboard.css supplies that shared dialog chrome;
+     mux.css and terminals.css follow it with terminal/full-page overrides. -->
+<link rel="stylesheet" href="/static/dashboard.css">
 <link rel="stylesheet" href="/static/mux.css">
 <link rel="stylesheet" href="/static/terminals.css">
 </head>
@@ -15,6 +17,7 @@
 <!-- Preact owns this stable standalone shell root. The xterm subtree remains
      opaque beneath its pane host and is created only by terminals-core.js. -->
 <div id="terminals-root"></div>
+<div id="message-access-dialog-root"></div>
 <!-- Vendored xterm.js as classic (non-module) scripts so Terminal / FitAddon / WebLinksAddon
      are plain globals by the time the module below runs — same arrangement as
      dashboard.html. -->

@@ -1115,12 +1115,15 @@ function TerminalTabs({
   }, [hasPanes, manageTitle]);
 
   useEffect(() => {
-    if (solo || !onComposeMessage) return undefined;
+    if (!onComposeMessage) return undefined;
     const onComposeShortcut = (event) => {
       const pane = current.panes.find((candidate) => candidate.key === current.activeKey);
       const dialogKind = composeMessageDialogKind();
       const action = terminalComposeShortcutAction(event, {
-        tabActive: document.getElementById('tab-terminals')?.classList.contains('active'),
+        // The standalone page is itself the active terminal surface. Keep this
+        // document-level capture path in both modes so header/tab controls get
+        // the shortcut too, before xterm or browser Cmd+M handling sees it.
+        tabActive: solo || document.getElementById('tab-terminals')?.classList.contains('active'),
         operatorModalOpen: dialogKind === 'operator-message',
         blockingOverlayOpen: hasShownOverlay(),
         eligiblePane: Boolean(pane?.seed?.agent),
@@ -1360,6 +1363,8 @@ export function mountStandaloneTerminalShell({
   state,
   actions,
   widgetFactory = mountTerminalWidget,
+  onComposeMessage = null,
+  composeMessageDialogKind = () => '',
 }) {
   let disposed = false;
   render(html`
@@ -1367,6 +1372,8 @@ export function mountStandaloneTerminalShell({
       state=${state}
       actions=${actions}
       widgetFactory=${widgetFactory}
+      onComposeMessage=${onComposeMessage}
+      composeMessageDialogKind=${composeMessageDialogKind}
       solo=${true}
       manageTitle=${true}
       empty=${true}

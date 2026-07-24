@@ -68,6 +68,13 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
       state.dispose();
     };
   };
+  const mountMessageDialogs = ({ confirmDiscard, notify, refresh }) => {
+    calls.push('dialogs');
+    assert.equal(typeof confirmDiscard, 'function');
+    assert.equal(typeof notify, 'function');
+    assert.equal(typeof refresh, 'function');
+    return () => calls.push('dialogs-cleanup');
+  };
   const historyRef = {
     replaceState(_state, _unused, url) {
       calls.push(`replace:${url}`);
@@ -89,6 +96,7 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
     initPrefs: () => { calls.push('prefs'); return prefs; },
     initThemeSync: () => calls.push('theme'),
     mountShell,
+    mountMessageDialogs,
   });
 
   const starting = page.start();
@@ -97,7 +105,7 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   resolvePrefs();
   assert.equal(await starting, true);
   assert.deepEqual(calls, [
-    'prefs', 'theme', 'mount', 'replace:/terminals?solo=1',
+    'prefs', 'theme', 'dialogs', 'mount', 'replace:/terminals?solo=1',
   ]);
   assert.equal(page.state.panes.value.length, 1);
   assert.equal(page.state.panes.value[0].seed.ws, seed.ws);
@@ -112,6 +120,7 @@ test('standalone lifecycle preserves hash, auth return, beacon, and exact-once c
   harness.window.dispatchEvent(new harness.window.Event('unload'));
   page.dispose();
   assert.equal(calls.filter((call) => call === 'cleanup').length, 1);
+  assert.equal(calls.filter((call) => call === 'dialogs-cleanup').length, 1);
   assert.equal(page.state.panes.value.length, 0);
 
   const lateAuth = new harness.window.CustomEvent('tclaude:auth-expired', { detail: {} });
@@ -260,14 +269,20 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
     documentRef: harness.document,
     fetchImpl: async () => ({ ok: true }),
   });
+  const composed = [];
+  let dialogKind = '';
   const cleanup = mountStandaloneTerminalShell({
     host, state, actions, widgetFactory: fake.factory,
+    onComposeMessage: (seed) => composed.push(seed),
+    composeMessageDialogKind: () => dialogKind,
   });
   await harness.act(() => {});
   assert.ok(host.querySelector('#mux-empty'));
 
   await harness.act(async () => {
-    actions.openPane({ ws: '/solo', key: 'solo', label: 'solo terminal' });
+    actions.openPane({
+      ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo',
+    });
     await Promise.resolve();
   });
   assert.equal(host.querySelector('[role="tablist"]'), null);
@@ -281,6 +296,31 @@ test('standalone Preact shell renders solo chrome around an opaque active widget
   assert.equal(fake.widgets[0].activeEdges.at(-1), true);
   assert.equal(fake.widgets[0].connectCount, 1);
   assert.equal(harness.document.title, 'solo terminal — tclaude terminals');
+
+  const message = getByRole(host, 'button', { name: '✉ Message' });
+  harness.fireEvent(message, 'click');
+  const headerChord = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(headerChord, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, metaKey: { value: true },
+  });
+  host.querySelector('.mux-pane-header').dispatchEvent(headerChord);
+  assert.equal(headerChord.defaultPrevented, true,
+    'the standalone shell captures Cmd+M above xterm and header controls');
+  assert.deepEqual(composed.map(({ restoreFocus, ...target }) => target), [
+    { ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo' },
+    { ws: '/solo', key: 'solo', label: 'solo terminal', agent: 'agt_solo' },
+  ]);
+  assert.equal(typeof composed[0].restoreFocus, 'function');
+
+  dialogKind = 'operator-message';
+  const held = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperties(held, {
+    key: { value: 'm' }, code: { value: 'KeyM' }, ctrlKey: { value: true },
+  });
+  harness.document.dispatchEvent(held);
+  assert.equal(held.defaultPrevented, true,
+    'the open standalone composer consumes repeated Ctrl/Cmd+M');
+  assert.equal(composed.length, 2, 'the held shortcut does not reopen or retarget the composer');
 
   const beforeUnload = new harness.window.Event('beforeunload', { cancelable: true });
   harness.window.dispatchEvent(beforeUnload);

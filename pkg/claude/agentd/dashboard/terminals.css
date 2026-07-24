@@ -3,15 +3,16 @@
    "Terminals" tab, this page exists only for the "⧉ tab" pop-out (?solo=1: one
    terminal in its own window).
 
-   Deliberately self-contained: this page is NOT the dashboard SPA, so it does
-   not pull in dashboard.css. The reusable pane / button widgets are shared
-   with the in-dashboard tab via mux.css; this file adds only the full-page
-   host and empty-state layout. */
+   This page is NOT the dashboard SPA, but it reuses dashboard.css for the
+   shared operator-message dialog. The reusable pane / button widgets are
+   shared with the in-dashboard tab via mux.css; this file supplies the
+   full-page host overrides and empty-state layout. */
 
 * { box-sizing: border-box; }
 
 html, body {
   margin: 0; height: 100%;
+  padding: 0; overflow: hidden;
   background: #0d1117; color: #c9d1d9;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px;

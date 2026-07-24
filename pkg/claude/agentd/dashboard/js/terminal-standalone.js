@@ -6,6 +6,10 @@ import { createTerminalShellActions } from './terminal-shell-actions.js';
 import { mountStandaloneTerminalShell } from './terminal-shell-island.js';
 import { createTerminalShellState } from './terminal-shell-state.js';
 import {
+  activeMessageAccessDialogKind, openOperatorMessageDialog,
+} from './message-access-dialog-controller.js';
+import { mountMessageAccessDialogsFeature } from './preact-loader.js';
+import {
   decodeTerminalOpenHash, requestTerminalReattach, terminalDashboardURL,
 } from './terminal-handoff.js';
 import { normalizeSeed } from './terminals-core.js';
@@ -24,6 +28,9 @@ export function createStandaloneTerminalsPage({
   historyRef = globalThis.history,
   navigatorRef = globalThis.navigator,
   mountShell = mountStandaloneTerminalShell,
+  mountMessageDialogs = mountMessageAccessDialogsFeature,
+  openComposeMessage = openOperatorMessageDialog,
+  composeMessageDialogKind = activeMessageAccessDialogKind,
 } = {}) {
   if (!host) throw new TypeError('standalone terminal page requires a host');
   if (typeof initPrefs !== 'function' || typeof initThemeSync !== 'function') {
@@ -36,6 +43,7 @@ export function createStandaloneTerminalsPage({
   const detachConversations = new Set();
   let actions = null;
   let mountCleanup = null;
+  let messageDialogsCleanup = null;
   let prefsReady = false;
   let soloSeed = null;
   let startPromise = null;
@@ -118,7 +126,9 @@ export function createStandaloneTerminalsPage({
     windowRef.removeEventListener('unload', dispose);
     if (mountCleanup) mountCleanup();
     else actions.dispose();
+    if (messageDialogsCleanup) messageDialogsCleanup();
     mountCleanup = null;
+    messageDialogsCleanup = null;
   }
 
   windowRef.addEventListener('hashchange', onHashChange);
@@ -128,11 +138,28 @@ export function createStandaloneTerminalsPage({
 
   function start() {
     if (startPromise) return startPromise;
-    startPromise = Promise.resolve(initPrefs()).then(() => {
+    startPromise = Promise.resolve(initPrefs()).then(async () => {
       if (disposed) return false;
       initThemeSync();
       if (disposed) return false;
-      mountCleanup = mountShell({ host, state, actions, widgetFactory });
+      const cleanup = await mountMessageDialogs({
+        refresh: async () => {},
+        notify: () => {},
+        confirmDiscard: () => windowRef.confirm('Discard this message draft?'),
+      });
+      if (disposed) {
+        cleanup?.();
+        return false;
+      }
+      messageDialogsCleanup = cleanup;
+      mountCleanup = mountShell({
+        host,
+        state,
+        actions,
+        widgetFactory,
+        onComposeMessage: cleanup ? openComposeMessage : null,
+        composeMessageDialogKind,
+      });
       prefsReady = true;
       consumeHash();
       return true;

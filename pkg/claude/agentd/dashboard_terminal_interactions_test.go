@@ -89,6 +89,7 @@ func TestDashboardTerminalInteractionsWired(t *testing.T) {
 		"const dialogKind = composeMessageDialogKind();",
 		"operatorModalOpen: dialogKind === 'operator-message',",
 		"blockingOverlayOpen: hasShownOverlay(),",
+		"tabActive: solo || document.getElementById('tab-terminals')?.classList.contains('active'),",
 		"if (action === 'ignore') return;",
 		"document.addEventListener('keydown', onComposeShortcut, true);",
 		"document.removeEventListener('keydown', onComposeShortcut, true);",
