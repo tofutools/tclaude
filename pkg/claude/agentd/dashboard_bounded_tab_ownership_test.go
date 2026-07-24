@@ -64,7 +64,7 @@ func TestDashboardBoundedTabOwnership(t *testing.T) {
 		t.Errorf("Access island mount count = %d, want 1", got)
 	}
 	jobsMount := strings.Index(dashboard, "await mountJobsFeature({")
-	concurrentMounts := strings.Index(dashboard, "await Promise.all([")
+	concurrentMounts := strings.Index(dashboard, "await Promise.all(featureMounts.map(")
 	bindTabs := strings.Index(dashboard, "pageCleanups.push(bindTabs(), bindTabHotkeys());")
 	if jobsMount < 0 || concurrentMounts < jobsMount || bindTabs < concurrentMounts {
 		t.Error("dashboard boot must await Jobs, then bounded islands concurrently, before binding navigation")
