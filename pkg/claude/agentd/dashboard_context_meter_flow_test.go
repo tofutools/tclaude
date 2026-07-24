@@ -239,6 +239,94 @@ func TestDashboardSnapshot_OpenCodeContextSurvivesOfflineResume(t *testing.T) {
 	assert.Equal(t, int64(200000), memberRow.State.ContextWindowSize, "Members[] window fallback")
 }
 
+// Guard the fallback's scope: it must NOT resurrect a pre-compaction value.
+// A compacted OpenCode row keeps its context_window_size but zeroes pct/tokens
+// (ResetCompact semantics), and the empty-check requires ALL four fields zero —
+// so a compacted picked row is "not empty" and renders its own reset state
+// rather than an older populated row's stale usage.
+func TestDashboardSnapshot_OpenCodeContextFallbackSkipsCompactedRow(t *testing.T) {
+	const conv = "occm-1111-2222-3333-444444444444"
+	const spawnLabel = "spwn-occm"
+	const cwdName = "occm"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveConvWithTitle(conv, "opencode-compacted")
+	f.HaveAliveSession(conv, spawnLabel, "tmux-occm", f.TestCwd(cwdName))
+	f.HaveGroup("occm-crew")
+	f.HaveMember("occm-crew", conv)
+
+	// An older populated generation (spawn row) whose usage must NOT leak.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: spawnLabel, TmuxSession: "tmux-occm", ConvID: conv,
+		Cwd: f.TestCwd(cwdName), Status: "idle", Harness: "opencode",
+	}), "spawn row opencode")
+	require.NoError(t,
+		db.UpdateContextSnapshot(spawnLabel, 80.0, 150000, 10000, 200000),
+		"stale pre-compaction spawn snapshot")
+
+	// The current (picked) row is post-compaction: pct/tokens zero, window kept.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: conv, TmuxSession: "tmux-occm-cur", ConvID: conv,
+		Cwd: f.TestCwd(cwdName), Status: "idle", Harness: "opencode",
+	}), "current row opencode")
+	require.NoError(t,
+		db.UpdateContextSnapshot(conv, 0, 0, 0, 200000),
+		"post-compaction snapshot: window known, usage reset")
+
+	f.MarkOffline("tmux-occm")
+	f.MarkOffline("tmux-occm-cur")
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from Agents[]", conv)
+	assert.Zero(t, agentRow.State.ContextPct, "compacted row must not resurrect stale pct")
+	assert.Zero(t, agentRow.State.TokensInput, "compacted row must not resurrect stale tokens")
+	assert.Zero(t, agentRow.State.TokensOutput, "compacted row must not resurrect stale tokens")
+	assert.Equal(t, int64(200000), agentRow.State.ContextWindowSize,
+		"compacted row keeps its own known window")
+}
+
+// Guard the fallback's scope: it is OpenCode-only. A Claude Code conv whose
+// picked row has no snapshot must render a clean zero — never borrow an older
+// row's usage. (Claude Code repopulates its picked row in-process, so it has no
+// need of the fallback and must not inherit the behaviour.)
+func TestDashboardSnapshot_ContextFallbackIsOpenCodeOnly(t *testing.T) {
+	const conv = "ccnf-1111-2222-3333-444444444444"
+	const oldLabel = "spwn-ccnf-old"
+	const newLabel = "spwn-ccnf-new"
+	const cwdName = "ccnf"
+
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	f := newFlow(t)
+	f.HaveConvWithTitle(conv, "cc-worker")
+
+	// An older Claude Code row carrying usage (default harness) — saved FIRST so
+	// the picked row below is the newer one.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: oldLabel, ConvID: conv, Cwd: f.TestCwd(cwdName), Status: "idle",
+	}), "old cc row")
+	require.NoError(t,
+		db.UpdateContextSnapshot(oldLabel, 55.0, 100000, 5000, 200000),
+		"old cc snapshot")
+
+	// The picked (newest) Claude Code row has no snapshot yet.
+	f.HaveAliveSession(conv, newLabel, "tmux-ccnf", f.TestCwd(cwdName))
+	f.HaveGroup("ccnf-crew")
+	f.HaveMember("ccnf-crew", conv)
+	f.MarkOffline("tmux-ccnf") // exercise the offline path too
+
+	snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+	agentRow := findDashAgent(snap, conv)
+	require.NotNil(t, agentRow, "agent %s missing from Agents[]", conv)
+	assert.Zero(t, agentRow.State.ContextPct,
+		"Claude Code must not borrow an older row's usage")
+	assert.Zero(t, agentRow.State.ContextWindowSize,
+		"Claude Code must not borrow an older row's window")
+}
+
 // Scenario: a freshly-spawned agent whose statusline hook has not yet
 // fired has no context snapshot row. The dashboard meter must render a
 // neutral / empty indicator, never a broken one — so /api/snapshot
