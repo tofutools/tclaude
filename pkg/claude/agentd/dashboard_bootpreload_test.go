@@ -81,6 +81,25 @@ func TestInjectBootPreload_EmitsLinksAndTotal(t *testing.T) {
 	}
 }
 
+// TestBootProgress_AppPhaseEventContract: the inline boot counter's app band
+// only moves if dashboard.js actually dispatches the `tclaude:boot-app`
+// milestone events the counter listens for. Guard both sides of that
+// cross-file contract so a rename in either file can't silently park the bar
+// at the module-band ceiling again.
+func TestBootProgress_AppPhaseEventContract(t *testing.T) {
+	const event = "tclaude:boot-app"
+	if !strings.Contains(string(dashboardIndexHTML), event) {
+		t.Errorf("served HTML inline boot counter does not listen for %s", event)
+	}
+	entry, err := fs.ReadFile(dashboardAssetsFS, bootPreloadEntry)
+	if err != nil {
+		t.Fatalf("read %s: %v", bootPreloadEntry, err)
+	}
+	if !strings.Contains(string(entry), event) {
+		t.Errorf("%s does not dispatch %s boot milestones", bootPreloadEntry, event)
+	}
+}
+
 // TestInjectBootPreload_PanicsWithoutMarker: the marker is a build-time
 // invariant; losing it must fail loudly, not silently ship a dashboard with no
 // preload or progress.
