@@ -24,11 +24,11 @@ import (
 // The `sandbox` sub-tree comes from harness.ClaudeSandboxOnBlock(), the
 // SAME block the per-session `--sandbox on` spawn mode injects via
 // `--settings`, so the global hardening and the per-session override can
-// never drift. That block is intentionally cross-platform (it lists both
-// the macOS-only per-path `allowUnixSockets` and the Linux/WSL2-only
-// `allowAllUnixSockets`). The `permissions` deny-list below is hardening-
-// only — a global settings concern, not a per-session sandbox knob — so it
-// stays here.
+// never drift. That block is intentionally cross-platform (it lists the
+// macOS-only per-path `allowUnixSockets` and `allowAllUnixSockets`, which is
+// required on Linux/WSL2 and also honored on macOS). The `permissions`
+// deny-list below is hardening-only — a global settings concern, not a
+// per-session sandbox knob — so it stays here.
 //
 // Arrays are []any (not []string) so the merge engine compares and
 // appends them uniformly against values decoded from the user's file,

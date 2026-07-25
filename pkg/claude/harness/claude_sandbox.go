@@ -146,9 +146,10 @@ func (claudeSandbox) ModeHelp(mode string) string {
 // is disabled so those boundaries cannot be skipped. ~/.codex remains readable
 // because it also contains the Codex runtime itself; denying that whole root
 // can strand the harness.
-// block is cross-platform: macOS honors per-path `allowUnixSockets`, Linux/WSL2
-// the broader `allowAllUnixSockets` — listing both keeps one block valid on
-// either (the inert key is harmless).
+// block is cross-platform: macOS honors per-path `allowUnixSockets`;
+// Linux/WSL2 require the broader `allowAllUnixSockets`, which macOS also
+// honors. Listing both keeps one block functional on either platform, at the
+// cost of the documented all-sockets exposure on macOS too.
 //
 // Arrays are []any (not []string) so the setup merge engine compares and
 // appends them uniformly against values decoded from a user's settings file

@@ -237,10 +237,10 @@ Notes:
   `~/.tclaude/api/agentd.sock` visible. *Separately*, the `sandbox.network`
   unix-socket allowance lets a sandboxed agent open it at all —
   `allowUnixSockets` (a path list, **macOS only**) or
-  `allowAllUnixSockets` (**Linux / WSL2**, all-or-nothing). Both axes are
-  required; see "Keeping the daemon socket reachable" below for why, the
-  trade-off, and the verification. `~/.claude/sessions` holds no socket
-  and needs neither.
+  `allowAllUnixSockets` (all platforms, and the only available option on
+  **Linux / WSL2**). Both axes are required; see "Keeping the daemon socket
+  reachable" below for why, the trade-off, and the verification.
+  `~/.claude/sessions` holds no socket and needs neither.
 - **Do not deny the whole `~/.codex` tree.** Standalone Codex installs its
   executable below `~/.codex/packages` and re-executes it for tool commands;
   a whole-tree deny strands managed Codex agents. Narrower state boundaries
@@ -323,12 +323,16 @@ Re-allowing it is a `sandbox.network` setting — *not* a filesystem one:
   option. Accept it deliberately, and keep the *filesystem* denies tight
   so the widened socket layer is the only give.
 
+`allowAllUnixSockets` is also honored on macOS. The cross-platform settings
+block therefore permits all Unix sockets there too, including an SSH agent
+socket used by `git push`; a macOS-only operator can remove that broad key and
+add every required socket path explicitly for a tighter policy.
+
 This allowance is a **precondition**, not something this guide's
 lockdown introduces: an agent that can already run `tclaude agent`
 inside a sandbox already has it set. The settings block above lists both
-keys so one `settings.json` works on either platform — a macOS-only
-operator can drop `allowAllUnixSockets` and keep the tighter per-path
-entry; on Linux/WSL2 the per-path entry is inert but harmless.
+keys so one `settings.json` works on either platform; on Linux/WSL2 the
+per-path entry is inert but harmless.
 
 **2. The socket *file* must be visible.** This is the filesystem layer.
 The socket lives under `~/.tclaude/api/`, outside the denied
