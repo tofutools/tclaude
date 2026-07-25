@@ -1685,11 +1685,17 @@ Author process-template YAML through the same agentd REST handlers and
 content-addressed store used by the dashboard editor:
 
 ```bash
-tclaude agent process-templates ls
+tclaude agent process-templates ls [--json]
 tclaude agent process-templates show <id>
 tclaude agent process-templates validate --file <template.yaml>
 tclaude agent process-templates save --file <template.yaml> [--expect-source-hash <hash>] [--ask-human 30s]
 ```
+
+`ls` prints a human table by default; `--json` emits the whole bounded listing
+as one `{"templates": [...]}` document on stdout — every field of the shared
+REST response, including each template's `versions` history — for agents and
+scripts that should not parse columns. Version `actor` and `authoredAt` are
+optional and omitted for unattributed versions.
 
 `ls`, `show`, and `validate` require `process.templates.read` (included by the
 optional default-permission installer). `save` independently requires the
