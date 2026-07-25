@@ -271,6 +271,62 @@ func TestTerminalHookProcessesReadInlineMailWithoutStartedCorrelation(t *testing
 	require.ErrorAs(t, err, &full, "unread pointer mail keeps counting against the bound")
 }
 
+// TCL-739: a regular message sent before its recipient conv is enrolled has no
+// to_agent companion. Once that conv rotates, the live actor's backlog still
+// counts the row through agent_conversations, so its terminal-hook sweep must
+// reach the row through the same historical-generation mapping.
+func TestTerminalHookProcessesPreEnrollmentInlineMailAfterRotation(t *testing.T) {
+	setupTestDB(t)
+	const oldConv = "pre-enrollment-old"
+	const newConv = "pre-enrollment-new"
+	const limit = 2
+
+	orphanID, _, err := InsertAgentMessageBounded(&AgentMessage{
+		ToConv: oldConv,
+		Body:   "inline before enrollment",
+	}, limit)
+	require.NoError(t, err)
+	_, _, err = EnsureAgentForConv(oldConv, "test")
+	require.NoError(t, err)
+
+	claim, claimed, err := ClaimAgentMessageNudge(orphanID, time.Now())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	completed, err := CompleteAgentMessageNudgeState(orphanID, claim, time.Now(), true)
+	require.NoError(t, err)
+	require.True(t, completed)
+
+	_, err = RotateAgentConv(oldConv, newConv, "clear")
+	require.NoError(t, err)
+
+	orphan, err := GetAgentMessage(orphanID)
+	require.NoError(t, err)
+	require.Empty(t, orphan.ToAgent, "pre-enrollment row has no stable-recipient companion")
+	require.False(t, orphan.ReadAt.IsZero(), "inline delivery put the body in the retired pane")
+	require.True(t, orphan.ProcessedAt.IsZero())
+
+	_, pending, err := InsertAgentMessageBounded(&AgentMessage{
+		ToConv: newConv,
+		Body:   "current generation",
+	}, limit)
+	require.NoError(t, err)
+	require.Equal(t, limit, pending, "the historical row consumes the live actor's other slot")
+
+	processed, err := MarkReadRegularAgentMessagesProcessed(newConv, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), processed)
+	orphan, err = GetAgentMessage(orphanID)
+	require.NoError(t, err)
+	require.False(t, orphan.ProcessedAt.IsZero(), "the live generation drains its historical row")
+
+	_, pending, err = InsertAgentMessageBounded(&AgentMessage{
+		ToConv: newConv,
+		Body:   "capacity reopened",
+	}, limit)
+	require.NoError(t, err)
+	require.Equal(t, limit, pending)
+}
+
 // MarkReadRegularAgentMessagesProcessed treats read_at on a regular_send row as
 // proof the body reached the pane, which is only sound while every
 // explicit-read path stamps read_at and processed_at together. A future path

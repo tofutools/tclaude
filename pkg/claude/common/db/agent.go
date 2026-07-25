@@ -3001,6 +3001,13 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 // restoring the unbounded-admissions defect the watermark exists to prevent.
 // TestMessageBackpressureInlineMailDrainsOnNextTerminalHook is the cascade
 // test: it drains exactly 1 of 10 and needs 9 further turns to finish.
+//
+// The empty-to_agent arm mirrors countUnprocessedRegularMessageBacklog.
+// Messages sent before a conv is enrolled have no stable-recipient companion;
+// after a generation rotation they still belong to the actor through the old
+// conv's agent_conversations row. Without that arm they consume the live
+// actor's backlog capacity but no terminal hook can ever acknowledge them
+// (TCL-739).
 func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
 	if convID == "" {
 		return 0, nil
@@ -3009,8 +3016,12 @@ func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64,
 	if err != nil {
 		return 0, err
 	}
-	const recipient = `(to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
-		COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`
+	const recipient = `(to_conv = ? OR
+		(pin_gen = 0 AND to_agent != '' AND to_agent =
+			COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')) OR
+		(to_agent = '' AND to_conv IN (
+			SELECT conv_id FROM agent_conversations WHERE agent_id =
+				COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), ''))))`
 	stamp := now.Format(time.RFC3339Nano)
 	res, err := d.Exec(`UPDATE agent_messages SET processed_at = ?
 		WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
@@ -3022,7 +3033,10 @@ func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64,
 			(SELECT MIN(id) FROM agent_messages
 			  WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
 				AND `+recipient+`))`,
-		stamp, convID, convID, convID, convID, convID, convID)
+		stamp,
+		convID, convID, convID,
+		convID, convID, convID,
+		convID, convID, convID)
 	if err != nil {
 		return 0, err
 	}
