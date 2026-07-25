@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/cronexpr"
@@ -99,6 +100,12 @@ var dashboardGraceSessionHashes = map[string]time.Time{}
 
 // dashboardSessionNow is indirected for focused expiry tests.
 var dashboardSessionNow = time.Now
+
+// daemonInstanceID is generated once per agentd process and published in every
+// snapshot. It is a restart marker for connected pages, nothing more: it is not
+// a credential, carries no state, and is meaningless to anyone who cannot
+// already read a snapshot.
+var daemonInstanceID = uuid.NewString()
 
 const dashboardCookieName = "tclaude_dashboard_session"
 
@@ -775,6 +782,12 @@ func dashboardAuthResult(r *http.Request) (ok bool, loginRequired bool, code int
 type snapshotPayload struct {
 	GeneratedAt string `json:"generated_at"`
 	Version     string `json:"version"`
+	// InstanceID identifies THIS agentd process and changes on every restart,
+	// including a restart of the same build (Version does not). A page that sees
+	// it change knows the daemon it was talking to is gone — and with it every
+	// browser-terminal WebSocket — even when the restart was quick enough that
+	// no poll was ever refused.
+	InstanceID string `json:"instance_id"`
 	// StaticVersion fingerprints the registry-shaped payload fields that rarely
 	// change. The browser echoes it on the next poll; when it still matches,
 	// StaticUnchanged is true and those fields are sent as null then restored
@@ -2225,6 +2238,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out := snapshotPayload{
 		GeneratedAt:          time.Now().Format(time.RFC3339),
 		Version:              buildversion.AppVersion(),
+		InstanceID:           daemonInstanceID,
 		PopupBase:            popupBaseURL,
 		UserDefaultModel:     readUserDefaultModel(),
 		Harnesses:            buildHarnessCatalog(),

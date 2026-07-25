@@ -878,15 +878,22 @@ or a replaced browser client finishes tearing down. Once the connection has
 been stable for a second, later disconnects keep the explicit **Reconnect**
 control; they never enter a permanent automatic retry loop.
 
-Restarting `agentd` is the one exception. It drops every web terminal at once,
-and the dashboard's own "Disconnected from agentd" banner records exactly when
-the daemon went away and came back. On that recovery — and only there — the
-dashboard's terminal panes each make a single reconnect attempt. Panes that are
-still connected, still dialling, or waiting on their disconnect prompt are left
-alone, so an attempt never races a terminal that was reopened elsewhere. If the
-one attempt fails, the pane falls back to the **Reconnect** control as usual.
-Standalone pop-out tabs do not poll the daemon, so they keep that control
-instead of reconnecting on their own.
+Losing `agentd` is the one exception. It drops every web terminal at once, and
+the dashboard notices in one of two ways: a poll that was refused and then
+succeeded, or a snapshot carrying a different daemon instance id than the last
+one. The second matters because the poll runs only every 2 seconds — every 10
+while the tab is hidden — so a quick restart is easily stepped over without a
+single failed request; the instance id changes on every restart regardless.
+
+On that recovery — and only there — the dashboard makes one reconnect pass over
+its terminals. A pane is redialled exactly when it is offering its **Reconnect**
+control, so the pass is the dashboard pressing that button once for you. Panes
+that are still connected, still dialling, or waiting on their own disconnect
+prompt are left alone, so it never races a terminal reopened elsewhere. A
+redial may still resolve through the short initial-retry window described above,
+and if it fails the pane goes back to the **Reconnect** control: there is no
+recurring background retry. Standalone pop-out tabs do not poll the daemon, so
+they keep that control instead of reconnecting on their own.
 
 Terminal tabs can be dragged within the tab strip to reorder them. The insertion
 line shows whether the drop will land before or after the tab under the pointer.

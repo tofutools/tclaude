@@ -1359,17 +1359,22 @@ export function mountTerminalShellIsland({
       return actions.receiveHandoffPane(seed);
     },
   });
-  // An agentd restart drops every terminal WebSocket while the dashboard's own
-  // poll keeps running. The panes are then dead but perfectly happy to be
-  // redialed, so the shell repairs them when the watchdog reports the socket
-  // side came back — one attempt per outage, never a background retry loop.
-  const unbindConnectionRestored = typeof onConnectionRestored === 'function'
-    ? onConnectionRestored(() => actions.reconnectAfterOutage())
-    : null;
   render(html`<${TerminalTabs} state=${state} actions=${actions} widgetFactory=${widgetFactory}
     onComposeMessage=${onComposeMessage} composeMessageDialogKind=${composeMessageDialogKind} />`, host);
   render(html`<${TerminalBadge} state=${state} />`, badgeHost);
   render(html`<${TerminalModal} state=${state} actions=${actions} widgetFactory=${widgetFactory} />`, modalHost);
+  // An agentd outage drops every terminal WebSocket while the dashboard itself
+  // recovers. The panes are then dead but perfectly happy to be redialed, so
+  // the shell repairs them when the watchdog reports agentd came back — one
+  // pass per outage, never a background retry loop.
+  //
+  // Subscribed LAST, immediately before the cleanup that releases it: the
+  // watchdog's listener set outlives this island, so a render that throws
+  // before registerCleanup must not leave a listener behind holding a shell
+  // that was never mounted.
+  const unbindConnectionRestored = typeof onConnectionRestored === 'function'
+    ? onConnectionRestored(() => actions.reconnectAfterOutage())
+    : null;
   registerCleanup(() => {
     unbindConnectionRestored?.();
     unbindHandoff();

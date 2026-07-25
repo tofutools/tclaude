@@ -26,7 +26,7 @@ import { reconcileTerminalsForAgentRoster } from './terminals-tab.js';
 import { lastSnapshot, setLastSnapshot } from './dashboard.js';
 import { setVegasRegularMode } from './slop.js';
 import { setHScrollFollow } from './hscroll.js';
-import { noteConnected, noteDisconnected } from './connection.js';
+import { noteConnected, noteDisconnected, noteServerIdentity } from './connection.js';
 import { syncDashDefaultProfile } from './profiles.js';
 import { dashboardState } from './snapshot-store.js';
 import { featureState } from './feature-state-registry.js';
@@ -164,6 +164,10 @@ export async function refresh(options) {
       return;
     }
     const data = await snapR.json();
+    // Which agentd process answered. Reported before the stale-request bail for
+    // the same reason noteConnected() is: a superseded poll still carries a
+    // truthful observation of a restart, and the watchdog owns the dedup.
+    noteServerIdentity(data.instance_id);
     if (!dashboardState.isCurrentRequest(requestId)) {
       jobs?.discardRequest(requestId);
       return;
