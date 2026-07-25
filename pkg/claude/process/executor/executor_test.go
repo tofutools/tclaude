@@ -558,21 +558,7 @@ func createRun(t *testing.T, runID string, program engine.ProgramCommand) {
 			"end": {Type: model.NodeTypeEnd},
 		},
 	}
-	definition, err := engine.Prepare(tmpl, map[string]string{})
-	require.NoError(t, err)
-	checkpoint, err := engine.Initialize(runID, definition)
-	require.NoError(t, err)
-	checkpointJSON, err := json.Marshal(checkpoint)
-	require.NoError(t, err)
-	snapshot, err := model.CanonicalSemanticJSON(tmpl)
-	require.NoError(t, err)
-	hash, err := model.SemanticHash(tmpl)
-	require.NoError(t, err)
-	require.NoError(t, db.CreateProcessRun(db.ProcessRunCreate{
-		ID: runID, TemplateRef: model.TemplateRef(tmpl.ID, hash),
-		TemplateSnapshotJSON: snapshot, ParamsJSON: json.RawMessage(`{}`),
-		Status: string(checkpoint.Status), CheckpointJSON: checkpointJSON,
-	}))
+	createRunFromTemplate(t, runID, tmpl)
 }
 
 func mustLoadRun(t *testing.T, runID string) *Run {

@@ -251,7 +251,7 @@ func TestProcessRuntimeDirectEntryKeepsUnsupportedShapesRefused(t *testing.T) {
 	f, _ := processRuntimeFlow(t)
 	tmpl := processDirectParallelEntryTemplate("", 2)
 	join := tmpl.Nodes["join"]
-	join.Join = model.JoinAny
+	join.Retry = &model.RetryPolicy{MaxAttempts: 2}
 	tmpl.Nodes["join"] = join
 
 	createdTemplate := processRuntimeRequest(t, f, http.MethodPost, "/v1/process/templates", processEditResponse{Template: tmpl})
@@ -266,8 +266,8 @@ func TestProcessRuntimeDirectEntryKeepsUnsupportedShapesRefused(t *testing.T) {
 	})
 	require.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), `"code":"process_run_invalid"`)
-	assert.Contains(t, refused.Body.String(), "nodes.join.join")
-	assert.Contains(t, refused.Body.String(), "join: any is not executable in this engine yet")
+	assert.Contains(t, refused.Body.String(), "nodes.join.retry")
+	assert.Contains(t, refused.Body.String(), "retries and poison handling are not executable in this engine yet")
 	assert.NotContains(t, refused.Body.String(), "exclusive-decision")
 
 	list := processRuntimeRequest(t, f, http.MethodGet, "/v1/process/runs", nil)

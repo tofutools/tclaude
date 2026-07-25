@@ -58,12 +58,10 @@ func CheckEligibility(tmpl *model.Template) model.Diagnostics {
 		node := tmpl.Nodes[nodeID]
 		path := "nodes." + nodeID
 
-		// join: all is executable: a join target activates once its complete
-		// candidate input set has settled with at least one arrival. join: any
-		// needs branch cancellation semantics the engine does not have (TCL-715).
-		if node.Join == model.JoinAny {
-			add("unsupported_join", path+".join", "join: any is not executable in this engine yet")
-		}
+		// Both authored join policies are executable. join: all activates once the
+		// complete candidate input set has settled with at least one arrival;
+		// join: any activates on the first arrival, and its losing branches keep
+		// running to their own settled outcome and arrive late at the reducer.
 		if node.Retry != nil {
 			add("unsupported_retry", path+".retry", "retries and poison handling are not executable in this engine yet")
 		}

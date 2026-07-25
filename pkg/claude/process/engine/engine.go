@@ -284,32 +284,42 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 }
 
 // requireNoWorkRemains refuses to terminate a run while any other work is still
-// live. Structured fan-out/join authoring already guarantees an end node sits
-// outside every open parallel scope — a branch cannot escape its scope, and a
-// join only activates once its whole candidate set settled — so on a valid
-// prepared graph this never fires. It exists so that a future semantics bug
-// fails loudly here instead of silently reporting a terminal run while branches
-// are still in flight. It is one scan at the single terminating transition of a
-// run, not a per-transition whole-graph proof.
+// live. With join: any a run really does reach its end node while losing
+// branches are still executing, so the WAIT lives in nextEngineTransition,
+// which simply does not offer such an end node yet. This stays as the
+// fail-loud assertion at the single terminating transition of a run: a
+// semantics bug that got past that gate stops here instead of silently
+// reporting a terminal run with branches in flight. It is not a
+// per-transition whole-graph proof.
 func requireNoWorkRemains(checkpoint Checkpoint, definition *Definition, endNodeID string) error {
+	kind, nodeID, remains := remainingWork(checkpoint, definition, endNodeID)
+	if !remains {
+		return nil
+	}
+	return fmt.Errorf("%w: end %q cannot complete while node %q %s",
+		ErrInvalidTransition, endNodeID, nodeID, kind)
+}
+
+// remainingWork names one live unit of work other than the given end node: an
+// outstanding command, an awaited decision, or an active node. It is a bounded
+// scan of the durable outboxes and the node-status map — no edges, no graph
+// walk — and it is consulted only when a ready end node is actually in hand.
+func remainingWork(checkpoint Checkpoint, definition *Definition, endNodeID string) (kind, nodeID string, remains bool) {
 	if len(checkpoint.Commands) > 0 {
-		return fmt.Errorf("%w: end %q cannot complete while node %q still has an outstanding command",
-			ErrInvalidTransition, endNodeID, checkpoint.Commands[0].NodeID)
+		return "still has an outstanding command", checkpoint.Commands[0].NodeID, true
 	}
 	if len(checkpoint.AwaitingDecisions) > 0 {
-		return fmt.Errorf("%w: end %q cannot complete while node %q is still awaiting a decision",
-			ErrInvalidTransition, endNodeID, checkpoint.AwaitingDecisions[0].NodeID)
+		return "is still awaiting a decision", checkpoint.AwaitingDecisions[0].NodeID, true
 	}
 	for _, other := range definition.nodes {
 		if other.id == endNodeID {
 			continue
 		}
 		if status := checkpoint.Nodes[other.id]; status == NodeReady || status == NodeRunning {
-			return fmt.Errorf("%w: end %q cannot complete while node %q is %q",
-				ErrInvalidTransition, endNodeID, other.id, status)
+			return "is " + string(status), other.id, true
 		}
 	}
-	return nil
+	return "", "", false
 }
 
 // outgoingArrivals selects which authored outgoing edges of a completing node
@@ -335,14 +345,20 @@ func (a outgoingArrivals) disposition(outcome string) EdgeDisposition {
 // one arrival for a routing node, every branch for a parallel fork — then
 // propagates closure and activation through the affected subgraph.
 //
-// A target is only ever considered once its COMPLETE candidate input set has
-// settled. At that point:
+// A join: any reducer activates on its FIRST arrival. Every other target is
+// only ever considered once its COMPLETE candidate input set has settled, and
+// at that point:
 //   - zero arrivals: the target is skipped, and closing its own outgoing edges
 //     recursively propagates the closure;
 //   - a join: all reducer with one or more arrivals: ready;
 //   - a non-join node with exactly one arrival: ready (the local-merge rule);
 //   - a non-join node with more than one arrival: a local fail-closed
 //     ErrInvalidTransition, since exclusive routing was violated.
+//
+// Only a join: any reducer can therefore still receive settlements after it
+// activated. Those cannot reach it: a target that is no longer pending is
+// skipped below, so the winner is never replaced and the reducer never
+// activates its downstream route twice.
 //
 // Several targets can activate in one pass, so several nodes can be ready or
 // running simultaneously. Each affected node's incoming edge list is scanned at
@@ -368,11 +384,25 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 		if next.Edges[edge.from][edge.outcome] != EdgeUnresolved {
 			return fmt.Errorf("%w: edge %q/%q is already settled", ErrInvalidTransition, edge.from, edge.outcome)
 		}
+		// A join: any reducer is won by the first arrival that settles into it,
+		// and only by that one. Every later arrival is real evidence that the
+		// branch got there — so it is not not_taken — but it is late. Deciding
+		// this from the target's own inbound edges rather than from its node
+		// status is what makes it hold WITHIN a single settlement pass too: a
+		// fork with two branch edges straight into its reducer settles both
+		// before either is dequeued.
+		if disposition == EdgeArrived && definition.nodes[edge.toIndex].joinAny &&
+			joinAlreadyWon(*next, definition, edge.toIndex) {
+			disposition = EdgeArrivedLate
+		}
 		next.Edges[edge.from][edge.outcome] = disposition
 		if counts := touched[edge.toIndex]; counts != nil {
 			counts.unresolved--
-			if disposition == EdgeArrived {
+			switch disposition {
+			case EdgeArrived:
 				counts.arrived++
+			case EdgeArrivedLate:
+				counts.arrivedLate++
 			}
 		}
 		queue = append(queue, edge.toIndex)
@@ -395,6 +425,17 @@ func completeAndSettle(next *Checkpoint, definition *Definition, index int, arri
 			scanned := countDispositions(*next, definition, target.incoming)
 			counts = &scanned
 			touched[targetIndex] = counts
+		}
+		// join: any is the one activation rule that does not wait for the
+		// complete candidate set: the first arrival activates the reducer and
+		// its downstream route, and the branches still in flight settle later
+		// as late arrivals against a node that is no longer pending.
+		if target.joinAny && counts.arrived > 0 {
+			next.Nodes[target.id] = NodeReady
+			if target.kind == definitionDecision {
+				addObligation(next, target.id)
+			}
+			continue
 		}
 		if counts.unresolved > 0 {
 			continue
@@ -583,11 +624,34 @@ func nextEngineTransition(checkpoint Checkpoint, definition *Definition) (Transi
 			continue
 		}
 		switch node.kind {
-		case definitionStart, definitionEnd, definitionParallel:
+		case definitionStart, definitionParallel:
+			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
+		case definitionEnd:
+			// A join: any winner reaches the end while its losing branches are
+			// still live, and those branches were dispatched or queued for real.
+			// The end is not refused — it is simply not the engine's to advance
+			// yet, so the scan continues looking for engine-owned work on another
+			// branch and the run stays running until the last loser settles.
+			if _, _, remains := remainingWork(checkpoint, definition, node.id); remains {
+				continue
+			}
 			return Transition{Kind: TransitionAdvance, NodeID: node.id}, true
 		}
 	}
 	return Transition{}, false
+}
+
+// joinAlreadyWon reports whether a join: any reducer already holds its one
+// winning arrival. It reads only that node's own inbound edges, which authoring
+// bounds by the normalized inbound degree limit.
+func joinAlreadyWon(checkpoint Checkpoint, definition *Definition, nodeIndex int) bool {
+	for _, edgeIndex := range definition.nodes[nodeIndex].incoming {
+		edge := definition.edges[edgeIndex]
+		if checkpoint.Edges[edge.from][edge.outcome] == EdgeArrived {
+			return true
+		}
+	}
+	return false
 }
 
 // soleOutcome returns the single authored outcome of a start or task node.

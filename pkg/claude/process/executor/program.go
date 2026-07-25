@@ -178,7 +178,13 @@ func Observe(run *Run, dispatch *Dispatch, result Result) (*Dispatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	events := append([]db.ProcessRunEvent{observed}, advanceEvidence(next, advanced, planned)...)
+	// The observation is the input, what it settled at a join: any reducer comes
+	// next, and the advance's own effects last. The join arrivals are read across
+	// the whole commit rather than just the advance: this observation may itself
+	// be the arrival that won a reducer, or a late one at a reducer somebody else
+	// already won.
+	events := commitEvidence(run.definition, run.checkpoint, advanced,
+		[]db.ProcessRunEvent{observed}, advanceEvidence(next, advanced, planned))
 	if err := persistEvents(run, advanced, events); err != nil {
 		Abandon(run, dispatch)
 		return nil, fmt.Errorf("program observation is not durable; reconciliation required: %w", err)

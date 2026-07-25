@@ -39,6 +39,16 @@ const (
 	EdgeUnresolved EdgeDisposition = "unresolved"
 	EdgeArrived    EdgeDisposition = "arrived"
 	EdgeNotTaken   EdgeDisposition = "not_taken"
+	// EdgeArrivedLate records a real arrival at a join: any reducer that had
+	// already been won. The source genuinely routed here — that is why it is not
+	// not_taken — but the join was decided before this branch got there.
+	//
+	// It is the durable winner fact, held in the edge state that already exists
+	// rather than in a second copy somewhere else: a join: any node has AT MOST
+	// ONE incoming edge with EdgeArrived, and that edge is the winner. Every
+	// later arrival at the same join settles as EdgeArrivedLate. Only an incoming
+	// edge of a join: any node may ever hold it, which the load boundary checks.
+	EdgeArrivedLate EdgeDisposition = "arrived_late"
 )
 
 type CommandKind string
