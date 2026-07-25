@@ -46,6 +46,99 @@ func TestRunProcessTemplatesLsUsesSharedRESTSurface(t *testing.T) {
 	assert.Contains(t, stdout.String(), "actor=agent:agt_writer")
 }
 
+func TestRunProcessTemplatesLsJSONEmitsTheWholeListingOnStdout(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"templates":[`+
+		`{"id":"demo","name":"Demo","description":"d","versionCount":2,`+
+		`"latestVersion":{"ref":"demo@sha256:abc","semanticHash":"abc","sourceHash":"src","actor":"agent:agt_writer"}},`+
+		`{"id":"other","versionCount":1,"latestVersion":{"ref":"other@sha256:def","semanticHash":"def","sourceHash":"src2"}}]}`))
+	var stdout, stderr bytes.Buffer
+
+	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
+
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	require.Len(t, calls, 1)
+	assert.Equal(t, "/v1/process/templates", calls[0].path)
+	assert.Empty(t, stderr.String(), "--json must keep stderr clean on success")
+
+	var decoded struct {
+		Templates []processTemplateListJSON `json:"templates"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded), "stdout must be pure JSON: %q", stdout.String())
+	require.Len(t, decoded.Templates, 2)
+	assert.Equal(t, []string{"demo", "other"}, []string{decoded.Templates[0].ID, decoded.Templates[1].ID},
+		"--json must preserve the daemon's ordering")
+	assert.Equal(t, processTemplateListJSON{
+		ID: "demo", Name: "Demo", Description: "d", VersionCount: 2,
+		LatestVersion: processTemplateVersionJSON{
+			Ref: "demo@sha256:abc", SemanticHash: "abc", SourceHash: "src", Actor: "agent:agt_writer",
+		},
+	}, decoded.Templates[0])
+	assert.NotContains(t, stdout.String(), "versions=", "--json must not mix in the human table")
+}
+
+func TestRunProcessTemplatesLsJSONEmitsEmptyCollectionNotNull(t *testing.T) {
+	for name, response := range map[string]string{
+		"empty array": `{"templates":[]}`,
+		"absent key":  `{}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var calls []capturedReq
+			stubDaemon(t, &calls, ok(response))
+			var stdout, stderr bytes.Buffer
+
+			rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
+
+			require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+			assert.JSONEq(t, `{"templates":[]}`, stdout.String())
+			assert.NotContains(t, stdout.String(), "No process templates.")
+		})
+	}
+}
+
+func TestRunProcessTemplatesLsJSONKeepsDaemonErrorsOffStdout(t *testing.T) {
+	prevAvail, prevReq := DaemonAvailableImpl, DaemonRequestImpl
+	t.Cleanup(func() { DaemonAvailableImpl, DaemonRequestImpl = prevAvail, prevReq })
+	DaemonAvailableImpl = func() bool { return true }
+	DaemonRequestImpl = func(string, string, any, any, DaemonOpts) error {
+		return &DaemonError{
+			Status: http.StatusForbidden, Code: "permission",
+			Msg: `caller is not granted permission "process.templates.read"`,
+		}
+	}
+	var stdout, stderr bytes.Buffer
+
+	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true}, &stdout, &stderr)
+
+	assert.Equal(t, rcIOFailure, rc, "--json must not change how daemon errors map to exit codes")
+	assert.Empty(t, stdout.String(), "a denied read must not emit a JSON document")
+	assert.Contains(t, stderr.String(), "process.templates.read")
+}
+
+func TestRunProcessTemplatesLsJSONRejectsInvalidAskHumanBeforeRequest(t *testing.T) {
+	var calls []capturedReq
+	stubDaemon(t, &calls, ok(`{"templates":[]}`))
+	var stdout, stderr bytes.Buffer
+
+	rc := runProcessTemplatesLs(&processTemplatesLsParams{JSON: true, AskHuman: "later"}, &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Empty(t, calls, "--json must not reorder validation ahead of the ask-human check")
+	assert.Empty(t, stdout.String())
+	assert.Contains(t, stderr.String(), "invalid --ask-human value")
+}
+
+func TestProcessTemplatesLsExposesJSONFlagAndKeepsTableDefault(t *testing.T) {
+	command := processTemplatesLsCmd()
+
+	flag := command.Flags().Lookup("json")
+	require.NotNil(t, flag)
+	assert.Equal(t, "false", flag.DefValue, "the human table stays the default")
+	assert.Contains(t, flag.Usage, "JSON")
+	assert.Contains(t, command.Long, "--json")
+	assert.Nil(t, command.Flags().Lookup("json-lines"), "one bounded collection needs no streaming variant")
+}
+
 func TestProcessTemplateReadCommandsExposeAskHumanFlagAndCompletion(t *testing.T) {
 	for name, command := range map[string]*cobra.Command{
 		"ls":       processTemplatesLsCmd(),

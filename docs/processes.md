@@ -13,11 +13,14 @@ authorship, and source-hash CAS checks are available in the dashboard editor.
 Agents author the same templates through:
 
 ```bash
-tclaude agent process-templates ls
+tclaude agent process-templates ls [--json]
 tclaude agent process-templates show <template-id>
 tclaude agent process-templates validate --file template.yaml
 tclaude agent process-templates save --file template.yaml --source-hash <hash>
 ```
+
+`ls --json` emits the same bounded listing as one `{"templates": [...]}`
+document instead of the human table, so scripts and agents never parse columns.
 
 Reads require `process.templates.read` — installed as an ordinary agent
 default by `tclaude setup --install-default-agent-permissions`, so every agent

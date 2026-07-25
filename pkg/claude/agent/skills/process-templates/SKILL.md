@@ -34,6 +34,20 @@ permissions for authoring. A 403 names the missing slug; do not loop on it.
 
 ## Safe workflow
 
+### Discover what exists
+
+```bash
+tclaude agent process-templates ls          # human table
+tclaude agent process-templates ls --json   # {"templates": [...]} on stdout
+```
+
+Prefer `--json` when you are deciding programmatically: it emits the whole
+bounded listing as one document, so never scrape the table columns. Each entry
+carries `id`, optional `name`/`description`, `versionCount`, and a
+`latestVersion` with `ref`, `semanticHash`, `sourceHash`, and the saving
+`actor`. `latestVersion.sourceHash` is a listing snapshot, not a CAS token:
+always take the `sourceHash` you save with from a fresh `show`.
+
 ### Edit an existing template
 
 Always start from the current head and preserve the complete document:

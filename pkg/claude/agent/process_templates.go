@@ -77,6 +77,7 @@ type processTemplateSourceRequest struct {
 }
 
 type processTemplatesLsParams struct {
+	JSON     bool   `long:"json" help:"Output the whole listing as JSON instead of the human table."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (for example 30s). Capped at 300s; timeout means deny."`
 }
 
@@ -84,6 +85,7 @@ func processTemplatesLsCmd() *cobra.Command {
 	return boa.CmdT[processTemplatesLsParams]{
 		Use:         "ls",
 		Short:       "List stored process templates",
+		Long:        "Lists every stored process template as a human table, or as one JSON object with --json. The listing is bounded, so --json emits the complete collection in one document; there is no streaming variant.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *processTemplatesLsParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
@@ -110,6 +112,20 @@ func runProcessTemplatesLs(p *processTemplatesLsParams, stdout, stderr io.Writer
 	if err := DaemonRequest(http.MethodGet, "/v1/process/templates", nil, &response, DaemonOpts{AskHuman: ask}); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return MapDaemonErrorToRC(err)
+	}
+	if p.JSON {
+		// The daemon always emits the key, but keep an empty listing "[]" rather
+		// than "null" so consumers can iterate the field unconditionally.
+		if response.Templates == nil {
+			response.Templates = []processTemplateListJSON{}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(response); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return rcIOFailure
+		}
+		return rcOK
 	}
 	if len(response.Templates) == 0 {
 		fmt.Fprintln(stdout, "No process templates.")
