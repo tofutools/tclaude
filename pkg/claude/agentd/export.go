@@ -264,13 +264,27 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+gerr.Error())
 		return
 	}
-	newConv, _, _, warn, spawnErr := cloneSpawnOnce(originalConv, cwd, false /* copy conv */, effort, model, "", false, nil, codexGitCommonDir, nil)
+	// The throwaway's name is fixed by the job, not derived from the source, so
+	// it is known up front and can ride the launch argv if the clone is ever
+	// launch-enrolled. Today it never is: the export request reaches the clone
+	// through the inbox in step 6 rather than as a launch follow-up, so there
+	// is no first turn for a name-only launch to attach to.
+	title := exportCloneTitle(originalConv)
+	spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+		SourceConv:        originalConv,
+		Cwd:               cwd,
+		Effort:            effort,
+		Model:             model,
+		CodexGitCommonDir: codexGitCommonDir,
+		Title:             title,
+	})
 	if spawnErr != nil {
 		slog.Warn("export clone: spawn failed", "job", jobID, "orig", originalConv, "error", spawnErr.Msg)
 		failExportJobAndReap(jobID, "", "could not clone the conversation to export it: "+spawnErr.Msg)
 		return
 	}
-	if warn != "" {
+	newConv := spawned.NewConv
+	if warn := spawned.Warn; warn != "" {
 		// The conv-id + .jsonl exist but the clone's tmux session registered
 		// slowly; waitForConvAlive below decides whether it actually came up.
 		slog.Warn("export clone: spawn registered slowly", "job", jobID, "conv", newConv, "warning", warn)
@@ -319,8 +333,7 @@ func runExportClone(jobID int64, originalConv, cwd, effort, model string, sameGr
 	// 4. Rename the clone so it is identifiable as the throwaway summary writer —
 	// a clean line of its own, settled before the nudge (same ordering trap as
 	// the clone post-init). Best-effort: a rename miss doesn't block the export.
-	title := exportCloneTitle(originalConv)
-	if isValidRenameTitle(title) {
+	if !spawned.LaunchEnrolled && isValidRenameTitle(title) {
 		if !deliverRename(newConv, title) {
 			slog.Warn("export clone: rename failed", "job", jobID, "conv", newConv, "title", title)
 		}

@@ -309,8 +309,25 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		cc = HydrateCCSim(s.t, s.w.HomeDir, convID, args.Cwd)
 		s.w.CCs.SetByConvID(cc)
 	}
+	cc.SetInputUnreadyForEnters(s.w.SpawnInputUnreadyEnters)
 	if err := cc.Start(); err != nil {
 		return err
+	}
+	// Launch-arg rename + first turn, same as SpawnNew: `claude --resume <id>
+	// --name <n> '<prompt>'` writes a custom-title turn and submits the
+	// positional as a turn on the RESUMED conversation, with no tmux send-keys.
+	// This is the clone-copy path's enrollment (TCL-732) — the clone forks its
+	// source's jsonl, so its name and handoff have to ride the resume argv.
+	// Empty on the legacy / human resume path.
+	if args.Name != "" {
+		if err := cc.WriteCustomTitle(args.Name); err != nil {
+			return err
+		}
+	}
+	if args.InitialPrompt != "" {
+		if err := cc.WriteUserTurn(args.InitialPrompt); err != nil {
+			return err
+		}
 	}
 	// Same observability as SpawnNew: capture the effort, model and sandbox
 	// the resume path threaded through, keyed by the conv-id, so flow tests
@@ -333,6 +350,8 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnGitWorktreeWriteDirs(convID, args.GitWorktreeWriteDirs)
 	s.w.RecordSpawnCodexGitCommonDir(convID, args.CodexGitCommonDir)
 	s.w.RecordSpawnCodexGitCommonDirPinned(convID, args.CodexGitCommonDirPinned)
+	s.w.RecordSpawnName(convID, args.Name)
+	s.w.RecordSpawnInitialPrompt(convID, args.InitialPrompt)
 	label := generateResumeLabel()
 	// Resume mints a fresh session row / TCLAUDE_SESSION_ID; track it.
 	cc.SessionID = label
@@ -359,6 +378,13 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	if err := recordLaunchPosture(label, args); err != nil {
 		return err
+	}
+	// Match SpawnNew's dead-at-launch model: the resume row and launch-arg
+	// transcript landed, but the harness exited before a pane survived. This
+	// catches callers that mistake durable metadata for liveness.
+	if s.w.SpawnPaneDiesAtLaunch {
+		cc.Shutdown()
+		return nil
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)

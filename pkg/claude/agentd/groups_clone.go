@@ -180,9 +180,19 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// Each clone runs its source agent's durable model + effort; "" falls
 		// back to the harness default.
 		effort, model := relaunch.Effort, relaunch.Model
-		newConv, _, label, warn, spawnErr := cloneSpawnOnce(
-			m.ConvID, cwd, body.NoCopyConv, effort, model,
-			"", false, nil, "", nil)
+		// The clone's title is derived from the source member's title as
+		// `<base>-c-<N>` — exactly the per-conv `agent clone` naming scheme.
+		// Membership rows carry no name of their own. Computed BEFORE the spawn
+		// so it can ride the launch argv when the clone is launch-enrolled.
+		newTitle := uniqueCloneTitle(agent.FreshTitle(m.ConvID))
+		spawned, spawnErr := cloneSpawnOnce(cloneSpawnParams{
+			SourceConv: m.ConvID,
+			Cwd:        cwd,
+			NoCopyConv: body.NoCopyConv,
+			Effort:     effort,
+			Model:      model,
+			Title:      newTitle,
+		})
 		if spawnErr != nil {
 			results = append(results, memberResult{
 				SrcConv: m.ConvID,
@@ -190,18 +200,13 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			})
 			continue
 		}
-		if warn != "" {
-			slog.Warn("groups clone: spawn-warn", "src", m.ConvID, "new_conv", newConv, "warning", warn)
+		newConv, label := spawned.NewConv, spawned.Label
+		if spawned.Warn != "" {
+			slog.Warn("groups clone: spawn-warn", "src", m.ConvID, "new_conv", newConv, "warning", spawned.Warn)
 		}
 		// Add ONLY to the new group — the source group is left
 		// untouched. Per-conv permissions are copied so the clone
 		// inherits its source's slugs (mirrors runCloneOrchestration).
-		//
-		// The clone's title is derived from the source member's title
-		// as `<base>-c-<N>`, then injected via /rename below — exactly
-		// the per-conv `agent clone` naming scheme. Membership rows
-		// carry no name of their own.
-		newTitle := uniqueCloneTitle(agent.FreshTitle(m.ConvID))
 		newMember := &db.AgentGroupMember{
 			GroupID: newGroupID,
 			ConvID:  newConv,
@@ -225,9 +230,14 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			continue
 		}
 		// Rename the clone to its computed title, materialising the
-		// .jsonl — same post-init the per-conv clone path runs.
+		// .jsonl — same post-init the per-conv clone path runs. A group clone
+		// carries no follow-up, so it is never launch-enrolled (a name-only
+		// launch writes no transcript); the branch is kept honest anyway so a
+		// future follow-up-bearing group clone doesn't double its greeting.
 		srcConv := m.ConvID
-		goBackground(func() { runClonePostInit(newConv, newTitle, srcConv, caller) })
+		if !spawned.LaunchEnrolled {
+			goBackground(func() { runClonePostInit(newConv, newTitle, srcConv, caller) })
+		}
 		// Per-conv perms — grant AND deny overrides, best-effort, mirror
 		// runCloneOrchestration.
 		if perms, err := db.ListAgentPermissionOverridesForConv(m.ConvID); err == nil {

@@ -1242,6 +1242,22 @@ the same rule spawn briefings follow. A **Codex** successor keeps the older
 post-connect flow (Codex cannot preset a conv-id and renames out-of-band), as
 does Claude Code under the `agent.spawn_legacy_injection` revert.
 
+**How a clone is named + handed off.** A Claude Code clone given a `follow_up`
+takes the same launch-enrollment path, on both branches: `--no-copy-conv`
+presets the conv-id exactly as a reincarnation does, and the default copy branch
+forks the source's jsonl and resumes into it with `claude --resume <id> --name
+<base>-c-<N> "<follow-up>"`. Nothing is typed into the clone's pane, so the
+`-c-<N>` title and the follow-up cannot merge into one line. The follow-up is
+saved to the clone's inbox under the same inline-or-pointer rule.
+
+A clone with **no** `follow_up` deliberately stays on the post-connect
+`/rename`. A name-only launch applies the name to the running TUI but writes no
+transcript — the conversation materialises on its first turn — so a clone with
+nothing to submit would come up with no jsonl at all, invisible to `conv ls` and
+the dashboard. Nothing is lost by staying: with only one injected stream there
+is no second stream to merge with. Codex clones and the
+`agent.spawn_legacy_injection` revert likewise keep the post-connect flow.
+
 ### remote-control
 
 Arm Claude Code's built-in Remote Access (claude.ai/code + the mobile

@@ -56,26 +56,25 @@ func TestClone_DerivesTitleFromOriginal(t *testing.T) {
 }
 
 // Scenario: cloning an agent WITH a follow-up handoff must not let the
-// handoff's inbox nudge bleed into the clone's /rename.
+// handoff's inbox nudge bleed into the clone's rename.
 //
 // Setup: a titled conv "worker" alive in group "alpha".
 //
-// Action: the human clones "worker" with a follow-up. Post-clone, the
-// new pane is both renamed to "worker-c-1" AND nudged about the queued
-// handoff ("[system: new agent message #N for you. ...]").
+// Action: the human clones "worker" with a follow-up.
 //
-// Regression: the rename and the handoff nudge used to run as two
-// separate goroutines (runClonePostInit + deliverHandoffViaFlush) that
-// both woke when the pane came online and send-keys'd into it
-// concurrently. The nudge text could land inside the still-unsubmitted
-// /rename line, so the clone's title became
-// "worker-c-1[system: new agent message #N ...]". Post-init is now a
-// single ordered goroutine — rename → settle gap → flush — so the
-// rename submits as a clean line of its own before the nudge is typed.
+// Regression: the rename and the handoff nudge used to run as two separate
+// goroutines (runClonePostInit + deliverHandoffViaFlush) that both woke when
+// the pane came online and send-keys'd into it concurrently. The nudge text
+// could land inside the still-unsubmitted /rename line, so the clone's title
+// became "worker-c-1[system: new agent message #N ...]". Ordering them in one
+// goroutine fixed the race; TCL-732 then removed both injections in favour of
+// launch args, which is what makes the outcome independent of whether the pane
+// is reading input at all.
 //
-// Expected: the clone's title is EXACTLY "worker-c-1" (no nudge
-// suffix), and the handoff nudge is still delivered to the pane.
-func TestClone_FollowUpNudgeDoesNotCorruptTitle(t *testing.T) {
+// Expected: the clone's title is EXACTLY "worker-c-1" (no nudge suffix) and the
+// follow-up still reaches the clone. clone_handoff_flow_test.go covers HOW it
+// gets there, on both branches and under an unready pane.
+func TestClone_FollowUpDoesNotCorruptTitle(t *testing.T) {
 	f := newFlow(t)
 
 	const oldConv = "old-aaaa-bbbb-cccc-eeee"
@@ -100,8 +99,6 @@ func TestClone_FollowUpNudgeDoesNotCorruptTitle(t *testing.T) {
 	// exactly, so a leaked "[system: ...]" suffix fails here.
 	f.AssertCloneTitle(c, "alpha", "worker-c-1", 10*time.Second)
 
-	// And the handoff nudge is still delivered (as its own line, after
-	// the rename) — folding flush into the ordered post-init goroutine
-	// must not drop the message.
-	f.AssertSentContains(c.TmuxTarget(), "new agent message", 10*time.Second)
+	// And the follow-up still reaches the clone — as its first turn.
+	f.AssertSpawnInitialPrompt(c.NewConv, "pick up the merge conflict work", 10*time.Second)
 }
