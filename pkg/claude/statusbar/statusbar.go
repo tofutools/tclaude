@@ -209,7 +209,7 @@ func ownedSessionID(envSessionID, renderConvID string) string {
 	if rowConv == "" || renderConvID == rowConv || renderConvID == pendingConv {
 		return envSessionID
 	}
-	slog.Info("status-bar: ignoring statusline render from a foreign conversation",
+	slog.Debug("status-bar: ignoring statusline render from a foreign conversation",
 		"session_id", envSessionID, "tracked_conv", rowConv, "render_conv", renderConvID,
 		"module", "hooks")
 	return ""
@@ -241,7 +241,8 @@ func run() error {
 	// Which tclaude session row — if any — this render is allowed to
 	// write. Every per-session write below keys off THIS, never the raw
 	// environment variable. See ownedSessionID.
-	ownedSession := ownedSessionID(os.Getenv("TCLAUDE_SESSION_ID"), input.SessionID)
+	envSessionID := os.Getenv("TCLAUDE_SESSION_ID")
+	ownedSession := ownedSessionID(envSessionID, input.SessionID)
 
 	// Short model label for the head of the context line. Prefers CC's
 	// display name ("Opus 4.6" -> "o4.6"); when that's missing or a lone
@@ -283,13 +284,15 @@ func run() error {
 	// within the next statusline render rather than after the next turn.
 	// SessionID from CC's stdin tracks /clear rotations; fall back to
 	// TCLAUDE_SESSION_ID when CC is too old to emit it. This row is keyed
-	// by CONV id, so a render that names its own conversation is already
-	// self-attributing — only the fallback needs the ownership guard,
-	// since a foreign child would otherwise stamp its cwd and branch onto
-	// the parent conversation's workspace row.
+	// by CONV id, so a render carrying session_id is self-attributing: a
+	// foreign child writes only its own (possibly otherwise unreferenced)
+	// workspace row, never the parent's. With an old payload that omits
+	// session_id there is no conversation evidence to distinguish a
+	// foreign child, so this fallback deliberately follows the same
+	// fail-soft policy as ownedSessionID.
 	sessionID := input.SessionID
 	if sessionID == "" {
-		sessionID = ownedSession
+		sessionID = envSessionID
 	}
 	if sessionID != "" {
 		ws := db.AgentWorkspace{

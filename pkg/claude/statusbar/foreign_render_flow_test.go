@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,6 +58,35 @@ func statuslinePayload(t *testing.T, convID, modelID, displayName, effort string
 	return string(raw)
 }
 
+func withBilling(t *testing.T, payload string, cost float64, rateLimits bool) string {
+	t.Helper()
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(payload), &decoded))
+	decoded["cost"] = map[string]any{"total_cost_usd": cost}
+	if rateLimits {
+		decoded["rate_limits"] = map[string]any{
+			"five_hour": map[string]any{
+				"used_percentage": 91,
+				"resets_at":       time.Now().Add(time.Hour).Unix(),
+			},
+		}
+	}
+	raw, err := json.Marshal(decoded)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+func sessionStatusbarFields(t *testing.T, sessionID string) (autoCompactWindow, rawStatusline string) {
+	t.Helper()
+	d, err := db.Open()
+	require.NoError(t, err)
+	require.NoError(t, d.QueryRow(
+		`SELECT auto_compact_window, last_statusline_json FROM sessions WHERE id = ?`,
+		sessionID,
+	).Scan(&autoCompactWindow, &rawStatusline))
+	return autoCompactWindow, rawStatusline
+}
+
 // The reported dashboard corruption, end to end: a nested Claude Code
 // started from inside an agent's pane inherits TCLAUDE_SESSION_ID, so its
 // statusline renders arrive keyed to the PARENT agent's session row. Its
@@ -86,9 +116,23 @@ func TestStatusbar_ForeignRenderLeavesParentRowIntact(t *testing.T) {
 	parent, err := db.GetContextSnapshot("sess-parent")
 	require.NoError(t, err)
 	require.Equal(t, "Opus 5", parent.Model, "parent render must be recorded")
+	require.NoError(t, db.UpdateSessionCost("sess-parent", 1.25))
+	require.NoError(t, db.UpdateSessionVirtualCost("sess-parent", 2.50))
+	require.NoError(t, db.SetSessionAutoCompactWindow("sess-parent", "450000"))
+	require.NoError(t, db.UpdateStatuslineSnapshot("sess-parent", `{"owner":"parent"}`))
 
 	// The nested child's render, carrying the parent's env session id.
 	renderStatusline(t, statuslinePayload(t, "conv-child", "claude-haiku-4-5-20251001", "Haiku 4.5", "low", 17, 200_000))
+	// Exercise the remaining guarded writers as well. Without rate
+	// limits cost is a real API charge; with rate limits it is the
+	// subscription WHAT-IF cost and also persists the raw statusline.
+	// The environment-observed window would overwrite the parent's pin
+	// if that writer escaped the same ownership gate.
+	t.Setenv(harness.AutoCompactWindowEnvVar, "123000")
+	childAPI := statuslinePayload(t, "conv-child", "claude-haiku-4-5-20251001", "Haiku 4.5", "low", 18, 200_000)
+	renderStatusline(t, withBilling(t, childAPI, 99, false))
+	childSubscription := statuslinePayload(t, "conv-child", "claude-haiku-4-5-20251001", "Haiku 4.5", "low", 19, 200_000)
+	renderStatusline(t, withBilling(t, childSubscription, 199, true))
 
 	got, err := db.GetContextSnapshot("sess-parent")
 	require.NoError(t, err)
@@ -97,6 +141,11 @@ func TestStatusbar_ForeignRenderLeavesParentRowIntact(t *testing.T) {
 	assert.Equal(t, "high", got.EffortLevel, "child effort must not overwrite the parent's")
 	assert.Equal(t, float64(42), got.ContextPct, "child context usage must not overwrite the parent's")
 	assert.Equal(t, int64(1_000_000), got.ContextWindowSize, "child window must not overwrite the parent's")
+	assert.Equal(t, 1.25, got.CostUSD, "child API cost must not overwrite the parent's")
+	assert.Equal(t, 2.50, got.VirtualCostUSD, "child WHAT-IF cost must not overwrite the parent's")
+	autoCompactWindow, rawStatusline := sessionStatusbarFields(t, "sess-parent")
+	assert.Equal(t, "450000", autoCompactWindow, "child environment must not overwrite the parent's compact window")
+	assert.Equal(t, `{"owner":"parent"}`, rawStatusline, "child raw statusline must not overwrite the parent's")
 }
 
 // The same path must stay fully open for the agent's own renders: a

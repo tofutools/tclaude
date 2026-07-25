@@ -234,6 +234,46 @@ func TestSubagentLedger_SubagentSessionEndRemovesEntry(t *testing.T) {
 	assert.Equal(t, 1, loadState(t, "send-sess").SubagentCount, "double removal of one sub-agent is a no-op")
 }
 
+// A real sub-agent can arrive "unknown" at SubagentStop time when its
+// ledger entry was swept during a long model turn. Its stop must still
+// settle an otherwise-empty main_agent_idle parent; the unknown id only
+// suppresses stopped-only side effects, not the lifecycle settle.
+func TestSubagentLedger_StopAfterTTLSweepStillSettles(t *testing.T) {
+	stale := db.SubagentSet{
+		"ag-slow": {Type: "Explore", Seen: time.Now().Add(-db.SubagentTTL - time.Minute)},
+	}
+	apply := ledgerWorld(t, "slow-sess", "conv-slow", &SessionState{
+		Status:        StatusMainAgentIdle,
+		StatusDetail:  "1 subagent running",
+		SubagentCount: 1,
+		Subagents:     stale,
+	})
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-slow", AgentType: "Explore"})
+
+	got := loadState(t, "slow-sess")
+	assert.Equal(t, StatusIdle, got.Status, "delayed real stop settles the parent after sweep")
+	assert.Empty(t, got.StatusDetail)
+	assert.Equal(t, 0, got.SubagentCount)
+}
+
+// SessionEnd may remove the ledger entry before the paired SubagentStop.
+// That ordering has the same settle requirement as the TTL path.
+func TestSubagentLedger_StopAfterSubagentSessionEndStillSettles(t *testing.T) {
+	apply := ledgerWorld(t, "paired-sess", "conv-paired", &SessionState{Status: StatusMainAgentIdle})
+	apply(HookCallbackInput{HookEventName: "SubagentStart", AgentID: "ag-paired", AgentType: "Explore"})
+
+	apply(HookCallbackInput{HookEventName: "SessionEnd", Reason: "other", AgentID: "ag-paired"})
+	require.Equal(t, StatusMainAgentIdle, loadState(t, "paired-sess").Status)
+
+	apply(HookCallbackInput{HookEventName: "SubagentStop", AgentID: "ag-paired", AgentType: "Explore"})
+
+	got := loadState(t, "paired-sess")
+	assert.Equal(t, StatusIdle, got.Status, "paired stop settles after SessionEnd removed the ledger entry")
+	assert.Empty(t, got.StatusDetail)
+	assert.Equal(t, 0, got.SubagentCount)
+}
+
 // Claude Code 2.1.220 ends EVERY main-thread turn with a synthetic
 // SubagentStop: a freshly minted agent_id no SubagentStart ever
 // announced, an empty agent_type, and an agent_transcript_path pointing
