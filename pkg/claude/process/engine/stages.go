@@ -149,8 +149,9 @@ type StageReset struct {
 // already NAMES the gate: an observation and an operator-recorded outcome name
 // their command's node, and a resolution names the parked node. So the caller
 // passes that node, this reads only that node's own prepared parent, and a
-// commit that reworked nothing pays a single map lookup. Nothing walks the
-// run's other compounds, or even this compound's other children.
+// commit that reworked nothing pays a single map lookup. Nothing ever walks
+// another compound; the one walk here is bounded by the named gate's OWN
+// parent's child list, for the fail-closed reason below.
 //
 // It is fail-closed in both directions: the named node must be a prepared check
 // or review gate, and the before/after delta must demonstrate THAT gate's
