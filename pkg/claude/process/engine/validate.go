@@ -447,16 +447,23 @@ func validateCheckpoint(checkpoint Checkpoint, definition *Definition) error {
 	return validateBlocked(checkpoint, definition)
 }
 
-// validateAttempts enforces that the sparse attempt counter names only known
-// program tasks and holds only attempt numbers the pinned definition could
-// actually have produced: at least the first attempt, at most the authored
-// budget. The map is keyed by node id, so its size is bounded by the prepared
-// node set without a separate count check.
+// validateAttempts is a narrow structural check on the sparse attempt counter.
+// It enforces exactly two things: the entry names a KNOWN reference (a prepared
+// program task), and the value is within the node's CURRENT budget — at least
+// the first attempt, at most the checkpoint's own authored-or-raised ceiling.
+// The map is keyed by node id, so its size is bounded by the prepared node set
+// without a separate count check.
 //
-// It deliberately says nothing about which nodes SHOULD have an entry. The
-// counter is sparse on purpose and the exhaustion disposition is expected to
-// change, so this stays a bound on the values rather than a whole-graph proof
-// about statuses.
+// It is explicitly NOT a claim that the number is one the reducer could have
+// produced. The ceiling is what an operator retry durably raised, so the bound
+// deliberately follows the checkpoint rather than the authored budget, and the
+// checkpoint under ~/.tclaude/data is authoritative: reconstructing reachability
+// here would be tamper detection on an ordinary load, which is deferred by
+// explicit product decision.
+//
+// It also deliberately says nothing about which nodes SHOULD have an entry. The
+// counter is sparse on purpose, so this stays a bound on the values rather than
+// a whole-graph proof about statuses.
 func validateAttempts(checkpoint Checkpoint, definition *Definition) error {
 	for nodeID, attempt := range checkpoint.Attempts {
 		node, ok := definitionNodeByID(definition, nodeID)

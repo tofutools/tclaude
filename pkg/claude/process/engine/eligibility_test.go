@@ -136,9 +136,10 @@ func TestExecutableRetryBudgetIsCapped(t *testing.T) {
 		}
 	}
 
-	// The cap is the checkpoint's upper bound too: validateAttempts compares
-	// against the prepared budget, so the two can never disagree about what a
-	// loadable attempt number is.
+	// With no operator retry the authored cap is also what the load boundary
+	// admits: validateAttempts compares against the node's CURRENT ceiling,
+	// which is the authored budget until an operator raises it, so eligibility
+	// and the boundary cannot disagree about an unretried run's attempt number.
 	checkpoint, err := Initialize("run-capped", definition)
 	if err != nil {
 		t.Fatal(err)
