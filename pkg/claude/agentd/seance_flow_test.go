@@ -586,6 +586,47 @@ func TestSeanceRun_CodexManagedSandboxRejectsHarnessHomeAsWorkspace(t *testing.T
 	assert.False(t, runCalled)
 }
 
+func TestSeanceRun_CodexRawWorkspaceRejectsHarnessHome(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "c0de2222-1111-2222-3333-444444444444"
+		newConv = "c0de2222-5555-6666-7777-888888888888"
+	)
+	oldCwd := f.TestCwd("seance-codex-raw-home")
+	t.Setenv("HOME", oldCwd)
+	haveSeanceCodexSession(f, oldConv, "codex-raw-home-old", "tmux-codex-raw-home-old", oldCwd)
+	oldRows, err := db.FindSessionsByConvID(oldConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldRows)
+	for _, row := range oldRows {
+		row.SandboxMode = harness.SandboxWorkspaceWrite
+		row.ApprovalPolicy = harness.ApprovalNever
+		require.NoError(t, db.SaveSession(row))
+	}
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	haveSeanceCodexSession(f, newConv, "codex-raw-home-new", "tmux-codex-raw-home-new",
+		f.TestCwd("seance-codex-raw-home-successor"))
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	previousRun := agentd.RunSeanceHarness
+	runCalled := false
+	agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		runCalled = true
+		return agentd.SeanceExecResult{Started: true}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previousRun })
+
+	_, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		"target": oldConv, "question": "What was recorded?",
+	})
+	assert.Equal(t, http.StatusConflict, status, "body=%s", body)
+	assert.Contains(t, body, "sandbox_cwd_conflict")
+	assert.Contains(t, body, "private harness state writable")
+	assert.False(t, runCalled)
+}
+
 func TestSeancePlan_MissingPredecessorSnapshotDoesNotBorrowSuccessorAuthority(t *testing.T) {
 	f := newFlow(t)
 	const (

@@ -236,19 +236,27 @@ func handleWhoamiSeanceRun(w http.ResponseWriter, r *http.Request) {
 	posture := resolved.launchPosture
 	profilePath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
+	if h.Name == harness.CodexName {
+		guardMode := posture.SandboxMode
+		if guardMode == harness.SandboxManagedProfile {
+			guardMode = harness.SandboxWorkspaceWrite
+		}
+		if guardMode == harness.SandboxWorkspaceWrite {
+			home, homeErr := os.UserHomeDir()
+			if homeErr != nil {
+				writeError(w, http.StatusBadGateway, "seance_init",
+					"resolve home for the recorded sandbox: "+homeErr.Error())
+				return
+			}
+			if harness.CodexSandboxCwdConflict(guardMode, resolved.Cwd, home) {
+				writeError(w, http.StatusConflict, "sandbox_cwd_conflict",
+					fmt.Sprintf("cannot reproduce the predecessor's sandbox in %q: "+
+						"the workspace would make private harness state writable", resolved.Cwd))
+				return
+			}
+		}
+	}
 	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
-		home, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			writeError(w, http.StatusBadGateway, "seance_init",
-				"resolve home for the recorded sandbox: "+homeErr.Error())
-			return
-		}
-		if harness.CodexSandboxCwdConflict(harness.SandboxWorkspaceWrite, resolved.Cwd, home) {
-			writeError(w, http.StatusConflict, "sandbox_cwd_conflict",
-				fmt.Sprintf("cannot reproduce the predecessor's managed sandbox in %q: "+
-					"the workspace would make private harness state writable", resolved.Cwd))
-			return
-		}
 		profileName, path, capability, profileErr := EnsureSeanceCodexProfile(
 			resolved.Cwd, session.GenerateSessionID(), resolved.effectiveSandbox)
 		if profileErr != nil {
