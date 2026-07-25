@@ -497,7 +497,9 @@ func (m *processRunManager) beginRun(runID string, prepared *executor.Run, start
 		switch run.Action().Kind {
 		case executor.ActionNeedsReconcile:
 			return false, executor.ErrNeedsReconcile
-		case executor.ActionAwaitDecision, executor.ActionTerminal:
+		case executor.ActionAwaitDecision, executor.ActionBlocked, executor.ActionTerminal:
+			// Parked on a human or an operator, or over. Nothing started, and
+			// nothing is wrong: the run waits for its next external input.
 			return false, nil
 		default:
 			return false, fmt.Errorf("process run did not become dispatchable, decision-blocked, or terminal")
@@ -586,7 +588,16 @@ func (m *processRunManager) drive(runID string, claim *processRunClaim, dispatch
 			// program result is serialized here rather than by a lock: whichever
 			// the select takes first commits first, and the loser sees the state
 			// the winner left behind.
-			request.reply <- request.input.apply(claim.run, request.actor)
+			applyErr := request.input.apply(claim.run, request.actor)
+			request.reply <- applyErr
+			// An operator cancel dooms the run from HERE rather than from an
+			// observation, so it needs the same best-effort sibling stop the
+			// observation path does. Asking the run, not the input, keeps the
+			// two paths on one rule. The killed programs still come back as
+			// ordinary observations, so nothing is lost or assumed.
+			if applyErr == nil && claim.run.Draining() {
+				claim.cancelWorkers()
+			}
 		}
 		more, err := fillProcessRun(claim, claim.run, processRunConcurrency-inFlight-len(pending))
 		if err != nil && !errors.Is(err, executor.ErrNeedsReconcile) {

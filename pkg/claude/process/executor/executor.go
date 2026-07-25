@@ -24,7 +24,12 @@ const (
 	ActionDispatch       ActionKind = "dispatch"
 	ActionAwaitDecision  ActionKind = "await_decision"
 	ActionNeedsReconcile ActionKind = "needs_reconcile"
-	ActionTerminal       ActionKind = "terminal"
+	// ActionBlocked reports a run whose remaining live work is parked on an
+	// operator resolution. Without it a parked run has no honest coarse summary:
+	// it is running, has nothing outstanding, and nothing an engine pass can
+	// push, so a driver would have to call that state an error.
+	ActionBlocked  ActionKind = "blocked"
+	ActionTerminal ActionKind = "terminal"
 )
 
 // EngineActor attributes durable evidence the engine produced by itself — an
@@ -216,6 +221,10 @@ func (r *Run) Action() Action {
 		obligation := r.checkpoint.AwaitingDecisions[0]
 		action.Kind = ActionAwaitDecision
 		action.Decision = &obligation
+		return action
+	}
+	if len(r.checkpoint.Blocked) > 0 {
+		action.Kind = ActionBlocked
 		return action
 	}
 	if r.checkpoint.Status == engine.RunRunning {

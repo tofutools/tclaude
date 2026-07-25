@@ -302,6 +302,14 @@ func TestRuntimeMutationVerbsReachDaemon(t *testing.T) {
 			},
 			wantPath: "/v1/process/runs/run_1/decide",
 		},
+		"resolve-blocked": {
+			run: func(stdout, stderr *bytes.Buffer) error {
+				return runProcessResolveBlocked(&processResolveBlockedParams{
+					RunID: "run_1", Node: "task-01", Attempt: 1, Action: "cancel", AskHuman: "30s",
+				}, stdout, stderr)
+			},
+			wantPath: "/v1/process/runs/run_1/resolve-blocked",
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -315,6 +323,32 @@ func TestRuntimeMutationVerbsReachDaemon(t *testing.T) {
 			assert.Equal(t, test.wantPath, gotPath)
 		})
 	}
+}
+
+// TestRuntimeResolveBlockedPassesAskHumanAndRejectsAnInvalidTimeout keeps the
+// parked-branch verb on the same --ask-human transport as every other run
+// mutation, and refuses a malformed timeout before anything is sent.
+func TestRuntimeResolveBlockedPassesAskHumanAndRejectsAnInvalidTimeout(t *testing.T) {
+	var gotOpts agent.DaemonOpts
+	requested := false
+	stubProcessRuntime(t, func(_ string, _ string, _, _ any, opts agent.DaemonOpts) error {
+		requested = true
+		gotOpts = opts
+		return nil
+	})
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runProcessResolveBlocked(&processResolveBlockedParams{
+		RunID: "run_1", Node: "task-01", Attempt: 2, Action: "skip", AskHuman: "60s",
+	}, &stdout, &stderr))
+	assert.Equal(t, 60*time.Second, gotOpts.AskHuman)
+	assert.Same(t, &stderr, gotOpts.RetryOutput)
+
+	requested = false
+	err := runProcessResolveBlocked(&processResolveBlockedParams{
+		RunID: "run_1", Node: "task-01", Attempt: 2, Action: "skip", AskHuman: "later",
+	}, &stdout, &stderr)
+	require.Error(t, err)
+	assert.False(t, requested, "an invalid --ask-human must not reach the daemon")
 }
 
 // TestRuntimeDisabledDaemonRejectsWithStableMessage proves that when the daemon
@@ -445,7 +479,7 @@ func TestRuntimeShowJSONEmitsCompleteRunSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &fields))
 	assert.ElementsMatch(t, []string{
 		"id", "templateRef", "params", "programAuthorizations", "status", "stateVersion",
-		"checkpoint", "action", "needsReconcile", "awaitingDecisions", "commands",
+		"checkpoint", "action", "needsReconcile", "awaitingDecisions", "commands", "blocked",
 		"createdAt", "updatedAt",
 	}, mapKeys(fields))
 }
@@ -689,6 +723,61 @@ func TestRuntimeDecideValidatesInputAndPrintsAwaitedFollowUpDecision(t *testing.
 	assert.Contains(t, stdout.String(), "confirm")
 	assert.Contains(t, stdout.String(), "no, yes")
 	assert.Contains(t, stdout.String(), "tclaude process decide run_1 --node confirm")
+}
+
+// TestRuntimeResolveBlockedValidatesInputAndPrintsTheParkedBranch covers the
+// operator surface for a parked branch: validation happens before anything
+// reaches the daemon, the request carries the exact blocked identity, and the
+// printed follow-up names the attempt so the suggested command is one the
+// daemon would actually accept rather than refuse as stale.
+func TestRuntimeResolveBlockedValidatesInputAndPrintsTheParkedBranch(t *testing.T) {
+	requested := false
+	stubProcessRuntime(t, func(method string, path string, in, out any, _ agent.DaemonOpts) error {
+		requested = true
+		assert.Equal(t, http.MethodPost, method)
+		assert.Equal(t, "/v1/process/runs/run_1/resolve-blocked", path)
+		encoded, err := json.Marshal(in)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"nodeId":"task-01","attempt":3,"action":"retry","note":"host was down"}`,
+			string(encoded))
+		response := out.(*struct {
+			Started bool           `json:"started"`
+			Run     processRunJSON `json:"run"`
+		})
+		response.Run = processRunJSON{
+			ID: "run_1", Action: "blocked",
+			Blocked: []processRunBlockedJSON{{NodeID: "task-02", Attempt: 5, Reason: "program exited with code 2"}},
+		}
+		return nil
+	})
+
+	var stdout, stderr bytes.Buffer
+	base := func() *processResolveBlockedParams {
+		return &processResolveBlockedParams{RunID: "run_1", Node: "task-01", Attempt: 3, Action: "retry"}
+	}
+	missingNode := base()
+	missingNode.Node = ""
+	require.ErrorContains(t, runProcessResolveBlocked(missingNode, &stdout, &stderr), "--node is required")
+	missingAttempt := base()
+	missingAttempt.Attempt = 0
+	require.ErrorContains(t, runProcessResolveBlocked(missingAttempt, &stdout, &stderr), "--attempt")
+	badAction := base()
+	badAction.Action = "reroute"
+	require.ErrorContains(t, runProcessResolveBlocked(badAction, &stdout, &stderr), "--action must be")
+	noAction := base()
+	noAction.Action = ""
+	require.ErrorContains(t, runProcessResolveBlocked(noAction, &stdout, &stderr), "--action must be")
+	require.False(t, requested, "validation failures must not reach the daemon")
+
+	accepted := base()
+	accepted.Note = "host was down"
+	require.NoError(t, runProcessResolveBlocked(accepted, &stdout, &stderr))
+	assert.True(t, requested)
+	assert.Contains(t, stdout.String(), "Resolved blocked node task-01 attempt 3 with retry for process run run_1.")
+	assert.Contains(t, stdout.String(), "blocked:")
+	assert.Contains(t, stdout.String(), "program exited with code 2")
+	assert.Contains(t, stdout.String(),
+		"tclaude process resolve-blocked run_1 --node task-02 --attempt 5 --action <retry|skip|cancel>")
 }
 
 func stubProcessRuntime(

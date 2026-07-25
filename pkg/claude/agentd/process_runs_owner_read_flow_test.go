@@ -93,6 +93,8 @@ func TestProcessRunsGroupOwnerGainsNoMutationAuthority(t *testing.T) {
 			map[string]any{"outcome": "succeeded"}},
 		{"decide", "/v1/process/runs/" + runOwnerRead + "/decide",
 			map[string]any{"nodeId": "choose", "verdict": "approve"}},
+		{"resolve-blocked", "/v1/process/runs/" + runOwnerRead + "/resolve-blocked",
+			map[string]any{"nodeId": "choose", "attempt": 1, "action": "retry"}},
 	} {
 		rec := agentReq(t, f, ownerConv, http.MethodPost, route.path, route.body)
 		require.Equalf(t, http.StatusForbidden, rec.Code,

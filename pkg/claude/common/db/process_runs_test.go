@@ -139,13 +139,21 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 	for _, item := range []struct {
 		id, status, checkpoint string
 	}{
-		{"run_awaiting", "running", `{"awaitingDecisions":[{"nodeId":"choose"}]}`},
-		{"run_reconcile", "running", `{"commands":[{"id":"command"}]}`},
-		// A runnable row has empty outbox arrays; an absent-key row (run_absent)
-		// classifies runnable via COALESCE(json_array_length(...), 0) = 0 too.
-		{"run_runnable", "running", `{"commands":[],"awaitingDecisions":[]}`},
-		{"run_absent", "running", `{"cursor":"ready"}`},
-		{"run_terminal", ProcessRunStatusCompleted, `{"cursor":"done"}`},
+		{"run_awaiting", "running", `{"awaitingDecisions":[{"nodeId":"choose"}],
+			"nodes":{"choose":"ready"}}`},
+		{"run_reconcile", "running", `{"commands":[{"id":"command"}],
+			"nodes":{"task":"running"}}`},
+		// A branch parked on an operator resolution is blocked, not ready, so a
+		// blocked-only run is excluded exactly like a decision-only one.
+		{"run_blocked", "running", `{"blocked":[{"nodeId":"task"}],
+			"nodes":{"task":"blocked"}}`},
+		// A runnable row has a ready node and empty outbox arrays; an
+		// absent-key row (run_absent) classifies its outboxes as empty via
+		// COALESCE(json_array_length(...), 0) = 0 too.
+		{"run_runnable", "running", `{"commands":[],"awaitingDecisions":[],
+			"nodes":{"task":"ready"}}`},
+		{"run_absent", "running", `{"nodes":{"task":"ready"}}`},
+		{"run_terminal", ProcessRunStatusCompleted, `{"nodes":{"end":"done"}}`},
 	} {
 		record := processRunFixture(t, item.id, item.status, json.RawMessage(item.checkpoint))
 		require.NoError(t, CreateProcessRun(record))
@@ -162,7 +170,7 @@ func TestRunnableProcessRunIDsExcludeOutstandingBeforeColdLoad(t *testing.T) {
 		ids, next, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
 		require.NoError(t, err)
 		assert.Equal(t, []string{"run_absent", "run_runnable"}, ids,
-			"repeated recovery pages must keep reconciliation- and decision-blocked rows before LoadRun")
+			"repeated recovery pages must keep reconciliation-, decision-, and operator-blocked rows before LoadRun")
 		assert.Empty(t, next)
 	}
 }
@@ -202,12 +210,48 @@ func TestRunnableProcessRunIDsIncludeReadyBranchBesideAwaitedDecision(t *testing
 		"only the run with work an engine pass can push is resumable")
 }
 
+// TestRunnableProcessRunIDsExcludeBlockedOnlyRuns is the parked-branch half of
+// the same rule: a branch waiting on an operator resolution is blocked rather
+// than ready, so a blocked-only run must not be reloaded and re-prepared every
+// minute — while a blocked branch beside live work still resumes normally.
+func TestRunnableProcessRunIDsExcludeBlockedOnlyRuns(t *testing.T) {
+	setupTestDB(t)
+	for _, item := range []struct {
+		id, checkpoint string
+	}{
+		// Parked on an operator and nothing else: quiescent, so excluded.
+		{"run_blocked_only", `{"blocked":[{"nodeId":"parked"}],
+			"nodes":{"fork":"done","join":"pending","live":"done","parked":"blocked","start":"done"}}`},
+		// Two parked branches, still nothing an engine pass could push.
+		{"run_blocked_pair", `{"blocked":[{"nodeId":"a"},{"nodeId":"b"}],
+			"nodes":{"a":"blocked","b":"blocked","fork":"done","start":"done"}}`},
+		// A sibling task is ready beside the parked branch: pushable.
+		{"run_blocked_with_ready", `{"blocked":[{"nodeId":"parked"}],
+			"nodes":{"fork":"done","join":"pending","live":"ready","parked":"blocked","start":"done"}}`},
+		// Parked beside an awaited decision: the decision consumes the only
+		// ready node, so there is still nothing to push.
+		{"run_blocked_with_decision", `{"blocked":[{"nodeId":"parked"}],
+			"awaitingDecisions":[{"nodeId":"decide"}],
+			"nodes":{"decide":"ready","fork":"done","parked":"blocked","start":"done"}}`},
+	} {
+		record := processRunFixture(t, item.id, "running", json.RawMessage(item.checkpoint))
+		require.NoError(t, CreateProcessRun(record))
+	}
+
+	for range 2 {
+		ids, _, err := ListRunnableProcessRunIDs("", MaxProcessRunReadPage)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"run_blocked_with_ready"}, ids,
+			"repeated sweeps must leave parked runs alone")
+	}
+}
+
 func TestRunnableProcessRunIDsAdvanceByExaminedRowsNotMatches(t *testing.T) {
 	setupTestDB(t)
 	for i := range MaxProcessRunReadPage + 1 {
-		checkpoint := json.RawMessage(`{"commands":[{"id":"command"}]}`)
+		checkpoint := json.RawMessage(`{"commands":[{"id":"command"}],"nodes":{"task":"running"}}`)
 		if i == MaxProcessRunReadPage {
-			checkpoint = json.RawMessage(`{"cursor":"ready"}`)
+			checkpoint = json.RawMessage(`{"nodes":{"task":"ready"}}`)
 		}
 		id := fmt.Sprintf("run_recovery_%02d", i)
 		require.NoError(t, CreateProcessRun(processRunFixture(t, id, "running", checkpoint)))
