@@ -266,13 +266,21 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// planning pass mints a fresh attempt for it while every sibling
 			// keeps exactly what it had. A task with no authored retry has a
 			// budget of one and therefore stays fail-fast.
-			if next.Attempts[node.id] < node.maxAttempts {
+			//
+			// A run some OTHER branch already failed is the exception, and it has
+			// to be: planning is shut off for the rest of that run, so a re-readied
+			// node would never get its next attempt. Leaving it ready would strand
+			// the run — non-terminal, nothing outstanding, nothing runnable — so a
+			// doomed run spends no further budget and takes the failure path below.
+			if !hasFailedNode(next) && next.Attempts[node.id] < node.maxAttempts {
 				next.Nodes[node.id] = NodeReady
 				break
 			}
-			// Budget exhausted: today's failure disposition, unchanged. Planning
-			// stops immediately — hasFailedNode shuts off both nextPlannableTask
-			// and nextEngineTransition.
+			// Budget exhausted, or spent by a run that was already doomed:
+			// today's failure disposition, unchanged. Planning stops immediately
+			// — hasFailedNode shuts off both nextPlannableTask and
+			// nextEngineTransition — and this is the transition that may empty
+			// the last outbox entry and let the failed run finalize.
 			next.Nodes[node.id] = NodeFailed
 			abandonAfterFailure(&next)
 		default:

@@ -275,6 +275,59 @@ func TestRetryingBranchLeavesItsSiblingUntouched(t *testing.T) {
 	}
 }
 
+// TestRetryBudgetIsNotSpentOnAnAlreadyDoomedRun is the drain property under
+// fan-out. Once some branch has failed, planning is shut off for the whole run,
+// so re-readying a sibling that still has budget would strand the run:
+// non-terminal, nothing outstanding, and nothing runnable to ever finish it. A
+// doomed run must take the failure path instead and finalize when its last
+// command drains.
+func TestRetryBudgetIsNotSpentOnAnAlreadyDoomedRun(t *testing.T) {
+	tmpl := fanOutTemplate("left", "right")
+	// Only the right branch is retryable, and left has no budget at all — so
+	// left's first failure dooms the run while right is still executing.
+	right := tmpl.Nodes["right"]
+	right.Retry = &model.RetryPolicy{MaxAttempts: 3}
+	tmpl.Nodes["right"] = right
+	definition := mustPrepare(t, tmpl, nil)
+
+	checkpoint, err := Initialize("run-doomed", definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, leftCommand := advanceAndPlan(t, checkpoint, definition)
+	checkpoint, rightCommand := advanceAndPlan(t, checkpoint, definition)
+	if leftCommand.NodeID != "left" || rightCommand.NodeID != "right" {
+		t.Fatalf("planned %q then %q", leftCommand.NodeID, rightCommand.NodeID)
+	}
+	checkpoint, err = Apply(checkpoint, definition, observed(leftCommand, ProgramFailed, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The doomed run still owes its sibling's observation, so it is not terminal
+	// yet — exactly today's drain behaviour.
+	if checkpoint.Status != RunRunning || len(checkpoint.Commands) != 1 {
+		t.Fatalf("state while the doomed run drains = %#v", checkpoint)
+	}
+	checkpoint, err = Apply(checkpoint, definition, observed(rightCommand, ProgramFailed, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Nodes["right"] == NodeReady {
+		t.Fatalf("a doomed run re-readied a branch nothing will ever plan: %#v", checkpoint)
+	}
+	if checkpoint.Status != RunFailed {
+		t.Fatalf("run status = %q, want failed once the last command drained", checkpoint.Status)
+	}
+	if Runnable(checkpoint, definition) {
+		t.Fatal("a terminal run reported runnable work")
+	}
+	// The counter still records the attempt that really ran; it is simply not
+	// advanced any further.
+	if got := checkpoint.Attempts["right"]; got != 1 {
+		t.Fatalf("right attempt counter = %d, want 1", got)
+	}
+}
+
 // TestColdLoadPreservesTheExactCurrentAttempt covers restart: the counter and
 // the outstanding attempt's exact command survive an encode/decode round trip,
 // and nothing about loading re-plans or re-mints them.
