@@ -2,7 +2,6 @@ package conv
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"time"
 
@@ -223,6 +222,10 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	// Same read-before-write ordering for the AskUserQuestion idle-timeout.
+	// resumeLaunchCmd already applied it to the launch; recording it on the row
+	// below is what keeps it from being asserted away as "known: inherit".
+	askTimeout := resumeAskTimeout(h, rc.ConvID)
 
 	// Launch through the shared script mechanism, not an inline `sh -c`: the
 	// resume command carries the same env exports and sandbox dir lists as a
@@ -239,19 +242,20 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 	// not coalesced back to "claude" by the DB layer (JOH-218).
 	pid := session.ParsePIDFromTmux(tmuxSession)
 	state := &session.SessionState{
-		ID:                 sessionID,
-		TmuxSession:        tmuxSession,
-		PID:                pid,
-		Cwd:                rc.ProjectPath,
-		ConvID:             rc.ConvID,
-		Status:             session.StatusIdle,
-		Harness:            h.Name,
-		SandboxMode:        resumeSandboxMode(rc.ConvID),
-		EffectiveSandbox:   resumeEffectiveSandboxForState(rc.ConvID),
-		ApprovalPolicy:     approvalPolicy,
-		ApprovalAutoReview: autoReview,
-		Created:            time.Now(),
-		Updated:            time.Now(),
+		ID:                     sessionID,
+		TmuxSession:            tmuxSession,
+		PID:                    pid,
+		Cwd:                    rc.ProjectPath,
+		ConvID:                 rc.ConvID,
+		Status:                 session.StatusIdle,
+		Harness:                h.Name,
+		SandboxMode:            resumeSandboxMode(rc.ConvID),
+		EffectiveSandbox:       resumeEffectiveSandboxForState(rc.ConvID),
+		ApprovalPolicy:         approvalPolicy,
+		ApprovalAutoReview:     autoReview,
+		AskUserQuestionTimeout: askTimeout,
+		Created:                time.Now(),
+		Updated:                time.Now(),
 	}
 
 	if err := session.SaveSessionState(state); err != nil {
@@ -259,28 +263,10 @@ func runResumeWithSession(rc *resolvedConv, attach bool, stdout, stderr *os.File
 		return 1
 	}
 	// Carry the posture onto the row this resume just created. Out-of-band,
-	// like the spawn path: SaveSession's UPSERT does not own the column.
+	// like the spawn path: SaveSession's UPSERT does not own these columns.
 	// Best-effort — the pane is already running with the right env, and a lost
 	// write only costs a FUTURE resume its opt-in.
-	if h.SupportsAutoMemory() {
-		if err := db.SetSessionAutoMemory(sessionID, autoMemory); err != nil {
-			slog.Warn("failed to record resumed session auto-memory posture",
-				"session_id", sessionID, "auto_memory", autoMemory, "error", err)
-		}
-	}
-	if h.SupportsContextFeatures() {
-		if err := db.SetSessionContextFeatures(sessionID, contextFeatures); err != nil {
-			slog.Warn("failed to record resumed session context features",
-				"session_id", sessionID,
-				"context_features", harness.FormatContextFeatures(contextFeatures), "error", err)
-		}
-	}
-	if h.SupportsAutoCompactWindow() {
-		if err := db.SetSessionAutoCompactWindow(sessionID, autoCompactWindow); err != nil {
-			slog.Warn("failed to record resumed session auto-compact window",
-				"session_id", sessionID, "auto_compact_window", autoCompactWindow, "error", err)
-		}
-	}
+	session.RecordLaunchPosture(sessionID, h, autoMemory, contextFeatures, autoCompactWindow)
 
 	displayName := rc.DisplayName
 	if len(displayName) > 50 {

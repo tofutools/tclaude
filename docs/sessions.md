@@ -53,6 +53,31 @@ agentd-managed launches retain their existing resolved launch shape, and the
 profile's sandbox, approval, identity, and permission fields remain agent-spawn
 policy rather than overrides for a directly attached human session.
 
+### A resume keeps the posture it was launched with
+
+`tclaude session new --resume <id>` relaunches the conversation the way it was
+recorded, not the way a fresh session would start. Every launch parameter tclaude
+records — `--sandbox`, `--ask-for-approval`, `--auto-review`, `--tools`,
+`--ask-user-question-timeout`, `--remote-control`, `--auto-memory`,
+`--context-features`, `--auto-compact-window` — is carried over unless you pass
+that flag yourself. Passing it wins, including when you pass the value that is
+also the default (`--auto-memory=false` keeps memory off even if the recorded
+posture had it on).
+
+This matters beyond the one launch: a resume records the posture it resolved, so
+a flag that silently fell back to its default would overwrite the recorded value
+and the original intent would be unrecoverable on the next resume. `tclaude conv
+resume`, the watch-mode resume, and the daemon's resume/clone/reincarnate paths
+follow the same rule.
+
+Model and effort are not on that list because they need no help: the harness
+itself remembers which model a conversation runs on across a resume, and the
+status line re-records both on every render.
+
+A recorded value the relaunch harness cannot honour — a Claude-only posture on a
+Codex resume, or a startup-context feature since retired from the catalog — is
+dropped rather than failing the resume.
+
 **Flags:**
 
 | Flag               | Description                                              |

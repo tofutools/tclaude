@@ -101,19 +101,19 @@ func TestGlobalDefaultLaunchProfile_ExplicitFieldsWinIndependently(t *testing.T)
 		{
 			name:     "harness",
 			params:   NewParams{Harness: "claude"},
-			explicit: explicitLaunchFields{harness: true},
+			explicit: explicitLaunchFields{"harness": true},
 			want:     NewParams{Harness: "claude", Effort: "high"},
 		},
 		{
 			name:     "model",
 			params:   NewParams{Model: "gpt-5.4"},
-			explicit: explicitLaunchFields{model: true},
+			explicit: explicitLaunchFields{"model": true},
 			want:     NewParams{Harness: "codex", Model: "gpt-5.4", Effort: "high"},
 		},
 		{
 			name:     "effort",
 			params:   NewParams{Effort: "low"},
-			explicit: explicitLaunchFields{effort: true},
+			explicit: explicitLaunchFields{"effort": true},
 			want:     NewParams{Harness: "codex", Model: "gpt-5.6-sol", Effort: "low"},
 		},
 	}
@@ -136,7 +136,7 @@ func TestGlobalDefaultLaunchProfile_ExplicitEmptyFieldUsesHarnessDefault(t *test
 		Name: "terminal-default", Harness: "codex", Model: "gpt-5.6-sol", Effort: "high",
 	})
 	params := &NewParams{}
-	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{model: true}))
+	require.NoError(t, applyGlobalDefaultLaunchProfile(params, explicitLaunchFields{"model": true}))
 	assert.Equal(t, "codex", params.Harness)
 	assert.Empty(t, params.Model, "an explicit --model= must not be filled from the profile")
 	assert.Equal(t, "high", params.Effort)

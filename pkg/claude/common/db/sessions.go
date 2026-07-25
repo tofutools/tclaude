@@ -391,44 +391,10 @@ func SessionLaunchProfileForConv(convID string) (SessionLaunchProfile, error) {
 		return SessionLaunchProfile{}, err
 	}
 	if resume != nil && resume.FallbackRelaunch != nil {
-		fallback := resume.FallbackRelaunch
-		if durable == nil {
-			durable = fallback
-		} else {
-			merged := *fallback
-			merged.Version = durable.Version
-			if durable.SandboxMode != nil {
-				merged.SandboxMode = durable.SandboxMode
-			}
-			if durable.ApprovalPolicy != nil {
-				merged.ApprovalPolicy = durable.ApprovalPolicy
-			}
-			if durable.ApprovalAutoReview != nil {
-				merged.ApprovalAutoReview = durable.ApprovalAutoReview
-			}
-			if durable.ModelID != nil {
-				merged.ModelID = durable.ModelID
-			}
-			if durable.Effort != nil {
-				merged.Effort = durable.Effort
-			}
-			if durable.ContextWindowSize != nil {
-				merged.ContextWindowSize = durable.ContextWindowSize
-			}
-			if durable.AskUserQuestionTimeout != nil {
-				merged.AskUserQuestionTimeout = durable.AskUserQuestionTimeout
-			}
-			if durable.RemoteControl != nil {
-				merged.RemoteControl = durable.RemoteControl
-			}
-			if durable.AutoMemory != nil {
-				merged.AutoMemory = durable.AutoMemory
-			}
-			if durable.ContextFeatures != nil {
-				merged.ContextFeatures = durable.ContextFeatures
-			}
-			durable = &merged
-		}
+		// Agent intent overlays the conversation fallback field by field; a nil
+		// field means unknown and keeps the fallback's value. The overlay itself
+		// lives in ComposeAgentRelaunchProfile so this list exists once.
+		durable = ComposeAgentRelaunchProfile(resume.FallbackRelaunch, durable)
 	}
 	if durable != nil {
 		p := SessionLaunchProfile{}
@@ -971,21 +937,11 @@ func SetSessionRemoteControl(sessionID string, on bool) error {
 // fallback when unmanaged. The live toggle path still reads the active
 // SessionRow directly because it controls one process generation.
 func RemoteControlForConv(convID string) (bool, error) {
-	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
-		return false, err
-	} else if p != nil && p.RemoteControl != nil {
-		return *p.RemoteControl, nil
-	}
-	if p, err := ConversationResumeProfileForConv(convID); err != nil {
-		return false, err
-	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.RemoteControl != nil {
-		return *p.FallbackRelaunch.RemoteControl, nil
-	}
-	s, err := FindSessionByConvID(convID)
-	if err != nil || s == nil {
+	p, err := RecordedLaunchPostureForConv(convID)
+	if err != nil || p == nil || p.RemoteControl == nil {
 		return false, err
 	}
-	return s.RemoteControl, nil
+	return *p.RemoteControl, nil
 }
 
 // SetSessionContextFeatures records the startup-context trim map a launch
@@ -1003,21 +959,11 @@ func SetSessionContextFeatures(sessionID string, features map[string]string) err
 // conversation fallback — the ContextFeatures twin of AutoMemoryForConv. Legacy
 // sessions are consulted only when v145 projection has not occurred.
 func ContextFeaturesForConv(convID string) (map[string]string, error) {
-	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
-		return nil, err
-	} else if p != nil && p.ContextFeatures != nil {
-		return *p.ContextFeatures, nil
-	}
-	if p, err := ConversationResumeProfileForConv(convID); err != nil {
-		return nil, err
-	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.ContextFeatures != nil {
-		return *p.FallbackRelaunch.ContextFeatures, nil
-	}
-	s, err := FindSessionByConvID(convID)
-	if err != nil || s == nil {
+	p, err := RecordedLaunchPostureForConv(convID)
+	if err != nil || p == nil || p.ContextFeatures == nil {
 		return nil, err
 	}
-	return s.ContextFeatures, nil
+	return *p.ContextFeatures, nil
 }
 
 // SetSessionAutoMemory records the auto-memory posture a launch resolved to,
@@ -1035,21 +981,11 @@ func SetSessionAutoMemory(sessionID string, on bool) error {
 // conversation fallback. Legacy sessions are consulted only when v145
 // projection has not occurred.
 func AutoMemoryForConv(convID string) (bool, error) {
-	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
-		return false, err
-	} else if p != nil && p.AutoMemory != nil {
-		return *p.AutoMemory, nil
-	}
-	if p, err := ConversationResumeProfileForConv(convID); err != nil {
-		return false, err
-	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.AutoMemory != nil {
-		return *p.FallbackRelaunch.AutoMemory, nil
-	}
-	s, err := FindSessionByConvID(convID)
-	if err != nil || s == nil {
+	p, err := RecordedLaunchPostureForConv(convID)
+	if err != nil || p == nil || p.AutoMemory == nil {
 		return false, err
 	}
-	return s.AutoMemory, nil
+	return *p.AutoMemory, nil
 }
 
 // SetSessionAutoCompactWindow records the auto-compaction context capacity a
@@ -1128,42 +1064,22 @@ func GetSessionAutoCompactWindow(id string) (string, error) {
 // conversation fallback — the AutoCompactWindow twin of AutoMemoryForConv.
 // Legacy sessions are consulted only when v145 projection has not occurred.
 func AutoCompactWindowForConv(convID string) (string, error) {
-	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
-		return "", err
-	} else if p != nil && p.AutoCompactWindow != nil {
-		return *p.AutoCompactWindow, nil
-	}
-	if p, err := ConversationResumeProfileForConv(convID); err != nil {
-		return "", err
-	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.AutoCompactWindow != nil {
-		return *p.FallbackRelaunch.AutoCompactWindow, nil
-	}
-	s, err := FindSessionByConvID(convID)
-	if err != nil || s == nil {
+	p, err := RecordedLaunchPostureForConv(convID)
+	if err != nil || p == nil || p.AutoCompactWindow == nil {
 		return "", err
 	}
-	return s.AutoCompactWindow, nil
+	return *p.AutoCompactWindow, nil
 }
 
 // AskTimeoutForConv returns durable agent intent, or the unmanaged conversation
 // fallback. Legacy sessions are consulted only when v145 projection has not
 // occurred.
 func AskTimeoutForConv(convID string) (string, error) {
-	if p, err := AgentRelaunchProfileForConv(convID); err != nil {
-		return "", err
-	} else if p != nil && p.AskUserQuestionTimeout != nil {
-		return *p.AskUserQuestionTimeout, nil
-	}
-	if p, err := ConversationResumeProfileForConv(convID); err != nil {
-		return "", err
-	} else if p != nil && p.FallbackRelaunch != nil && p.FallbackRelaunch.AskUserQuestionTimeout != nil {
-		return *p.FallbackRelaunch.AskUserQuestionTimeout, nil
-	}
-	s, err := FindSessionByConvID(convID)
-	if err != nil || s == nil {
+	p, err := RecordedLaunchPostureForConv(convID)
+	if err != nil || p == nil || p.AskUserQuestionTimeout == nil {
 		return "", err
 	}
-	return s.AskUserQuestionTimeout, nil
+	return *p.AskUserQuestionTimeout, nil
 }
 
 // UpdateSessionModel stores the LLM model display name ("Opus 4.8",

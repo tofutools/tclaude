@@ -7,25 +7,31 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-type explicitLaunchFields struct {
-	harness bool
-	model   bool
-	effort  bool
-}
+// explicitLaunchFields records which launch flags the caller actually typed,
+// keyed by flag name. Cobra's Changed() is the ONLY place the distinction
+// between "omitted" and "explicitly set to the default" still exists — by the
+// time a flag reaches NewParams, `--auto-memory=false` and no flag at all are
+// the same bool. Both the global-default profile and the relaunch carryover
+// fill omitted fields only, so both need this.
+//
+// A map rather than a struct so a new entry in launchCarryoverFields needs no
+// parallel edit here.
+type explicitLaunchFields map[string]bool
+
+func (e explicitLaunchFields) has(flag string) bool { return e[flag] }
 
 // RunNewFromCommand launches a session from a Cobra CLI surface while
 // preserving the distinction between an omitted launch flag and an explicitly
-// empty one. The dashboard/global profile only fills omitted fields.
+// empty one. The dashboard/global profile only fills omitted fields, and on a
+// --resume so does the recorded launch posture.
 func RunNewFromCommand(params *NewParams, cmd *cobra.Command) error {
-	explicit := explicitLaunchFields{
-		harness: cmd.Flags().Changed("harness"),
-		model:   cmd.Flags().Changed("model"),
-		effort:  cmd.Flags().Changed("effort"),
-	}
+	explicit := explicitLaunchFields{}
+	cmd.Flags().Visit(func(f *pflag.Flag) { explicit[f.Name] = true })
 	return runNewWithGlobalDefault(params, explicit)
 }
 
@@ -38,6 +44,14 @@ func RunNew(params *NewParams) error {
 
 func runNewWithGlobalDefault(params *NewParams, explicit explicitLaunchFields) error {
 	if err := applyGlobalDefaultLaunchProfile(params, explicit); err != nil {
+		return err
+	}
+	// A --resume must relaunch the conversation the way it was launched, so the
+	// recorded posture fills every flag the caller left out. This runs BEFORE
+	// runNew because runNew validates and records straight off params: a field
+	// still blank here is what gets asserted onto the fresh session row, and the
+	// durable projection turns that assertion into permanent loss (TCL-730).
+	if err := applyRecordedLaunchPosture(params, explicit); err != nil {
 		return err
 	}
 	return runNew(params)
@@ -72,7 +86,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 		return nil
 	}
 	if prof == nil {
-		if !explicit.harness && strings.TrimSpace(params.Harness) == "" {
+		if !explicit.has("harness") && strings.TrimSpace(params.Harness) == "" {
 			params.Harness = firstInstalledHarness(lookPath)
 		}
 		return nil
@@ -85,7 +99,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 		return fmt.Errorf("global default spawn profile %q is disabled: %s", prof.Name, reason)
 	}
 
-	if !explicit.harness && strings.TrimSpace(params.Harness) == "" {
+	if !explicit.has("harness") && strings.TrimSpace(params.Harness) == "" {
 		params.Harness = strings.TrimSpace(prof.Harness)
 	}
 	h, err := harness.Resolve(params.Harness)
@@ -98,7 +112,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 	}
 	profileMatchesHarness := profileHarness == h.Name
 
-	if !explicit.model && strings.TrimSpace(params.Model) == "" {
+	if !explicit.has("model") && strings.TrimSpace(params.Model) == "" {
 		if raw := strings.TrimSpace(prof.Model); raw != "" {
 			value, validateErr := h.Models.ValidateModel(raw)
 			switch {
@@ -112,7 +126,7 @@ func applyGlobalDefaultLaunchProfileWithLookPath(
 			}
 		}
 	}
-	if !explicit.effort && strings.TrimSpace(params.Effort) == "" {
+	if !explicit.has("effort") && strings.TrimSpace(params.Effort) == "" {
 		if raw := strings.TrimSpace(prof.Effort); raw != "" {
 			value, validateErr := h.Models.ValidateEffort(raw)
 			switch {

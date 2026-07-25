@@ -1154,44 +1154,13 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("persist managed launch resume provenance: %w", err)
 		}
 	}
-	if h.SupportsAutoMemory() {
-		// Record the posture this launch actually ran with so a later relaunch
-		// reproduces it instead of falling back to the default. Out-of-band
-		// like SetSessionResumeProvenance, since SaveSession's UPSERT does not
-		// own the column. Best-effort: the pane is already running with the
-		// right env, and a lost write only costs a future relaunch its opt-in
-		// (degrading to memory off, the recommended posture) — not worth
-		// killing a healthy session over.
-		if err := db.SetSessionAutoMemory(sessionID, autoMemory); err != nil {
-			slog.Warn("failed to record session auto-memory posture",
-				"session_id", sessionID, "auto_memory", autoMemory, "error", err)
-		}
-	}
-	if h.SupportsContextFeatures() {
-		// Same discipline for the startup-context trims: record what this launch
-		// resolved to so a resume / clone / reincarnation hands the successor the
-		// same lean context. Written unconditionally (including the empty map) so
-		// the row distinguishes "known: trims nothing" from a legacy unknown.
-		// Best-effort for the same reason as the auto-memory write above — a lost
-		// write costs a future relaunch its trims, not this session's.
-		if err := db.SetSessionContextFeatures(sessionID, contextFeatures); err != nil {
-			slog.Warn("failed to record session context features",
-				"session_id", sessionID,
-				"context_features", harness.FormatContextFeatures(contextFeatures), "error", err)
-		}
-	}
-	if h.SupportsAutoCompactWindow() {
-		// Same discipline for the auto-compaction window: record what this launch
-		// resolved to so a resume / clone / reincarnation keeps compacting at the
-		// same point. Written unconditionally (including "") so the row
-		// distinguishes "known: nothing pinned" from a legacy unknown. Best-effort
-		// for the same reason as the writes above — a lost write costs a future
-		// relaunch its pinned window, not this session's.
-		if err := db.SetSessionAutoCompactWindow(sessionID, autoCompactWindow); err != nil {
-			slog.Warn("failed to record session auto-compact window",
-				"session_id", sessionID, "auto_compact_window", autoCompactWindow, "error", err)
-		}
-	}
+	// Record the postures this launch actually ran with so a later relaunch
+	// reproduces them instead of falling back to defaults. Out-of-band like
+	// SetSessionResumeProvenance, since SaveSession's UPSERT does not own these
+	// columns. On a --resume the values came from the conversation's own record
+	// via applyRecordedLaunchPosture, so this write keeps them alive rather than
+	// overwriting them. See RecordLaunchPosture.
+	RecordLaunchPosture(sessionID, h, autoMemory, contextFeatures, autoCompactWindow)
 	if h.Name == harness.CodexName {
 		if err := db.UpdateSessionModel(sessionID, model); err != nil {
 			slog.Warn("failed to seed Codex session model", "session_id", sessionID, "error", err)
