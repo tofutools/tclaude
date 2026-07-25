@@ -66,20 +66,21 @@ func runMerge(tree map[string]any) *hardeningReport {
 	return r
 }
 
-// The spec has 19 leaf values: 3 scalars (sandbox.enabled,
-// sandbox.allowUnsandboxedCommands, sandbox.network.allowAllUnixSockets) and
+// The spec has 20 leaf values: 4 scalars (sandbox.enabled,
+// sandbox.failIfUnavailable, sandbox.allowUnsandboxedCommands,
+// sandbox.network.allowAllUnixSockets) and
 // 16 array elements (allowedDomains 2, allowUnixSockets 3, denyWrite 2,
 // denyRead 2, allowRead 3, permissions.deny 4). The socket lists carry the
 // canonical api/ socket plus the two retained pre-split sockets. The deny lists
 // cover the two protected roots: ~/.tclaude/data and ~/.claude/sessions.
-const specLeafCount = 19
+const specLeafCount = 20
 
-// Pin the two halves that make disabling dangerouslyDisableSandbox usable:
-// GitHub operations required by the agent workflow stay inside the network
-// sandbox, then the model-controlled escape hatch is switched off.
-func TestSandboxHardeningSpec_DisablesBypassAfterAllowingGitHub(t *testing.T) {
+// Pin the fail-closed properties together with the network allowance that makes
+// disabling dangerouslyDisableSandbox usable for the required GitHub workflow.
+func TestSandboxHardeningSpec_FailsClosedAndPreservesGitHub(t *testing.T) {
 	sandbox := sandboxHardeningSpec()["sandbox"].(map[string]any)
 	assert.Equal(t, false, sandbox["allowUnsandboxedCommands"])
+	assert.Equal(t, true, sandbox["failIfUnavailable"])
 
 	network := sandbox["network"].(map[string]any)
 	assert.Equal(t, []any{"github.com", "api.github.com"}, network["allowedDomains"])

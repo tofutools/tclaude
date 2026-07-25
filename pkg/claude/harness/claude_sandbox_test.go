@@ -167,6 +167,10 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 	if b["enabled"] != true {
 		t.Fatalf("on block must enable the sandbox, got %v", b["enabled"])
 	}
+	if b["failIfUnavailable"] != true {
+		t.Fatalf("on block must fail closed when the sandbox runtime is unavailable, got %v",
+			b["failIfUnavailable"])
+	}
 	if b["allowUnsandboxedCommands"] != false {
 		t.Fatalf("on block must disable the dangerouslyDisableSandbox bypass, got %v",
 			b["allowUnsandboxedCommands"])

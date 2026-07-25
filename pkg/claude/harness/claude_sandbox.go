@@ -158,6 +158,7 @@ func (claudeSandbox) ModeHelp(mode string) string {
 func ClaudeSandboxOnBlock() map[string]any {
 	return map[string]any{
 		"enabled":                  true,
+		"failIfUnavailable":        true,
 		"allowUnsandboxedCommands": false,
 		"network": map[string]any{
 			"allowUnixSockets":    tclaudeAgentdSocketTildes(),

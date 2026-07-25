@@ -187,6 +187,7 @@ any project's `.claude/settings.json`:
 {
   "sandbox": {
     "enabled": true,
+    "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
     "network": {
       "allowUnixSockets":    ["~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"],
@@ -213,13 +214,17 @@ any project's `.claude/settings.json`:
 `tclaude setup --install-sandbox-hardening` installs this block
 append-only and idempotently. **Existing installations must re-run that command
 after upgrading**: settings written by an older tclaude do not acquire
-`allowUnsandboxedCommands: false` or the GitHub domains until the installer
-runs again.
+`failIfUnavailable: true`, `allowUnsandboxedCommands: false`, or the GitHub
+domains until the installer runs again.
 
 Notes:
 
 - **`sandbox.enabled` must be `true`.** With the sandbox off, layer 1
   does nothing and a Bash one-liner can write anywhere your user can.
+- **`sandbox.failIfUnavailable` must be `true`.** Claude Code otherwise warns
+  and runs Bash unsandboxed when the platform sandbox cannot start (for
+  example, because bubblewrap or socat is unavailable). Hardening must fail
+  closed instead of silently losing its OS boundary.
 - **`allowUnsandboxedCommands` must be `false`.** Otherwise an agent can set
   `dangerouslyDisableSandbox: true` on a Bash call and ask the permission layer
   to run it outside every filesystem and network boundary above.
@@ -277,10 +282,13 @@ workstation where the operator controls that file. If
 `sandbox.allowUnsandboxedCommands: hardening wants false ... left unchanged
 (fix it manually)` and does not overwrite the operator's choice.
 
-This is strong default configuration, not an administrator lock: a project
-setting with higher precedence can change a scalar setting. For a shared
-machine or a policy that agents must not be able to relax between launches,
-use Claude Code's root-owned managed policy settings and add top-level
+This is strong default configuration, not an administrator lock: a project or
+local setting with higher precedence can change a scalar setting, and Claude
+Code can hot-reload such a change during a running `inherit` session. For a
+single tclaude launch that must pin the setting above project/local scope, use
+sandbox `on`; its command-line settings block is outranked only by managed
+policy. For a shared machine or a policy that agents must never be able to
+relax, use Claude Code's root-owned managed policy settings and add top-level
 `"forbidUnsandboxedCommands": true`. `tclaude setup` does not write system
 policy files or invoke privilege escalation.
 
@@ -426,8 +434,10 @@ as the warning above, and records it on the session row. The badge then reads:
 
 Because the verdict is resolved at launch, it describes what the *running* agent
 got. Editing `settings.json` afterwards does not change an existing agent's
-badge — it changes what the next launch will report. A resume re-resolves, so a
-resumed agent picks up your new posture.
+badge. Claude Code may hot-reload a project/local scalar such as
+`allowUnsandboxedCommands`, so the badge is a launch-time OS-sandbox verdict,
+not proof that a later settings edit left every escape hatch disabled. A resume
+re-resolves the OS-sandbox verdict and picks up the new posture.
 
 Agents older than this feature, and Codex agents, record no verdict: a Codex
 launch's `--sandbox` mode *is* its posture, so its badge shows the mode
