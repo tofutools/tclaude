@@ -55,7 +55,7 @@ type SessionRow struct {
 	// OSSandboxState and OSSandboxSource are the launch-time verdict on whether
 	// the harness's OS sandbox was ACTUALLY active, and what decided that —
 	// "on"/"off"/"unconfigured" plus the launch flag or the settings file that
-	// won the precedence chain (schema v156, TCL-729). SandboxMode above records
+	// won the precedence chain (schema v157, TCL-729). SandboxMode above records
 	// the launch REQUEST, which for Claude Code's `inherit` default answers
 	// nothing; these record the outcome, resolved once at launch by
 	// harness.ResolveLaunchOSSandbox because it is a property of the settings
