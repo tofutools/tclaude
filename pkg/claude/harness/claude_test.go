@@ -191,11 +191,26 @@ func TestClaudeAsker_BuildAskArgv(t *testing.T) {
 		}),
 		[]string{"claude", "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--resume", "rid-2", "--", "go"})
 
+	// A daemon-brokered capture replays the predecessor's recorded sandbox and
+	// approval posture, while ephemeral mode leaves the dead session untouched.
+	posture := SpawnSpec{SandboxMode: ClaudeSandboxOff, ApprovalPolicy: "auto"}
+	eq("recorded launch posture",
+		claudeAsker{}.BuildAskArgv(AskSpec{
+			Print: true, Ephemeral: true, LaunchPosture: &posture,
+			ResumeID: "rid-safe", Prompt: "remember?",
+		}),
+		[]string{"claude", "-p",
+			"--no-session-persistence",
+			"--settings", `{"sandbox":{"enabled":false}}`,
+			"--permission-mode", "auto",
+			"--resume", "rid-safe", "--", "remember?"})
+
 	// Stream is print-only: a Stream spec that isn't Print (can't happen via the
 	// ask flow, but the builder must be safe) emits no capture-only flags.
 	eq("stream ignored without print",
 		claudeAsker{}.BuildAskArgv(AskSpec{
-			Stream: true, SessionID: "sid-3", Prompt: "hi",
+			Stream: true, Ephemeral: true, LaunchPosture: &posture,
+			SessionID: "sid-3", Prompt: "hi",
 		}),
 		[]string{"claude", "--session-id", "sid-3", "hi"})
 

@@ -1,12 +1,10 @@
 package agent
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -21,22 +19,23 @@ import (
 // from Steve Yegge's Gas Town).
 //
 // When an agent reincarnates, the old conversation is retired but its
-// full `.jsonl` transcript survives on disk. A séance resumes that dead
-// conversation HEADLESSLY for a single turn — `claude -p --resume
-// <predecessor>` run from the predecessor's own launch dir — puts one
-// question to it, and hands back JUST the answer. The successor pays for
-// the answer (a few hundred tokens) instead of dragging the whole
-// transcript back into its live context window, which is the very thing
+// full harness transcript survives on disk. A séance resumes that dead
+// conversation HEADLESSLY for a single ephemeral turn from the predecessor's
+// own launch dir, puts one question to it, and hands back JUST the answer. The
+// successor pays for the answer (a few hundred tokens) instead of dragging the
+// whole transcript back into its live context window, which is the very thing
 // reincarnate was trying to shed.
 //
 // The mechanics are the `tclaude ask` headless-Q&A primitive (JOH-250/
 // 252) aimed at a retired conv-id: the same harness-agnostic Asker argv
-// builder, the same one-shot capture, just resolved against a dead
-// ancestor and run in that ancestor's cwd (resume is cwd-scoped — a
-// conv is only resumable from where it was created). Hooks are
-// suppressed (TCLAUDE_IGNORE_HOOKS=true) so the ephemeral resume never
-// flips the dead agent back to "alive", re-enrolls it, or fires
-// notifications: the predecessor stays in its grave; we only consult it.
+// builder and one-shot capture, just resolved against a dead ancestor and run
+// in that ancestor's cwd (resume is cwd-scoped — a conv is only resumable from
+// where it was created). The authenticated daemon runs this one subprocess:
+// managed callers cannot safely write their harness home, while agentd can
+// initialize the harness without exposing that home to the caller. The daemon
+// replays the predecessor's recorded sandbox and approval posture, suppresses
+// tclaude lifecycle hooks, bounds output/time, and does not persist the
+// consultation back into the dead session.
 
 type seanceParams struct {
 	Question string `pos:"true" optional:"true" help:"What to ask the predecessor. Quote multi-word strings. Read from --file instead for long/multi-line questions. Omit only with --print-cmd."`
@@ -45,7 +44,7 @@ type seanceParams struct {
 	Back     int    `long:"back" optional:"true" default:"1" help:"Walk back this many generations (1 = immediate predecessor). Applies to self and agent selectors; an exact conv-id already names the generation."`
 	Model    string `long:"model" optional:"true" help:"Model for the séance turn (default: the harness's configured default). The predecessor's own model is not recorded; you pick the medium for the summoning."`
 	Effort   string `long:"effort" optional:"true" help:"Reasoning effort for the séance turn (harness-specific; default: harness default)."`
-	Timeout  string `long:"timeout" optional:"true" help:"Cap the séance call, e.g. '90s' or '3m'. Default: no timeout."`
+	Timeout  string `long:"timeout" optional:"true" help:"Cap the séance call, e.g. '90s' or '3m'. Default: 5m; maximum: 10m."`
 	PrintCmd bool   `long:"print-cmd" help:"Resolve the predecessor + command and print them WITHOUT running anything. No LLM call, no cost — use it to verify targeting (and the resume cwd) for free before spending tokens."`
 }
 
@@ -80,24 +79,9 @@ func seanceCmd() *cobra.Command {
 	}.ToCobra()
 }
 
-// seanceRun is the single swappable subprocess boundary in this command
-// (the testharness convention — production resumes the real harness;
-// tests assign a fake that records the plan and returns canned text).
-type seancePlan struct {
-	Argv    []string
-	Cwd     string
-	Timeout time.Duration
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
-}
-
-var seanceRun = liveSeanceRun
-
 // seanceResolveResp is the daemon-owned half of a séance plan. Resolution
 // belongs in agentd because succession, session cwd and harness metadata live
-// in private ~/.tclaude/data; the sandboxed CLI keeps ownership of the actual
-// billable harness subprocess.
+// in private ~/.tclaude/data.
 type seanceResolveResp struct {
 	Predecessor string `json:"predecessor"`
 	Harness     string `json:"harness"`
@@ -105,29 +89,23 @@ type seanceResolveResp struct {
 	Hops        int    `json:"hops"`
 	Requested   int    `json:"requested_back"`
 	Exact       bool   `json:"exact"`
+	Sandbox     string `json:"sandbox"`
+	Approval    string `json:"approval"`
+	AutoReview  bool   `json:"auto_review"`
 }
 
-func liveSeanceRun(p seancePlan) error {
-	if len(p.Argv) == 0 {
-		return fmt.Errorf("empty command")
-	}
-	ctx := context.Background()
-	if p.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, p.Timeout)
-		defer cancel()
-	}
-	cmd := exec.CommandContext(ctx, p.Argv[0], p.Argv[1:]...)
-	cmd.Dir = p.Cwd
-	// Suppress tclaude's hooks for the ephemeral resume: the séance must
-	// not flip the dead conv back to "alive", re-enroll it, or fire
-	// notifications. Mirrors the headless `claude -p` call in task/add.go.
-	cmd.Env = append(os.Environ(), "TCLAUDE_IGNORE_HOOKS=true")
-	cmd.Stdin = p.Stdin
-	cmd.Stdout = p.Stdout
-	cmd.Stderr = p.Stderr
-	return cmd.Run()
+type seanceRunResp struct {
+	Answer      string `json:"answer"`
+	Predecessor string `json:"predecessor"`
+	Harness     string `json:"harness"`
+	Truncated   bool   `json:"truncated,omitempty"`
 }
+
+const (
+	defaultSeanceTimeout = 5 * time.Minute
+	maxSeanceTimeout     = 10 * time.Minute
+	maxSeanceQuestion    = 32 << 10
+)
 
 func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 	// 1) Resolve the question (positional or --file/stdin). Skippable
@@ -142,14 +120,22 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 
-	var timeout time.Duration
+	timeout := defaultSeanceTimeout
 	if p.Timeout != "" {
 		d, err := time.ParseDuration(p.Timeout)
-		if err != nil || d < 0 {
+		if err != nil || d <= 0 {
 			fmt.Fprintf(stderr, "Error: invalid --timeout %q (use e.g. 90s, 3m)\n", p.Timeout)
 			return rcInvalidArg
 		}
 		timeout = d
+	}
+	if timeout > maxSeanceTimeout {
+		fmt.Fprintf(stderr, "Error: --timeout must not exceed %s\n", maxSeanceTimeout)
+		return rcInvalidArg
+	}
+	if len(question) > maxSeanceQuestion {
+		fmt.Fprintf(stderr, "Error: question is too long (%d bytes; maximum %d)\n", len(question), maxSeanceQuestion)
+		return rcInvalidArg
 	}
 
 	// 2) Ask agentd to resolve the dead generation and its launch metadata.
@@ -183,12 +169,36 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcInvalidArg
 	}
 
+	model, err := h.Models.ValidateModel(p.Model)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: invalid --model: %v\n", err)
+		return rcInvalidArg
+	}
+	effort, err := h.Models.ValidateEffort(p.Effort)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: invalid --effort: %v\n", err)
+		return rcInvalidArg
+	}
+	posture := harness.SpawnSpec{
+		SandboxMode:    resolved.Sandbox,
+		ApprovalPolicy: resolved.Approval,
+		AutoReview:     resolved.AutoReview,
+	}
+	if h.Name == harness.CodexName && posture.SandboxMode == harness.SandboxManagedProfile {
+		// The daemon creates a launch-unique profile at execution time. Keep a
+		// visibly symbolic name in --print-cmd rather than pretending the
+		// generic read-only ask posture is what will run.
+		posture.SandboxMode = ""
+		posture.PermissionProfile = harness.CodexAgentProfile + "-<launch-id>"
+	}
 	spec := harness.AskSpec{
-		ResumeID: target,
-		Prompt:   question,
-		Print:    true, // capture mode: print the answer and exit
-		Model:    p.Model,
-		Effort:   p.Effort,
+		ResumeID:      target,
+		Prompt:        question,
+		Print:         true, // capture mode: print the answer and exit
+		Ephemeral:     true,
+		LaunchPosture: &posture,
+		Model:         model,
+		Effort:        effort,
 	}
 	argv := h.Ask.BuildAskArgv(spec)
 
@@ -203,20 +213,32 @@ func runSeance(p *seanceParams, stdin io.Reader, stdout, stderr io.Writer) int {
 		return rcOK
 	}
 
-	// 4) Hold the séance. The answer streams straight to our stdout.
+	// 4) Hold the séance through agentd. A managed agent intentionally cannot
+	//    write its harness home, so a nested Codex/Claude process cannot even
+	//    initialize in this CLI's sandbox. agentd owns the narrow, audited,
+	//    bounded one-shot execution boundary and replays the predecessor's
+	//    recorded sandbox/approval posture from the private DB.
 	fmt.Fprintf(stderr, "Summoning %s (resuming in %s)...\n", short(target), resolved.Cwd)
-	plan := seancePlan{
-		Argv:    argv,
-		Cwd:     resolved.Cwd,
-		Timeout: timeout,
-		Stdin:   stdin,
-		Stdout:  stdout,
-		Stderr:  stderr,
+	var result seanceRunResp
+	if err := DaemonRequest(http.MethodPost, "/v1/whoami/seance/run", map[string]any{
+		// Pin execution to the exact generation that the free planning call
+		// resolved. A concurrent reincarnation cannot silently retarget a
+		// billable request to a different ancestor.
+		"target":     target,
+		"back":       1,
+		"question":   question,
+		"model":      model,
+		"effort":     effort,
+		"timeout_ms": timeout.Milliseconds(),
+	}, &result, DaemonOpts{Timeout: timeout + 30*time.Second}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return mapSeanceDaemonErrorToRC(err)
 	}
-	if err := seanceRun(plan); err != nil {
-		fmt.Fprintf(stderr, "Error: the séance failed: %v\n", err)
+	if result.Truncated {
+		fmt.Fprintln(stderr, "Error: agentd truncated the séance answer")
 		return rcIOFailure
 	}
+	_, _ = io.WriteString(stdout, result.Answer)
 	return rcOK
 }
 
@@ -226,6 +248,8 @@ func mapSeanceDaemonErrorToRC(err error) int {
 		case "permission":
 			return rcAuth
 		case "unsupported_harness":
+			return rcInvalidArg
+		case "invalid_arg":
 			return rcInvalidArg
 		}
 	}

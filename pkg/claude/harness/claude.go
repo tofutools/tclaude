@@ -208,6 +208,21 @@ func (claudeAsker) BuildAskArgv(spec AskSpec) []string {
 	if spec.Stream && spec.Print {
 		argv = append(argv, "--output-format", "stream-json", "--verbose", "--include-partial-messages")
 	}
+	if spec.Ephemeral && spec.Print {
+		argv = append(argv, "--no-session-persistence")
+	}
+	if posture := spec.LaunchPosture; posture != nil && spec.Print {
+		// A brokered resume replays the exact launch posture recorded for the
+		// conversation. In particular, do not replace an active agent's
+		// sandbox/permission mode with generic plan mode: that makes a séance
+		// behave unlike waking the same stopped agent.
+		if settings := claudeSettingsJSON(*posture); settings != "" {
+			argv = append(argv, "--settings", settings)
+		}
+		if mode := claudeApprovalValue(posture.ApprovalPolicy); mode != "" {
+			argv = append(argv, "--permission-mode", mode)
+		}
+	}
 	switch {
 	case spec.ResumeID != "":
 		argv = append(argv, "--resume", spec.ResumeID)

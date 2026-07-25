@@ -1,5 +1,7 @@
 package harness
 
+import "slices"
+
 // codexAsker builds the `codex` argv for a one-shot `tclaude ask` turn
 // (JOH-252). Like claudeAsker it returns an argv slice (exec'd directly, no
 // shell) so the untrusted question is one element of the slice — never shell-
@@ -36,6 +38,32 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 	argv := []string{"codex"}
 
 	if spec.Print {
+		if posture := spec.LaunchPosture; posture != nil {
+			// These are top-level Codex options, so they must precede `exec`.
+			// `exec resume` lacks its own --sandbox/--ask-for-approval/-p
+			// switches but inherits the top-level configuration exactly like
+			// the interactive resume used for a stopped agent.
+			if posture.PermissionProfile != "" {
+				argv = append(argv, "-p", posture.PermissionProfile)
+			} else if posture.SandboxMode != "" {
+				argv = append(argv, "--sandbox", posture.SandboxMode)
+			}
+			if posture.ApprovalPolicy != "" {
+				argv = append(argv, "--ask-for-approval", posture.ApprovalPolicy)
+			}
+			if posture.AutoReview {
+				argv = append(argv, "-c", codexApprovalsReviewerKey+`="`+codexApprovalsReviewerAuto+`"`)
+			}
+			names := make([]string, 0, len(posture.ShellEnvironment))
+			for name := range posture.ShellEnvironment {
+				names = append(names, name)
+			}
+			slices.Sort(names)
+			for _, name := range names {
+				argv = append(argv, "-c",
+					"shell_environment_policy.set."+name+"="+codexTOMLString(posture.ShellEnvironment[name]))
+			}
+		}
 		// Non-interactive capture: `codex exec` (+ `resume <id>` to continue).
 		argv = append(argv, "exec")
 		if spec.ResumeID != "" {
@@ -48,15 +76,18 @@ func (codexAsker) BuildAskArgv(spec AskSpec) []string {
 		// anywhere). exec/exec-resume both accept this; the TUI handles a
 		// non-git cwd interactively instead.
 		argv = append(argv, "--skip-git-repo-check")
-		// Read-only sandbox: a captured answer can read to answer but never
-		// write/act. `codex exec` takes the `--sandbox` flag; `codex exec
-		// resume` does NOT (verified against codex-cli 0.141.0), so on a resume
-		// we assert the same policy via the `-c sandbox_mode=…` config override
-		// (accepted by both subcommands) instead.
-		if spec.ResumeID != "" {
-			argv = append(argv, "-c", `sandbox_mode="`+SandboxReadOnly+`"`)
-		} else {
-			argv = append(argv, "--sandbox", SandboxReadOnly)
+		if spec.LaunchPosture == nil {
+			// Ordinary capture keeps its historical read-only posture. A
+			// brokered resume instead supplied the predecessor's recorded
+			// posture above.
+			if spec.ResumeID != "" {
+				argv = append(argv, "-c", `sandbox_mode="`+SandboxReadOnly+`"`)
+			} else {
+				argv = append(argv, "--sandbox", SandboxReadOnly)
+			}
+		}
+		if spec.Ephemeral {
+			argv = append(argv, "--ephemeral")
 		}
 		argv = appendCodexAskModelEffort(argv, spec)
 		// Untrusted prompt as the trailing positional, behind `--`: a captured

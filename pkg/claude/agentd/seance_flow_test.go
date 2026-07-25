@@ -1,16 +1,20 @@
 package agentd_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -41,6 +45,31 @@ func requestSeancePlan(
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out),
 		"decode séance plan: %s", rec.Body.String())
 	return &out, rec.Code, rec.Body.String()
+}
+
+func requestSeanceRun(
+	t *testing.T,
+	f *testharness.Flow,
+	caller string,
+	body map[string]any,
+) (*seanceRunView, int, string) {
+	t.Helper()
+	req := agentd.AsAgentPeer(testharness.JSONRequest(t,
+		http.MethodPost, "/v1/whoami/seance/run", body), caller)
+	rec := testharness.Serve(f.Mux, req)
+	if rec.Code != http.StatusOK {
+		return nil, rec.Code, rec.Body.String()
+	}
+	var out seanceRunView
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out),
+		"decode séance result: %s", rec.Body.String())
+	return &out, rec.Code, rec.Body.String()
+}
+
+type seanceRunView struct {
+	Answer      string `json:"answer"`
+	Predecessor string `json:"predecessor"`
+	Harness     string `json:"harness"`
 }
 
 // Production-path contract: the daemon resolves the caller's stable actor,
@@ -232,6 +261,14 @@ func TestSeancePlan_OpenCodeExactGenerationDoesNotRedirect(t *testing.T) {
 		row.Harness = harness.OpenCodeName
 		require.NoError(t, db.UpsertConvIndex(row))
 		setSessionHarness(t, generation.id, harness.OpenCodeName)
+		sessions, err := db.FindSessionsByConvID(generation.id)
+		require.NoError(t, err)
+		require.NotEmpty(t, sessions)
+		for _, session := range sessions {
+			session.SandboxMode = harness.OpenCodeSandboxAccessControl
+			session.ApprovalPolicy = harness.OpenCodeApprovalDeny
+			require.NoError(t, db.SaveSession(session))
+		}
 	}
 	f.HaveGroup("alpha")
 	f.HaveMember("alpha", first)
@@ -249,6 +286,20 @@ func TestSeancePlan_OpenCodeExactGenerationDoesNotRedirect(t *testing.T) {
 		assert.Equal(t, firstCwd, got.Cwd)
 		assert.True(t, got.Exact)
 	}
+
+	previous := agentd.RunSeanceHarness
+	called := false
+	agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		called = true
+		return agentd.SeanceExecResult{Stdout: "unsafe", Started: true}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previous })
+	_, status, body := requestSeanceRun(t, f, head, map[string]any{
+		"target": first, "question": "what did you know?",
+	})
+	assert.Equal(t, http.StatusConflict, status, "body=%s", body)
+	assert.Contains(t, body, "managed-server permission posture")
+	assert.False(t, called, "OpenCode must fail before the daemon subprocess boundary")
 }
 
 func TestSeancePlan_RejectsUnboundedAndShortSelectors(t *testing.T) {
@@ -314,4 +365,299 @@ func TestSeancePlan_RejectsUnboundedAndShortSelectors(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, status, "body=%s", body)
 		assert.Contains(t, body, "at least 8")
 	})
+}
+
+func TestSeanceRun_ExecutesThroughDaemonBoundary(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "a11ce000-1111-2222-3333-444444444444"
+		newConv = "b0b00000-1111-2222-3333-444444444444"
+	)
+	oldCwd := f.TestCwd("seance-run-old")
+	f.HaveConvWithTitle(oldConv, "old-runner")
+	f.HaveAliveSession(oldConv, "old-runner-label", "old-runner-tmux", oldCwd)
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	f.HaveConvWithTitle(newConv, "new-runner")
+	f.HaveAliveSession(newConv, "new-runner-label", "new-runner-tmux", f.TestCwd("seance-run-new"))
+	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	previous := agentd.RunSeanceHarness
+	var captured agentd.SeanceExecPlan
+	agentd.RunSeanceHarness = func(_ context.Context, plan agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		captured = plan
+		return agentd.SeanceExecResult{
+			Stdout:  "The token bug was in the resume path.\n",
+			Started: true,
+		}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previous })
+
+	got, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		"target":     oldConv,
+		"question":   "What did you learn?",
+		"timeout_ms": int64((30 * time.Second).Milliseconds()),
+	})
+	require.Equal(t, http.StatusOK, status, "body=%s", body)
+	assert.Equal(t, "The token bug was in the resume path.\n", got.Answer)
+	assert.Equal(t, oldConv, got.Predecessor)
+	assert.Equal(t, harness.DefaultName, got.Harness)
+	assert.Equal(t, oldCwd, captured.Cwd)
+	command := strings.Join(captured.Argv, " ")
+	assert.Contains(t, command, "--resume "+oldConv)
+	assert.Contains(t, command, "-p")
+	assert.Contains(t, command, "What did you learn?")
+	assert.Contains(t, command, "--no-session-persistence")
+	assert.Contains(t, command, "--permission-mode bypassPermissions")
+	assert.NotContains(t, command, "--safe-mode")
+
+	rows, err := db.ListAuditLog(db.AuditLogFilter{Verb: "seance"})
+	require.NoError(t, err)
+	require.NotEmpty(t, rows)
+	audit := rows[0]
+	assert.Equal(t, db.AuditActorAgent, audit.ActorKind)
+	assert.Equal(t, newConv, audit.ActorConv)
+	assert.Equal(t, oldConv, audit.TargetConv)
+	assert.Equal(t, oldConv[:8], audit.TargetLabel)
+	assert.Contains(t, audit.Detail, "harness claude")
+	assert.NotContains(t, audit.Detail, "What did you learn?")
+	assert.NotContains(t, audit.Detail, "token bug")
+}
+
+func TestSeanceRun_ReplaysExactPredecessorCodexSandbox(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "c0de0000-1111-2222-3333-444444444444"
+		newConv = "c0de0000-5555-6666-7777-888888888888"
+	)
+	oldCwd := f.TestCwd("seance-codex-old")
+	newCwd := f.TestCwd("seance-codex-new")
+	f.HaveAliveCodexSession(oldConv, "codex-old", "tmux-codex-old", oldCwd)
+	predecessorSnapshot := sandboxpolicy.EmptySnapshot()
+	predecessorSnapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "POLICY_OWNER", Value: "predecessor",
+	}}
+	oldRows, err := db.FindSessionsByConvID(oldConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, oldRows)
+	for _, row := range oldRows {
+		row.SandboxMode = harness.SandboxManagedProfile
+		row.ApprovalPolicy = harness.ApprovalNever
+		row.EffectiveSandbox = &predecessorSnapshot
+		require.NoError(t, db.SaveSession(row))
+	}
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+
+	f.HaveAliveCodexSession(newConv, "codex-new", "tmux-codex-new", newCwd)
+	successorSnapshot := sandboxpolicy.EmptySnapshot()
+	successorSnapshot.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "POLICY_OWNER", Value: "successor",
+	}}
+	newRows, err := db.FindSessionsByConvID(newConv)
+	require.NoError(t, err)
+	require.NotEmpty(t, newRows)
+	for _, row := range newRows {
+		row.SandboxMode = harness.SandboxManagedProfile
+		row.ApprovalPolicy = harness.ApprovalNever
+		row.EffectiveSandbox = &successorSnapshot
+		require.NoError(t, db.SaveSession(row))
+	}
+	_, err = db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	previousProfile := agentd.EnsureSeanceCodexProfile
+	var rendered *sandboxpolicy.Snapshot
+	agentd.EnsureSeanceCodexProfile = func(
+		cwd, launchID string,
+		snapshot *sandboxpolicy.Snapshot,
+	) (string, string, *harness.CodexSplitPolicyCapability, error) {
+		assert.Equal(t, oldCwd, cwd)
+		assert.Len(t, launchID, 16)
+		rendered = snapshot
+		return "tclaude-agent-0123456789abcdef", t.TempDir() + "/profile", nil, nil
+	}
+	t.Cleanup(func() { agentd.EnsureSeanceCodexProfile = previousProfile })
+
+	previousRun := agentd.RunSeanceHarness
+	var captured agentd.SeanceExecPlan
+	agentd.RunSeanceHarness = func(_ context.Context, plan agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		captured = plan
+		return agentd.SeanceExecResult{Stdout: "remembered\n", Started: true}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previousRun })
+
+	got, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		"target": oldConv, "question": "What was the policy?",
+	})
+	require.Equal(t, http.StatusOK, status, "body=%s", body)
+	assert.Equal(t, "remembered\n", got.Answer)
+	require.NotNil(t, rendered)
+	assert.Equal(t, "predecessor", rendered.Effective.Environment[0].Value,
+		"the historical generation wins over the successor actor snapshot")
+	assert.Equal(t, "predecessor", captured.Environment["POLICY_OWNER"])
+	command := strings.Join(captured.Argv, " ")
+	assert.Contains(t, command, "-p tclaude-agent-0123456789abcdef")
+	assert.Contains(t, command, "--ask-for-approval never")
+	assert.Contains(t, command, "exec resume "+oldConv)
+	assert.Contains(t, command, "--ephemeral")
+	assert.NotContains(t, command, `sandbox_mode="read-only"`)
+}
+
+func TestSeanceRun_BoundsAndFailureModes(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "cafe0000-1111-2222-3333-444444444444"
+		newConv = "face0000-1111-2222-3333-444444444444"
+	)
+	f.HaveConvWithTitle(oldConv, "old-bounds")
+	f.HaveAliveSession(oldConv, "old-bounds-label", "old-bounds-tmux", f.TestCwd("seance-bounds-old"))
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	f.HaveConvWithTitle(newConv, "new-bounds")
+	f.HaveAliveSession(newConv, "new-bounds-label", "new-bounds-tmux", f.TestCwd("seance-bounds-new"))
+	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	previous := agentd.RunSeanceHarness
+	t.Cleanup(func() { agentd.RunSeanceHarness = previous })
+	runCalls := 0
+	agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		runCalls++
+		return agentd.SeanceExecResult{Stdout: "ok", Started: true}
+	}
+	base := func() map[string]any {
+		return map[string]any{"target": oldConv, "question": "question"}
+	}
+
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]any)
+		want string
+	}{
+		{name: "empty question", edit: func(b map[string]any) { b["question"] = " " }, want: "question is required"},
+		{name: "large question", edit: func(b map[string]any) { b["question"] = strings.Repeat("q", 32<<10+1) }, want: "question is too long"},
+		{name: "large request", edit: func(b map[string]any) { b["padding"] = strings.Repeat("x", 65<<10) }, want: "invalid JSON"},
+		{name: "timeout cap", edit: func(b map[string]any) { b["timeout_ms"] = int64((10*time.Minute + time.Millisecond).Milliseconds()) }, want: "no more than"},
+		{name: "timeout overflow", edit: func(b map[string]any) { b["timeout_ms"] = int64(^uint64(0) >> 1) }, want: "no more than"},
+		{name: "invalid model", edit: func(b map[string]any) { b["model"] = "definitely-not-a-claude-model" }, want: "invalid --model"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := base()
+			tc.edit(body)
+			_, status, response := requestSeanceRun(t, f, newConv, body)
+			assert.Equal(t, http.StatusBadRequest, status, "body=%s", response)
+			assert.Contains(t, response, tc.want)
+		})
+	}
+	assert.Zero(t, runCalls, "invalid requests must never reach the billable boundary")
+
+	tests := []struct {
+		name   string
+		result agentd.SeanceExecResult
+		status int
+		code   string
+	}{
+		{
+			name:   "initialization",
+			result: agentd.SeanceExecResult{Err: errors.New("executable not found")},
+			status: http.StatusBadGateway,
+			code:   "seance_init",
+		},
+		{
+			name: "harness exit",
+			result: agentd.SeanceExecResult{
+				Started: true,
+				Stderr:  "authentication failed",
+				Err:     errors.New("exit status 1"),
+			},
+			status: http.StatusBadGateway,
+			code:   "seance_failed",
+		},
+		{
+			name: "answer limit",
+			result: agentd.SeanceExecResult{
+				Started:         true,
+				StdoutTruncated: true,
+				Err:             context.Canceled,
+			},
+			status: http.StatusBadGateway,
+			code:   "seance_output_limit",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+				return tc.result
+			}
+			_, status, response := requestSeanceRun(t, f, newConv, base())
+			assert.Equal(t, tc.status, status, "body=%s", response)
+			assert.Contains(t, response, tc.code)
+		})
+	}
+
+	t.Run("deadline", func(t *testing.T) {
+		agentd.RunSeanceHarness = func(ctx context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+			<-ctx.Done()
+			return agentd.SeanceExecResult{Started: true, Err: ctx.Err()}
+		}
+		body := base()
+		body["timeout_ms"] = int64(1)
+		_, status, response := requestSeanceRun(t, f, newConv, body)
+		assert.Equal(t, http.StatusGatewayTimeout, status, "body=%s", response)
+		assert.Contains(t, response, "seance_timeout")
+	})
+}
+
+func TestSeanceRun_ConcurrencyIsBounded(t *testing.T) {
+	f := newFlow(t)
+	const (
+		oldConv = "1111cafe-1111-2222-3333-444444444444"
+		newConv = "2222face-1111-2222-3333-444444444444"
+	)
+	f.HaveConvWithTitle(oldConv, "old-concurrent")
+	f.HaveAliveSession(oldConv, "old-concurrent-label", "old-concurrent-tmux", f.TestCwd("seance-concurrent-old"))
+	f.HaveGroup("alpha")
+	f.HaveMember("alpha", oldConv)
+	f.HaveConvWithTitle(newConv, "new-concurrent")
+	f.HaveAliveSession(newConv, "new-concurrent-label", "new-concurrent-tmux", f.TestCwd("seance-concurrent-new"))
+	_, err := db.RotateAgentConv(oldConv, newConv, "reincarnate")
+	require.NoError(t, err)
+
+	previous := agentd.RunSeanceHarness
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	agentd.RunSeanceHarness = func(_ context.Context, _ agentd.SeanceExecPlan) agentd.SeanceExecResult {
+		entered <- struct{}{}
+		<-release
+		return agentd.SeanceExecResult{Stdout: "ok", Started: true}
+	}
+	t.Cleanup(func() { agentd.RunSeanceHarness = previous })
+
+	type outcome struct {
+		status int
+		body   string
+	}
+	done := make(chan outcome, 2)
+	for range 2 {
+		go func() {
+			_, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+				"target": oldConv, "question": "hold",
+			})
+			done <- outcome{status: status, body: body}
+		}()
+	}
+	<-entered
+	<-entered
+	_, status, body := requestSeanceRun(t, f, newConv, map[string]any{
+		"target": oldConv, "question": "third",
+	})
+	assert.Equal(t, http.StatusTooManyRequests, status, "body=%s", body)
+	assert.Contains(t, body, "seance_busy")
+	close(release)
+	for range 2 {
+		got := <-done
+		assert.Equal(t, http.StatusOK, got.status, "body=%s", got.body)
+	}
 }
