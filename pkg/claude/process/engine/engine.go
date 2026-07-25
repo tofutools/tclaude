@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Initialize creates the exact pre-execution v2 state from one prepared
+// Initialize creates the exact pre-execution v3 state from one prepared
 // definition. It performs no implicit advancement: the entry node is the sole
 // ready node and every authored edge begins unresolved. As a creation boundary
 // it runs the full structural ValidateCheckpoint once on the constructed state;
@@ -83,7 +83,7 @@ func AdvanceAndPlan(checkpoint Checkpoint, definition *Definition) (Checkpoint, 
 	if !ok {
 		return next, nil, committed > 0, nil
 	}
-	command := programCommand(next.RunID, node)
+	command := programCommand(next.RunID, node, nextAttempt(next, node.id))
 	planned, err := apply(next, definition, Transition{Kind: TransitionCommandPlanned, Command: &command})
 	if err != nil {
 		return Checkpoint{}, nil, false, err
@@ -196,11 +196,23 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 		if status := next.Nodes[node.id]; status != NodeReady {
 			return invalid("command_planned requires ready task %q; got %q", node.id, status)
 		}
-		expected := programCommand(next.RunID, node)
+		// The planned command must be the deterministic request for the node's
+		// NEXT attempt. Binding the attempt into the comparison is what makes
+		// replaying an already-committed plan fail closed instead of re-running
+		// the same identity: the counter has moved on, so the old command no
+		// longer matches anything the reducer would mint.
+		attempt := nextAttempt(next, node.id)
+		if attempt > node.maxAttempts {
+			return invalid("node %q has no attempt %d within its authored budget of %d", node.id, attempt, node.maxAttempts)
+		}
+		expected := programCommand(next.RunID, node, attempt)
 		if !commandsEqual(*transition.Command, expected) {
 			return invalid("planned command does not match deterministic command for node %q", node.id)
 		}
 		next.Nodes[node.id] = NodeRunning
+		// The counter advances with the outbox entry, in this one step: a durable
+		// command always names the node's current attempt.
+		recordAttempt(&next, node.id, attempt)
 		// Plural outbox: only this node's entry is written. Sibling branches keep
 		// whatever they had outstanding.
 		putCommand(&next, cloneCommand(expected))
@@ -248,9 +260,27 @@ func apply(checkpoint Checkpoint, definition *Definition, transition Transition)
 			// running. The run therefore stays RunRunning until its durable
 			// outbox drains, so those siblings remain individually observable
 			// or reconcilable and a crash mid-drain cold-loads them honestly.
-			// Planning stops immediately regardless — hasFailedNode shuts off
-			// both nextPlannableTask and nextEngineTransition.
 			removeCommand(&next, outstanding.NodeID)
+			// Retry is authored policy, and it is branch-local: a failed attempt
+			// still inside its budget re-readies only THIS node, so the next
+			// planning pass mints a fresh attempt for it while every sibling
+			// keeps exactly what it had. A task with no authored retry has a
+			// budget of one and therefore stays fail-fast.
+			//
+			// A run some OTHER branch already failed is the exception, and it has
+			// to be: planning is shut off for the rest of that run, so a re-readied
+			// node would never get its next attempt. Leaving it ready would strand
+			// the run — non-terminal, nothing outstanding, nothing runnable — so a
+			// doomed run spends no further budget and takes the failure path below.
+			if !hasFailedNode(next) && next.Attempts[node.id] < node.maxAttempts {
+				next.Nodes[node.id] = NodeReady
+				break
+			}
+			// Budget exhausted, or spent by a run that was already doomed:
+			// today's failure disposition, unchanged. Planning stops immediately
+			// — hasFailedNode shuts off both nextPlannableTask and
+			// nextEngineTransition — and this is the transition that may empty
+			// the last outbox entry and let the failed run finalize.
 			next.Nodes[node.id] = NodeFailed
 			abandonAfterFailure(&next)
 		default:
@@ -518,6 +548,15 @@ func removeObligation(checkpoint *Checkpoint, nodeID string) {
 	}
 }
 
+// Failing reports whether this run has already exhausted a task's attempts and
+// can therefore only drain: no further command will ever be planned for it.
+//
+// It is deliberately distinct from "an attempt failed". With authored retries a
+// failed observation is routinely just the end of one attempt, so a caller that
+// wants to act on a run being over — cancelling sibling programs, say — has to
+// ask about the run rather than about the observation it just committed.
+func Failing(checkpoint Checkpoint) bool { return hasFailedNode(checkpoint) }
+
 // hasFailedNode reports whether any program task has already failed.
 //
 // A failed task fails the whole run, but with several commands in flight the
@@ -667,19 +706,48 @@ func verdictAllowed(node definitionNode, verdict string) bool {
 	return slices.Contains(node.verdicts, verdict)
 }
 
-func programCommand(runID string, node definitionNode) Command {
+// programCommand mints the deterministic request for one attempt of one task.
+// The attempt is part of the identity, so two attempts of the same node in the
+// same run never share a command id and an observation of the older one can
+// never match the newer outbox entry.
+func programCommand(runID string, node definitionNode, attempt int) Command {
 	return Command{
-		ID:      fmt.Sprintf("cmd_%d_%s_%d_%s_program", len(runID), runID, len(node.id), node.id),
+		ID:      fmt.Sprintf("cmd_%d_%s_%d_%s_%d_program", len(runID), runID, len(node.id), node.id, attempt),
 		Kind:    CommandProgram,
 		NodeID:  node.id,
+		Attempt: attempt,
 		Program: cloneProgramCommand(node.program),
 	}
+}
+
+// nextAttempt is the attempt number a fresh command for this node would carry.
+// The counter is sparse and monotonic: an absent entry means the node has never
+// executed, so its first attempt is 1.
+func nextAttempt(checkpoint Checkpoint, nodeID string) int {
+	return checkpoint.Attempts[nodeID] + 1
+}
+
+// recordAttempt commits a node's new current attempt. It is called only from
+// the planning transition, in the same reducer step that moves the node to
+// running and writes its outbox entry, so the durable counter and the durable
+// command are never separately observable.
+func recordAttempt(checkpoint *Checkpoint, nodeID string, attempt int) {
+	if checkpoint.Attempts == nil {
+		checkpoint.Attempts = make(map[string]int, 1)
+	}
+	checkpoint.Attempts[nodeID] = attempt
 }
 
 func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	clone := checkpoint
 	clone.Nodes = make(map[string]NodeStatus, len(checkpoint.Nodes))
 	maps.Copy(clone.Nodes, checkpoint.Nodes)
+	// Sparse by construction: a run with nothing executed yet keeps a nil map,
+	// so a rejected transition leaves the caller's checkpoint encoding untouched.
+	if len(checkpoint.Attempts) > 0 {
+		clone.Attempts = make(map[string]int, len(checkpoint.Attempts))
+		maps.Copy(clone.Attempts, checkpoint.Attempts)
+	}
 	clone.Edges = make(map[string]map[string]EdgeDisposition, len(checkpoint.Edges))
 	for from, dispositions := range checkpoint.Edges {
 		copied := make(map[string]EdgeDisposition, len(dispositions))

@@ -409,7 +409,8 @@ func TestEngineOwnedAdvanceProceedsAlongsideBranchWork(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		outerCommand := programCommand(outerFanned.RunID, definition.nodes[definition.index["outer-task"]])
+		outerCommand := programCommand(outerFanned.RunID, definition.nodes[definition.index["outer-task"]],
+			nextAttempt(outerFanned, "outer-task"))
 		withCommand, err := Apply(outerFanned, definition, Transition{Kind: TransitionCommandPlanned, Command: &outerCommand})
 		if err != nil {
 			t.Fatal(err)

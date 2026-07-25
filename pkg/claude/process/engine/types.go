@@ -6,7 +6,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/process/model"
 )
 
-const CheckpointVersion = 2
+const CheckpointVersion = 3
 
 type RunStatus string
 
@@ -55,7 +55,7 @@ type CommandKind string
 
 const CommandProgram CommandKind = "program"
 
-// Checkpoint is the complete v2 reducer state. The pinned template and run
+// Checkpoint is the complete v3 reducer state. The pinned template and run
 // parameters live beside it in the run record, rather than being copied into
 // every transition.
 type Checkpoint struct {
@@ -63,6 +63,17 @@ type Checkpoint struct {
 	RunID   string                `json:"runId"`
 	Status  RunStatus             `json:"status"`
 	Nodes   map[string]NodeStatus `json:"nodes"`
+	// Attempts is the sparse, monotonic attempt counter of every node that has
+	// actually executed. It holds one entry per node the reducer has planned a
+	// command for, is never reset or reused, and is what makes attempt identity
+	// outlive an attempt: the counter advances exactly once per planned command,
+	// so a delayed attempt-N observation can never bind to attempt N+1.
+	//
+	// It is not attempt history. A node's entry is its CURRENT attempt number,
+	// and the durable command for that node — if any — is the command of that
+	// exact attempt. Nodes that never ran are simply absent, so a run without
+	// authored retries and no dispatch yet encodes nothing at all.
+	Attempts map[string]int `json:"attempts,omitempty"`
 	// Edges holds one disposition per authored edge, keyed by source node and
 	// then outcome label — the same (from, outcome) identity the authoring
 	// model and editor layout already use. Nesting avoids inventing an escaped
@@ -120,10 +131,17 @@ type DecisionObligation struct {
 // Command is the one durable outbox item this sequential slice can produce.
 // Program contains the fully bound request so dispatch never has to reread
 // mutable authoring input.
+//
+// Attempt is the node's attempt this request belongs to, counted from 1, and it
+// is bound into the deterministic ID as well as carried as its own field. That
+// is what stops a retried node from minting the same identity twice: exact
+// outbox matching stays the stale-input authority, and the identity it matches
+// on is now per attempt rather than per node.
 type Command struct {
 	ID      string         `json:"id"`
 	Kind    CommandKind    `json:"kind"`
 	NodeID  string         `json:"nodeId"`
+	Attempt int            `json:"attempt"`
 	Program ProgramCommand `json:"program"`
 }
 

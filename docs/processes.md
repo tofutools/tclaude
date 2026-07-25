@@ -82,10 +82,28 @@ verb above still needs `process.runs.manage` (an explicit grant or a one-shot
 - Program task performers (`performer.kind: program`), executed as argv without
   a shell, with a bounded environment and output.
 - Human deciders on decision nodes.
+- Bounded program retries. A program task may declare
+  `retry.maxAttempts: <n>`, which **includes the first attempt** and is capped
+  at 100 — retries here run back to back, so an unbounded budget would be an
+  unthrottled loop with no run-cancel verb to stop it. A failed attempt inside
+  the budget re-readies only that node and runs a fresh attempt;
+  parallel siblings are untouched and are neither cancelled nor renumbered. A
+  task with no `retry` stays fail-fast. Every attempt of a node carries its own
+  attempt number and its own command id, so a delayed or duplicated report from
+  an earlier attempt is refused as stale rather than credited to the current
+  one. Attempt numbers are visible in `tclaude process show --json` (the
+  checkpoint's sparse `attempts` map and each outstanding command's `attempt`)
+  and in the `program_prepared` / `program_observed` rows of `tclaude process
+  events`; the plain `show` table's COMMAND column carries the same attempt in
+  the command id. Once the budget is exhausted the run fails exactly as an
+  unretried failure does today.
 
-Not executable yet: agent deciders, agent or human task performers, retries and
-poison handling, wait nodes, captures, and compound plan/check/review stages. Template validation and run creation both refuse
-these with a path-specific diagnostic rather than failing later.
+Not executable yet: agent deciders, agent or human task performers, retry
+backoff waits, same-session retry feedback (`retry.onFail:
+feedback-same-session`), retries on compound stages, poison handling, wait
+nodes, captures, and compound plan/check/review stages. Template validation and
+run creation both refuse these with a path-specific diagnostic rather than
+failing later.
 
 ## Crashes and reconciliation
 
@@ -96,6 +114,12 @@ each outstanding command as `needs_reconcile`, and an operator resolves it
 explicitly with `record-outcome` (I checked out of band; here is what
 happened) or `reissue` (run it again). When a run holds more than one such
 command, both verbs require `--node` to name which one.
+
+A restart preserves each node's exact attempt number, and an outstanding
+retried attempt is reported `needs_reconcile` like any other — never silently
+re-run. `reissue` re-runs that same durable attempt rather than spending
+another one from the budget; `record-outcome --outcome failed` spends it, and
+the next attempt starts if the budget allows.
 
 A failed branch fails the run, but the run is only reported failed once every
 command still in flight has been accounted for.
