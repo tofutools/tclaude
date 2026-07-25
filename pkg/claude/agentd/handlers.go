@@ -2296,8 +2296,15 @@ func contextSnapshotForConvIn(convID string, aliveSet map[string]struct{}) (snap
 	// status line. ContextPct already arrives re-based; this makes the token
 	// denominator match it. The stored snapshot keeps the model's real window —
 	// the relaunch layer reads that one to re-derive a 1M model's [1m] suffix.
-	snap.ContextWindowSize = harness.EffectiveContextWindow(
-		snap.ContextWindowSize, harness.AutoCompactWindowTokens(sess.AutoCompactWindow))
+	//
+	// Gated on a POPULATED snapshot for the same reason stateForConvInSessionsTimed
+	// is: an all-zero snapshot means the statusline hook has never fired, and
+	// substituting the pin for the absent window would turn that sentinel into a
+	// fabricated "0% of 450k" reading. See snapshotPopulated.
+	if snapshotPopulated(snap) {
+		snap.ContextWindowSize = harness.EffectiveContextWindow(
+			snap.ContextWindowSize, harness.AutoCompactWindowTokens(sess.AutoCompactWindow))
+	}
 	return snap, sess.ID, true
 }
 

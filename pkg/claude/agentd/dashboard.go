@@ -1867,9 +1867,21 @@ func stateForConvInSessionsTimed(rows []*db.SessionRow, aliveSet map[string]stru
 		// "x / y tokens" agreeing with the percentage beside it. The durable
 		// snapshot keeps the model's real window untouched — the relaunch layer
 		// reads that one to re-derive a 1M model's [1m] suffix.
-		out.ContextWindowSize = harness.EffectiveContextWindow(
-			snap.ContextWindowSize, harness.AutoCompactWindowTokens(pick.AutoCompactWindow))
-		out.AutoCompactWindow = harness.AutoCompactWindowTokens(pick.AutoCompactWindow)
+		//
+		// Gated on a POPULATED snapshot. A zero window here does not mean "unknown
+		// model window, so the pin stands" — it is the all-zero sentinel for "the
+		// statusline hook has never fired", which is the normal state of every
+		// freshly spawned agent (the launch records its pin long before the first
+		// render). Substituting the pin would fabricate a window out of nothing and
+		// make snapshotPopulated / has_snapshot report usage that was never
+		// observed, costing `agent context-info` and the meter their ability to
+		// distinguish "not reported yet" from a genuine 0%.
+		out.ContextWindowSize = snap.ContextWindowSize
+		if snapshotPopulated(snap) {
+			out.ContextWindowSize = harness.EffectiveContextWindow(
+				snap.ContextWindowSize, harness.AutoCompactWindowTokens(pick.AutoCompactWindow))
+			out.AutoCompactWindow = harness.AutoCompactWindowTokens(pick.AutoCompactWindow)
+		}
 		out.Model = snap.Model
 		out.EffortLevel = snap.EffortLevel
 		out.CostUSD = snap.CostUSD

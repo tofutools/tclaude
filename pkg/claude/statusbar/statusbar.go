@@ -272,7 +272,20 @@ func run() error {
 	if input.ContextWindow.ContextWindowSize != nil {
 		rawWindow = *input.ContextWindow.ContextWindowSize
 	}
-	pinnedWindow := harness.AutoCompactWindowTokens(os.Getenv(harness.AutoCompactWindowEnvVar))
+	// Route the environment through the SAME parser the spawn boundary uses, so
+	// this pane's bar is governed by a value the rest of the feature would accept:
+	// it applies the 10k–10M bounds and understands the `450k` spelling. Reading
+	// the raw integer instead would let a typo'd `=500` in the operator's shell
+	// re-base every percentage against a 500-token window — clamping the bar to
+	// 100%, storing that, firing the context nudge on every render, and (because
+	// the value is recorded durably below) re-injecting itself on every later
+	// resume. An unparseable value is ignored, leaving Claude Code's own default
+	// threshold in charge, which is the same fail-soft direction
+	// durableRelaunchConfigForConv takes.
+	pinnedWindow := int64(0)
+	if parsed, err := harness.ParseAutoCompactWindow(os.Getenv(harness.AutoCompactWindowEnvVar)); err == nil {
+		pinnedWindow = harness.AutoCompactWindowTokens(parsed)
+	}
 	effectiveWindow := harness.EffectiveContextWindow(rawWindow, pinnedWindow)
 	ctxPct := int(harness.RebaseContextPercentage(rawCtxPct, rawWindow, effectiveWindow))
 

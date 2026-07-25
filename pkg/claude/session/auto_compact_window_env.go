@@ -30,10 +30,21 @@ import (
 // both env-assembly paths route through: session.runNew (spawn and `tclaude
 // session new -r` resume) and conv.resumeLaunchCmd (watch-mode resume) — the
 // sibling of ApplyAutoMemoryEnv and ApplyContextFeaturesEnv.
+// The window is re-parsed here rather than trusted, so this seam can never
+// inject a value the spawn boundary would have rejected. Callers reach it with a
+// window read back out of durable state (a session row, a relaunch profile), and
+// that state can predate the bounds, or have been hand-edited. An unparseable or
+// out-of-range value is dropped, leaving Claude Code's own default threshold in
+// charge — the same fail-soft direction durableRelaunchConfigForConv takes,
+// because losing a pin costs an earlier compaction while honouring a bad one
+// would wedge the agent's whole context accounting.
 func ApplyAutoCompactWindowEnv(h *harness.Harness, window string, env map[string]string) {
-	window = strings.TrimSpace(window)
-	if env == nil || window == "" || !h.SupportsAutoCompactWindow() {
+	if env == nil || strings.TrimSpace(window) == "" || !h.SupportsAutoCompactWindow() {
 		return
 	}
-	env[harness.AutoCompactWindowEnvVar] = window
+	canonical, err := harness.ParseAutoCompactWindow(window)
+	if err != nil || canonical == "" {
+		return
+	}
+	env[harness.AutoCompactWindowEnvVar] = canonical
 }

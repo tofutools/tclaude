@@ -484,6 +484,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.ContextFeatures != nil {
 			merged.ContextFeatures = agent.ContextFeatures
 		}
+		if agent.AutoCompactWindow != nil {
+			merged.AutoCompactWindow = agent.AutoCompactWindow
+		}
 		agent = merged
 	}
 	agentRaw, err := encodeRelaunchProfile(agent)

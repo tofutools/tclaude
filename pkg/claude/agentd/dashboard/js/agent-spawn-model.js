@@ -160,19 +160,30 @@ export function spawnCapabilityView(draft, context) {
   };
 }
 
-// AUTO_COMPACT_WINDOW_PATTERN is the client-side shape check: digits with an
-// optional fraction and an optional k/M suffix, plus `_` as a digit separator.
-// It deliberately mirrors harness.ParseAutoCompactWindow rather than trying to
-// be cleverer than it — the daemon remains the authority, and this only exists
-// so an obvious typo is caught before the round trip.
-const AUTO_COMPACT_WINDOW_PATTERN = /^\d[\d_]*(\.\d+)?[kKmM]?$/;
+// AUTO_COMPACT_WINDOW_PATTERN is the client-side shape check, applied to the
+// value AFTER the same normalization harness.ParseAutoCompactWindow performs:
+// surrounding whitespace trimmed, and `_` / interior spaces dropped as digit
+// separators. It must not be STRICTER than the Go parser — this gate blocks
+// submit (see validateSpawnDraft), so a spelling the daemon would accept must
+// not be rejected here. A leading `.` is allowed for the same reason: Go reads
+// ".5M" as 500000.
+//
+// The daemon remains the authority; this exists only so an obvious typo is
+// caught before the round trip.
+const AUTO_COMPACT_WINDOW_PATTERN = /^(\d+(\.\d+)?|\.\d+)[kKmM]?$/;
+
+// normalizeAutoCompactWindowInput strips the separators the Go parser strips, so
+// the pattern and the arithmetic below both see the same digits.
+function normalizeAutoCompactWindowInput(raw) {
+  return text(raw).trim().replace(/[_ ]/g, '');
+}
 
 // parseAutoCompactWindow returns the token count a field value denotes, or null
 // when it is blank or malformed. Float math is fine here: this is a hint, and
 // the daemon does the exact arithmetic on the digit string.
 export function parseAutoCompactWindow(raw) {
-  const value = text(raw).replace(/_/g, '');
-  if (!value || !AUTO_COMPACT_WINDOW_PATTERN.test(text(raw))) return null;
+  const value = normalizeAutoCompactWindowInput(raw);
+  if (!value || !AUTO_COMPACT_WINDOW_PATTERN.test(value)) return null;
   const suffix = value.slice(-1);
   const scale = /[kK]/.test(suffix) ? 1000 : /[mM]/.test(suffix) ? 1000000 : 1;
   const digits = scale === 1 ? value : value.slice(0, -1);

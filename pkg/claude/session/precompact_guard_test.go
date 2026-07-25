@@ -18,6 +18,8 @@ import (
 // TestPreCompactFloor pins the window→floor matching: exact windows,
 // near-miss windows that should still resolve by ratio, and windows too
 // far from any configured class (which must fail open via ok=false).
+// The class is always chosen by the MODEL window; passing the same value as
+// the effective window is the "nothing pinned" case and must not scale.
 func TestPreCompactFloor(t *testing.T) {
 	def := config.DefaultPreCompactThresholds() // {200k→150k, 1M→800k}
 	cases := []struct {
@@ -35,10 +37,53 @@ func TestPreCompactFloor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, ok := preCompactFloor(def, c.window)
+			got, ok := preCompactFloor(def, c.window, c.window)
 			assert.Equal(t, c.ok, ok)
 			if c.ok {
 				assert.Equal(t, c.want, got)
+			}
+		})
+	}
+}
+
+// TestPreCompactFloorScalesToPinnedWindow is the regression guard for a pinned
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW. The ladder is keyed by MODEL class and
+// rejects a match more than 2× away, so an operator-chosen pin must not be used
+// for the lookup: 450k is >2× from both classes and would silently switch the
+// guard OFF, while 500k would match the 1M class's absolute 800k floor — a floor
+// a 500k window can never reach, blocking EVERY compaction and inverting the
+// pin's purpose. The floor is therefore scaled to the same FRACTION of the
+// pinned window.
+func TestPreCompactFloorScalesToPinnedWindow(t *testing.T) {
+	def := config.DefaultPreCompactThresholds() // {200k→150k, 1M→800k}
+	cases := []struct {
+		name             string
+		model, effective int64
+		want             int64
+		ok               bool
+	}{
+		// 1M model, the flagship pin. 800k/1M = 80% of 450k = 360k.
+		{"1M model pinned to 450k", 1_000_000, 450_000, 360_000, true},
+		// The value that would otherwise always-block.
+		{"1M model pinned to 500k", 1_000_000, 500_000, 400_000, true},
+		{"1M model pinned to 600k", 1_000_000, 600_000, 480_000, true},
+		// 200k model: 150k/200k = 75% of 100k = 75k.
+		{"200k model pinned to 100k", 200_000, 100_000, 75_000, true},
+		// A pin at or above the model window is a no-op — Claude Code caps it.
+		{"pin above the model window does not scale", 200_000, 200_000, 150_000, true},
+		// A model window with no class within 2× still fails open, pin or not.
+		{"unmatched model window fails open", 8_000, 4_000, 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := preCompactFloor(def, c.model, c.effective)
+			require.Equal(t, c.ok, ok)
+			if c.ok {
+				assert.Equal(t, c.want, got)
+				// The floor must always be reachable within the pinned window,
+				// or the guard blocks unconditionally.
+				assert.Less(t, got, c.effective,
+					"a floor at or above the effective window blocks every compaction")
 			}
 		})
 	}
