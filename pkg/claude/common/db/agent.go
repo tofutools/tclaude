@@ -2916,10 +2916,25 @@ func MarkRegularAgentMessageStarted(id int64, convID string, inline bool, now ti
 	return true, nil
 }
 
-// MarkStartedRegularAgentMessagesProcessed acknowledges inline regular prompts
-// whose full body was consumed and whose turn reached a terminal hook. Pointer
-// notifications remain pending until inbox read marks their row processed.
-func MarkStartedRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
+// MarkReadRegularAgentMessagesProcessed acknowledges regular messages whose
+// full body is already in the recipient's pane, once its turn reaches a
+// terminal hook. Pointer notifications remain pending until inbox read marks
+// their row processed.
+//
+// read_at is deliberately the only delivery predicate here. On a regular_send
+// row it is set solely by inline delivery — either the daemon's post-send
+// completion stamp or the inline branch of MarkRegularAgentMessageStarted — so
+// it already means "the body was put in the pane"; pointer nudges leave it
+// empty. Requiring started_at as well used to wedge the recipient permanently
+// (TCL-737): an inline turn that missed its UserPromptSubmit correlation, or
+// whose Stop hook never fired, left a row read-but-unprocessed. Nothing showed
+// it as unread, the backlog gate counted it, and the only self-heal — the
+// catch-up in MarkRegularAgentMessageStarted — needed a NEW inline message that
+// the full queue rejected first. Draining on read_at alone keeps the bound
+// measuring real consumption ("inline mail delivered since the recipient's last
+// completed turn", plus unread pointer mail) while guaranteeing that one more
+// completed turn always reopens capacity, with no operator intervention.
+func MarkReadRegularAgentMessagesProcessed(convID string, now time.Time) (int64, error) {
 	if convID == "" {
 		return 0, nil
 	}
@@ -2929,7 +2944,7 @@ func MarkStartedRegularAgentMessagesProcessed(convID string, now time.Time) (int
 	}
 	stamp := now.Format(time.RFC3339Nano)
 	res, err := d.Exec(`UPDATE agent_messages SET processed_at = ?
-		WHERE regular_send = 1 AND started_at != '' AND read_at != '' AND processed_at = ''
+		WHERE regular_send = 1 AND read_at != '' AND processed_at = ''
 		  AND (to_conv = ? OR (pin_gen = 0 AND to_agent != '' AND to_agent =
 			COALESCE((SELECT agent_id FROM agent_conversations WHERE conv_id = ?), '')))`,
 		stamp, convID, convID)

@@ -1232,7 +1232,7 @@ func ApplyHook(input HookCallbackInput, envSessionID string) error {
 		}
 	}
 	if input.HookEventName == "Stop" || input.HookEventName == "StopFailure" {
-		if _, err := db.MarkStartedRegularAgentMessagesProcessed(state.ConvID, time.Now()); err != nil {
+		if _, err := db.MarkReadRegularAgentMessagesProcessed(state.ConvID, time.Now()); err != nil {
 			slog.Warn("failed to mark regular agent messages processed",
 				"error", err, "conv_id", state.ConvID, "module", "hooks")
 		}
